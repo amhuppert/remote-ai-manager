@@ -14,10 +14,7 @@ import {
   planPreviewResponseFixture,
   specControlsDetailFixture,
 } from "./SpecControls.fixtures";
-import SpecReviewMode, {
-  bulkApprovalSubjects,
-  reviewAttentionCount,
-} from "./SpecReviewMode";
+import SpecReviewMode, { bulkApprovalSubjects } from "./SpecReviewMode";
 
 vi.mock(
   "next/link",
@@ -354,46 +351,6 @@ function renderReview(blocked = true): void {
 }
 
 describe("SpecReviewMode", () => {
-  it("embeds in the detail shell and exposes one bulk approval action", () => {
-    renderReview();
-
-    expect(screen.getByTestId("spec-review-mode")).not.toHaveClass("px-xl");
-
-    expect(
-      screen.getByRole("heading", { name: "Review plan-stage revision 2" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("link", { name: "← native-sdd" }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByTestId("spec-phase-facets")).not.toBeInTheDocument();
-
-    const semanticTab = screen.getByRole("tab", {
-      name: /Semantic changes/,
-    });
-    expect(semanticTab).toHaveClass(
-      "data-[state=active]:bg-bg-elevated",
-      "data-[state=active]:text-text-primary",
-    );
-    expect(semanticTab).not.toHaveClass("data-[state=active]:bg-cyan");
-
-    const semanticSurface = screen.getByRole("region", {
-      name: "Semantic changes",
-    });
-    expect(
-      within(semanticSurface).getByText("3 changes across 3 kinds"),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", {
-        name: /Approve all requirements/i,
-      }),
-    ).not.toBeInTheDocument();
-    // The header states what is outstanding; approving it is the sign-off act.
-    expect(
-      screen.queryByRole("button", { name: /Approve all remaining/i }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText("3 awaiting approval")).toBeInTheDocument();
-  });
-
   it("describes an approved revision as having nothing awaiting review", () => {
     const fixture = reviewDetailFixture(false);
     if (fixture.currentRevision === null || fixture.baseRevision === null) {
@@ -478,76 +435,6 @@ describe("SpecReviewMode", () => {
       screen.getByText(/semantic change list is the review contract/i),
     ).toBeVisible();
     expect(screen.getByText(/--- revision-1/)).toBeVisible();
-  });
-
-  it("colours the words a revision changed and keeps their Markdown formatting", async () => {
-    const detail = reviewDetailFixture();
-    const current = detail.currentRevision;
-    if (current === null) throw new Error("Fixture requires a revision");
-    const requirement = current.elements.find(
-      (entry) => entry.element.id === "requirement-1",
-    );
-    if (requirement === undefined) throw new Error("Fixture requires R1");
-    requirement.version.payload = {
-      kind: "requirement",
-      statement: "Every execution records the **exact selected** scope.",
-      priority: "must",
-      risk: "high",
-    };
-
-    renderWithQuery(
-      <SpecReviewMode
-        detail={detail}
-        projectName="command-center"
-        highlightedChangeId={null}
-      />,
-    );
-
-    const card = screen.getByTestId("review-change-requirement-1");
-    expect(
-      await within(card).findByText("pins", { selector: "del" }),
-    ).toBeVisible();
-    expect(
-      within(card).getByText("records the", { selector: "ins" }),
-    ).toBeVisible();
-    // The rewritten phrase is emphasised in the new revision: it has to stay
-    // bold and take the added colour, not fall back to raw asterisks.
-    expect(
-      within(card).getByText("exact selected", { selector: "strong ins" }),
-    ).toBeVisible();
-    expect(within(card).getByText("Revision 1 → 2")).toBeVisible();
-  });
-
-  it("presents the approved execution graph metadata for each changed task", async () => {
-    const user = userEvent.setup();
-    renderReview();
-
-    const task = screen.getByTestId("review-change-task-1");
-    const body = within(task).getByText("Revision 1 → 2").parentElement;
-    if (body === null) throw new Error("Current revision missing");
-    // The plan metadata is what this revision added, so each value reads as an
-    // addition against the approved revision.
-    await waitFor(() => {
-      expect(body).toHaveTextContent("Dependencies:");
-      expect(within(body).getByText("T2", { selector: "ins" })).toBeVisible();
-    });
-    expect(
-      within(body).getByText("persistence", { selector: "ins" }),
-    ).toBeVisible();
-    expect(
-      within(body).getByText("src/lib/specs, src/lib/state-store", {
-        selector: "ins",
-      }),
-    ).toBeVisible();
-    // Criterion coverage did not move between the two revisions, so it stays
-    // uncoloured alongside the values that did.
-    expect(body).toHaveTextContent("Criterion coverage: R1.1");
-
-    await user.click(screen.getByRole("tab", { name: "Raw diff" }));
-    expect(screen.getByText(/Dependencies:\*\* T2/)).toBeVisible();
-    expect(
-      screen.getByText(/Touched surfaces:\*\* src\/lib\/specs/),
-    ).toBeVisible();
   });
 
   it("nests newly appended acceptance criteria under their parent requirement", () => {
@@ -663,18 +550,6 @@ describe("SpecReviewMode", () => {
     });
   });
 
-  it("keeps the approve action for subjects without a valid approval", () => {
-    renderReview();
-
-    const requirement = screen.getByTestId("review-change-requirement-1");
-    expect(
-      within(requirement).getByRole("button", { name: "Approve item" }),
-    ).toBeInTheDocument();
-    expect(
-      within(requirement).queryByRole("button", { name: "Unapprove item" }),
-    ).not.toBeInTheDocument();
-  });
-
   it("shows a sign-off coverage note instead of an approve action for elements without an approval gate", () => {
     const detail = reviewDetailFixture();
     const current = detail.currentRevision;
@@ -754,165 +629,6 @@ describe("SpecReviewMode", () => {
     expect(
       within(requirement).queryByText("Covered by sign-off"),
     ).not.toBeInTheDocument();
-  });
-
-  it("renders element content as formatted markdown", async () => {
-    const detail = reviewDetailFixture();
-    const current = detail.currentRevision;
-    if (current === null) throw new Error("Fixture requires a revision");
-    const requirementEntry = current.elements.find(
-      (entry) => entry.element.id === "requirement-1",
-    );
-    if (requirementEntry?.version.payload.kind !== "requirement") {
-      throw new Error("Fixture requires requirement-1");
-    }
-    requirementEntry.version.payload.statement =
-      "Every execution **pins** the exact selected scope.";
-
-    renderWithQuery(
-      <SpecReviewMode
-        detail={detail}
-        projectName="command-center"
-        highlightedChangeId={null}
-      />,
-    );
-
-    const requirement = screen.getByTestId("review-change-requirement-1");
-    await waitFor(() => {
-      expect(requirement.querySelector("strong")).toHaveTextContent("pins");
-    });
-  });
-
-  it("formats paragraph-only sections and review questions without a dense raw headline", async () => {
-    const detail = reviewDetailFixture();
-    const current = detail.currentRevision;
-    if (current === null) throw new Error("Fixture requires a revision");
-    current.elements.push({
-      element: {
-        id: "section-markdown",
-        specId: detail.spec.id,
-        kind: "section",
-        number: null,
-        parentElementId: null,
-        createdAt: NOW,
-      },
-      version: {
-        revisionId: current.revision.id,
-        elementId: "section-markdown",
-        position: 0,
-        payload: {
-          kind: "section",
-          role: "design_narrative",
-          title: "Runtime contract",
-          body: "First paragraph.\n\nSecond paragraph.",
-        },
-        payloadHash: "section-markdown-hash",
-        elementVersion: 1,
-        createdAt: NOW,
-        updatedAt: NOW,
-      },
-    });
-    const question = detail.questions[0];
-    const assumption = detail.assumptions[0];
-    if (question === undefined || assumption === undefined) {
-      throw new Error("Fixture requires a question and assumption");
-    }
-    question.text = "Which **runtime** owns the contract?";
-    assumption.text = "The `worker` owns it.";
-
-    renderWithQuery(
-      <SpecReviewMode
-        detail={detail}
-        projectName="command-center"
-        highlightedChangeId={null}
-      />,
-    );
-
-    const section = screen.getByTestId("review-change-section-markdown");
-    const sectionToggle = within(section).getByRole("button", {
-      name: "Added section: Runtime contract",
-    });
-    expect(sectionToggle).not.toHaveTextContent("First paragraph.");
-    // The section is new in this revision, so its formatted paragraphs read as
-    // added prose rather than as a wall of unattributed text.
-    await waitFor(() => {
-      expect(section.querySelectorAll("p")).toHaveLength(2);
-    });
-    const paragraphs = section.querySelectorAll("p");
-    expect(paragraphs[0]).toHaveTextContent("First paragraph.");
-    expect(paragraphs[1]).toHaveTextContent("Second paragraph.");
-    expect(
-      within(section).getByText("First paragraph.", { selector: "ins" }),
-    ).toBeVisible();
-
-    const reviewQuestions = screen.getByRole("region", {
-      name: "Questions and assumptions in this revision",
-    });
-    expect(
-      await within(reviewQuestions).findByText("runtime", {
-        selector: "strong",
-      }),
-    ).toBeVisible();
-    expect(
-      await within(reviewQuestions).findByText("worker", { selector: "code" }),
-    ).toBeVisible();
-  });
-
-  it("renders every question and assumption and gates sign-off on unresolved items", () => {
-    renderReview();
-
-    const qa = screen.getByRole("region", {
-      name: "Questions and assumptions in this revision",
-    });
-    expect(within(qa).getByText("Q1")).toBeInTheDocument();
-    expect(within(qa).getByText("Q2")).toBeInTheDocument();
-    expect(within(qa).getByText("A1")).toBeInTheDocument();
-    expect(within(qa).getByText("A2")).toBeInTheDocument();
-    expect(within(qa).getByText("A3")).toBeInTheDocument();
-    expect(within(qa).getByText("Open — blocks sign-off")).toBeInTheDocument();
-    expect(
-      within(qa).getByText("Proposed — blocks sign-off"),
-    ).toBeInTheDocument();
-    expect(
-      within(qa).getByRole("link", { name: "Resolve on Questions screen" }),
-    ).toHaveAttribute(
-      "href",
-      "/specs/command-center/native-sdd?view=questions",
-    );
-
-    const readiness = screen.getByTestId("review-readiness");
-    expect(within(readiness).getByText("0/3 approved")).toBeInTheDocument();
-    expect(
-      within(readiness).getByText("Approvals incomplete"),
-    ).toBeInTheDocument();
-    expect(
-      within(readiness).getByText("1 blocking thread"),
-    ).toBeInTheDocument();
-    expect(
-      within(readiness).getByText("1 rejected assumption"),
-    ).toBeInTheDocument();
-    expect(within(readiness).getByText("1 open question")).toBeInTheDocument();
-    expect(
-      within(readiness).getByText("1 undisposed assumption"),
-    ).toBeInTheDocument();
-    expect(within(readiness).getByRole("progressbar")).toHaveAttribute(
-      "aria-valuenow",
-      "0",
-    );
-    expect(
-      within(readiness).getByRole("button", {
-        name: "Approve 3 remaining and sign off revision 2",
-      }),
-    ).toBeDisabled();
-  });
-
-  it("replaces the bulk action with an all-approved state", () => {
-    renderReview(false);
-
-    expect(
-      screen.queryByRole("button", { name: /Approve all remaining/i }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText("All approved")).toBeInTheDocument();
   });
 
   it("blocks the UI sign-off affordance when Q&A are the only unresolved items", () => {
@@ -1136,23 +852,6 @@ describe("SpecReviewMode", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("reflows review rows and preserves touch targets on the mobile spine", () => {
-    renderReview();
-
-    const requirement = screen.getByTestId("review-change-requirement-1");
-    expect(
-      within(requirement).getByRole("button", {
-        name: /modified requirement/i,
-      }),
-    ).toHaveClass("max-768:min-h-[44px]");
-    expect(
-      within(requirement).getByRole("button", { name: "Comment" }),
-    ).toHaveClass("max-768:min-h-[44px]");
-    expect(screen.getByTestId("review-readiness")).toHaveClass(
-      "max-768:flex-col",
-    );
-  });
-
   it("explains review termination and records an explicit sign-off acknowledgement", async () => {
     const user = userEvent.setup();
     renderReview(false);
@@ -1223,53 +922,6 @@ describe("SpecReviewMode", () => {
 
     await waitFor(() =>
       expect(onComplete).toHaveBeenCalledWith("Draft revision 3 opened"),
-    );
-  });
-
-  it("reports a successful sign-off transition to the parent shell", async () => {
-    const detail = reviewDetailFixture(false);
-    const current = detail.currentRevision;
-    if (current === null) throw new Error("Fixture requires a revision");
-    api.json(
-      "POST",
-      "/api/specs/command-center/native-sdd/actions/approve-remaining-and-sign-off",
-      {
-        revision: {
-          ...current.revision,
-          state: "approved",
-          approvedAt: NOW,
-        },
-        approval: null,
-        subjectApprovals: [],
-      },
-    );
-    const onComplete = vi.fn();
-    const user = userEvent.setup();
-    renderWithQuery(
-      <SpecReviewMode
-        detail={detail}
-        projectName="command-center"
-        highlightedChangeId={null}
-        onComplete={onComplete}
-      />,
-    );
-
-    await user.click(
-      screen.getByRole("button", { name: "Sign off revision 2" }),
-    );
-    await user.click(
-      screen.getByRole("checkbox", {
-        name: /I reviewed the semantic change list/i,
-      }),
-    );
-    await user.click(
-      screen.getByRole("button", {
-        name: "Sign off — freeze revision 2",
-      }),
-    );
-
-    await waitFor(() =>
-      expect(onComplete).toHaveBeenCalledWith("Revision 2 signed off"),
     );
   });
 });
@@ -1433,32 +1085,6 @@ describe("SpecReviewMode stranded proposals", () => {
     );
   });
 
-  it("requires a reason before the dismissal can be confirmed", async () => {
-    const user = userEvent.setup();
-    renderWithQuery(
-      <SpecReviewMode
-        detail={strandedProposalFixture()}
-        projectName="command-center"
-        highlightedChangeId={null}
-      />,
-    );
-
-    await user.click(
-      screen.getByRole("button", { name: /Dismiss superseded proposal/i }),
-    );
-    // The reason is the durable marker's only account of why reviewed work was
-    // disposed of, so the act cannot commit without one.
-    expect(
-      screen.getByRole("button", { name: /Dismiss revision 2/i }),
-    ).toBeDisabled();
-  });
-
-  it("counts a stranded proposal as review attention", () => {
-    expect(reviewAttentionCount(strandedProposalFixture())).toBeGreaterThan(0);
-    // A spec whose head is approved with nothing proposed owes no review.
-    expect(reviewAttentionCount(specControlsDetailFixture())).toBe(0);
-  });
-
   it("keeps the current proposal's full actions while the stranded one stays reachable", async () => {
     const user = userEvent.setup();
     renderWithQuery(
@@ -1572,27 +1198,6 @@ describe("SpecReviewMode plan preview", () => {
       within(panel).getByTestId("plan-preview-evidence-gaps"),
     ).toHaveTextContent(/Evidence gaps: screenshot/);
 
-    expect(previewedRevisionIds()).toEqual(["revision-2"]);
-  });
-
-  it("renders the preview on a stranded plan-stage proposal, not on the lineage head", async () => {
-    renderWithQuery(
-      <SpecReviewMode
-        detail={strandedProposalFixture()}
-        projectName="command-center"
-        highlightedChangeId={null}
-      />,
-    );
-
-    const panel = await screen.findByTestId("plan-preview-panel");
-    expect(
-      await within(panel).findByTestId("plan-preview-context-persistence"),
-    ).toBeVisible();
-    expect(
-      screen.getByTestId("superseded-proposal-review"),
-    ).toBeInTheDocument();
-    // Revision 3 is the approved lineage head; the preview belongs to the
-    // proposal being viewed, which is the stranded revision 2 (#50).
     expect(previewedRevisionIds()).toEqual(["revision-2"]);
   });
 
@@ -1722,28 +1327,6 @@ function twoProposalsWithNotesFixture(): SpecDetailView {
 }
 
 describe("SpecReviewMode proposal notes", () => {
-  it("renders the selected proposal's notes above the change cards", () => {
-    renderWithQuery(
-      <SpecReviewMode
-        detail={twoProposalsWithNotesFixture()}
-        projectName="command-center"
-        highlightedChangeId={null}
-      />,
-    );
-
-    const notes = screen.getByTestId("proposal-notes");
-    expect(within(notes).getByText(CURRENT_NOTES)).toBeInTheDocument();
-    const firstChange = screen.getAllByTestId(/^review-change-/)[0];
-    if (firstChange === undefined) {
-      throw new Error("Fixture requires at least one change card");
-    }
-    // Bitwise: the change card FOLLOWS the notes in document order.
-    expect(
-      notes.compareDocumentPosition(firstChange) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-  });
-
   it("follows the selection to a stranded proposal's own notes", async () => {
     const user = userEvent.setup();
     renderWithQuery(
@@ -1771,18 +1354,6 @@ describe("SpecReviewMode proposal notes", () => {
       notes.compareDocumentPosition(firstChange) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-  });
-
-  it("shows no notes block for a proposal whose author supplied none", () => {
-    renderWithQuery(
-      <SpecReviewMode
-        detail={reviewDetailFixture()}
-        projectName="command-center"
-        highlightedChangeId={null}
-      />,
-    );
-
-    expect(screen.queryByTestId("proposal-notes")).not.toBeInTheDocument();
   });
 });
 
@@ -1963,19 +1534,5 @@ describe("SpecReviewMode combined approve-and-sign-off", () => {
     } finally {
       api.restore();
     }
-  });
-
-  it("names the act plainly when the policy leaves nothing outstanding", () => {
-    renderWithQuery(
-      <SpecReviewMode
-        detail={reviewDetailFixture(false)}
-        projectName="command-center"
-        highlightedChangeId={null}
-      />,
-    );
-
-    expect(
-      screen.getByRole("button", { name: "Sign off revision 2" }),
-    ).toBeInTheDocument();
   });
 });

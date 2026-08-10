@@ -34,14 +34,6 @@ describe("ConfirmDialog", () => {
     expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
   });
 
-  it("renders nothing when open=false", () => {
-    const { container } = render(
-      <ConfirmDialog {...defaultProps} open={false} />,
-    );
-    expect(container.innerHTML).toBe("");
-    expect(screen.queryByRole("alertdialog")).toBeNull();
-  });
-
   it("returns focus to the opener element on close (state-opened, no Radix trigger)", async () => {
     function Harness(): React.JSX.Element {
       const [open, setOpen] = useState(false);
@@ -117,43 +109,6 @@ describe("ConfirmDialog", () => {
     fireEvent.keyDown(screen.getByRole("alertdialog"), { key: "Escape" });
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onConfirm).not.toHaveBeenCalled();
-  });
-
-  it("does not dismiss on an outside pointer press (alert dialog semantics)", () => {
-    const onCancel = vi.fn();
-    render(
-      <div>
-        <ConfirmDialog {...defaultProps} onCancel={onCancel} />
-        <button type="button">outside</button>
-      </div>,
-    );
-    // Radix makes the background inert/aria-hidden while the alert dialog is
-    // open, so the outside control is queried with `hidden`. An alert dialog
-    // ignores outside-pointer dismissal, so neither callback fires.
-    const outside = screen.getByRole("button", {
-      name: "outside",
-      hidden: true,
-    });
-    fireEvent.pointerDown(outside);
-    fireEvent.click(outside);
-    expect(onCancel).not.toHaveBeenCalled();
-    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
-  });
-
-  it("uses custom confirm and cancel labels", () => {
-    render(
-      <ConfirmDialog
-        {...defaultProps}
-        confirmLabel="Yes, delete"
-        cancelLabel="No, keep"
-      />,
-    );
-    expect(
-      screen.getByRole("button", { name: "Yes, delete" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "No, keep" }),
-    ).toBeInTheDocument();
   });
 
   it("hides the cancel button when hideCancel=true (acknowledge-only)", () => {

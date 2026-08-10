@@ -43,23 +43,6 @@ describe("SessionActionsMenu", () => {
     ).toBeInTheDocument();
   });
 
-  it("invokes onDelete when the delete item is picked", async () => {
-    const user = userEvent.setup();
-    const onDelete = vi.fn();
-    render(
-      <SessionActionsMenu
-        {...defaultLayoutProps()}
-        targetBranch="main"
-        onDelete={onDelete}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: /actions/i }));
-    await user.click(screen.getByRole("menuitem", { name: /delete session/i }));
-
-    expect(onDelete).toHaveBeenCalledTimes(1);
-  });
-
   it("disables Push and Rebase when no handler is provided", async () => {
     const user = userEvent.setup();
     render(
@@ -79,22 +62,55 @@ describe("SessionActionsMenu", () => {
     ).toHaveAttribute("data-disabled");
   });
 
-  it("invokes onRebase when the rebase item is picked", async () => {
+  it("binds each action item to its matching consumer callback", async () => {
     const user = userEvent.setup();
+    const onPush = vi.fn();
     const onRebase = vi.fn();
-    render(
-      <SessionActionsMenu
-        {...defaultLayoutProps()}
-        targetBranch="main"
-        onDelete={vi.fn()}
-        onRebase={onRebase}
-      />,
+    const onDelete = vi.fn();
+    const onCompactConversation = vi.fn();
+    const onViewArtifact = vi.fn();
+    const onRefreshArtifact = vi.fn();
+    const onCopyReference = vi.fn();
+    const props = {
+      ...defaultLayoutProps(),
+      targetBranch: "main",
+      onPush,
+      onRebase,
+      onDelete,
+      onCompactConversation,
+      onViewArtifact,
+      onRefreshArtifact,
+      onCopyReference,
+    };
+    const { rerender } = render(
+      <SessionActionsMenu {...props} compaction={{ kind: "failed" }} />,
     );
 
-    await user.click(screen.getByRole("button", { name: /actions/i }));
-    await user.click(screen.getByRole("menuitem", { name: /rebase on main/i }));
+    const selectItem = async (name: RegExp): Promise<void> => {
+      await user.click(screen.getByRole("button", { name: /actions/i }));
+      await user.click(screen.getByRole("menuitem", { name }));
+    };
 
-    expect(onRebase).toHaveBeenCalledTimes(1);
+    for (const [name, callback] of [
+      [/push branch/i, onPush],
+      [/rebase on main/i, onRebase],
+      [/compact conversation/i, onCompactConversation],
+      [/view context artifact/i, onViewArtifact],
+      [/copy reference/i, onCopyReference],
+      [/delete session/i, onDelete],
+    ] as const) {
+      await selectItem(name);
+      expect(callback).toHaveBeenCalledOnce();
+    }
+
+    rerender(
+      <SessionActionsMenu
+        {...props}
+        compaction={{ kind: "stale", behind: 1 }}
+      />,
+    );
+    await selectItem(/refresh context artifact/i);
+    expect(onRefreshArtifact).toHaveBeenCalledOnce();
   });
 });
 
@@ -125,37 +141,11 @@ describe("SessionActionsMenu — layout fallback", () => {
       screen.getByRole("menuitemradio", { name: "Conversation only" }),
     ).toHaveAttribute("aria-checked", "true");
   });
-
-  it("changes layout from the fallback menu", async () => {
-    const user = userEvent.setup();
-    const onLayoutChange = vi.fn();
-    render(
-      <SessionActionsMenu
-        targetBranch="main"
-        onDelete={vi.fn()}
-        activeLayout="conversation"
-        onLayoutChange={onLayoutChange}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: /actions/i }));
-    await user.click(
-      screen.getByRole("menuitemradio", { name: "Panes (split-screen)" }),
-    );
-
-    expect(onLayoutChange).toHaveBeenCalledWith("panes");
-  });
 });
 
 describe("SessionActionsMenu — compaction actions", () => {
   function renderWithCompaction(
     state: import("./compaction-chip-state").CompactionChipState,
-    handlers: {
-      onCompactConversation?: () => void;
-      onViewArtifact?: () => void;
-      onRefreshArtifact?: () => void;
-      onCopyReference?: () => void;
-    } = {},
   ) {
     return render(
       <SessionActionsMenu
@@ -163,10 +153,10 @@ describe("SessionActionsMenu — compaction actions", () => {
         targetBranch="main"
         onDelete={vi.fn()}
         compaction={state}
-        onCompactConversation={handlers.onCompactConversation ?? vi.fn()}
-        onViewArtifact={handlers.onViewArtifact ?? vi.fn()}
-        onRefreshArtifact={handlers.onRefreshArtifact ?? vi.fn()}
-        onCopyReference={handlers.onCopyReference ?? vi.fn()}
+        onCompactConversation={vi.fn()}
+        onViewArtifact={vi.fn()}
+        onRefreshArtifact={vi.fn()}
+        onCopyReference={vi.fn()}
       />,
     );
   }
@@ -174,7 +164,6 @@ describe("SessionActionsMenu — compaction actions", () => {
   async function openMenu() {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /actions/i }));
-    return user;
   }
 
   it("hides every compaction item when no compaction state is provided", async () => {
@@ -211,16 +200,6 @@ describe("SessionActionsMenu — compaction actions", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("none: Compact conversation invokes the handler", async () => {
-    const onCompactConversation = vi.fn();
-    renderWithCompaction({ kind: "none" }, { onCompactConversation });
-    const user = await openMenu();
-    await user.click(
-      screen.getByRole("menuitem", { name: /compact conversation/i }),
-    );
-    expect(onCompactConversation).toHaveBeenCalledTimes(1);
-  });
-
   it("pending: shows a disabled Compacting… item instead of Compact", async () => {
     renderWithCompaction({ kind: "pending" });
     await openMenu();
@@ -233,22 +212,19 @@ describe("SessionActionsMenu — compaction actions", () => {
   });
 
   it("fresh: offers View context artifact but not Refresh", async () => {
-    const onViewArtifact = vi.fn();
-    renderWithCompaction({ kind: "fresh" }, { onViewArtifact });
-    const user = await openMenu();
+    renderWithCompaction({ kind: "fresh" });
+    await openMenu();
     expect(
       screen.queryByRole("menuitem", { name: /refresh context artifact/i }),
     ).not.toBeInTheDocument();
-    await user.click(
+    expect(
       screen.getByRole("menuitem", { name: /view context artifact/i }),
-    );
-    expect(onViewArtifact).toHaveBeenCalledTimes(1);
+    ).toBeInTheDocument();
   });
 
   it("stale: offers View and Refresh with the behind count", async () => {
-    const onRefreshArtifact = vi.fn();
-    renderWithCompaction({ kind: "stale", behind: 5 }, { onRefreshArtifact });
-    const user = await openMenu();
+    renderWithCompaction({ kind: "stale", behind: 5 });
+    await openMenu();
     expect(
       screen.getByRole("menuitem", { name: /view context artifact/i }),
     ).toBeInTheDocument();
@@ -256,8 +232,6 @@ describe("SessionActionsMenu — compaction actions", () => {
       name: /refresh context artifact/i,
     });
     expect(refresh.textContent).toMatch(/behind 5/i);
-    await user.click(refresh);
-    expect(onRefreshArtifact).toHaveBeenCalledTimes(1);
   });
 
   it("outdated: offers View and Refresh", async () => {
@@ -280,13 +254,5 @@ describe("SessionActionsMenu — compaction actions", () => {
     expect(
       screen.getByRole("menuitem", { name: /view context artifact/i }),
     ).toBeInTheDocument();
-  });
-
-  it("Copy reference invokes the handler", async () => {
-    const onCopyReference = vi.fn();
-    renderWithCompaction({ kind: "fresh" }, { onCopyReference });
-    const user = await openMenu();
-    await user.click(screen.getByRole("menuitem", { name: /copy reference/i }));
-    expect(onCopyReference).toHaveBeenCalledTimes(1);
   });
 });

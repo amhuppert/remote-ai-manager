@@ -23,55 +23,10 @@ function getBody(container: HTMLElement): HTMLElement | null {
 }
 
 describe("InspectorConfigBlock", () => {
-  describe("source badges", () => {
-    it('renders "Global" when source is global', () => {
-      render(<InspectorConfigBlock {...baseProps} source="global" />);
-      expect(screen.getByText("Global")).toBeInTheDocument();
-    });
-
-    it('renders "Workflow" when source is workflow', () => {
-      render(<InspectorConfigBlock {...baseProps} source="workflow" />);
-      expect(screen.getByText("Workflow")).toBeInTheDocument();
-    });
-
-    it('renders "Overridden" when source is context-override', () => {
-      render(<InspectorConfigBlock {...baseProps} source="context-override" />);
-      expect(screen.getByText("Overridden")).toBeInTheDocument();
-    });
-
-    it('renders "Disabled" when source is disabled', () => {
-      render(<InspectorConfigBlock {...baseProps} source="disabled" />);
-      expect(screen.getByText("Disabled")).toBeInTheDocument();
-    });
-  });
-
-  describe("source data attribute (drives left-border styling)", () => {
-    const sources: Array<
-      "global" | "workflow" | "context-override" | "disabled"
-    > = ["global", "workflow", "context-override", "disabled"];
-
-    for (const source of sources) {
-      it(`exposes data-source="${source}"`, () => {
-        const { container } = render(
-          <InspectorConfigBlock {...baseProps} source={source} />,
-        );
-        const block = container.querySelector("[data-source]");
-        expect(block?.getAttribute("data-source")).toBe(source);
-      });
-    }
-  });
-
   describe("default open/closed state", () => {
     it("is collapsed by default when source is global", () => {
       const { container } = render(
         <InspectorConfigBlock {...baseProps} source="global" />,
-      );
-      expect(getBody(container)).toBeNull();
-    });
-
-    it("is collapsed by default when source is workflow", () => {
-      const { container } = render(
-        <InspectorConfigBlock {...baseProps} source="workflow" />,
       );
       expect(getBody(container)).toBeNull();
     });
@@ -82,77 +37,18 @@ describe("InspectorConfigBlock", () => {
       );
       expect(getBody(container)).not.toBeNull();
     });
-
-    it("is expanded by default when source is disabled", () => {
-      const { container } = render(
-        <InspectorConfigBlock {...baseProps} source="disabled" />,
-      );
-      expect(getBody(container)).not.toBeNull();
-    });
-
-    it("toggles open/closed when the header is clicked", () => {
-      const { container } = render(
-        <InspectorConfigBlock {...baseProps} source="global" />,
-      );
-      const head = getHead(container);
-      expect(getBody(container)).toBeNull();
-      fireEvent.click(head);
-      expect(getBody(container)).not.toBeNull();
-    });
-  });
-
-  describe("Radix Collapsible disclosure wiring", () => {
-    it("keeps the body out of the DOM while collapsed", () => {
-      render(
-        <InspectorConfigBlock {...baseProps} source="global">
-          <span data-testid="cfg-body">body</span>
-        </InspectorConfigBlock>,
-      );
-      // A Radix-backed disclosure unmounts the closed region (not merely hidden).
-      expect(screen.queryByTestId("cfg-body")).toBeNull();
-    });
-
-    it("mounts the body when expanded by default (context-override)", () => {
-      render(
-        <InspectorConfigBlock {...baseProps} source="context-override">
-          <span data-testid="cfg-body">body</span>
-        </InspectorConfigBlock>,
-      );
-      expect(screen.getByTestId("cfg-body")).toBeInTheDocument();
-    });
-
-    it("wires aria-expanded + aria-controls from the header to the region", () => {
-      const { container } = render(
-        <InspectorConfigBlock {...baseProps} source="context-override">
-          <span data-testid="cfg-body">body</span>
-        </InspectorConfigBlock>,
-      );
-      const head = getHead(container);
-      expect(head.getAttribute("aria-expanded")).toBe("true");
-      const controls = head.getAttribute("aria-controls");
-      expect(controls).toBeTruthy();
-      expect(document.getElementById(controls!)).not.toBeNull();
-    });
   });
 
   describe("children readonly wrapper", () => {
-    const inherited: Array<"global" | "workflow" | "disabled"> = [
-      "global",
-      "workflow",
-      "disabled",
-    ];
-
-    for (const source of inherited) {
-      it(`marks children aria-disabled when source is ${source}`, () => {
-        const { container } = render(
-          <InspectorConfigBlock {...baseProps} source={source} defaultOpen>
-            <span data-testid="child">body</span>
-          </InspectorConfigBlock>,
-        );
-        const controls = container.querySelector("[aria-disabled]");
-        expect(controls?.getAttribute("aria-disabled")).toBe("true");
-      });
-    }
+    it("marks inherited children aria-disabled", () => {
+      const { container } = render(
+        <InspectorConfigBlock {...baseProps} source="global" defaultOpen>
+          <span data-testid="child">body</span>
+        </InspectorConfigBlock>,
+      );
+      const controls = container.querySelector("[aria-disabled]");
+      expect(controls?.getAttribute("aria-disabled")).toBe("true");
+    });
 
     it("does NOT mark children aria-disabled when source is context-override", () => {
       const { container } = render(

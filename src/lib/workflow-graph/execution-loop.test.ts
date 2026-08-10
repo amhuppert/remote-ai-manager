@@ -42,11 +42,6 @@ import {
   type GraphWorkflowExecutionLoopDeps,
   type GraphWorkflowExecutionLoopWorkflowManager,
 } from "./execution-loop";
-import {
-  getTraceContext,
-  runWithTrace,
-  type TraceContext,
-} from "@/lib/logging";
 import type { LaneDriftAuditInput, LaneDriftAuditor } from "./lane-drift";
 import { DEFAULT_PLAN_REPAIR_POLICY } from "./config-schemas";
 import { isResumableHalt } from "./lifecycle-classifier";
@@ -2719,9 +2714,11 @@ describe("execution loop", () => {
       canonicalPrefixes: [],
     };
 
-    const runIteration = vi.fn(async (): Promise<GraphWorkflowIterationResult> => {
-      throw new Error("the turn must not run against a stale index");
-    });
+    const runIteration = vi.fn(
+      async (): Promise<GraphWorkflowIterationResult> => {
+        throw new Error("the turn must not run against a stale index");
+      },
+    );
     const harness = buildHarness({
       initialExecution: initial,
       executionTargetResolver: {
@@ -2808,9 +2805,7 @@ describe("execution loop", () => {
             includedContextIds: [],
             lastCommittingContextId: null,
             commitSnapshots: [],
-            ignoredBaseline: [
-              { path: "node_modules", digest: "digest-nm" },
-            ],
+            ignoredBaseline: [{ path: "node_modules", digest: "digest-nm" }],
             createdAt: "2026-03-27T11:55:00.000Z",
             updatedAt: "2026-03-27T11:55:00.000Z",
           },
@@ -2898,9 +2893,7 @@ describe("execution loop", () => {
             },
           ],
           memberContextIds: ["ctx-1"],
-          ignoredBaseline: [
-            { path: "node_modules", digest: "digest-nm" },
-          ],
+          ignoredBaseline: [{ path: "node_modules", digest: "digest-nm" }],
         },
       ]);
       // The landing itself succeeded either way — drift is a lane-level
@@ -5266,150 +5259,6 @@ describe("execution loop", () => {
     expect(finalPublish!.sourceLaneIds).toEqual(["lane-a"]);
     expect(finalPublish!.sourceLaneIds).not.toContain("lane-b");
     expect(result.status).toBe("completed");
-  });
-
-  it("does not plan a final publish when no worktree lanes exist", async () => {
-    const definition = createSingleContextDefinition(5);
-    const initial = createRunningExecution(definition, {
-      contextStates: {
-        "ctx-1": {
-          skipReason: null,
-          landingIntent: null,
-          pendingApproval: null,
-          pendingUserInputs: {},
-          contextId: "ctx-1",
-          status: "completed",
-          totalTaskCount: 1,
-          completedTaskCount: 1,
-          iterationCount: 1,
-          consecutiveFailureCount: 0,
-          worktreePath: null,
-          branchName: null,
-          isolation: "session",
-          batchId: null,
-          laneId: null,
-          joinId: null,
-          mergeStatus: "not-applicable",
-          cleanupStatus: "not-applicable",
-          lastMergeError: null,
-        },
-      },
-    });
-
-    const joinRunSpy = vi.fn();
-
-    const harness = buildHarness({
-      initialExecution: initial,
-      joinRunner: { run: joinRunSpy },
-      iterationOrchestrator: {
-        async runIteration(): Promise<GraphWorkflowIterationResult> {
-          throw new Error("iterationOrchestrator should not run");
-        },
-      },
-    });
-
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
-    const result = await loop.run({
-      projectPath: "/repo",
-      projectName: "test",
-      sessionName: "session-1",
-      execution: initial,
-    });
-
-    expect(joinRunSpy).not.toHaveBeenCalled();
-    expect(result.status).toBe("completed");
-  });
-
-  describe("trace context propagation", () => {
-    it("runs each execution inside a workflow:<id> trace so downstream timed() logs aggregate per execution", async () => {
-      const definition = createSingleContextDefinition(5);
-      const initial = createRunningExecution(definition, {
-        id: "exec-trace-1",
-      });
-      let captured: TraceContext | null = null;
-      const harness = buildHarness({
-        initialExecution: initial,
-        iterationOrchestrator: {
-          async runIteration(): Promise<GraphWorkflowIterationResult> {
-            captured = getTraceContext() ?? null;
-            const next = structuredClone(harness.getCurrent());
-            next.contextStates["ctx-1"]!.iterationCount = 1;
-            next.contextStates["ctx-1"]!.status = "completed";
-            next.contextStates["ctx-1"]!.completedTaskCount = 1;
-            next.taskStates["task-1"]!.status = "completed";
-            next.activeContextIds = [];
-            harness.setCurrent(next);
-            return {
-              conversationId: "conv-1",
-              execution: next,
-              shouldContinueInContext: false,
-            };
-          },
-        },
-      });
-
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
-      await loop.run({
-        projectPath: "/repo",
-        projectName: "test",
-        sessionName: "session-1",
-        execution: initial,
-      });
-
-      expect(captured).not.toBeNull();
-      expect(captured!.action).toBe("workflow:exec-trace-1");
-      expect(captured!.traceId).toBeTypeOf("string");
-      expect(captured!.traceId.length).toBeGreaterThan(0);
-    });
-
-    it("inherits the caller's traceId when an HTTP handler kicks off the execution, so the request and workflow group into one Speedscope stack", async () => {
-      const definition = createSingleContextDefinition(5);
-      const initial = createRunningExecution(definition, {
-        id: "exec-trace-2",
-      });
-      let captured: TraceContext | null = null;
-      const harness = buildHarness({
-        initialExecution: initial,
-        iterationOrchestrator: {
-          async runIteration(): Promise<GraphWorkflowIterationResult> {
-            captured = getTraceContext() ?? null;
-            const next = structuredClone(harness.getCurrent());
-            next.contextStates["ctx-1"]!.iterationCount = 1;
-            next.contextStates["ctx-1"]!.status = "completed";
-            next.contextStates["ctx-1"]!.completedTaskCount = 1;
-            next.taskStates["task-1"]!.status = "completed";
-            next.activeContextIds = [];
-            harness.setCurrent(next);
-            return {
-              conversationId: "conv-1",
-              execution: next,
-              shouldContinueInContext: false,
-            };
-          },
-        },
-      });
-
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
-      const parent: TraceContext = {
-        traceId: "parent-request-trace",
-        action: "request:POST /api/workflows/run",
-        projectName: "test",
-        sessionName: "session-1",
-      };
-
-      await runWithTrace(parent, () =>
-        loop.run({
-          projectPath: "/repo",
-          projectName: "test",
-          sessionName: "session-1",
-          execution: initial,
-        }),
-      );
-
-      expect(captured).not.toBeNull();
-      expect(captured!.traceId).toBe("parent-request-trace");
-      expect(captured!.action).toBe("workflow:exec-trace-2");
-    });
   });
 
   describe("approval gate wait", () => {

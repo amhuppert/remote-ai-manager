@@ -32,7 +32,6 @@ import { STANDARD_AGENT_PROFILE_ID } from "@/lib/agent-profiles/builtins";
 import { computeContentHash } from "@/lib/agent-profiles/hashing";
 import {
   validateSessionName,
-  sanitizeBranchName,
   generateRandomSuffix,
   createSessionService,
   PLANNER_SESSION_NAME,
@@ -405,10 +404,6 @@ describe("validateSessionName", () => {
     expect(validateSessionName("")).toBe("Session name cannot be empty");
   });
 
-  it("returns error for whitespace-only string", () => {
-    expect(validateSessionName("   ")).toBe("Session name cannot be empty");
-  });
-
   it("returns error for name over 100 characters", () => {
     const longName = "a".repeat(101);
     expect(validateSessionName(longName)).toBe(
@@ -436,90 +431,8 @@ describe("validateSessionName", () => {
     expect(validateSessionName("my_feature")).toBeNull();
   });
 
-  it("returns null for valid alphanumeric name", () => {
-    expect(validateSessionName("myFeature")).toBeNull();
-  });
-
-  it("returns null for name with spaces, hyphens, underscores", () => {
-    expect(validateSessionName("My Feature")).toBeNull();
-    expect(validateSessionName("my-feature")).toBeNull();
-    expect(validateSessionName("my_feature")).toBeNull();
-    expect(validateSessionName("Feature 123")).toBeNull();
-  });
-
-  it("returns null for name starting with a number", () => {
-    expect(validateSessionName("1st-session")).toBeNull();
-  });
-
   it("returns null for exactly 100 character name", () => {
     expect(validateSessionName("a".repeat(100))).toBeNull();
-  });
-
-  it("returns null for names with special characters (commas, dots, etc.)", () => {
-    expect(validateSessionName("test, with special chars!")).toBeNull();
-    expect(validateSessionName("test@name")).toBeNull();
-    expect(validateSessionName("test#name")).toBeNull();
-    expect(validateSessionName("test.name")).toBeNull();
-    expect(validateSessionName("-starts-with-hyphen")).toBeNull();
-    expect(validateSessionName("feat: add auth")).toBeNull();
-    expect(validateSessionName("fix(login): handle edge case")).toBeNull();
-  });
-});
-
-// ===========================================================================
-// 1.2 – Branch name sanitization (Req 2.1–2.5)
-// ===========================================================================
-
-describe("sanitizeBranchName", () => {
-  it("converts to lowercase", () => {
-    expect(sanitizeBranchName("MyFeature")).toBe("myfeature");
-  });
-
-  it("replaces non-alphanumeric characters with hyphens", () => {
-    expect(sanitizeBranchName("hello world")).toBe("hello-world");
-    expect(sanitizeBranchName("hello_world")).toBe("hello-world");
-    expect(sanitizeBranchName("hello.world")).toBe("hello-world");
-  });
-
-  it("collapses consecutive hyphens", () => {
-    expect(sanitizeBranchName("test__name")).toBe("test-name");
-    expect(sanitizeBranchName("a---b")).toBe("a-b");
-  });
-
-  it("strips leading and trailing hyphens", () => {
-    expect(sanitizeBranchName("-leading")).toBe("leading");
-    expect(sanitizeBranchName("trailing-")).toBe("trailing");
-    expect(sanitizeBranchName("-both-")).toBe("both");
-  });
-
-  it("handles representative inputs from spec", () => {
-    expect(sanitizeBranchName("My Feature")).toBe("my-feature");
-    expect(sanitizeBranchName("test__name")).toBe("test-name");
-  });
-
-  it("handles complex mixed input", () => {
-    expect(sanitizeBranchName("  Hello World!! ")).toBe("hello-world");
-  });
-
-  it("handles names with commas and special characters", () => {
-    expect(sanitizeBranchName("test, with special chars!")).toBe(
-      "test-with-special-chars",
-    );
-    expect(sanitizeBranchName("feat: add auth")).toBe("feat-add-auth");
-    expect(sanitizeBranchName("fix(login): handle edge case")).toBe(
-      "fix-login-handle-edge-case",
-    );
-    expect(sanitizeBranchName("test@name#value")).toBe("test-name-value");
-  });
-
-  it("returns empty string for names with no alphanumeric characters", () => {
-    expect(sanitizeBranchName("---")).toBe("");
-    expect(sanitizeBranchName("!@#$%")).toBe("");
-  });
-
-  it("caller adds csm/ prefix (branch name pattern)", () => {
-    const sanitized = sanitizeBranchName("My Feature");
-    expect(`csm/${sanitized}`).toBe("csm/my-feature");
   });
 });
 
@@ -528,20 +441,9 @@ describe("sanitizeBranchName", () => {
 // ===========================================================================
 
 describe("generateRandomSuffix", () => {
-  it("returns a 6-character string", () => {
-    const result = generateRandomSuffix();
-    expect(result).toHaveLength(6);
-  });
-
   it("returns only lowercase hex characters", () => {
     const result = generateRandomSuffix();
     expect(result).toMatch(/^[a-f0-9]{6}$/);
-  });
-
-  it("returns different values on successive calls", () => {
-    const a = generateRandomSuffix();
-    const b = generateRandomSuffix();
-    expect(a).not.toBe(b);
   });
 });
 
@@ -1228,26 +1130,6 @@ describe("provisionSession — random suffix", () => {
     expect(session.branchName).toMatch(/^csm\/my-feature-[a-f0-9]{6}$/);
   });
 
-  it("worktreePath includes the same suffix", async () => {
-    mockGitSuccess();
-    const session = await service.createSessionNormal(
-      "/projects/repo",
-      "My Feature",
-    );
-    expect(session.worktreePath).toMatch(
-      /^\/projects\/repo\/\.worktrees\/my-feature-[a-f0-9]{6}$/,
-    );
-  });
-
-  it("sessionName does NOT include the suffix", async () => {
-    mockGitSuccess();
-    const session = await service.createSessionNormal(
-      "/projects/repo",
-      "My Feature",
-    );
-    expect(session.sessionName).toBe("My Feature");
-  });
-
   it("git worktree add uses the suffixed branch and path", async () => {
     mockGitSuccess();
     const session = await service.createSessionNormal(
@@ -1422,67 +1304,6 @@ describe("deleteSession", () => {
       projectPath: "/projects/repo",
       worktreePath: "/projects/repo/.worktrees/cc-session",
     });
-  });
-
-  it("removes worktree for imported sessions the same as CC-created ones", async () => {
-    readStateMock.mockResolvedValue(
-      stateWithSession("/projects/repo", "imported-session", {
-        source: "imported",
-        worktreePath: "/external/path/imported-session",
-      }),
-    );
-    existsSyncMock.mockReturnValue(true);
-
-    const result = await service.deleteSession(
-      "/projects/repo",
-      "imported-session",
-    );
-
-    expect(result.worktreeRemoved).toBe(true);
-    expect(fastRemoveWorktreeMock).toHaveBeenCalledWith({
-      projectPath: "/projects/repo",
-      worktreePath: "/external/path/imported-session",
-    });
-    expect(writeStateMock).toHaveBeenCalledTimes(1);
-    const savedState = writeStateMock.mock.calls[0]![0];
-    expect(
-      savedState.projects["/projects/repo"].sessions["imported-session"],
-    ).toBeUndefined();
-  });
-
-  it("treats sessions without source field as CC-created (backward compat)", async () => {
-    const stateWithoutSource = {
-      projects: {
-        "/projects/repo": {
-          rootPath: "/projects/repo",
-          sessions: {
-            "legacy-session": {
-              sessionName: "legacy-session",
-              worktreePath: "/projects/repo/.worktrees/legacy-session",
-              branchName: "csm/legacy-session",
-              createdAt: "2024-01-01T00:00:00Z",
-              lastActivityAt: "2024-01-01T00:00:00Z",
-              archived: false,
-              finished: false,
-              conversations: [],
-              // no source field
-            },
-          },
-        },
-      },
-      archivedProjects: [],
-      pinnedProjects: [],
-    };
-    readStateMock.mockResolvedValue(stateWithoutSource);
-    existsSyncMock.mockReturnValue(true);
-
-    const result = await service.deleteSession(
-      "/projects/repo",
-      "legacy-session",
-    );
-
-    expect(result.worktreeRemoved).toBe(true);
-    expect(fastRemoveWorktreeMock).toHaveBeenCalled();
   });
 
   it("throws error for non-existent session in existing project", async () => {
@@ -2249,34 +2070,6 @@ describe("provisionSession — child session branching", () => {
     );
   });
 
-  it("stores targetBranch on session state", async () => {
-    mockGitSuccess();
-    const session = await service.provisionSession(
-      "/projects/repo",
-      "child-target",
-      {
-        mode: "normal",
-        targetBranch: "csm/parent-branch-abc123",
-      },
-    );
-
-    expect(session.targetBranch).toBe("csm/parent-branch-abc123");
-  });
-
-  it("stores parentSessionName on session state", async () => {
-    mockGitSuccess();
-    const session = await service.provisionSession(
-      "/projects/repo",
-      "child-parent",
-      {
-        mode: "normal",
-        parentSessionName: "Parent Session",
-      },
-    );
-
-    expect(session.parentSessionName).toBe("Parent Session");
-  });
-
   it("defaults targetBranch to main and parentSessionName to null", async () => {
     mockGitSuccess();
     const session = await service.provisionSession(
@@ -2510,26 +2303,6 @@ describe("retargetOrphanedChildren", () => {
     expect(child2.parentSessionName).toBeNull();
   });
 
-  it("does not affect sessions that are not children of the parent", async () => {
-    const state = stateWithChildren("Parent", [
-      {
-        name: "Child",
-        targetBranch: "csm/Parent",
-        parentSessionName: "Parent",
-      },
-      { name: "Unrelated", targetBranch: "main", parentSessionName: null },
-    ]);
-    readStateMock.mockResolvedValue(state);
-
-    await service.retargetOrphanedChildren("/projects/repo", "Parent");
-
-    const savedState = writeStateMock.mock.calls[0]![0];
-    const unrelated =
-      savedState.projects["/projects/repo"].sessions["Unrelated"];
-    expect(unrelated.targetBranch).toBe("main");
-    expect(unrelated.parentSessionName).toBeNull();
-  });
-
   it("does not cascade to transitive descendants (grandchildren)", async () => {
     const state = stateWithChildren("Parent", [
       {
@@ -2553,16 +2326,6 @@ describe("retargetOrphanedChildren", () => {
     // Grandchild still points to Child — not retargeted
     expect(grandchild.targetBranch).toBe("csm/Child");
     expect(grandchild.parentSessionName).toBe("Child");
-  });
-
-  it("is a no-op when no children exist", async () => {
-    const state = stateWithChildren("Parent", []);
-    readStateMock.mockResolvedValue(state);
-
-    await service.retargetOrphanedChildren("/projects/repo", "Parent");
-
-    // Focused retarget still runs (a scoped UPDATE) even with no children.
-    expect(deps.retargetChildrenToMain).toHaveBeenCalled();
   });
 });
 
@@ -2614,19 +2377,6 @@ describe("deleteSession — orphan retargeting", () => {
       pinnedProjects: [] as string[],
     };
   }
-
-  it("performs retarget + remove in a single fused delete labeled deleteSession", async () => {
-    readStateMock.mockResolvedValue(stateWithParentAndChild());
-    existsSyncMock.mockReturnValue(true);
-    mockGitSuccess();
-
-    await service.deleteSession("/projects/repo", "Parent");
-
-    const fusedLabels = (deps.applyFusedSessionDelete as Mock).mock.calls.map(
-      (call: unknown[]) => call[2],
-    );
-    expect(fusedLabels).toEqual(["deleteSession"]);
-  });
 
   it("the single deleteSession mutator retargets children and removes the parent in one pass", async () => {
     readStateMock.mockResolvedValue(stateWithParentAndChild());

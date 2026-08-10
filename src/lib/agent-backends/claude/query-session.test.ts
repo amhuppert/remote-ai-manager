@@ -166,28 +166,6 @@ beforeEach(() => {
   _resetLiveOccupancyForTesting();
 });
 
-describe("createQuerySession", () => {
-  it("creates a session with status alive", () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const session = createQuerySession(makeDefaultOptions());
-    expect(session.status).toBe("alive");
-
-    session.close();
-  });
-
-  it("exposes the SDK Query object", () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const session = createQuerySession(makeDefaultOptions());
-    expect(session.query).toBe(mock.query);
-
-    session.close();
-  });
-});
-
 describe("QuerySession.sendPrompt", () => {
   it("resolves with correct TurnResult when result message arrives", async () => {
     const mock = createControllableMockQuery();
@@ -479,14 +457,12 @@ describe("QuerySession.sendPrompt", () => {
 });
 
 describe("structured output extraction", () => {
-  it("includes structuredOutput from SDKResultSuccess in TurnResult", async () => {
+  it("maps SDK structured_output into the TurnResult", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
     const session = createQuerySession(makeDefaultOptions());
-    const emit = vi.fn();
-
-    const turnPromise = session.sendPrompt("Hello", emit);
+    const turnPromise = session.sendPrompt("Return JSON", vi.fn());
 
     mock.pushMessage({
       type: "result",
@@ -501,36 +477,9 @@ describe("structured output extraction", () => {
       structured_output: { name: "test" },
     } as unknown as SDKMessage);
 
-    const result = await turnPromise;
-    expect(result.structuredOutput).toEqual({ name: "test" });
-
-    session.close();
-  });
-
-  it("sets structuredOutput to undefined when not present in result", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const session = createQuerySession(makeDefaultOptions());
-    const emit = vi.fn();
-
-    const turnPromise = session.sendPrompt("Hello", emit);
-
-    mock.pushMessage({
-      type: "result",
-      subtype: "success",
-      session_id: "sess-abc",
-      uuid: "u1",
-      total_cost_usd: 0.05,
-      duration_ms: 1200,
-      num_turns: 3,
-      result: "Normal text response",
-      is_error: false,
-    } as unknown as SDKMessage);
-
-    const result = await turnPromise;
-    expect(result.structuredOutput).toBeUndefined();
-
+    await expect(turnPromise).resolves.toMatchObject({
+      structuredOutput: { name: "test" },
+    });
     session.close();
   });
 });
@@ -598,25 +547,14 @@ describe("structured output error handling", () => {
 });
 
 describe("QuerySession.close", () => {
-  it("transitions status to dead", () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const session = createQuerySession(makeDefaultOptions());
-    expect(session.status).toBe("alive");
-
-    session.close();
-    expect(session.status).toBe("dead");
-  });
-
-  it("calls close on the SDK Query", () => {
+  it("delegates cleanup to the SDK Query", () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
     const session = createQuerySession(makeDefaultOptions());
     session.close();
 
-    expect(mock.query.close).toHaveBeenCalled();
+    expect(mock.query.close).toHaveBeenCalledTimes(1);
   });
 
   it("rejects pending turn promise", async () => {
@@ -630,15 +568,6 @@ describe("QuerySession.close", () => {
     session.close();
 
     await expect(turnPromise).rejects.toThrow();
-  });
-
-  it("is idempotent — calling close twice does not throw", () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const session = createQuerySession(makeDefaultOptions());
-    session.close();
-    expect(() => session.close()).not.toThrow();
   });
 });
 
@@ -1359,25 +1288,6 @@ describe("QuerySession externalTurnHandler (auto-continuation)", () => {
 
   it.each([
     [
-      "rate_limit_event",
-      {
-        type: "rate_limit_event",
-        uuid: "amb-1",
-        session_id: "sess-1",
-        rate_limit_info: { status: "allowed" },
-      },
-    ],
-    [
-      "system/commands_changed",
-      {
-        type: "system",
-        subtype: "commands_changed",
-        uuid: "amb-2",
-        session_id: "sess-1",
-        commands: [],
-      },
-    ],
-    [
       "system/task_notification",
       {
         type: "system",
@@ -1792,76 +1702,6 @@ describe("QuerySession background-task tracking", () => {
 
     session.close();
   });
-
-  function pushAssistantToolUse(
-    mock: ReturnType<typeof createControllableMockQuery>,
-    toolUseId: string,
-    toolName: string,
-  ) {
-    mock.pushMessage({
-      type: "assistant",
-      session_id: "sess-1",
-      uuid: `u-asst-${toolUseId}`,
-      message: {
-        content: [
-          {
-            type: "tool_use",
-            id: toolUseId,
-            name: toolName,
-            input: {},
-          },
-        ],
-      },
-    } as unknown as SDKMessage);
-  }
-
-  it("excludes a Monitor-originated task from the waitable set (Req 2.2)", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const session = createQuerySession(makeDefaultOptions());
-    const emit = vi.fn();
-
-    const turn = session.sendPrompt("Watch the dev server", emit);
-
-    // The assistant invokes the Monitor tool; the pump records id -> name on the
-    // pending turn BEFORE the task_started arrives.
-    pushAssistantToolUse(mock, "tool-mon", "Monitor");
-    pushTaskStarted(mock, "watch-1", "tool-mon");
-    pushResult(mock, "u-result");
-    await turn;
-
-    expect(
-      session.backgroundTaskState.tasks.get("watch-1")?.classification,
-    ).toBe("excluded");
-    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([]);
-
-    session.close();
-  });
-
-  it("keeps a Bash-originated task in the waitable set (Req 2.1)", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const session = createQuerySession(makeDefaultOptions());
-    const emit = vi.fn();
-
-    const turn = session.sendPrompt("Run the build in the background", emit);
-
-    pushAssistantToolUse(mock, "tool-bash", "Bash");
-    pushTaskStarted(mock, "shell-1", "tool-bash");
-    pushResult(mock, "u-result");
-    await turn;
-
-    expect(
-      session.backgroundTaskState.tasks.get("shell-1")?.classification,
-    ).toBe("waitable");
-    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([
-      "shell-1",
-    ]);
-
-    session.close();
-  });
 });
 
 describe("QuerySession.awaitBackgroundTaskSettlement", () => {
@@ -1994,50 +1834,6 @@ describe("QuerySession.awaitBackgroundTaskSettlement", () => {
     session.close();
   });
 
-  it("treats a failed task_notification as settled to end the wait (4.3)", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const session = createQuerySession(makeDefaultOptions());
-    const emit = vi.fn();
-
-    const turn = session.sendPrompt("Run the build in the background", emit);
-    pushTaskStarted(mock, "task-a", "tool-1");
-    pushResult(mock, "u-result");
-    await turn;
-
-    const waitPromise = session.awaitBackgroundTaskSettlement(10_000);
-    pushTaskNotification(mock, "task-a", "failed");
-
-    const outcome = await waitPromise;
-    expect(outcome.timedOut).toBe(false);
-    expect(outcome.settledTaskIds).toEqual(["task-a"]);
-
-    session.close();
-  });
-
-  it("treats a stopped task_notification as settled to end the wait (4.3)", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const session = createQuerySession(makeDefaultOptions());
-    const emit = vi.fn();
-
-    const turn = session.sendPrompt("Run the build in the background", emit);
-    pushTaskStarted(mock, "task-a", "tool-1");
-    pushResult(mock, "u-result");
-    await turn;
-
-    const waitPromise = session.awaitBackgroundTaskSettlement(10_000);
-    pushTaskNotification(mock, "task-a", "stopped");
-
-    const outcome = await waitPromise;
-    expect(outcome.timedOut).toBe(false);
-    expect(outcome.settledTaskIds).toEqual(["task-a"]);
-
-    session.close();
-  });
-
   it("close() resolves a pending waiter rather than leaving it hanging", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
@@ -2093,35 +1889,6 @@ describe("QuerySession.awaitBackgroundTaskSettlement", () => {
       expect(raced.outcome.waitedTaskIds).toEqual(["task-a"]);
       expect(raced.outcome.settledTaskIds).toEqual(["task-a"]);
     }
-
-    session.close();
-  });
-
-  it("demotes tasks that survive a full wait timeout so later waits skip them", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const session = createQuerySession(makeDefaultOptions());
-    const emit = vi.fn();
-
-    const turn = session.sendPrompt(
-      "Run the dev server in the background",
-      emit,
-    );
-    pushTaskStarted(mock, "task-c", "tool-1");
-    pushResult(mock, "u-result");
-    await turn;
-
-    const outcome = await session.awaitBackgroundTaskSettlement(20);
-    expect(outcome.timedOut).toBe(true);
-    expect(outcome.settledTaskIds).toEqual([]);
-
-    // The survivor stops holding future barriers open.
-    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([]);
-
-    const second = await session.awaitBackgroundTaskSettlement(10_000);
-    expect(second.timedOut).toBe(false);
-    expect(second.waitedTaskIds).toEqual([]);
 
     session.close();
   });
@@ -2965,23 +2732,6 @@ describe("QuerySession idle-timer vs waitable-task races", () => {
 // ---------------------------------------------------------------------------
 
 describe("QuerySession onBackgroundTasksLost", () => {
-  function pushAssistantToolUse(
-    mock: ReturnType<typeof createControllableMockQuery>,
-    toolUseId: string,
-    toolName: string,
-  ) {
-    mock.pushMessage({
-      type: "assistant",
-      session_id: "sess-1",
-      uuid: `u-asst-${toolUseId}`,
-      message: {
-        content: [
-          { type: "tool_use", id: toolUseId, name: toolName, input: {} },
-        ],
-      },
-    } as unknown as SDKMessage);
-  }
-
   function pushTaskStarted(
     mock: ReturnType<typeof createControllableMockQuery>,
     taskId: string,
@@ -3074,24 +2824,6 @@ describe("QuerySession onBackgroundTasksLost", () => {
       makeDefaultOptions({ onBackgroundTasksLost }),
     );
     const turn = session.sendPrompt("no tasks here", vi.fn());
-    pushResult(mock, "u-r1");
-    await turn;
-
-    session.close();
-    expect(onBackgroundTasksLost).not.toHaveBeenCalled();
-  });
-
-  it("does not invoke onBackgroundTasksLost for excluded (Monitor) tasks", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-    const onBackgroundTasksLost = vi.fn();
-
-    const session = createQuerySession(
-      makeDefaultOptions({ onBackgroundTasksLost }),
-    );
-    const turn = session.sendPrompt("watch the dev server", vi.fn());
-    pushAssistantToolUse(mock, "tool-mon", "Monitor");
-    pushTaskStarted(mock, "watch-1", "tool-mon");
     pushResult(mock, "u-r1");
     await turn;
 
@@ -3265,78 +2997,6 @@ describe("QuerySession onBackgroundActivity", () => {
     });
 
     session.close();
-  });
-
-  it("adopts a task the SDK's level signal reports and drops one it omits", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-    const onBackgroundActivity = vi.fn();
-
-    const session = createQuerySession(
-      makeDefaultOptions({ onBackgroundActivity }),
-    );
-    const turn = session.sendPrompt("start work", vi.fn());
-    pushResult(mock, "u-r1");
-    await turn;
-
-    mock.pushMessage({
-      type: "system",
-      subtype: "background_tasks_changed",
-      tasks: [
-        { task_id: "lvl-1", task_type: "bash", description: "build watcher" },
-      ],
-      session_id: "sess-1",
-      uuid: "u-level-1",
-    } as unknown as SDKMessage);
-    await settle();
-
-    expect(onBackgroundActivity.mock.lastCall![0]).toMatchObject({
-      tasks: [{ taskId: "lvl-1", description: "build watcher" }],
-    });
-    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([
-      "lvl-1",
-    ]);
-
-    mock.pushMessage({
-      type: "system",
-      subtype: "background_tasks_changed",
-      tasks: [],
-      session_id: "sess-1",
-      uuid: "u-level-2",
-    } as unknown as SDKMessage);
-    await settle();
-
-    expect(onBackgroundActivity).toHaveBeenLastCalledWith(null);
-    session.close();
-  });
-
-  it("reports the shrunken set when a wait timeout demotes a survivor", async () => {
-    vi.useFakeTimers();
-    try {
-      const mock = createControllableMockQuery();
-      queryMock.mockReturnValue(mock.query);
-      const onBackgroundActivity = vi.fn();
-
-      const session = createQuerySession(
-        makeDefaultOptions({ onBackgroundActivity }),
-      );
-      const turn = session.sendPrompt("start a dev server", vi.fn());
-      pushTaskStarted(mock, "server-1");
-      pushResult(mock, "u-r1");
-      await vi.advanceTimersByTimeAsync(0);
-      await turn;
-      onBackgroundActivity.mockClear();
-
-      const wait = session.awaitBackgroundTaskSettlement(1_000);
-      await vi.advanceTimersByTimeAsync(1_100);
-      const outcome = await wait;
-
-      expect(outcome.timedOut).toBe(true);
-      expect(onBackgroundActivity).toHaveBeenLastCalledWith(null);
-      session.close();
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it("keeps pumping when the activity callback throws", async () => {

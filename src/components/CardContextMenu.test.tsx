@@ -18,51 +18,21 @@ const baseItems = [
 ];
 
 describe("CardContextMenu", () => {
-  it("renders the trigger button", () => {
-    render(
-      <CardContextMenu items={baseItems} open={false} onOpenChange={vi.fn()} />,
-    );
-    expect(
-      screen.getByRole("button", { name: "Project actions" }),
-    ).toBeInTheDocument();
-  });
-
-  it("requests open when the trigger is activated", async () => {
+  it("maps a destructive item to its action and danger treatment", async () => {
     const user = userEvent.setup();
-    const onOpenChange = vi.fn();
+    const onAction = vi.fn();
     render(
       <CardContextMenu
-        items={baseItems}
-        open={false}
-        onOpenChange={onOpenChange}
-      />,
-    );
-    await user.click(screen.getByRole("button", { name: "Project actions" }));
-    expect(onOpenChange).toHaveBeenCalledWith(true);
-  });
-
-  it("renders items as menuitems when open", () => {
-    render(<CardContextMenu items={baseItems} open onOpenChange={vi.fn()} />);
-    expect(
-      screen.getByRole("menuitem", { name: "Archive Project" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("menuitem", { name: "Delete Project" }),
-    ).toBeInTheDocument();
-  });
-
-  it("calls onAction when an item is selected", async () => {
-    const user = userEvent.setup();
-    const actionFn = vi.fn();
-    render(
-      <CardContextMenu
-        items={[{ label: "Test Action", onAction: actionFn }]}
+        items={[{ label: "Delete Project", danger: true, onAction }]}
         open
         onOpenChange={vi.fn()}
       />,
     );
-    await user.click(screen.getByRole("menuitem", { name: "Test Action" }));
-    expect(actionFn).toHaveBeenCalledTimes(1);
+
+    const item = screen.getByRole("menuitem", { name: "Delete Project" });
+    expect(item.className).toContain("text-red");
+    await user.click(item);
+    expect(onAction).toHaveBeenCalledOnce();
   });
 
   it("does not propagate the trigger click to the click-through card", async () => {

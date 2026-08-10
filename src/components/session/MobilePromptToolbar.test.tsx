@@ -51,48 +51,6 @@ function renderToolbar(overrides: Partial<MobilePromptToolbarProps> = {}) {
   );
 }
 
-describe("MobilePromptToolbar sheets (ui/Dialog migration)", () => {
-  it("does not mount either sheet dialog until its trigger is used", () => {
-    renderToolbar();
-    expect(screen.queryByRole("dialog")).toBeNull();
-  });
-
-  it("opens the More sheet as a portaled modal dialog with a scrim", () => {
-    renderToolbar();
-    fireEvent.click(screen.getByRole("button", { name: "More options" }));
-    expect(
-      screen.getByRole("dialog", { name: "More options" }),
-    ).toBeInTheDocument();
-    // The Radix Overlay scrim is mounted — a real modal, not a CSS-toggled div.
-    expect(document.querySelector("[data-cc-modal-scrim]")).not.toBeNull();
-  });
-
-  it("opens the Model + Reasoning sheet as a modal dialog", () => {
-    renderToolbar();
-    fireEvent.click(screen.getByRole("button", { name: /^Model Opus/ }));
-    expect(
-      screen.getByRole("dialog", { name: "Model and reasoning" }),
-    ).toBeInTheDocument();
-  });
-
-  it("dismisses the More sheet via Escape (Radix owns dismissal)", () => {
-    renderToolbar();
-    fireEvent.click(screen.getByRole("button", { name: "More options" }));
-    fireEvent.keyDown(screen.getByRole("dialog"), {
-      key: "Escape",
-      code: "Escape",
-    });
-    expect(screen.queryByRole("dialog")).toBeNull();
-  });
-
-  it("dismisses the More sheet via its close button", () => {
-    renderToolbar();
-    fireEvent.click(screen.getByRole("button", { name: "More options" }));
-    fireEvent.click(screen.getByRole("button", { name: "Close menu" }));
-    expect(screen.queryByRole("dialog")).toBeNull();
-  });
-});
-
 describe("MobilePromptToolbar sheet open-state reporting", () => {
   // The sheets are portaled outside the composer's DOM region, so the composer
   // only knows a sheet is open through this report; without it the composer

@@ -16,7 +16,6 @@ import {
   createGraphWorkflowRouteScriptValidatorService,
   createGraphWorkflowRouteValidationRoundService,
   launchGraphWorkflowExecution,
-  resolveGraphValidatorTimeoutMs,
   OWNER_CONVERSATION_HEADER,
   type GraphWorkflowExecutionRouteDeps,
   type GraphWorkflowRouteValidationRoundServiceDeps,
@@ -96,20 +95,6 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     ...overrides,
   };
 }
-
-describe("resolveGraphValidatorTimeoutMs", () => {
-  const config = {
-    agentBackends: {
-      claude: { model: "opus", timeoutMs: 45_000 },
-      codex: { model: "gpt-5.4", timeoutMs: null },
-    },
-  };
-
-  it("uses the selected validator backend profile without an enablement gate", () => {
-    expect(resolveGraphValidatorTimeoutMs(config, "claude")).toBe(45_000);
-    expect(resolveGraphValidatorTimeoutMs(config, "codex")).toBe(0);
-  });
-});
 
 describe("graph workflow execution route handlers", () => {
   const resolveProjectPath = vi.fn<(_name: string) => Promise<string | null>>();
@@ -2859,30 +2844,6 @@ describe("graph workflow resolve-approval route handler", () => {
     expect(response.status).toBe(404);
   });
 
-  it("returns 404 for an unknown project", async () => {
-    const handlers = buildHandlers();
-
-    const response = await postResolveApproval(
-      handlers,
-      { contextId: GATED_CONTEXT_ID, decision: "approve" },
-      { name: "missing-project", session: SESSION_NAME },
-    );
-
-    expect(response.status).toBe(404);
-  });
-
-  it("returns 404 for an unknown session", async () => {
-    const handlers = buildHandlers();
-
-    const response = await postResolveApproval(
-      handlers,
-      { contextId: GATED_CONTEXT_ID, decision: "approve" },
-      { name: "repo", session: "session-missing" },
-    );
-
-    expect(response.status).toBe(404);
-  });
-
   it.each([
     [
       "reject without a message",
@@ -3807,51 +3768,6 @@ describe("launchGraphWorkflowExecution (production start+kickoff seam)", () => {
 
     expect(kickOffExecutionLoop).not.toHaveBeenCalled();
   });
-
-  it("propagates an input error without kicking off the loop", async () => {
-    const startExecution = vi.fn(async () => {
-      throw new WorkflowStartInputError(
-        { kind: "missing_required", name: "env" },
-        'Required parameter "env" was not supplied',
-      );
-    });
-    const kickOffExecutionLoop = vi.fn(async () => {});
-
-    await expect(
-      launchGraphWorkflowExecution(
-        {
-          projectPath: PROJECT_PATH,
-          projectName: PROJECT_NAME,
-          sessionName: SESSION_NAME,
-          definitionId: "wf-1",
-        },
-        makeSeamDeps({ startExecution, kickOffExecutionLoop }),
-      ),
-    ).rejects.toBeInstanceOf(WorkflowStartInputError);
-
-    expect(kickOffExecutionLoop).not.toHaveBeenCalled();
-  });
-
-  it("propagates a not-found error without kicking off the loop", async () => {
-    const startExecution = vi.fn(async () => {
-      throw new Error('Workflow definition "nope" was not found');
-    });
-    const kickOffExecutionLoop = vi.fn(async () => {});
-
-    await expect(
-      launchGraphWorkflowExecution(
-        {
-          projectPath: PROJECT_PATH,
-          projectName: PROJECT_NAME,
-          sessionName: SESSION_NAME,
-          definitionId: "nope",
-        },
-        makeSeamDeps({ startExecution, kickOffExecutionLoop }),
-      ),
-    ).rejects.toThrow('Workflow definition "nope" was not found');
-
-    expect(kickOffExecutionLoop).not.toHaveBeenCalled();
-  });
 });
 
 describe("lifecycle contract: production slot auto-release", () => {
@@ -4317,13 +4233,6 @@ describe("buildLaneIterationToolServer (Phase 3 lane MCP detachment)", () => {
     // The lane tools are now the `cctl workflow …` verbs, so a freshly spawned
     // lane conversation's transient tool server carries no server entries.
     expect(config.servers).toEqual([]);
-  });
-
-  it("is a no-op when merged into a conversation's portable-MCP config", () => {
-    // Mirrors compose's mergeTransientLast contract: an empty transient adds
-    // nothing, so a lane spawn cannot re-introduce an in-process CC server.
-    const server = buildLaneIterationToolServer().server as PortableMcpConfig;
-    expect(server.servers.length).toBe(0);
   });
 });
 

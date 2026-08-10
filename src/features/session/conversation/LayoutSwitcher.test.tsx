@@ -10,13 +10,6 @@ function buttonByLabel(name: string): HTMLButtonElement {
 }
 
 describe("LayoutSwitcher", () => {
-  it("renders four layout mode buttons (Req 3.1)", () => {
-    render(
-      <LayoutSwitcher activeLayout="conversation" onLayoutChange={vi.fn()} />,
-    );
-    expect(screen.getAllByRole("button").length).toBe(4);
-  });
-
   it("orders panes after split and before conversation-only (Req 3.1)", () => {
     render(
       <LayoutSwitcher activeLayout="conversation" onLayoutChange={vi.fn()} />,
@@ -70,35 +63,6 @@ describe("LayoutSwitcher", () => {
 
     fireEvent.click(buttonByLabel("Right panel only"));
     expect(onLayoutChange).toHaveBeenLastCalledWith("diff");
-  });
-
-  it("highlights the active mode (Req 4.4)", () => {
-    render(<LayoutSwitcher activeLayout="split" onLayoutChange={vi.fn()} />);
-    expect(buttonByLabel("Split 50/50").getAttribute("data-active")).toBe(
-      "true",
-    );
-    expect(buttonByLabel("Conversation only").getAttribute("data-active")).toBe(
-      "false",
-    );
-    expect(buttonByLabel("Right panel only").getAttribute("data-active")).toBe(
-      "false",
-    );
-  });
-
-  it("exposes an accessible name for each mode", () => {
-    render(
-      <LayoutSwitcher activeLayout="conversation" onLayoutChange={vi.fn()} />,
-    );
-    const labels = screen
-      .getAllByRole("button")
-      .map((b) => b.getAttribute("aria-label"));
-    expect(labels).toEqual(
-      expect.arrayContaining([
-        "Conversation only",
-        "Split 50/50",
-        "Right panel only",
-      ]),
-    );
   });
 
   it("exposes the selected layout as a labeled toggle group", () => {

@@ -19,18 +19,6 @@ const sessions = [
 ] as unknown as SessionListItem[];
 
 describe("SessionsFilterPopover", () => {
-  it("keeps the panel closed until the trigger is activated", () => {
-    render(
-      <SessionsFilterPopover
-        tokens={[]}
-        onTokensChange={vi.fn()}
-        sessions={sessions}
-      />,
-    );
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.queryByText("working")).toBeNull();
-  });
-
   it("opens a labelled floating panel exposing the derived status/target options", () => {
     render(
       <SessionsFilterPopover

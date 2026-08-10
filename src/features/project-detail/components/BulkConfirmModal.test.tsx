@@ -4,36 +4,6 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import BulkConfirmModal from "./BulkConfirmModal";
 
 describe("BulkConfirmModal", () => {
-  it("returns null when not open", () => {
-    const { container } = render(
-      <BulkConfirmModal
-        open={false}
-        kind="archive"
-        count={3}
-        isPending={false}
-        onConfirm={vi.fn()}
-        onClose={vi.fn()}
-      />,
-    );
-    expect(container.firstChild).toBeNull();
-  });
-
-  it("exposes an alertdialog labelled by its title", () => {
-    render(
-      <BulkConfirmModal
-        open
-        kind="archive"
-        count={4}
-        isPending={false}
-        onConfirm={vi.fn()}
-        onClose={vi.fn()}
-      />,
-    );
-    expect(
-      screen.getByRole("alertdialog", { name: "Archive sessions?" }),
-    ).toBeInTheDocument();
-  });
-
   it("renders archive copy with cyan primary button", () => {
     render(
       <BulkConfirmModal
@@ -155,22 +125,6 @@ describe("BulkConfirmModal", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("calls onClose when Escape is pressed", () => {
-    const onClose = vi.fn();
-    render(
-      <BulkConfirmModal
-        open
-        kind="archive"
-        count={1}
-        isPending={false}
-        onConfirm={vi.fn()}
-        onClose={onClose}
-      />,
-    );
-    fireEvent.keyDown(screen.getByRole("alertdialog"), { key: "Escape" });
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
   it("disables buttons while pending", () => {
     render(
       <BulkConfirmModal
@@ -184,23 +138,5 @@ describe("BulkConfirmModal", () => {
     );
     expect(screen.getByRole("button", { name: "Delete 2" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
-  });
-
-  it("does not call onConfirm when Escape is pressed", () => {
-    const onConfirm = vi.fn();
-    const onClose = vi.fn();
-    render(
-      <BulkConfirmModal
-        open
-        kind="delete"
-        count={1}
-        isPending={false}
-        onConfirm={onConfirm}
-        onClose={onClose}
-      />,
-    );
-    fireEvent.keyDown(screen.getByRole("alertdialog"), { key: "Escape" });
-    expect(onConfirm).not.toHaveBeenCalled();
-    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

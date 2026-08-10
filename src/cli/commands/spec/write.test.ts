@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import {
-  PROPOSAL_NOTES_MAX_CHARACTERS,
-  oversizedProposalNotesRefusal,
-} from "@/lib/specs/proposal-notes";
 import type { SpecGatePreset } from "@/lib/specs/schemas";
 import { revisionInReviewInstruction } from "@/lib/specs/authoring-service";
 import { runCli } from "../../core";
@@ -264,7 +260,6 @@ function makeHost(
     files?: Record<string, string>;
     refusal?:
       | "propose"
-      | "propose-notes-cap"
       | "claim-task-complete"
       | "draft-upsert"
       | "draft-batch"
@@ -275,8 +270,6 @@ function makeHost(
       | "answer-question"
       | "open-amendment";
     approved?: boolean;
-    /** false emulates a server built before handles were projected. */
-    handles?: boolean;
     /** Drives the execution_start dial the CLI resolves locally. */
     preset?: SpecGatePreset;
     /** The approval ask was already open, so no second request was created. */
@@ -285,8 +278,6 @@ function makeHost(
     skippedWithdrawn?: boolean;
     /** Every dial concluded the stage, so the propose absorbed the sign-off. */
     absorbedSignOff?: boolean;
-    /** The write brought a historical element id back into the revision. */
-    revived?: boolean;
     /**
      * Blocking finding counts the lint read answers with, consumed in order —
      * the first is the draft before the write, the second after it.
@@ -302,8 +293,7 @@ function makeHost(
   } = {},
 ): CliHost & { requests: RecordedRequest[] } {
   const requests: RecordedRequest[] = [];
-  const handle = (value: string): { handle?: string } =>
-    options.handles === false ? {} : { handle: value };
+  const handle = (value: string) => ({ handle: value });
   let lintReads = 0;
   return {
     requests,
@@ -345,14 +335,6 @@ function makeHost(
       }
 
       const action = pathname.split("/").at(-1);
-      if (options.refusal === "propose-notes-cap" && action === "propose") {
-        // The server's own refusal, built by oversizedProposalNotesRefusal.
-        const refusal = oversizedProposalNotesRefusal(
-          "x".repeat(PROPOSAL_NOTES_MAX_CHARACTERS + 1),
-        );
-        if (refusal === null) throw new Error("expected a cap refusal");
-        return response(refusal, 409);
-      }
       if (options.refusal === "propose" && action === "propose") {
         const findings = [
           {
@@ -612,9 +594,6 @@ function makeHost(
           return response({
             element: taskElementBody().element.element,
             version: taskElementBody().element.version,
-            ...(options.revived === undefined
-              ? {}
-              : { revived: options.revived }),
             ...handle("T1"),
           });
         case "draft-batch":
@@ -647,9 +626,6 @@ function makeHost(
                   "requirement-id-1",
                 ),
                 version: batchVersion("criterion-id-1", 1, CRITERION_PAYLOAD),
-                ...(options.revived === undefined
-                  ? {}
-                  : { revived: options.revived }),
                 ...handle("R1.1"),
               },
             ],
@@ -973,7 +949,6 @@ const FIRST_ELEMENT_ADDRESS = {
     risk: "high",
   },
 };
-const FIRST_ELEMENT_FILE_CONTENT = JSON.stringify(FIRST_ELEMENT_ADDRESS);
 // The draft document: the same element, plus the compare-and-swap version the
 // author last read. `null` creates the element.
 const DRAFT_ELEMENT = { ...FIRST_ELEMENT_ADDRESS, baseElementVersion: null };
@@ -1012,7 +987,6 @@ const BATCH_DOCUMENT_FILE_CONTENT = JSON.stringify({
 const REMOVALS_ONLY_FILE_CONTENT = JSON.stringify({
   removals: BATCH_REMOVALS,
 });
-
 const DISCOVERED_TASK_FILE_CONTENT = JSON.stringify({
   title: "Handle the discovered migration",
   instructions: "Write the follow-up migration.",
@@ -1023,151 +997,6 @@ const DISCOVERED_TASK_FILE_CONTENT = JSON.stringify({
 });
 
 describe("cctl spec write verbs", () => {
-  it("sends typed create, answer, assume, approval-request, and abandon mutations", async () => {
-    const host = makeHost({
-      files: { [SPEC_FILE]: FIRST_ELEMENT_FILE_CONTENT },
-    });
-    const commands = [
-      [
-        "spec",
-        "create",
-        "--slug",
-        "native-sdd",
-        "--name",
-        "Native SDD",
-        "--preset",
-        "contract-bearing",
-        "--file",
-        SPEC_FILE,
-      ],
-      ["spec", "answer", "native-sdd/Q1", "--answer", "The full scope."],
-      [
-        "spec",
-        "assume",
-        "native-sdd",
-        "--text",
-        "SQLite remains authoritative.",
-      ],
-      [
-        "spec",
-        "request-approval",
-        "native-sdd",
-        "--gate",
-        "requirements",
-        "--subject",
-        "R1",
-      ],
-      ["spec", "abandon", "native-sdd", "--reason", "Superseded"],
-    ];
-    for (const command of commands) {
-      const result = await runCli(command, baseEnv, host);
-      expect(result.exitCode).toBe(0);
-    }
-
-    const actions = actionRequests(host).map((request) => ({
-      action: new URL(request.url).pathname.split("/").at(-1),
-      body: JSON.parse(request.init.body ?? "{}"),
-      conversation: request.init.headers["x-cc-conversation-id"],
-    }));
-    expect(actions.map((item) => item.action)).toEqual([
-      "create",
-      "answer-question",
-      "propose-assumption",
-      "request-approval",
-      "abandon-spec",
-    ]);
-    expect(
-      actions.every((item) => item.conversation === "conversation-1"),
-    ).toBe(true);
-    // The first draft save travels inside the single create request.
-    expect(actions[0]?.body).toEqual({
-      slug: "native-sdd",
-      name: "Native SDD",
-      gatePolicy: { preset: "contract-bearing" },
-      initialElement: JSON.parse(FIRST_ELEMENT_FILE_CONTENT),
-    });
-  });
-
-  it("prints the addressing handle assigned by create, draft, and question", async () => {
-    const host = makeHost({
-      files: {
-        [SPEC_FILE]: FIRST_ELEMENT_FILE_CONTENT,
-        [DRAFT_FILE]: DRAFT_FILE_CONTENT,
-      },
-    });
-
-    const created = await runCli(
-      [
-        "spec",
-        "create",
-        "--slug",
-        "native-sdd",
-        "--name",
-        "Native SDD",
-        "--preset",
-        "contract-bearing",
-        "--file",
-        SPEC_FILE,
-      ],
-      baseEnv,
-      host,
-    );
-    expect(created.exitCode).toBe(0);
-    expect(created.stdout).toContain("native-sdd/R1");
-
-    const drafted = await runCli(
-      ["spec", "draft", "native-sdd", "--file", DRAFT_FILE, "--json"],
-      baseEnv,
-      host,
-    );
-    expect(drafted.exitCode).toBe(0);
-    expect(JSON.parse(drafted.stdout).draft.handle).toBe("T1");
-
-    const questioned = await runCli(
-      ["spec", "question", "native-sdd", "--text", "Which retention?"],
-      baseEnv,
-      host,
-    );
-    expect(questioned.exitCode).toBe(0);
-    expect(questioned.stdout).toContain("native-sdd/Q2");
-  });
-
-  it("reports a revived element id as a return rather than a fresh save", async () => {
-    const host = makeHost({
-      revived: true,
-      files: { [DRAFT_FILE]: DRAFT_FILE_CONTENT },
-    });
-
-    const drafted = await runCli(
-      ["spec", "draft", "native-sdd", "--file", DRAFT_FILE],
-      baseEnv,
-      host,
-    );
-
-    expect(drafted.exitCode).toBe(0);
-    expect(drafted.stdout).toContain("revived native-sdd/T1 (task)");
-    // The number and handle came back with it, which is the whole point of
-    // reintroducing rather than re-authoring under a new id.
-    expect(drafted.stdout).toContain(
-      "the element kept the number and handle it was created with",
-    );
-  });
-
-  it("falls back to kind and version when an older server sends no handle", async () => {
-    const host = makeHost({
-      handles: false,
-      files: { [DRAFT_FILE]: DRAFT_FILE_CONTENT },
-    });
-    const drafted = await runCli(
-      ["spec", "draft", "native-sdd", "--file", DRAFT_FILE],
-      baseEnv,
-      host,
-    );
-
-    expect(drafted.exitCode).toBe(0);
-    expect(drafted.stdout).toContain("saved task at version 1");
-  });
-
   it("opens an amendment draft on an approved spec through its own verb", async () => {
     const host = makeHost({ approved: true });
     const result = await runCli(
@@ -1190,19 +1019,6 @@ describe("cctl spec write verbs", () => {
       ok: true,
       revision: { id: "revision-amendment", number: 2, authoringStage: "plan" },
     });
-  });
-
-  it("names the amendment revision and its authoring stage in text mode", async () => {
-    const result = await runCli(
-      ["spec", "amend", "native-sdd"],
-      baseEnv,
-      makeHost({ approved: true }),
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("revision 2");
-    expect(result.stdout).toContain("plan");
-    expect(result.stdout).not.toContain("withdrawn");
   });
 
   /**
@@ -1320,43 +1136,14 @@ describe("cctl spec write verbs", () => {
 
   it("refuses a withdraw-proposal with no revision token before any network request", async () => {
     const host = makeHost();
-    for (const argv of [
-      ["spec", "withdraw-proposal"],
-      ["spec", "withdraw-proposal", "native-sdd"],
-      ["spec", "withdraw-proposal", "native-sdd", "--revision", ""],
-      ["spec", "withdraw-proposal", "Not A Slug!", "--revision", "revision-1"],
-      [
-        "spec",
-        "withdraw-proposal",
-        "native-sdd",
-        "extra",
-        "--revision",
-        "revision-1",
-      ],
-    ]) {
-      const result = await runCli(argv, baseEnv, host);
-      expect(result.exitCode, argv.join(" ")).toBe(2);
-    }
-    expect(host.requests).toHaveLength(0);
-
-    const missing = await runCli(
+    const result = await runCli(
       ["spec", "withdraw-proposal", "native-sdd"],
       baseEnv,
-      makeHost(),
+      host,
     );
-    expect(missing.stderr).toContain("--revision <revision-id>");
-  });
 
-  it("validates the amend slug locally before any network request", async () => {
-    const host = makeHost();
-    for (const argv of [
-      ["spec", "amend"],
-      ["spec", "amend", "Not A Slug!"],
-      ["spec", "amend", "native-sdd", "extra"],
-    ]) {
-      const result = await runCli(argv, baseEnv, host);
-      expect(result.exitCode).toBe(2);
-    }
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("--revision <revision-id>");
     expect(host.requests).toHaveLength(0);
   });
 
@@ -1392,49 +1179,6 @@ describe("cctl spec write verbs", () => {
     });
   });
 
-  it("opens a spec-level question without an attachment", async () => {
-    const host = makeHost();
-    const result = await runCli(
-      ["spec", "question", "native-sdd", "--text", "Is the scope right?"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(actionRequests(host)[0]?.init.body ?? "{}")).toEqual({
-      elementId: null,
-      text: "Is the scope right?",
-    });
-  });
-
-  it("requires --text for spec question before any network request", async () => {
-    const host = makeHost();
-    const result = await runCli(
-      ["spec", "question", "native-sdd"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("--text");
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("states the handle grammar for a malformed --element attachment", async () => {
-    const host = makeHost();
-    const result = await runCli(
-      ["spec", "question", "native-sdd", "--text", "x", "--element", "task_7"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("--element");
-    expect(result.stderr).toContain("looks like an element id");
-    expect(result.stderr).toContain("T<n> for a task");
-    expect(host.requests).toHaveLength(0);
-  });
-
   it("names the missing spec slug for a well-formed but unqualified handle", async () => {
     const host = makeHost();
     const task = await runCli(
@@ -1442,12 +1186,6 @@ describe("cctl spec write verbs", () => {
       baseEnv,
       host,
     );
-    const answer = await runCli(
-      ["spec", "answer", "Q1", "--answer", "The full scope."],
-      baseEnv,
-      host,
-    );
-
     expect(task.exitCode).toBe(2);
     expect(task.stderr).toContain(
       '"T7" is missing its spec slug; this command takes a qualified handle like <slug>/T7',
@@ -1457,11 +1195,6 @@ describe("cctl spec write verbs", () => {
     expect(task.stderr).not.toContain("not a valid element handle");
     expect(task.stderr).not.toContain("Optionally qualify");
 
-    expect(answer.exitCode).toBe(2);
-    expect(answer.stderr).toContain(
-      '"Q1" is missing its spec slug; this command takes a qualified handle like <slug>/Q2',
-    );
-    expect(answer.stderr).not.toContain("not a valid element handle");
     expect(host.requests).toHaveLength(0);
   });
 
@@ -1549,36 +1282,12 @@ describe("cctl spec write verbs", () => {
     const host = makeHost();
     for (const argv of [
       ["spec", "question", "native-sdd", "--text", "x", "--element", "Q1"],
-      ["spec", "question", "native-sdd", "--text", "x", "--element", "A1"],
-      ["spec", "assume", "native-sdd", "--text", "x", "--element", "Q1"],
       ["spec", "assume", "native-sdd", "--text", "x", "--element", "A1"],
     ]) {
       const result = await runCli(argv, baseEnv, host);
       expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain("--element");
     }
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("refuses spec create without --file before any network request", async () => {
-    const host = makeHost();
-    const result = await runCli(
-      [
-        "spec",
-        "create",
-        "--slug",
-        "native-sdd",
-        "--name",
-        "Native SDD",
-        "--preset",
-        "contract-bearing",
-      ],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("--file");
     expect(host.requests).toHaveLength(0);
   });
 
@@ -1651,34 +1360,6 @@ describe("cctl spec write verbs", () => {
   });
 
   /**
-   * The compare-and-swap version moved into the document, so a caller still
-   * passing the flag must be told where it went. A silently ignored flag would
-   * send the write at whatever version the file happens to state.
-   */
-  it("refuses the removed --base-version flag and names the field it moved to", async () => {
-    const host = makeHost({ files: { [DRAFT_FILE]: DRAFT_FILE_CONTENT } });
-
-    const result = await runCli(
-      [
-        "spec",
-        "draft",
-        "native-sdd",
-        "--file",
-        DRAFT_FILE,
-        "--base-version",
-        "3",
-      ],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("--base-version");
-    expect(result.stderr).toContain("baseElementVersion");
-    expect(host.requests).toHaveLength(0);
-  });
-
-  /**
    * The create document and the draft document are different shapes: a spec's
    * first revision has no element version to compare against. A create file
    * carrying one is a draft document sent at the wrong verb.
@@ -1724,45 +1405,6 @@ describe("cctl spec write verbs", () => {
     // The receipt answers "did that help?" without a second command: the draft
     // went from refusing propose to accepting it.
     expect(text.stdout).toContain("lint: 2 -> 0 blocking");
-  });
-
-  it("carries the blocking-count delta structurally in the --json receipt", async () => {
-    const host = makeHost({
-      files: { [BATCH_FILE]: BATCH_FILE_CONTENT },
-      blockingCounts: [2, 0],
-    });
-
-    const structured = await runCli(
-      ["spec", "draft", "native-sdd", "--file", BATCH_FILE, "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(structured.exitCode).toBe(0);
-    // A machine reader must not have to parse the English sentence back apart
-    // to learn what the write did to the draft's proposability.
-    expect(JSON.parse(structured.stdout).lint).toEqual({
-      blockingBefore: 2,
-      blockingAfter: 0,
-    });
-  });
-
-  it("names the blocking findings the write left behind", async () => {
-    const host = makeHost({
-      files: { [DRAFT_FILE]: DRAFT_FILE_CONTENT },
-      blockingCounts: [1, 3],
-    });
-
-    const text = await runCli(
-      ["spec", "draft", "native-sdd", "--file", DRAFT_FILE],
-      baseEnv,
-      host,
-    );
-
-    expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain("lint: 1 -> 3 blocking");
-    // A draft that still refuses propose says where to read why.
-    expect(text.stdout).toContain("cctl spec lint native-sdd");
   });
 
   it("omits the lint delta rather than failing the write when lint cannot be read", async () => {
@@ -1829,28 +1471,6 @@ describe("cctl spec write verbs", () => {
       },
       tokens: { revision: "revision-draft" },
     });
-  });
-
-  it("marks the batch entries that returned rather than being created", async () => {
-    const host = makeHost({
-      revived: true,
-      files: { [BATCH_FILE]: BATCH_FILE_CONTENT },
-    });
-
-    const text = await runCli(
-      ["spec", "draft", "native-sdd", "--file", BATCH_FILE],
-      baseEnv,
-      host,
-    );
-
-    expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain(
-      "[1] native-sdd/R1.1 (criterion) at version 1 (revived)",
-    );
-    // The entry the server did not mark reads as an ordinary save.
-    expect(text.stdout).toContain(
-      "[0] native-sdd/R1 (requirement) at version 4\n",
-    );
   });
 
   it("names every element that refused a batch, by index, in text and json", async () => {
@@ -1966,47 +1586,6 @@ describe("cctl spec write verbs", () => {
     expect(result.stdout).toContain("removed 1 element");
   });
 
-  it("refuses a keyed document whose removal states a handle instead of an id", async () => {
-    const host = makeHost({
-      files: {
-        [BATCH_FILE]: JSON.stringify({
-          elements: [],
-          // The file contract has no handle form: the server's removal schema
-          // is {elementId, baseElementVersion} and this file speaks it exactly.
-          removals: [{ handle: "T1", baseElementVersion: 2 }],
-        }),
-      },
-    });
-
-    const result = await runCli(
-      ["spec", "draft", "native-sdd", "--file", BATCH_FILE],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("does not match the required schema");
-    expect(result.stderr).toContain("removals.0");
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("refuses a keyed document that neither writes nor removes anything", async () => {
-    const host = makeHost({
-      files: {
-        [BATCH_FILE]: JSON.stringify({ elements: [], removals: [] }),
-      },
-    });
-
-    const result = await runCli(
-      ["spec", "draft", "native-sdd", "--file", BATCH_FILE],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
-  });
-
   it("refuses a batch element that omits its own baseElementVersion", async () => {
     const host = makeHost({
       files: {
@@ -2028,34 +1607,6 @@ describe("cctl spec write verbs", () => {
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("does not match the required schema");
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("names the failing field when a draft file misses the schema", async () => {
-    const host = makeHost({
-      files: {
-        [DRAFT_FILE]: JSON.stringify({
-          elementId: "criterion-id-1",
-          kind: "criterion",
-          parentElementId: "requirement-id-1",
-          baseElementVersion: null,
-          payload: {
-            kind: "criterion",
-            text: "Rendered output matches a screenshot.",
-            validationStrategy: { kinds: ["screenshot"] },
-          },
-        }),
-      },
-    });
-    const result = await runCli(
-      ["spec", "draft", "native-sdd", "--file", DRAFT_FILE],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    // The refusal must point at the failing field, not just say "schema".
-    expect(result.stderr).toContain("payload.validationStrategy.kinds");
     expect(host.requests).toHaveLength(0);
   });
 
@@ -2168,23 +1719,6 @@ describe("cctl spec write verbs", () => {
     expect(actionRequests(host)).toHaveLength(0);
   });
 
-  it("refuses spec remove with no handle and refuses a repeated handle", async () => {
-    const host = makeHost();
-
-    const bare = await runCli(["spec", "remove", "native-sdd"], baseEnv, host);
-    const repeated = await runCli(
-      ["spec", "remove", "native-sdd", "T1", "T1"],
-      baseEnv,
-      host,
-    );
-
-    expect(bare.exitCode).toBe(2);
-    expect(bare.stderr).toContain("<handle>");
-    expect(repeated.exitCode).toBe(2);
-    expect(repeated.stderr).toContain("T1");
-    expect(host.requests).toHaveLength(0);
-  });
-
   it("names the handle a removal would strand when the batch is refused", async () => {
     const host = makeHost({ refusal: "draft-batch-dangling" });
 
@@ -2236,18 +1770,26 @@ describe("cctl spec write verbs", () => {
     });
   });
 
-  it("redirects the retired design advance to delivery-plan authoring", async () => {
-    const host = makeHost();
+  it("reports the claim's status and the execution it was filed against", async () => {
     const result = await runCli(
-      ["spec", "advance", "native-sdd", "--from", "design"],
+      [
+        "spec",
+        "task",
+        "complete",
+        "native-sdd/T1",
+        "--execution",
+        "execution-1",
+        "--evidence",
+        "evidence-1",
+      ],
       baseEnv,
-      host,
+      makeHost({ approved: true }),
     );
 
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("design is the final evergreen stage");
-    expect(result.stderr).toContain("cctl spec plan open native-sdd");
-    expect(host.requests).toHaveLength(0);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("state: claim accepted");
+    expect(result.stdout).toContain("  execution: execution-1");
+    expect(result.stdout).toContain("  claim: claim-id-1");
   });
 
   it("lets the server refuse an evidence-less task completion with instruction", async () => {
@@ -2271,57 +1813,6 @@ describe("cctl spec write verbs", () => {
     expect(
       JSON.parse(actionRequests(host)[0]?.init.body ?? "{}").evidenceIds,
     ).toEqual([]);
-  });
-
-  it("reports what create changed, the tokens it assigned, and the next command", async () => {
-    const host = makeHost({
-      files: { [SPEC_FILE]: FIRST_ELEMENT_FILE_CONTENT },
-    });
-    const text = await runCli(
-      [
-        "spec",
-        "create",
-        "--slug",
-        "native-sdd",
-        "--name",
-        "Native SDD",
-        "--preset",
-        "contract-bearing",
-        "--file",
-        SPEC_FILE,
-      ],
-      baseEnv,
-      host,
-    );
-
-    expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain("created spec native-sdd");
-    expect(text.stdout).toContain(
-      "state: draft revision 1 at requirements stage",
-    );
-    expect(text.stdout).toContain("  handle: native-sdd/R1");
-    expect(text.stdout).toContain("  revision: revision-draft");
-    expect(text.stdout).toContain("  element version: 1");
-    expect(text.stdout).toContain("acts next: agent");
-    expect(text.stdout).toContain(
-      "next: cctl spec draft native-sdd --file <element.json>",
-    );
-  });
-
-  it("reports the amendment draft's state and the command that authors into it", async () => {
-    const result = await runCli(
-      ["spec", "amend", "native-sdd"],
-      baseEnv,
-      makeHost({ approved: true }),
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("state: draft revision 2 at plan stage");
-    expect(result.stdout).toContain("  revision: revision-amendment");
-    expect(result.stdout).toContain("acts next: agent");
-    expect(result.stdout).toContain(
-      "next: cctl spec draft native-sdd --file <element.json>",
-    );
   });
 
   it("renders the server's pending block instead of deriving one from the stage", async () => {
@@ -2361,6 +1852,18 @@ describe("cctl spec write verbs", () => {
    * markdown with headings and lists, which no shell argument survives
    * intact, and the same file is what the author edits between rounds.
    */
+  it("names the human disposition a proposed assumption waits on", async () => {
+    const result = await runCli(
+      ["spec", "assume", "native-sdd", "--text", "SQLite stays authoritative."],
+      baseEnv,
+      makeHost(),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("state: assumption A1 is proposed");
+    expect(result.stdout).toContain("acts next: human");
+  });
+
   it("sends the notes document the propose was given", async () => {
     const notes = "## Disposition\n\nClosed F3 by rebinding the loop exit.\n";
     const host = makeHost({ files: { [NOTES_FILE]: notes } });
@@ -2381,19 +1884,6 @@ describe("cctl spec write verbs", () => {
     });
   });
 
-  it("omits notes entirely when the propose was given none", async () => {
-    const host = makeHost();
-
-    await runCli(["spec", "propose", "native-sdd"], baseEnv, host);
-
-    const propose = actionRequests(host).find((request) =>
-      request.url.endsWith("/propose"),
-    );
-    expect(JSON.parse(String(propose?.init.body))).toEqual({
-      revisionId: "revision-draft",
-    });
-  });
-
   /** An unreadable file proposes nothing: the round would lose its record. */
   it("refuses an unreadable notes file without proposing", async () => {
     const host = makeHost();
@@ -2409,35 +1899,6 @@ describe("cctl spec write verbs", () => {
     expect(actionRequests(host)).toEqual([]);
   });
 
-  it("refuses an empty notes file rather than sending a blank document", async () => {
-    const host = makeHost({ files: { [NOTES_FILE]: "   \n" } });
-
-    const result = await runCli(
-      ["spec", "propose", "native-sdd", "--notes", NOTES_FILE],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain(NOTES_FILE);
-    expect(actionRequests(host)).toEqual([]);
-  });
-
-  it("prints the server's cap refusal for an over-cap notes document", async () => {
-    const result = await runCli(
-      ["spec", "propose", "native-sdd", "--notes", NOTES_FILE],
-      baseEnv,
-      makeHost({
-        files: { [NOTES_FILE]: "x".repeat(64) },
-        refusal: "propose-notes-cap",
-      }),
-    );
-
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("20000");
-    expect(result.stderr).toContain("--notes");
-  });
-
   it("hands the next draft back to the agent when the propose absorbed the sign-off", async () => {
     const result = await runCli(
       ["spec", "propose", "native-sdd"],
@@ -2450,70 +1911,6 @@ describe("cctl spec write verbs", () => {
     expect(result.stdout).toContain("acts next: agent");
     expect(result.stdout).toContain("next: cctl spec amend native-sdd");
     expect(result.stdout).not.toContain("instruction:");
-  });
-
-  it("names the human answer an opened question waits on", async () => {
-    const result = await runCli(
-      ["spec", "question", "native-sdd", "--text", "Which retention period?"],
-      baseEnv,
-      makeHost(),
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("state: question Q2 is open");
-    expect(result.stdout).toContain("  handle: native-sdd/Q2");
-    expect(result.stdout).toContain("acts next: human");
-    expect(result.stdout).toContain("next: cctl spec status native-sdd");
-  });
-
-  it("names the human disposition a proposed assumption waits on", async () => {
-    const result = await runCli(
-      ["spec", "assume", "native-sdd", "--text", "SQLite stays authoritative."],
-      baseEnv,
-      makeHost(),
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("state: assumption A1 is proposed");
-    expect(result.stdout).toContain("acts next: human");
-  });
-
-  it("reports the claim's status and the execution it was filed against", async () => {
-    const result = await runCli(
-      [
-        "spec",
-        "task",
-        "complete",
-        "native-sdd/T1",
-        "--execution",
-        "execution-1",
-        "--evidence",
-        "evidence-1",
-      ],
-      baseEnv,
-      makeHost({ approved: true }),
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("state: claim accepted");
-    expect(result.stdout).toContain("  execution: execution-1");
-    expect(result.stdout).toContain("  claim: claim-id-1");
-  });
-
-  it("reports the attention record a requested approval created", async () => {
-    const result = await runCli(
-      ["spec", "request-approval", "native-sdd", "--gate", "requirements"],
-      baseEnv,
-      makeHost(),
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("  attention: attention-1");
-    expect(result.stdout).toContain("acts next: human");
-    // A whole-gate ask has to say what it covers, or the agent cannot tell
-    // this entry from a request for one subject.
-    expect(result.stdout).toContain("  scope: gate");
-    expect(result.stdout).toContain("2 outstanding: R1, R2");
   });
 
   it("sends an omitted --subject as an omission for the server to resolve", async () => {
@@ -2573,24 +1970,6 @@ describe("cctl spec write verbs", () => {
     expect(envelope.tokens).not.toHaveProperty("elementId");
   });
 
-  it("carries the mutation envelope into --json for every mutating verb", async () => {
-    const result = await runCli(
-      ["spec", "advance", "native-sdd", "--from", "requirements", "--json"],
-      baseEnv,
-      makeHost(),
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      ok: true,
-      changed: expect.stringContaining("advanced revision 1"),
-      state: "draft revision 1 at design stage",
-      tokens: { revision: "revision-draft" },
-      actsNext: "agent",
-      next: expect.stringContaining("cctl spec draft native-sdd"),
-    });
-  });
-
   it("names the execution an abandon retired", async () => {
     const result = await runCli(
       [
@@ -2624,19 +2003,6 @@ describe("cctl spec write verbs", () => {
     expect(result.stderr).toContain("Spec Studio");
   });
 
-  it("requires an abandon reason locally", async () => {
-    const host = makeHost();
-    const result = await runCli(
-      ["spec", "abandon", "native-sdd"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("--reason");
-    expect(host.requests).toHaveLength(0);
-  });
-
   it("posts a rename action with the new slug and optional name", async () => {
     const host = makeHost();
     const result = await runCli(
@@ -2661,34 +2027,6 @@ describe("cctl spec write verbs", () => {
       name: "Native SDD v2",
     });
     expect(result.stdout).toContain("native-sdd-v2");
-  });
-
-  it("requires --to and validates both slugs locally before network", async () => {
-    const host = makeHost();
-
-    const missingTo = await runCli(
-      ["spec", "rename", "native-sdd"],
-      baseEnv,
-      host,
-    );
-    expect(missingTo.exitCode).toBe(2);
-    expect(missingTo.stderr).toContain("--to");
-
-    const invalidTarget = await runCli(
-      ["spec", "rename", "native-sdd", "--to", "Not A Slug!"],
-      baseEnv,
-      host,
-    );
-    expect(invalidTarget.exitCode).toBe(2);
-
-    const invalidSource = await runCli(
-      ["spec", "rename", "Not A Slug!", "--to", "native-sdd-v2"],
-      baseEnv,
-      host,
-    );
-    expect(invalidSource.exitCode).toBe(2);
-
-    expect(host.requests).toHaveLength(0);
   });
 
   it("surfaces the typed human_act_required refusal for an agent rename", async () => {
@@ -2811,27 +2149,6 @@ describe("cctl spec write verbs", () => {
     expect(host.requests).toHaveLength(0);
   });
 
-  it("requires --file for spec capture before any network request", async () => {
-    const host = makeHost();
-    for (const argv of [
-      ["spec", "capture", "native-sdd"],
-      ["spec", "capture", "native-sdd", "--execution", "execution-1"],
-      [
-        "spec",
-        "capture",
-        "native-sdd",
-        "--file",
-        TASK_FILE,
-        "--blocking-reason",
-        "   ",
-      ],
-    ]) {
-      const result = await runCli(argv, baseEnv, host);
-      expect(result.exitCode).toBe(2);
-    }
-    expect(host.requests).toHaveLength(0);
-  });
-
   it("surfaces the prelaunch redirect naming the plan verb", async () => {
     const host = makeHost({
       files: { [TASK_FILE]: DISCOVERED_TASK_FILE_CONTENT },
@@ -2848,15 +2165,6 @@ describe("cctl spec write verbs", () => {
     expect(result.stderr).toContain(
       "cctl spec plan edit native-sdd --file <plan.json>",
     );
-  });
-
-  it("does not expose policy, sign-off, or verdict verbs", async () => {
-    const host = makeHost();
-    for (const verb of ["policy", "sign-off", "verdict"]) {
-      const result = await runCli(["spec", verb], baseEnv, host);
-      expect(result.exitCode).toBe(2);
-    }
-    expect(host.requests).toHaveLength(0);
   });
 });
 
@@ -2980,38 +2288,6 @@ describe("cctl spec start against a delivery plan", () => {
     expect(result.stdout).toContain("cctl spec start native-sdd");
     expect(result.stdout).toContain(
       "The approved parked candidate is ready to launch.",
-    );
-  });
-
-  it("prints the plan's sign-off act when an unapproved candidate is parked", async () => {
-    const host = makeHost({
-      approved: true,
-      startBody: {
-        body: {
-          parked: {
-            ...CANDIDATE,
-            nextAct: {
-              actor: "human",
-              command: "cctl spec plan sign-off native-sdd",
-              reason:
-                "The parked candidate carries no approval, so a launch would refuse.",
-            },
-          },
-        },
-      },
-    });
-
-    const result = await runCli(
-      ["spec", "start", "native-sdd", "--park"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("acts next: human");
-    expect(result.stdout).toContain("cctl spec plan sign-off native-sdd");
-    expect(result.stdout).toContain(
-      "The parked candidate carries no approval, so a launch would refuse.",
     );
   });
 

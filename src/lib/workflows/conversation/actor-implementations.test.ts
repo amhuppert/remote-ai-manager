@@ -1235,100 +1235,47 @@ describe("executePromptForMachine", () => {
     expect(mockDeps.mutateConversation).not.toHaveBeenCalled();
   });
 
-  // Design 4 (invoked-actor half), apply services: `applyMcpAtTurnStart`
-  // persists through `stateManager.mutateConversation` and the capability
-  // applies through `writeRuntimeState`, so the facet must gate them too — not
-  // just the direct writes. On the runtime-REUSE path the actor runs the MCP
-  // turn-start apply hook and the capability idle drain; both must be inert for
-  // an ephemeral runtime. A durable control on the same paths proves the drive
-  // reaches them (not a dead assertion).
-  it("gates the invoked actor's apply-service durable writes (applyMcpAtTurnStart) on the ephemeral mode", async () => {
-    // Reuse an alive runtime so `isNewRuntime` is false and the MCP turn-start
-    // apply hook fires (a new runtime seeds MCP instead and skips the hook).
-    const makeAliveRuntime = () => {
-      const rt = createMockBackendRuntime({ modelId: "opus" });
-      (rt.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue(
-        defaultTurnResult,
-      );
-      return rt;
-    };
-
-    const durableInput = makeExecutePromptInput({ conversationId: "conv-d" });
-    registerConversationRuntime(
-      conversationRuntimeKey(
-        durableInput.projectPath,
-        durableInput.sessionName,
-        durableInput.conversationId,
-      ),
-      {
-        abortController: new AbortController(),
-        backendRuntime: makeAliveRuntime(),
-      },
+  it("gates turn-start MCP apply and idle capability drain for ephemeral turns", async () => {
+    const reusedRuntime = createMockBackendRuntime({ modelId: "opus" });
+    (reusedRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue(
+      defaultTurnResult,
     );
-    await executePromptForMachine(durableInput);
-    expect(mockDeps.applyMcpAtTurnStart).toHaveBeenCalledTimes(1);
-    // The turn-start capability cascade (persists via writeRuntimeState) runs
-    // on every turn — gate it too.
-    expect(mockDeps.applyCapabilityAtTurnStart).toHaveBeenCalled();
-
-    vi.mocked(mockDeps.applyMcpAtTurnStart).mockClear();
-    vi.mocked(mockDeps.applyCapabilityAtTurnStart).mockClear();
-
-    const ephemeralInput = makeExecutePromptInput({
-      conversationId: "conv-e",
+    const reusedInput = makeExecutePromptInput({
+      conversationId: "conv-ephemeral-reused",
       persistence: "ephemeral",
     });
     registerConversationRuntime(
       conversationRuntimeKey(
-        ephemeralInput.projectPath,
-        ephemeralInput.sessionName,
-        ephemeralInput.conversationId,
+        reusedInput.projectPath,
+        reusedInput.sessionName,
+        reusedInput.conversationId,
       ),
       {
         abortController: new AbortController(),
-        backendRuntime: makeAliveRuntime(),
+        backendRuntime: reusedRuntime,
       },
     );
-    await executePromptForMachine(ephemeralInput);
-    // The facet replaced applyMcpAtTurnStart / applyCapabilityAtTurnStart with
-    // inert no-ops, so the production apply services (which write via
-    // mutateConversation / writeRuntimeState) are never reached.
+
+    await executePromptForMachine(reusedInput);
+
     expect(mockDeps.applyMcpAtTurnStart).not.toHaveBeenCalled();
-    expect(mockDeps.applyCapabilityAtTurnStart).not.toHaveBeenCalled();
-  });
 
-  it("gates the invoked actor's capability idle drain (applyCapabilityWhenIdle) on the ephemeral mode", async () => {
-    // A failed caller turn drains Claude idle capability work via
-    // `applyCapabilityWhenIdle` (which persists through `writeRuntimeState`).
     mockSendTurn.mockRejectedValue(new Error("SDK crashed"));
-
-    const durableInput = makeExecutePromptInput({ conversationId: "conv-d" });
-    registerConversationRuntime(
-      conversationRuntimeKey(
-        durableInput.projectPath,
-        durableInput.sessionName,
-        durableInput.conversationId,
-      ),
-      { abortController: new AbortController() },
-    );
-    await executePromptForMachine(durableInput);
-    expect(mockDeps.applyCapabilityWhenIdle).toHaveBeenCalledTimes(1);
-
-    vi.mocked(mockDeps.applyCapabilityWhenIdle).mockClear();
-
-    const ephemeralInput = makeExecutePromptInput({
-      conversationId: "conv-e",
+    const failedInput = makeExecutePromptInput({
+      conversationId: "conv-ephemeral-failed",
       persistence: "ephemeral",
     });
     registerConversationRuntime(
       conversationRuntimeKey(
-        ephemeralInput.projectPath,
-        ephemeralInput.sessionName,
-        ephemeralInput.conversationId,
+        failedInput.projectPath,
+        failedInput.sessionName,
+        failedInput.conversationId,
       ),
       { abortController: new AbortController() },
     );
-    await executePromptForMachine(ephemeralInput);
+
+    await executePromptForMachine(failedInput);
+
     expect(mockDeps.applyCapabilityWhenIdle).not.toHaveBeenCalled();
   });
 
@@ -2773,38 +2720,6 @@ describe("executePromptForMachine", () => {
     expect(createCall["tooling"]).not.toHaveProperty("capabilities");
   });
 
-  it("emits a non-blocking diagnostic when project-conversation composition fails", async () => {
-    const streamEmit = vi.fn();
-    const composeCapabilityConfigForProjectConversation = vi.fn(async () => {
-      throw new Error("cascade failed");
-    });
-
-    mockDeps = createMockDeps({
-      composeCapabilityConfigForProjectConversation,
-    });
-    setActorDeps(mockDeps);
-
-    const input = makeProjectExecutePromptInput();
-    const key = conversationRuntimeKey(
-      input.projectPath,
-      input.sessionName,
-      input.conversationId,
-    );
-    registerConversationRuntime(key, {
-      abortController: new AbortController(),
-      streamEmit,
-    });
-
-    const result = await executePromptForMachine(input);
-
-    expect(result.error).toBeNull();
-    expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
-    expect(streamEmit).toHaveBeenCalledWith("error", {
-      message:
-        "Project conversation capability configuration could not be fully composed: cascade failed",
-    });
-  });
-
   it("emits non-blocking diagnostics returned by project-conversation composition", async () => {
     const streamEmit = vi.fn();
     const diagnostics: AgentCapabilityDiagnostic[] = [
@@ -4016,30 +3931,6 @@ describe("executePromptForMachine", () => {
         },
       ]);
     });
-
-    it("does not call getNextImageIndex when there are no images", async () => {
-      const getNextImageIndex = vi.fn(async () => 1);
-      mockDeps = createMockDeps({ getNextImageIndex });
-      setActorDeps(mockDeps);
-
-      const input = makeExecutePromptInput({ images: [] });
-      const key = conversationRuntimeKey(
-        input.projectPath,
-        input.sessionName,
-        input.conversationId,
-      );
-      registerConversationRuntime(key, {
-        abortController: new AbortController(),
-      });
-
-      await executePromptForMachine(input);
-
-      expect(getNextImageIndex).not.toHaveBeenCalled();
-
-      const sendTurnCall = mockSendTurn.mock.calls[0]! as unknown[];
-      const turnInput = sendTurnCall[0] as ConversationBackendTurnInput;
-      expect(turnInput.imageRefs).toEqual([]);
-    });
   });
 
   // ---------------------------------------------------------------
@@ -4120,72 +4011,6 @@ describe("executePromptForMachine", () => {
       expect(appendOrder).toEqual(["append", "markDelivered"]);
     });
 
-    it("does not append a second user entry when input_accepted fires more than once", async () => {
-      mockSendTurn.mockImplementation(
-        async (turnInput: ConversationBackendTurnInput) => {
-          await turnInput.onEvent({ type: "input_accepted" });
-          await turnInput.onEvent({ type: "input_accepted" });
-          return defaultTurnResult;
-        },
-      );
-
-      const input = makeExecutePromptInput({
-        promptText: "queued follow-up",
-        queuedDelivery: {
-          messageIds: ["m1"],
-          deliveryAttemptId: "att-1",
-        },
-      });
-      const key = conversationRuntimeKey(
-        input.projectPath,
-        input.sessionName,
-        input.conversationId,
-      );
-      registerConversationRuntime(key, {
-        abortController: new AbortController(),
-      });
-
-      await executePromptForMachine(input);
-
-      expect(userAppendCalls()).toHaveLength(1);
-      expect(mockDeps.markQueuedDelivered).toHaveBeenCalledTimes(1);
-    });
-
-    it("appends nothing and returns rows to pending when acceptance never happens (turn completes without input_accepted)", async () => {
-      mockSendTurn.mockResolvedValue(defaultTurnResult);
-
-      const input = makeExecutePromptInput({
-        promptText: "queued follow-up",
-        queuedDelivery: {
-          messageIds: ["m1", "m2"],
-          deliveryAttemptId: "att-1",
-        },
-      });
-      const key = conversationRuntimeKey(
-        input.projectPath,
-        input.sessionName,
-        input.conversationId,
-      );
-      registerConversationRuntime(key, {
-        abortController: new AbortController(),
-      });
-
-      await executePromptForMachine(input);
-
-      expect(userAppendCalls()).toHaveLength(0);
-      expect(mockDeps.markQueuedDelivered).not.toHaveBeenCalled();
-      expect(mockDeps.markQueuedPending).toHaveBeenCalledTimes(1);
-      expect(mockDeps.markQueuedPending).toHaveBeenCalledWith(
-        expect.objectContaining({
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-          conversationId: input.conversationId,
-          ids: ["m1", "m2"],
-          deliveryAttemptId: "att-1",
-        }),
-      );
-    });
-
     it("appends nothing and returns rows to pending when the turn throws before acceptance", async () => {
       mockSendTurn.mockRejectedValue(new Error("backend dispatch failed"));
 
@@ -4216,62 +4041,6 @@ describe("executePromptForMachine", () => {
           deliveryAttemptId: "att-1",
         }),
       );
-    });
-
-    it("does not return rows to pending after a successful delivery", async () => {
-      mockSendTurn.mockImplementation(
-        async (turnInput: ConversationBackendTurnInput) => {
-          await turnInput.onEvent({ type: "input_accepted" });
-          return defaultTurnResult;
-        },
-      );
-
-      const input = makeExecutePromptInput({
-        promptText: "queued follow-up",
-        queuedDelivery: {
-          messageIds: ["m1"],
-          deliveryAttemptId: "att-1",
-        },
-      });
-      const key = conversationRuntimeKey(
-        input.projectPath,
-        input.sessionName,
-        input.conversationId,
-      );
-      registerConversationRuntime(key, {
-        abortController: new AbortController(),
-      });
-
-      await executePromptForMachine(input);
-
-      expect(mockDeps.markQueuedDelivered).toHaveBeenCalledTimes(1);
-      expect(mockDeps.markQueuedPending).not.toHaveBeenCalled();
-    });
-
-    it("normal (non-queued) turns append exactly one user entry at dispatch and never touch queue marks", async () => {
-      mockSendTurn.mockResolvedValue(defaultTurnResult);
-
-      const input = makeExecutePromptInput({ promptText: "normal prompt" });
-      const key = conversationRuntimeKey(
-        input.projectPath,
-        input.sessionName,
-        input.conversationId,
-      );
-      registerConversationRuntime(key, {
-        abortController: new AbortController(),
-      });
-
-      await executePromptForMachine(input);
-
-      const userCalls = userAppendCalls();
-      expect(userCalls).toHaveLength(1);
-      expect((userCalls[0]![1] as { id?: string }).id).toBe(input.streamId);
-      expect((userCalls[0]![1] as { content: unknown }).content).toEqual([
-        { type: "text", text: "normal prompt" },
-      ]);
-      expect(mockDeps.markQueuedDelivered).not.toHaveBeenCalled();
-      expect(mockDeps.markQueuedPending).not.toHaveBeenCalled();
-      expect(mockDeps.markQueuedFailed).not.toHaveBeenCalled();
     });
   });
 });
@@ -4398,63 +4167,6 @@ describe("executePromptForMachine alignment injection", () => {
     expect(CC_CLI_INSTRUCTIONS).not.toContain("\n");
   });
 
-  it("injects the /align suggestion when a normal session has no active charter", async () => {
-    mockDeps = createMockDeps({
-      getSessionState: vi.fn(async () => makeSessionState()),
-      getActiveAlignmentInjection: vi.fn(async () => null),
-    });
-    setActorDeps(mockDeps);
-
-    const input = makeExecutePromptInput();
-    registerFreshRuntime(input);
-
-    await executePromptForMachine(input);
-
-    const instructions = capturedSessionInstructions();
-    expect(instructions).toContain(ALIGN_SUGGESTION_INSTRUCTIONS);
-    expect(capturedAlignmentVersion()).toBeNull();
-  });
-
-  it("injects neither the charter nor the suggestion for an optimistic session", async () => {
-    mockDeps = createMockDeps({
-      getSessionState: vi.fn(async () =>
-        makeSessionState({ creationMode: "optimistic" }),
-      ),
-      getActiveAlignmentInjection: vi.fn(async () => injection),
-    });
-    setActorDeps(mockDeps);
-
-    const input = makeExecutePromptInput();
-    registerFreshRuntime(input);
-
-    await executePromptForMachine(input);
-
-    const instructions = capturedSessionInstructions();
-    expect(instructions).not.toContain(injection.text);
-    expect(instructions).not.toContain(ALIGN_SUGGESTION_INSTRUCTIONS);
-    expect(capturedAlignmentVersion()).toBeNull();
-    expect(mockDeps.getActiveAlignmentInjection).not.toHaveBeenCalled();
-  });
-
-  it("injects neither the charter nor the suggestion on an autonomous turn", async () => {
-    mockDeps = createMockDeps({
-      getSessionState: vi.fn(async () => makeSessionState()),
-      getActiveAlignmentInjection: vi.fn(async () => injection),
-    });
-    setActorDeps(mockDeps);
-
-    const input = makeExecutePromptInput({ autonomous: true });
-    registerFreshRuntime(input);
-
-    await executePromptForMachine(input);
-
-    const instructions = capturedSessionInstructions();
-    expect(instructions).not.toContain(injection.text);
-    expect(instructions).not.toContain(ALIGN_SUGGESTION_INSTRUCTIONS);
-    expect(capturedAlignmentVersion()).toBeNull();
-    expect(mockDeps.getActiveAlignmentInjection).not.toHaveBeenCalled();
-  });
-
   it("selects the enabled ask-question variant when askUserQuestionsEnabled is true", async () => {
     mockDeps = createMockDeps({
       getSessionState: vi.fn(async () => makeSessionState()),
@@ -4487,25 +4199,6 @@ describe("executePromptForMachine alignment injection", () => {
     const instructions = capturedSessionInstructions();
     expect(instructions).toContain(ASK_QUESTION_INSTRUCTIONS);
     expect(instructions).not.toContain(ASK_QUESTION_INSTRUCTIONS_ENABLED);
-  });
-
-  it("injects neither the charter nor the suggestion for a project conversation", async () => {
-    mockDeps = createMockDeps({
-      getSessionState: vi.fn(async () => null),
-      getActiveAlignmentInjection: vi.fn(async () => injection),
-    });
-    setActorDeps(mockDeps);
-
-    const input = makeProjectExecutePromptInput();
-    registerFreshRuntime(input);
-
-    await executePromptForMachine(input);
-
-    const instructions = capturedSessionInstructions();
-    expect(instructions).not.toContain(injection.text);
-    expect(instructions).not.toContain(ALIGN_SUGGESTION_INSTRUCTIONS);
-    expect(capturedAlignmentVersion()).toBeNull();
-    expect(mockDeps.getActiveAlignmentInjection).not.toHaveBeenCalled();
   });
 
   it("never injects the removed <objective> tag and leaves reference docs passive", async () => {

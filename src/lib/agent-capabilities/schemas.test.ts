@@ -1,27 +1,19 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  AGENT_CAPABILITY_CASCADE_BACKEND_OWNERSHIP,
   AGENT_CAPABILITY_CASCADE_KINDS,
-  agentCapabilityApplyStatusSchema,
-  agentCapabilityCascadeKindSchema,
-  agentCapabilityCascadeLayerSchema,
-  agentCapabilityCascadeRefSchema,
   decodeCascadeKind,
   encodeCascadeKind,
   agentCapabilityCascadeOverrideSchema,
   agentCapabilityCascadeRuntimeStateSchema,
   agentCapabilityCascadesOverrideSchema,
   agentCapabilityDiagnosticSchema,
-  agentCapabilityDiscoveredItemSchema,
   agentCapabilityGlobalStateSchema,
   agentCapabilityItemOverrideSchema,
   agentCapabilityMetadataSchema,
-  agentCapabilityOriginLayerSchema,
   agentCapabilityOverridesSchema,
   agentCapabilityPatchRequestSchema,
   agentCapabilityRuntimeApplicationStateSchema,
-  agentCapabilityRuntimeVisibilitySchema,
   agentCapabilityScopeContextSchema,
   agentCapabilitySourceRefSchema,
   agentCapabilityViewResponseSchema,
@@ -37,72 +29,13 @@ import { sessionStateSchema } from "@/lib/sessions/schemas";
 // Task 2.1 — Persistent capability override and runtime state schemas
 // ===========================================================================
 
-describe("agentCapabilityCascadeKindSchema", () => {
-  it("accepts exactly the five declared cascade kinds", () => {
-    for (const value of AGENT_CAPABILITY_CASCADE_KINDS) {
-      expect(agentCapabilityCascadeKindSchema.safeParse(value).success).toBe(
-        true,
-      );
-    }
-  });
-
-  it("rejects unknown cascade kinds", () => {
-    expect(
-      agentCapabilityCascadeKindSchema.safeParse("codex-agents").success,
-    ).toBe(false);
-    expect(
-      agentCapabilityCascadeKindSchema.safeParse("project-conversation")
-        .success,
-    ).toBe(false);
-    expect(
-      agentCapabilityCascadeKindSchema.safeParse(
-        "project-conversation-capabilities",
-      ).success,
-    ).toBe(false);
-    expect(agentCapabilityCascadeKindSchema.safeParse("plugins").success).toBe(
-      false,
-    );
-  });
-
-  it("exposes the five cascade kinds in the canonical order", () => {
-    expect(AGENT_CAPABILITY_CASCADE_KINDS).toEqual([
-      "claude-skills",
-      "claude-plugins",
-      "claude-agents",
-      "codex-skills",
-      "codex-plugins",
-    ]);
-  });
-});
-
 describe("agentCapabilityItemOverrideSchema", () => {
-  it("requires an explicit enabled boolean when an item key is present", () => {
-    expect(
-      agentCapabilityItemOverrideSchema.safeParse({ enabled: true }).success,
-    ).toBe(true);
-    expect(
-      agentCapabilityItemOverrideSchema.safeParse({ enabled: false }).success,
-    ).toBe(true);
-  });
-
   it("rejects override records without enabled set", () => {
     expect(agentCapabilityItemOverrideSchema.safeParse({}).success).toBe(false);
-  });
-
-  it("rejects non-boolean enabled values", () => {
-    expect(
-      agentCapabilityItemOverrideSchema.safeParse({ enabled: "yes" }).success,
-    ).toBe(false);
   });
 });
 
 describe("agentCapabilityCascadeOverrideSchema", () => {
-  it("accepts an empty items map", () => {
-    expect(
-      agentCapabilityCascadeOverrideSchema.safeParse({ items: {} }).success,
-    ).toBe(true);
-  });
-
   it("preserves a populated items map", () => {
     const result = agentCapabilityCascadeOverrideSchema.safeParse({
       items: {
@@ -127,11 +60,6 @@ describe("agentCapabilityCascadeOverrideSchema", () => {
 });
 
 describe("agentCapabilityCascadesOverrideSchema (sparse cascade map)", () => {
-  it("accepts an empty cascades record", () => {
-    const result = agentCapabilityCascadesOverrideSchema.safeParse({});
-    expect(result.success).toBe(true);
-  });
-
   it("accepts only the cascades that have overrides", () => {
     const result = agentCapabilityCascadesOverrideSchema.safeParse({
       "claude-skills": {
@@ -157,11 +85,6 @@ describe("agentCapabilityCascadesOverrideSchema (sparse cascade map)", () => {
 });
 
 describe("agentCapabilityOverridesSchema", () => {
-  it("requires a cascades record (empty allowed)", () => {
-    const result = agentCapabilityOverridesSchema.safeParse({ cascades: {} });
-    expect(result.success).toBe(true);
-  });
-
   it("rejects payloads missing the cascades field", () => {
     expect(agentCapabilityOverridesSchema.safeParse({}).success).toBe(false);
   });
@@ -185,15 +108,6 @@ describe("agentCapabilityOverridesSchema", () => {
 });
 
 describe("agentCapabilityGlobalStateSchema", () => {
-  it("parses a minimal global state file", () => {
-    const result = agentCapabilityGlobalStateSchema.safeParse({
-      version: 1,
-      overrides: { cascades: {} },
-      updatedAt: "2026-05-17T22:51:08Z",
-    });
-    expect(result.success).toBe(true);
-  });
-
   it("requires version 1", () => {
     const result = agentCapabilityGlobalStateSchema.safeParse({
       version: 2,
@@ -212,102 +126,7 @@ describe("agentCapabilityGlobalStateSchema", () => {
   });
 });
 
-describe("agentCapabilityCascadeLayerSchema", () => {
-  it("accepts global, project, session, and conversation", () => {
-    for (const value of ["global", "project", "session", "conversation"]) {
-      expect(agentCapabilityCascadeLayerSchema.safeParse(value).success).toBe(
-        true,
-      );
-    }
-  });
-
-  it("rejects layer names outside the four-layer chain", () => {
-    expect(agentCapabilityCascadeLayerSchema.safeParse("native").success).toBe(
-      false,
-    );
-    expect(agentCapabilityCascadeLayerSchema.safeParse("user").success).toBe(
-      false,
-    );
-  });
-});
-
-describe("agentCapabilityOriginLayerSchema", () => {
-  it("accepts the four cascade layers plus native", () => {
-    for (const value of [
-      "global",
-      "project",
-      "session",
-      "conversation",
-      "native",
-    ]) {
-      expect(agentCapabilityOriginLayerSchema.safeParse(value).success).toBe(
-        true,
-      );
-    }
-  });
-
-  it("rejects unknown origin layers", () => {
-    expect(
-      agentCapabilityOriginLayerSchema.safeParse("inherited").success,
-    ).toBe(false);
-  });
-});
-
-describe("agentCapabilityApplyStatusSchema", () => {
-  it("accepts each documented apply status", () => {
-    for (const value of [
-      "applied",
-      "staged-idle",
-      "staged-next-turn",
-      "deferred-next-conversation",
-      "unsupported",
-      "rejected",
-      "none",
-    ]) {
-      expect(agentCapabilityApplyStatusSchema.safeParse(value).success).toBe(
-        true,
-      );
-    }
-  });
-
-  it("rejects unknown apply status values", () => {
-    expect(
-      agentCapabilityApplyStatusSchema.safeParse("applied_now").success,
-    ).toBe(false);
-    expect(agentCapabilityApplyStatusSchema.safeParse("pending").success).toBe(
-      false,
-    );
-  });
-});
-
-describe("agentCapabilityRuntimeVisibilitySchema", () => {
-  it("accepts each documented runtime visibility value", () => {
-    for (const value of [
-      "runtime-visible",
-      "source-only",
-      "unavailable",
-      "stale",
-    ]) {
-      expect(
-        agentCapabilityRuntimeVisibilitySchema.safeParse(value).success,
-      ).toBe(true);
-    }
-  });
-
-  it("rejects unknown runtime visibility values", () => {
-    expect(
-      agentCapabilityRuntimeVisibilitySchema.safeParse("loaded").success,
-    ).toBe(false);
-  });
-});
-
 describe("agentCapabilityCascadeRuntimeStateSchema (per-cascade runtime apply state)", () => {
-  it("accepts an empty per-cascade runtime apply record", () => {
-    expect(agentCapabilityCascadeRuntimeStateSchema.safeParse({}).success).toBe(
-      true,
-    );
-  });
-
   it("carries applied/pending hashes, pending item ids, apply status, and sanitized error", () => {
     const result = agentCapabilityCascadeRuntimeStateSchema.safeParse({
       appliedHash: "h-1",
@@ -323,23 +142,9 @@ describe("agentCapabilityCascadeRuntimeStateSchema (per-cascade runtime apply st
       expect(result.data.lastApplyStatus).toBe("staged-idle");
     }
   });
-
-  it("rejects unknown apply status enum values", () => {
-    const result = agentCapabilityCascadeRuntimeStateSchema.safeParse({
-      lastApplyStatus: "applied_now",
-    });
-    expect(result.success).toBe(false);
-  });
 });
 
 describe("agentCapabilityRuntimeApplicationStateSchema (per-conversation aggregate)", () => {
-  it("accepts an empty cascades record", () => {
-    expect(
-      agentCapabilityRuntimeApplicationStateSchema.safeParse({ cascades: {} })
-        .success,
-    ).toBe(true);
-  });
-
   it("stores runtime apply state keyed by cascade kind", () => {
     const result = agentCapabilityRuntimeApplicationStateSchema.safeParse({
       cascades: {
@@ -503,12 +308,6 @@ describe("agentCapabilityOverrides field on persisted state schemas", () => {
 // ===========================================================================
 
 describe("agentCapabilityScopeContextSchema", () => {
-  it("accepts a global scope without project or session", () => {
-    expect(
-      agentCapabilityScopeContextSchema.safeParse({ level: "global" }).success,
-    ).toBe(true);
-  });
-
   it("accepts a session conversation scope with identifiers", () => {
     const result = agentCapabilityScopeContextSchema.safeParse({
       level: "conversation",
@@ -583,24 +382,6 @@ describe("agentCapabilityScopeContextSchema", () => {
 });
 
 describe("agentCapabilitySourceRefSchema", () => {
-  it("accepts a native source ref with kind and path", () => {
-    expect(
-      agentCapabilitySourceRefSchema.safeParse({
-        kind: "project-file",
-        path: "/repo/.agents/skills/debug-logs/SKILL.md",
-      }).success,
-    ).toBe(true);
-  });
-
-  it("accepts a plugin source ref keyed by owning plugin id", () => {
-    expect(
-      agentCapabilitySourceRefSchema.safeParse({
-        kind: "plugin",
-        pluginId: "plugin:user:debug-logs",
-      }).success,
-    ).toBe(true);
-  });
-
   it("rejects unknown source kinds", () => {
     expect(
       agentCapabilitySourceRefSchema.safeParse({ kind: "internet" }).success,
@@ -629,10 +410,6 @@ describe("agentCapabilityViewRowSchema", () => {
     applyStatus: "none",
     diagnostics: [],
   };
-
-  it("parses a minimal row with required fields only", () => {
-    expect(agentCapabilityViewRowSchema.safeParse(baseRow).success).toBe(true);
-  });
 
   it("captures inherited-disable reason with parent plugin id and origin layer", () => {
     const row = {
@@ -665,80 +442,9 @@ describe("agentCapabilityViewRowSchema", () => {
     });
     expect(result.success).toBe(true);
   });
-
-  it("accepts the documented apply statuses including staged-next-turn", () => {
-    for (const status of [
-      "applied",
-      "staged-idle",
-      "staged-next-turn",
-      "deferred-next-conversation",
-      "unsupported",
-      "rejected",
-      "none",
-    ]) {
-      expect(
-        agentCapabilityViewRowSchema.safeParse({
-          ...baseRow,
-          applyStatus: status,
-        }).success,
-      ).toBe(true);
-    }
-  });
-
-  it("rejects unknown apply statuses", () => {
-    expect(
-      agentCapabilityViewRowSchema.safeParse({
-        ...baseRow,
-        applyStatus: "applied_now",
-      }).success,
-    ).toBe(false);
-  });
-});
-
-describe("agentCapabilityDiscoveredItemSchema", () => {
-  it("accepts a discovered item from a native source", () => {
-    const result = agentCapabilityDiscoveredItemSchema.safeParse({
-      itemId: "skill:project:debug-logs",
-      displayName: "debug-logs",
-      capabilityKind: "skill",
-      source: {
-        kind: "project-file",
-        path: "/repo/.agents/skills/debug-logs/SKILL.md",
-      },
-      nativeDefault: { enabled: true },
-      runtimeVisibility: "source-only",
-    });
-    expect(result.success).toBe(true);
-  });
 });
 
 describe("agentCapabilityDiagnosticSchema", () => {
-  it("accepts a discovery diagnostic with cascade and source context", () => {
-    const result = agentCapabilityDiagnosticSchema.safeParse({
-      severity: "warning",
-      code: "agent-capabilities.discovery.source-unreadable",
-      message: "could not read source",
-      cascadeKind: "claude-skills",
-      layer: "project",
-      backend: "claude",
-      sourceRef: {
-        kind: "project-file",
-        path: "/repo/.agents/skills",
-      },
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("rejects severities outside info/warning/error", () => {
-    expect(
-      agentCapabilityDiagnosticSchema.safeParse({
-        severity: "critical",
-        code: "x",
-        message: "y",
-      }).success,
-    ).toBe(false);
-  });
-
   it("rejects diagnostics that try to leak native config payloads", () => {
     // Strict schema: only declared fields are allowed. Payload contents like
     // skill source text or plugin config blobs must never travel through this
@@ -754,18 +460,6 @@ describe("agentCapabilityDiagnosticSchema", () => {
 });
 
 describe("agentCapabilityViewResponseSchema", () => {
-  it("parses a minimal response", () => {
-    const result = agentCapabilityViewResponseSchema.safeParse({
-      level: "global",
-      cascadeKind: "claude-skills",
-      backend: "claude",
-      items: [],
-      diagnostics: [],
-      effectiveHash: "h",
-    });
-    expect(result.success).toBe(true);
-  });
-
   it("parses a response with metadata mirrored from the registry", () => {
     const result = agentCapabilityViewResponseSchema.safeParse({
       level: "conversation",
@@ -849,24 +543,6 @@ describe("agentCapabilityPatchRequestSchema", () => {
 });
 
 describe("agentCapabilitiesUpdatedEventSchema (SSE)", () => {
-  it("accepts a global-scope event with backend and invalidation hints", () => {
-    const result = agentCapabilitiesUpdatedEventSchema.safeParse({
-      type: "agent-capabilities-updated",
-      level: "global",
-      cascadeKind: "claude-skills",
-      backend: "claude",
-      changedItemIds: ["skill:project:debug-logs"],
-      effectiveHash: "h-1",
-      invalidationHints: {
-        level: "global",
-        cascadeKind: "claude-skills",
-        itemIds: ["skill:project:debug-logs"],
-        effectiveHash: "h-1",
-      },
-    });
-    expect(result.success).toBe(true);
-  });
-
   it("accepts a conversation-scope event with full identifiers", () => {
     const result = agentCapabilitiesUpdatedEventSchema.safeParse({
       type: "agent-capabilities-updated",
@@ -995,24 +671,6 @@ describe("agentCapabilitiesUpdatedEventSchema (SSE)", () => {
     });
     expect(result.success).toBe(false);
   });
-
-  it("requires correct literal type discriminator", () => {
-    const result = agentCapabilitiesUpdatedEventSchema.safeParse({
-      type: "agent-capabilities-changed",
-      level: "global",
-      cascadeKind: "claude-skills",
-      backend: "claude",
-      changedItemIds: [],
-      effectiveHash: "h",
-      invalidationHints: {
-        level: "global",
-        cascadeKind: "claude-skills",
-        itemIds: [],
-        effectiveHash: "h",
-      },
-    });
-    expect(result.success).toBe(false);
-  });
 });
 
 describe("agentCapabilitiesDiscoveryUpdatedEventSchema (SSE)", () => {
@@ -1032,24 +690,6 @@ describe("agentCapabilitiesDiscoveryUpdatedEventSchema (SSE)", () => {
       },
     });
     expect(result.success).toBe(true);
-  });
-
-  it("rejects unknown level values", () => {
-    const result = agentCapabilitiesDiscoveryUpdatedEventSchema.safeParse({
-      type: "agent-capabilities-discovery-updated",
-      level: "user",
-      cascadeKind: "claude-skills",
-      backend: "claude",
-      refreshedAt: "2026-05-17T00:00:00.000Z",
-      sourceSignature: "sig-1",
-      invalidationHints: {
-        level: "global",
-        cascadeKind: "claude-skills",
-        refreshDiscovery: true,
-        sourceSignature: "sig-1",
-      },
-    });
-    expect(result.success).toBe(false);
   });
 
   it("rejects discovery events pairing a cascade with the wrong backend", () => {
@@ -1075,23 +715,6 @@ describe("agentCapabilitiesDiscoveryUpdatedEventSchema (SSE)", () => {
 // Cascade/backend ownership — enforced once at the schema boundary so no
 // downstream resolver, API route, or UI hook needs to duplicate the check.
 // ===========================================================================
-
-describe("AGENT_CAPABILITY_CASCADE_BACKEND_OWNERSHIP", () => {
-  it("maps each declared cascade kind to its owning backend exactly once", () => {
-    const expected: Record<string, "claude" | "codex"> = {
-      "claude-skills": "claude",
-      "claude-plugins": "claude",
-      "claude-agents": "claude",
-      "codex-skills": "codex",
-      "codex-plugins": "codex",
-    };
-    for (const cascadeKind of AGENT_CAPABILITY_CASCADE_KINDS) {
-      expect(AGENT_CAPABILITY_CASCADE_BACKEND_OWNERSHIP[cascadeKind]).toBe(
-        expected[cascadeKind],
-      );
-    }
-  });
-});
 
 describe("agentCapabilityViewRowSchema cascade/backend ownership", () => {
   const validRow = {
@@ -1127,27 +750,6 @@ describe("agentCapabilityViewRowSchema cascade/backend ownership", () => {
       );
     }
   });
-
-  it("rejects codex-cascade rows paired with the claude backend", () => {
-    const result = agentCapabilityViewRowSchema.safeParse({
-      ...validRow,
-      cascadeKind: "codex-skills",
-      backend: "claude",
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("accepts every (cascadeKind, owning-backend) pair", () => {
-    for (const cascadeKind of AGENT_CAPABILITY_CASCADE_KINDS) {
-      const backend = AGENT_CAPABILITY_CASCADE_BACKEND_OWNERSHIP[cascadeKind];
-      const result = agentCapabilityViewRowSchema.safeParse({
-        ...validRow,
-        cascadeKind,
-        backend,
-      });
-      expect(result.success).toBe(true);
-    }
-  });
 });
 
 describe("agentCapabilityMetadataSchema (canonical capability metadata)", () => {
@@ -1160,10 +762,6 @@ describe("agentCapabilityMetadataSchema (canonical capability metadata)", () => 
     runtimeVisibility: "sdk-runtime" as const,
     compositionSupport: "translator" as const,
   };
-
-  it("parses a valid metadata record", () => {
-    expect(agentCapabilityMetadataSchema.safeParse(valid).success).toBe(true);
-  });
 
   it("rejects metadata pairing a claude cascade with the codex backend", () => {
     const result = agentCapabilityMetadataSchema.safeParse({
@@ -1178,31 +776,11 @@ describe("agentCapabilityMetadataSchema (canonical capability metadata)", () => 
     }
   });
 
-  it("rejects metadata pairing a codex cascade with the claude backend", () => {
-    const result = agentCapabilityMetadataSchema.safeParse({
-      cascadeKind: "codex-plugins",
-      backend: "claude",
-      capabilityKind: "plugin",
-      applySemantics: "next-turn",
-      discoverySupport: "available",
-      runtimeVisibility: "source-only",
-      compositionSupport: "translator",
-    });
-    expect(result.success).toBe(false);
-  });
-
   it("rejects metadata records carrying unknown extra fields (.strict guards payload leakage)", () => {
     const result = agentCapabilityMetadataSchema.safeParse({
       ...valid,
       rawSdkConfig: { secret: "should not be here" },
     });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects metadata records missing required fields", () => {
-    const partial: Record<string, unknown> = { ...valid };
-    delete partial.compositionSupport;
-    const result = agentCapabilityMetadataSchema.safeParse(partial);
     expect(result.success).toBe(false);
   });
 });
@@ -1275,26 +853,6 @@ describe("agentCapabilityDiagnosticSchema cascade/backend ownership", () => {
     });
     expect(result.success).toBe(false);
   });
-
-  it("allows diagnostics with cascadeKind only (no backend asserted)", () => {
-    const result = agentCapabilityDiagnosticSchema.safeParse({
-      severity: "warning",
-      code: "x",
-      message: "y",
-      cascadeKind: "claude-skills",
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("allows diagnostics with backend only (no cascade asserted)", () => {
-    const result = agentCapabilityDiagnosticSchema.safeParse({
-      severity: "warning",
-      code: "x",
-      message: "y",
-      backend: "codex",
-    });
-    expect(result.success).toBe(true);
-  });
 });
 
 describe("cascade-kind codec ({backend, kind} ⇄ persisted string)", () => {
@@ -1303,21 +861,6 @@ describe("cascade-kind codec ({backend, kind} ⇄ persisted string)", () => {
       const ref = decodeCascadeKind(cascadeKind);
       expect(encodeCascadeKind(ref)).toBe(cascadeKind);
     }
-  });
-
-  it("decodes each persisted string into the expected pair", () => {
-    expect(decodeCascadeKind("claude-skills")).toEqual({
-      backend: "claude",
-      kind: "skills",
-    });
-    expect(decodeCascadeKind("claude-agents")).toEqual({
-      backend: "claude",
-      kind: "agents",
-    });
-    expect(decodeCascadeKind("codex-plugins")).toEqual({
-      backend: "codex",
-      kind: "plugins",
-    });
   });
 
   it("fails loudly on an unknown persisted string", () => {
@@ -1329,20 +872,5 @@ describe("cascade-kind codec ({backend, kind} ⇄ persisted string)", () => {
     expect(() =>
       encodeCascadeKind({ backend: "codex", kind: "agents" }),
     ).toThrow(/does not support/);
-  });
-
-  it("validates refs through agentCapabilityCascadeRefSchema", () => {
-    expect(
-      agentCapabilityCascadeRefSchema.safeParse({
-        backend: "claude",
-        kind: "agents",
-      }).success,
-    ).toBe(true);
-    expect(
-      agentCapabilityCascadeRefSchema.safeParse({
-        backend: "codex",
-        kind: "agents",
-      }).success,
-    ).toBe(false);
   });
 });

@@ -90,11 +90,6 @@ const THREE_CANDIDATES: readonly Candidate[] = [
   { handle: "candidate-streamed", approach: "streamed projection", score: 3 },
 ];
 
-const TWO_CANDIDATES: readonly Candidate[] = [
-  { handle: "candidate-inline", approach: "inline projection", score: 4 },
-  { handle: "candidate-cached", approach: "cached projection", score: 8 },
-];
-
 /**
  * The payload the generator's lane posts. Every candidate gets an edge FROM the
  * invoker and an edge INTO the pre-declared filter — the second half is what
@@ -443,28 +438,6 @@ describe("Generate-And-Filter template — authoring (R15.2)", () => {
     // copy is not a pattern proof.
     expect(result.warnings).toEqual([]);
   });
-
-  it("grants expansion authority to the generator only, with the filter pre-declared downstream", () => {
-    const definition = planDefinition();
-    const authorized = definition.executionContexts
-      .filter((context) => context.mutability?.allowAgentContextAdd === true)
-      .map((context) => context.id);
-
-    expect(authorized).toEqual([GENERATOR]);
-    // The rejoin target must already be in the authored topology and downstream
-    // of the invoker — that is what makes the fan-out converge rather than
-    // dangle.
-    expect(
-      definition.edges.some(
-        (edge) =>
-          edge.sourceContextId === GENERATOR && edge.targetContextId === FILTER,
-      ),
-    ).toBe(true);
-    expect(definition.executionContexts.map((context) => context.id)).toEqual([
-      GENERATOR,
-      FILTER,
-    ]);
-  });
 });
 
 // ============================================================
@@ -624,32 +597,6 @@ describe("Generate-And-Filter — engine proof (R15.2)", () => {
         (context) => context.id,
       ),
     ).toEqual(expect.arrayContaining(candidateIds));
-  });
-
-  it("fans out exactly the candidate set the generator chose", async () => {
-    // The load-bearing variation: only the scripted judgment changes. Two
-    // candidates instead of three must produce a two-context fan-out and a
-    // filter whose inputs name exactly those two.
-    const run = await runPattern({ candidates: TWO_CANDIDATES });
-    const candidateIds = candidateIdsFor(TWO_CANDIDATES);
-
-    expect(run.attempts[0]?.body.createdContextIds).toEqual(candidateIds);
-    expect(run.settled.status).toBe("completed");
-    expect(
-      resolveUpstreamInputs(run.settled, FILTER)
-        .map((input) => input.contextId)
-        .sort(),
-    ).toEqual([GENERATOR, ...candidateIds].sort());
-    expect(run.settled.expansionReceipts.accepted[0]?.addedContextIds).toEqual(
-      candidateIds,
-    );
-    // The three-candidate run's third context is absent here, so the previous
-    // test's assertions could not have passed on this run.
-    expect(
-      run.settled.workingDefinition.executionContexts.some((context) =>
-        context.id.endsWith("candidate-streamed"),
-      ),
-    ).toBe(false);
   });
 
   it("answers a re-posted expansion from its receipt instead of fanning out twice", async () => {

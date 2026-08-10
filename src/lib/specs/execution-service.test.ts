@@ -165,22 +165,6 @@ describe("ExecutionService start", () => {
     ).toEqual({ count: 0 });
   });
 
-  it("launches the approved attempt pin while a later revision is proposed", async () => {
-    const result = await service.start({
-      specId,
-      revisionId: proposedRevisionId,
-      actor: { kind: "human" },
-      sessionName: "session-execution",
-    });
-
-    expect(result).toMatchObject({
-      ok: true,
-      execution: { revision_id: revisionId },
-      deliveryPlan: { attemptId: approvedLaunch.attemptId },
-    });
-    expect(definitions.records).toHaveLength(1);
-  });
-
   it("3.10 refuses execution start for an abandoned spec before preparing a definition", async () => {
     db.prepare(
       "UPDATE specs SET abandoned_at = ?, abandoned_reason = ? WHERE id = ?",
@@ -431,21 +415,6 @@ describe("ExecutionService start", () => {
     expect(kinds).toContain("execution_abandoned");
     if (result.ok) throw new Error("the launch should have been refused");
     expect(result.refusal.instruction).toContain("Nothing is running");
-  });
-
-  it("16.8 exposes no pin mutation path and caller mutations cannot change the stored pin", async () => {
-    const result = await service.start(startInput());
-    if (!result.ok) throw new Error("start was refused");
-
-    approvedLaunch.scope.selectedTaskIds.splice(0);
-    approvedLaunch.scope.selectedCriterionIds.splice(0);
-    expect(
-      JSON.parse(
-        deps.deliveryRepo.findExecutionById(result.execution.id)?.scope_json ??
-          "null",
-      ),
-    ).toEqual(fullScope());
-    expect(service).not.toHaveProperty("updatePin");
   });
 
   it("3.5 marks a linked workflow execution running idempotently and ignores unlinked callbacks", async () => {
@@ -828,19 +797,6 @@ describe("ExecutionService start", () => {
     });
   });
 
-  it("admits definition approvals for definitions no spec execution prepared", async () => {
-    const callbacks = createExecutionLifecycleCallbacks(deps);
-
-    await expect(
-      callbacks.admitDefinitionApproval(
-        lifecycleContext,
-        "workflow-unrelated",
-        "definition-unrelated",
-        1,
-      ),
-    ).resolves.toEqual({ ok: true });
-  });
-
   it.each(["abandoned", "delivered"] as const)(
     "redirects a terminal %s execution to the seeded delivery-plan path",
     async (state) => {
@@ -878,35 +834,6 @@ describe("ExecutionService start", () => {
       expect(admitted.instruction).toContain("cctl spec start native-sdd");
     },
   );
-
-  it("records a notify-policy execution_start admission when a Notify-dial run reaches running", async () => {
-    db.prepare("UPDATE specs SET gate_policy_json = ? WHERE id = ?").run(
-      '{"preset":"fast-path"}',
-      specId,
-    );
-    const started = await service.start(startInput());
-    if (!started.ok) throw new Error("start was refused");
-    const callbacks = createExecutionLifecycleCallbacks(deps);
-
-    await callbacks.markRunning(
-      lifecycleContext,
-      "workflow-notify-run",
-      started.definition.id,
-      started.definition.revision,
-    );
-    // A second report must not duplicate the admission row.
-    await service.markRunning("workflow-notify-run");
-
-    const admissions = deps.reviewRepo
-      .findGateAdmissionsByRevision(revisionId)
-      .filter((admission) => admission.gate === "execution_start");
-    expect(admissions).toHaveLength(1);
-    expect(admissions[0]).toMatchObject({
-      basis: "notify_policy",
-      execution_id: started.execution.id,
-      approval_id: null,
-    });
-  });
 
   it("11.2/19.1 commits the execution_start policy admission with its typed gate event and posts one post-hoc notice", async () => {
     db.prepare("UPDATE specs SET gate_policy_json = ? WHERE id = ?").run(
@@ -1176,24 +1103,6 @@ describe("ExecutionService start", () => {
     // Honest-stale: no sealing commit ever named the validated sha.
     expect(JSON.parse(rows[0]!.evaluated_state_json)).toEqual({
       relevantPaths: [],
-    });
-  });
-
-  it("adapts workflow lifecycle callbacks to the linked immutable spec execution", async () => {
-    const running = await startRunning();
-    deps.getPublishedMerge = vi.fn(async () => ({
-      mergeHash: "merge-sha-callback",
-      deliveryGatePassed: true,
-    }));
-    const callbacks = createExecutionLifecycleCallbacks(deps);
-
-    const workflowExecutionId = `workflow-${running.id}`;
-    await callbacks.markRunning(lifecycleContext, workflowExecutionId);
-    await callbacks.markDelivered(workflowExecutionId, "merge-sha-callback");
-
-    expect(deps.deliveryRepo.findExecutionById(running.id)).toMatchObject({
-      state: "delivered",
-      delivered_at: now,
     });
   });
 
@@ -1667,15 +1576,6 @@ describe("ExecutionService execution-start gate", () => {
     service = createExecutionService(deps);
   });
 
-  function startInput() {
-    return {
-      specId,
-      revisionId,
-      actor: { kind: "agent" as const, conversationId: "conversation-start" },
-      sessionName: "session-execution",
-    };
-  }
-
   function startedExecutionId(
     sessionName: string | null = "session-execution",
   ): string {
@@ -1686,18 +1586,6 @@ describe("ExecutionService execution-start gate", () => {
     deps.deliveryRepo.insertExecution(execution);
     return execution.id;
   }
-
-  it("launches an approved candidate without touching the historical definition-approval ports", async () => {
-    const started = await service.start(startInput());
-
-    expect(started.ok).toBe(true);
-    expect(gate.launchApprovedDefinition).toHaveBeenCalledOnce();
-
-    expect(gate.hasPendingDefinitionApproval).not.toHaveBeenCalled();
-    expect(gate.ensurePendingDefinitionApproval).not.toHaveBeenCalled();
-    expect(gate.grantApproval).not.toHaveBeenCalled();
-    expect(gate.approveWorkflowDefinition).not.toHaveBeenCalled();
-  });
 
   it("launches the prepared definition before recording exactly one human approval when no workflow execution is pending", async () => {
     const executionId = await startedExecutionId();
@@ -1920,10 +1808,18 @@ describe("ExecutionService execution-start gate", () => {
     expect(result).toMatchObject({ ok: true, value: { id: executionId } });
   });
 
-  it("refuses an unknown execution and a spec mismatch", async () => {
+  it("refuses missing and foreign-spec executions before touching the gate", async () => {
     const missing = await service.approveExecutionStart({
       specId,
       executionId: "execution-unknown",
+      actor: { kind: "human" },
+      approver: "operator",
+      projectName: "repo-project",
+    });
+    const foreignExecutionId = startedExecutionId();
+    const foreign = await service.approveExecutionStart({
+      specId: "spec-other",
+      executionId: foreignExecutionId,
       actor: { kind: "human" },
       approver: "operator",
       projectName: "repo-project",
@@ -1933,7 +1829,13 @@ describe("ExecutionService execution-start gate", () => {
       ok: false,
       refusal: { code: "not_found" },
     });
+    expect(foreign).toMatchObject({
+      ok: false,
+      refusal: { code: "validation" },
+    });
+    expect(gate.hasPendingDefinitionApproval).not.toHaveBeenCalled();
     expect(gate.grantApproval).not.toHaveBeenCalled();
+    expect(gate.approveWorkflowDefinition).not.toHaveBeenCalled();
   });
 
   it("refuses when the execution has no session to start the workflow in", async () => {

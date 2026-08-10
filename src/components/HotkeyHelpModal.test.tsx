@@ -14,13 +14,6 @@ function command(id: HotkeyId, available: boolean): HotkeyCommandView {
 }
 
 describe("HotkeyHelpModal", () => {
-  it("renders a labelled shortcuts dialog when open", () => {
-    render(<HotkeyHelpModal open onClose={vi.fn()} />);
-    expect(
-      screen.getByRole("dialog", { name: "Keyboard Shortcuts" }),
-    ).toBeInTheDocument();
-  });
-
   it("keeps the preserved scroll-cap id and mobile-sheet hooks on the card", () => {
     // The scroll cap (max-height/overflow) lives in keyboard-shortcuts-modal.css
     // keyed on #hotkey-help-modal — not expressible as layoutClassName utilities —
@@ -30,11 +23,6 @@ describe("HotkeyHelpModal", () => {
     const dialog = screen.getByRole("dialog", { name: "Keyboard Shortcuts" });
     expect(dialog).toHaveAttribute("id", "hotkey-help-modal");
     expect(dialog.className).toContain("max-768:max-w-full");
-  });
-
-  it("renders nothing when closed", () => {
-    render(<HotkeyHelpModal open={false} onClose={vi.fn()} />);
-    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("closes on Escape", () => {

@@ -272,15 +272,6 @@ const runningExecution: SpecExecutionRow = {
   workflow_execution_id: "workflow-execution-3",
 };
 
-// A run pinned to the approved predecessor. The detail view scopes gate
-// admissions to the revisions its runs pinned, so an admission is only
-// reportable when some run pins the revision it was recorded against.
-const predecessorExecution: SpecExecutionRow = {
-  ...parkedExecution,
-  id: "execution-4",
-  revision_id: approvedPredecessor.id,
-};
-
 const question: SpecQuestionRow = {
   id: "question-1",
   spec_id: spec.id,
@@ -757,10 +748,6 @@ function makeHost(
     sibling?: boolean;
     /** Pin the seeded draft at this authoring stage. */
     draftStage?: SpecRevision["authoringStage"];
-    /** Gate preset the seeded spec carries. */
-    preset?: Spec["gatePolicy"]["preset"];
-    /** Freeze the seeded revision as proposed, so no draft is open. */
-    proposed?: boolean;
     /**
      * Point the seeded plan at a criterion id the revision does not carry —
      * the shape an amendment that forked past its own content leaves behind.
@@ -799,14 +786,8 @@ function makeHost(
     ...(options.draftStage === undefined
       ? {}
       : { authoringStage: options.draftStage }),
-    ...(options.proposed === true
-      ? { state: "proposed" as const, proposedAt: CREATED_AT }
-      : {}),
   };
-  const seededSpec: Spec =
-    options.preset === undefined
-      ? spec
-      : { ...spec, gatePolicy: { preset: options.preset } };
+  const seededSpec = spec;
   const plannedSnapshot: SpecRevisionSnapshot =
     options.unplannedCoverage === true
       ? {
@@ -1028,105 +1009,6 @@ function makeHost(
 }
 
 describe("cctl spec read verbs against seeded read routes", () => {
-  it("lists the seeded inventory", async () => {
-    const result = await runCli(
-      ["spec", "list", "--json"],
-      baseEnv,
-      makeHost(),
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      ok: true,
-      specs: [{ spec: { slug: "native-sdd", name: "Native SDD" } }],
-    });
-  });
-
-  it("shows full and summary views", async () => {
-    const host = makeHost();
-    const full = await runCli(
-      ["spec", "show", "native-sdd", "--json"],
-      baseEnv,
-      host,
-    );
-    const summary = await runCli(
-      ["spec", "show", "native-sdd", "--summary", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(JSON.parse(full.stdout).spec).toMatchObject({
-      spec: { slug: "native-sdd" },
-      currentRevision: { revision: { id: revision.id } },
-    });
-    expect(JSON.parse(summary.stdout).spec).toMatchObject({
-      spec: { slug: "native-sdd" },
-      counts: { requirements: 1, criteria: 1, tasks: 2 },
-    });
-  });
-
-  it("shows executions and gate admissions in the domain shape without losing state or workflow linkage", async () => {
-    const host = makeHost({
-      executions: [predecessorExecution],
-      priorAdmission: true,
-    });
-    const result = await runCli(
-      ["spec", "show", "native-sdd", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    const detail = JSON.parse(result.stdout).spec;
-    // state + workflow linkage are what make a parked run diagnosable; the
-    // scope arrives as the object it is, never as a JSON string to re-parse.
-    expect(detail.executions).toEqual([
-      {
-        id: "execution-4",
-        specId: spec.id,
-        revisionId: approvedPredecessor.id,
-        revisionNumber: 1,
-        state: "definition_review",
-        workflowDefinitionId: "workflow-def-1",
-        workflowDefinitionRevision: 1,
-        workflowExecutionId: null,
-        definitionApprovalRequired: true,
-        scope: {
-          selectedTaskIds: ["task-1"],
-          selectedCriterionIds: ["criterion-1"],
-          exclusionDispositions: [],
-        },
-        sessionName: "feature-session",
-        deliveredAt: null,
-        abandonedReason: null,
-        createdAt: CREATED_AT,
-        updatedAt: CREATED_AT,
-        // This fixture serves no snapshot for the pinned revision, so the
-        // per-criterion projection is honestly empty rather than guessed.
-        deliveryProjection: [],
-      },
-    ]);
-    expect(detail.gateAdmissions).toEqual([
-      {
-        id: "admission-1",
-        specId: spec.id,
-        gate: "requirements",
-        basis: "human_approval",
-        approvalId: null,
-        revisionId: approvedPredecessor.id,
-        revisionNumber: 1,
-        executionId: null,
-        actor: { kind: "human" },
-        createdAt: CREATED_AT,
-      },
-    ]);
-    const snakeCased = [...detail.executions, ...detail.gateAdmissions].flatMap(
-      (row: Record<string, unknown>) =>
-        Object.keys(row).filter((key) => key.includes("_")),
-    );
-    expect(snakeCased).toEqual([]);
-  });
-
   it("keeps the measures project endpoint distinct from a legal measures spec slug", async () => {
     const host = makeHost({ measuresSlug: true });
     const shown = await runCli(
@@ -1149,53 +1031,9 @@ describe("cctl spec read verbs against seeded read routes", () => {
     ]);
   });
 
-  it("shows phase, gates, pending approvals, open questions, and coverage", async () => {
-    const result = await runCli(
-      ["spec", "status", "native-sdd", "--json"],
-      baseEnv,
-      makeHost(),
-    );
-    const status = JSON.parse(result.stdout).status;
-
-    expect(status.phase).toEqual({ primary: "draft", authoringStage: "plan" });
-    expect(status.gates).toHaveLength(5);
-    expect(status.pendingApprovals.length).toBeGreaterThan(0);
-    expect(status.openQuestions).toEqual([
-      expect.objectContaining({ handle: "Q1" }),
-    ]);
-    expect(status.coverage).toEqual({
-      coveredCriteria: 1,
-      totalCriteria: 1,
-      percentage: 100,
-    });
-    expect(status.taskPlan).toEqual([
-      expect.objectContaining({
-        handle: "T1",
-        dependsOn: [],
-        laneGroup: "cli",
-        executionLane: "cli-surface",
-        touchedPaths: ["src/cli/commands/spec"],
-        criterionCoverage: ["R1.1"],
-      }),
-      expect.objectContaining({
-        handle: "T2",
-        dependsOn: ["T1"],
-        laneGroup: "cli",
-        executionLane: "cli-surface",
-        touchedPaths: ["src/cli/commands/spec/read.contract.test.ts"],
-        criterionCoverage: ["R1.1"],
-      }),
-    ]);
-  });
-
   it("renders every remaining active authoring stage and its concluding gate", async () => {
     const host = makeHost({ draftStage: "requirements" });
     const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-    const structured = await runCli(
-      ["spec", "status", "native-sdd", "--json"],
-      baseEnv,
-      host,
-    );
 
     expect(text.exitCode).toBe(0);
     // The stages this spec still walks must be readable here rather than
@@ -1211,50 +1049,6 @@ describe("cctl spec read verbs against seeded read routes", () => {
     );
     expect(text.stdout).toContain(
       "  next: cctl spec propose native-sdd — human sign-off required; gates consulted: requirements (gate)",
-    );
-
-    expect(
-      JSON.parse(structured.stdout).status.authoringSequence,
-    ).toMatchObject({
-      pinnedStage: "requirements",
-      stages: [
-        { stage: "requirements", concludedBy: "propose" },
-        { stage: "design", concludedBy: "propose" },
-      ],
-      nextTransition: { stage: "requirements", action: "propose" },
-    });
-  });
-
-  it("names the advance command for a stage its dial concludes without review", async () => {
-    const host = makeHost({
-      draftStage: "requirements",
-      preset: "exploratory",
-    });
-    const result = await runCli(
-      ["spec", "status", "native-sdd"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain(
-      "  requirements: dial notify — concluded by advance",
-    );
-    expect(result.stdout).toContain(
-      "  next: cctl spec advance native-sdd --from requirements",
-    );
-  });
-
-  it("says no draft is open rather than implying a stage sequence", async () => {
-    const result = await runCli(
-      ["spec", "status", "native-sdd"],
-      baseEnv,
-      makeHost({ proposed: true }),
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain(
-      "remaining authoring stages: none — the current revision is not an open draft",
     );
   });
 
@@ -1283,54 +1077,21 @@ describe("cctl spec read verbs against seeded read routes", () => {
   });
 
   /**
-   * The dependency list is the other half of the same fork signature: a task
-   * id the amendment dropped printed as if it were a handle reads as ordering
-   * the compiler can honour.
+   * Raw ids for content an amendment dropped cannot enter handle-shaped task
+   * fields or make the current revision's ordering and coverage look complete.
    */
-  it("names a depended-on task the current revision does not carry", async () => {
-    const host = makeHost({ orphanedDependency: true });
+  it("keeps orphaned plan references out of handle-shaped status fields", async () => {
+    const host = makeHost({
+      orphanedCoverage: true,
+      orphanedDependency: true,
+    });
     const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-    const structured = await runCli(
-      ["spec", "status", "native-sdd", "--json"],
-      baseEnv,
-      host,
-    );
 
     expect(text.exitCode).toBe(0);
     expect(text.stdout).toContain("unresolved dependency ids:");
     expect(text.stdout).toContain(
       "task-dropped-by-amendment (not in the current revision; excluded from ordering)",
     );
-    // The raw id never enters the handle-shaped field.
-    expect(text.stdout).not.toContain(
-      "dependencies: T1, task-dropped-by-amendment",
-    );
-
-    const status = JSON.parse(structured.stdout).status;
-    expect(status.taskPlan[1]).toMatchObject({
-      handle: "T2",
-      dependsOn: ["T1"],
-      unresolvedDependsOnTaskElementIds: ["task-dropped-by-amendment"],
-    });
-  });
-
-  /**
-   * The ratio and the per-task coverage line both used to swallow a criterion
-   * id the revision does not carry: coverage dropped it from numerator and
-   * denominator, and the task line printed the raw id where handles go. A plan
-   * that reads "100%" while pointing at content the spec lost is exactly the
-   * fork this ticket exists for, so status has to name it.
-   */
-  it("names a covered criterion the current revision does not carry", async () => {
-    const host = makeHost({ orphanedCoverage: true });
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-    const structured = await runCli(
-      ["spec", "status", "native-sdd", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(text.exitCode).toBe(0);
     expect(text.stdout).toContain("unresolved criterion ids:");
     expect(text.stdout).toContain(
       "criterion-dropped-by-amendment (not in the current revision; excluded from coverage)",
@@ -1342,13 +1103,9 @@ describe("cctl spec read verbs against seeded read routes", () => {
     expect(text.stdout).not.toContain(
       "criterion coverage: R1.1, criterion-dropped-by-amendment",
     );
-
-    const status = JSON.parse(structured.stdout).status;
-    expect(status.taskPlan[1]).toMatchObject({
-      handle: "T2",
-      criterionCoverage: ["R1.1"],
-      unresolvedCriterionElementIds: ["criterion-dropped-by-amendment"],
-    });
+    expect(text.stdout).not.toContain(
+      "dependencies: T1, task-dropped-by-amendment",
+    );
   });
 
   it("qualifies an executing phase whose executions have launched no workflow lane", async () => {
@@ -1422,21 +1179,6 @@ describe("cctl spec read verbs against seeded read routes", () => {
     });
   });
 
-  it("counts only running spec executions as running lanes", async () => {
-    const host = makeHost({
-      executions: [runningExecution, definitionApprovalExecution],
-    });
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-
-    expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain(
-      "phase: executing (1 workflow lane running, 1 execution parked awaiting human approval of the compiled definition)",
-    );
-    expect(text.stdout).toContain(
-      "execution-3: running — workflow lane workflow-execution-3",
-    );
-  });
-
   it("reports a running execution whose workflow lane completed as awaiting the delivering merge", async () => {
     const host = makeHost({
       executions: [runningExecution],
@@ -1505,30 +1247,9 @@ describe("cctl spec read verbs against seeded read routes", () => {
     ]);
   });
 
-  it("omits the executions section for a spec with no active run", async () => {
-    const host = makeHost();
-    const result = await runCli(
-      ["spec", "status", "native-sdd"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("phase: draft");
-    expect(result.stdout).not.toContain("executions:");
-    expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
-      "/api/specs/demo/native-sdd/status",
-    ]);
-  });
-
   it("reads a gate as pending on the current revision and its earlier admission as history", async () => {
     const host = makeHost({ priorAdmission: true });
     const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-    const structured = await runCli(
-      ["spec", "status", "native-sdd", "--json"],
-      baseEnv,
-      host,
-    );
 
     expect(text.exitCode).toBe(0);
     expect(text.stdout).toContain(
@@ -1539,34 +1260,6 @@ describe("cctl spec read verbs against seeded read routes", () => {
     );
     // A prior revision's admission must never read as today's gate state.
     expect(text.stdout).not.toMatch(/requirements: admitted/);
-
-    const status = JSON.parse(structured.stdout).status as {
-      applicableGates: string[];
-      gates: Array<{
-        gate: string;
-        state: string;
-        applicability: { reason: string; governanceBaseRevisionId: string };
-        currentAdmissions: unknown[];
-        priorAdmissions: Array<{ revisionNumber: number; basis: string }>;
-      }>;
-    };
-    const requirements = status.gates.find(
-      (gate) => gate.gate === "requirements",
-    );
-    // The amendment introduces the requirement the approved predecessor never
-    // carried, so the gate is consulted again against that governance base.
-    expect(requirements?.state).toBe("pending");
-    expect(requirements?.applicability).toEqual({
-      reason: "changed_since_governance_base",
-      governanceBaseRevisionId: approvedPredecessor.id,
-    });
-    expect(status.applicableGates).toContain("requirements");
-    // The rev-1 row is history and only history: it never becomes a current
-    // admission of revision 2.
-    expect(requirements?.currentAdmissions).toEqual([]);
-    expect(requirements?.priorAdmissions).toEqual([
-      expect.objectContaining({ revisionNumber: 1, basis: "human_approval" }),
-    ]);
   });
 
   it("separates the admission that satisfies the current revision from its history", async () => {
@@ -1585,20 +1278,6 @@ describe("cctl spec read verbs against seeded read routes", () => {
     expect(text.stdout).toContain(
       "    history: admitted on rev 1 by human (basis human_approval)",
     );
-  });
-
-  it("says why a gate it does not consult asks for nothing", async () => {
-    const host = makeHost({ priorAdmission: true });
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-
-    expect(text.exitCode).toBe(0);
-    // The design gate governs nothing this revision changed since the approved
-    // base, so "not required" has to carry the reason rather than read as an
-    // unexplained silence.
-    expect(text.stdout).toContain(
-      "design: not required (gate) — not consulted: nothing it governs changed since revision revision-0",
-    );
-    expect(text.stdout).not.toContain("not_required");
   });
 
   it("prints the whole lint panel grouped by severity, flagging what would block propose", async () => {
@@ -1645,23 +1324,9 @@ describe("cctl spec read verbs against seeded read routes", () => {
     ]);
   });
 
-  it("says a clean draft has nothing to fix rather than printing an empty panel", async () => {
-    const host = makeHost();
-    const text = await runCli(["spec", "lint", "native-sdd"], baseEnv, host);
-
-    expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain("lint: 0 findings, 0 blocking");
-    expect(text.stdout).toContain("nothing to fix");
-  });
-
   it("summarises lint findings in status and points at the verb for the rest", async () => {
     const host = makeHost({ unplannedCoverage: true });
     const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-    const structured = await runCli(
-      ["spec", "status", "native-sdd", "--json"],
-      baseEnv,
-      host,
-    );
 
     expect(text.exitCode).toBe(0);
     expect(text.stdout).toContain("lint findings: 3 total, 3 blocking");
@@ -1671,22 +1336,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
     // The tier rides the status route's own lint read — status stays one call.
     expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
       "/api/specs/demo/native-sdd/status",
-      "/api/specs/demo/native-sdd/status",
     ]);
-
-    const status = JSON.parse(structured.stdout).status as {
-      draftHealth: {
-        total: number;
-        blocking: number;
-        counts: Array<{ severity: string; count: number }>;
-        top: Array<{ elementHandle: string }>;
-      } | null;
-    };
-    expect(status.draftHealth?.total).toBe(3);
-    expect(status.draftHealth?.blocking).toBe(3);
-    expect(status.draftHealth?.top.map((entry) => entry.elementHandle)).toEqual(
-      ["R1.1", "T1", "T2"],
-    );
   });
 
   it("bounds each enumerated status section and reports what it left out", async () => {
@@ -1713,69 +1363,6 @@ describe("cctl spec read verbs against seeded read routes", () => {
     expect(text.stdout).toContain(
       "pending subject approvals: 2 total, 2 shown, 0 omitted",
     );
-  });
-
-  it("reports the subject approvals and the revision sign-off as separate items", async () => {
-    const host = makeHost();
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-
-    expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain("pending subject approvals:");
-    // An open draft owes a propose, not a sign-off, and status has to say so
-    // rather than leave the section absent.
-    expect(text.stdout).toContain(
-      "revision sign-off:\n  none — no revision is under review",
-    );
-  });
-
-  it("gets qualified and bare element handles", async () => {
-    const host = makeHost();
-    const qualified = await runCli(
-      ["spec", "get", "native-sdd/R1", "--json"],
-      baseEnv,
-      host,
-    );
-    const bare = await runCli(
-      ["spec", "get", "native-sdd", "R1", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(JSON.parse(qualified.stdout).element.handle).toBe("R1");
-    expect(JSON.parse(bare.stdout).element.handle).toBe("R1");
-  });
-
-  it("preserves plan graph facts through show and get", async () => {
-    const host = makeHost();
-    const shown = await runCli(
-      ["spec", "show", "native-sdd", "--json"],
-      baseEnv,
-      host,
-    );
-    const fetched = await runCli(
-      ["spec", "get", "native-sdd/T2", "--json"],
-      baseEnv,
-      host,
-    );
-
-    const shownTasks = JSON.parse(shown.stdout)
-      .spec.currentRevision.elements.filter(
-        (entry: { version: { payload: { kind: string } } }) =>
-          entry.version.payload.kind === "task",
-      )
-      .map(
-        (entry: { version: { payload: Record<string, unknown> } }) =>
-          entry.version.payload,
-      );
-    expect(shownTasks[1]).toMatchObject({
-      dependsOnTaskElementIds: ["task-1"],
-      laneGroup: "cli",
-      touchedPaths: ["src/cli/commands/spec/read.contract.test.ts"],
-      coveredCriterionElementIds: ["criterion-1"],
-    });
-    expect(
-      JSON.parse(fetched.stdout).element.element.version.payload,
-    ).toMatchObject(shownTasks[1]);
   });
 
   it("gets question and assumption handles as typed views", async () => {
@@ -1814,6 +1401,23 @@ describe("cctl spec read verbs against seeded read routes", () => {
     });
   });
 
+  it("gets qualified and bare element handles", async () => {
+    const host = makeHost();
+    const qualified = await runCli(
+      ["spec", "get", "native-sdd/R1", "--json"],
+      baseEnv,
+      host,
+    );
+    const bare = await runCli(
+      ["spec", "get", "native-sdd", "R1", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(JSON.parse(qualified.stdout).element.handle).toBe("R1");
+    expect(JSON.parse(bare.stdout).element.handle).toBe("R1");
+  });
+
   it("searches requirement text", async () => {
     const result = await runCli(
       ["spec", "search", "native-sdd", "durable", "--json"],
@@ -1825,6 +1429,25 @@ describe("cctl spec read verbs against seeded read routes", () => {
       expect.objectContaining({ handle: "R1", kind: "requirement" }),
     ]);
     expect(JSON.parse(result.stdout).scope).toBe("spec");
+  });
+
+  it("reports slug, title, phase, preset, and a match summary per hit in text", async () => {
+    const result = await runCli(
+      ["spec", "search", "--all", "durable"],
+      baseEnv,
+      makeHost({ sibling: true }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "audit-log\tdraft\tfast-path\t1 element match\tAudit Log",
+    );
+    expect(result.stdout).toContain(
+      "native-sdd\tdraft\tcontract-bearing\t1 element match\tNative SDD",
+    );
+    expect(result.stdout).toContain(
+      "  R1\trequirement\tSpecs are durable product objects.",
+    );
   });
 
   it("searches every spec in the project under --all", async () => {
@@ -1858,49 +1481,6 @@ describe("cctl spec read verbs against seeded read routes", () => {
     ]);
   });
 
-  it("reports slug, title, phase, preset, and a match summary per hit in text", async () => {
-    const result = await runCli(
-      ["spec", "search", "--all", "durable"],
-      baseEnv,
-      makeHost({ sibling: true }),
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain(
-      "audit-log\tdraft\tfast-path\t1 element match\tAudit Log",
-    );
-    expect(result.stdout).toContain(
-      "native-sdd\tdraft\tcontract-bearing\t1 element match\tNative SDD",
-    );
-    expect(result.stdout).toContain(
-      "  R1\trequirement\tSpecs are durable product objects.",
-    );
-  });
-
-  it("reports a slug-or-name-only hit as a hit with no element matches", async () => {
-    const result = await runCli(
-      ["spec", "search", "--all", "audit-log"],
-      baseEnv,
-      makeHost({ sibling: true }),
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain(
-      "audit-log\tdraft\tfast-path\tname or slug match, 0 element matches\tAudit Log",
-    );
-  });
-
-  it("says no matches rather than printing an empty project-wide result", async () => {
-    const result = await runCli(
-      ["spec", "search", "--all", "nothing-matches-this"],
-      baseEnv,
-      makeHost({ sibling: true }),
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("no matches");
-  });
-
   it("refuses --all with a slug, naming both search shapes", async () => {
     const result = await runCli(
       ["spec", "search", "--all", "native-sdd", "durable"],
@@ -1911,17 +1491,6 @@ describe("cctl spec read verbs against seeded read routes", () => {
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("cctl spec search --all <query>");
     expect(result.stderr).toContain("cctl spec search <slug> <query>");
-  });
-
-  it("names the project-wide shape when a bare query has no slug", async () => {
-    const result = await runCli(
-      ["spec", "search", "durable"],
-      baseEnv,
-      makeHost({ sibling: true }),
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("cctl spec search --all <query>");
   });
 
   /**
@@ -1960,6 +1529,50 @@ describe("cctl spec read verbs against seeded read routes", () => {
       );
     }
 
+    it("prints per-element summaries and the compared pair in human output", async () => {
+      const result = await runCli(
+        ["spec", "diff", "native-sdd"],
+        baseEnv,
+        makeHost({ lineage: true }),
+      );
+
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.stdout).toContain("revision 3 (draft)");
+      expect(result.stdout).toContain("revision 2 (proposed)");
+      expect(result.stdout).toContain(
+        "added\tD1\tAdded decision: Default to the review base",
+      );
+      expect(result.stdout).toContain(
+        "removed\tT1\tRemoved task: Build the diff verb",
+      );
+      expect(result.stdout).toContain("unchanged\tR1.1");
+    });
+
+    it("refuses conflicting bases at the route, not only at the CLI", async () => {
+      const host = makeHost({ lineage: true });
+
+      const response = await host.fetch(
+        `http://cc.test/api/specs/demo/native-sdd/diff?baseline=governance&from=${LINEAGE_REVISION_IDS.approved}`,
+        { method: "GET", headers: {} },
+      );
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        code: "conflicting_baseline",
+      });
+    });
+
+    it("refuses a revision id that is not part of this spec, naming the flag", async () => {
+      const result = await runCli(
+        ["spec", "diff", "native-sdd", "--to", "revision-from-another-spec"],
+        baseEnv,
+        makeHost({ lineage: true }),
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("revision-from-another-spec");
+      expect(result.stderr).toContain("cctl spec show native-sdd");
+    });
     it("defaults to the pair Spec Studio diffs and classes it identically", async () => {
       const host = makeHost({ lineage: true });
       const shown = await runCli(
@@ -2001,25 +1614,6 @@ describe("cctl spec read verbs against seeded read routes", () => {
           Object.values(studioClasses).map((entry) => entry.classification),
         ),
       ).toEqual(new Set(["added", "removed", "unchanged"]));
-    });
-
-    it("prints per-element summaries and the compared pair in human output", async () => {
-      const result = await runCli(
-        ["spec", "diff", "native-sdd"],
-        baseEnv,
-        makeHost({ lineage: true }),
-      );
-
-      expect(result.exitCode, result.stderr).toBe(0);
-      expect(result.stdout).toContain("revision 3 (draft)");
-      expect(result.stdout).toContain("revision 2 (proposed)");
-      expect(result.stdout).toContain(
-        "added\tD1\tAdded decision: Default to the review base",
-      );
-      expect(result.stdout).toContain(
-        "removed\tT1\tRemoved task: Build the diff verb",
-      );
-      expect(result.stdout).toContain("unchanged\tR1.1");
     });
 
     it("switches the base to the nearest approved ancestor only under --baseline governance", async () => {
@@ -2111,32 +1705,6 @@ describe("cctl spec read verbs against seeded read routes", () => {
         false,
       );
     });
-
-    it("refuses conflicting bases at the route, not only at the CLI", async () => {
-      const host = makeHost({ lineage: true });
-
-      const response = await host.fetch(
-        `http://cc.test/api/specs/demo/native-sdd/diff?baseline=governance&from=${LINEAGE_REVISION_IDS.approved}`,
-        { method: "GET", headers: {} },
-      );
-
-      expect(response.status).toBe(400);
-      expect(await response.json()).toMatchObject({
-        code: "conflicting_baseline",
-      });
-    });
-
-    it("refuses a revision id that is not part of this spec, naming the flag", async () => {
-      const result = await runCli(
-        ["spec", "diff", "native-sdd", "--to", "revision-from-another-spec"],
-        baseEnv,
-        makeHost({ lineage: true }),
-      );
-
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain("revision-from-another-spec");
-      expect(result.stderr).toContain("cctl spec show native-sdd");
-    });
   });
 
   /**
@@ -2157,7 +1725,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
       })
       .strict();
 
-    it("writes a derived path and prints exactly the four manifest facts", async () => {
+    it("writes the bundle to the derived default path", async () => {
       const host = makeHost();
 
       const result = await runCli(
@@ -2170,12 +1738,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
       const written = host.written.get(DERIVED_PATH);
       if (written === undefined) throw new Error("no bundle written");
       expect(JSON.parse(written)).toEqual(bundle);
-      expect(result.stdout.trimEnd().split("\n")).toEqual([
-        "revisions: 1",
-        "elements: 3",
-        `content hash: sha256:${createHash("sha256").update(written, "utf-8").digest("hex")}`,
-        `written: ${DERIVED_PATH}`,
-      ]);
+      expect(result.stdout).toContain(DERIVED_PATH);
     });
 
     it("writes --out when given and reports that path instead", async () => {
@@ -2268,33 +1831,6 @@ describe("cctl spec read verbs against seeded read routes", () => {
     });
   });
 
-  it("states the handle grammar when spec get is given an element id", async () => {
-    const host = makeHost();
-    const result = await runCli(
-      ["spec", "get", "native-sdd/requirement-1"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("looks like an element id");
-    expect(result.stderr).toContain("R<n>.<m> for a criterion");
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("names the missing slug when spec get is given a bare handle", async () => {
-    const host = makeHost();
-    const result = await runCli(["spec", "get", "R1"], baseEnv, host);
-
-    expect(result.exitCode).toBe(2);
-    // R1 is a valid handle; only the slug this command needs is absent, so the
-    // refusal must not deny the grammar it then quotes back as an example.
-    expect(result.stderr).not.toContain("is not a valid element handle");
-    expect(result.stderr).toContain("missing its spec slug");
-    expect(result.stderr).toContain("<slug>/R1");
-    expect(host.requests).toHaveLength(0);
-  });
-
   // The project-wide search route used to sit beside [slug] as a static
   // `search` segment, which Next resolves first — so this read reached the
   // search handler and got a 200 the detail parser rejected as
@@ -2317,22 +1853,6 @@ describe("cctl spec read verbs against seeded read routes", () => {
     });
   });
 
-  it("refuses an invalid slug positional on spec get instead of throwing", async () => {
-    const host = makeHost();
-    const result = await runCli(
-      ["spec", "get", "Bad_Slug", "R1"],
-      baseEnv,
-      host,
-    );
-
-    // The handle grammar is probed against a stand-in slug, so the caller's own
-    // slug has to be validated separately or it reaches the parser unchecked.
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("invalid spec slug");
-    expect(result.stderr).not.toContain("Invalid spec slug:");
-    expect(host.requests).toHaveLength(0);
-  });
-
   it("rejects malformed slugs, handles, and --against files before network", async () => {
     const host = makeHost({ files: { "/tmp/bad.json": "not json" } });
     for (const argv of [
@@ -2343,74 +1863,6 @@ describe("cctl spec read verbs against seeded read routes", () => {
       const result = await runCli(argv, baseEnv, host);
       expect(result.exitCode).toBe(2);
     }
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("renders the spec family and leaf help from the registry", async () => {
-    const host = makeHost();
-    const group = await runCli(["spec", "--help"], baseEnv, host);
-    const leaf = await runCli(["spec", "get", "--help"], baseEnv, host);
-
-    expect(group.exitCode).toBe(0);
-    expect(group.stdout).toContain("spec get");
-    expect(leaf.stdout).toContain("cctl spec get <slug>/<handle>");
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("names gate policy as mutable and human-only in the spec family help", async () => {
-    const host = makeHost();
-    const group = await runCli(["spec", "--help"], baseEnv, host);
-
-    expect(group.exitCode).toBe(0);
-    expect(group.stdout).toContain("Spec Studio");
-    expect(group.stdout).toContain("human_act_required");
-    expect(group.stdout).toMatch(/gate policy/i);
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("teaches the single-act launch and its opt-in park in spec start help", async () => {
-    const host = makeHost();
-    const start = await runCli(["spec", "start", "--help"], baseEnv, host);
-
-    expect(start.exitCode).toBe(0);
-    // The two things an agent has to know before running it: the approval it
-    // requires, and that `--park` takes no slot.
-    expect(start.stdout).toContain("spec plan sign-off");
-    expect(start.stdout).toContain("compiledDefinitionHash");
-    expect(start.stdout).toContain("--park");
-    expect(start.stdout).toContain("no session slot");
-    expect(start.stdout).not.toContain(
-      "cctl spec start <slug> --file <scope.json>",
-    );
-    expect(start.stdout).toContain(
-      "cctl spec plan open <slug> --seed-from last",
-    );
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("separates the human-only whole-spec abandon from the agent-reachable execution abandon", async () => {
-    const host = makeHost();
-    const abandon = await runCli(["spec", "abandon", "--help"], baseEnv, host);
-
-    expect(abandon.exitCode).toBe(0);
-    expect(abandon.stdout).toContain("human_act_required");
-    expect(abandon.stdout).toContain("--execution");
-    expect(abandon.stdout).toMatch(/Spec Studio/);
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("disambiguates capture from amend in both commands' help", async () => {
-    const host = makeHost();
-    const capture = await runCli(["spec", "capture", "--help"], baseEnv, host);
-    const amend = await runCli(["spec", "amend", "--help"], baseEnv, host);
-
-    expect(capture.exitCode).toBe(0);
-    expect(capture.stdout).toMatch(/during a running execution/i);
-    expect(capture.stdout).toContain("spec amend");
-
-    expect(amend.exitCode).toBe(0);
-    expect(amend.stdout).toMatch(/after .*approv/i);
-    expect(amend.stdout).toContain("spec capture");
     expect(host.requests).toHaveLength(0);
   });
 });

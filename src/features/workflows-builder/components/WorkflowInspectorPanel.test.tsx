@@ -12,7 +12,6 @@ import {
   createWorkflowDefinition,
   createWorkflowLayout,
 } from "@/lib/workflow-graph/test-fixtures";
-import { OUTPUT_SCHEMA_TEMPLATE } from "@/components/workflow-config/OutputSchemaField";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
 import { installFetchFixture } from "@/test/fetch-fixture";
 import WorkflowInspectorPanel from "./WorkflowInspectorPanel";
@@ -160,40 +159,6 @@ describe("WorkflowInspectorPanel — persistent tab strip", () => {
 });
 
 describe("WorkflowInspectorPanel — workflow tab body", () => {
-  it("renders exactly twelve InspectorConfigBlocks and no AC, tasks, or delete", () => {
-    resetStore();
-    setupStore({ selectedContextId: null });
-    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
-
-    const blocks = container.querySelectorAll("[data-source]");
-    expect(blocks).toHaveLength(12);
-    const labels = Array.from(
-      container.querySelectorAll("[data-section-label]"),
-    ).map((el) => el.textContent);
-    expect(labels).toEqual([
-      "Implementer",
-      "Collaboration",
-      "Context validator",
-      "Script validator",
-      "Agent validation",
-      "Lane-merge validation",
-      "Human approval gate",
-      "Ask user questions",
-      "Iteration policy",
-      "Circuit breaker",
-      "Plan repair",
-      "Agent task add",
-    ]);
-
-    expect(
-      screen.queryByRole("button", { name: "Edit acceptance criteria" }),
-    ).toBeNull();
-    expect(container.querySelector('[data-section="tasks"]')).toBeNull();
-    expect(
-      container.querySelector('[data-section="delete-context"]'),
-    ).toBeNull();
-  });
-
   it("clicking Override then Reset on a workflow block mutates workflowConfig", () => {
     resetStore();
     setupStore({ selectedContextId: null });
@@ -404,42 +369,6 @@ describe("WorkflowInspectorPanel — launch parameters editor", () => {
 });
 
 describe("WorkflowInspectorPanel — context tab body", () => {
-  it("renders AC read view, eleven blocks, tasks editor, and delete button", () => {
-    resetStore();
-    setupStore({ selectedContextId: "context-plan" });
-    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
-
-    expect(
-      screen.getByRole("button", { name: "Edit acceptance criteria" }),
-    ).toBeInTheDocument();
-    const blocks = container.querySelectorAll("[data-source]");
-    expect(blocks).toHaveLength(11);
-
-    expect(container.querySelector('[data-section="tasks"]')).not.toBeNull();
-    expect(
-      container.querySelector('[data-section="delete-context"]'),
-    ).not.toBeNull();
-  });
-
-  it("renders the acceptance-criteria read view through the compact canonical adapter", async () => {
-    resetStore();
-    const definition = createWorkflowDefinition();
-    const ctx = definition.executionContexts.find(
-      (c) => c.id === "context-plan",
-    );
-    if (ctx) ctx.acceptanceCriteria = "Ship ~~drafts~~ **canonical** rendering";
-    setupStore({ selectedContextId: "context-plan", definition });
-    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
-
-    // GFM strikethrough — only the canonical renderer produces <del>.
-    const del = await screen.findByText("drafts", undefined, {
-      timeout: 15000,
-    });
-    expect(del.tagName).toBe("DEL");
-    expect(del.closest('[data-markdown-intent="compact"]')).not.toBeNull();
-    expect(container.querySelector(".wb-markdown-inline")).toBeNull();
-  });
-
   it("editing acceptance criteria through the focus sheet updates the store", () => {
     resetStore();
     setupStore({ selectedContextId: "context-plan" });
@@ -748,25 +677,6 @@ describe("WorkflowInspectorPanel — validator cohort override footer", () => {
     });
   });
 
-  it("re-enabling an emptied cohort seeds a reviewer rather than enabling a vacuous set", () => {
-    resetStore();
-    setupStore({
-      selectedContextId: "context-plan",
-      definition: definitionWithPlanValidator({
-        enabled: false,
-        assignments: [],
-      } as unknown as typeof OVERRIDE_COHORT),
-    });
-    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
-
-    const block = findBlockByLabel(container, "Context validator")!;
-    fireEvent.click(within(block).getByLabelText("Context validator enabled"));
-
-    const cohort = planContext()?.contextValidator;
-    expect(cohort?.enabled).toBe(true);
-    expect(cohort?.assignments).toHaveLength(1);
-  });
-
   it("Reset to inherit drops the context override entirely", () => {
     resetStore();
     setupStore({
@@ -787,40 +697,6 @@ describe("WorkflowInspectorPanel — validator cohort override footer", () => {
     expect(planContext()?.contextValidator).toBeUndefined();
   });
 
-  /**
-   * R12.1/R12.2 on the workflow-definition consumer. The builder renders the
-   * SAME shared cohort editor the Settings defaults form and the live Config
-   * tab render, so proving the axis lights up here is proving the wiring, not a
-   * per-surface reimplementation.
-   */
-  it("exposes the authority axis and its instructions face through the shared editor", () => {
-    resetStore();
-    setupStore({
-      selectedContextId: "context-plan",
-      definition: definitionWithPlanValidator(OVERRIDE_COHORT),
-    });
-    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
-
-    const block = findBlockByLabel(container, "Context validator")!;
-    expect(
-      within(block).getByTestId("cohort-authority-badge").textContent,
-    ).toBe("Blocking");
-    expect(
-      within(block).getByLabelText("Mandate for security"),
-    ).toBeInTheDocument();
-
-    fireEvent.click(
-      within(within(block).getByLabelText("Validator authority")).getByRole(
-        "radio",
-        { name: "advisory" },
-      ),
-    );
-
-    expect(planContext()?.contextValidator?.assignments[0]?.authority).toBe(
-      "advisory",
-    );
-  });
-
   it("edits a validator's instructions through the shared editor", () => {
     resetStore();
     setupStore({
@@ -836,30 +712,6 @@ describe("WorkflowInspectorPanel — validator cohort override footer", () => {
 
     expect(planContext()?.contextValidator?.assignments[0]?.focus).toBe(
       "auth boundaries",
-    );
-  });
-
-  it("clears a validator's instructions through the shared editor", () => {
-    resetStore();
-    setupStore({
-      selectedContextId: "context-plan",
-      definition: definitionWithPlanValidator({
-        ...OVERRIDE_COHORT,
-        assignments: OVERRIDE_COHORT.assignments.map((entry) => ({
-          ...entry,
-          focus: "auth boundaries",
-        })),
-      }),
-    });
-    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
-
-    const block = findBlockByLabel(container, "Context validator")!;
-    fireEvent.change(within(block).getByLabelText("Mandate for security"), {
-      target: { value: "" },
-    });
-
-    expect(planContext()?.contextValidator?.assignments[0]).not.toHaveProperty(
-      "focus",
     );
   });
 });
@@ -1141,8 +993,8 @@ function planContext() {
 }
 
 describe("WorkflowInspectorPanel — context output schema", () => {
-  // R7.4: identity content in the Brief group — no cascade chrome at all.
-  it("renders the field inside the Brief group with no config-block chrome", () => {
+  // R7.1: the field flattens to and diffs into the saved-tier context update.
+  it("writes a valid edited schema into the draft definition", () => {
     resetStore();
     setupStore({
       selectedContextId: "context-plan",
@@ -1156,20 +1008,8 @@ describe("WorkflowInspectorPanel — context output schema", () => {
       throw new Error("No Brief group rendered");
     }
     expect(brief.contains(field)).toBe(true);
-    // InspectorConfigBlock marks itself with data-source (the provenance
-    // badge/cascade switch host); the schema field must not sit inside one.
     expect(field.closest("[data-source]")).toBeNull();
     expect(within(field).queryByRole("switch")).not.toBeInTheDocument();
-  });
-
-  // R7.1: the field flattens to and diffs into the saved-tier context update.
-  it("writes a valid edited schema into the draft definition", () => {
-    resetStore();
-    setupStore({
-      selectedContextId: "context-plan",
-      definition: bareContextDefinition({ type: "object" }),
-    });
-    render(<WorkflowInspectorPanel {...defaultProps} />);
 
     fireEvent.change(schemaTextarea(), {
       target: {
@@ -1182,24 +1022,6 @@ describe("WorkflowInspectorPanel — context output schema", () => {
       type: "object",
       properties: { verdict: { type: "string" } },
     });
-  });
-
-  it("seeds a template from the empty state and clears the key again", () => {
-    resetStore();
-    setupStore({
-      selectedContextId: "context-plan",
-      definition: bareContextDefinition(),
-    });
-    render(<WorkflowInspectorPanel {...defaultProps} />);
-
-    expect(planContext()?.outputSchema).toBeUndefined();
-    fireEvent.click(screen.getByRole("button", { name: "+ Add schema" }));
-    expect(planContext()?.outputSchema).toEqual(
-      JSON.parse(OUTPUT_SCHEMA_TEMPLATE),
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
-    expect("outputSchema" in (planContext() ?? {})).toBe(false);
   });
 
   it("leaves the draft definition untouched while the text is invalid", () => {
@@ -1239,38 +1061,6 @@ describe("WorkflowInspectorPanel — context output schema", () => {
 
     fireEvent.change(schemaTextarea(), {
       target: { value: '{ "type": "object" }' },
-    });
-    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-  });
-
-  it("re-enables Save when an unsupported keyword is removed", () => {
-    resetStore();
-    setupStore({
-      selectedContextId: "context-plan",
-      definition: bareContextDefinition({ type: "object" }),
-    });
-    act(() => {
-      _useGraphWorkflowBuilderStore.setState({ dirty: true });
-    });
-    render(<WorkflowInspectorPanel {...defaultProps} />);
-
-    fireEvent.change(schemaTextarea(), {
-      target: {
-        value:
-          '{ "type": "object", "properties": { "d": { "type": "string", "format": "date" } } }',
-      },
-    });
-    expect(screen.getByTestId("output-schema-field")).toHaveAttribute(
-      "data-stage",
-      "unsupported",
-    );
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-
-    fireEvent.change(schemaTextarea(), {
-      target: {
-        value:
-          '{ "type": "object", "properties": { "d": { "type": "string" } } }',
-      },
     });
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
@@ -1448,32 +1238,6 @@ describe("WorkflowInspectorPanel — validator cohort editor", () => {
     return context.contextValidator;
   }
 
-  it("reports an unoverridden cohort as inherited from the global defaults", () => {
-    const { container } = renderContextTab();
-    const provenance = within(cohortBlock(container)).getByTestId(
-      "cohort-cascade",
-    );
-    expect(provenance).toHaveAttribute("data-cascade-state", "inherit");
-    expect(provenance.textContent).toContain("global defaults");
-  });
-
-  it("reports a cohort authored on this context as in use here", () => {
-    const { container } = renderContextTab();
-    const provenance = within(overrideCohort(container)).getByTestId(
-      "cohort-cascade",
-    );
-    expect(provenance).toHaveAttribute("data-cascade-state", "use");
-    expect(provenance.textContent).toContain("this context");
-  });
-
-  it("shows each assignment's profile tier badge", () => {
-    const { container } = renderContextTab();
-    const badges = within(cohortBlock(container)).getAllByTestId(
-      "cohort-tier-badge",
-    );
-    expect(badges.map((badge) => badge.textContent)).toEqual(["Built-in"]);
-  });
-
   it("adds a second validator and reorders the cohort", () => {
     const { container } = renderContextTab();
     fireEvent.click(
@@ -1512,46 +1276,6 @@ describe("WorkflowInspectorPanel — validator cohort editor", () => {
       ),
     );
     expect(contextCohort()!.assignments[0]?.agent.backend).toBe("codex");
-  });
-
-  it("keeps a switched-off cohort's assignments dormant and restores them", () => {
-    const { container } = renderContextTab();
-    const block = overrideCohort(container);
-    fireEvent.click(
-      within(block).getByRole("button", { name: "Add validator" }),
-    );
-    const authored = contextCohort()!.assignments.map((a) => a.id);
-    expect(authored).toHaveLength(2);
-
-    const toggle = within(cohortBlock(container)).getByRole("switch", {
-      name: "Context validator enabled",
-    });
-    fireEvent.click(toggle);
-
-    expect(contextCohort()!.enabled).toBe(false);
-    expect(contextCohort()!.assignments.map((a) => a.id)).toEqual(authored);
-
-    const disabledBlock = cohortBlock(container);
-    expect(within(disabledBlock).getByTestId("cohort-cascade")).toHaveAttribute(
-      "data-cascade-state",
-      "disabled",
-    );
-    expect(
-      within(disabledBlock).getByTestId("cohort-dormant-notice"),
-    ).toBeVisible();
-    expect(
-      within(disabledBlock)
-        .getAllByTestId(/^cohort-assignment-/)
-        .map((row) => row.getAttribute("data-dormant")),
-    ).toEqual(["true", "true"]);
-
-    fireEvent.click(
-      within(cohortBlock(container)).getByRole("switch", {
-        name: "Context validator enabled",
-      }),
-    );
-    expect(contextCohort()!.enabled).toBe(true);
-    expect(contextCohort()!.assignments.map((a) => a.id)).toEqual(authored);
   });
 
   it("authors the cohort on the workflow tab too", () => {

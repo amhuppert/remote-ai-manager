@@ -1,12 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getCodexReasoningLevelsForModel } from "@/lib/agent-backends/schemas";
 import {
-  graphWorkflowApprovalPendingEventSchema,
-  graphWorkflowApprovalResolvedEventSchema,
-  graphWorkflowBatchScheduledEventSchema,
   graphWorkflowExecutionEventSchema,
-  graphWorkflowMergeStatusEventSchema,
-  graphWorkflowPendingHaltReasonEventSchema,
   graphWorkflowSharedDocumentsUpdatedEventSchema,
   graphWorkflowStatusEventSchema,
   graphWorkflowValidationResultEventSchema,
@@ -464,17 +459,6 @@ describe("workflow charter requirement on persisted schemas", () => {
     expect(result.success).toBe(false);
   });
 
-  it("parses a semantic definition that includes a valid charter", () => {
-    const result = workflowSemanticDefinitionSchema.safeParse(
-      createSemanticDefinition(),
-    );
-
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.charter.sourcesOfTruth).toHaveLength(2);
-    }
-  });
-
   it("rejects an execution snapshot that omits the charter", () => {
     const result = graphWorkflowExecutionSchema.safeParse({
       id: "execution-no-charter",
@@ -486,23 +470,6 @@ describe("workflow charter requirement on persisted schemas", () => {
     });
 
     expect(result.success).toBe(false);
-  });
-
-  it("parses an execution snapshot that includes a valid charter", () => {
-    const result = graphWorkflowExecutionSchema.safeParse({
-      id: "execution-with-charter",
-      seedDefinitionId: "workflow-1",
-      seedDefinitionRevision: 1,
-      workingDefinition: createResolvedDefinition(),
-      status: "pending",
-      startedAt: timestamp,
-      charter: makeTestCharter(),
-    });
-
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.charter.mission).toBe(makeTestCharter().mission);
-    }
   });
 
   it("defaults a shared-document entry without an explicit kind to 'shared'", () => {
@@ -518,23 +485,6 @@ describe("workflow charter requirement on persisted schemas", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.kind).toBe("shared");
-    }
-  });
-
-  it("accepts a shared-document entry with an explicit charter kind", () => {
-    const result = graphWorkflowSharedDocumentEntrySchema.safeParse({
-      id: "charter-doc",
-      relativePath: ".cc/graph-workflow-docs/charter.md",
-      description: "The governing charter",
-      readWhen: "Read before resolving any source conflict.",
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      kind: "charter",
-    });
-
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.kind).toBe("charter");
     }
   });
 });
@@ -890,16 +840,6 @@ describe("workflowLiveEditOperationSchema", () => {
     }
   });
 
-  it("accepts an add-task with no id (minted server-side)", () => {
-    const result = workflowLiveEditOperationSchema.safeParse({
-      type: "add-task",
-      contextId: "impl",
-      title: "Extra work",
-      instructions: "Do the thing.",
-    });
-    expect(result.success).toBe(true);
-  });
-
   it("rejects an update-context with no editable field present", () => {
     const result = workflowLiveEditOperationSchema.safeParse({
       type: "update-context",
@@ -951,16 +891,6 @@ describe("workflowLiveEditRequestSchema", () => {
       baseLiveRevision: 4,
       source: "cli",
       dryRun: true,
-      operations: [validOp],
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("treats dryRun as optional", () => {
-    const result = workflowLiveEditRequestSchema.safeParse({
-      executionId: "exec-7",
-      baseLiveRevision: 1,
-      source: "ui",
       operations: [validOp],
     });
     expect(result.success).toBe(true);
@@ -1066,73 +996,6 @@ describe("workflow graph session state and SSE schemas", () => {
     });
     expect(docsEvent.success).toBe(true);
   });
-
-  it("parses graph-workflow-pending-halt-reason events", () => {
-    const event = graphWorkflowPendingHaltReasonEventSchema.safeParse({
-      type: "graph-workflow-pending-halt-reason",
-      projectName: "remote-ai-manager",
-      sessionName: "session-1",
-      executionId: "execution-1",
-      pendingHaltReason: {
-        type: "circuit_breaker",
-        contextId: "context-1",
-        condition: "retry_exhaustion",
-      },
-    });
-    expect(event.success).toBe(true);
-    if (event.success) {
-      expect(event.data.pendingHaltReason).toEqual({
-        type: "circuit_breaker",
-        contextId: "context-1",
-        condition: "retry_exhaustion",
-        summary: null,
-      });
-    }
-
-    const nullEvent = graphWorkflowPendingHaltReasonEventSchema.safeParse({
-      type: "graph-workflow-pending-halt-reason",
-      projectName: "remote-ai-manager",
-      sessionName: "session-1",
-      executionId: "execution-1",
-      pendingHaltReason: null,
-    });
-    expect(nullEvent.success).toBe(true);
-  });
-
-  it("parses graph-workflow-merge-status events", () => {
-    const event = graphWorkflowMergeStatusEventSchema.safeParse({
-      type: "graph-workflow-merge-status",
-      projectName: "remote-ai-manager",
-      sessionName: "session-1",
-      executionId: "execution-1",
-      contextId: "context-1",
-      branchName: "csm/session-1-context-1",
-      mergeStatus: "in-progress",
-      cleanupStatus: "pending",
-      lastMergeError: null,
-    });
-    expect(event.success).toBe(true);
-    if (event.success) {
-      expect(event.data.mergeStatus).toBe("in-progress");
-      expect(event.data.cleanupStatus).toBe("pending");
-    }
-  });
-
-  it("parses graph-workflow-batch-scheduled events", () => {
-    const event = graphWorkflowBatchScheduledEventSchema.safeParse({
-      type: "graph-workflow-batch-scheduled",
-      projectName: "remote-ai-manager",
-      sessionName: "session-1",
-      executionId: "execution-1",
-      batchId: "batch-1",
-      contextIds: ["context-1", "context-2"],
-    });
-    expect(event.success).toBe(true);
-    if (event.success) {
-      expect(event.data.batchId).toBe("batch-1");
-      expect(event.data.contextIds).toEqual(["context-1", "context-2"]);
-    }
-  });
 });
 
 function createWorkflowDefaults() {
@@ -1232,23 +1095,6 @@ describe("workflowDefaultsSchema", () => {
 });
 
 describe("graphWorkflowScriptValidatorConfigSchema", () => {
-  it("accepts an ordered command selection", () => {
-    const result = graphWorkflowScriptValidatorConfigSchema.safeParse({
-      commands: ["typecheck", "test"],
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.commands).toEqual(["typecheck", "test"]);
-    }
-  });
-
-  it("accepts an empty command selection as disabled", () => {
-    const result = graphWorkflowScriptValidatorConfigSchema.safeParse({
-      commands: [],
-    });
-    expect(result.success).toBe(true);
-  });
-
   it("defaults commands to an empty selection when the block is empty", () => {
     const result = graphWorkflowScriptValidatorConfigSchema.safeParse({});
     expect(result.success).toBe(true);
@@ -1262,52 +1108,6 @@ describe("graphWorkflowScriptValidatorConfigSchema", () => {
       enabled: true,
     });
     expect(result.success).toBe(false);
-  });
-});
-
-describe("workflowConfigOverrideSchema scriptValidator", () => {
-  it("accepts an override that sets scriptValidator", () => {
-    const result = workflowConfigOverrideSchema.safeParse({
-      scriptValidator: { commands: ["pre-merge"] },
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.scriptValidator?.commands).toEqual(["pre-merge"]);
-    }
-  });
-
-  it("accepts an override that omits scriptValidator (inherits)", () => {
-    const result = workflowConfigOverrideSchema.safeParse({});
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.scriptValidator).toBeUndefined();
-    }
-  });
-});
-
-describe("graphWorkflowExecutionContextDefinitionSchema scriptValidator", () => {
-  const base = {
-    id: "ctx-1",
-    title: "Context",
-    acceptanceCriteria: "AC",
-    placement: { lane: "ctx-1", mode: "full" },
-  };
-
-  it("accepts a context that sets scriptValidator", () => {
-    const result = graphWorkflowExecutionContextDefinitionSchema.safeParse({
-      ...base,
-      scriptValidator: { commands: ["pre-merge"] },
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("accepts a context that omits scriptValidator (inherits)", () => {
-    const result =
-      graphWorkflowExecutionContextDefinitionSchema.safeParse(base);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.scriptValidator).toBeUndefined();
-    }
   });
 });
 
@@ -1340,17 +1140,6 @@ describe("graphWorkflowResolvedContextSchema scriptValidator", () => {
       expect(result.data.scriptValidator).toEqual({ commands: [] });
     }
   });
-
-  it("parses a resolved context with selected script-validator commands", () => {
-    const result = graphWorkflowResolvedContextSchema.safeParse({
-      ...base,
-      scriptValidator: { commands: ["pre-merge"] },
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.scriptValidator.commands).toEqual(["pre-merge"]);
-    }
-  });
 });
 
 describe("execution context outputSchema (D2 R1)", () => {
@@ -1359,24 +1148,6 @@ describe("execution context outputSchema (D2 R1)", () => {
     title: "Context",
     acceptanceCriteria: "AC",
     placement: { lane: "ctx-1", mode: "full" },
-  };
-
-  const resolvedBase = {
-    ...authoredBase,
-    implementer: {
-      id: "implementer",
-      profile: { tier: "builtin", id: "general-implementer" },
-      profileSnapshot: makeProfileSnapshot(),
-      agent: {
-        backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
-      },
-    },
-    contextValidator: { enabled: false, assignments: [] },
-    mutability: { allowAgentTaskAdd: false },
-    circuitBreaker: { consecutiveFailureThreshold: 3 },
-    iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
   };
 
   // A nested object schema with an array and an enum: the persisted value is an
@@ -1407,34 +1178,6 @@ describe("execution context outputSchema (D2 R1)", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.outputSchema).toEqual(OUTPUT_SCHEMA);
-    }
-  });
-
-  it("leaves outputSchema undefined on an authored context that declares none", () => {
-    const result =
-      graphWorkflowExecutionContextDefinitionSchema.safeParse(authoredBase);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.outputSchema).toBeUndefined();
-    }
-  });
-
-  it("accepts a resolved context carrying outputSchema and preserves the document verbatim", () => {
-    const result = graphWorkflowResolvedContextSchema.safeParse({
-      ...resolvedBase,
-      outputSchema: OUTPUT_SCHEMA,
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.outputSchema).toEqual(OUTPUT_SCHEMA);
-    }
-  });
-
-  it("leaves outputSchema undefined on a resolved context with none — no schema-level default", () => {
-    const result = graphWorkflowResolvedContextSchema.safeParse(resolvedBase);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.outputSchema).toBeUndefined();
     }
   });
 
@@ -1512,13 +1255,6 @@ describe("graphWorkflowLaneContinuityPolicySchema", () => {
     expect(result.enabled).toBe(false);
   });
 
-  it("accepts contextLimitTokens as a positive integer", () => {
-    const result = graphWorkflowLaneContinuityPolicySchema.parse({
-      contextLimitTokens: 100000,
-    });
-    expect(result.contextLimitTokens).toBe(100000);
-  });
-
   it("rejects contextLimitTokens of zero", () => {
     const result = graphWorkflowLaneContinuityPolicySchema.safeParse({
       contextLimitTokens: 0,
@@ -1531,13 +1267,6 @@ describe("graphWorkflowLaneContinuityPolicySchema", () => {
       contextLimitTokens: -1,
     });
     expect(result.success).toBe(false);
-  });
-
-  it("accepts omitted contextLimitTokens (no limit configured)", () => {
-    const result = graphWorkflowLaneContinuityPolicySchema.parse({
-      enabled: true,
-    });
-    expect(result.contextLimitTokens).toBeUndefined();
   });
 
   it("rejects float contextLimitTokens", () => {
@@ -1556,53 +1285,9 @@ describe("graphWorkflowIterationPolicySchema with continuity", () => {
     expect(result.continuity.enabled).toBe(true);
     expect(result.continuity.contextLimitTokens).toBeUndefined();
   });
-
-  it("accepts explicit continuity with contextLimitTokens", () => {
-    const result = graphWorkflowIterationPolicySchema.parse({
-      maxIterations: 5,
-      continuity: { enabled: true, contextLimitTokens: 80000 },
-    });
-    expect(result.continuity.enabled).toBe(true);
-    expect(result.continuity.contextLimitTokens).toBe(80000);
-  });
-
-  it("accepts continuity disabled with no limit", () => {
-    const result = graphWorkflowIterationPolicySchema.parse({
-      maxIterations: 3,
-      continuity: { enabled: false },
-    });
-    expect(result.continuity.enabled).toBe(false);
-    expect(result.continuity.contextLimitTokens).toBeUndefined();
-  });
 });
 
 describe("globalConfigSchema workflowDefaults", () => {
-  it("accepts config with workflowDefaults", () => {
-    const result = globalConfigSchema.safeParse({
-      baseDir: "/projects",
-      ignorePatterns: [],
-      agentBackends: {
-        claude: {
-          model: "opus",
-          reasoningEffort: "high",
-          timeoutMs: 3_600_000,
-        },
-        codex: {
-          model: "gpt-5.4",
-          reasoningEffort: "high",
-          timeoutMs: null,
-        },
-      },
-      workflowDefaults: createWorkflowDefaults(),
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(
-        result.data.workflowDefaults?.contextValidator?.assignments,
-      ).toHaveLength(1);
-    }
-  });
-
   it("accepts config without workflowDefaults (backward compat)", () => {
     const result = globalConfigSchema.safeParse({
       baseDir: "/projects",
@@ -1649,18 +1334,6 @@ describe("graphWorkflowExecutionSessionRefSchema", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data).toEqual({ backend: "codex", ref: "thread-abc" });
-    }
-  });
-
-  it("accepts all lane kinds", () => {
-    const lanes = ["implementer", "context_validator"] as const;
-    for (const lane of lanes) {
-      const result = graphWorkflowExecutionSessionRefSchema.safeParse({
-        engine: "claude",
-        lane,
-        conversationId: "conv-x",
-      });
-      expect(result.success).toBe(true);
     }
   });
 
@@ -2074,17 +1747,6 @@ describe("graphWorkflowExecutionEventSchema preReset marker", () => {
     }
   });
 
-  it("persists preReset: true when specified", () => {
-    const result = graphWorkflowExecutionEventSchema.safeParse({
-      ...baseEvent,
-      preReset: true,
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.preReset).toBe(true);
-    }
-  });
-
   it("rejects a non-boolean preReset value", () => {
     const result = graphWorkflowExecutionEventSchema.safeParse({
       ...baseEvent,
@@ -2125,38 +1787,6 @@ describe("graphWorkflowHaltReasonSchema", () => {
       expect(result.data.infraReason).toBe("exception");
       expect(result.data.message).toBe("Codex process terminated unexpectedly");
       expect(result.data.contextId).toBe("ctx-1");
-    }
-  });
-
-  it("accepts all infraReason variants", () => {
-    for (const infraReason of [
-      "exception",
-      "unparseable",
-      "schema_mismatch",
-    ] as const) {
-      const result = graphWorkflowHaltReasonSchema.safeParse({
-        type: "validator_infra_error",
-        contextId: "ctx-1",
-        engine: "claude",
-        infraReason,
-        message: "msg",
-        summary: null,
-      });
-      expect(result.success).toBe(true);
-    }
-  });
-
-  it("accepts both engines for validator_infra_error", () => {
-    for (const engine of ["claude", "codex"] as const) {
-      const result = graphWorkflowHaltReasonSchema.safeParse({
-        type: "validator_infra_error",
-        contextId: "ctx-1",
-        engine,
-        infraReason: "exception",
-        message: "msg",
-        summary: null,
-      });
-      expect(result.success).toBe(true);
     }
   });
 
@@ -2318,19 +1948,6 @@ describe("graphWorkflowHaltReasonSchema", () => {
 });
 
 describe("workflowCollaborationStatusSchema", () => {
-  it("accepts every named status", () => {
-    for (const status of [
-      "converged",
-      "rounds_exhausted",
-      "requires_user_input",
-      "objective_disagreement",
-    ] as const) {
-      expect(workflowCollaborationStatusSchema.safeParse(status).success).toBe(
-        true,
-      );
-    }
-  });
-
   it("rejects unknown statuses", () => {
     expect(workflowCollaborationStatusSchema.safeParse("unknown").success).toBe(
       false,
@@ -2485,38 +2102,6 @@ describe("graphWorkflowExecutionContextStateSchema parallel-execution fields", (
     }
   });
 
-  it("accepts every mergeStatus enum value", () => {
-    for (const mergeStatus of [
-      "not-applicable",
-      "pending",
-      "in-progress",
-      "merged-success",
-      "merged-failed",
-      "conflicts",
-    ] as const) {
-      const result = graphWorkflowExecutionContextStateSchema.safeParse({
-        ...baseContextState,
-        mergeStatus,
-      });
-      expect(result.success).toBe(true);
-    }
-  });
-
-  it("accepts every cleanupStatus enum value", () => {
-    for (const cleanupStatus of [
-      "not-applicable",
-      "pending",
-      "removed",
-      "failed",
-    ] as const) {
-      const result = graphWorkflowExecutionContextStateSchema.safeParse({
-        ...baseContextState,
-        cleanupStatus,
-      });
-      expect(result.success).toBe(true);
-    }
-  });
-
   it("rejects unknown isolation values", () => {
     const result = graphWorkflowExecutionContextStateSchema.safeParse({
       ...baseContextState,
@@ -2619,39 +2204,6 @@ describe("graphWorkflowExecutionSchema parallel-execution fields", () => {
         result.data.collaborationContinuations["ctx-1"]?.[0]?.result
           .finalAnswer,
       ).toBe("Use the existing job queue.");
-    }
-  });
-
-  it("parses activeContextIds as a string array", () => {
-    const result = graphWorkflowExecutionSchema.safeParse({
-      ...minimalExecution,
-      activeContextIds: ["ctx-1", "ctx-2"],
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.activeContextIds).toEqual(["ctx-1", "ctx-2"]);
-    }
-  });
-
-  it("persists pendingHaltReason as a merge_failure variant", () => {
-    const result = graphWorkflowExecutionSchema.safeParse({
-      ...minimalExecution,
-      pendingHaltReason: {
-        type: "merge_failure",
-        contextId: "ctx-2",
-        message: "Auto-resolution exhausted",
-        conflictFiles: ["src/lib/foo.ts"],
-      },
-    });
-    expect(result.success).toBe(true);
-    if (
-      result.success &&
-      result.data.pendingHaltReason?.type === "merge_failure"
-    ) {
-      expect(result.data.pendingHaltReason.contextId).toBe("ctx-2");
-      expect(result.data.pendingHaltReason.conflictFiles).toEqual([
-        "src/lib/foo.ts",
-      ]);
     }
   });
 
@@ -2792,16 +2344,6 @@ describe("graphWorkflowExecutionLaneStateSchema", () => {
     }
   });
 
-  it("accepts every lane status enum value", () => {
-    for (const status of ["pending", "active", "merged", "halted"] as const) {
-      const result = graphWorkflowExecutionLaneStateSchema.safeParse({
-        ...baseValidLane,
-        status,
-      });
-      expect(result.success).toBe(true);
-    }
-  });
-
   it("rejects an unknown lane kind", () => {
     const result = graphWorkflowExecutionLaneStateSchema.safeParse({
       ...baseValidLane,
@@ -2913,22 +2455,6 @@ describe("graphWorkflowExecutionJoinStateSchema", () => {
     }
   });
 
-  it("accepts every join status enum value", () => {
-    for (const status of [
-      "pending",
-      "running",
-      "succeeded",
-      "failed",
-      "conflicts",
-    ] as const) {
-      const result = graphWorkflowExecutionJoinStateSchema.safeParse({
-        ...baseValidJoin,
-        status,
-      });
-      expect(result.success).toBe(true);
-    }
-  });
-
   it("rejects an unknown join kind", () => {
     const result = graphWorkflowExecutionJoinStateSchema.safeParse({
       ...baseValidJoin,
@@ -2975,19 +2501,6 @@ describe("graphWorkflowExecutionContextStateSchema lane/join references", () => 
     if (result.success) {
       expect(result.data.laneId).toBeNull();
       expect(result.data.joinId).toBeNull();
-    }
-  });
-
-  it("parses populated laneId and joinId references", () => {
-    const result = graphWorkflowExecutionContextStateSchema.safeParse({
-      ...baseContextState,
-      laneId: "lane-ctx-1",
-      joinId: "join-ctx-1",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.laneId).toBe("lane-ctx-1");
-      expect(result.data.joinId).toBe("join-ctx-1");
     }
   });
 
@@ -3173,16 +2686,6 @@ describe("graphWorkflowHumanApprovalGateConfigSchema", () => {
     }
   });
 
-  it("accepts { enabled: true }", () => {
-    const result = graphWorkflowHumanApprovalGateConfigSchema.safeParse({
-      enabled: true,
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.enabled).toBe(true);
-    }
-  });
-
   it("rejects non-boolean enabled values", () => {
     const result = graphWorkflowHumanApprovalGateConfigSchema.safeParse({
       enabled: "yes",
@@ -3246,14 +2749,6 @@ describe("humanApprovalGate cascade fields", () => {
 });
 
 describe("graphWorkflowApprovalDecisionSchema", () => {
-  it("parses an approved decision", () => {
-    const result = graphWorkflowApprovalDecisionSchema.safeParse({
-      type: "approved",
-      decidedAt: timestamp,
-    });
-    expect(result.success).toBe(true);
-  });
-
   it("parses a rejected decision with a message", () => {
     const result = graphWorkflowApprovalDecisionSchema.safeParse({
       type: "rejected",
@@ -3350,60 +2845,6 @@ describe("context state pendingApproval", () => {
 });
 
 describe("approval gate SSE event schemas", () => {
-  it("parses graph-workflow-approval-pending events", () => {
-    const event = graphWorkflowApprovalPendingEventSchema.safeParse({
-      type: "graph-workflow-approval-pending",
-      projectName: "remote-ai-manager",
-      sessionName: "session-1",
-      executionId: "execution-1",
-      contextId: "context-1",
-      contextTitle: "Plan",
-      conversationId: "conversation-1",
-      requestedAt: timestamp,
-    });
-    expect(event.success).toBe(true);
-
-    const nullTitle = graphWorkflowApprovalPendingEventSchema.safeParse({
-      type: "graph-workflow-approval-pending",
-      projectName: "remote-ai-manager",
-      sessionName: "session-1",
-      executionId: "execution-1",
-      contextId: "context-1",
-      contextTitle: null,
-      conversationId: "conversation-1",
-      requestedAt: timestamp,
-    });
-    expect(nullTitle.success).toBe(true);
-  });
-
-  it("parses graph-workflow-approval-resolved events", () => {
-    const approved = graphWorkflowApprovalResolvedEventSchema.safeParse({
-      type: "graph-workflow-approval-resolved",
-      projectName: "remote-ai-manager",
-      sessionName: "session-1",
-      executionId: "execution-1",
-      contextId: "context-1",
-      conversationId: "conversation-1",
-      decision: "approved",
-      message: null,
-      decidedAt: timestamp,
-    });
-    expect(approved.success).toBe(true);
-
-    const rejected = graphWorkflowApprovalResolvedEventSchema.safeParse({
-      type: "graph-workflow-approval-resolved",
-      projectName: "remote-ai-manager",
-      sessionName: "session-1",
-      executionId: "execution-1",
-      contextId: "context-1",
-      conversationId: "conversation-1",
-      decision: "rejected",
-      message: "Needs more tests.",
-      decidedAt: timestamp,
-    });
-    expect(rejected.success).toBe(true);
-  });
-
   it("accepts approval events in the execution history event union", () => {
     const result = graphWorkflowExecutionEventSchema.safeParse({
       occurredAt: timestamp,

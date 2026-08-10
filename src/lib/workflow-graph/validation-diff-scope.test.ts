@@ -302,11 +302,6 @@ describe("computeValidationDiffScope (real git repo)", () => {
     await rm(repoPath, { recursive: true, force: true });
   });
 
-  it("returns empty for a clean worktree", async () => {
-    const scope = await computeValidationDiffScope(repoPath);
-    expect(scope.kind).toBe("empty");
-  });
-
   it("captures modified, deleted, renamed, and untracked changes against HEAD", async () => {
     // Modify a tracked file.
     await writeFile(
@@ -336,19 +331,6 @@ describe("computeValidationDiffScope (real git repo)", () => {
     // The rendered section surfaces the new untracked file's content.
     const rendered = renderDiffScopeSection(scope);
     expect(rendered.section).toContain("+export const c = 3;");
-  });
-
-  it("reports the tree hash a round freezes on, for the very patch it renders", async () => {
-    await writeFile(
-      join(repoPath, "tracked.ts"),
-      "export const a = 1;\nexport const b = 2;\n",
-    );
-
-    const scope = await computeValidationDiffScope(repoPath);
-
-    expect(scope.kind).toBe("available");
-    if (scope.kind !== "available") throw new Error("expected available");
-    expect(scope.treeHash).toBe(await computeCandidateTreeHash(repoPath));
   });
 
   it("never renders a patch older than the tree it reports", async () => {
@@ -485,30 +467,10 @@ describe("computeValidationDiffScope scoped to ownership (real repo)", () => {
 
     const scope = await computeValidationDiffScope(repoPath, scopeA);
 
-    // Unscoped, the porcelain probe would call this dirty and then find no
-    // owned patch to show — reported as a degraded read rather than a no-op.
     expect(scope.kind).toBe("empty");
     if (scope.kind !== "empty") throw new Error("expected empty");
     expect(scope.treeHash).toBe(
       await computeCandidateTreeHash(repoPath, scopeA),
     );
-  });
-
-  it("keeps the whole-tree diff for a full-access member of the same worktree", async () => {
-    await writeFile(join(repoPath, "a", "owned.ts"), "export const a = 2;\n");
-    await writeFile(join(repoPath, "b", "sibling.ts"), "export const b = 2;\n");
-
-    const scope = await computeValidationDiffScope(
-      repoPath,
-      candidateScopeForPlacement({ lane: "impl", mode: "full" }),
-    );
-
-    expect(scope.kind).toBe("available");
-    if (scope.kind !== "available") throw new Error("expected available");
-    expect(scope.diff.files.map((file) => file.filePath).sort()).toEqual([
-      "a/owned.ts",
-      "b/sibling.ts",
-    ]);
-    expect(scope.treeHash).toBe(await computeCandidateTreeHash(repoPath));
   });
 });

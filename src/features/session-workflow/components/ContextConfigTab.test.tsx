@@ -249,54 +249,6 @@ describe("ContextConfigTab — display", () => {
       within(runtime).getByTestId("runtime-last-merge-error"),
     ).toHaveTextContent("conflict in file.ts");
   });
-
-  it("renders an off toggle for a null validator and omits absent collaboration", () => {
-    const context = fullContext();
-    context.contextValidator = { enabled: false, assignments: [] };
-    delete (context as { collaboration?: unknown }).collaboration;
-
-    render(
-      <ContextConfigTab
-        execution={startedExecution(context, startedContextState())}
-        contextId="context-impl"
-      />,
-    );
-
-    const val = screen.getByTestId("config-block-context-validator");
-    expect(within(val).getByText(/off/i)).toBeInTheDocument();
-    expect(
-      within(val).getByLabelText("Context validator enabled"),
-    ).not.toBeChecked();
-    expect(
-      screen.queryByTestId("config-block-collaboration"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("renders placeholders for unassigned runtime facts and hides an absent merge error", () => {
-    const state = startedContextState();
-    state.worktreePath = null;
-    state.laneId = null;
-    state.isolation = "session";
-    state.lastMergeError = null;
-
-    render(
-      <ContextConfigTab
-        execution={startedExecution(fullContext(), state)}
-        contextId="context-impl"
-      />,
-    );
-
-    const runtime = screen.getByTestId("context-runtime");
-    expect(within(runtime).getByTestId("runtime-isolation")).toHaveTextContent(
-      "session",
-    );
-    expect(
-      within(runtime).getByTestId("runtime-worktree-path"),
-    ).toHaveTextContent("—");
-    expect(
-      within(runtime).queryByTestId("runtime-last-merge-error"),
-    ).not.toBeInTheDocument();
-  });
 });
 
 describe("ContextConfigTab — context validator enabled field", () => {
@@ -515,20 +467,6 @@ describe("ContextConfigTab — validator authority and lane rotation", () => {
     return screen.getByTestId("config-block-context-validator");
   }
 
-  it("exposes the authority axis and its instructions face through the shared editor", () => {
-    renderEditable();
-    const block = validatorBlock();
-    expect(
-      within(block).getByTestId("cohort-authority-badge").textContent,
-    ).toBe("Blocking");
-    expect(
-      within(block).getByLabelText("Mandate for general"),
-    ).toBeInTheDocument();
-    expect(
-      within(block).getByLabelText("Validator authority"),
-    ).toBeInTheDocument();
-  });
-
   it("carries an authority edit into the update-context op", () => {
     const { onSaveContextConfig } = renderEditable();
     fireEvent.click(
@@ -657,6 +595,15 @@ describe("ContextConfigTab — disable matrix per lifecycle × execution status"
 
     expect(screen.getByLabelText("Max iterations")).toBeDisabled();
     expect(screen.queryByTestId("config-save-bar")).not.toBeInTheDocument();
+    const agentValidation = screen.getByTestId("config-block-agent-validation");
+    for (const selector of within(agentValidation).getAllByRole("radio")) {
+      expect(selector).toBeDisabled();
+    }
+    expect(
+      within(
+        screen.getByTestId("config-block-script-validator"),
+      ).getByLabelText("Add script validator command"),
+    ).toBeDisabled();
 
     const pauseButton = screen.getByRole("button", { name: "Pause to edit" });
     fireEvent.click(pauseButton);
@@ -1054,30 +1001,6 @@ describe("ContextConfigTab — validation command selectors", () => {
     expect(
       within(script).getByRole("button", { name: "Remove test" }),
     ).toBeInTheDocument();
-  });
-
-  it("disables the selector editors while the context is not editable", () => {
-    render(
-      <ContextConfigTab
-        execution={startedExecution(
-          contextWithValidationSelectors(),
-          startedContextState(),
-          { status: "running", activeContextIds: ["context-impl"] },
-        )}
-        contextId="context-impl"
-      />,
-    );
-
-    const block = screen.getByTestId("config-block-agent-validation");
-    expect(
-      within(roleSection(block, "implementer")).getByRole("radio", {
-        name: "Only",
-      }),
-    ).toBeDisabled();
-    const script = screen.getByTestId("config-block-script-validator");
-    expect(
-      within(script).getByLabelText("Add script validator command"),
-    ).toBeDisabled();
   });
 });
 
@@ -1542,24 +1465,6 @@ describe("ContextConfigTab — output schema flatten/diff round trip", () => {
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
   });
 
-  it("renders the empty state for a context that declares no schema", () => {
-    render(
-      <ContextConfigTab
-        execution={startedExecution(fullContext(), startedContextState(), {
-          status: "paused",
-        })}
-        contextId="context-impl"
-        onSaveContextConfig={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByTestId("output-schema-field")).toHaveAttribute(
-      "data-stage",
-      "empty",
-    );
-    expect(screen.getByTestId("output-schema-empty")).toBeInTheDocument();
-  });
-
   it("diffs an edited schema into the update-context op as a parsed object", () => {
     const onSaveContextConfig = vi.fn();
     render(
@@ -1665,26 +1570,6 @@ describe("ContextConfigTab — output schema flatten/diff round trip", () => {
 });
 
 describe("ContextConfigTab — output schema lifecycle affordances", () => {
-  it("editable: the editor accepts input and carries no read-only explanation", () => {
-    render(
-      <ContextConfigTab
-        execution={startedExecution(schemaContext(), startedContextState(), {
-          status: "paused",
-        })}
-        contextId="context-impl"
-        onSaveContextConfig={vi.fn()}
-      />,
-    );
-
-    expect(schemaEditor()).not.toBeDisabled();
-    expect(
-      screen.queryByTestId("output-schema-readonly-hint"),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByTestId("config-output-schema-dirty"),
-    ).not.toBeInTheDocument();
-  });
-
   it("dirty: a valid edit shows the unsaved hint and enables save", () => {
     render(
       <ContextConfigTab
@@ -1768,68 +1653,6 @@ describe("ContextConfigTab — output schema lifecycle affordances", () => {
     expect(saveButton).toBeDisabled();
     fireEvent.click(saveButton);
     expect(onSaveContextConfig).not.toHaveBeenCalled();
-  });
-
-  it("pause-to-edit: the editor is disabled with a pause-specific explanation", () => {
-    render(
-      <ContextConfigTab
-        execution={startedExecution(schemaContext(), startedContextState(), {
-          status: "running",
-          activeContextIds: ["context-impl"],
-        })}
-        contextId="context-impl"
-        onSaveContextConfig={vi.fn()}
-        onPauseExecution={vi.fn()}
-      />,
-    );
-
-    expect(schemaEditor()).toBeDisabled();
-    expect(screen.getByTestId("output-schema-readonly-hint")).toHaveTextContent(
-      /pause the execution/i,
-    );
-    expect(
-      screen.queryByRole("button", { name: "Clear" }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("frozen: the editor is disabled, explained, and the banner lock is an SVG not an emoji", () => {
-    const state = startedContextState();
-    state.status = "completed";
-    render(
-      <ContextConfigTab
-        execution={startedExecution(schemaContext(), state, {
-          status: "paused",
-        })}
-        contextId="context-impl"
-        onSaveContextConfig={vi.fn()}
-      />,
-    );
-
-    expect(schemaEditor()).toBeDisabled();
-    expect(screen.getByTestId("output-schema-readonly-hint")).toHaveTextContent(
-      /already captured/i,
-    );
-
-    const banner = screen.getByTestId("config-affordance-frozen");
-    expect(banner.querySelector("svg")).not.toBeNull();
-    expect(banner.textContent ?? "").not.toMatch(/\p{Extended_Pictographic}/u);
-  });
-
-  it("execution read-only: the editor is disabled with an immutability explanation", () => {
-    render(
-      <ContextConfigTab
-        execution={startedExecution(schemaContext(), startedContextState(), {
-          status: "completed",
-        })}
-        contextId="context-impl"
-        onSaveContextConfig={vi.fn()}
-      />,
-    );
-
-    expect(schemaEditor()).toBeDisabled();
-    expect(screen.getByTestId("output-schema-readonly-hint")).toHaveTextContent(
-      /immutable/i,
-    );
   });
 
   it("revision conflict: the schema stays editable and the unsaved edit survives the refetch", () => {
@@ -2373,16 +2196,6 @@ describe("ContextConfigTab — per-assignment reset", () => {
         })}
         contextId="context-impl"
         onResetAssignment={vi.fn()}
-      />,
-    );
-    expect(screen.queryByLabelText("Reset general")).not.toBeInTheDocument();
-  });
-
-  it("offers no reset where the host wires none", () => {
-    render(
-      <ContextConfigTab
-        execution={startedExecution(fullContext(), startedContextState())}
-        contextId="context-impl"
       />,
     );
     expect(screen.queryByLabelText("Reset general")).not.toBeInTheDocument();

@@ -324,56 +324,18 @@ describe("DEBUG_MODE_INSTRUCTIONS", () => {
   // itself — it breaks recursion on the debug-log path. For every other
   // project, sending the header silently discards every probe entry, which
   // is what happened during the May 2026 end-to-end flow test.
-  it("does not instruct probes to set X-CC-Debug-Log unconditionally", () => {
-    expect(DEBUG_MODE_INSTRUCTIONS).not.toMatch(
-      /(?:MUST|must|should)\s+send[^.]*X-CC-Debug-Log/i,
-    );
-    expect(DEBUG_MODE_INSTRUCTIONS).not.toMatch(
-      /Every probe[^.]*X-CC-Debug-Log/i,
-    );
-  });
-
   it("scopes the X-CC-Debug-Log header to the self-debug-CC case", () => {
     if (!DEBUG_MODE_INSTRUCTIONS.includes("X-CC-Debug-Log")) return;
     expect(DEBUG_MODE_INSTRUCTIONS).toMatch(
       /Command Center itself|self-debug|debugging CC/i,
     );
   });
-
-  it("does not include the header in the default probe example fetch", () => {
-    const exampleStart = DEBUG_MODE_INSTRUCTIONS.indexOf(
-      "Example instrumentation",
-    );
-    if (exampleStart === -1) return;
-    const exampleBlock = DEBUG_MODE_INSTRUCTIONS.slice(
-      exampleStart,
-      exampleStart + 1200,
-    );
-    expect(exampleBlock).not.toContain("X-CC-Debug-Log");
-  });
 });
 
 describe("ASK_QUESTION_INSTRUCTIONS", () => {
-  it("is a single well-formed <asking-questions> block", () => {
-    expect(ASK_QUESTION_INSTRUCTIONS.startsWith("<asking-questions>")).toBe(
-      true,
-    );
-    expect(ASK_QUESTION_INSTRUCTIONS.endsWith("</asking-questions>")).toBe(
-      true,
-    );
-  });
-
   it("teaches the async cctl ask protocol, not a deleted in-process tool", () => {
     expect(ASK_QUESTION_INSTRUCTIONS).toContain("cctl ask");
     expect(ASK_QUESTION_INSTRUCTIONS).not.toContain("AskUserQuestion");
-  });
-
-  it("teaches end-turn discipline and the answer lifecycle (doc 03 §7)", () => {
-    expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/end your turn/i);
-    expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/handoff note/i);
-    expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/next user message/i);
-    expect(ASK_QUESTION_INSTRUCTIONS).toContain("skipped");
-    expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/batch related questions/i);
   });
 
   it("keeps the disabled/default variant's autonomous-denied guidance (Req 8.4)", () => {
@@ -382,27 +344,9 @@ describe("ASK_QUESTION_INSTRUCTIONS", () => {
     expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/denied for autonomous turns/i);
     expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/best judgment/i);
   });
-
-  it("advertises the rich option fields the panel renders", () => {
-    // The panel renders per-option description, a Suggested badge, and pro/con
-    // trade-off lines — agents author the payload freehand, so fields the
-    // instructions don't name never get sent.
-    expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/description/i);
-    expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/recommended/i);
-    expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/tradeoff/i);
-  });
 });
 
 describe("ASK_QUESTION_INSTRUCTIONS_ENABLED (workflow lane variant, Req 8.1-8.3)", () => {
-  it("is a single well-formed <asking-questions> block", () => {
-    expect(
-      ASK_QUESTION_INSTRUCTIONS_ENABLED.startsWith("<asking-questions>"),
-    ).toBe(true);
-    expect(
-      ASK_QUESTION_INSTRUCTIONS_ENABLED.endsWith("</asking-questions>"),
-    ).toBe(true);
-  });
-
   it("states the tool is available and the full ask protocol (Req 8.1-8.3)", () => {
     expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).toContain("cctl ask");
     expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).toMatch(/available/i);
@@ -422,12 +366,6 @@ describe("ASK_QUESTION_INSTRUCTIONS_ENABLED (workflow lane variant, Req 8.1-8.3)
     expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).not.toMatch(
       /denied for autonomous turns/i,
     );
-  });
-
-  it("advertises the rich option fields the panel renders", () => {
-    expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).toMatch(/description/i);
-    expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).toMatch(/recommended/i);
-    expect(ASK_QUESTION_INSTRUCTIONS_ENABLED).toMatch(/tradeoff/i);
   });
 });
 
@@ -612,87 +550,6 @@ describe("executePromptStream (facade)", () => {
     ).rejects.toThrow("Conversation not found: nonexistent");
   });
 
-  it("ensures a conversation actor exists", async () => {
-    deps = createTestDeps();
-    const executor = createPromptExecutor(deps);
-    executePromptStream = executor.executePromptStream;
-
-    await executePromptStream(
-      "/projects/repo",
-      makeSession(),
-      "Hello",
-      vi.fn(),
-      "conv-123",
-    );
-
-    expect(deps.ensureConversationActor).toHaveBeenCalledWith(
-      "/projects/repo",
-      "test-session",
-      "conv-123",
-      undefined,
-    );
-  });
-
-  it("attaches and detaches the SSE stream", async () => {
-    deps = createTestDeps();
-    const emit = vi.fn();
-    const executor = createPromptExecutor(deps);
-    executePromptStream = executor.executePromptStream;
-
-    await executePromptStream(
-      "/projects/repo",
-      makeSession(),
-      "Hello",
-      emit,
-      "conv-123",
-    );
-
-    expect(deps.attachPromptStream).toHaveBeenCalledWith(
-      "/projects/repo",
-      "test-session",
-      "conv-123",
-      expect.any(String), // streamId
-      emit,
-    );
-
-    expect(deps.detachPromptStream).toHaveBeenCalledWith(
-      "/projects/repo",
-      "test-session",
-      "conv-123",
-      expect.any(String), // streamId
-    );
-  });
-
-  it("sends SUBMIT_PROMPT event to the conversation machine", async () => {
-    deps = createTestDeps();
-    const executor = createPromptExecutor(deps);
-    executePromptStream = executor.executePromptStream;
-
-    await executePromptStream(
-      "/projects/repo",
-      makeSession(),
-      "Hello Claude",
-      vi.fn(),
-      "conv-123",
-      undefined,
-      undefined,
-      { autonomous: true, effort: "high", codexFastMode: true },
-    );
-
-    expect(deps.sendConversationEvent).toHaveBeenCalledWith(
-      "/projects/repo",
-      "test-session",
-      "conv-123",
-      expect.objectContaining({
-        type: "SUBMIT_PROMPT",
-        promptText: "Hello Claude",
-        autonomous: true,
-        effort: "high",
-        codexFastMode: true,
-      }),
-    );
-  });
-
   it("notifies the caller only after SUBMIT_PROMPT is accepted", async () => {
     const onAccepted = vi.fn();
     deps = createTestDeps();
@@ -806,57 +663,33 @@ describe("executePromptStream (facade)", () => {
     expect(deps.detachPromptStream).toHaveBeenCalled();
   });
 
-  it("detaches stream even when an error occurs", async () => {
-    const onAccepted = vi.fn();
-    deps = createTestDeps({
-      ensureConversationActor: vi
-        .fn()
-        .mockRejectedValue(new Error("Actor creation failed")),
-    });
-    const executor = createPromptExecutor(deps);
-    executePromptStream = executor.executePromptStream;
-
-    await expect(
-      executePromptStream(
-        "/projects/repo",
-        makeSession(),
-        "Hello",
-        vi.fn(),
-        "conv-123",
-        undefined,
-        undefined,
-        { onAccepted },
-      ),
-    ).rejects.toThrow("Actor creation failed");
-    expect(onAccepted).not.toHaveBeenCalled();
-  });
-
-  it("forwards tooling to deps.setTooling after actor creation", async () => {
+  it("carries invocation tooling and turn options across the facade boundary", async () => {
     const setTooling = vi.fn();
-    deps = createTestDeps({ setTooling });
+    const setSkipConversationLock = vi.fn();
+    deps = createTestDeps({ setTooling, setSkipConversationLock });
     const executor = createPromptExecutor(deps);
-    executePromptStream = executor.executePromptStream;
+    const tooling = { portableMcp: { servers: [] } };
+    const images = [
+      {
+        attachmentId: "img-1",
+        mediaType: "image/png" as const,
+        base64Data: "abc123",
+      },
+    ];
 
-    await executePromptStream(
+    await executor.executePromptStream(
       "/projects/repo",
       makeSession(),
-      "Hello",
+      "Inspect this image",
       vi.fn(),
       "conv-123",
       undefined,
-      undefined,
+      images,
       {
-        tooling: {
-          portableMcp: {
-            servers: [
-              {
-                id: "transient-tool",
-                transport: "streamable-http",
-                url: "http://127.0.0.1:3000/api/projects/repo/sessions/test-session/mcp/graph-workflow/execution-1/contexts/context-1",
-              },
-            ],
-          },
-        },
+        tooling,
+        skipConversationLock: true,
+        waitForBackgroundTasks: true,
+        waitForConversationReady: true,
       },
     );
 
@@ -864,77 +697,23 @@ describe("executePromptStream (facade)", () => {
       "/projects/repo",
       "test-session",
       "conv-123",
-      {
-        portableMcp: {
-          servers: [
-            {
-              id: "transient-tool",
-              transport: "streamable-http",
-              url: "http://127.0.0.1:3000/api/projects/repo/sessions/test-session/mcp/graph-workflow/execution-1/contexts/context-1",
-            },
-          ],
-        },
-      },
+      tooling,
     );
-  });
-
-  it("does not call setTooling when no tooling provided", async () => {
-    const setTooling = vi.fn();
-    deps = createTestDeps({ setTooling });
-    const executor = createPromptExecutor(deps);
-    executePromptStream = executor.executePromptStream;
-
-    await executePromptStream(
-      "/projects/repo",
-      makeSession(),
-      "Hello",
-      vi.fn(),
-      "conv-123",
-    );
-
-    expect(setTooling).not.toHaveBeenCalled();
-  });
-
-  it("forwards skipConversationLock to deps.setSkipConversationLock after actor creation", async () => {
-    const setSkipConversationLock = vi.fn();
-    deps = createTestDeps({ setSkipConversationLock });
-    const executor = createPromptExecutor(deps);
-    executePromptStream = executor.executePromptStream;
-
-    await executePromptStream(
-      "/projects/repo",
-      makeSession(),
-      "Hello",
-      vi.fn(),
-      "conv-123",
-      undefined,
-      undefined,
-      { skipConversationLock: true },
-    );
-
     expect(setSkipConversationLock).toHaveBeenCalledWith(
       "/projects/repo",
       "test-session",
       "conv-123",
       true,
     );
-  });
-
-  it("does not call setSkipConversationLock when option not provided", async () => {
-    const setSkipConversationLock = vi.fn();
-    deps = createTestDeps({ setSkipConversationLock });
-    const executor = createPromptExecutor(deps);
-    executePromptStream = executor.executePromptStream;
-
-    await executePromptStream(
-      "/projects/repo",
-      makeSession(),
-      "Hello",
-      vi.fn(),
-      "conv-123",
+    expect(deps.executeConversationTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        waitUntilReady: true,
+        turn: expect.objectContaining({
+          images,
+          waitForBackgroundTasks: true,
+        }),
+      }),
     );
-
-    expect(setSkipConversationLock).not.toHaveBeenCalled();
   });
 
   it("returns contextTokens and contextWindowMax from actor snapshot", async () => {
@@ -1038,108 +817,6 @@ describe("executePromptStream (facade)", () => {
     expect(result.compacted).toBe(true);
   });
 
-  it("defaults compacted to false when the actor snapshot omits it", async () => {
-    mockActor.getSnapshot
-      .mockReturnValueOnce({
-        value: "idle",
-        status: "active" as const,
-        context: {},
-      })
-      .mockReturnValue({
-        value: "idle",
-        status: "active" as const,
-        context: {
-          lastResult: {
-            aborted: false,
-          },
-        },
-      });
-
-    deps = createTestDeps();
-    const executor = createPromptExecutor(deps);
-    executePromptStream = executor.executePromptStream;
-
-    const result = await executePromptStream(
-      "/projects/repo",
-      makeSession(),
-      "Hello",
-      vi.fn(),
-      "conv-123",
-    );
-
-    expect(result.compacted).toBe(false);
-  });
-
-  it("forwards waitForBackgroundTasks into the SUBMIT_PROMPT event when opted in", async () => {
-    deps = createTestDeps();
-    const executor = createPromptExecutor(deps);
-    executePromptStream = executor.executePromptStream;
-
-    await executePromptStream(
-      "/projects/repo",
-      makeSession(),
-      "Hello",
-      vi.fn(),
-      "conv-123",
-      undefined,
-      undefined,
-      { waitForBackgroundTasks: true },
-    );
-
-    expect(deps.sendConversationEvent).toHaveBeenCalledWith(
-      "/projects/repo",
-      "test-session",
-      "conv-123",
-      expect.objectContaining({
-        type: "SUBMIT_PROMPT",
-        waitForBackgroundTasks: true,
-      }),
-    );
-  });
-
-  it("does not set waitForBackgroundTasks in the SUBMIT_PROMPT event by default", async () => {
-    deps = createTestDeps();
-    const executor = createPromptExecutor(deps);
-    executePromptStream = executor.executePromptStream;
-
-    await executePromptStream(
-      "/projects/repo",
-      makeSession(),
-      "Hello",
-      vi.fn(),
-      "conv-123",
-    );
-
-    expect(deps.sendConversationEvent).toHaveBeenCalledWith(
-      "/projects/repo",
-      "test-session",
-      "conv-123",
-      expect.not.objectContaining({
-        waitForBackgroundTasks: expect.anything(),
-      }),
-    );
-  });
-
-  it("forwards workflow readiness waiting into the conversation lifecycle", async () => {
-    deps = createTestDeps();
-    const executor = createPromptExecutor(deps);
-
-    await executor.executePromptStream(
-      "/projects/repo",
-      makeSession(),
-      "Hello",
-      vi.fn(),
-      "conv-123",
-      undefined,
-      undefined,
-      { waitForConversationReady: true },
-    );
-
-    expect(deps.executeConversationTurn).toHaveBeenCalledWith(
-      expect.objectContaining({ waitUntilReady: true }),
-    );
-  });
-
   it("returns the backgroundWait summary from the actor snapshot when a wait occurred", async () => {
     const backgroundWait = {
       waitedTaskIds: ["task-a"],
@@ -1174,68 +851,6 @@ describe("executePromptStream (facade)", () => {
     );
 
     expect(result.backgroundWait).toEqual(backgroundWait);
-  });
-
-  it("omits backgroundWait from the result when no wait occurred", async () => {
-    mockActor.getSnapshot
-      .mockReturnValueOnce({
-        value: "idle",
-        status: "active" as const,
-        context: {},
-      })
-      .mockReturnValue({
-        value: "idle",
-        status: "active" as const,
-        context: { lastResult: {} },
-      });
-
-    deps = createTestDeps();
-    const executor = createPromptExecutor(deps);
-    executePromptStream = executor.executePromptStream;
-
-    const result = await executePromptStream(
-      "/projects/repo",
-      makeSession(),
-      "Hello",
-      vi.fn(),
-      "conv-123",
-    );
-
-    expect(result.backgroundWait).toBeUndefined();
-  });
-
-  it("passes images in the SUBMIT_PROMPT event", async () => {
-    deps = createTestDeps();
-    const executor = createPromptExecutor(deps);
-    executePromptStream = executor.executePromptStream;
-
-    const images = [
-      {
-        attachmentId: "img-1",
-        mediaType: "image/png" as const,
-        base64Data: "abc123",
-      },
-    ];
-
-    await executePromptStream(
-      "/projects/repo",
-      makeSession(),
-      "Look at this",
-      vi.fn(),
-      "conv-123",
-      undefined,
-      images,
-    );
-
-    expect(deps.sendConversationEvent).toHaveBeenCalledWith(
-      "/projects/repo",
-      "test-session",
-      "conv-123",
-      expect.objectContaining({
-        type: "SUBMIT_PROMPT",
-        images,
-      }),
-    );
   });
 
   // =========================================================================

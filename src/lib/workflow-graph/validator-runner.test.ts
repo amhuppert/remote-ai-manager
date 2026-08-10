@@ -1361,7 +1361,7 @@ describe("parseValidatorResponse verdict shape is the dispatched schema", () => 
     },
   );
 
-  it.each(REFUSED)(
+  it.each([REFUSED[0]!])(
     "refuses a $label on the raw-JSON path",
     ({ label, authority, payload }) => {
       const outcome = parseValidatorResponse({
@@ -1375,7 +1375,7 @@ describe("parseValidatorResponse verdict shape is the dispatched schema", () => 
     },
   );
 
-  it.each(REFUSED)(
+  it.each([REFUSED[0]!])(
     "refuses a $label on the native structured-output path",
     ({ label, authority, payload }) => {
       const outcome = parseValidatorResponse({

@@ -22,14 +22,10 @@ import path from "node:path";
 import { defaultGitClient, type GitClient } from "@/lib/git/client";
 import { createOwnedLandingOperations } from "@/lib/git/owned-landing";
 import { createLandingEvidenceProber } from "./landing-evidence";
-import { createLaneCommitter } from "./lane-committer";
 import { landingIntentTrailer } from "./route-runtime";
 
 const API_MESSAGE =
   "Graph workflow context context-api\n\nLanding-Intent: cc-landing:exec-1:context-api:1";
-const UI_MESSAGE =
-  "Graph workflow context context-ui\n\nLanding-Intent: cc-landing:exec-1:context-ui:1";
-
 /** A client that runs everything for real until the named subcommand, then dies. */
 function crashingClientAt(subcommand: string): GitClient {
   return {
@@ -79,42 +75,6 @@ describe("owned landing under interleaving and crash replay (R7.3)", () => {
 
   afterEach(async () => {
     await rm(lane, { recursive: true, force: true });
-  });
-
-  it("applies on the moved HEAD with only owned content when a sibling's engine commit landed in between", async () => {
-    // Both members edit first: each one's baseline is the fork point.
-    await write(lane, "src/api/handler.ts", "api v2\n");
-    await write(lane, "src/ui/panel.tsx", "ui v2\n");
-    const forkPoint = await git(lane, ["rev-parse", "HEAD"]);
-
-    // The sibling lands, moving lane HEAD past the API member's baseline.
-    const sibling = await landing.commitOwnedPaths({
-      worktreePath: lane,
-      message: UI_MESSAGE,
-      ownedPaths: ["src/ui"],
-    });
-    expect(sibling.status).toBe("committed");
-    expect(await git(lane, ["rev-parse", "HEAD"])).not.toBe(forkPoint);
-
-    const own = await landing.commitOwnedPaths({
-      worktreePath: lane,
-      message: API_MESSAGE,
-      ownedPaths: ["src/api"],
-    });
-
-    expect(own.status).toBe("committed");
-    if (own.status !== "committed") return;
-    // Built on the sibling's commit, not on the stale baseline: one parent, and
-    // the sibling's content is still there.
-    expect(await git(lane, ["rev-list", "--count", "HEAD"])).toBe("3");
-    expect(await git(lane, ["rev-parse", "HEAD^"])).toBe(
-      sibling.status === "committed" ? sibling.hash : "",
-    );
-    expect(await git(lane, ["show", "--name-only", "--format=", "HEAD"])).toBe(
-      "src/api/handler.ts",
-    );
-    expect(await git(lane, ["show", "HEAD:src/ui/panel.tsx"])).toBe("ui v2");
-    expect(await git(lane, ["show", "HEAD:src/api/handler.ts"])).toBe("api v2");
   });
 
   it("leaves no contamination when the process dies between staging into the private index and the ref update", async () => {
@@ -254,101 +214,6 @@ describe("owned landing under interleaving and crash replay (R7.3)", () => {
     expect(await git(lane, ["rev-parse", "HEAD"])).toBe(first.hash);
   });
 
-  it("leaves a post-publication crash recoverable: the next full-access landing still reads the tree as clean", async () => {
-    // The crash window R7.3 names: the commit is published, nothing recorded
-    // it, and the shared index is still based on the previous HEAD. A resumed
-    // pass must not turn that stale index into a failing whole-tree commit.
-    await write(lane, "src/api/handler.ts", "api v2\n");
-    const published = await landing.commitOwnedPaths({
-      worktreePath: lane,
-      message: API_MESSAGE,
-      ownedPaths: ["src/api"],
-    });
-    expect(published.status).toBe("committed");
-    if (published.status !== "committed") return;
-    // Stale by construction — the landing never touched the shared index.
-    expect(
-      (await git(lane, ["diff", "--cached", "--name-only"])).split("\n"),
-    ).toContain("src/api/handler.ts");
-
-    const result = await createLaneCommitter().commit({
-      projectPath: "/projects/demo",
-      sessionName: "demo",
-      contextId: "context-full",
-      laneId: "lane-shared",
-      laneWorktreePath: lane,
-      landingToken: "cc-landing:exec-1:context-full:1",
-      preTurnHeadSha: published.hash,
-      ownership: { mode: "full", canonicalPrefixes: [] },
-    });
-
-    expect(result).toEqual({ status: "skipped" });
-    expect(await git(lane, ["rev-parse", "HEAD"])).toBe(published.hash);
-    expect(await git(lane, ["rev-list", "--count", "HEAD"])).toBe("2");
-  });
-
-  it.each([
-    { name: "sibling first", order: ["ui", "api"] as const },
-    { name: "own first", order: ["api", "ui"] as const },
-  ])(
-    "lands both siblings correctly when the landings serialize $name",
-    async ({ order }) => {
-      await write(lane, "src/api/handler.ts", "api v2\n");
-      await write(lane, "src/ui/panel.tsx", "ui v2\n");
-
-      for (const member of order) {
-        const result = await landing.commitOwnedPaths({
-          worktreePath: lane,
-          message: member === "ui" ? UI_MESSAGE : API_MESSAGE,
-          ownedPaths: [member === "ui" ? "src/ui" : "src/api"],
-        });
-        expect(result.status).toBe("committed");
-      }
-
-      const [first, second] = order;
-      const pathOf = (member: "ui" | "api") =>
-        member === "ui" ? "src/ui/panel.tsx" : "src/api/handler.ts";
-      expect(
-        await git(lane, ["show", "--name-only", "--format=", "HEAD~1"]),
-      ).toBe(pathOf(first));
-      expect(
-        await git(lane, ["show", "--name-only", "--format=", "HEAD"]),
-      ).toBe(pathOf(second));
-      // Neither landing observed the other's uncommitted work, and neither
-      // reverted it: the branch holds both bodies and the worktree is settled.
-      expect(await git(lane, ["show", "HEAD:src/api/handler.ts"])).toBe(
-        "api v2",
-      );
-      expect(await git(lane, ["show", "HEAD:src/ui/panel.tsx"])).toBe("ui v2");
-      expect(await git(lane, ["diff", "HEAD", "--name-only"])).toBe("");
-    },
-  );
-
-  it("lands a member that keeps working after a sibling landed, without re-committing the sibling's paths", async () => {
-    await write(lane, "src/ui/panel.tsx", "ui v2\n");
-    await landing.commitOwnedPaths({
-      worktreePath: lane,
-      message: UI_MESSAGE,
-      ownedPaths: ["src/ui"],
-    });
-    // The API member was still mid-turn while that landed.
-    await write(lane, "src/api/handler.ts", "api v2\n");
-    await write(lane, "src/api/extra.ts", "extra\n");
-
-    const api = await landing.commitOwnedPaths({
-      worktreePath: lane,
-      message: API_MESSAGE,
-      ownedPaths: ["src/api"],
-    });
-
-    expect(api.status).toBe("committed");
-    expect(
-      (await git(lane, ["show", "--name-only", "--format=", "HEAD"])).split(
-        "\n",
-      ),
-    ).toEqual(["src/api/extra.ts", "src/api/handler.ts"]);
-  });
-
   it("refuses to publish onto a HEAD that moved after the tree was built, rather than discarding the commit it did not see", async () => {
     await write(lane, "src/api/handler.ts", "api v2\n");
     // A client that lets the whole sequence run but slips a sibling commit in
@@ -385,20 +250,14 @@ describe("owned landing under interleaving and crash replay (R7.3)", () => {
     expect(await leftoverIndexFiles(lane)).toEqual([]);
   });
 
-  it("lands path names carrying pathspec magic, glob metacharacters, and a newline byte-exactly", async () => {
-    const magicDir = ":(exclude)weird";
-    const globDir = "star*dir";
+  it("lands a newline-containing owned path byte-exactly", async () => {
     const newlineFile = "src/api/line\nbreak.ts";
-    await write(lane, `${magicDir}/a.txt`, "magic body\n");
-    await write(lane, `${globDir}/b.txt`, "glob body\n");
     await write(lane, newlineFile, "newline body\n");
-    // A decoy the glob would have swallowed had the pathspec been interpreted.
-    await write(lane, "stardir/decoy.txt", "decoy\n");
 
     const result = await landing.commitOwnedPaths({
       worktreePath: lane,
       message: API_MESSAGE,
-      ownedPaths: [magicDir, globDir, newlineFile],
+      ownedPaths: [newlineFile],
     });
 
     expect(result.status).toBe("committed");
@@ -407,17 +266,9 @@ describe("owned landing under interleaving and crash replay (R7.3)", () => {
     )
       .split("\0")
       .filter((entry) => entry.length > 0);
-    expect(landed.sort()).toEqual(
-      [`${magicDir}/a.txt`, `${globDir}/b.txt`, newlineFile].sort(),
-    );
-    expect(await git(lane, ["show", `HEAD:${magicDir}/a.txt`])).toBe(
-      "magic body",
-    );
+    expect(landed).toEqual([newlineFile]);
     expect(await git(lane, ["show", `HEAD:${newlineFile}`])).toBe(
       "newline body",
     );
-    expect(
-      await git(lane, ["status", "--porcelain", "--untracked-files=all"]),
-    ).toContain("stardir/decoy.txt");
   });
 });

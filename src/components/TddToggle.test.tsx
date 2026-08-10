@@ -14,26 +14,6 @@ Element.prototype.setPointerCapture = () => {};
 Element.prototype.releasePointerCapture = () => {};
 
 describe("TddToggle", () => {
-  it("exposes a switch role with an accessible name and aria-checked reflecting state", () => {
-    const { rerender } = render(
-      <TddToggle enabled={false} onChange={vi.fn()} />,
-    );
-    const sw = screen.getByRole("switch", { name: /red-green tdd/i });
-    expect(sw).toHaveAttribute("aria-checked", "false");
-
-    rerender(<TddToggle enabled onChange={vi.fn()} />);
-    expect(
-      screen.getByRole("switch", { name: /red-green tdd/i }),
-    ).toHaveAttribute("aria-checked", "true");
-  });
-
-  it("toggles via the switch (native keyboard/click — no hand-rolled aria-pressed button)", () => {
-    const onChange = vi.fn();
-    render(<TddToggle enabled={false} onChange={onChange} />);
-    fireEvent.click(screen.getByRole("switch", { name: /red-green tdd/i }));
-    expect(onChange).toHaveBeenCalledWith(true);
-  });
-
   it("toggles when the visible label is clicked", () => {
     const onChange = vi.fn();
     render(<TddToggle enabled onChange={onChange} />);
@@ -51,14 +31,7 @@ describe("TddToggle", () => {
     expect(onChange).toHaveBeenCalledWith(true);
   });
 
-  it("does not double-toggle: a direct switch click fires onChange once", () => {
-    const onChange = vi.fn();
-    render(<TddToggle enabled={false} onChange={onChange} />);
-    fireEvent.click(screen.getByRole("switch", { name: /red-green tdd/i }));
-    expect(onChange).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not fire onChange when the pill is clicked while disabled", () => {
+  it("does not toggle from the surrounding pill while disabled", () => {
     const onChange = vi.fn();
     render(<TddToggle enabled={false} onChange={onChange} disabled />);
     const pill = screen.getByRole("switch", { name: /red-green tdd/i })
@@ -67,12 +40,11 @@ describe("TddToggle", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("does not fire onChange while disabled", () => {
+  it("does not double-toggle: a direct switch click fires onChange once", () => {
     const onChange = vi.fn();
-    render(<TddToggle enabled={false} onChange={onChange} disabled />);
-    const sw = screen.getByRole("switch", { name: /red-green tdd/i });
-    fireEvent.click(sw);
-    expect(onChange).not.toHaveBeenCalled();
+    render(<TddToggle enabled={false} onChange={onChange} />);
+    fireEvent.click(screen.getByRole("switch", { name: /red-green tdd/i }));
+    expect(onChange).toHaveBeenCalledTimes(1);
   });
 
   it("renders the compact variant with the TDD label as a switch", () => {

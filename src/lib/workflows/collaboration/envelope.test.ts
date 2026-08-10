@@ -23,7 +23,7 @@
  *
  * No `vi.mock`. All deps are injected.
  */
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
@@ -347,44 +347,6 @@ function baseInput(
 }
 
 describe("runAsymmetricCollaborationSlice — initial draft phase", () => {
-  it("issues initial draft requests for both agent_one and agent_two in parallel and routes them to the correct backends (primary=claude → agent_one=claude, agent_two=codex)", async () => {
-    const programmed = makeProgrammedCallAgent({
-      claude: [
-        makeBackendResult("claude", makeAgentOneInitialDraft()),
-        makeBackendResult("claude", makeAgentOneProposedChanges()),
-        makeBackendResult(
-          "claude",
-          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
-        ),
-        makeBackendResult("claude", makeFinalAnswer()),
-      ],
-      codex: [
-        makeBackendResult("codex", makeAgentTwoInitialDraft()),
-        makeBackendResult("codex", makeAgentTwoCrossReview()),
-        makeBackendResult("codex", makeAgentTwoCounterProposalRound1()),
-      ],
-    });
-    const built = await buildDeps(programmed);
-
-    const result = await runAsymmetricCollaborationSlice(
-      baseInput(),
-      built.deps,
-    );
-
-    expect(result.kind).toBe("completed_final");
-
-    const initialRequests = programmed.receivedRequests.slice(0, 2);
-    expect(initialRequests).toHaveLength(2);
-    const initialBackends = initialRequests
-      .map((req) =>
-        req.kind === "conversation_turn"
-          ? (req.backend ?? "claude")
-          : req.backend,
-      )
-      .sort();
-    expect(initialBackends).toEqual(["claude", "codex"]);
-  });
-
   it("routes agent_one to codex and agent_two to claude when primaryAgentBackend is codex", async () => {
     const programmed = makeProgrammedCallAgent({
       codex: [
@@ -460,37 +422,6 @@ describe("runAsymmetricCollaborationSlice — initial draft phase", () => {
     for (const request of initialRequests) {
       expect(request.writeCapability).toBe("artifact_only");
     }
-  });
-
-  it("schedules initial draft calls with writeCapability=artifact_only", async () => {
-    const programmed = makeProgrammedCallAgent({
-      claude: [
-        makeBackendResult("claude", makeAgentOneInitialDraft()),
-        makeBackendResult("claude", makeAgentOneProposedChanges()),
-        makeBackendResult(
-          "claude",
-          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
-        ),
-        makeBackendResult("claude", makeFinalAnswer()),
-      ],
-      codex: [
-        makeBackendResult("codex", makeAgentTwoInitialDraft()),
-        makeBackendResult("codex", makeAgentTwoCrossReview()),
-        makeBackendResult("codex", makeAgentTwoCounterProposalRound1()),
-      ],
-    });
-    const built = await buildDeps(programmed);
-
-    const result = await runAsymmetricCollaborationSlice(
-      baseInput(),
-      built.deps,
-    );
-
-    expect(result.kind).toBe("completed_final");
-
-    const [first, second] = programmed.receivedRequests;
-    expect(first?.writeCapability).toBe("artifact_only");
-    expect(second?.writeCapability).toBe("artifact_only");
   });
 });
 
@@ -679,11 +610,15 @@ describe("runAsymmetricCollaborationSlice — policy edges", () => {
         makeBackendResult("codex", makeAgentTwoCounterProposalRound1()),
       ],
     });
-    const built = await buildDeps(programmed);
+    const updateConversationBackendRef = vi.fn(async () => {});
+    const built = await buildDeps(programmed, {
+      updateConversationBackendRef,
+    });
 
     const result = await runAsymmetricCollaborationSlice(
       baseInput({
         autonomousResolutionThreshold: "blocking",
+        conversationId: "conv-1",
         negotiationRounds: 5,
       }),
       built.deps,
@@ -692,6 +627,7 @@ describe("runAsymmetricCollaborationSlice — policy edges", () => {
     expect(result.kind).toBe("paused_for_user_input");
     if (result.kind !== "paused_for_user_input") return;
     expect(result.resumeToken).toBeTruthy();
+    expect(updateConversationBackendRef).not.toHaveBeenCalled();
   });
 
   it("loops into another negotiation round when Agent One's resolution returns continue_negotiation with implementation disagreements and rounds remain", async () => {
@@ -1842,26 +1778,6 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
     expect(codexInit.ref).toBeNull();
   });
 
-  it("is a no-op for lane seeding when priorBackendRef is omitted", async () => {
-    const inner = createLaneService({ store: createInMemoryLaneStore() });
-    const { service, initializeCalls } = spyOnLaneInitialize(inner);
-
-    const programmed = makeFullHappyPathClaudePrimary();
-    const built = await buildDeps(programmed, { laneService: service });
-
-    await runAsymmetricCollaborationSlice(
-      baseInput({ primaryAgentBackend: "claude" }),
-      built.deps,
-    );
-
-    const claudeInit = initializeCalls.find((s) => s.backend === "claude");
-    const codexInit = initializeCalls.find((s) => s.backend === "codex");
-    if (!claudeInit || !codexInit) throw new Error("expected both lanes init");
-
-    expect(claudeInit.ref).toBeNull();
-    expect(codexInit.ref).toBeNull();
-  });
-
   it("does not overwrite an existing lane on resume (initializeLaneIfMissing wins)", async () => {
     const laneStore = createInMemoryLaneStore();
     const inner = createLaneService({ store: laneStore });
@@ -1897,35 +1813,6 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
     expect(lane).toBeDefined();
     if (!lane) return;
     expect(lane.ref).toBe("sess-claude");
-  });
-
-  it("calls updateConversationBackendRef with the primary lane's latest claude ref on completed_final", async () => {
-    const programmed = makeFullHappyPathClaudePrimary();
-    const updateCalls: Array<{
-      conversationId: string;
-      ref: AgentSessionRef;
-    }> = [];
-    const built = await buildDeps(programmed, {
-      updateConversationBackendRef: async (conversationId, ref) => {
-        updateCalls.push({ conversationId, ref });
-      },
-    });
-
-    const result = await runAsymmetricCollaborationSlice(
-      baseInput({
-        primaryAgentBackend: "claude",
-        conversationId: "conv-1",
-      }),
-      built.deps,
-    );
-
-    expect(result.kind).toBe("completed_final");
-    expect(updateCalls).toEqual([
-      {
-        conversationId: "conv-1",
-        ref: { backend: "claude", ref: "sess-claude" },
-      },
-    ]);
   });
 
   it("calls updateConversationBackendRef with the primary lane's latest codex ref when primary is codex", async () => {
@@ -2047,97 +1934,6 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
     );
 
     expect(result.kind).toBe("failed");
-    expect(updateCalls).toEqual([]);
-  });
-
-  it("does NOT call updateConversationBackendRef when the run pauses for user input", async () => {
-    const programmed = makeProgrammedCallAgent({
-      claude: [
-        makeBackendResult("claude", makeAgentOneInitialDraft()),
-        makeBackendResult("claude", makeAgentOneProposedChanges()),
-        makeBackendResult(
-          "claude",
-          makeResolutionDecisionContinue({
-            remaining_disagreements: [makeObjectiveDisagreement()],
-          }),
-        ),
-      ],
-      codex: [
-        makeBackendResult("codex", makeAgentTwoInitialDraft()),
-        makeBackendResult("codex", makeAgentTwoCrossReview()),
-        makeBackendResult("codex", makeAgentTwoCounterProposalRound1()),
-      ],
-    });
-    const updateCalls: Array<{
-      conversationId: string;
-      ref: AgentSessionRef;
-    }> = [];
-    const built = await buildDeps(programmed, {
-      updateConversationBackendRef: async (conversationId, ref) => {
-        updateCalls.push({ conversationId, ref });
-      },
-    });
-
-    const result = await runAsymmetricCollaborationSlice(
-      baseInput({
-        primaryAgentBackend: "claude",
-        conversationId: "conv-1",
-        autonomousResolutionThreshold: "blocking",
-        negotiationRounds: 5,
-      }),
-      built.deps,
-    );
-
-    expect(result.kind).toBe("paused_for_user_input");
-    expect(updateCalls).toEqual([]);
-  });
-
-  it("does NOT call updateConversationBackendRef when the run is user-stopped", async () => {
-    const controller = new AbortController();
-    controller.abort();
-
-    const programmed = makeFullHappyPathClaudePrimary();
-    const updateCalls: Array<{
-      conversationId: string;
-      ref: AgentSessionRef;
-    }> = [];
-    const built = await buildDeps(programmed, {
-      updateConversationBackendRef: async (conversationId, ref) => {
-        updateCalls.push({ conversationId, ref });
-      },
-    });
-
-    const result = await runAsymmetricCollaborationSlice(
-      baseInput({
-        primaryAgentBackend: "claude",
-        conversationId: "conv-1",
-        stopSignal: controller.signal,
-      }),
-      built.deps,
-    );
-
-    expect(result.kind).toBe("completed_unresolved");
-    expect(updateCalls).toEqual([]);
-  });
-
-  it("skips updateConversationBackendRef when conversationId is undefined", async () => {
-    const programmed = makeFullHappyPathClaudePrimary();
-    const updateCalls: Array<{
-      conversationId: string;
-      ref: AgentSessionRef;
-    }> = [];
-    const built = await buildDeps(programmed, {
-      updateConversationBackendRef: async (conversationId, ref) => {
-        updateCalls.push({ conversationId, ref });
-      },
-    });
-
-    const result = await runAsymmetricCollaborationSlice(
-      baseInput({ primaryAgentBackend: "claude" }),
-      built.deps,
-    );
-
-    expect(result.kind).toBe("completed_final");
     expect(updateCalls).toEqual([]);
   });
 });

@@ -135,9 +135,10 @@ describe("ConfigPage — Workflow Defaults", () => {
   it("uses the redesigned settings shell with General as the default section", async () => {
     await renderConfigPage();
 
-    expect(
-      screen.getByRole("tablist", { name: "Settings" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "Settings" })).toHaveAttribute(
+      "data-orientation",
+      "vertical",
+    );
     expect(screen.getByRole("tab", { name: /General/i })).toHaveAttribute(
       "aria-selected",
       "true",
@@ -167,15 +168,6 @@ describe("ConfigPage — Workflow Defaults", () => {
       screen.queryByRole("heading", { name: /General settings/i }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("System Configuration")).not.toBeInTheDocument();
-  });
-
-  it("exposes the settings nav as a vertical Radix tablist", async () => {
-    await renderConfigPage();
-
-    // Radix promotes the <nav> to role=tablist; aria-label is preserved.
-    const tablist = screen.getByRole("tablist", { name: "Settings" });
-    expect(tablist).toHaveAttribute("data-orientation", "vertical");
-    expect(tablist.tagName).toBe("NAV");
   });
 
   it("consolidates backend defaults into a single Agent backends section", async () => {
@@ -366,42 +358,6 @@ describe("ConfigPage — Workflow Defaults", () => {
     expect(defaultTimeout).toHaveValue("10");
     expect(defaultTimeout).not.toHaveAttribute("aria-invalid");
     expect(screen.queryByText(/invalid field/i)).not.toBeInTheDocument();
-  });
-
-  it("wires the active section to a role=tabpanel", async () => {
-    await renderConfigPage();
-
-    const generalTab = screen.getByRole("tab", { name: /General/i });
-    const panel = screen.getByRole("tabpanel");
-    expect(panel).toHaveAttribute(
-      "aria-labelledby",
-      generalTab.getAttribute("id"),
-    );
-    expect(
-      screen.getByRole("heading", { name: /General settings/i }),
-    ).toBeInTheDocument();
-  });
-
-  it("moves selection + DOM focus with ArrowDown and swaps the tabpanel", async () => {
-    const user = userEvent.setup();
-    await renderConfigPage();
-
-    const generalTab = screen.getByRole("tab", { name: /General/i });
-    generalTab.focus();
-    expect(generalTab).toHaveFocus();
-
-    await user.keyboard("{ArrowDown}");
-
-    const backendsTab = screen.getByRole("tab", { name: /Agent backends/i });
-    expect(backendsTab).toHaveFocus();
-    expect(backendsTab).toHaveAttribute("aria-selected", "true");
-    expect(generalTab).toHaveAttribute("aria-selected", "false");
-
-    const panel = screen.getByRole("tabpanel");
-    expect(panel).toHaveAttribute(
-      "aria-labelledby",
-      backendsTab.getAttribute("id"),
-    );
   });
 
   it("renders config section headers as static chrome instead of expandable controls", async () => {

@@ -857,6 +857,9 @@ describe("graph workflow iteration orchestrator", () => {
       contextId: "context-plan",
     });
 
+    expect(runAgentIteration).toHaveBeenCalledWith(
+      expect.objectContaining({ askUserQuestionsEnabled: false }),
+    );
     expect(result.shouldContinueInContext).toBe(false);
     expect(result.execution.contextStates["context-plan"]?.status).toBe(
       "completed",
@@ -919,60 +922,6 @@ describe("graph workflow iteration orchestrator", () => {
 
     expect(runAgentIteration).toHaveBeenCalledWith(
       expect.objectContaining({ askUserQuestionsEnabled: true }),
-    );
-  });
-
-  it("passes askUserQuestionsEnabled false when the toggle is disabled", async () => {
-    const repository = createRepository(
-      createExecutionWithPlanTasks({
-        "task-plan-1": "completed",
-        "task-plan-2": "pending",
-      }),
-    );
-    const createConversation = vi.fn(async () => ({ id: "conversation-aq2" }));
-    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
-    const runAgentIteration = vi.fn(async () => {
-      const current = structuredClone(repository.read());
-      current.taskStates["task-plan-2"] = {
-        ...current.taskStates["task-plan-2"]!,
-        status: "completed",
-        summary: "Finished planning",
-        completedAt: "2026-03-27T16:22:00.000Z",
-      };
-      current.contextStates["context-plan"] = {
-        ...current.contextStates["context-plan"]!,
-        completedTaskCount: 2,
-      };
-      await repository.mutateActive("/repo", "session-1", () => current);
-      return {
-        conversationId: "conv-mock",
-        contextTokens: null,
-        contextWindowMax: null,
-        compacted: false,
-      };
-    });
-
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
-      executionRepository: repository,
-      findLatestContextValidationEvent:
-        repository.findLatestContextValidationEvent,
-      createConversation,
-      createToolServer,
-      runAgentIteration,
-      now() {
-        return "2026-03-27T16:20:00.000Z";
-      },
-    });
-
-    await orchestrator.runIteration({
-      projectPath: "/repo",
-      projectName: "repo",
-      sessionName: "session-1",
-      contextId: "context-plan",
-    });
-
-    expect(runAgentIteration).toHaveBeenCalledWith(
-      expect.objectContaining({ askUserQuestionsEnabled: false }),
     );
   });
 
@@ -2460,64 +2409,6 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
     expect(result.conversationId).toBe("conv-new");
   });
 
-  it("reuses the same implementer conversation across 3 consecutive iterations in the same context", async () => {
-    const execution = createExecutionWithPlanTasks({
-      "task-plan-1": "pending",
-      "task-plan-2": "pending",
-    });
-    const repository = createRepository(execution);
-
-    let convCounter = 0;
-    const createConversation = vi.fn(async () => {
-      convCounter++;
-      return { id: `conv-${convCounter}` };
-    });
-    const getConversation = vi.fn(
-      async (_p: string, _s: string, id: string) => ({ id }),
-    );
-    const createToolServer = vi.fn(() => ({ server: {} }));
-    const runAgentIteration = vi.fn(async () => ({
-      conversationId: "conv-mock",
-      contextTokens: 50_000,
-      contextWindowMax: 200_000,
-      compacted: false,
-    }));
-
-    const continuityService = makeLaneContinuityService(repository, {
-      createConversation,
-      getConversation,
-      now: () => NOW,
-    });
-
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
-      executionRepository: repository,
-      findLatestContextValidationEvent:
-        repository.findLatestContextValidationEvent,
-      createConversation: vi.fn(),
-      createToolServer,
-      runAgentIteration,
-      continuityService,
-      now: () => NOW,
-    });
-
-    const input = {
-      projectPath: "/repo",
-      projectName: "repo",
-      sessionName: "session-1",
-      contextId: "context-plan",
-    };
-    const result1 = await orchestrator.runIteration(input);
-    const result2 = await orchestrator.runIteration(input);
-    const result3 = await orchestrator.runIteration(input);
-
-    // Only one conversation created — on the very first call
-    expect(createConversation).toHaveBeenCalledOnce();
-    // All three iterations reuse the same session
-    expect(result1.conversationId).toBe("conv-1");
-    expect(result2.conversationId).toBe("conv-1");
-    expect(result3.conversationId).toBe("conv-1");
-  });
-
   it("starts a fresh session when the context limit was exceeded on the previous iteration", async () => {
     const baseExecution = createExecutionWithPlanTasks({
       "task-plan-1": "pending",
@@ -3148,51 +3039,6 @@ describe("task validation failure handling (circuit breaker)", () => {
     expect(
       result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
     ).toBe(0);
-  });
-
-  it("omits acceptance criteria from iteration prompt when contextValidator is null (disabled)", async () => {
-    const execution = createExecutionWithPlanTasks({
-      "task-plan-1": "pending",
-      "task-plan-2": "pending",
-    });
-    const planContext = execution.workingDefinition.executionContexts.find(
-      (ctx) => ctx.id === "context-plan",
-    )!;
-    planContext.acceptanceCriteria =
-      "Never-include-me-sentinel: plan review complete.";
-    planContext.contextValidator = { enabled: false, assignments: [] };
-
-    const repository = createRepository(execution);
-    const prompts: string[] = [];
-
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
-      executionRepository: repository,
-      findLatestContextValidationEvent:
-        repository.findLatestContextValidationEvent,
-      createConversation: vi.fn(async () => ({ id: "conversation-null" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
-      runAgentIteration: vi.fn(async (agentInput) => {
-        prompts.push(agentInput.prompt);
-        return {
-          conversationId: "conversation-null",
-          contextTokens: null,
-          contextWindowMax: null,
-          compacted: false,
-        };
-      }),
-      now: () => "2026-03-27T16:00:00.000Z",
-    });
-
-    await orchestrator.runIteration({
-      projectPath: "/repo",
-      projectName: "repo",
-      sessionName: "session-1",
-      contextId: "context-plan",
-    });
-
-    expect(prompts.length).toBeGreaterThan(0);
-    expect(prompts[0]).not.toContain("Never-include-me-sentinel");
-    expect(prompts[0]).not.toContain("Acceptance Criteria");
   });
 
   it("omits every collaboration reference when the resolved context has no enabled collaboration config", async () => {

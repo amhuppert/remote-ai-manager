@@ -1,24 +1,24 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ContextFillIndicator } from "./ContextFillIndicator";
 
 describe("ContextFillIndicator", () => {
-  it("renders the percentage text", () => {
-    render(<ContextFillIndicator percentage={42} />);
-    expect(screen.getByText("42%")).toBeDefined();
-  });
+  it("clamps and rounds the visible and accessible percentage", () => {
+    const { rerender } = render(<ContextFillIndicator percentage={0} />);
 
-  it("renders the CONTEXT label", () => {
-    render(<ContextFillIndicator percentage={42} />);
-    expect(screen.getByText("Context")).toBeDefined();
-  });
-
-  it("clamps percentage to 0-100 range for display", () => {
-    const { rerender } = render(<ContextFillIndicator percentage={-10} />);
-    expect(screen.getByText("0%")).toBeDefined();
-
-    rerender(<ContextFillIndicator percentage={150} />);
-    expect(screen.getByText("100%")).toBeDefined();
+    for (const [input, expected] of [
+      [-10, 0],
+      [42.6, 43],
+      [150, 100],
+    ] as const) {
+      rerender(<ContextFillIndicator percentage={input} />);
+      expect(screen.getByText(`${expected}%`)).toBeInTheDocument();
+      expect(
+        screen.getByRole("progressbar", {
+          name: `Context window ${expected}% full`,
+        }),
+      ).toBeInTheDocument();
+    }
   });
 });

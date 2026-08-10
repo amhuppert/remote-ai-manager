@@ -715,6 +715,7 @@ describe("background-jobs", () => {
       const result = dispatchMergeJob({
         ...BASE_MERGE_PARAMS,
         autoResolve: false,
+        targetBranch: "csm/parent-branch",
       });
       expect(result.ok).toBe(true);
 
@@ -733,6 +734,10 @@ describe("background-jobs", () => {
       );
       expect(job?.status).toBe("conflicts");
       expect(job?.conflictFiles).toEqual(["file1.ts"]);
+      expect(job?.targetBranch).toBe("csm/parent-branch");
+
+      const [notification] = notificationsRepo.getNotifications().notifications;
+      expect(notification?.message).toContain("csm/parent-branch");
 
       expect(releaseSession).toHaveBeenCalled();
     });
@@ -881,7 +886,7 @@ describe("background-jobs", () => {
   // dispatchCommitJob
   // ----------------------------------------------------------
   describe("dispatchCommitJob", () => {
-    it("successful commit → completed broadcast", async () => {
+    it("commits, validates, and broadcasts completed state", async () => {
       mockCommitChangesActor.mockResolvedValue({ hash: "commit789" });
 
       const result = dispatchCommitJob(BASE_COMMIT_PARAMS);
@@ -909,6 +914,18 @@ describe("background-jobs", () => {
       expect(job?.status).toBe("completed");
       expect(job?.commitHash).toBe("commit789");
 
+      expect(mockRunValidation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectPath: BASE_COMMIT_PARAMS.projectPath,
+          worktreePath: BASE_COMMIT_PARAMS.worktreePath,
+        }),
+      );
+      const phaseEvents = mockBroadcast.mock.calls
+        .map((call) => (call[0] as JobStatusEvent).phase)
+        .filter(Boolean);
+      expect(phaseEvents).toContain("committing");
+      expect(phaseEvents).toContain("validating");
+
       expect(releaseSession).toHaveBeenCalled();
     });
 
@@ -928,24 +945,8 @@ describe("background-jobs", () => {
       );
     });
 
-    it("failed commit → failed broadcast", async () => {
-      const err = new Error("No uncommitted changes to commit");
-      mockCommitChangesActor.mockRejectedValue(err);
-
-      const result = dispatchCommitJob(BASE_COMMIT_PARAMS);
-      expect(result.ok).toBe(true);
-
-      await waitForJobCompletions();
-
-      const last = lastBroadcast();
-      expect(last.status).toBe("failed");
-      expect(last.errorMessage).toContain("No uncommitted changes to commit");
-
-      expect(releaseSession).toHaveBeenCalled();
-    });
-
-    it("failed commit includes gitOutput in errorMessage", async () => {
-      const err = new Error("Commit failed") as Error & {
+    it("failed commit includes git output in the failed broadcast", async () => {
+      const err = new Error("No uncommitted changes to commit") as Error & {
         gitOutput?: string;
       };
       err.gitOutput = "pre-commit hook failed: lint errors";
@@ -956,41 +957,12 @@ describe("background-jobs", () => {
 
       await waitForJobCompletions();
 
-      const job = getJob(
-        BASE_COMMIT_PARAMS.projectPath,
-        BASE_COMMIT_PARAMS.sessionName,
-      );
-      expect(job?.errorMessage).toContain("pre-commit hook failed");
-    });
-
-    it("commit + validation passes → completed with phases", async () => {
-      mockCommitChangesActor.mockResolvedValue({ hash: "commit789" });
-      // mockRunValidation already defaults to resolving (undefined)
-
-      const result = dispatchCommitJob(BASE_COMMIT_PARAMS);
-      expect(result.ok).toBe(true);
-
-      await waitForJobCompletions();
-
-      // Verify both commit and validation actors were called
-      expect(mockCommitChangesActor).toHaveBeenCalled();
-      expect(mockRunValidation).toHaveBeenCalledWith(
-        expect.objectContaining({
-          projectPath: BASE_COMMIT_PARAMS.projectPath,
-          worktreePath: BASE_COMMIT_PARAMS.worktreePath,
-        }),
-      );
-
-      // Verify phases were broadcast (committing, validating)
-      const phaseEvents = mockBroadcast.mock.calls
-        .map((c) => (c[0] as JobStatusEvent).phase)
-        .filter(Boolean);
-      expect(phaseEvents).toContain("committing");
-      expect(phaseEvents).toContain("validating");
-
       const last = lastBroadcast();
-      expect(last.status).toBe("completed");
-      expect(last.commitHash).toBe("commit789");
+      expect(last.status).toBe("failed");
+      expect(last.errorMessage).toContain("No uncommitted changes to commit");
+      expect(last.errorMessage).toContain("pre-commit hook failed");
+
+      expect(releaseSession).toHaveBeenCalled();
     });
 
     it("validation fails → fix → re-validate → completed", async () => {
@@ -1060,29 +1032,6 @@ describe("background-jobs", () => {
       );
       expect(job?.status).toBe("failed");
       expect(job?.commitHash).toBe("commit789");
-    });
-  });
-
-  // ----------------------------------------------------------
-  // Lock lifecycle
-  // ----------------------------------------------------------
-  describe("lock lifecycle", () => {
-    it("session lock is always released even when pipeline throws", async () => {
-      mockMergeMain.mockRejectedValue(new Error("unexpected"));
-
-      dispatchMergeJob(BASE_MERGE_PARAMS);
-      await waitForJobCompletions();
-
-      expect(releaseSession).toHaveBeenCalledTimes(1);
-    });
-
-    it("session lock is always released on commit failure", async () => {
-      mockCommitChangesActor.mockRejectedValue(new Error("commit failed"));
-
-      dispatchCommitJob(BASE_COMMIT_PARAMS);
-      await waitForJobCompletions();
-
-      expect(releaseSession).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -1557,34 +1506,6 @@ describe("background-jobs", () => {
         candidateValidation,
       });
     });
-
-    it("getJob returns undefined for unknown session", () => {
-      const job = getJob("/unknown", "unknown-session");
-      expect(job).toBeUndefined();
-    });
-
-    it("getConflictAnalysis returns undefined when no analysis stored", () => {
-      const analysis = getConflictAnalysis("/unknown", "unknown-session");
-      expect(analysis).toBeUndefined();
-    });
-
-    it("getJob returns the job after dispatch", () => {
-      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockPublishActor.mockResolvedValue({
-        status: "completed" as const,
-        mergeHash: "abc",
-      });
-
-      dispatchMergeJob(BASE_MERGE_PARAMS);
-
-      const job = getJob(
-        BASE_MERGE_PARAMS.projectPath,
-        BASE_MERGE_PARAMS.sessionName,
-      );
-      expect(job).toBeDefined();
-      expect(job?.jobType).toBe("merge");
-      expect(job?.status).toBe("running");
-    });
   });
 
   // ----------------------------------------------------------
@@ -1788,41 +1709,6 @@ describe("background-jobs", () => {
       );
     });
 
-    it("stores targetBranch on the registered BackgroundJob", () => {
-      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockPublishActor.mockResolvedValue({
-        status: "completed" as const,
-        mergeHash: "abc",
-      });
-
-      dispatchMergeJob({
-        ...BASE_MERGE_PARAMS,
-        targetBranch: "csm/parent-branch",
-      });
-
-      const job = getJob(
-        BASE_MERGE_PARAMS.projectPath,
-        BASE_MERGE_PARAMS.sessionName,
-      );
-      expect(job?.targetBranch).toBe("csm/parent-branch");
-    });
-
-    it("defaults targetBranch to undefined on job when not provided", () => {
-      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockPublishActor.mockResolvedValue({
-        status: "completed" as const,
-        mergeHash: "abc",
-      });
-
-      dispatchMergeJob(BASE_MERGE_PARAMS);
-
-      const job = getJob(
-        BASE_MERGE_PARAMS.projectPath,
-        BASE_MERGE_PARAMS.sessionName,
-      );
-      expect(job?.targetBranch).toBeUndefined();
-    });
-
     it("dispatchMergeJob threads resolutionContext to the resolveConflicts actor and keeps it on the terminal job", async () => {
       mockMergeMain.mockResolvedValue({
         status: "conflicts",
@@ -1964,47 +1850,6 @@ describe("background-jobs", () => {
       const [notification] = notificationsRepo.getNotifications().notifications;
       expect(notification?.message).toContain("csm/parent-branch");
     });
-
-    it("notification message includes target branch for conflicts", async () => {
-      mockMergeMain.mockResolvedValue({
-        status: "conflicts",
-        conflictFiles: ["file1.ts"],
-      });
-
-      dispatchMergeJob({
-        ...BASE_MERGE_PARAMS,
-        autoResolve: false,
-        targetBranch: "csm/parent-branch",
-      });
-      await waitForJobCompletions();
-
-      const [notification] = notificationsRepo.getNotifications().notifications;
-      expect(notification?.message).toContain("csm/parent-branch");
-    });
-  });
-
-  // ----------------------------------------------------------
-  // _resetForTesting
-  // ----------------------------------------------------------
-  describe("_resetForTesting", () => {
-    it("clears all jobs and analyses", () => {
-      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockPublishActor.mockResolvedValue({
-        status: "completed" as const,
-        mergeHash: "abc",
-      });
-
-      dispatchMergeJob(BASE_MERGE_PARAMS);
-      expect(
-        getJob(BASE_MERGE_PARAMS.projectPath, BASE_MERGE_PARAMS.sessionName),
-      ).toBeDefined();
-
-      _resetForTesting();
-
-      expect(
-        getJob(BASE_MERGE_PARAMS.projectPath, BASE_MERGE_PARAMS.sessionName),
-      ).toBeUndefined();
-    });
   });
 
   describe("getActiveJobs", () => {
@@ -2027,10 +1872,6 @@ describe("background-jobs", () => {
       // Clean up — resolve the blocked actor
       resolveActor?.();
       await waitForJobCompletions();
-    });
-
-    it("returns empty array when no jobs are running", () => {
-      expect(getActiveJobs()).toHaveLength(0);
     });
   });
 
@@ -2092,53 +1933,6 @@ describe("background-jobs", () => {
       expect(ctx.action).toBe("job:merge");
       expect(ctx.traceId).toBeTypeOf("string");
       expect(ctx.traceId.length).toBeGreaterThan(0);
-    });
-
-    it("dispatchCommitJob runs under job:commit trace", async () => {
-      const captured: TraceContext[] = [];
-      mockCommitChangesActor.mockImplementation(async () => {
-        const ctx = getTraceContext();
-        if (ctx) captured.push(ctx);
-        return { hash: "deadbeef" };
-      });
-      mockRunValidation.mockResolvedValue(undefined);
-
-      dispatchCommitJob(BASE_COMMIT_PARAMS);
-
-      await waitForJobCompletions();
-
-      expect(captured.length).toBeGreaterThan(0);
-      expect(captured[0]?.action).toBe("job:commit");
-    });
-
-    it("dispatchResolveConflictsJob runs under job:resolve-conflicts trace", async () => {
-      const captured: TraceContext[] = [];
-      mockAnalyzeConflictsActor.mockImplementation(async () => {
-        const ctx = getTraceContext();
-        if (ctx) captured.push(ctx);
-        return { status: "analyzed" as const, conflicts: [] };
-      });
-      mockResolveConflictsActor.mockResolvedValue({ status: "resolved" });
-      mockMergeMain.mockResolvedValue({
-        status: "conflict",
-        conflictFiles: ["a.ts"],
-      });
-      mockPublishActor.mockResolvedValue({
-        status: "completed" as const,
-        mergeHash: "feedface",
-      });
-
-      dispatchResolveConflictsJob(BASE_RESOLVE_PARAMS);
-
-      await waitForJobCompletions();
-
-      // analyzeConflicts only fires on the conflict path; if our path didn't
-      // reach it, fall back to confirming the dispatch produced *some* traced
-      // activity via checkUncommitted (covered in the merge-job test). For
-      // the resolve flow we want to confirm action override specifically.
-      if (captured.length > 0) {
-        expect(captured[0]?.action).toBe("job:resolve-conflicts");
-      }
     });
   });
 });

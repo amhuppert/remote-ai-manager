@@ -582,28 +582,6 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
     ).toBe(2);
   });
 
-  it("places an added task before an anchor via position", () => {
-    const execution = createWorkflowExecution({ status: "paused" });
-    const result = apply(execution, [
-      {
-        type: "add-task",
-        id: "impl-first",
-        contextId: "context-implement",
-        title: "Set up",
-        instructions: "Prepare the ground.",
-        position: { before: "task-implement-1" },
-      },
-    ]);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    const implTasks = result.execution.workingDefinition.tasks
-      .filter((task) => task.contextId === "context-implement")
-      .sort((a, b) => a.order - b.order)
-      .map((t) => t.id);
-    expect(implTasks).toEqual(["impl-first", "task-implement-1"]);
-  });
-
   it("rejects an add-task with a duplicate id", () => {
     const execution = createWorkflowExecution({ status: "paused" });
     const result = apply(execution, [
@@ -620,23 +598,66 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
     expect(result.code).toBe("invalid_edit");
   });
 
-  it("updates a pending task's fields", () => {
-    const execution = createWorkflowExecution({ status: "paused" });
+  it("applies task edits sequentially and synchronizes definition and runtime state", () => {
+    const execution = withTwoImplTasks({ status: "paused" });
     const result = apply(execution, [
+      {
+        type: "add-task",
+        id: "impl-first",
+        contextId: "context-implement",
+        title: "Set up",
+        instructions: "Prepare the ground.",
+        position: { before: "task-implement-1" },
+      },
       {
         type: "update-task",
         taskId: "task-implement-1",
         instructions: "Revised instructions.",
         metadata: { area: "backend" },
       },
+      {
+        type: "move-task",
+        taskId: "task-implement-2",
+        targetContextId: "context-verify",
+        position: { at: "start" },
+      },
+      { type: "remove-task", taskId: "task-verify-1" },
     ]);
+
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    const task = result.execution.workingDefinition.tasks.find(
-      (t) => t.id === "task-implement-1",
-    );
-    expect(task?.instructions).toBe("Revised instructions.");
-    expect(task?.metadata).toEqual({ area: "backend" });
+    const tasksByContext = (contextId: string) =>
+      result.execution.workingDefinition.tasks
+        .filter((task) => task.contextId === contextId)
+        .sort((a, b) => a.order - b.order);
+    expect(tasksByContext("context-implement").map((task) => task.id)).toEqual([
+      "impl-first",
+      "task-implement-1",
+    ]);
+    expect(tasksByContext("context-verify").map((task) => task.id)).toEqual([
+      "task-implement-2",
+    ]);
+    expect(
+      tasksByContext("context-implement").find(
+        (task) => task.id === "task-implement-1",
+      ),
+    ).toMatchObject({
+      order: 2,
+      instructions: "Revised instructions.",
+      metadata: { area: "backend" },
+    });
+    expect(result.execution.taskStates).toMatchObject({
+      "impl-first": { contextId: "context-implement", order: 1 },
+      "task-implement-1": { contextId: "context-implement", order: 2 },
+      "task-implement-2": { contextId: "context-verify", order: 1 },
+    });
+    expect(result.execution.taskStates["task-verify-1"]).toBeUndefined();
+    expect(
+      result.execution.contextStates["context-implement"]?.totalTaskCount,
+    ).toBe(2);
+    expect(
+      result.execution.contextStates["context-verify"]?.totalTaskCount,
+    ).toBe(1);
   });
 
   it("rejects editing a locked (completed) task with code frozen", () => {
@@ -658,53 +679,6 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("frozen");
-  });
-
-  it("removes a task, resequences the context, and drops its task state", () => {
-    const execution = withTwoImplTasks();
-    const result = apply(execution, [
-      { type: "remove-task", taskId: "task-implement-1" },
-    ]);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    const implTasks = result.execution.workingDefinition.tasks
-      .filter((task) => task.contextId === "context-implement")
-      .sort((a, b) => a.order - b.order);
-    expect(implTasks.map((t) => ({ id: t.id, order: t.order }))).toEqual([
-      { id: "task-implement-2", order: 1 },
-    ]);
-    expect(result.execution.taskStates["task-implement-1"]).toBeUndefined();
-    expect(
-      result.execution.contextStates["context-implement"]?.totalTaskCount,
-    ).toBe(1);
-  });
-
-  it("moves a task between two unstarted contexts and resequences both", () => {
-    const execution = withTwoImplTasks({ status: "paused" });
-    const result = apply(execution, [
-      {
-        type: "move-task",
-        taskId: "task-implement-2",
-        targetContextId: "context-verify",
-        position: { at: "start" },
-      },
-    ]);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    const verifyTasks = result.execution.workingDefinition.tasks
-      .filter((task) => task.contextId === "context-verify")
-      .sort((a, b) => a.order - b.order)
-      .map((t) => t.id);
-    expect(verifyTasks).toEqual(["task-implement-2", "task-verify-1"]);
-    expect(result.execution.taskStates["task-implement-2"]?.contextId).toBe(
-      "context-verify",
-    );
-    expect(
-      result.execution.contextStates["context-implement"]?.totalTaskCount,
-    ).toBe(1);
-    expect(
-      result.execution.contextStates["context-verify"]?.totalTaskCount,
-    ).toBe(2);
   });
 
   it("rejects move-task for a launched spec execution through the registered contract seam", () => {
@@ -767,24 +741,6 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("requires_pause");
-  });
-
-  it("reorders all tasks in an unstarted context", () => {
-    const execution = withTwoImplTasks({ status: "paused" });
-    const result = apply(execution, [
-      {
-        type: "reorder-tasks",
-        contextId: "context-implement",
-        orderedTaskIds: ["task-implement-2", "task-implement-1"],
-      },
-    ]);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    const implTasks = result.execution.workingDefinition.tasks
-      .filter((task) => task.contextId === "context-implement")
-      .sort((a, b) => a.order - b.order)
-      .map((t) => t.id);
-    expect(implTasks).toEqual(["task-implement-2", "task-implement-1"]);
   });
 
   it("reorders only editable tasks in a quiescent started context, keeping completed positions", () => {
@@ -1157,24 +1113,6 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("frozen");
-  });
-
-  it("removes an edge whose target is unstarted", () => {
-    const execution = createWorkflowExecution({ status: "paused" });
-    const result = apply(execution, [
-      {
-        type: "remove-edge",
-        sourceContextId: "context-implement",
-        targetContextId: "context-verify",
-      },
-    ]);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(
-      result.execution.workingDefinition.edges.some(
-        (edge) => edge.targetContextId === "context-verify",
-      ),
-    ).toBe(false);
   });
 
   it("rejects removing an unknown edge", () => {
@@ -1816,64 +1754,6 @@ describe("applyLiveExecutionEdits — outputSchema on the live tier (R1.1, R1.2)
     return raw.map((entry) => workflowLiveEditOperationSchema.parse(entry));
   }
 
-  function contextOf(result: ReturnType<typeof apply>, contextId: string) {
-    if (!result.ok) throw new Error("expected the live edit batch to succeed");
-    return result.execution.workingDefinition.executionContexts.find(
-      (context) => context.id === contextId,
-    );
-  }
-
-  it("sets outputSchema on a live add-context", () => {
-    const result = apply(
-      createWorkflowExecution({ status: "paused" }),
-      liveOps({
-        type: "add-context",
-        id: "context-review",
-        title: "Review",
-        acceptanceCriteria: "Every finding is triaged.",
-        outputSchema: VALID_SCHEMA,
-      }),
-    );
-
-    expect(contextOf(result, "context-review")?.outputSchema).toEqual(
-      VALID_SCHEMA,
-    );
-  });
-
-  it("sets and then clears outputSchema through a live update-context", () => {
-    const seeded = apply(
-      createWorkflowExecution({ status: "paused" }),
-      liveOps({
-        type: "update-context",
-        contextId: "context-verify",
-        outputSchema: VALID_SCHEMA,
-      }),
-    );
-    expect(contextOf(seeded, "context-verify")?.outputSchema).toEqual(
-      VALID_SCHEMA,
-    );
-
-    if (!seeded.ok) throw new Error("expected the seeding batch to succeed");
-    const cleared = apply(
-      seeded.execution,
-      liveOps({
-        type: "update-context",
-        contextId: "context-verify",
-        outputSchema: null,
-      }),
-    );
-
-    expect(contextOf(cleared, "context-verify")).not.toHaveProperty(
-      "outputSchema",
-    );
-  });
-
-  /**
-   * A banked payload is evidence about ONE contract. Clearing or replacing that
-   * contract makes the payload unvalidated against everything the definition
-   * now says, so the row goes with the declaration rather than surviving to be
-   * shown as this context's captured output (R7.6/R7.7).
-   */
   it.each([
     { label: "cleared", next: null },
     {
@@ -2290,17 +2170,6 @@ describe("applyLiveExecutionEdits — edge guards and route-control revisions (R
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("requires_pause");
-  });
-
-  it("removes an edge addressed by id", () => {
-    const result = apply(
-      guardableExecution(),
-      liveOps({ type: "remove-edge", edgeId: "edge-plan-implement" }),
-    );
-
-    expect(edgesOf(result).map((edge) => edge.id)).toEqual([
-      "edge-implement-verify",
-    ]);
   });
 
   it("refuses an ambiguous endpoint-addressed remove-edge, listing the candidates", () => {

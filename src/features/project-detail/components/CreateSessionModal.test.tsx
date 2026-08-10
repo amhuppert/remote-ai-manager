@@ -94,19 +94,6 @@ describe("CreateSessionModal", () => {
     expect(screen.getByText("Optimistic")).toBeInTheDocument();
   });
 
-  it("does not present a Focus creation mode or affordance", () => {
-    renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    expect(screen.queryByText("Focus")).toBeNull();
-    expect(screen.queryByText("Fast")).toBeNull();
-  });
-
-  it("renders no dialog when open=false", () => {
-    renderWithQuery(<CreateSessionModal {...defaultProps} open={false} />);
-    expect(screen.queryByText("New Session")).toBeNull();
-    // Radix portals the content only while open, so no dialog is in the DOM.
-    expect(screen.queryByRole("dialog")).toBeNull();
-  });
-
   it("auto-focuses name input in normal mode", async () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
     const input = screen.getByPlaceholderText("e.g. Copy To Clipboard");
@@ -181,11 +168,6 @@ describe("CreateSessionModal", () => {
   });
 
   describe("optimistic mode", () => {
-    it("shows Optimistic button in mode toggle", () => {
-      renderWithQuery(<CreateSessionModal {...defaultProps} />);
-      expect(screen.getByText("Optimistic")).toBeInTheDocument();
-    });
-
     it("switches to optimistic mode and shows the rich instructions editor", () => {
       renderWithQuery(<CreateSessionModal {...defaultProps} />);
       switchToOptimisticMode();

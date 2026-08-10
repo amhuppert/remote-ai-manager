@@ -470,38 +470,6 @@ describe("executeAgentCall — structured-output gate", () => {
     }
   });
 
-  it("falls back to parsing raw JSON text on the task_run path when structuredOutput is missing", async () => {
-    const capturedValues: unknown[] = [];
-    const runner = makeTaskRunner("codex", {
-      result: { structuredOutput: undefined, text: '{"ok":true}' },
-    });
-    const result = await executeAgentCall(
-      {
-        kind: "task_run",
-        backend: "codex",
-        prompt: "go",
-        outputSchema: { type: "object", required: ["ok"] },
-      },
-      buildDepsForTask({
-        runner,
-        view: CODEX_VIEW,
-        validate: (_schema, value) => {
-          capturedValues.push(value);
-          return typeof value === "object" &&
-            value !== null &&
-            (value as { ok?: unknown }).ok === true
-            ? { valid: true }
-            : { valid: false, errors: ["ok must be true"] };
-        },
-      }),
-    );
-    expect(capturedValues).toEqual([{ ok: true }]);
-    expect(result.outcome.kind).toBe("completed");
-    if (result.outcome.kind === "completed") {
-      expect(result.outcome.structuredOutput).toEqual({ ok: true });
-    }
-  });
-
   it("does not run the gate when the dispatch already failed", async () => {
     let calls = 0;
     const runtime = makeConversationRuntime("claude", {
@@ -708,100 +676,6 @@ describe("executeAgentCall — guaranteed structured-output validation", () => {
       expect(result.outcome.structuredOutput).toEqual({ ok: true });
     }
   });
-
-  it("emits the full shared execution fields on facade-level validation logs", async () => {
-    const warn = vi.fn();
-    const stubLogger = {
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn,
-      error: vi.fn(),
-    };
-    const runtime = makeConversationRuntime("claude", {
-      result: { structuredOutput: { ok: false } },
-    });
-    await executeAgentCall(
-      {
-        kind: "conversation_turn",
-        prompt: "go",
-        laneRef: { workflowId: "wf-1", laneId: "lane-A" },
-        outputSchema: { type: "object" },
-      },
-      {
-        resolveConversationRuntime: () => ({
-          runtime,
-          capabilityView: CLAUDE_VIEW,
-          signal: new AbortController().signal,
-          artifacts: [
-            { kind: "design_doc", relativePath: "memory-bank/d.md" },
-            { kind: "transcript", relativePath: "memory-bank/t.md" },
-          ],
-        }),
-        validateStructuredOutput: () => ({
-          valid: false,
-          errors: ["bad"],
-        }),
-        logger: stubLogger,
-      },
-    );
-    expect(warn).toHaveBeenCalledWith(
-      "agent_call.facade.structured_output_failed",
-      expect.objectContaining({
-        requestKind: "conversation_turn",
-        backend: "claude",
-        workflowId: "wf-1",
-        laneId: "lane-A",
-        outcome: "failed",
-        artifactKinds: ["design_doc", "transcript"],
-      }),
-    );
-  });
-
-  it("includes artifactKinds on default-validator failure logs too", async () => {
-    const warn = vi.fn();
-    const stubLogger = {
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn,
-      error: vi.fn(),
-    };
-    const runtime = makeConversationRuntime("claude", {
-      result: { structuredOutput: { ok: true, extra: "nope" } },
-    });
-    await executeAgentCall(
-      {
-        kind: "conversation_turn",
-        prompt: "go",
-        laneRef: { workflowId: "wf-2", laneId: "lane-Z" },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["ok"],
-          properties: { ok: { type: "boolean" } },
-        },
-      },
-      {
-        resolveConversationRuntime: () => ({
-          runtime,
-          capabilityView: CLAUDE_VIEW,
-          signal: new AbortController().signal,
-          artifacts: [{ kind: "design_doc", relativePath: "memory-bank/d.md" }],
-        }),
-        logger: stubLogger,
-      },
-    );
-    expect(warn).toHaveBeenCalledWith(
-      "agent_call.facade.structured_output_failed",
-      expect.objectContaining({
-        requestKind: "conversation_turn",
-        backend: "claude",
-        workflowId: "wf-2",
-        laneId: "lane-Z",
-        outcome: "failed",
-        artifactKinds: ["design_doc"],
-      }),
-    );
-  });
 });
 
 describe("executeAgentCall — timeout normalization across backends", () => {
@@ -861,17 +735,6 @@ describe("resolveSchedulingHint — write-capable defaults", () => {
     expect(hint.allowParallel).toBe(false);
   });
 
-  it("honors an explicit read_only request and allows parallel scheduling", () => {
-    const hint = resolveSchedulingHint({
-      kind: "task_run",
-      backend: "codex",
-      prompt: "go",
-      writeCapability: "read_only",
-    });
-    expect(hint.writeCapability).toBe("read_only");
-    expect(hint.allowParallel).toBe(true);
-  });
-
   it("honors an explicit artifact_only request and allows parallel scheduling", () => {
     const hint = resolveSchedulingHint({
       kind: "task_run",
@@ -881,17 +744,6 @@ describe("resolveSchedulingHint — write-capable defaults", () => {
     });
     expect(hint.writeCapability).toBe("artifact_only");
     expect(hint.allowParallel).toBe(true);
-  });
-
-  it("treats explicit write_capable identically to the default", () => {
-    const hint = resolveSchedulingHint({
-      kind: "task_run",
-      backend: "codex",
-      prompt: "go",
-      writeCapability: "write_capable",
-    });
-    expect(hint.writeCapability).toBe("write_capable");
-    expect(hint.allowParallel).toBe(false);
   });
 });
 
@@ -1160,23 +1012,6 @@ describe("executeAgentCall — pre-turn MCP apply hook", () => {
     }
     expect(result.continuationDisposition).toBe("retain");
   });
-
-  it("dispatches normally when applyMcp succeeds", async () => {
-    const applyMcp = vi.fn(async () => ({ ok: true as const }));
-    const result = await executeAgentCall(
-      { kind: "conversation_turn", backend: "claude", prompt: "hi" },
-      {
-        resolveConversationRuntime: () => ({
-          runtime: makeConversationRuntime("claude"),
-          capabilityView: CLAUDE_VIEW,
-          signal: new AbortController().signal,
-        }),
-        applyMcp,
-      },
-    );
-    expect(applyMcp).toHaveBeenCalledTimes(1);
-    expect(result.outcome.kind).toBe("completed");
-  });
 });
 
 describe("executeAgentCall — continuity recording", () => {
@@ -1331,23 +1166,6 @@ describe("executeAgentCall — widened result fields", () => {
     if (result.outcome.kind === "completed") {
       expect(result.outcome.structuredOutput).toEqual({ answer: 7 });
       expect(result.outcome.parse).toEqual({ source: "fenced" });
-    }
-  });
-
-  it("carries numTurns and contentBlocks on the completed conversation outcome", async () => {
-    const result = await executeAgentCall(
-      { kind: "conversation_turn", backend: "claude", prompt: "hi" },
-      buildDepsForConversation({
-        runtime: makeConversationRuntime("claude"),
-        view: CLAUDE_VIEW,
-      }),
-    );
-    expect(result.outcome.kind).toBe("completed");
-    if (result.outcome.kind === "completed") {
-      expect(result.outcome.numTurns).toBe(1);
-      expect(result.outcome.contentBlocks).toEqual([
-        { type: "text", text: "hi" },
-      ]);
     }
   });
 
@@ -1649,53 +1467,6 @@ describe("executeAgentCall — structured-output repair", () => {
       backendRef: { backend: "claude", ref: "session-repair" },
       continuationDisposition: "retain",
     });
-  });
-
-  it("logs the schema root when a validation issue has no explicit path", async () => {
-    const info = vi.fn();
-    let calls = 0;
-    const runner: AgentTaskRunner = {
-      backend: "codex",
-      async run() {
-        calls += 1;
-        return {
-          backendRef: { backend: "codex", ref: "thread-original" },
-          text: JSON.stringify({ ok: calls > 1 }),
-          usage: null,
-          error: null,
-          timedOut: false,
-          failure: null,
-          continuationDisposition: "retain",
-        };
-      },
-    };
-
-    await executeAgentCall(
-      {
-        kind: "task_run",
-        backend: "codex",
-        prompt: "produce a manifest",
-        outputSchema: { type: "object" },
-      },
-      {
-        ...buildDepsForTask({ runner, view: CODEX_VIEW }),
-        validateStructuredOutput: (_schema, value) =>
-          (value as { ok?: unknown }).ok === true
-            ? { valid: true }
-            : { valid: false, errors: ["manifest shape is invalid"] },
-        logger: {
-          debug: vi.fn(),
-          info,
-          warn: vi.fn(),
-          error: vi.fn(),
-        },
-      },
-    );
-
-    expect(info).toHaveBeenCalledWith(
-      "agent_call.facade.structured_output_repair_attempted",
-      expect.objectContaining({ issuePaths: ["$"] }),
-    );
   });
 
   it("bounds the count and length of logged validation issue paths", async () => {

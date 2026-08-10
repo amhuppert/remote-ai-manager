@@ -36,17 +36,6 @@ afterEach(async () => {
 });
 
 // ==========================================================================
-// getTranscriptPath
-// ==========================================================================
-
-describe("getTranscriptPath", () => {
-  it("returns path inside transcripts directory", async () => {
-    const result = await getTranscriptPath("abc-123", TEST_DIR);
-    expect(result).toBe(path.join(TEST_DIR, "transcripts", "abc-123.jsonl"));
-  });
-});
-
-// ==========================================================================
 // appendTranscriptEntry
 // ==========================================================================
 
@@ -66,31 +55,6 @@ describe("appendTranscriptEntry", () => {
     const lines = raw.trim().split("\n");
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines[0]!)).toEqual(entry);
-  });
-
-  it("appends multiple entries", async () => {
-    const entry1: TranscriptEntry = {
-      timestamp: "2024-01-01T00:00:00Z",
-      type: "user",
-      role: "user",
-      content: [{ type: "text", text: "Hello" }],
-    };
-    const entry2: TranscriptEntry = {
-      timestamp: "2024-01-01T00:00:01Z",
-      type: "assistant",
-      role: "assistant",
-      content: [{ type: "text", text: "Hi there!" }],
-    };
-
-    await appendTranscriptEntry("conv-2", entry1, TEST_DIR);
-    await appendTranscriptEntry("conv-2", entry2, TEST_DIR);
-
-    const filePath = path.join(TEST_DIR, "transcripts", "conv-2.jsonl");
-    const raw = await readFile(filePath, "utf-8");
-    const lines = raw.trim().split("\n");
-    expect(lines).toHaveLength(2);
-    expect(JSON.parse(lines[0]!).role).toBe("user");
-    expect(JSON.parse(lines[1]!).role).toBe("assistant");
   });
 
   it("appends a stable entry id only once across concurrent retries", async () => {
@@ -139,20 +103,10 @@ describe("readLastAssistantContent", () => {
     _resetLastAssistantCacheForTesting();
   });
 
-  it("returns null for null path", async () => {
-    expect(await readLastAssistantContent(null)).toBeNull();
-  });
-
   it("returns null for a non-existent file", async () => {
     expect(
       await readLastAssistantContent("/tmp/nonexistent-tail-xyz.jsonl"),
     ).toBeNull();
-  });
-
-  it("returns null for an empty file", async () => {
-    const filePath = path.join(TEST_DIR, "transcripts", "empty-tail.jsonl");
-    await writeFile(filePath, "", "utf-8");
-    expect(await readLastAssistantContent(filePath)).toBeNull();
   });
 
   it("returns the content blocks of the most recent assistant entry", async () => {
@@ -379,11 +333,6 @@ describe("readLastAssistantContent", () => {
 // ==========================================================================
 
 describe("readConversationMessages", () => {
-  it("returns empty array for null path", async () => {
-    const result = await readConversationMessages(null);
-    expect(result).toEqual([]);
-  });
-
   it("returns empty array for non-existent file", async () => {
     const result = await readConversationMessages("/tmp/nonexistent-xyz.jsonl");
     expect(result).toEqual([]);
@@ -497,14 +446,6 @@ describe("readConversationMessages", () => {
 
     const result = await readConversationMessages(filePath);
     expect(result).toHaveLength(1);
-  });
-
-  it("handles empty file", async () => {
-    const filePath = path.join(TEST_DIR, "transcripts", "empty.jsonl");
-    await writeFile(filePath, "", "utf-8");
-
-    const result = await readConversationMessages(filePath);
-    expect(result).toEqual([]);
   });
 
   it("preserves tool_use content blocks", async () => {
@@ -763,10 +704,6 @@ describe("readConversationMessages", () => {
 // ==========================================================================
 
 describe("readConversationMessagesWithSeq", () => {
-  it("returns [] for null path", async () => {
-    expect(await readConversationMessagesWithSeq(null)).toEqual([]);
-  });
-
   it("returns [] for non-existent file", async () => {
     expect(
       await readConversationMessagesWithSeq("/tmp/missing-xyz.jsonl"),
@@ -1118,41 +1055,9 @@ describe("parseCommandContent", () => {
     });
   });
 
-  it("parses command without args tag", () => {
-    const content =
-      "<command-message>commit</command-message>\n<command-name>/commit</command-name>";
-    const result = parseCommandContent(content);
-    expect(result).toEqual({
-      type: "command",
-      name: "/commit",
-      args: null,
-    });
-  });
-
   it("returns null for non-command content", () => {
     expect(parseCommandContent("Hello Claude")).toBeNull();
     expect(parseCommandContent("some text without tags")).toBeNull();
-  });
-
-  it("handles command-name without leading slash", () => {
-    const content = "<command-name>commit</command-name>";
-    const result = parseCommandContent(content);
-    expect(result).toEqual({
-      type: "command",
-      name: "/commit",
-      args: null,
-    });
-  });
-
-  it("handles empty args", () => {
-    const content =
-      "<command-name>/test</command-name>\n<command-args>  </command-args>";
-    const result = parseCommandContent(content);
-    expect(result).toEqual({
-      type: "command",
-      name: "/test",
-      args: null,
-    });
   });
 
   // Plain text slash commands
@@ -1173,40 +1078,6 @@ describe("parseCommandContent", () => {
       type: "command",
       name: "/commit",
       args: null,
-    });
-  });
-
-  it("parses plain namespaced slash command without args", () => {
-    const result = parseCommandContent("/kiro:spec-status");
-    expect(result).toEqual({
-      type: "command",
-      name: "/kiro:spec-status",
-      args: null,
-    });
-  });
-
-  it("parses plain slash command with multi-word args", () => {
-    const result = parseCommandContent("/kiro:spec-init notifications feature");
-    expect(result).toEqual({
-      type: "command",
-      name: "/kiro:spec-init",
-      args: "notifications feature",
-    });
-  });
-
-  it("does not parse regular text as a slash command", () => {
-    expect(parseCommandContent("Hello Claude, please help")).toBeNull();
-    expect(
-      parseCommandContent("I need help with /path/to/file in my project"),
-    ).toBeNull();
-  });
-
-  it("handles plain slash command with leading/trailing whitespace", () => {
-    const result = parseCommandContent("  /commit fix bug  ");
-    expect(result).toEqual({
-      type: "command",
-      name: "/commit",
-      args: "fix bug",
     });
   });
 });
@@ -1384,62 +1255,6 @@ describe("copyTranscriptUpTo", () => {
     // Should include 4 lines: user "Hello" + assistant "Part 1" + "Part 2" + "Part 3"
     expect(target).toHaveLength(4);
     expect(target[0]!.content![0]).toEqual({ type: "text", text: "Hello" });
-    expect(target[target.length - 1]!.content![0]).toEqual({
-      type: "text",
-      text: "Part 3",
-    });
-  });
-
-  it("copies everything before target when target is last message", async () => {
-    const entries: TranscriptEntry[] = [
-      {
-        timestamp: "t0",
-        type: "user",
-        role: "user",
-        content: [{ type: "text", text: "Hello" }],
-      },
-      {
-        timestamp: "t1",
-        type: "assistant",
-        role: "assistant",
-        content: [{ type: "text", text: "Part 1" }],
-      },
-      {
-        timestamp: "t2",
-        type: "assistant",
-        role: "assistant",
-        content: [{ type: "text", text: "Part 2" }],
-      },
-      {
-        timestamp: "t3",
-        type: "assistant",
-        role: "assistant",
-        content: [{ type: "text", text: "Part 3" }],
-      },
-      {
-        timestamp: "t4",
-        type: "user",
-        role: "user",
-        content: [{ type: "text", text: "Follow-up" }],
-      },
-    ];
-
-    const sourcePath = await writeTranscript("fork-noresp-source", entries);
-
-    // Fork at merged index 2 (the "Follow-up" user message)
-    // should copy only messages before it
-    await copyTranscriptUpTo({
-      sourceTranscriptPath: sourcePath,
-      targetConversationId: "fork-noresp-target",
-      upToMessageIndex: 2,
-      mode: "exclusive",
-      configDir: TEST_DIR,
-    });
-
-    const target = await readTarget("fork-noresp-target");
-
-    // Should include 4 lines: user "Hello" + assistant "Part 1/2/3"
-    expect(target).toHaveLength(4);
     expect(target[target.length - 1]!.content![0]).toEqual({
       type: "text",
       text: "Part 3",
@@ -2138,20 +1953,6 @@ describe("appendTranscriptEntry — message-appended broadcast", () => {
     expect(event.message.codexFastMode).toBe(true);
   });
 
-  it("uses the active broadcast dep set via setTranscriptDeps", async () => {
-    const spy = vi.fn();
-    setTranscriptDeps({ broadcast: spy });
-
-    await appendTranscriptEntry(
-      "conv-spy",
-      makeEntry("user", "hello"),
-      TEST_DIR,
-      meta,
-    );
-
-    expect(spy).toHaveBeenCalledTimes(1);
-  });
-
   it("indexes visible Markdown refs before broadcasting", async () => {
     const order: string[] = [];
     setTranscriptDeps({
@@ -2318,18 +2119,6 @@ describe("appendTranscriptEntry — message-appended broadcast", () => {
       );
       expect((captured[1] as { seq: number }).seq).toBe(5);
     });
-
-    it("computes seq=0 on cold cache when the file does not yet exist", async () => {
-      const conversationId = "conv-cold-no-file";
-
-      await appendTranscriptEntry(
-        conversationId,
-        makeEntry("user", "first"),
-        TEST_DIR,
-        meta,
-      );
-      expect((captured[0] as { seq: number }).seq).toBe(0);
-    });
   });
 });
 
@@ -2421,21 +2210,6 @@ describe("system notices", () => {
     expect(log.allFieldValues()).not.toContain(
       PROJECT_CONVERSATION_SESSION_SENTINEL,
     );
-  });
-
-  it("does not broadcast a notice entry with empty content", async () => {
-    await appendTranscriptEntry(
-      "conv-notice-empty",
-      {
-        timestamp: "2024-01-01T00:00:00Z",
-        type: "notice",
-        role: "notice",
-        content: [],
-      },
-      TEST_DIR,
-      meta,
-    );
-    expect(captured).toHaveLength(0);
   });
 
   it("keeps model/effort inheritance across an interleaved notice and gives notices no model/effort", async () => {
@@ -2546,13 +2320,6 @@ describe("readTranscriptEntriesWithSeq", () => {
     await writeFile(filePath, lines.join("\n") + "\n", "utf-8");
     return filePath;
   }
-
-  it("returns empty result for null path", async () => {
-    expect(await readTranscriptEntriesWithSeq(null)).toEqual({
-      entries: [],
-      maxSeq: -1,
-    });
-  });
 
   it("returns empty result for non-existent file", async () => {
     expect(

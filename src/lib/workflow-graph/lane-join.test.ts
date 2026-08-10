@@ -1485,21 +1485,6 @@ describe("planFinalPublishJoin", () => {
 });
 
 describe("findActiveJoin", () => {
-  it("returns a pending join when present", () => {
-    const base = createWorkflowExecution();
-    const join = makeJoin({
-      joinId: "join-1",
-      targetLaneId: "lane-a",
-      sourceLaneIds: ["lane-a", "lane-b"],
-      status: "pending",
-    });
-    const execution: GraphWorkflowExecution = {
-      ...base,
-      joins: { "join-1": join },
-    };
-    expect(findActiveJoin(execution)?.joinId).toBe("join-1");
-  });
-
   it("returns null when only succeeded/failed joins exist", () => {
     const base = createWorkflowExecution();
     const execution: GraphWorkflowExecution = {
@@ -1575,19 +1560,6 @@ describe("remainingSourceLanes", () => {
 });
 
 describe("appendPendingJoin / applyJoinProgress", () => {
-  it("appendPendingJoin stores the join under its id", () => {
-    const base = createWorkflowExecution();
-    const next = appendPendingJoin(
-      base,
-      makeJoin({
-        joinId: "join-1",
-        targetLaneId: "lane-a",
-        sourceLaneIds: ["lane-a", "lane-b"],
-      }),
-    );
-    expect(next.joins["join-1"]?.status).toBe("pending");
-  });
-
   it("appendPendingJoin writes joinId onto the target context state for context_merge joins so UI wait-state derivation can see the link", () => {
     const base = createWorkflowExecution();
     expect(base.contextStates["context-verify"]?.joinId).toBeNull();

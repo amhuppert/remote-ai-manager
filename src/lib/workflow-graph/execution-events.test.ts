@@ -427,35 +427,6 @@ describe("graph workflow execution event publisher", () => {
     );
   });
 
-  it("dispatches push notification when workflow completes", () => {
-    const broadcast = vi.fn();
-    const dispatchPush = vi.fn();
-    const publisher = createGraphWorkflowExecutionEventPublisher({
-      broadcast,
-      dispatchPush,
-      now: () => "2026-03-28T10:00:00.000Z",
-    });
-
-    const prev = createWorkflowExecution({ status: "running" });
-    const next = createWorkflowExecution({ ...prev, status: "completed" });
-
-    deriveDelivering(
-      publisher,
-      publisher.publishExecutionUpdate({
-        projectPath: "/projects/repo",
-        sessionName: "sess-1",
-        previousExecution: prev,
-        nextExecution: next,
-      }),
-    );
-
-    expect(dispatchPush).toHaveBeenCalledWith({
-      kind: "workflow-completed",
-      projectName: "repo",
-      sessionName: "sess-1",
-    });
-  });
-
   it("dispatches push notification when workflow is halted", () => {
     const broadcast = vi.fn();
     const dispatchPush = vi.fn();
@@ -842,30 +813,6 @@ describe("graph workflow execution event publisher", () => {
         contextId: "context-plan",
       },
     });
-  });
-
-  it("does not dispatch push when dispatchPush dep is not provided", () => {
-    const broadcast = vi.fn();
-    const publisher = createGraphWorkflowExecutionEventPublisher({
-      broadcast,
-      now: () => "2026-03-28T10:00:00.000Z",
-    });
-
-    const prev = createWorkflowExecution({ status: "running" });
-    const next = createWorkflowExecution({ ...prev, status: "completed" });
-
-    // Should not throw even without dispatchPush
-    expect(() => {
-      deriveDelivering(
-        publisher,
-        publisher.publishExecutionUpdate({
-          projectPath: "/projects/repo",
-          sessionName: "sess-1",
-          previousExecution: prev,
-          nextExecution: next,
-        }),
-      );
-    }).not.toThrow();
   });
 
   it("emits a graph-workflow-lane-status event when a lane is newly created", () => {

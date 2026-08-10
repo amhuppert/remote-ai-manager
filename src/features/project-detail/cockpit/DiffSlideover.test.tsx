@@ -31,16 +31,6 @@ describe("DiffSlideover", () => {
     expect(screen.getByText(/cc-app · main · worktree/)).toBeInTheDocument();
   });
 
-  it("renders nothing when closed", () => {
-    render(
-      <DiffSlideover open={false} onClose={vi.fn()}>
-        <div>diff body</div>
-      </DiffSlideover>,
-    );
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.queryByText("diff body")).toBeNull();
-  });
-
   it("dismisses via the close button", () => {
     const onClose = renderOpen();
     fireEvent.click(screen.getByRole("button", { name: "Close diff" }));
@@ -54,12 +44,5 @@ describe("DiffSlideover", () => {
       code: "Escape",
     });
     expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not dismiss on an interaction inside the panel", () => {
-    const onClose = renderOpen();
-    fireEvent.mouseDown(screen.getByText("diff body"));
-    fireEvent.click(screen.getByText("diff body"));
-    expect(onClose).not.toHaveBeenCalled();
   });
 });

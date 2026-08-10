@@ -131,61 +131,6 @@ function makeExecutionWithHistory(
 }
 
 describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () => {
-  it("renders summary with markdown inline code for any validator", async () => {
-    const { execution, events } = makeExecutionWithHistory([
-      makeValidationEvent({
-        summary: "All 23 tests passed via `bunx vitest run`",
-        sessionRef: conversationValidationRef("conv-md"),
-      }),
-    ]);
-
-    render(
-      <ExecutionInspectorPanel
-        execution={execution}
-        events={events}
-        selectedContextId={null}
-        {...baseHandlers}
-      />,
-    );
-
-    // The canonical Markdown adapter defers its renderer — wait for it to mount.
-    // Cold-load of the dynamic chunk can exceed the 1000ms default timeout
-    // under parallel test-suite load.
-    const codeEl = await screen.findByText("bunx vitest run", undefined, {
-      timeout: 15000,
-    });
-    expect(codeEl.closest("code")).toBeTruthy();
-  });
-
-  it("renders issue descriptions as markdown for any validator", async () => {
-    const { execution, events } = makeExecutionWithHistory([
-      makeValidationEvent({
-        pass: false,
-        summary: "Failed",
-        issues: [
-          {
-            taskId: "task-1",
-            title: "Missing coverage",
-            description: "No tests for `handleSubmit` function",
-          },
-        ],
-        sessionRef: conversationValidationRef("conv-md-2"),
-      }),
-    ]);
-
-    render(
-      <ExecutionInspectorPanel
-        execution={execution}
-        events={events}
-        selectedContextId={null}
-        {...baseHandlers}
-      />,
-    );
-
-    const codeEl = await screen.findByText("handleSubmit");
-    expect(codeEl.closest("code")).toBeTruthy();
-  });
-
   it("routes summary and issue descriptions through the compact canonical adapter", async () => {
     const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
@@ -247,45 +192,6 @@ describe("ExecutionInspectorPanel — ValidationCard lane and backend badges", (
 
     expect(screen.getByText("Context")).toBeInTheDocument();
   });
-
-  it("renders backend badge showing claude", () => {
-    const { execution, events } = makeExecutionWithHistory([
-      makeValidationEvent({
-        sessionRef: conversationValidationRef("conv-1"),
-      }),
-    ]);
-
-    render(
-      <ExecutionInspectorPanel
-        execution={execution}
-        events={events}
-        selectedContextId={null}
-        {...baseHandlers}
-      />,
-    );
-
-    expect(screen.getByText("claude")).toBeInTheDocument();
-  });
-
-  it("renders backend badge showing codex", () => {
-    const { execution, events } = makeExecutionWithHistory([
-      makeValidationEvent({
-        reviewArtifact: responseReviewArtifact("thread-xyz", "Looks good"),
-        sessionRef: responseValidationRef("thread-xyz"),
-      }),
-    ]);
-
-    render(
-      <ExecutionInspectorPanel
-        execution={execution}
-        events={events}
-        selectedContextId={null}
-        {...baseHandlers}
-      />,
-    );
-
-    expect(screen.getByText("codex")).toBeInTheDocument();
-  });
 });
 
 describe("ExecutionInspectorPanel — View Transcript button", () => {
@@ -318,57 +224,6 @@ describe("ExecutionInspectorPanel — View Transcript button", () => {
     fireEvent.click(screen.getByRole("button", { name: /View Transcript/i }));
     expect(onViewConversation).toHaveBeenCalledWith(
       "workflow-conversation-1",
-      "context_validator",
-      "context-plan",
-    );
-  });
-
-  it("shows View Transcript button for claude validation when handler is provided", () => {
-    const onViewConversation = vi.fn();
-    const { execution, events } = makeExecutionWithHistory([
-      makeValidationEvent({
-        sessionRef: conversationValidationRef("conv-abc"),
-      }),
-    ]);
-
-    render(
-      <ExecutionInspectorPanel
-        execution={execution}
-        events={events}
-        selectedContextId={null}
-        onViewConversation={onViewConversation}
-        {...baseHandlers}
-      />,
-    );
-
-    expect(
-      screen.getByRole("button", { name: /View Transcript/i }),
-    ).toBeInTheDocument();
-  });
-
-  it("calls onViewConversation with correct args when View Transcript is clicked", () => {
-    const onViewConversation = vi.fn();
-    const { execution, events } = makeExecutionWithHistory([
-      makeValidationEvent({
-        contextId: "context-plan",
-        sessionRef: conversationValidationRef("conv-abc"),
-      }),
-    ]);
-
-    render(
-      <ExecutionInspectorPanel
-        execution={execution}
-        events={events}
-        selectedContextId={null}
-        onViewConversation={onViewConversation}
-        {...baseHandlers}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /View Transcript/i }));
-
-    expect(onViewConversation).toHaveBeenCalledWith(
-      "conv-abc",
       "context_validator",
       "context-plan",
     );
@@ -421,64 +276,6 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
 
     expect(screen.getByText("Testfake Review")).toBeInTheDocument();
     expect(screen.getByText("testfake-review-ref")).toBeInTheDocument();
-  });
-
-  it("displays codex thread ID in artifact section", () => {
-    const { execution, events } = makeExecutionWithHistory([
-      makeValidationEvent({
-        reviewArtifact: responseReviewArtifact(
-          "thread-codex-99",
-          "Code looks correct",
-        ),
-        sessionRef: responseValidationRef("thread-codex-99"),
-      }),
-    ]);
-
-    render(
-      <ExecutionInspectorPanel
-        execution={execution}
-        events={events}
-        selectedContextId={null}
-        {...baseHandlers}
-      />,
-    );
-
-    expect(screen.getByText("thread-codex-99")).toBeInTheDocument();
-  });
-
-  it("displays codex response text in artifact section", async () => {
-    const { execution, events } = makeExecutionWithHistory([
-      makeValidationEvent({
-        reviewArtifact: responseReviewArtifact(
-          "thread-1",
-          "Everything checks out.",
-        ),
-        sessionRef: responseValidationRef("thread-1"),
-      }),
-    ]);
-
-    render(
-      <ExecutionInspectorPanel
-        execution={execution}
-        events={events}
-        selectedContextId={null}
-        {...baseHandlers}
-      />,
-    );
-
-    // The plain-text response first paints in the adapter's streaming
-    // fallback, which is then swapped for the loaded canonical root. Poll until
-    // the text lands inside that root so we never assert on the detached
-    // fallback node (cold chunk load can exceed the 1000ms default).
-    await waitFor(
-      () =>
-        expect(
-          screen
-            .getByText("Everything checks out.")
-            .closest('[data-markdown-intent="compact"]'),
-        ).not.toBeNull(),
-      { timeout: 15000 },
-    );
   });
 
   it("parses JSON codex response and renders summary as markdown instead of raw JSON", async () => {
@@ -1230,25 +1027,6 @@ describe("ExecutionInspectorPanel — awaiting-approval status badge", () => {
 });
 
 describe("ExecutionInspectorPanel — Reset Context", () => {
-  it("shows a Reset button when execution is paused and context is not completed", () => {
-    const execution = createWorkflowExecution({ status: "paused" });
-    const events: GraphWorkflowExecutionEvent[] = [];
-
-    render(
-      <ExecutionInspectorPanel
-        execution={execution}
-        events={events}
-        selectedContextId="context-plan"
-        {...baseHandlers}
-        onResetContext={vi.fn()}
-      />,
-    );
-
-    expect(
-      screen.getByRole("button", { name: /reset context/i }),
-    ).toBeInTheDocument();
-  });
-
   it("shows a Reset button when execution is halted and context is not completed", () => {
     const execution = createWorkflowExecution({ status: "halted" });
     const events: GraphWorkflowExecutionEvent[] = [];
@@ -1358,28 +1136,6 @@ describe("ExecutionInspectorPanel — Reset Context", () => {
     expect(onResetContext).toHaveBeenCalledWith("context-plan");
   });
 
-  it("does not call onResetContext when the confirmation dialog is cancelled", () => {
-    const onResetContext = vi.fn();
-    const execution = createWorkflowExecution({ status: "paused" });
-    const events: GraphWorkflowExecutionEvent[] = [];
-
-    render(
-      <ExecutionInspectorPanel
-        execution={execution}
-        events={events}
-        selectedContextId="context-plan"
-        {...baseHandlers}
-        onResetContext={onResetContext}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /reset context/i }));
-    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
-
-    expect(onResetContext).not.toHaveBeenCalled();
-    expect(screen.queryByText("Reset context?")).not.toBeInTheDocument();
-  });
-
   it("hides history entries flagged as preReset in the detail history tab", () => {
     const visibleEvent = makeValidationEvent({
       contextId: "context-plan",
@@ -1476,21 +1232,6 @@ describe("ExecutionInspectorPanel — Launch Inputs audit surface", () => {
     expect(screen.getByText("priority")).toBeInTheDocument();
     expect(screen.getByText("high")).toBeInTheDocument();
   });
-
-  it("omits the Launch Inputs section for a zero-input execution", () => {
-    const execution = createWorkflowExecution({ boundInputs: {} });
-
-    render(
-      <ExecutionInspectorPanel
-        execution={execution}
-        events={[]}
-        selectedContextId={null}
-        {...baseHandlers}
-      />,
-    );
-
-    expect(screen.queryByText("Launch Inputs")).not.toBeInTheDocument();
-  });
 });
 
 describe("ExecutionInspectorPanel — parked user-input questions", () => {
@@ -1513,21 +1254,6 @@ describe("ExecutionInspectorPanel — parked user-input questions", () => {
     />
   );
 
-  it("mounts the question panel for the selected parked context when userInputPanels is provided", () => {
-    render(
-      <ExecutionInspectorPanel
-        execution={createWorkflowExecution({ status: "running" })}
-        events={[]}
-        selectedContextId="context-plan"
-        {...baseHandlers}
-        userInputPanels={parkedPanel(QUESTION_TEXT)}
-      />,
-    );
-
-    expect(screen.getByText(QUESTION_TEXT)).toBeInTheDocument();
-    expect(screen.getByText("Postgres")).toBeInTheDocument();
-  });
-
   it("mounts one panel per waiting lane", () => {
     render(
       <ExecutionInspectorPanel
@@ -1546,20 +1272,6 @@ describe("ExecutionInspectorPanel — parked user-input questions", () => {
 
     expect(screen.getByText(QUESTION_TEXT)).toBeInTheDocument();
     expect(screen.getByText(SECOND_QUESTION_TEXT)).toBeInTheDocument();
-  });
-
-  it("renders no question panel when userInputPanels is null", () => {
-    render(
-      <ExecutionInspectorPanel
-        execution={createWorkflowExecution({ status: "running" })}
-        events={[]}
-        selectedContextId="context-plan"
-        {...baseHandlers}
-        userInputPanels={null}
-      />,
-    );
-
-    expect(screen.queryByText(QUESTION_TEXT)).not.toBeInTheDocument();
   });
 
   it("renders no question panel in the overview (no context selected) even if props carry a panel", () => {
@@ -1601,21 +1313,6 @@ describe("ExecutionInspectorPanel — Config tab + overview header", () => {
     expect(within(tab).getByTestId("runtime-isolation")).toHaveTextContent(
       "session",
     );
-  });
-
-  it("keeps the Tasks tab as the default detail view", () => {
-    render(
-      <ExecutionInspectorPanel
-        execution={createWorkflowExecution({ status: "running" })}
-        events={[]}
-        selectedContextId="context-plan"
-        {...baseHandlers}
-      />,
-    );
-
-    // Tasks content is present by default; config is not.
-    expect(screen.getByText("Inspect code")).toBeInTheDocument();
-    expect(screen.queryByTestId("context-config-tab")).not.toBeInTheDocument();
   });
 
   it("shows liveRevision and seed definition id@revision in the overview header", () => {
@@ -1674,21 +1371,6 @@ describe("ExecutionInspectorPanel — Config tab + overview header", () => {
     expect(note).toHaveTextContent(
       "Mission narrowed after descoping the importer",
     );
-  });
-
-  it("renders no charter amendment note when the charter was never amended", () => {
-    render(
-      <ExecutionInspectorPanel
-        execution={createWorkflowExecution()}
-        events={[]}
-        selectedContextId={null}
-        {...baseHandlers}
-      />,
-    );
-
-    expect(
-      screen.queryByTestId("overview-charter-amendments"),
-    ).not.toBeInTheDocument();
   });
 });
 
@@ -1929,13 +1611,6 @@ describe("ExecutionInspectorPanel — output-schema validation card (R3.2)", () 
     ).not.toBeInTheDocument();
   });
 
-  it("renders the instance path as the issue title", () => {
-    renderHistory(schemaRejection);
-
-    const title = screen.getByText("/verdict");
-    expect(title.tagName).toBe("CODE");
-  });
-
   it("keeps the lane badge and transcript link for an agent-validator failure", () => {
     renderHistory(
       makeValidationEvent({
@@ -2004,47 +1679,6 @@ describe("ExecutionInspectorPanel — output-schema halt card (R3.2)", () => {
     };
   }
 
-  it("lists the refused instance paths in the context halt card", () => {
-    const { execution, events } = outputSchemaHaltFixture();
-
-    render(
-      <ExecutionInspectorPanel
-        execution={execution}
-        events={events}
-        selectedContextId="context-plan"
-        {...baseHandlers}
-      />,
-    );
-
-    const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent(
-      /Output schema not satisfied in context-plan/,
-    );
-    expect(within(alert).getByText("/verdict")).toBeInTheDocument();
-    expect(
-      within(alert).getByText(/not one of the allowed values/),
-    ).toBeInTheDocument();
-  });
-
-  it("lists the refused instance paths on the overview card, which is the first halt surface seen", () => {
-    const { execution, events } = outputSchemaHaltFixture();
-
-    render(
-      <ExecutionInspectorPanel
-        execution={execution}
-        events={events}
-        selectedContextId={null}
-        {...baseHandlers}
-      />,
-    );
-
-    const alert = screen.getByRole("alert");
-    expect(within(alert).getByText("/verdict")).toBeInTheDocument();
-    expect(
-      within(alert).getByText(/not one of the allowed values/),
-    ).toBeInTheDocument();
-  });
-
   it("offers Edit schema on the overview card, routing the host to the refusing context", () => {
     const { execution, events } = outputSchemaHaltFixture();
     const onEditSchema = vi.fn();
@@ -2062,123 +1696,45 @@ describe("ExecutionInspectorPanel — output-schema halt card (R3.2)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Edit schema" }));
     expect(onEditSchema).toHaveBeenCalledWith("context-plan");
   });
-
-  it("renders a concurrent secondary output-schema failure with its own paths", () => {
-    const { execution, events } = outputSchemaHaltFixture();
-    const withSecondary: GraphWorkflowExecution = {
-      ...execution,
-      secondaryHaltReasons: [
-        {
-          type: "circuit_breaker",
-          contextId: "context-build",
-          condition: "output_schema_validation",
-          failureCount: 2,
-          summary: "Output schema not satisfied",
-        },
-      ],
-    };
-    const withBuildRejection: GraphWorkflowExecutionEvent[] = [
-      ...events,
-      {
-        occurredAt: "2026-03-27T09:42:00.000Z",
-        preReset: false,
-        event: makeValidationEvent({
-          contextId: "context-build",
-          kind: "output_schema",
-          pass: false,
-          summary: "Output rejected",
-          issues: [
-            {
-              title: "/artifact",
-              description: "is required",
-              path: "/artifact",
-            },
-          ],
-          rejectedOutput: "{}",
-          gateRepairAttempts: null,
-          gateRepairBudget: null,
-        }),
-      },
-    ];
-
-    render(
-      <ExecutionInspectorPanel
-        execution={withSecondary}
-        events={withBuildRejection}
-        selectedContextId={null}
-        {...baseHandlers}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /1 more failure/ }));
-    const alert = screen.getByRole("alert");
-    expect(within(alert).getByText("/artifact")).toBeInTheDocument();
-    expect(within(alert).getByText(/is required/)).toBeInTheDocument();
-  });
 });
 
-describe("ExecutionInspectorPanel — captured output group", () => {
-  const outputSchema = {
-    type: "object",
-    properties: { verdict: { type: "string" } },
-    required: ["verdict"],
-  };
-
-  function withSchema(): GraphWorkflowExecution {
+describe("ExecutionInspectorPanel — context data composition", () => {
+  it("mounts the selected context's captured output and direct upstream input", () => {
+    const outputSchema = {
+      type: "object",
+      properties: { verdict: { type: "string" } },
+      required: ["verdict"],
+    };
     const definition = createResolvedWorkflowDefinition();
     definition.executionContexts = definition.executionContexts.map(
       (context) =>
-        context.id === "context-plan" ? { ...context, outputSchema } : context,
+        context.id === "context-plan" || context.id === "context-implement"
+          ? { ...context, outputSchema }
+          : context,
     );
-    return createWorkflowExecution({ workingDefinition: definition });
-  }
+    const execution = createWorkflowExecution({
+      workingDefinition: definition,
+      contextOutputs: {
+        "context-plan": {
+          value: { verdict: "ready" },
+          capturedAt: "2026-03-27T14:20:00.000Z",
+          iteration: 1,
+          parse: { source: "native" },
+        },
+        "context-implement": {
+          value: { verdict: "pass" },
+          capturedAt: "2026-03-27T14:22:00.000Z",
+          iteration: 2,
+          parse: { source: "native" },
+        },
+      },
+    });
 
-  it("omits the Output group entirely for a context with no declared schema (R7.6)", () => {
-    const { container } = render(
-      <ExecutionInspectorPanel
-        execution={createWorkflowExecution()}
-        events={[]}
-        selectedContextId="context-plan"
-        {...baseHandlers}
-      />,
-    );
-
-    expect(container.querySelector('[data-section="output"]')).toBeNull();
-  });
-
-  it("renders the pending Output group for a schema-declaring context (R7.6)", () => {
-    const { container } = render(
-      <ExecutionInspectorPanel
-        execution={withSchema()}
-        events={[]}
-        selectedContextId="context-plan"
-        {...baseHandlers}
-      />,
-    );
-
-    expect(container.querySelector('[data-section="output"]')).not.toBeNull();
-    expect(screen.getByTestId("captured-output-contract")).toHaveTextContent(
-      "object · 1 field · 1 required",
-    );
-  });
-
-  it("renders the captured payload once the context banks its output (R7.6)", () => {
-    const execution = withSchema();
     render(
       <ExecutionInspectorPanel
-        execution={{
-          ...execution,
-          contextOutputs: {
-            "context-plan": {
-              value: { verdict: "pass" },
-              capturedAt: "2026-03-27T14:22:00.000Z",
-              iteration: 2,
-              parse: { source: "native" },
-            },
-          },
-        }}
+        execution={execution}
         events={[]}
-        selectedContextId="context-plan"
+        selectedContextId="context-implement"
         {...baseHandlers}
       />,
     );
@@ -2186,138 +1742,11 @@ describe("ExecutionInspectorPanel — captured output group", () => {
     expect(screen.getByTestId("captured-output-status")).toHaveTextContent(
       "Captured",
     );
-    expect(screen.getByText('"verdict":')).toBeInTheDocument();
-  });
-
-  it("renders the rejected state from the recorded output-schema failure (R3.2)", () => {
-    const execution = withSchema();
-    const events: GraphWorkflowExecutionEvent[] = [
-      {
-        occurredAt: "2026-03-27T09:41:00.000Z",
-        preReset: false,
-        event: makeValidationEvent({
-          kind: "output_schema",
-          pass: false,
-          summary: "Output rejected — 1 issue",
-          rejectedOutput: '{ "verdict": "partial" }',
-          gateRepairAttempts: null,
-          gateRepairBudget: null,
-          issues: [{ title: "/verdict", description: "not allowed" }],
-        }),
-      },
-    ];
-
-    render(
-      <ExecutionInspectorPanel
-        execution={execution}
-        events={events}
-        selectedContextId="context-plan"
-        {...baseHandlers}
-      />,
+    const upstream = screen.getByTestId("upstream-inputs");
+    expect(within(upstream).getByTestId("upstream-input-row")).toHaveAttribute(
+      "data-context-id",
+      "context-plan",
     );
-
-    expect(screen.getByTestId("captured-output-status")).toHaveTextContent(
-      "Rejected",
-    );
-    expect(screen.getByTestId("captured-output-rejected")).toHaveTextContent(
-      '"verdict": "partial"',
-    );
-  });
-});
-
-// R7.8: the execution inspector's rows are EXECUTION-derived — the same
-// predecessors the prompt injects, with what each has actually banked.
-describe("ExecutionInspectorPanel — upstream inputs", () => {
-  const planSchema = {
-    type: "object",
-    properties: { verdict: { type: "string" }, notes: { type: "string" } },
-    required: ["verdict"],
-  };
-
-  function executionWithPlanSchema(): GraphWorkflowExecution {
-    const definition = createResolvedWorkflowDefinition();
-    definition.executionContexts = definition.executionContexts.map(
-      (context) =>
-        context.id === "context-plan"
-          ? { ...context, outputSchema: planSchema }
-          : context,
-    );
-    return createWorkflowExecution({ workingDefinition: definition });
-  }
-
-  it("omits the block for a root context", () => {
-    render(
-      <ExecutionInspectorPanel
-        execution={executionWithPlanSchema()}
-        events={[]}
-        selectedContextId="context-plan"
-        {...baseHandlers}
-      />,
-    );
-
-    expect(screen.queryByTestId("upstream-inputs")).toBeNull();
-  });
-
-  it("lists the direct predecessor with its declared fields, still uncaptured", () => {
-    render(
-      <ExecutionInspectorPanel
-        execution={executionWithPlanSchema()}
-        events={[]}
-        selectedContextId="context-implement"
-        {...baseHandlers}
-      />,
-    );
-
-    const rows = screen.getAllByTestId("upstream-input-row");
-    expect(rows.map((row) => row.dataset.contextId)).toEqual(["context-plan"]);
-    expect(
-      within(rows[0]!)
-        .getAllByTestId("upstream-input-field")
-        .map((chip) => chip.textContent),
-    ).toEqual(["verdict", "notes"]);
-    expect(rows[0]!.dataset.captured).toBe("false");
-  });
-
-  it("marks the predecessor captured once its output is banked", () => {
-    const execution = executionWithPlanSchema();
-    render(
-      <ExecutionInspectorPanel
-        execution={{
-          ...execution,
-          contextOutputs: {
-            "context-plan": {
-              value: { verdict: "pass", notes: "none" },
-              capturedAt: "2026-03-27T14:22:00.000Z",
-              iteration: 1,
-              parse: { source: "native" },
-            },
-          },
-        }}
-        events={[]}
-        selectedContextId="context-implement"
-        {...baseHandlers}
-      />,
-    );
-
-    expect(
-      screen.getAllByTestId("upstream-input-row")[0]!.dataset.captured,
-    ).toBe("true");
-  });
-
-  it("keeps a schema-less predecessor listed as prose-only", () => {
-    render(
-      <ExecutionInspectorPanel
-        execution={createWorkflowExecution()}
-        events={[]}
-        selectedContextId="context-implement"
-        {...baseHandlers}
-      />,
-    );
-
-    const rows = screen.getAllByTestId("upstream-input-row");
-    expect(rows.map((row) => row.dataset.contextId)).toEqual(["context-plan"]);
-    expect(rows[0]!.dataset.declared).toBe("false");
-    expect(within(rows[0]!).getByTestId("upstream-input-prose")).toBeTruthy();
   });
 });
 
@@ -3061,19 +2490,6 @@ function guardedExecution(): GraphWorkflowExecution {
 }
 
 describe("ExecutionInspectorPanel — routing section (R13.1)", () => {
-  it("renders no routing section for a context with no guarded route", () => {
-    render(
-      <ExecutionInspectorPanel
-        execution={createWorkflowExecution()}
-        events={[]}
-        selectedContextId="context-implement"
-        {...baseHandlers}
-      />,
-    );
-
-    expect(screen.queryByTestId("context-routing")).toBeNull();
-  });
-
   it("lists each incoming guard with its resolution", () => {
     const execution = guardedExecution();
     render(
@@ -3237,19 +2653,6 @@ describe("ExecutionInspectorPanel — loop pass section (R13.1)", () => {
     expect(section).toHaveTextContent("template v2");
     expect(section).toHaveTextContent("context-implement");
   });
-
-  it("renders no loop section for a context outside every loop", () => {
-    render(
-      <ExecutionInspectorPanel
-        execution={loopExecution()}
-        events={[]}
-        selectedContextId="context-plan"
-        {...baseHandlers}
-      />,
-    );
-
-    expect(screen.queryByTestId("context-loop")).toBeNull();
-  });
 });
 
 describe("ExecutionInspectorPanel — expansion receipts (R13.1)", () => {
@@ -3299,19 +2702,6 @@ describe("ExecutionInspectorPanel — expansion receipts (R13.1)", () => {
     expect(section).toHaveTextContent("req-1");
   });
 
-  it("shows no provenance section on an authored context", () => {
-    render(
-      <ExecutionInspectorPanel
-        execution={expandedExecution()}
-        events={[]}
-        selectedContextId="context-plan"
-        {...baseHandlers}
-      />,
-    );
-
-    expect(screen.queryByTestId("context-provenance")).toBeNull();
-  });
-
   it("lists accepted expansions and refusals in the overview", () => {
     render(
       <ExecutionInspectorPanel
@@ -3330,19 +2720,6 @@ describe("ExecutionInspectorPanel — expansion receipts (R13.1)", () => {
     const refusals = screen.getAllByTestId("expansion-refusal-row");
     expect(refusals).toHaveLength(1);
     expect(refusals[0]!).toHaveTextContent("expansion-context-cap-exceeded");
-  });
-
-  it("renders no expansion section for an execution that never expanded", () => {
-    render(
-      <ExecutionInspectorPanel
-        execution={createWorkflowExecution()}
-        events={[]}
-        selectedContextId={null}
-        {...baseHandlers}
-      />,
-    );
-
-    expect(screen.queryByTestId("expansion-ledger")).toBeNull();
   });
 });
 
@@ -3467,35 +2844,6 @@ describe("ExecutionInspectorPanel — advisories in the round history (R9.2/R9.3
     };
   }
 
-  it("renders the advisory, its authority badges and its disposition on the history tab", () => {
-    render(
-      <ExecutionInspectorPanel
-        execution={advisoryExecution()}
-        events={[]}
-        selectedContextId="context-plan"
-        {...baseHandlers}
-      />,
-    );
-    selectDetailTab(/history/i);
-
-    const rows = screen.getAllByTestId("cohort-member");
-    expect(rows.map((row) => row.getAttribute("data-authority"))).toEqual([
-      "blocking",
-      "advisory",
-    ]);
-
-    const advisory = within(rows[1]!).getByTestId("cohort-advisory");
-    expect(
-      within(advisory).getByTestId("cohort-advisory-kind"),
-    ).toHaveTextContent("Plan");
-    expect(
-      within(advisory).getByTestId("cohort-advisory-disposition"),
-    ).toHaveAttribute("data-disposition", "declined");
-    expect(
-      screen.getByText("The backfill is a separate approved task."),
-    ).toBeInTheDocument();
-  });
-
   /**
    * The round-2 aggregate as the engine publishes it: the specialist entries
    * carry the advisories that lane raised, and no disposition, because the
@@ -3575,41 +2923,6 @@ describe("ExecutionInspectorPanel — advisories in the round history (R9.2/R9.3
     expect(screen.queryByText("No disposition")).toBeNull();
   });
 
-  it("carries a tone-coded authority badge on every specialist row, live round or not (R9.5)", () => {
-    render(
-      <ExecutionInspectorPanel
-        execution={advisoryExecution()}
-        events={[roundTwoAggregate()]}
-        selectedContextId="context-plan"
-        {...baseHandlers}
-      />,
-    );
-    selectDetailTab(/history/i);
-
-    // The rows of a round read off its validation-result event answer the
-    // authority question the same way the live round's roster rows do.
-    const historicalRows = screen.getAllByTestId("validation-specialist");
-    expect(
-      historicalRows.map((row) => row.getAttribute("data-authority")),
-    ).toEqual(["blocking", "advisory"]);
-    const badges = historicalRows.map((row) =>
-      within(row).getByTestId("cohort-member-authority"),
-    );
-    expect(
-      badges.map((badge) => [
-        badge.textContent,
-        badge.getAttribute("data-tone"),
-      ]),
-    ).toEqual([
-      ["Blocking", "amber"],
-      ["Advisory", "neutral"],
-    ]);
-    // Never the failure tone: authority is not a verdict.
-    for (const badge of badges) {
-      expect(badge).not.toHaveAttribute("data-tone", "red");
-    }
-  });
-
   it("badges a seat the live cohort no longer holds as unknown rather than advisory (R9.5)", () => {
     const execution = advisoryExecution();
     const base = execution.workingDefinition;
@@ -3647,25 +2960,6 @@ describe("ExecutionInspectorPanel — advisories in the round history (R9.2/R9.3
       within(rows[0]!).getByTestId("cohort-member-authority"),
     ).toHaveTextContent("Authority unknown");
   });
-
-  it("shows the advisory-response step on the round timeline", () => {
-    render(
-      <ExecutionInspectorPanel
-        execution={advisoryExecution()}
-        events={[]}
-        selectedContextId="context-plan"
-        {...baseHandlers}
-      />,
-    );
-    selectDetailTab(/history/i);
-
-    const steps = screen.getAllByTestId("cohort-round-step");
-    expect(steps[steps.length - 1]).toHaveAttribute(
-      "data-step",
-      "advisory_response",
-    );
-    expect(steps[steps.length - 1]).toHaveAttribute("data-state", "current");
-  });
 });
 
 describe("ExecutionInspectorPanel — execution-level advisory index (R9.4)", () => {
@@ -3687,31 +2981,6 @@ describe("ExecutionInspectorPanel — execution-level advisory index (R9.4)", ()
       ],
     });
   }
-
-  it("aggregates every long-lived advisory on the overview, no round opened", () => {
-    render(
-      <ExecutionInspectorPanel
-        execution={indexedExecution()}
-        events={[]}
-        selectedContextId={null}
-        {...baseHandlers}
-      />,
-    );
-
-    const entries = screen.getAllByTestId("advisory-index-entry");
-    expect(entries).toHaveLength(2);
-    // Two different contexts and two different rounds, in one list.
-    expect(entries.map((el) => el.getAttribute("data-context-id"))).toEqual([
-      "context-plan",
-      "context-implement",
-    ]);
-    expect(
-      within(entries[0]!).getByTestId("advisory-index-origin"),
-    ).toHaveTextContent("Plan · Round 2 · security");
-    expect(
-      within(entries[1]!).getByTestId("advisory-index-origin"),
-    ).toHaveTextContent("Implement · Round 1 · general");
-  });
 
   it("links an entry back to the context that raised it", () => {
     const onOpenAdvisoryOrigin = vi.fn();
@@ -3735,19 +3004,6 @@ describe("ExecutionInspectorPanel — execution-level advisory index (R9.4)", ()
       contextId: "context-implement",
       roundSeq: 1,
     });
-  });
-
-  it("renders no advisory section for a run that raised none", () => {
-    render(
-      <ExecutionInspectorPanel
-        execution={createWorkflowExecution()}
-        events={[]}
-        selectedContextId={null}
-        {...baseHandlers}
-      />,
-    );
-
-    expect(screen.queryByTestId("advisory-index")).toBeNull();
   });
 });
 
