@@ -885,7 +885,23 @@ export function sendConversationEvent(
 ): boolean {
   const actor = getConversationActor(projectPath, sessionName, conversationId);
   if (!actor) return false;
-  if (!actor.getSnapshot().can(event)) return false;
+  const snapshot = actor.getSnapshot();
+  if (typeof snapshot.can !== "function") {
+    logger.error("conversation-manager.incompatible_snapshot", {
+      conversationId,
+      ...scopeRefFromStoreSessionName(sessionName),
+      lifecycleState: snapshot.value,
+      eventType: event.type,
+    });
+    stopConversationActor(
+      projectPath,
+      sessionName,
+      conversationId,
+      "incompatible_snapshot",
+    );
+    return false;
+  }
+  if (!snapshot.can(event)) return false;
   actor.send(event);
   return true;
 }
