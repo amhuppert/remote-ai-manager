@@ -486,6 +486,7 @@ describe("settleRoutes — landing intents gate the decision (R2.5)", () => {
       includedContextIds: [],
       lastCommittingContextId: null,
       commitSnapshots: [],
+      ignoredBaseline: [],
       createdAt: NOW,
       updatedAt: NOW,
     };
@@ -1045,6 +1046,7 @@ describe("landing evidence (decision D8): commit modes replay from the branch", 
         includedContextIds: ["fix"],
         lastCommittingContextId: "fix",
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: NOW,
         updatedAt: NOW,
       },
@@ -1121,6 +1123,79 @@ describe("landing evidence (decision D8): commit modes replay from the branch", 
       evidence: "adopted-head",
       headSha: "bbb",
     });
+  });
+
+  it("refuses to adopt a moved lane HEAD for an enveloped context, because on a shared lane the mover is a sibling", () => {
+    const execution = laneCommitExecution();
+    const state = execution.contextStates.fix;
+    if (!state) throw new Error("fixture missing the fix context state");
+    state.reservedOwnership = {
+      mode: "owned",
+      canonicalPrefixes: ["/tmp/lane-1/src/api"],
+    };
+
+    // HEAD moved past the baseline with no trailer for this context: a sibling
+    // member landed. Crediting the range would settle this context as landed
+    // over work that was never committed, and its own landing would never be
+    // repaired — the commit would be silently lost.
+    expect(
+      reconcileLandingIntents(execution, {
+        now: LATER,
+        branchEvidence: new Map([
+          [
+            "fix",
+            { headSha: "bbb", tokenCommitSha: null, baselineReachable: true },
+          ],
+        ]),
+      }),
+    ).toEqual([]);
+    expect(execution.contextStates.fix?.landingIntent?.state).toBe("pending");
+  });
+
+  it("still promotes an enveloped context on its own trailer, which is the only evidence that names it", () => {
+    const execution = laneCommitExecution();
+    const state = execution.contextStates.fix;
+    if (!state) throw new Error("fixture missing the fix context state");
+    state.reservedOwnership = {
+      mode: "owned",
+      canonicalPrefixes: ["/tmp/lane-1/src/api"],
+    };
+
+    reconcileLandingIntents(execution, {
+      now: LATER,
+      branchEvidence: new Map([
+        [
+          "fix",
+          { headSha: "ccc", tokenCommitSha: "bbb", baselineReachable: true },
+        ],
+      ]),
+    });
+
+    expect(execution.contextStates.fix?.landingIntent).toMatchObject({
+      state: "landed",
+      evidence: "commit",
+      headSha: "ccc",
+    });
+  });
+
+  it("refuses to adopt a moved lane HEAD for a read-only member, which commits nothing of its own", () => {
+    const execution = laneCommitExecution();
+    const state = execution.contextStates.fix;
+    if (!state) throw new Error("fixture missing the fix context state");
+    state.reservedOwnership = { mode: "readOnly", canonicalPrefixes: [] };
+
+    expect(
+      reconcileLandingIntents(execution, {
+        now: LATER,
+        branchEvidence: new Map([
+          [
+            "fix",
+            { headSha: "bbb", tokenCommitSha: null, baselineReachable: true },
+          ],
+        ]),
+      }),
+    ).toEqual([]);
+    expect(execution.contextStates.fix?.landingIntent?.state).toBe("pending");
   });
 
   it("refuses an adopted range whose recorded baseline is not an ancestor of head", () => {

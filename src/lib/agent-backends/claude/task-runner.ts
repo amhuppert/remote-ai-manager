@@ -369,6 +369,12 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       const stream = this.deps.runQuery({
         prompt,
         options: {
+          // A restricted TASK lane keeps its caller's working directory: its
+          // policy denies the whole candidate worktree and allows nothing
+          // inside it, so the sandbox's writable-cwd default is already
+          // overridden by an explicit deny. A policy that allows part of the
+          // tree it runs in cannot be confined that way and must run from
+          // `envelope.workingDirectory` instead — see the conversation path.
           cwd: input.workingDirectory,
           systemPrompt: {
             type: "preset",

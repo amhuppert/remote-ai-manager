@@ -219,6 +219,7 @@ function definitionEditTouchedPaths(
           "acceptanceCriteria",
           "outputSchema",
           "routing",
+          "placement",
           "implementer",
           "contextValidator",
           "scriptValidator",
@@ -405,6 +406,12 @@ function applyOperation(
         id: operation.id,
         title: operation.title,
         acceptanceCriteria: operation.acceptanceCriteria,
+        // Authored placement wins. Without one the context falls back to a
+        // single-member lane of its own, matching the one-worktree-per-context
+        // shape an added context had before placement was authored. The
+        // resulting definition is re-validated below, so an id that cannot be a
+        // lane name is refused with a located issue.
+        placement: operation.placement ?? { lane: operation.id, mode: "full" },
         ...(operation.description !== undefined
           ? { description: operation.description }
           : {}),
@@ -464,6 +471,12 @@ function applyOperation(
       if (operation.title !== undefined) context.title = operation.title;
       if (operation.acceptanceCriteria !== undefined) {
         context.acceptanceCriteria = operation.acceptanceCriteria;
+      }
+      // Wholesale replacement, never a merge: the grade discriminates on `mode`,
+      // so merging an owning placement's paths onto a read-only one would build
+      // a shape the union has no member for.
+      if (operation.placement !== undefined) {
+        context.placement = operation.placement;
       }
       applyOptionalBlock(context, "description", operation.description);
       applyOptionalBlock(context, "outputSchema", operation.outputSchema);

@@ -139,6 +139,7 @@ function makeContext(
     id: "ctx-1",
     title: "Context 1",
     acceptanceCriteria: "must pass",
+    placement: { lane: "ctx-1", mode: "full" },
     ...overrides,
   };
 }

@@ -151,6 +151,70 @@ describe("ExecutionStatusBar awaiting-approval chip", () => {
   });
 });
 
+describe("ExecutionStatusBar lane activity", () => {
+  it("shows both concurrently active members of an authored lane", () => {
+    const base = makeExecution({ status: "running", haltReason: null });
+    const execution = makeExecution({
+      status: "running",
+      haltReason: null,
+      activeContextIds: ["context-plan", "context-implement"],
+      workingDefinition: {
+        ...base.workingDefinition,
+        executionContexts: base.workingDefinition.executionContexts.map(
+          (context) =>
+            context.id === "context-plan" || context.id === "context-implement"
+              ? {
+                  ...context,
+                  placement: {
+                    lane: "delivery",
+                    mode: "owned" as const,
+                    ownedPaths: [`src/${context.id}`],
+                  },
+                }
+              : context,
+        ),
+      },
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "running",
+          laneId: "delivery",
+          batchId: "batch-1",
+        },
+        "context-implement": {
+          ...base.contextStates["context-implement"]!,
+          status: "running",
+          laneId: "delivery",
+          batchId: "batch-1",
+        },
+      },
+      executionLanes: {
+        delivery: {
+          laneId: "delivery",
+          kind: "worktree",
+          status: "active",
+          worktreePath: "/repo/.worktrees/delivery",
+          branchName: "csm/delivery",
+          includedContextIds: [],
+          lastCommittingContextId: null,
+          commitSnapshots: [],
+          ignoredBaseline: [],
+          createdAt: "2026-08-09T12:00:00.000Z",
+          updatedAt: "2026-08-09T12:00:00.000Z",
+        },
+      },
+    });
+
+    render(<ExecutionStatusBar {...baseProps} execution={execution} />);
+
+    const lane = screen.getByTestId("execution-lane-activity");
+    expect(lane).toHaveTextContent("delivery");
+    expect(lane).toHaveTextContent("context-plan: running");
+    expect(lane).toHaveTextContent("context-implement: running");
+  });
+});
+
 const longJoinFailure: GraphWorkflowHaltReason = {
   type: "join_failure",
   joinId: "join-final",

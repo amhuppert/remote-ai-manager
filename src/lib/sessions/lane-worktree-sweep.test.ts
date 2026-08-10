@@ -45,6 +45,26 @@ describe("createLaneWorktreeSweep", () => {
     ]);
   });
 
+  it("removes named lane worktrees whose suffix is unrelated to any context id", async () => {
+    const { deps, removed } = createDeps([
+      "session-1.implementation",
+      "session-1.analysis-readers",
+      "other-session.implementation",
+    ]);
+    const sweep = createLaneWorktreeSweep(deps);
+
+    const result = await sweep.sweep({
+      projectPath: "/repo",
+      sessionWorktreePath: "/repo/.worktrees/session-1",
+    });
+
+    expect(removed).toEqual([
+      "/repo/.worktrees/session-1.implementation",
+      "/repo/.worktrees/session-1.analysis-readers",
+    ]);
+    expect(result).toEqual(removed);
+  });
+
   it("does not match sessions whose name shares a prefix without the dot separator", async () => {
     const { deps, removed } = createDeps(["session-1", "session-10.ctx-a"]);
     const sweep = createLaneWorktreeSweep(deps);

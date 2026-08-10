@@ -225,6 +225,12 @@ const specTaskPlanStatusSchema = z
      */
     unresolvedDependsOnTaskElementIds: z.array(z.string().min(1)).default([]),
     laneGroup: z.string().min(1).nullable(),
+    /**
+     * The lane the compiler will place this task's context on, or null when it
+     * compiles to a single-member lane. Defaulted so a payload from a server
+     * without the field still satisfies the strict parse.
+     */
+    executionLane: z.string().min(1).nullable().default(null),
     touchedPaths: z.array(z.string().min(1)),
     /** Handles of the covered criteria this revision carries, in payload order. */
     criterionCoverage: z.array(z.string().min(1)),

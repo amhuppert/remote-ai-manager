@@ -345,6 +345,14 @@ function maximalResolvedContext(): Record<string, unknown> {
     title: "Implement the thing",
     description: "Detailed description of the context",
     acceptanceCriteria: "All tests pass and the build is green",
+    // The owning grade, because it is the only one that carries a payload:
+    // a placement round-trip that only ever saw `{ lane, mode }` would not
+    // prove the owned-prefix set survives a real save and reload.
+    placement: {
+      lane: "delivery",
+      mode: "owned",
+      ownedPaths: ["src/feature", "docs/feature.md"],
+    },
     origin: {
       sourceUri: "spec://native-sdd/contexts/ctx-1",
       label: "Implementation context",
@@ -601,6 +609,14 @@ function buildMaximalExecution(): unknown {
           title: "Implement the thing",
           description: "Detailed description of the context",
           acceptanceCriteria: "All tests pass and the build is green",
+          // The owning grade, because it is the only one that carries a payload:
+          // a placement round-trip that only ever saw `{ lane, mode }` would not
+          // prove the owned-prefix set survives a real save and reload.
+          placement: {
+            lane: "delivery",
+            mode: "owned",
+            ownedPaths: ["src/feature", "docs/feature.md"],
+          },
           origin: {
             sourceUri: "spec://native-sdd/contexts/ctx-1",
             label: "Implementation context",
@@ -853,6 +869,12 @@ function buildMaximalExecution(): unknown {
         // path, so the maximal fixture carries a non-null value to prove it
         // survives the archived-execution round-trip.
         reservedByBatchId: "batch-1",
+        // The frozen write envelope the scheduler admitted this context under
+        // (decision D4) — persisted, so the archive has to carry it too.
+        reservedOwnership: {
+          mode: "owned",
+          canonicalPrefixes: ["/wt/lane-1/src/api", "/wt/lane-1/docs"],
+        },
         laneId: "lane-1",
         joinId: "join-1",
         mergeStatus: "in-progress",
@@ -865,6 +887,14 @@ function buildMaximalExecution(): unknown {
             type: "rejected",
             message: "needs more tests before merge",
             decidedAt: "2026-01-01T00:00:45.000Z",
+          },
+          // The scope this gate froze under; the approval surface reads its
+          // bytes back through this identity rather than the live placement.
+          approvalScope: {
+            kind: "scoped",
+            ownedPaths: ["src/api", "docs/api.md"],
+            treeHash: "owned-subset-digest-1",
+            headSha: "abc1234",
           },
         },
         pendingUserInputs: {
@@ -918,6 +948,9 @@ function buildMaximalExecution(): unknown {
         validationRound: {
           seq: 4,
           candidate: {
+            // The non-default scope, so a round-trip that dropped the field
+            // would read back as the whole-tree candidate this is not.
+            identityScope: "owned",
             headSha: "a".repeat(40),
             candidateTreeHash: "b".repeat(40),
             taskStateHash: "c".repeat(64),
@@ -1284,8 +1317,41 @@ function buildMaximalExecution(): unknown {
             committedAt: "2026-01-02T03:00:00Z",
           },
         ],
+        ignoredBaseline: [
+          {
+            path: "node_modules",
+            digest: "digest-node-modules",
+            excluded: ["node_modules/.cache/generated"],
+          },
+          {
+            path: "dist/bundle.js",
+            digest: "digest-dist-bundle",
+            excluded: [],
+          },
+        ],
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-02T03:00:00Z",
+      },
+    },
+    laneReservations: {
+      "lane-2": {
+        laneId: "lane-2",
+        batchId: "batch-2",
+        provisioning: true,
+        members: [
+          {
+            contextId: "ctx-2",
+            ownership: {
+              mode: "owned",
+              canonicalPrefixes: ["/wt/lane-2/src/ui"],
+            },
+          },
+          {
+            contextId: "ctx-3",
+            ownership: { mode: "readOnly", canonicalPrefixes: [] },
+          },
+        ],
+        createdAt: "2026-01-02T04:00:00Z",
       },
     },
     joins: {
@@ -1297,6 +1363,16 @@ function buildMaximalExecution(): unknown {
         sourceLaneIds: ["lane-2"],
         mergedSourceLaneIds: ["lane-2"],
         validationDebtSourceLaneIds: ["lane-2"],
+        sourceLaneContextIds: {
+          "lane-2": ["ctx-2", "ctx-3"],
+        },
+        validationEvidence: [
+          {
+            sourceLaneIds: ["lane-2"],
+            contextIds: ["ctx-2", "ctx-3"],
+            recordedAt: "2026-01-02T04:30:00Z",
+          },
+        ],
         status: "running",
         errorMessage: "retrying merge",
         conflicts: {
@@ -1333,10 +1409,6 @@ function buildMaximalExecution(): unknown {
         updatedAt: "2026-01-02T04:00:00Z",
         completedAt: "2026-01-02T05:00:00Z",
       },
-    },
-    lanePlan: {
-      continuationMap: { "ctx-1": "ctx-2" },
-      longestDownstreamPath: { "ctx-1": 3 },
     },
     machineSnapshot: { value: "running", context: { step: 2 } },
     history: [

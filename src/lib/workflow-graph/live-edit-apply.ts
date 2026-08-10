@@ -143,6 +143,10 @@ export async function buildDefaultLiveEditDeps(
     id: "__live_edit_global_defaults__",
     title: "Live edit defaults",
     acceptanceCriteria: "Live edit defaults",
+    // Never scheduled and never validated — this context exists only to give
+    // the config cascade a no-override input — but the field is required, so it
+    // carries the same self-named single-member lane every other default uses.
+    placement: { lane: "__live_edit_global_defaults__", mode: "full" },
   };
   const resolved = resolveContext(defaults, {}, syntheticContext);
   const snapshotFor = await buildAssignmentSnapshotLookup(projectPath);

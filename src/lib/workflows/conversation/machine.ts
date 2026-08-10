@@ -127,6 +127,9 @@ function conversationTurnFromEvent(
       ? { documentFeedback: event.documentFeedback }
       : {}),
     ...(event.askUserQuestionsEnabled ? { askUserQuestionsEnabled: true } : {}),
+    ...(event.fsWritePolicy !== undefined
+      ? { fsWritePolicy: event.fsWritePolicy }
+      : {}),
   };
 }
 
@@ -750,6 +753,9 @@ export const conversationMachine = setup({
                   : {}),
                 ...(activeTurn.askUserQuestionsEnabled
                   ? { askUserQuestionsEnabled: true }
+                  : {}),
+                ...(activeTurn.fsWritePolicy !== undefined
+                  ? { fsWritePolicy: activeTurn.fsWritePolicy }
                   : {}),
               };
             },

@@ -269,6 +269,12 @@ vi.mock("@/lib/workflows/queries", () => ({
   }),
   useWorkflowDefinitionQuery: () => ({ data: undefined }),
   useGraphWorkflowExecutionQuery: () => ({ data: null, isPending: false }),
+  // No execution here means no approval gate stands, so the scoped change-set
+  // query is never enabled; a quiet stub keeps the workspace renderable.
+  useGraphWorkflowApprovalSnapshotQuery: () => ({
+    data: undefined,
+    error: null,
+  }),
 }));
 
 vi.mock("@/lib/conversations/queries", () => ({

@@ -21,6 +21,7 @@ const CONTEXT: GraphWorkflowExecutionContextDefinition = {
   id: "context-plan",
   title: "Plan",
   acceptanceCriteria: "The plan is written",
+  placement: { lane: "context-plan", mode: "full" },
 };
 
 /**

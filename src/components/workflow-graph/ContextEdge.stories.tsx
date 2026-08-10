@@ -29,6 +29,7 @@ function makeNode(
         id,
         title,
         acceptanceCriteria: "TBD",
+        placement: { lane: id, mode: "full" },
         implementer: {
           id: "implementer",
           profile: { tier: "builtin", id: "general-implementer" },

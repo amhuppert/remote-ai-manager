@@ -18,7 +18,6 @@ import type { GraphWorkflowExecution } from "./schemas";
  */
 export const STRUCTURAL_REVISION_KEYS = [
   "workingDefinition",
-  "lanePlan",
   "routeControlRevisions",
   "charter",
   "charterAmendments",

@@ -2364,6 +2364,7 @@ describe("ExecutionInspectorPanel — per-assignment cohort inspector (R12.3)", 
     return {
       seq: 2,
       candidate: {
+        identityScope: "wholeTree",
         headSha: "head-sha-1",
         candidateTreeHash: "tree-hash-1",
         taskStateHash: "task-hash-1",
@@ -3390,6 +3391,7 @@ describe("ExecutionInspectorPanel — advisories in the round history (R9.2/R9.3
           validationRound: {
             seq: 2,
             candidate: {
+              identityScope: "wholeTree",
               headSha: "head-1",
               candidateTreeHash: "tree-hash-1",
               taskStateHash: "tasks-1",
@@ -3799,6 +3801,7 @@ describe("ExecutionInspectorPanel — an origin link reaches the originating rou
     const liveRound: GraphWorkflowValidationRound = {
       seq: 3,
       candidate: {
+        identityScope: "wholeTree",
         headSha: "head-3",
         candidateTreeHash: "tree-hash-3",
         taskStateHash: "tasks-3",

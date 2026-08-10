@@ -207,6 +207,10 @@ export async function loadGraphWorkflowLaneToolContext(
             id: executionContext.id,
             title: executionContext.title,
             acceptanceCriteria: executionContext.acceptanceCriteria,
+            // Only the collaboration cascade reads this stand-in, and nothing in
+            // that cascade consults placement; the self-named lane keeps the
+            // required field honest without inventing a grouping.
+            placement: { lane: executionContext.id, mode: "full" },
           };
         return {
           globalDefaults: coerceGlobalDefaults(globalConfig.workflowDefaults),

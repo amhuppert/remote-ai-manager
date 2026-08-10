@@ -309,6 +309,7 @@ type PendingApprovalStandingFixture = {
   requestedAt: string;
   workflowName: string | null;
   executionSuspended: boolean;
+  enveloped: boolean;
   tasksCompleted: number | null;
   tasksTotal: number | null;
 };
@@ -322,6 +323,7 @@ function makePendingApproval(
     requestedAt: "2025-01-01T00:00:00.000Z",
     workflowName: null,
     executionSuspended: false,
+    enveloped: false,
     tasksCompleted: 6,
     tasksTotal: 6,
     ...overrides,

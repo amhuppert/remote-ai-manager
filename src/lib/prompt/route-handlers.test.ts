@@ -644,6 +644,7 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
         conversationId: "conv-1",
         requestedAt: "2026-06-10T09:00:00.000Z",
         decision: null,
+        approvalScope: { kind: "whole_tree" },
       };
       return sessionStateSchema.parse({
         ...testSession,
@@ -676,6 +677,7 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
           pendingApproval: {
             conversationId: "conv-1",
             requestedAt: "2026-06-10T09:00:00.000Z",
+            approvalScope: { kind: "whole_tree" },
             decision: {
               type: "approved",
               decidedAt: "2026-06-10T09:05:00.000Z",
@@ -700,6 +702,7 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
           pendingApproval: {
             conversationId: "conv-1",
             requestedAt: "2026-06-10T09:00:00.000Z",
+            approvalScope: { kind: "whole_tree" },
             decision: {
               type: "rejected",
               message: "Please use the existing helper",
@@ -726,6 +729,7 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
             conversationId: "conv-validator",
             requestedAt: "2026-06-10T09:00:00.000Z",
             decision: null,
+            approvalScope: { kind: "whole_tree" },
           },
         }),
       );

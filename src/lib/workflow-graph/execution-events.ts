@@ -18,7 +18,11 @@ import type {
   GraphWorkflowRouteResolvedEvent,
   GraphWorkflowExecutionEvent,
   GraphWorkflowJoinStatusEvent,
+  GraphWorkflowLaneConcurrentAdmissionEvent,
+  GraphWorkflowLaneCreatedEvent,
   GraphWorkflowLaneCommitEvent,
+  GraphWorkflowLaneDriftHaltedEvent,
+  GraphWorkflowLaneLandedEvent,
   GraphWorkflowLaneStatusEvent,
   GraphWorkflowGraphExpandedEvent,
   GraphWorkflowLiveEditAppliedEvent,
@@ -49,8 +53,10 @@ import type {
   GraphWorkflowValidationIssue,
   GraphWorkflowValidatorType,
 } from "@/lib/workflow-graph/definition-schemas";
+import { SESSION_LANE_ID } from "@/lib/workflow-graph/lane-identity";
 
-const logger = createLogger("workflow.live-edit");
+const liveEditLogger = createLogger("workflow.live-edit");
+const laneLogger = createLogger("workflow.lanes");
 
 function defaultBroadcast(event: GraphWorkflowSSEEvent): void {
   publishEvent(event);
@@ -531,6 +537,16 @@ function haltReasonsEqual(
         previous.pass === next.pass &&
         previous.maxPasses === next.maxPasses
       );
+    case "ownership_violation":
+      return (
+        next.type === "ownership_violation" &&
+        previous.laneId === next.laneId &&
+        // The reporting context is part of the identity: the same lane can drift
+        // again after a repair, and the member that noticed says which landing
+        // it was found at.
+        previous.contextId === next.contextId &&
+        arraysEqual(previous.unattributedPaths, next.unattributedPaths)
+      );
   }
 
   return assertNever(previous);
@@ -557,6 +573,49 @@ function deriveActiveBatchIds(execution: GraphWorkflowExecution): string[] {
     }
   }
   return out;
+}
+
+function activeContextIdsByAuthoredLane(
+  execution: GraphWorkflowExecution,
+): Map<string, string[]> {
+  const activeContextIds = new Set(execution.activeContextIds);
+  const contextIdsByLane = new Map<string, string[]>();
+  for (const context of execution.workingDefinition.executionContexts) {
+    if (!activeContextIds.has(context.id)) continue;
+    const contextIds = contextIdsByLane.get(context.placement.lane) ?? [];
+    contextIds.push(context.id);
+    contextIdsByLane.set(context.placement.lane, contextIds);
+  }
+  for (const contextId of execution.activeContextIds) {
+    const context = execution.workingDefinition.executionContexts.find(
+      (candidate) => candidate.id === contextId,
+    );
+    if (context) continue;
+    const runtimeLaneId = execution.contextStates[contextId]?.laneId;
+    if (!runtimeLaneId) continue;
+    const contextIds = contextIdsByLane.get(runtimeLaneId) ?? [];
+    contextIds.push(contextId);
+    contextIdsByLane.set(runtimeLaneId, contextIds);
+  }
+  return contextIdsByLane;
+}
+
+function ownershipViolationReasons(
+  execution: GraphWorkflowExecution | null,
+): Extract<GraphWorkflowHaltReason, { type: "ownership_violation" }>[] {
+  if (!execution) return [];
+  return [
+    execution.haltReason,
+    execution.pendingHaltReason,
+    ...execution.secondaryHaltReasons,
+  ].filter(
+    (
+      reason,
+    ): reason is Extract<
+      GraphWorkflowHaltReason,
+      { type: "ownership_violation" }
+    > => reason?.type === "ownership_violation",
+  );
 }
 
 function laneFieldsChanged(
@@ -642,12 +701,46 @@ export function deliverGraphWorkflowEvents(
   for (const row of delivery.events) {
     send(row.event);
     if (row.event.type === "graph-workflow-live-edit-applied") {
-      logger.info("live_edit.applied", {
+      liveEditLogger.info("live_edit.applied", {
         executionId: row.event.executionId,
         liveRevision: row.event.liveRevision,
         source: row.event.source,
         operationCount: row.event.operationCount,
         affectedContextIds: row.event.affectedContextIds,
+      });
+    }
+    if (row.event.type === "graph-workflow-lane-created") {
+      laneLogger.info("lane.created", {
+        executionId: row.event.executionId,
+        laneId: row.event.laneId,
+        kind: row.event.kind,
+        placementSource: row.event.placementSource,
+      });
+    }
+    if (row.event.type === "graph-workflow-lane-concurrent-admission") {
+      laneLogger.info("lane.concurrent_admission", {
+        executionId: row.event.executionId,
+        laneId: row.event.laneId,
+        batchId: row.event.batchId,
+        memberContextIds: row.event.memberContextIds,
+        canonicalCheckResult: row.event.canonicalCheckResult,
+      });
+    }
+    if (row.event.type === "graph-workflow-lane-landed") {
+      laneLogger.info("lane.landed", {
+        executionId: row.event.executionId,
+        laneId: row.event.laneId,
+        contextId: row.event.contextId,
+        ownedPathspec: row.event.ownedPathspec,
+        commitSha: row.event.commitSha,
+      });
+    }
+    if (row.event.type === "graph-workflow-lane-drift-halted") {
+      laneLogger.error("lane.drift_halted", {
+        executionId: row.event.executionId,
+        laneId: row.event.laneId,
+        contextId: row.event.contextId,
+        unattributedPaths: row.event.unattributedPaths,
       });
     }
   }
@@ -845,6 +938,54 @@ export function createGraphWorkflowExecutionEventPublisher(
       } satisfies GraphWorkflowBatchScheduledEvent);
     }
 
+    for (const [laneId, nextLane] of Object.entries(
+      nextExecution.executionLanes,
+    )) {
+      const previousLane = previousExecution?.executionLanes[laneId];
+      if (previousLane) continue;
+      events.push({
+        type: "graph-workflow-lane-created",
+        projectName,
+        sessionName: input.sessionName,
+        executionId: nextExecution.id,
+        laneId: nextLane.laneId,
+        kind: nextLane.kind,
+        placementSource:
+          nextLane.laneId === SESSION_LANE_ID ? "session" : "authored",
+      } satisfies GraphWorkflowLaneCreatedEvent);
+    }
+
+    const previousActiveByLane = previousExecution
+      ? activeContextIdsByAuthoredLane(previousExecution)
+      : new Map<string, string[]>();
+    for (const [laneId, memberContextIds] of activeContextIdsByAuthoredLane(
+      nextExecution,
+    )) {
+      if (memberContextIds.length < 2) continue;
+      const previousMembers = new Set(previousActiveByLane.get(laneId) ?? []);
+      const newlyActiveContextIds = memberContextIds.filter(
+        (contextId) => !previousMembers.has(contextId),
+      );
+      if (newlyActiveContextIds.length === 0) continue;
+      const batchId =
+        newlyActiveContextIds
+          .map((contextId) => nextExecution.contextStates[contextId]?.batchId)
+          .find(
+            (candidate): candidate is string =>
+              candidate !== null && candidate !== undefined,
+          ) ?? null;
+      events.push({
+        type: "graph-workflow-lane-concurrent-admission",
+        projectName,
+        sessionName: input.sessionName,
+        executionId: nextExecution.id,
+        laneId,
+        batchId,
+        memberContextIds,
+        canonicalCheckResult: "passed",
+      } satisfies GraphWorkflowLaneConcurrentAdmissionEvent);
+    }
+
     // The blob keeps one bounded settlement marker per source; the LEDGER is
     // this event stream (decision D4). Derived from the marker diff so the
     // route resolution and the event commit in the same mutation by
@@ -974,6 +1115,30 @@ export function createGraphWorkflowExecutionEventPublisher(
           iterationCount: nextContext.iterationCount,
         });
       }
+
+      const previousLanding = previousContext?.landingIntent;
+      const nextLanding = nextContext.landingIntent;
+      if (
+        nextLanding?.mode === "lane_commit" &&
+        nextLanding.state === "landed" &&
+        nextLanding.laneId !== null &&
+        previousLanding?.state !== "landed"
+      ) {
+        events.push({
+          type: "graph-workflow-lane-landed",
+          projectName,
+          sessionName: input.sessionName,
+          executionId: nextExecution.id,
+          laneId: nextLanding.laneId,
+          contextId: context.id,
+          ownedPathspec:
+            context.placement.mode === "owned"
+              ? [...context.placement.ownedPaths]
+              : null,
+          commitSha: nextLanding.headSha,
+          landedAt: nextLanding.settledAt ?? getNow(deps),
+        } satisfies GraphWorkflowLaneLandedEvent);
+      }
     }
 
     for (const task of nextIndex.taskById.values()) {
@@ -1036,6 +1201,27 @@ export function createGraphWorkflowExecutionEventPublisher(
           summary: haltReason.summary ?? null,
         } satisfies GraphWorkflowCircuitBreakerEvent);
       }
+    }
+
+    const previousOwnershipViolations =
+      ownershipViolationReasons(previousExecution);
+    for (const reason of ownershipViolationReasons(nextExecution)) {
+      if (
+        previousOwnershipViolations.some((previousReason) =>
+          haltReasonsEqual(previousReason, reason),
+        )
+      ) {
+        continue;
+      }
+      events.push({
+        type: "graph-workflow-lane-drift-halted",
+        projectName,
+        sessionName: input.sessionName,
+        executionId: nextExecution.id,
+        laneId: reason.laneId,
+        contextId: reason.contextId,
+        unattributedPaths: [...reason.unattributedPaths],
+      } satisfies GraphWorkflowLaneDriftHaltedEvent);
     }
 
     for (const contextId of orderedContextIds) {

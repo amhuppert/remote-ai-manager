@@ -494,6 +494,62 @@ export type GraphWorkflowLaneStatusEvent = z.infer<
   typeof graphWorkflowLaneStatusEventSchema
 >;
 
+export const graphWorkflowLaneCreatedEventSchema = z.object({
+  type: z.literal("graph-workflow-lane-created"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  laneId: graphWorkflowExecutionLaneIdSchema,
+  kind: graphWorkflowExecutionLaneKindSchema,
+  placementSource: z.enum(["authored", "session"]),
+});
+export type GraphWorkflowLaneCreatedEvent = z.infer<
+  typeof graphWorkflowLaneCreatedEventSchema
+>;
+
+export const graphWorkflowLaneConcurrentAdmissionEventSchema = z.object({
+  type: z.literal("graph-workflow-lane-concurrent-admission"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  laneId: graphWorkflowExecutionLaneIdSchema,
+  batchId: z.string().trim().min(1).nullable(),
+  memberContextIds: z.array(z.string().trim().min(1)).min(2),
+  canonicalCheckResult: z.literal("passed"),
+});
+export type GraphWorkflowLaneConcurrentAdmissionEvent = z.infer<
+  typeof graphWorkflowLaneConcurrentAdmissionEventSchema
+>;
+
+export const graphWorkflowLaneLandedEventSchema = z.object({
+  type: z.literal("graph-workflow-lane-landed"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  laneId: graphWorkflowExecutionLaneIdSchema,
+  contextId: z.string().trim().min(1),
+  ownedPathspec: z.array(z.string().min(1)).nullable(),
+  /** Null when the member landed successfully without creating a commit. */
+  commitSha: z.string().trim().min(1).nullable(),
+  landedAt: z.string(),
+});
+export type GraphWorkflowLaneLandedEvent = z.infer<
+  typeof graphWorkflowLaneLandedEventSchema
+>;
+
+export const graphWorkflowLaneDriftHaltedEventSchema = z.object({
+  type: z.literal("graph-workflow-lane-drift-halted"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  laneId: graphWorkflowExecutionLaneIdSchema,
+  contextId: z.string().trim().min(1),
+  unattributedPaths: z.array(z.string().min(1)).min(1),
+});
+export type GraphWorkflowLaneDriftHaltedEvent = z.infer<
+  typeof graphWorkflowLaneDriftHaltedEventSchema
+>;
+
 export const graphWorkflowLaneCommitEventSchema = z.object({
   type: z.literal("graph-workflow-lane-commit"),
   projectName: z.string(),
@@ -684,6 +740,9 @@ export const graphWorkflowPlanRepairEventSchema = z.object({
     "max_iterations",
     // D4 R12: a loop that exhausted a pass budget is repairable too.
     "loop_limit_reached",
+    // Lightweight parallelism R8: lane drift is repaired by widening a
+    // member's ownership.
+    "ownership_violation",
   ]),
   /** The loop a `loop_limit_reached` round repaired; null for context halts. */
   loopGroupId: z.string().nullable().default(null),
@@ -749,6 +808,10 @@ const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
   graphWorkflowMergeStatusEventSchema,
   graphWorkflowBatchScheduledEventSchema,
   graphWorkflowLaneStatusEventSchema,
+  graphWorkflowLaneCreatedEventSchema,
+  graphWorkflowLaneConcurrentAdmissionEventSchema,
+  graphWorkflowLaneLandedEventSchema,
+  graphWorkflowLaneDriftHaltedEventSchema,
   graphWorkflowLaneCommitEventSchema,
   graphWorkflowJoinStatusEventSchema,
   graphWorkflowApprovalPendingEventSchema,

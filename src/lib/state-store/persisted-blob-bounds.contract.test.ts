@@ -190,12 +190,22 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: subset of the author-fixed execution contexts. In graph_workflow_executions.runtime_json.",
       "executionLanes.*.commitSnapshots":
         "tracked: grows one entry per lane commit with no eviction — graph_workflow_execution normalization (structural change #4). In graph_workflow_executions.runtime_json.",
+      "executionLanes.*.ignoredBaseline":
+        "bounded: written ONCE at lane provisioning and never appended to, one entry per ignored path as the repo's ignore rules name it (a whole-directory pattern like `node_modules/` collapses to one entry, whose per-file contents are carried as a fixed-width digest rather than a path list). The per-file comparison manifest lives in the lane's private git metadata rather than this database blob. In graph_workflow_executions.runtime_json.",
+      "contextStates.*.reservedOwnership.canonicalPrefixes":
+        "bounded: one canonical path per prefix the context's authored placement declares, so it is sized by the definition rather than by the run. In graph_workflow_executions.runtime_json.",
+      "contextStates.*.pendingApproval.approvalScope.ownedPaths":
+        "bounded: the owned paths of the context's authored placement, snapshotted once when it enters the approval gate and cleared with the pending record when the decision applies — sized by the definition, not by the run. In graph_workflow_executions.runtime_json.",
+      laneReservations:
+        "pruned: a lane claim exists only between a scheduling batch's reserve and its finalize (or its compensating release), which both delete every reservation the batch owns. In graph_workflow_executions.runtime_json.",
+      "laneReservations.*.members":
+        "bounded: the contexts one batch admitted onto that lane, at most the author-fixed execution-context count. In graph_workflow_executions.runtime_json.",
+      "laneReservations.*.members[].ownership.canonicalPrefixes":
+        "bounded: one canonical path per prefix that member's authored placement declares. In graph_workflow_executions.runtime_json.",
       "laneStates.**":
         "bounded: outer keys are author-fixed execution contexts; inner keys are the one implementer plus that context's author-fixed validator assignments. In graph_workflow_executions.runtime_json.",
       "joins.**":
         "bounded: per-join merge state keyed by author-fixed joins; lane-id and conflict-file lists sized by the merge. In graph_workflow_executions.runtime_json.",
-      "lanePlan.**":
-        "bounded: continuation / longest-path maps derived from the author-fixed graph. In graph_workflow_executions.definition_json.",
       "haltReason.**":
         "bounded: single halt descriptor (conflict files / source lanes from one halt). In graph_workflow_executions.runtime_json.",
       "pendingHaltReason.**":
@@ -291,6 +301,12 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: subset of that join's source lanes.",
       "event.conflicts.**":
         "bounded: the conflicting files of ONE merge attempt plus their per-file resolver analysis, written once when that attempt fails.",
+      "event.memberContextIds":
+        "bounded: the contexts concurrently admitted to one lane, a subset of the execution contexts.",
+      "event.ownedPathspec":
+        "bounded: one canonical path per prefix the landed context's authored placement declares, so it is sized by the definition rather than by the run.",
+      "event.unattributedPaths":
+        "bounded: one ownership-violation halt's unattributed paths, capped at 50 by the halt schema and execution-loop reporting boundary.",
       // --- structural edits (D4) ---
       "event.affectedContextIds":
         "bounded: the contexts one accepted live-edit batch touched; a batch is bounded by its own operation payload, not by edit history.",

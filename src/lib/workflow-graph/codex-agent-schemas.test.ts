@@ -19,6 +19,7 @@ describe("execution context implementer config with backend support", () => {
           id: "ctx-codex",
           title: "Codex Context",
           acceptanceCriteria: "TBD",
+          placement: { lane: "ctx-codex", mode: "full" },
           implementer: {
             id: "implementer",
             profile: { tier: "builtin", id: "general-implementer" },

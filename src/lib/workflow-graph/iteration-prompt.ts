@@ -466,11 +466,26 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
   // Command reference — the lane agent's only discovery surface (doc 02 §4.3),
   // so it names the exact `cctl` invocations, not MCP tools. Run them in the
   // shell; they resolve this execution + context from the environment.
+  const isReadOnly = input.context.placement.mode === "readOnly";
+  const isSessionReader =
+    isReadOnly && input.context.placement.lane === "session";
+  const payloadGuidance = isReadOnly
+    ? "Write scratch files and every `cctl --file` JSON payload under the per-context scratch directory named in the filesystem write-envelope briefing. The repository is read-only, so no payload directory is created inside it."
+    : "Write scratch and payload files — including the `--file` JSON the commands below read — under `.cc/temp/`, which is git-ignored. Any other file you leave in the worktree IS committed when this execution context lands and is reviewed by the context validator against this context's scope, so keep throwaway files out of the worktree root.";
+  const sharedDocPayloadPath = isReadOnly
+    ? "per-context-scratch/doc.json"
+    : ".cc/temp/doc.json";
   const toolDocs: string[] = [
     "## Command Center CLI (`cctl`)",
     "Advance and interact with the workflow by running these `cctl` commands in your shell. They resolve this execution and context automatically from the environment — you never pass identity flags.",
     "",
-    "Write scratch and payload files — including the `--file` JSON the commands below read — under `.cc/temp/`, which is git-ignored. Any other file you leave in the worktree IS committed when this execution context lands and is reviewed by the context validator against this context's scope, so keep throwaway files out of the worktree root.",
+    payloadGuidance,
+    ...(isSessionReader
+      ? [
+          "",
+          "This session reader sees a live view of the user's worktree. It is an advisory analyzer: concurrent user edits are accepted, and the reader must report through its structured context output rather than trying to stabilize or fingerprint the repository.",
+        ]
+      : []),
     "",
     "### Complete a task",
     "```",
@@ -481,9 +496,9 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
     "",
     "### Register a shared document",
     "```",
-    "cctl workflow shared-doc upsert <relativePath> --file <.cc/temp/doc.json>",
+    `cctl workflow shared-doc upsert <relativePath> --file <${sharedDocPayloadPath}>`,
     "```",
-    'Register or update a shared document for agents in later workflow iterations. `<relativePath>` is the document\'s path relative to the worktree root; `<.cc/temp/doc.json>` is a JSON object `{ "description": "<what it contains>", "readWhen": "<when a future agent should read it>" }` you author with the Write tool under `.cc/temp/` (git-ignored scratch, per above).',
+    `Register or update a shared document for agents in later workflow iterations. \`<relativePath>\` is the document's path relative to the worktree root; \`<${sharedDocPayloadPath}>\` is a JSON object \`{ "description": "<what it contains>", "readWhen": "<when a future agent should read it>" }\` you author under the payload location above.`,
   ];
 
   if (input.allowAgentTaskAdd) {

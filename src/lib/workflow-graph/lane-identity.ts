@@ -5,6 +5,8 @@
  * A context is reviewed by an ordered cohort of validator assignments, so lane
  * KIND alone no longer identifies a lane. This module owns the one encoding
  * every addressing surface shares:
+ *  - `laneIdViolation` / `validateLaneId` — the charset an authored lane name
+ *    must satisfy to be spliceable into a branch name and a worktree path;
  *  - `laneStateKey` — the `execution.laneStates[contextId]` inner key;
  *  - `graphLaneId` / `parseGraphLaneId` — the primitive-layer lane id the
  *    shared `LaneStore`/`LaneService` stack addresses lanes by;
@@ -27,6 +29,157 @@ import {
 
 const LANE_ID_SEPARATOR = "\u0000";
 const ASSIGNMENT_SEPARATOR = ":";
+
+const LANE_ID_PATTERN = /^[A-Za-z0-9_.-]+$/;
+
+/**
+ * The authored spelling of the session lane: the session worktree itself,
+ * which hosts read-only contexts and is never provisioned as a group lane.
+ *
+ * The internal id the lane machinery addresses it by is
+ * {@link SESSION_LANE_ID}. Both spellings are refused as authored GROUP lane
+ * names — `session` because it denotes the session worktree rather than a
+ * provisioned lane, `__session__` because an author writes `session`.
+ */
+export const SESSION_LANE_NAME = "session";
+
+/**
+ * The internal lane id for the session worktree itself. A lane record is
+ * materialized under it when planning final-publish joins, so the lane
+ * reachability machinery recognizes the session worktree as a join target like
+ * any other lane.
+ *
+ * Deliberately outside `laneIdViolation`'s charset intersection with authored
+ * names: an author writes {@link SESSION_LANE_NAME}, and this spelling is what
+ * the engine uses so the two can never be confused for one another.
+ */
+export const SESSION_LANE_ID = "__session__";
+
+/**
+ * The runtime lane id an AUTHORED lane name addresses.
+ *
+ * Only the session lane is spelled differently at the two tiers — an author
+ * writes {@link SESSION_LANE_NAME} and the engine keys its record under
+ * {@link SESSION_LANE_ID} — so every surface that looks a placement's lane up in
+ * `executionLanes`, `joins`, or a context state's `laneId` has to fold that one
+ * name. Owning the fold here keeps the two spellings from drifting apart across
+ * the readiness classifier, join planning, provisioning, and lane lifecycle.
+ *
+ * Total by construction: a group lane's authored name IS its runtime id.
+ */
+export function executionLaneIdFor(laneName: string): string {
+  return laneName === SESSION_LANE_NAME ? SESSION_LANE_ID : laneName;
+}
+
+/**
+ * Why `laneId` is unsafe to splice into a git branch name and a filesystem
+ * path, or null when it is safe.
+ *
+ * The reason is RETURNED rather than thrown so definition validation can locate
+ * an illegal authored lane name on the context that declared it, while the
+ * provisioning callers keep the throwing form below. Lane ids and per-context
+ * ids share these constraints — a single-context lane's id is its context id —
+ * so this one grammar covers both.
+ */
+export function laneIdViolation(laneId: string): string | null {
+  if (!LANE_ID_PATTERN.test(laneId)) {
+    return "must match /^[A-Za-z0-9_.-]+$/";
+  }
+  if (laneId.startsWith(".") || laneId.startsWith("-")) {
+    return "must not start with '.' or '-'";
+  }
+  if (laneId.includes("..")) {
+    return "must not contain '..'";
+  }
+  if (laneId.endsWith(".") || laneId.endsWith("-")) {
+    return "must not end with '.' or '-'";
+  }
+  if (laneId.endsWith(".lock")) {
+    return "must not end with '.lock'";
+  }
+  return null;
+}
+
+/**
+ * Validate that a lane id is safe to splice into a git branch name and a
+ * filesystem path. The validator is exported under a context-named alias below
+ * so callers that still address per-context lanes keep reading naturally.
+ */
+export function validateLaneId(laneId: string): void {
+  const violation = laneIdViolation(laneId);
+  if (violation !== null) {
+    throw new Error(`Invalid laneId ${JSON.stringify(laneId)}: ${violation}`);
+  }
+}
+
+/**
+ * Characters a lane name may carry literally. `.` is deliberately absent even
+ * though the grammar admits it: excluding it makes `..`, a trailing `.`, and a
+ * `.lock` suffix unreachable in the output, so the encoder satisfies every rule
+ * of the grammar by construction rather than by a post-hoc repair that would
+ * cost injectivity.
+ */
+const LANE_NAME_LITERAL = /^[A-Za-z0-9-]$/;
+
+const LANE_NAME_ESCAPE = "_";
+
+/**
+ * Turn an arbitrary non-empty id into a lane name: `laneIdViolation` returns
+ * null for the result, whatever the id contained. (Emptiness is excluded by the
+ * definition schema, which requires every context id to be non-empty, and an
+ * empty lane name is the one thing no encoding can produce.)
+ *
+ * A lane name becomes a git branch name and a worktree path segment, so it must
+ * satisfy the grammar above. An ID need not: a compiled execution context is
+ * named from caller-assigned spec element ids and authored lane-group names,
+ * both of which accept any non-empty string, so a context whose lane is "itself"
+ * needs its id encoded rather than copied.
+ *
+ * Two properties make the encoding safe to use as an identity:
+ *  - it is the IDENTITY on ids that already read as lane names, so the common
+ *    case keeps a lane and its context spelled the same; and
+ *  - it is INJECTIVE, so two contexts can never land on one lane that each
+ *    believes it owns alone. `_` is the escape and doubles to encode itself;
+ *    every other unit becomes a fixed-width `_XXXX` UTF-16 code-unit escape,
+ *    which no `__` can be confused with because a hex digit is never `_`.
+ *
+ * Encoding walks code UNITS rather than code points: escaping a surrogate pair
+ * as a single value would map distinct ids onto one lane.
+ */
+export function laneNameFromId(id: string): string {
+  let lane = "";
+  for (let index = 0; index < id.length; index += 1) {
+    const unit = id.charAt(index);
+    if (unit === LANE_NAME_ESCAPE) {
+      lane += `${LANE_NAME_ESCAPE}${LANE_NAME_ESCAPE}`;
+      continue;
+    }
+    // A lane name may not open or close on `-`, so those two positions are
+    // escaped even though the character is otherwise literal.
+    const atEdge = index === 0 || index === id.length - 1;
+    if (LANE_NAME_LITERAL.test(unit) && !(atEdge && unit === "-")) {
+      lane += unit;
+      continue;
+    }
+    lane += `${LANE_NAME_ESCAPE}${id
+      .charCodeAt(index)
+      .toString(16)
+      .padStart(4, "0")}`;
+  }
+  return lane;
+}
+
+/** Backward-compatible alias retained while callers migrate to validateLaneId. */
+export function validateContextId(contextId: string): void {
+  try {
+    validateLaneId(contextId);
+  } catch (err) {
+    if (err instanceof Error) {
+      throw new Error(err.message.replace(/laneId/g, "contextId"));
+    }
+    throw err;
+  }
+}
 
 /** Lane kinds whose lanes are per-assignment rather than per-context. */
 const ASSIGNMENT_SCOPED_LANES: ReadonlySet<GraphWorkflowLaneKind> = new Set([

@@ -49,6 +49,7 @@ function roundWith(
   return {
     seq: 3,
     candidate: {
+      identityScope: "wholeTree",
       headSha: "head-1",
       candidateTreeHash: "tree-a",
       taskStateHash: "state-a",

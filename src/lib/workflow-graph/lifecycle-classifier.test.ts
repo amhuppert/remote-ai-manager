@@ -33,6 +33,7 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
       id: "ctx-1",
       title: "Ctx 1",
       acceptanceCriteria: "AC1",
+      placement: { lane: "ctx-1", mode: "full" },
       implementer: {
         id: "implementer",
         profile: { tier: "builtin", id: "general-implementer" },
@@ -487,6 +488,13 @@ describe("isResumableHalt", () => {
       contextId: "refine__p3__judge",
       message: "the final allowed pass did not satisfy the until predicate",
       summary: null,
+    },
+    ownership_violation: {
+      type: "ownership_violation",
+      laneId: "lane-api",
+      contextId: "ctx-1",
+      unattributedPaths: ["scripts/deploy.sh"],
+      message: 'Lane "lane-api" has 1 change no member owns',
     },
   };
 

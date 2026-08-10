@@ -9,6 +9,7 @@ function round(
   return {
     seq: 2,
     candidate: {
+      identityScope: "wholeTree",
       headSha: "head-1",
       candidateTreeHash: "tree-1",
       taskStateHash: "tasks-1",

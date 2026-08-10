@@ -99,6 +99,11 @@ const HALT_RESUMABILITY: Record<GraphWorkflowHaltReason["type"], boolean> = {
   loop_exit_skipped: true,
   loop_invariant: true,
   loop_limit_reached: true,
+  // Drift on a shared lane is resumable by design (lightweight parallelism R8):
+  // the remedy is a live edit that widens a member's ownership to cover the
+  // write, or removal of the write, and then resume. Nothing about the halt is
+  // terminal — the lane worktree and every member's work are intact.
+  ownership_violation: true,
   aborted: false,
   recovery_error: false,
 };

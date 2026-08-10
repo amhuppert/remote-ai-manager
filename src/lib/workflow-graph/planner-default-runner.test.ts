@@ -27,6 +27,7 @@ const submittedDefinition: WorkflowSemanticDefinition = {
       title: "Plan",
       description: "Inspect the implementation surface.",
       acceptanceCriteria: "TBD",
+      placement: { lane: "context-plan", mode: "full" },
       implementer: {
         id: "implementer",
         profile: { tier: "builtin", id: "general-implementer" },

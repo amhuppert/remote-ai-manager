@@ -13,6 +13,7 @@
  * which continuity anchor the lane holds, never the channel, so the matrix
  * exists to prove exactly that: none of the four can lose the payload.
  */
+import { WHOLE_TREE_CANDIDATE_SCOPE } from "@/lib/git/diff";
 
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
@@ -236,6 +237,7 @@ async function runValidator(
     executeWorkflowTaskRun: productionTaskRun(backend),
     computeValidationDiffScope: async () => ({
       kind: "unavailable",
+      candidateScope: WHOLE_TREE_CANDIDATE_SCOPE,
       reason: "test",
     }),
     readLaneConversation: async () => null,

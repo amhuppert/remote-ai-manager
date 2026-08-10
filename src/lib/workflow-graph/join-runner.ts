@@ -68,6 +68,22 @@ export interface JoinRunnerDeps {
   now?(): string;
 }
 
+function coveredContextIdsForLanes(
+  execution: GraphWorkflowExecution,
+  join: GraphWorkflowExecutionJoinState,
+  laneIds: readonly string[],
+): string[] {
+  const covered = new Set<string>();
+  for (const laneId of laneIds) {
+    const contextIds =
+      join.sourceLaneContextIds?.[laneId] ??
+      execution.executionLanes[laneId]?.includedContextIds ??
+      [];
+    for (const contextId of contextIds) covered.add(contextId);
+  }
+  return [...covered];
+}
+
 export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
   const createJobId = deps.createJobId ?? (() => randomUUID());
   const now = deps.now ?? (() => new Date().toISOString());
@@ -224,6 +240,11 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
               sourceLaneId,
             ]),
           ];
+          const coveredContextIds = coveredContextIdsForLanes(
+            execution,
+            currentJoin,
+            coveredLaneIds,
+          );
           const resolutionContext =
             buildJoinResolutionContext(
               execution,
@@ -261,7 +282,13 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
                       });
                   const validationMode: MergeValidationMode =
                     selectedValidationMode.mode === "run"
-                      ? { ...selectedValidationMode, coveredLaneIds }
+                      ? {
+                          ...selectedValidationMode,
+                          coveredLaneIds,
+                          ...(coveredContextIds.length > 0
+                            ? { coveredContextIds }
+                            : {}),
+                        }
                       : selectedValidationMode;
                   if (validationMode.mode === "skip") {
                     logger.info("graph-workflow.join.validation_deferred", {
@@ -395,7 +422,19 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
                 ? { addResolvedConflict: resolvedConflict }
                 : {}),
               ...(completedMergeValidationMode?.mode === "run"
-                ? { clearValidationDebt: true }
+                ? {
+                    clearValidationDebt: true,
+                    addValidationEvidence: {
+                      sourceLaneIds: [
+                        ...(completedMergeValidationMode.coveredLaneIds ?? []),
+                      ],
+                      contextIds: [
+                        ...(completedMergeValidationMode.coveredContextIds ??
+                          []),
+                      ],
+                      recordedAt: now(),
+                    },
+                  }
                 : { addValidationDebtSourceLaneId: sourceLaneId }),
             }),
           );

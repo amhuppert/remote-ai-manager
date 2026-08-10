@@ -543,6 +543,10 @@ export function createTestFakeBackend(
       factory,
       continuity,
       capabilities,
+      // Same honesty as the task facet below: the fake conversation runtime
+      // establishes no OS-level envelope, so an implementer turn that needs one
+      // must be refused rather than dispatched here.
+      fsWriteRestriction: "unsupported",
       runtimeConfig,
       transcript: conversationTranscriptProjection,
     },

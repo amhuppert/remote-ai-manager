@@ -177,10 +177,19 @@ describe("cctl workflow status", () => {
     id: "exec-1",
     status: "running",
     haltReason: null,
+    activeContextIds: ["phase-a", "phase-b"],
     workingDefinition: {
       executionContexts: [
-        { id: "phase-a", title: "Phase A" },
-        { id: "phase-b", title: "Phase B" },
+        {
+          id: "phase-a",
+          title: "Phase A",
+          placement: { lane: "delivery", mode: "owned" },
+        },
+        {
+          id: "phase-b",
+          title: "Phase B",
+          placement: { lane: "delivery", mode: "owned" },
+        },
       ],
     },
     contextStates: {
@@ -189,12 +198,24 @@ describe("cctl workflow status", () => {
         status: "completed",
         totalTaskCount: 2,
         completedTaskCount: 2,
+        batchId: "batch-1",
+        laneId: "delivery",
       },
       "phase-b": {
         contextId: "phase-b",
         status: "running",
         totalTaskCount: 3,
         completedTaskCount: 1,
+        batchId: "batch-1",
+        laneId: "delivery",
+      },
+    },
+    executionLanes: {
+      delivery: {
+        laneId: "delivery",
+        kind: "worktree",
+        status: "active",
+        includedContextIds: ["phase-a"],
       },
     },
   };
@@ -212,6 +233,9 @@ describe("cctl workflow status", () => {
     expect(result.stdout).toContain("2/2");
     expect(result.stdout).toContain("phase-b");
     expect(result.stdout).toContain("1/3");
+    expect(result.stdout).toContain("delivery");
+    expect(result.stdout).toContain("phase-a: active (completed)");
+    expect(result.stdout).toContain("phase-b: active (running)");
   });
 
   it("--json returns the full execution payload", async () => {
@@ -227,6 +251,28 @@ describe("cctl workflow status", () => {
     expect(envelope.execution.contextStates["phase-b"].completedTaskCount).toBe(
       1,
     );
+    expect(envelope.lanes).toEqual([
+      {
+        laneId: "delivery",
+        runtimeLaneId: "delivery",
+        kind: "worktree",
+        status: "active",
+        members: [
+          {
+            contextId: "phase-a",
+            status: "completed",
+            activity: "active",
+            batchId: "batch-1",
+          },
+          {
+            contextId: "phase-b",
+            status: "running",
+            activity: "active",
+            batchId: "batch-1",
+          },
+        ],
+      },
+    ]);
   });
 
   it("reports no active execution plainly", async () => {

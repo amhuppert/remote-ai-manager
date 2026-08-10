@@ -10,6 +10,7 @@ import { createExecutionIndex } from "./execution-index";
 
 function createContext(id: string, title = id): GraphWorkflowResolvedContext {
   return {
+    placement: { lane: id, mode: "full" as const },
     id,
     title,
     acceptanceCriteria: "Context acceptance criteria",

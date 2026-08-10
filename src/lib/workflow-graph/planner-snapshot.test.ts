@@ -31,6 +31,7 @@ const FIXTURE_DRAFT: WorkflowSemanticDefinition = {
       description: "Inspect the implementation surface.",
       acceptanceCriteria:
         "plan.md describes the change in implementable detail.",
+      placement: { lane: "context-plan", mode: "full" },
       implementer: {
         id: "implementer",
         profile: { tier: "builtin", id: "general-implementer" },
@@ -53,6 +54,7 @@ const FIXTURE_DRAFT: WorkflowSemanticDefinition = {
       description: "Apply the planned change.",
       acceptanceCriteria:
         "feature behaves as described when exercised end-to-end.",
+      placement: { lane: "context-implement", mode: "full" },
       implementer: {
         id: "implementer",
         profile: { tier: "builtin", id: "general-implementer" },
@@ -233,6 +235,10 @@ describe("planner workflow generation — fixture snapshot", () => {
                 "allowAgentContextAdd": false,
                 "allowAgentTaskAdd": false,
               },
+              "placement": {
+                "lane": "context-plan",
+                "mode": "full",
+              },
               "title": "Plan",
             },
             {
@@ -261,6 +267,10 @@ describe("planner workflow generation — fixture snapshot", () => {
               "mutability": {
                 "allowAgentContextAdd": false,
                 "allowAgentTaskAdd": false,
+              },
+              "placement": {
+                "lane": "context-implement",
+                "mode": "full",
               },
               "title": "Implement",
             },

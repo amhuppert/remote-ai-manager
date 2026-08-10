@@ -62,6 +62,7 @@ function resolvedContext(
   overrides: Partial<GraphWorkflowResolvedContext> = {},
 ): GraphWorkflowResolvedContext {
   return {
+    placement: { lane: "ctx-1", mode: "full" as const },
     id: "ctx-1",
     title: "Implement",
     acceptanceCriteria: "all tasks complete",
@@ -120,6 +121,7 @@ describe("resolveLaneToolCollaborationConfig", () => {
         id: "ctx-1",
         title: "Implement",
         acceptanceCriteria: "all tasks complete",
+        placement: { lane: "ctx-1", mode: "full" },
         collaboration: {
           secondAgent: {
             backend: "claude",

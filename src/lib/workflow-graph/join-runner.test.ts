@@ -4,6 +4,7 @@ import type {
   GraphWorkflowExecutionJoinState,
   GraphWorkflowExecutionLaneState,
 } from "@/lib/workflow-graph/schemas";
+import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import { createSessionGitLock } from "@/lib/shared/lock-retry";
 import { createPerSessionMergeMutex } from "./per-session-merge-mutex";
 import { createJoinRunner, type JoinRunnerMutateActive } from "./join-runner";
@@ -30,6 +31,7 @@ function makeLane(
     includedContextIds: [],
     lastCommittingContextId: null,
     commitSnapshots: [],
+    ignoredBaseline: [],
     createdAt: t0,
     updatedAt: t0,
     ...overrides,
@@ -441,6 +443,11 @@ describe("join-runner", () => {
       source: "graph_lane_merge",
       selection: { mode: "only", commands: ["typecheck"] },
       coveredLaneIds: ["lane-b", "lane-c", "lane-d"],
+      coveredContextIds: [
+        "context-plan",
+        "context-implement",
+        "context-verify",
+      ],
     });
     expect(finalCall?.resolutionContext).toContain(
       "Planned the shared validation contract.",
@@ -530,6 +537,88 @@ describe("join-runner", () => {
         source: "graph_lane_merge",
         selection: { mode: "only", commands: ["test"] },
         coveredLaneIds: ["lane-b"],
+      },
+    ]);
+  });
+
+  it("runs one barrier for a replayed three-member lane and records member evidence", async () => {
+    const memberContextIds = [
+      "context-plan",
+      "context-implement",
+      "context-verify",
+    ];
+    const execution = setupExecutionWithJoin(
+      makeJoin({
+        joinId: "join-three-member-lane",
+        targetLaneId: "lane-session",
+        sourceLaneIds: ["lane-shared"],
+        sourceLaneContextIds: { "lane-shared": memberContextIds },
+      }),
+      {
+        "lane-session": makeLane({
+          laneId: "lane-session",
+          branchName: "csm/session",
+          worktreePath: "/tmp/session",
+          kind: "session",
+        }),
+        "lane-shared": makeLane({
+          laneId: "lane-shared",
+          branchName: "csm/lane-shared",
+          worktreePath: "/tmp/lane-shared",
+          includedContextIds: [...memberContextIds],
+        }),
+      },
+    );
+    execution.workingDefinition.laneMergeValidation = {
+      strategy: "final-only",
+      commands: { mode: "only", commands: ["typecheck"] },
+    };
+
+    const replayed = graphWorkflowExecutionSchema.parse(
+      JSON.parse(JSON.stringify(execution)),
+    );
+    replayed.executionLanes["lane-shared"]!.includedContextIds.push(
+      "context-late",
+    );
+    const observed: GraphMergeRunnerInput[] = [];
+    const persist = createInMemoryPersist(replayed);
+    const runner = createJoinRunner({
+      mergeRunner: fakeMergeRunner(
+        new Map([["csm/lane-shared", completed("hash-shared")]]),
+        observed,
+      ),
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeMutex: createPerSessionMergeMutex(),
+      now: () => t0,
+    });
+
+    const result = await runner.run({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      joinId: "join-three-member-lane",
+      mutateActive: persist.mutateActive,
+    });
+
+    expect(result).toEqual({ status: "succeeded" });
+    expect(observed).toHaveLength(1);
+    expect(observed[0]?.validationMode).toEqual({
+      mode: "run",
+      source: "graph_lane_merge",
+      selection: { mode: "only", commands: ["typecheck"] },
+      coveredLaneIds: ["lane-shared"],
+      coveredContextIds: memberContextIds,
+    });
+    const replayedEvidence = graphWorkflowExecutionSchema.parse(
+      JSON.parse(JSON.stringify(persist.read())),
+    ).joins["join-three-member-lane"]?.validationEvidence;
+    expect(replayedEvidence).toEqual([
+      {
+        sourceLaneIds: ["lane-shared"],
+        contextIds: memberContextIds,
+        recordedAt: t0,
       },
     ]);
   });

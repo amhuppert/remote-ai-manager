@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdtempSync,
@@ -14,6 +15,37 @@ const root = process.cwd();
 
 function read(relativePath: string): string {
   return readFileSync(resolve(root, relativePath), "utf8");
+}
+
+/**
+ * The agent-facing instruction surfaces, repository-wide: an agent reads these
+ * as CURRENT instruction, so a token naming a removed mechanism here is a
+ * false statement rather than a historical note. Enumerated as git pathspecs
+ * so a newly added skill, steering document, or design doc is swept the moment
+ * it is tracked, without anyone remembering to register it.
+ */
+const GUIDANCE_PATHSPECS = [
+  "AGENTS.md",
+  "CLAUDE.md",
+  "CONTEXT.md",
+  ".kiro/steering",
+  ".claude/skills",
+  ".agents",
+  "plugins",
+  "docs",
+] as const;
+
+function guidanceFiles(): string[] {
+  return execFileSync("git", ["ls-files", "-z", "--", ...GUIDANCE_PATHSPECS], {
+    cwd: root,
+    encoding: "utf8",
+  })
+    .split("\0")
+    .filter((path) => path.length > 0);
+}
+
+function guidanceFilesContaining(pattern: RegExp): string[] {
+  return guidanceFiles().filter((path) => pattern.test(read(path)));
 }
 
 /** The env vars Vitest reads worker limits from, ranked above any caller. */
@@ -308,6 +340,45 @@ describe("agent instruction and canonical documentation contracts", () => {
     }
   });
 
+  /**
+   * Guidance may only name a command the registry actually resolves. An agent
+   * is told to run registered validation exclusively through `cctl validate
+   * run <name>`, so a documented name that is absent from the registry is a
+   * dead end at the moment the agent is least able to improvise: it has been
+   * forbidden the direct invocation that would otherwise substitute. Renaming
+   * or folding a command is the drift this catches — `test-full-suite` became
+   * `test --scope full`, and `build`/`seams` were only ever steps inside
+   * `typecheck`.
+   */
+  it("only names validation commands the registry resolves", () => {
+    const allowlist = new Map<string, string>([
+      [
+        "docs/reports/validation-concurrency-live-e2e-2026-08-05.md",
+        "dated live-e2e transcript quoting the run's own fixture command names",
+      ],
+    ]);
+    const registered = new Set(
+      Object.keys(
+        (
+          JSON.parse(read("CommandCenter.json")) as {
+            validation: { commands: Record<string, unknown> };
+          }
+        ).validation.commands,
+      ),
+    );
+
+    const unresolvable = guidanceFiles()
+      .filter((path) => !allowlist.has(path))
+      .flatMap((path) =>
+        [...read(path).matchAll(/cctl validate run ([a-z][a-z0-9-]*)/g)]
+          .map((match) => match[1] ?? "")
+          .filter((name) => !registered.has(name))
+          .map((name) => `${path}: ${name}`),
+      );
+
+    expect(unresolvable).toEqual([]);
+  });
+
   it("keeps agent validation guidance on the server-owned policy path", () => {
     const agents = read("AGENTS.md");
     const agentContext = read(
@@ -399,6 +470,115 @@ describe("agent instruction and canonical documentation contracts", () => {
     expect(read(".agents/skills/graph-workflow-planning/SKILL.md")).toBe(
       read(".claude/skills/graph-workflow-planning/SKILL.md"),
     );
+  });
+
+  it("teaches the three placement grades, ownership grain, and shared-surface sequencing", () => {
+    const skill = read(".claude/skills/graph-workflow-planning/SKILL.md");
+
+    // The authored field and its three grades, in the spelling a plan.json uses.
+    expect(skill).toContain("## Lane Placement and File Ownership");
+    expect(skill).toContain('"placement"');
+    expect(skill).toContain('"mode": "readOnly"');
+    expect(skill).toContain('"mode": "owned"');
+    expect(skill).toContain('"mode": "full"');
+    expect(skill).toContain('"ownedPaths"');
+
+    // Selection judgment: what each grade is FOR.
+    expect(skill).toContain("Same-file competition");
+    expect(skill).toContain("Dependency-mutating");
+    expect(skill).toContain("fan-out readers");
+
+    // Ownership grain and the new-file denial it avoids.
+    expect(skill).toContain("directory-grain ownership");
+    expect(skill).toContain("### Sequencing shared surfaces");
+    expect(skill).toContain("dependency-ordered");
+
+    // Envelope consequences the planner has to plan AROUND.
+    expect(skill).toContain("cannot commit, branch, or reset");
+    expect(skill).toContain("Whole-repo verification runs once per lane");
+    expect(skill).toContain("payload directory");
+    expect(skill).toContain("per-context scratch");
+    expect(skill).toContain("one worktree and one fan-in join");
+
+    // The accept-time refusals, so a planner can read a validate failure.
+    for (const code of [
+      "placement-reserved-lane-name",
+      "placement-session-lane-write-capable",
+      "placement-lane-name-invalid",
+      "placement-readonly-missing-output-schema",
+      "placement-full-access-concurrency",
+      "placement-owned-paths-overlap",
+    ]) {
+      expect(skill).toContain(code);
+    }
+
+    // The pre-placement guidance inverted the intra-lane rule: concurrent
+    // same-lane members MUST be ownership-disjoint, so the old blanket
+    // "never contort boundaries for disjointness" advice cannot survive.
+    expect(skill).not.toContain(
+      "do not contort context boundaries to keep write surfaces disjoint",
+    );
+    expect(skill).not.toContain("one branch per context");
+  });
+
+  it("documents the placement model and ownership envelope in the owning steering", () => {
+    const workflows = read(".kiro/steering/workflows.md");
+    const auditDataSources = read(
+      ".claude/skills/graph-workflow-audit/references/data-sources.md",
+    );
+
+    expect(workflows).toContain("contextPlacementSchema");
+    expect(workflows).toContain("placement-validation.ts");
+    expect(workflows).toContain("ownedPaths");
+    expect(workflows).toContain("ownership_violation");
+    // The per-context landing model this replaced.
+    expect(workflows).not.toContain(
+      "Every provisioned worktree context is assigned an execution lane",
+    );
+
+    // The audit reference is the auditor's field map of a persisted execution.
+    expect(auditDataSources).toContain("placement");
+  });
+
+  /**
+   * `lanePlan` was the deterministic seed-time lane assignment, fully replaced
+   * by authored `placement`. The sweep is over instruction surfaces rather than
+   * the whole tree because those are the files an agent reads as current
+   * instruction; legacy-persistence code and its migration fixtures keep the
+   * field deliberately, since rows written before the cutover still carry it.
+   */
+  it("keeps the removed lanePlan vocabulary out of agent-facing guidance", () => {
+    const allowlist = new Map<string, string>([
+      [
+        "docs/design/cc-cli/06-workflow-live-editing.md",
+        "historical design record of the live-edit slice, which recomputed lanePlan",
+      ],
+      [
+        "docs/reports/graph-workflow-improvement-report.md",
+        "dated audit report describing the module set as it stood",
+      ],
+      [
+        "docs/reports/graph-workflow-dynamic-improvements-report.md",
+        "dated audit report describing the module set as it stood",
+      ],
+      [
+        "docs/reports/2026-07-11-composable-modules-architecture-audit.md",
+        "dated architecture audit citing lane-plan.ts line ranges",
+      ],
+    ]);
+    const staleToken = /lanePlan|lane-plan/;
+
+    const offenders = guidanceFilesContaining(staleToken).filter(
+      (path) => !allowlist.has(path),
+    );
+    expect(offenders).toEqual([]);
+
+    // An allowlist entry that no longer needs the exemption is a standing
+    // licence to reintroduce the token, so every entry must still earn it.
+    const deadEntries = [...allowlist.keys()].filter(
+      (path) => !staleToken.test(read(path)),
+    );
+    expect(deadEntries).toEqual([]);
   });
 
   it("staffs workflow assignments from the library, not a runtime-only validator", () => {

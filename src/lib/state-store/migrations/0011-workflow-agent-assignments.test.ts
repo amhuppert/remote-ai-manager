@@ -242,7 +242,6 @@ const DEFINITION_KEYS = [
   "startedAt",
   "workingDefinition",
   "charter",
-  "lanePlan",
 ];
 
 function seedExecutionRow(

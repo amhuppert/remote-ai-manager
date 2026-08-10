@@ -38,6 +38,7 @@
  * `validation-cohort-engine.test.ts`'s cohort-vs-solo differential (R5.2), which
  * proves the same deltas are cohort-size invariant.
  */
+import { WHOLE_TREE_CANDIDATE_SCOPE } from "@/lib/git/diff";
 
 import {
   mkdirSync,
@@ -703,7 +704,11 @@ describe("a migrated reviewer resumes its own session across rounds (R3.3)", () 
       },
       getProjectDisplayName: () => "legacy-workflows",
       async computeValidationDiffScope() {
-        return { kind: "unavailable", reason: "not needed in this test" };
+        return {
+          kind: "unavailable",
+          candidateScope: WHOLE_TREE_CANDIDATE_SCOPE,
+          reason: "not needed in this test",
+        };
       },
       async readLaneConversation() {
         return null;

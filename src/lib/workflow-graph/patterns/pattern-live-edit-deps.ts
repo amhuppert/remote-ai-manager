@@ -27,6 +27,7 @@ export function harnessLiveEditDeps(): LiveEditDeps {
     id: "__pattern_defaults__",
     title: "Pattern defaults",
     acceptanceCriteria: "Pattern defaults",
+    placement: { lane: "__pattern_defaults__", mode: "full" as const },
   };
   const resolved = resolveContext(defaults, {}, synthetic);
   const agentValidation = resolveAgentValidationWithProvenance(

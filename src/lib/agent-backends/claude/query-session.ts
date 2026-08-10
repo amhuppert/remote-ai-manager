@@ -25,6 +25,11 @@ import type {
 } from "@/lib/conversations/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { BackgroundTasksLostInfo } from "@/lib/agent-backends/conversation";
+import type { FsWritePolicy } from "@/lib/agent-backends/task";
+import {
+  buildClaudeConversationFsWriteEnvelope,
+  type ClaudeFsWriteEnvelope,
+} from "./fs-write-envelope";
 import type { ConversationBackgroundActivity } from "@/lib/conversations/schemas";
 import {
   captureTraceContext,
@@ -254,6 +259,16 @@ export interface QuerySessionOptions {
   plugins: Array<{ type: "local"; path: string; skipMcpDiscovery?: boolean }>;
   settingSources: Array<"user" | "project" | "local">;
   disallowedTools: string[];
+  /**
+   * Server-derived filesystem-write envelope for this session's turns. When
+   * present it REPLACES the unrestricted `bypassPermissions` configuration with
+   * the sandbox plus path-scoped permission rules `buildClaudeConversationFsWriteEnvelope`
+   * derives; a policy this session cannot establish as written throws here, so
+   * the caller gets a failed turn instead of an unconfined session.
+   */
+  fsWritePolicy?: FsWritePolicy;
+  /** MCP server keys pre-approved wholesale when a policy is in force. */
+  mcpServerKeys?: readonly string[];
   /** Idle TTL in ms — session is closed after this much inactivity (default: 5 min) */
   idleTtlMs?: number;
   /**
@@ -443,8 +458,32 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     }
   }
 
+  // Composed before the SDK options so an unestablishable policy stops the
+  // session from being created at all. `bypassPermissions` below is the
+  // unrestricted configuration this replaces: falling back to it on a policy
+  // we could not translate would be the one outcome fail-closed exists to
+  // prevent.
+  const writeEnvelope = ((): ClaudeFsWriteEnvelope | undefined => {
+    if (options.fsWritePolicy === undefined) return undefined;
+    const result = buildClaudeConversationFsWriteEnvelope({
+      policy: options.fsWritePolicy,
+      mcpServerKeys: options.mcpServerKeys ?? Object.keys(options.mcpServers),
+    });
+    if (result.kind === "unestablishable") {
+      throw new Error(
+        `Cannot establish the Claude write envelope for conversation ${options.conversationId}: ${result.reason}`,
+      );
+    }
+    return result.envelope;
+  })();
+
   const sdkOptions: Options = {
-    cwd: options.cwd,
+    // A confined turn runs from the envelope's own working root, not the
+    // worktree: the sandbox makes the working directory and its subdirectories
+    // writable by default, so a confined turn left in the worktree could write
+    // anywhere in it. The repository is reached by the absolute path the
+    // dispatcher briefs the agent with, exactly as it is under Codex.
+    cwd: writeEnvelope?.workingDirectory ?? options.cwd,
     model: options.model ?? undefined,
     ...(options.effort ? { effort: options.effort as Options["effort"] } : {}),
     // Surface a summary of the model's reasoning so thinking blocks carry text.
@@ -453,18 +492,51 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     // default for supported models — we only opt into the summarized display.
     thinking: { type: "adaptive", display: "summarized" },
     systemPrompt: options.systemPrompt,
-    settingSources: options.settingSources,
-    permissionMode: "bypassPermissions",
-    allowDangerouslySkipPermissions: true,
+    // No user, project, or local settings under an envelope: a settings file
+    // committed into the worktree must not be able to widen the permissions of
+    // the lane confined to part of it.
+    settingSources: writeEnvelope ? [] : options.settingSources,
+    // A confined lane drops the bypass entirely: with the file-mutation tools
+    // scoped by rule, "deny anything not pre-approved" is what makes an
+    // unanticipated mutation path fail instead of prompting into a headless
+    // void.
+    ...(writeEnvelope
+      ? {
+          permissionMode: writeEnvelope.permissionMode,
+          sandbox: writeEnvelope.sandbox,
+        }
+      : {
+          permissionMode: "bypassPermissions" as const,
+          allowDangerouslySkipPermissions: true,
+        }),
     disallowedTools: options.disallowedTools,
     ...(options.plugins.length > 0 ? { plugins: options.plugins } : {}),
-    ...(options.settings ? { settings: options.settings } : {}),
+    ...(writeEnvelope
+      ? {
+          settings: {
+            ...(options.settings ?? {}),
+            permissions: writeEnvelope.permissions,
+          },
+        }
+      : options.settings
+        ? { settings: options.settings }
+        : {}),
     maxTurns: options.maxTurns,
     resume: options.resume,
     forkSession: options.forkSession,
     resumeSessionAt: options.resumeSessionAt,
     persistSession: true,
-    env: options.env as Record<string, string>,
+    // A confined turn's temp is REDIRECTED into the policy's own tmp entry.
+    // The sandbox otherwise keeps a separate session temp directory writable
+    // and points sandboxed commands' $TMPDIR at it, which would be a writable
+    // path the composed allowlist never granted.
+    env: (writeEnvelope
+      ? {
+          ...options.env,
+          CLAUDE_CODE_TMPDIR: writeEnvelope.tmpDir,
+          TMPDIR: writeEnvelope.tmpDir,
+        }
+      : options.env) as Record<string, string>,
     mcpServers: options.mcpServers as Record<string, never>,
     strictMcpConfig: true,
     canUseTool: options.canUseTool,

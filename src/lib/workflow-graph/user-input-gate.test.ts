@@ -141,6 +141,7 @@ function openRound(
   return {
     seq: ROUND_SEQ,
     candidate: {
+      identityScope: "wholeTree",
       headSha: "head-1",
       candidateTreeHash: "tree-a",
       taskStateHash: "tasks-a",

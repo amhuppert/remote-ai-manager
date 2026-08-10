@@ -358,6 +358,7 @@ describe("workflow definition route handlers", () => {
               id: "context-plan",
               title: "Plan",
               acceptanceCriteria: "Plan is documented",
+              placement: { lane: "plan", mode: "full" },
             },
           ],
           tasks: [],
@@ -371,6 +372,84 @@ describe("workflow definition route handlers", () => {
     expect(response.status).toBe(201);
     expect(createDefinition).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    [
+      "no placement at all",
+      { id: "context-plan", title: "Plan", acceptanceCriteria: "Documented" },
+      "definition.executionContexts.0.placement",
+    ],
+    [
+      "a lane name outside the lane-id charset",
+      {
+        id: "context-plan",
+        title: "Plan",
+        acceptanceCriteria: "Documented",
+        placement: { lane: "plan lane", mode: "full" },
+      },
+      "definition.executionContexts.0.placement.lane",
+    ],
+    [
+      "a write-capable context on the reserved session lane",
+      {
+        id: "context-plan",
+        title: "Plan",
+        acceptanceCriteria: "Documented",
+        placement: { lane: "session", mode: "full" },
+      },
+      "definition.executionContexts.0.placement.lane",
+    ],
+    [
+      "an owned path naming repository metadata",
+      {
+        id: "context-plan",
+        title: "Plan",
+        acceptanceCriteria: "Documented",
+        placement: { lane: "plan", mode: "owned", ownedPaths: [".git/config"] },
+      },
+      "definition.executionContexts.0.placement.ownedPaths.0",
+    ],
+    [
+      "a read-only context with no output contract",
+      {
+        id: "context-plan",
+        title: "Plan",
+        acceptanceCriteria: "Documented",
+        placement: { lane: "session", mode: "readOnly" },
+      },
+      "definition.executionContexts.0.outputSchema",
+    ],
+  ])(
+    "returns 400 from create when a context declares %s",
+    async (_label, context, expectedPath) => {
+      resolveProjectPath.mockResolvedValue("/repo");
+
+      const response = await handlers.CREATE(
+        makeRequest("/api/projects/repo/workflows", "POST", {
+          name: "Bad placement",
+          definition: {
+            schemaVersion: 1,
+            workflowConfig: {},
+            charter: makeTestCharter(),
+            executionContexts: [context],
+            tasks: [],
+            edges: [],
+          },
+          layout: createWorkflowLayout(),
+        }),
+        makeContext({ name: "repo" }),
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as {
+        issues: Array<{ path: string; message: string }>;
+      };
+      expect(body.issues).toContainEqual(
+        expect.objectContaining({ path: expectedPath }),
+      );
+      expect(createDefinition).not.toHaveBeenCalled();
+    },
+  );
 
   it("returns 400 when a context is missing acceptanceCriteria", async () => {
     resolveProjectPath.mockResolvedValue("/repo");

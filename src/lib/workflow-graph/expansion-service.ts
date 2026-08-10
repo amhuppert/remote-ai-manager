@@ -39,7 +39,10 @@ import { z } from "zod";
 import type { AgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
 import { createLogger } from "@/lib/logging";
 import type { AgentAssignment } from "@/lib/workflow-graph/config-schemas";
-import { contextOutputSchemaSchema } from "@/lib/workflow-graph/definition-schemas";
+import {
+  contextOutputSchemaSchema,
+  contextPlacementSchema,
+} from "@/lib/workflow-graph/definition-schemas";
 import type { WorkflowGraphValidationError } from "@/lib/workflow-graph/definition-schemas";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import type {
@@ -108,6 +111,14 @@ const expansionContextSchema = z
     acceptanceCriteria: z.string().trim().min(1),
     description: z.string().trim().min(1).optional(),
     outputSchema: contextOutputSchemaSchema.optional(),
+    /**
+     * Where this context runs and what it may write (lwp R10.1). REQUIRED of
+     * every generated context, but parsed as optional so a payload that omits it
+     * is refused by the compiler with a code naming the handle rather than by a
+     * schema error naming an array index — the same reason the lane grammar
+     * itself is checked at accept time rather than in the Zod shape.
+     */
+    placement: contextPlacementSchema.optional(),
     /**
      * A PRE-EXISTING context to seed this child's TUNING config from. Never a
      * sibling this batch creates: seeding from one would make the compiled
@@ -487,6 +498,16 @@ export function compileExpansionBatch(input: {
   // --- handles -------------------------------------------------------------
   const contextIdByHandle = new Map<string, string>();
   for (const context of request.contexts) {
+    // Placement is required of generated contexts (lwp R10.1). There is no
+    // inherit-from-invoker fallback: sharing a lane is a claim about concurrency
+    // and ownership between two specific contexts, and a lane an agent did not
+    // choose is exactly the claim it cannot have meant to make.
+    if (context.placement === undefined) {
+      return refuse(
+        "expansion-placement-missing",
+        `Generated context "${context.handle}" declares no placement; every expansion context must name the lane it runs on and what it may write`,
+      );
+    }
     if (contextIdByHandle.has(context.handle)) {
       return refuse(
         "expansion-duplicate-handle",
@@ -696,6 +717,13 @@ export function compileExpansionBatch(input: {
         : {}),
       ...(context.outputSchema !== undefined
         ? { outputSchema: context.outputSchema }
+        : {}),
+      // Never seeded from `configFromContextId`, for the same reason the live
+      // add refuses to: a lane and its owned prefixes are the one thing two
+      // contexts must not share by accident. The handle loop above already
+      // refused a payload that omitted it.
+      ...(context.placement !== undefined
+        ? { placement: context.placement }
         : {}),
       configFromContextId: invokerContextId,
       ...(explicitImplementer !== undefined

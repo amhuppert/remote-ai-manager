@@ -1,4 +1,7 @@
-import type { ValidationCandidateTreeResolution } from "@/lib/workflow-graph/validation-round";
+import type {
+  ValidationCandidateTree,
+  ValidationCandidateTreeResolution,
+} from "@/lib/workflow-graph/validation-round";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type {
   GraphWorkflowVisualLayout,
@@ -133,7 +136,11 @@ export function makeSeededValidatorAssignment(
  * tree is — this is the "nothing interesting here" answer.
  */
 export function stubValidationRoundService(
-  tree: { headSha?: string; candidateTreeHash?: string } = {},
+  tree: {
+    headSha?: string;
+    candidateTreeHash?: string;
+    identityScope?: ValidationCandidateTree["identityScope"];
+  } = {},
 ): {
   resolveCandidateTree(): Promise<ValidationCandidateTreeResolution>;
 } {
@@ -141,6 +148,7 @@ export function stubValidationRoundService(
     async resolveCandidateTree() {
       return {
         kind: "resolved",
+        identityScope: tree.identityScope ?? "wholeTree",
         headSha: tree.headSha ?? "stub-head",
         candidateTreeHash: tree.candidateTreeHash ?? "stub-tree",
       };
@@ -203,6 +211,7 @@ export function createWorkflowDefinition(
         title: "Plan",
         description: "Plan the implementation",
         acceptanceCriteria: "Plan is documented",
+        placement: { lane: "plan", mode: "full" },
         implementer: makeImplementerAssignment({
           backend: "claude",
           model: "opus",
@@ -223,6 +232,7 @@ export function createWorkflowDefinition(
         title: "Implement",
         description: "Implement the feature",
         acceptanceCriteria: "Feature implemented",
+        placement: { lane: "implement", mode: "full" },
         implementer: makeImplementerAssignment({
           backend: "claude",
           model: "sonnet",
@@ -252,6 +262,7 @@ export function createWorkflowDefinition(
         title: "Verify",
         description: "Verify the result",
         acceptanceCriteria: "Verification passes",
+        placement: { lane: "verify", mode: "full" },
         implementer: makeImplementerAssignment({
           backend: "claude",
           model: "opus",
@@ -361,6 +372,9 @@ export function createResolvedWorkflowDefinition(
         ? { description: ctx.description }
         : {}),
       acceptanceCriteria: ctx.acceptanceCriteria,
+      // Mirrored, like production resolution: a launched execution schedules and
+      // edits its WORKING definition, so placement has to survive the resolve.
+      placement: ctx.placement,
       implementer: seedAssignment(
         ctx.implementer ??
           makeImplementerAssignment({
@@ -548,8 +562,8 @@ export function createWorkflowExecution(
     advisoryIndex: [],
     laneStates: {},
     executionLanes: {},
+    laneReservations: {},
     joins: {},
-    lanePlan: { continuationMap: {}, longestDownstreamPath: {} },
     machineSnapshot: null,
     startedAt: timestamp,
     completedAt: null,

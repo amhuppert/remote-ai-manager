@@ -43,6 +43,7 @@
  *     CC_LIVE_PROMPT_AUTHORITY_TESTS=1 bun run test --project unit-node \
  *       src/lib/workflow-graph/validator-prompt-authority.live.test.ts
  */
+import { WHOLE_TREE_CANDIDATE_SCOPE } from "@/lib/git/diff";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -322,6 +323,7 @@ async function runAdversarialValidator(
     // test here.
     computeValidationDiffScope: async () => ({
       kind: "unavailable",
+      candidateScope: WHOLE_TREE_CANDIDATE_SCOPE,
       reason: "live prompt-authority fixture",
     }),
     readLaneConversation: async () => null,

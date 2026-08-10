@@ -239,6 +239,53 @@ describe("transitionContextStatus", () => {
     expect(execution.contextStates["context-plan"]!.status).toBe("completed");
   });
 
+  it("atomically records a group-lane reader's no-commit inclusion marker on completion", () => {
+    const execution = createWorkflowExecution();
+    execution.workingDefinition.executionContexts =
+      execution.workingDefinition.executionContexts.map((context) =>
+        context.id === "context-plan"
+          ? {
+              ...context,
+              placement: { lane: "analysis", mode: "readOnly" as const },
+              outputSchema: {
+                type: "object" as const,
+                properties: { result: { type: "string" as const } },
+              },
+            }
+          : context,
+      );
+    execution.contextStates["context-plan"] = {
+      ...execution.contextStates["context-plan"]!,
+      status: "running",
+      isolation: "worktree",
+      laneId: "analysis",
+      worktreePath: "/repo/.worktrees/session-1.analysis",
+      branchName: "csm/session-1-analysis",
+    };
+    execution.executionLanes.analysis = {
+      laneId: "analysis",
+      kind: "worktree",
+      status: "active",
+      worktreePath: "/repo/.worktrees/session-1.analysis",
+      branchName: "csm/session-1-analysis",
+      includedContextIds: [],
+      lastCommittingContextId: null,
+      commitSnapshots: [],
+      ignoredBaseline: [],
+      createdAt: "2026-03-27T12:00:00.000Z",
+      updatedAt: "2026-03-27T12:00:00.000Z",
+    };
+
+    transitionContextStatus(execution, "context-plan", "completed", {
+      reason: "test",
+    });
+
+    expect(execution.executionLanes.analysis!.includedContextIds).toEqual([
+      "context-plan",
+    ]);
+    expect(execution.executionLanes.analysis!.commitSnapshots).toEqual([]);
+  });
+
   it("throws IllegalContextStatusTransitionError on an illegal transition and leaves the draft untouched", () => {
     const execution = createWorkflowExecution();
     execution.contextStates["context-plan"]!.status = "completed";

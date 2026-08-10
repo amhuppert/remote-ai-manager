@@ -20,11 +20,13 @@ import { effortLevelSchema, type EffortLevel } from "./schemas";
 import {
   claudeBackendMetadata,
   claudeConversationCapabilities,
+  claudeConversationFsWriteRestriction,
   claudeTaskFsWriteRestriction,
 } from "./claude/descriptor";
 import {
   codexBackendMetadata,
   codexConversationCapabilities,
+  codexConversationFsWriteRestriction,
   codexTaskFsWriteRestriction,
 } from "./codex/descriptor";
 
@@ -156,6 +158,14 @@ const TASK_FS_WRITE_RESTRICTION: Readonly<
   codex: codexTaskFsWriteRestriction,
 };
 
+/** The conversation-facet twin, for the implementer dispatch gate. */
+const CONVERSATION_FS_WRITE_RESTRICTION: Readonly<
+  Record<AgentBackendId, FsWriteRestrictionSupport>
+> = {
+  claude: claudeConversationFsWriteRestriction,
+  codex: codexConversationFsWriteRestriction,
+};
+
 /**
  * The declared conversation capabilities for a backend, importable without
  * crossing into the adapter directories. Same literals the registered
@@ -285,6 +295,17 @@ export function getFsWriteRestrictionForBackend(
   backend: AgentBackendId,
 ): FsWriteRestrictionSupport {
   return TASK_FS_WRITE_RESTRICTION[backend];
+}
+
+/**
+ * The same question for the CONVERSATION facet, which is the path graph-workflow
+ * implementers dispatch through. Read before an owning or read-only implementer
+ * turn so a backend that cannot confine writes is refused rather than run.
+ */
+export function getConversationFsWriteRestrictionForBackend(
+  backend: AgentBackendId,
+): FsWriteRestrictionSupport {
+  return CONVERSATION_FS_WRITE_RESTRICTION[backend];
 }
 
 /** Runtime inactivity default declared by the backend metadata. */

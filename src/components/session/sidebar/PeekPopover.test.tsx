@@ -435,6 +435,7 @@ describe("PeekPopover", () => {
         requestedAt: "2026-05-15T12:00:00.000Z",
         workflowName: null,
         executionSuspended: false,
+        enveloped: false,
         tasksCompleted: 6,
         tasksTotal: 6,
       },
@@ -448,11 +449,61 @@ describe("PeekPopover", () => {
       return {
         isSubmitting: false,
         executionSuspended: false,
+        scopedChanges: null,
         onApprove: vi.fn(),
         onReject: vi.fn(),
         ...overrides,
       };
     }
+
+    // The peek is a real approval surface with live Approve/Reject controls, so
+    // an enveloped context has to be decided on here through the same frozen
+    // owned-path artifact the workspace panel renders (R15.2) — never through
+    // the shared lane worktree's whole-tree delta, and never through nothing.
+    it("renders the frozen owned-path artifact for an enveloped context", () => {
+      renderPeek({
+        conversation: GATED_CONVERSATION,
+        approvalGate: gateProps({
+          scopedChanges: {
+            status: "ready",
+            ownedPaths: ["src/api"],
+            diff: {
+              files: [
+                {
+                  filePath: "src/api/handler.ts",
+                  additions: 1,
+                  deletions: 0,
+                  hunks: [
+                    {
+                      header: "@@ -1 +1,2 @@",
+                      lines: [
+                        { type: "hunk-header", content: "@@ -1 +1,2 @@" },
+                        { type: "add", content: "export const handler = 2;" },
+                      ],
+                    },
+                  ],
+                },
+              ],
+              totalAdditions: 1,
+              totalDeletions: 0,
+            },
+          },
+        }),
+      });
+
+      const changes = screen.getByTestId("approval-gate-scoped-changes");
+      expect(changes).toHaveTextContent("src/api/handler.ts");
+      expect(changes).toHaveTextContent("owned: src/api");
+    });
+
+    it("does not offer Approve in the peek before the frozen artifact loads", () => {
+      renderPeek({
+        conversation: GATED_CONVERSATION,
+        approvalGate: gateProps({ scopedChanges: { status: "loading" } }),
+      });
+
+      expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+    });
 
     it("shows the awaiting-approval header status with elapsed time", () => {
       renderPeek({

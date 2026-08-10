@@ -12,6 +12,7 @@ import {
   makeSeededValidatorAssignment,
 } from "@/lib/workflow-graph/test-fixtures";
 import { createGraphWorkflowIterationOrchestrator } from "./iteration-orchestrator";
+import type { CandidateScope } from "@/lib/git/diff";
 import {
   computeTaskStateHash,
   type ValidationCandidateTreeResolution,
@@ -166,6 +167,8 @@ interface Harness {
   orchestrator: ReturnType<typeof createGraphWorkflowIterationOrchestrator>;
   run(): Promise<void>;
   probeCount(): number;
+  /** Every candidate scope the engine asked a probe for, in probe order. */
+  probedScopes(): CandidateScope[];
 }
 
 function createHarness(params: {
@@ -188,8 +191,12 @@ function createHarness(params: {
   // and again after the script phase (and once more before publishing), so a
   // test moves the candidate simply by queueing a different tree.
   let probe = 0;
+  const probedScopes: CandidateScope[] = [];
   const resolveCandidateTree = vi.fn(
-    async (): Promise<ValidationCandidateTreeResolution> => {
+    async (input: {
+      candidateScope: CandidateScope;
+    }): Promise<ValidationCandidateTreeResolution> => {
+      probedScopes.push(input.candidateScope);
       const tree = params.trees[Math.min(probe, params.trees.length - 1)]!;
       probe += 1;
       return tree;
@@ -241,6 +248,7 @@ function createHarness(params: {
       });
     },
     probeCount: () => probe,
+    probedScopes: () => probedScopes,
   };
 }
 
@@ -260,11 +268,13 @@ function validationResultEvents(
 
 const TREE_A: ValidationCandidateTreeResolution = {
   kind: "resolved",
+  identityScope: "wholeTree",
   headSha: "head-1",
   candidateTreeHash: "tree-a",
 };
 const TREE_B: ValidationCandidateTreeResolution = {
   kind: "resolved",
+  identityScope: "wholeTree",
   headSha: "head-1",
   candidateTreeHash: "tree-b",
 };
@@ -304,6 +314,7 @@ describe("validation round: freeze at round start", () => {
     expect(round.phase).toBe("script");
     expect(round.startedAt).toBe(NOW);
     expect(round.candidate).toEqual({
+      identityScope: "wholeTree",
       headSha: "head-1",
       candidateTreeHash: "tree-a",
       taskStateHash: computeTaskStateHash(execution.taskStates, "context-plan"),
@@ -320,6 +331,56 @@ describe("validation round: freeze at round start", () => {
     ]);
     for (const specialist of Object.values(round.specialists)) {
       expect(specialist.state).toBe("pending");
+    }
+  });
+
+  it("probes under the candidate scope the reviewed context's placement declares", async () => {
+    // R15: an enveloped context is identified by its owned subset, so the engine
+    // has to ask for that subset — at the freeze and at every re-probe alike. A
+    // whole-tree probe here would put a sibling's writes inside this context's
+    // identity and its round could never hold.
+    const execution = createCohortExecution();
+    const planContext = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-plan",
+    );
+    if (!planContext) throw new Error("context-plan fixture missing");
+    planContext.placement = {
+      lane: "impl",
+      mode: "owned",
+      ownedPaths: ["src/a", "docs/a.md"],
+    };
+
+    const harness = createHarness({
+      execution,
+      trees: [{ ...TREE_A, identityScope: "owned" }],
+    });
+
+    await harness.run();
+
+    const scopes = harness.probedScopes();
+    expect(scopes.length).toBeGreaterThan(1);
+    for (const scope of scopes) {
+      expect(scope).toEqual({
+        mode: "owned",
+        ownedPaths: ["src/a", "docs/a.md"],
+      });
+    }
+    expect(
+      harness.repository.read().contextStates["context-plan"]?.validationRound
+        ?.candidate.identityScope,
+    ).toBe("owned");
+  });
+
+  it("probes whole-tree for a full-access context", async () => {
+    const harness = createHarness({
+      execution: createCohortExecution(),
+      trees: [TREE_A],
+    });
+
+    await harness.run();
+
+    for (const scope of harness.probedScopes()) {
+      expect(scope).toEqual({ mode: "wholeTree" });
     }
   });
 
@@ -685,6 +746,7 @@ describe("validation round: implementer exclusion", () => {
       validationRound: {
         seq: 3,
         candidate: {
+          identityScope: "wholeTree",
           headSha: "head-1",
           candidateTreeHash: "tree-a",
           taskStateHash: "tasks-1",

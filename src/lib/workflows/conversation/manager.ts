@@ -50,6 +50,7 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
 import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
+import type { FsWritePolicy } from "@/lib/agent-backends/task";
 
 const logger = createLogger("conversation-manager");
 
@@ -76,6 +77,13 @@ export interface ConversationTurnRequest {
   waitForBackgroundTasks?: boolean;
   documentFeedback?: DocumentFeedbackPayload;
   askUserQuestionsEnabled?: boolean;
+  /**
+   * Server-derived filesystem-write envelope for this turn, composed by the
+   * graph-workflow implementer dispatch path. Carried explicitly through this
+   * hop because absent means unrestricted: a lifecycle module that dropped it
+   * would un-confine the lane without any layer reporting a failure.
+   */
+  fsWritePolicy?: FsWritePolicy;
 }
 
 /** Stable public projection of the completed turn. */
@@ -732,6 +740,9 @@ export async function executeConversationTurn(
         : {}),
       ...(input.turn.askUserQuestionsEnabled
         ? { askUserQuestionsEnabled: true }
+        : {}),
+      ...(input.turn.fsWritePolicy !== undefined
+        ? { fsWritePolicy: input.turn.fsWritePolicy }
         : {}),
     };
 

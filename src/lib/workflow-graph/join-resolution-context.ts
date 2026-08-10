@@ -67,8 +67,11 @@ export function buildJoinResolutionContext(
     coveredSections.push(
       [
         `- Lane \`${coveredLaneId}\` (branch \`${coveredLane.branchName}\`):`,
-        describeLaneWork(execution, coveredLane.includedContextIds) ??
-          "  - No recorded work descriptions for this lane.",
+        describeLaneWork(
+          execution,
+          join.sourceLaneContextIds?.[coveredLaneId] ??
+            coveredLane.includedContextIds,
+        ) ?? "  - No recorded work descriptions for this lane.",
       ].join("\n"),
     );
   }

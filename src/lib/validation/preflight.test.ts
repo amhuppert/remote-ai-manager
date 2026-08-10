@@ -23,7 +23,11 @@ describe("validation command preflight", () => {
         },
         undefined,
       ),
-    ).toEqual({ commandCosts: { test: 8 }, concurrencyLimit: 8 });
+    ).toEqual({
+      commandCosts: { test: 8 },
+      concurrencyLimit: 8,
+      laneMergeCommands: ["test"],
+    });
   });
 
   it("rejects configured cost above the limit without clamping", () => {

@@ -101,6 +101,7 @@ function makeGraphWorkflowExecution(
       },
       executionContexts: [
         {
+          placement: { lane: "ctx-1", mode: "full" as const },
           id: "ctx-1",
           title: "Implementation",
           description: "Implement the feature",
@@ -128,6 +129,7 @@ function makeGraphWorkflowExecution(
           id: "ctx-2",
           title: "Testing",
           acceptanceCriteria: "TBD",
+          placement: { lane: "ctx-2", mode: "full" },
           implementer: {
             id: "implementer",
             profile: { tier: "builtin", id: "general-implementer" },
@@ -267,8 +269,8 @@ function makeGraphWorkflowExecution(
     advisoryIndex: [],
     laneStates: {},
     executionLanes: {},
+    laneReservations: {},
     joins: {},
-    lanePlan: { continuationMap: {}, longestDownstreamPath: {} },
     machineSnapshot: null,
     history: [],
     startedAt: "2026-03-28T10:00:00Z",

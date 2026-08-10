@@ -160,6 +160,7 @@ function cascade(
     },
     executionContexts: [
       {
+        placement: { lane: "ctx-1", mode: "full" as const },
         id: "ctx-1",
         title: "Build",
         acceptanceCriteria: "It builds",

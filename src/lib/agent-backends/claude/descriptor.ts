@@ -92,6 +92,15 @@ export const claudeTaskTranscriptProjection: BackendTaskTranscriptProjection = {
  */
 export const claudeTaskFsWriteRestriction = "enforced" as const;
 
+/**
+ * The same claim for a CONVERSATION turn: `query-session` translates a
+ * delivered policy onto the sandbox, path-scoped mutation rules, and a working
+ * root outside the confined tree, and refuses to create the session at all for
+ * a policy it cannot establish. Graph-workflow implementers dispatch through
+ * this path, so this is the declaration that gates them.
+ */
+export const claudeConversationFsWriteRestriction = "enforced" as const;
+
 export interface ClaudeDescriptorDeps {
   conversationFactory: ConversationBackendFactory;
   /** `createClaudeContinuityAdapter(...)` in production; injected so the
@@ -117,6 +126,7 @@ export function createClaudeBackendDescriptor(
       factory: deps.conversationFactory,
       continuity: deps.continuity,
       capabilities: claudeConversationCapabilities,
+      fsWriteRestriction: claudeConversationFsWriteRestriction,
       runtimeConfig: deps.runtimeConfig,
       transcript: claudeConversationTranscriptProjection,
     },

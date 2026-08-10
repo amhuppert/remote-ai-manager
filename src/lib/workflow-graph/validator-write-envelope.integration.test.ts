@@ -18,6 +18,7 @@
  * OS-level enforcement of the delivered policy is proven separately against the
  * real installed runners.
  */
+import { WHOLE_TREE_CANDIDATE_SCOPE } from "@/lib/git/diff";
 
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
@@ -303,6 +304,7 @@ async function runValidatorRaw(
     executeWorkflowTaskRun: productionTaskRun(backend),
     computeValidationDiffScope: async () => ({
       kind: "unavailable",
+      candidateScope: WHOLE_TREE_CANDIDATE_SCOPE,
       reason: "test",
     }),
     readLaneConversation: async () => null,

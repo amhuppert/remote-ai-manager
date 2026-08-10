@@ -242,7 +242,7 @@ describe("spawnValidation", () => {
     const childPid = Number(
       readFileSync(path.join(worktreeDir, "child.pid"), "utf-8").trim(),
     );
-    expect(pidAlive(childPid)).toBe(false);
+    expect(await eventually(() => !pidAlive(childPid))).toBe(true);
 
     // wait() observes the same settled outcome.
     await expect(result.handle.wait()).resolves.toEqual(outcome);

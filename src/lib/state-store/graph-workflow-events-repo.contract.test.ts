@@ -569,6 +569,78 @@ describe("graph-workflow-events-repo durability contract", () => {
     });
   });
 
+  it("round-trips every lane decision record through the real repo", () => {
+    const occurredAt = "2026-08-09T12:00:00.000Z";
+    const events = [
+      {
+        type: "graph-workflow-lane-created",
+        projectName: "p1",
+        sessionName: SESSION_NAME,
+        executionId: EXECUTION_ID,
+        laneId: "delivery",
+        kind: "worktree",
+        placementSource: "authored",
+      },
+      {
+        type: "graph-workflow-lane-concurrent-admission",
+        projectName: "p1",
+        sessionName: SESSION_NAME,
+        executionId: EXECUTION_ID,
+        laneId: "delivery",
+        batchId: "batch-1",
+        memberContextIds: ["context-plan", "context-implement"],
+        canonicalCheckResult: "passed",
+      },
+      {
+        type: "graph-workflow-lane-landed",
+        projectName: "p1",
+        sessionName: SESSION_NAME,
+        executionId: EXECUTION_ID,
+        laneId: "delivery",
+        contextId: "context-plan",
+        ownedPathspec: ["src/plan"],
+        commitSha: "plan-sha",
+        landedAt: "2026-08-09T12:01:00.000Z",
+      },
+      {
+        type: "graph-workflow-lane-landed",
+        projectName: "p1",
+        sessionName: SESSION_NAME,
+        executionId: EXECUTION_ID,
+        laneId: "delivery",
+        contextId: "context-implement",
+        ownedPathspec: ["src/implement"],
+        commitSha: null,
+        landedAt: "2026-08-09T12:02:00.000Z",
+      },
+      {
+        type: "graph-workflow-lane-drift-halted",
+        projectName: "p1",
+        sessionName: SESSION_NAME,
+        executionId: EXECUTION_ID,
+        laneId: "delivery",
+        contextId: "context-plan",
+        unattributedPaths: ["src/unowned.ts"],
+      },
+    ].map((event) =>
+      graphWorkflowExecutionEventSchema.parse({
+        occurredAt,
+        event,
+        preReset: false,
+      }),
+    );
+
+    repo.appendMany(
+      PROJECT_PATH,
+      SESSION_NAME,
+      EXECUTION_ID,
+      occurredAt,
+      events,
+    );
+
+    expect(repo.findByExecution(EXECUTION_ID)).toEqual(events);
+  });
+
   it("round-trips a refused expansion receipt with its empty id arrays", () => {
     const refusal = graphWorkflowExecutionEventSchema.parse({
       occurredAt: "2026-02-15T08:09:11Z",

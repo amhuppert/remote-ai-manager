@@ -15,6 +15,7 @@ import { validationCostExceedsLimitStatus } from "./0012-validation-cost-exceeds
 import { scriptValidatorCommands } from "./0013-script-validator-commands";
 import { validationRunSessionName } from "./0014-validation-run-session-name";
 import { mintGraphWorkflowEdgeIds } from "./0015-mint-graph-workflow-edge-ids";
+import { graphWorkflowContextPlacement } from "./0016-graph-workflow-context-placement";
 import { validationRunScopes } from "./0016-validation-run-scopes";
 
 /**
@@ -40,6 +41,7 @@ export const migrations: readonly StateMigration[] = [
   scriptValidatorCommands,
   validationRunSessionName,
   mintGraphWorkflowEdgeIds,
+  graphWorkflowContextPlacement,
   validationRunScopes,
 ];
 

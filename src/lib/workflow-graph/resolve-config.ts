@@ -266,6 +266,12 @@ export function resolveContext(
       : {}),
     acceptanceCriteria: context.acceptanceCriteria,
     ...(context.origin !== undefined ? { origin: context.origin } : {}),
+    // Identity passthrough: no cascade tier contributes placement, and the
+    // runtime reads the lane off the resolved context. Unconditional, unlike
+    // the optional passthroughs below: placement is required on the authored
+    // context, so every resolution carries one and a resolved context missing
+    // it can only be a row seeded before the field existed.
+    placement: context.placement,
     // Identity passthrough: no cascade tier contributes an output schema, so an
     // undeclared field stays absent rather than resolving to a default shape.
     ...(context.outputSchema !== undefined

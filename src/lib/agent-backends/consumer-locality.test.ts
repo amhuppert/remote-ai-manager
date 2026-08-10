@@ -1167,6 +1167,7 @@ describe("E6: graph runners", () => {
         model: "fake-1",
         reasoningEffort: "medium",
         toolServer: { servers: [] },
+        placement: { lane: "build", mode: "full" },
       })
       .then(
         () => null,

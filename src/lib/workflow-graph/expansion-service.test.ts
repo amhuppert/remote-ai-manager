@@ -25,9 +25,11 @@ import {
 import type { LiveEditDeps, ResolvedContextConfig } from "./runtime-edits";
 import type {
   GraphWorkflowExecution,
+  GraphWorkflowExecutionJoinState,
   GraphWorkflowExpansionAcceptanceReceipt,
   GraphWorkflowExpansionRefusalReceipt,
 } from "./schemas";
+import { appendPendingJoin } from "./lane-join";
 import type { GraphWorkflowSSEEvent } from "./event-schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { prepareLiveEditAssignmentSnapshots } from "./live-edit-preparation";
@@ -119,10 +121,26 @@ function runningExecution(
   return execution;
 }
 
+/**
+ * Every expansion context must declare a placement (lwp R10.1). Tests about
+ * OTHER refusals get the neutral one — a single-member lane of the handle's own,
+ * which is concurrency-comparable with nothing and overlaps nothing — so a
+ * placement they never meant to reason about cannot decide their verdict. A test
+ * that DOES reason about placement states it and this default steps aside.
+ */
+function withDefaultPlacement(
+  contexts: GraphExpansionRequest["contexts"],
+): GraphExpansionRequest["contexts"] {
+  return contexts.map((context) => ({
+    placement: { lane: `${context.handle}-lane`, mode: "full" as const },
+    ...context,
+  }));
+}
+
 function makeRequest(
   overrides: Partial<GraphExpansionRequest> = {},
 ): GraphExpansionRequest {
-  return graphExpansionRequestSchema.parse({
+  const merged = {
     requestId: "req-1",
     rationale: "Fan out one candidate per approach and let the filter pick.",
     contexts: [
@@ -141,6 +159,10 @@ function makeRequest(
     ],
     edges: [{ from: INVOKER, to: "candidate-a" }],
     ...overrides,
+  };
+  return graphExpansionRequestSchema.parse({
+    ...merged,
+    contexts: withDefaultPlacement(merged.contexts),
   });
 }
 
@@ -929,6 +951,299 @@ describe("graph expansion — inherited core refusals", () => {
   });
 });
 
+/**
+ * Expansion speaks the placement vocabulary (lwp R10.1): a generated context
+ * declares where it runs and what it may write, exactly as an authored one does,
+ * and every placement refusal the authored tier can raise reaches it through the
+ * shared live-edit core.
+ */
+describe("graph expansion — placement (lwp R10.1)", () => {
+  const SHARED_LANE = "shared";
+
+  /** Put the untouched, downstream `context-verify` on a shared group lane. */
+  function withSharedLaneMember(ownedPaths: string[]) {
+    return (execution: GraphWorkflowExecution): void => {
+      const verify = execution.workingDefinition.executionContexts.find(
+        (context) => context.id === "context-verify",
+      );
+      if (!verify) throw new Error("fixture lost context-verify");
+      verify.placement = { lane: SHARED_LANE, mode: "owned", ownedPaths };
+    };
+  }
+
+  function placementOf(
+    execution: GraphWorkflowExecution,
+    contextId: string,
+  ): unknown {
+    return execution.workingDefinition.executionContexts.find(
+      (context) => context.id === contextId,
+    )?.placement;
+  }
+
+  it("refuses a generated context that declares no placement", async () => {
+    const harness = makeHarness(runningExecution());
+    const before = structuredClone(harness.current());
+
+    // Built through the schema directly: `makeRequest` fills the neutral default
+    // in, and the omission is exactly what this test is about.
+    const outcome = await expandWith(
+      harness,
+      graphExpansionRequestSchema.parse({
+        requestId: "req-1",
+        rationale: "Fan out one candidate.",
+        contexts: [
+          {
+            handle: "candidate-a",
+            title: "Candidate A",
+            acceptanceCriteria: "Candidate A is implemented",
+          },
+        ],
+        tasks: [
+          {
+            contextHandle: "candidate-a",
+            title: "Build candidate A",
+            instructions: "Implement approach A.",
+          },
+        ],
+        edges: [{ from: INVOKER, to: "candidate-a" }],
+      }),
+    );
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.issues.map((issue) => issue.code)).toContain(
+      "expansion-placement-missing",
+    );
+    expect(harness.current().workingDefinition).toEqual(
+      before.workingDefinition,
+    );
+  });
+
+  it("compiles a valid expansion onto a BRAND-NEW lane and runs it there", async () => {
+    const harness = makeHarness(runningExecution());
+
+    const outcome = await expandWith(
+      harness,
+      makeRequest({
+        contexts: [
+          {
+            handle: "candidate-a",
+            title: "Candidate A",
+            acceptanceCriteria: "Candidate A is implemented",
+            placement: {
+              lane: "candidate-a-lane",
+              mode: "owned",
+              ownedPaths: ["src/candidate-a"],
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    const addedId = outcome.createdContextIds[0] ?? "";
+    expect(placementOf(harness.current(), addedId)).toEqual({
+      lane: "candidate-a-lane",
+      mode: "owned",
+      ownedPaths: ["src/candidate-a"],
+    });
+  });
+
+  it("compiles a valid expansion onto an EXISTING open lane", async () => {
+    const harness = makeHarness(
+      runningExecution(withSharedLaneMember(["docs"])),
+    );
+
+    const outcome = await expandWith(
+      harness,
+      makeRequest({
+        contexts: [
+          {
+            handle: "candidate-a",
+            title: "Candidate A",
+            acceptanceCriteria: "Candidate A is implemented",
+            placement: {
+              lane: SHARED_LANE,
+              mode: "owned",
+              ownedPaths: ["src/candidate-a"],
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    const addedId = outcome.createdContextIds[0] ?? "";
+    expect(placementOf(harness.current(), addedId)).toEqual({
+      lane: SHARED_LANE,
+      mode: "owned",
+      ownedPaths: ["src/candidate-a"],
+    });
+  });
+
+  it("refuses ownership overlapping a concurrency-comparable same-lane member", async () => {
+    // Nothing sequences the generated context against `context-verify`, so both
+    // could hold the shared lane's one worktree at once.
+    const harness = makeHarness(
+      runningExecution(withSharedLaneMember(["src"])),
+    );
+    const before = structuredClone(harness.current());
+
+    const outcome = await expandWith(
+      harness,
+      makeRequest({
+        contexts: [
+          {
+            handle: "candidate-a",
+            title: "Candidate A",
+            acceptanceCriteria: "Candidate A is implemented",
+            placement: {
+              lane: SHARED_LANE,
+              mode: "owned",
+              ownedPaths: ["src/candidate-a"],
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.issues.map((issue) => issue.code)).toContain(
+      "placement-owned-paths-overlap",
+    );
+    expect(harness.current().workingDefinition).toEqual(
+      before.workingDefinition,
+    );
+  });
+
+  it("counts placement as part of the request's identity", async () => {
+    // A retry is recognised by hashing the canonical payload. If placement sat
+    // outside that hash, re-posting a used requestId with the candidate moved to
+    // a different lane would replay the ORIGINAL receipt and the move would
+    // silently never happen.
+    const harness = makeHarness(runningExecution());
+    const onLane = (lane: string) =>
+      makeRequest({
+        contexts: [
+          {
+            handle: "candidate-a",
+            title: "Candidate A",
+            acceptanceCriteria: "Candidate A is implemented",
+            placement: { lane, mode: "owned", ownedPaths: ["src/candidate-a"] },
+          },
+        ],
+      });
+
+    expect((await expandWith(harness, onLane("lane-one"))).ok).toBe(true);
+
+    const outcome = await expandWith(harness, onLane("lane-two"));
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.issues.map((issue) => issue.code)).toContain(
+      "expansion-request-id-reused",
+    );
+  });
+
+  /** The join intent that promises SHARED_LANE's content to the `landing` lane. */
+  const SHARED_LANE_JOIN: GraphWorkflowExecutionJoinState = {
+    joinId: "join-1",
+    kind: "context_merge",
+    contextId: "context-implement",
+    targetLaneId: "landing",
+    sourceLaneIds: [SHARED_LANE, "landing"],
+    mergedSourceLaneIds: [],
+    validationDebtSourceLaneIds: [],
+    status: "pending",
+    errorMessage: null,
+    conflicts: null,
+    conflictGuidance: null,
+    createdAt: "2026-08-04T00:00:00.000Z",
+    updatedAt: "2026-08-04T00:00:00.000Z",
+    completedAt: null,
+  };
+
+  const ONTO_SHARED_LANE = makeRequest({
+    contexts: [
+      {
+        handle: "candidate-a",
+        title: "Candidate A",
+        acceptanceCriteria: "Candidate A is implemented",
+        placement: {
+          lane: SHARED_LANE,
+          mode: "owned",
+          ownedPaths: ["src/candidate-a"],
+        },
+      },
+    ],
+  });
+
+  it("refuses an expansion onto a lane whose join intent already exists", async () => {
+    const harness = makeHarness(
+      runningExecution((execution) => {
+        withSharedLaneMember(["docs"])(execution);
+        execution.joins = { "join-1": SHARED_LANE_JOIN };
+      }),
+    );
+    const before = structuredClone(harness.current());
+
+    const outcome = await expandWith(harness, ONTO_SHARED_LANE);
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.issues.map((issue) => issue.code)).toContain("lane_closed");
+    expect(harness.current().workingDefinition).toEqual(
+      before.workingDefinition,
+    );
+  });
+
+  it("refuses an expansion whose target lane a join claimed after the batch validated", async () => {
+    // The production race. Closure is validated OUTSIDE the write queue, so the
+    // scheduler can plan the lane's join between that validation and the staged
+    // install. Planning a join moves `joins` and the downstream context's
+    // `joinId` — it never touches `workingDefinition`, so `structuralRevision`
+    // does not move, and it is not a live edit, so `liveRevision` does not
+    // either. Nothing the staging fence carried before would notice, and the
+    // added member would land on a lane already promised to a merge.
+    const harness = makeHarness(
+      runningExecution(withSharedLaneMember(["docs"])),
+    );
+    const before = structuredClone(harness.current());
+    let planned = false;
+    const service = createGraphWorkflowExpansionService({
+      ...harness.deps,
+      mutateActive: async (projectPath, sessionName, fn) => {
+        if (!planned) {
+          planned = true;
+          await harness.deps.mutateActive(projectPath, sessionName, (draft) =>
+            appendPendingJoin(draft, SHARED_LANE_JOIN),
+          );
+        }
+        return harness.deps.mutateActive(projectPath, sessionName, fn);
+      },
+    });
+
+    const outcome = await service.expand({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      executionId: "execution-1",
+      contextId: INVOKER,
+      conversationId: CONVERSATION_ID,
+      request: ONTO_SHARED_LANE,
+    });
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.issues.map((issue) => issue.code)).toContain("lane_closed");
+    expect(harness.current().workingDefinition).toEqual(
+      before.workingDefinition,
+    );
+    expect(harness.current().liveRevision).toBe(before.liveRevision);
+  });
+});
+
 describe("graph expansion — generated child authority", () => {
   it("stamps expansion authority off on every generated child", async () => {
     const harness = makeHarness(runningExecution());
@@ -1538,6 +1853,7 @@ function fanOutRequest(
       handle: `candidate-${i}`,
       title: `Candidate ${i}`,
       acceptanceCriteria: `Candidate ${i} works`,
+      placement: { lane: `candidate-${i}-lane`, mode: "full" },
     })),
     tasks: Array.from({ length: count }, (_, i) => ({
       contextHandle: `candidate-${i}`,

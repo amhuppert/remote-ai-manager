@@ -5,6 +5,7 @@ import type {
   GraphWorkflowExecutionContextState,
   GraphWorkflowExecutionJoinState,
   GraphWorkflowExecutionJoinResolvedConflict,
+  GraphWorkflowExecutionJoinValidationEvidence,
 } from "@/lib/workflow-graph/schemas";
 import type {
   GraphWorkflowContextStatus,
@@ -168,6 +169,16 @@ export function transitionContextStatus(
     );
   }
   contextState.status = next;
+  if (next !== "completed" || contextState.laneId === null) return;
+
+  const placement = draft.workingDefinition.executionContexts.find(
+    (context) => context.id === contextId,
+  )?.placement;
+  if (placement?.mode !== "readOnly") return;
+
+  const lane = draft.executionLanes[contextState.laneId];
+  if (!lane || lane.includedContextIds.includes(contextId)) return;
+  lane.includedContextIds = [...lane.includedContextIds, contextId];
 }
 
 /**
@@ -298,6 +309,7 @@ export interface ApplyJoinProgressPatch {
   addMergedSourceLaneId?: string;
   addValidationDebtSourceLaneId?: string;
   clearValidationDebt?: boolean;
+  addValidationEvidence?: GraphWorkflowExecutionJoinValidationEvidence;
   errorMessage?: string | null;
   conflicts?: GraphWorkflowExecutionJoinState["conflicts"];
   /** Append one auto-resolved conflict record (smart-merge sub-turn or clean
@@ -330,6 +342,19 @@ export function applyJoinProgress(
         !currentValidationDebt.includes(patch.addValidationDebtSourceLaneId)
       ? [...currentValidationDebt, patch.addValidationDebtSourceLaneId]
       : currentValidationDebt;
+  const currentValidationEvidence = join.validationEvidence ?? [];
+  const evidenceToAdd = patch.addValidationEvidence;
+  const validationEvidence =
+    evidenceToAdd &&
+    !currentValidationEvidence.some(
+      (evidence) =>
+        evidence.sourceLaneIds.length === evidenceToAdd.sourceLaneIds.length &&
+        evidence.sourceLaneIds.every(
+          (laneId, index) => laneId === evidenceToAdd.sourceLaneIds[index],
+        ),
+    )
+      ? [...currentValidationEvidence, evidenceToAdd]
+      : currentValidationEvidence;
 
   const status = patch.status ?? join.status;
   const completedAt =
@@ -346,6 +371,7 @@ export function applyJoinProgress(
         status,
         mergedSourceLaneIds,
         validationDebtSourceLaneIds,
+        validationEvidence,
         errorMessage:
           patch.errorMessage !== undefined
             ? patch.errorMessage

@@ -17,6 +17,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type Database from "better-sqlite3";
 import {
@@ -49,10 +50,16 @@ function freshDb(projectPath: string): Db {
   return fixture.db;
 }
 
+/**
+ * Rooted in the OS temp dir, not the worktree: the stored-workflow layout keys
+ * a project by `base64url(projectPath)` as ONE directory name, so the fixture's
+ * own absolute path is inflated by 4/3 into a single filename. Anchored under
+ * `process.cwd()`, a checkout whose path is merely long — a session worktree
+ * named after its branch, say — pushes that name past the 255-byte component
+ * limit and every test here dies in `mkdir`, far from the cause.
+ */
 function freshFixtureRoot(): string {
-  const tempRoot = path.join(process.cwd(), ".cc", "temp");
-  mkdirSync(tempRoot, { recursive: true });
-  const dir = mkdtempSync(path.join(tempRoot, "script-validator-"));
+  const dir = mkdtempSync(path.join(os.tmpdir(), "cc-0013-"));
   tempDirs.push(dir);
   return dir;
 }

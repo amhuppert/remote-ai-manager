@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { storybookTest } from "@storybook/addon-vitest/vitest-plugin";
+import { resolveWorkerBudget } from "./scripts/validate/worker-budget.mjs";
 
 const dirname =
   typeof __dirname !== "undefined"
@@ -38,25 +39,18 @@ const nodeTestFiles = unitTestFiles.filter(
   (filePath) => !jsdomTestFileSet.has(filePath),
 );
 
-// Bound worker parallelism to available RAM, not just core count. Vitest's
-// default forks pool spawns one worker per CPU core with no heap cap; on a
-// high-core / low-RAM machine that fans out to N heavyweight Node processes at
-// once, which can exhaust RAM + swap during a full-suite (e.g. pre-merge
-// validation) run and freeze the machine. The unit projects use Node or jsdom,
-// so ~1.5 GB per worker is ample; budgeting that heap
-// against ~55% of total RAM keeps low-RAM machines at the 2-worker floor while
-// letting high-RAM / high-core machines use more parallelism (e.g. 16 GB / 16
-// cores -> 5 workers) at a *lower* total heap footprint than the old 2 GB
-// budget — so the change adds throughput without raising peak memory pressure.
-const GB = 1024 ** 3;
+// Worker parallelism is bounded by RAM, not just core count — see
+// `scripts/validate/worker-budget.mjs`, which owns that policy for this config
+// and for the validation launcher alike. The unit projects use Node or jsdom,
+// so ~1.5 GB per worker is ample.
 const WORKER_HEAP_MB = 1536;
-const maxForks = Math.max(
-  2,
-  Math.min(
-    os.availableParallelism(),
-    Math.floor(((os.totalmem() / GB) * 0.55) / (WORKER_HEAP_MB / 1024)),
-  ),
-);
+const COORDINATOR_HEAP_MB = 3072;
+const maxForks = resolveWorkerBudget({
+  coordinatorHeapMb: COORDINATOR_HEAP_MB,
+  workerHeapMb: WORKER_HEAP_MB,
+  totalMemoryBytes: os.totalmem(),
+  availableParallelism: os.availableParallelism(),
+});
 
 // Claude Code sets CLAUDECODE=1 in every shell it spawns.
 // Use the minimal `dot` reporter to reduce test output by ~96%,

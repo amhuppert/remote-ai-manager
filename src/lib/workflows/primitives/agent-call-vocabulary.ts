@@ -101,6 +101,12 @@ const baseRequestFields = {
   modelId: z.string().min(1).optional(),
   reasoningEffort: z.string().min(1).optional(),
   imageRefs: z.array(conversationImageRefSchema).max(5).optional(),
+  // Declared on the shared base because BOTH dispatch paths now establish it
+  // natively: the task runner on its own sandbox, and the conversation runtimes
+  // on theirs (D6). A path that could carry the field without honouring it
+  // would be the one hop where a policy silently evaporates, so a runtime that
+  // cannot establish a present policy fails the turn instead.
+  fsWritePolicy: fsWritePolicySchema.optional(),
 } as const;
 
 export const agentCallRequestSchema = z.discriminatedUnion("kind", [
@@ -112,10 +118,6 @@ export const agentCallRequestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("task_run"),
     backend: agentBackendIdShapeSchema,
-    // Task-path only: the envelope is established by the task runner's native
-    // sandbox mechanism. Declaring it on the shared base would let a
-    // conversation turn carry a policy no dispatch path can honour.
-    fsWritePolicy: fsWritePolicySchema.optional(),
     ...baseRequestFields,
   }),
 ]);

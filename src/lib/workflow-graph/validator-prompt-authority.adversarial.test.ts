@@ -30,6 +30,7 @@
  * is covered by `seed-assignment-snapshots.test.ts`, so the two together carry
  * an authored focus from stored configuration to the provider.
  */
+import { WHOLE_TREE_CANDIDATE_SCOPE } from "@/lib/git/diff";
 
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
@@ -378,6 +379,7 @@ async function runValidator(options: RunOptions): Promise<ValidatorRunResult> {
     executeWorkflowTaskRun: productionTaskRun(options.backend),
     computeValidationDiffScope: async () => ({
       kind: "unavailable",
+      candidateScope: WHOLE_TREE_CANDIDATE_SCOPE,
       reason: "test",
     }),
     readLaneConversation: async () => null,

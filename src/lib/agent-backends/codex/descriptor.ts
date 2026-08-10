@@ -122,6 +122,16 @@ export const codexTaskTranscriptProjection: BackendTaskTranscriptProjection = {
  */
 export const codexTaskFsWriteRestriction = "enforced" as const;
 
+/**
+ * The same claim for a CONVERSATION turn: the conversation runtime replaces
+ * danger-full-access with a `workspace-write` sandbox whose writable roots are
+ * exactly the delivered allowlist, moves the run out of the target worktree,
+ * and fails the turn for a policy it cannot establish. Graph-workflow
+ * implementers dispatch through this path, so this is the declaration that
+ * gates them.
+ */
+export const codexConversationFsWriteRestriction = "enforced" as const;
+
 export interface CodexDescriptorDeps {
   conversationFactory: ConversationBackendFactory;
   /** `createCodexContinuityAdapter(...)` in production; injected so the
@@ -148,6 +158,7 @@ export function createCodexBackendDescriptor(
       factory: deps.conversationFactory,
       continuity: deps.continuity,
       capabilities: codexConversationCapabilities,
+      fsWriteRestriction: codexConversationFsWriteRestriction,
       runtimeConfig: deps.runtimeConfig,
       transcript: codexConversationTranscriptProjection,
     },

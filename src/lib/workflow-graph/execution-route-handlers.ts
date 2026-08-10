@@ -94,6 +94,7 @@ import {
   createGraphWorkflowIterationOrchestrator,
   type GraphWorkflowIterationToolServer,
   type IterationOrchestratorScriptValidatorInput,
+  type IterationOrchestratorValidationRoundService,
 } from "@/lib/workflow-graph/iteration-orchestrator";
 import {
   createGraphWorkflowManager,
@@ -122,7 +123,7 @@ import { stopExecutionLaneDevServers as defaultStopExecutionLaneDevServers } fro
 import { toHaltReason } from "@/lib/workflow-graph/errors";
 import { readWorktreeDirtyPaths } from "@/lib/git/worktree";
 import { defaultGitClient } from "@/lib/git/client";
-import { computeCandidateTreeHash } from "@/lib/git/diff";
+import { computeCandidateTreeHash, type CandidateScope } from "@/lib/git/diff";
 import type { ValidationCandidateTreeResolution } from "@/lib/workflow-graph/validation-round";
 import { createGraphLaneContinuity } from "@/lib/workflow-graph/lane-continuity";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
@@ -135,10 +136,7 @@ import { createPerSessionMergeMutex } from "./per-session-merge-mutex";
 import { createSessionGitLock } from "@/lib/shared/lock-retry";
 import { acquireSessionLock } from "@/lib/prompt/single-flight";
 import { createGraphWorkflowMergeRunner } from "./graph-merge-runner";
-import {
-  createExecutionTargetResolver,
-  type ExecutionTarget,
-} from "./execution-target-resolver";
+import { createExecutionTargetResolver } from "./execution-target-resolver";
 import { createGraphWorkflowSignalHaltHandler } from "./graph-workflow-signal-halt";
 import {
   createApprovalGateService,
@@ -147,6 +145,11 @@ import {
   type RecordDecisionInput,
   type RecordDecisionResult,
 } from "./approval-gate";
+import {
+  resolveApprovalSnapshot,
+  type ApprovalSnapshotResolution,
+  type ResolveApprovalSnapshotInput,
+} from "./approval-snapshot";
 import { createSoloContextCommitter } from "./solo-context-committer";
 import { createLaneCommitter } from "./lane-committer";
 import { createJoinRunner } from "./join-runner";
@@ -316,52 +319,88 @@ const validationService = createGraphWorkflowValidationService({
   renderRoundCommonSections: validatorRunner.renderRoundCommonSections,
 });
 
+export interface GraphWorkflowRouteValidationRoundServiceDeps {
+  getSession(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<SessionState | null>;
+  /** The base commit the patch is read against; null when git cannot answer. */
+  readHeadSha(worktreePath: string): Promise<string | null>;
+  /** The candidate's identity under `scope`; null when it cannot be read. */
+  computeCandidateIdentity(
+    worktreePath: string,
+    scope: CandidateScope,
+  ): Promise<string | null>;
+}
+
 /**
- * Resolves a validation round's candidate tree from the worktree the cohort
+ * Resolves a validation round's candidate identity from the worktree the cohort
  * will inspect: the per-context target when the context is worktree-isolated,
  * the session worktree otherwise.
  *
+ * The identity is read under the caller's candidate scope, and the scope is
+ * reported back as part of the resolution. The caller owns the scope because only
+ * it knows the reviewed context's placement; this service owns reading it, so the
+ * freeze and every later re-read go through one implementation and cannot differ
+ * in how they computed the same thing.
+ *
  * A failure is reported as `unavailable` with its reason, never as a partial
- * identity. The engine treats an unreadable tree as an infrastructure outcome —
- * a round that cannot name what it reviewed cannot certify it — so degrading to
- * "some components are missing" here would let a semantic verdict be published
- * on a candidate nobody could pin down.
+ * identity. The engine treats an unreadable candidate as an infrastructure
+ * outcome — a round that cannot name what it reviewed cannot certify it — so
+ * degrading to "some components are missing" here would let a semantic verdict be
+ * published on a candidate nobody could pin down.
  */
-const validationRoundService = {
-  async resolveCandidateTree(input: {
-    projectPath: string;
-    sessionName: string;
-    executionTarget?: ExecutionTarget;
-  }): Promise<ValidationCandidateTreeResolution> {
-    const worktreePath =
-      input.executionTarget?.worktreePath ??
-      (await defaultGetSession(input.projectPath, input.sessionName))
-        ?.worktreePath;
-    if (worktreePath === undefined) {
+export function createGraphWorkflowRouteValidationRoundService(
+  deps: GraphWorkflowRouteValidationRoundServiceDeps,
+): IterationOrchestratorValidationRoundService {
+  return {
+    async resolveCandidateTree(
+      input,
+    ): Promise<ValidationCandidateTreeResolution> {
+      const worktreePath =
+        input.executionTarget?.worktreePath ??
+        (await deps.getSession(input.projectPath, input.sessionName))
+          ?.worktreePath;
+      if (worktreePath === undefined) {
+        return {
+          kind: "unavailable",
+          reason: `no worktree resolved for session "${input.sessionName}"`,
+        };
+      }
+
+      const [head, candidateTreeHash] = await Promise.all([
+        deps.readHeadSha(worktreePath),
+        deps.computeCandidateIdentity(worktreePath, input.candidateScope),
+      ]);
+
+      if (head === null || candidateTreeHash === null) {
+        return {
+          kind: "unavailable",
+          reason: `git could not resolve ${head === null ? "HEAD" : "the candidate tree"} in ${worktreePath}`,
+        };
+      }
+
       return {
-        kind: "unavailable",
-        reason: `no worktree resolved for session "${input.sessionName}"`,
+        kind: "resolved",
+        identityScope:
+          input.candidateScope.mode === "wholeTree" ? "wholeTree" : "owned",
+        headSha: head,
+        candidateTreeHash,
       };
-    }
+    },
+  };
+}
 
-    const [head, candidateTreeHash] = await Promise.all([
-      defaultGitClient
-        .git(["rev-parse", "HEAD"], worktreePath)
-        .then((result) => result.stdout.trim() || null)
-        .catch(() => null),
-      computeCandidateTreeHash(worktreePath),
-    ]);
-
-    if (head === null || candidateTreeHash === null) {
-      return {
-        kind: "unavailable",
-        reason: `git could not resolve ${head === null ? "HEAD" : "the candidate tree"} in ${worktreePath}`,
-      };
-    }
-
-    return { kind: "resolved", headSha: head, candidateTreeHash };
-  },
-};
+const validationRoundService = createGraphWorkflowRouteValidationRoundService({
+  getSession: defaultGetSession,
+  readHeadSha: (worktreePath) =>
+    defaultGitClient
+      .git(["rev-parse", "HEAD"], worktreePath)
+      .then((result) => result.stdout.trim() || null)
+      .catch(() => null),
+  computeCandidateIdentity: (worktreePath, scope) =>
+    computeCandidateTreeHash(worktreePath, scope),
+});
 const scriptValidatorRunner = createScriptValidatorRunner();
 
 export interface GraphWorkflowRouteScriptValidatorServiceDeps {
@@ -488,6 +527,7 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
       toolServer: input.toolServer,
       executionTarget: input.executionTarget,
       askUserQuestionsEnabled: input.askUserQuestionsEnabled,
+      placement: input.placement,
     });
   },
   validationService,
@@ -762,6 +802,14 @@ export interface GraphWorkflowExecutionRouteDeps {
     input: RecordDecisionInput,
   ): Promise<RecordDecisionResult>;
   /**
+   * The change set the human approval surface renders for one parked context.
+   * Optional so a test can exercise the route without git; defaults to the real
+   * scoped reader.
+   */
+  resolveApprovalSnapshot?(
+    input: ResolveApprovalSnapshotInput,
+  ): Promise<ApprovalSnapshotResolution>;
+  /**
    * Approve the pending workflow definition on the session's active execution
    * (the definition-review gate for approval-required definitions). Defaults
    * to the workflow manager's atomic first-approval-wins recording.
@@ -869,6 +917,7 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
     workflowManager.recordPendingHaltReason(input),
   drainAndHalt: (input) => workflowManager.drainAndHalt(input),
   recordApprovalDecision: (input) => approvalGateService.recordDecision(input),
+  resolveApprovalSnapshot: (input) => resolveApprovalSnapshot(input),
   auth: createAgentAuth(),
   listArchivedExecutions: (projectPath, sessionName) =>
     listArchivedGraphWorkflowExecutions(projectPath, sessionName),
@@ -1902,6 +1951,70 @@ export function createGraphWorkflowExecutionRouteHandlers(
     }
   }
 
+  /**
+   * The change set the approval panel renders for one parked context (R15.2).
+   *
+   * A read of its own rather than a field on the execution payload: the patch is
+   * git bytes, not execution state, and folding it into the execution row every
+   * poller already fetches would put an unbounded blob on the hot path for the
+   * one surface that needs it.
+   */
+  async function APPROVAL_SNAPSHOT(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSession(context, deps);
+    if ("error" in resolved) {
+      return resolved.error;
+    }
+
+    const params = new URL(request.url).searchParams;
+    const contextId = params.get("contextId") ?? "";
+    // Optional: when the caller names the gate it is rendering, the resolver
+    // refuses to answer for a different one.
+    const requestedAt = params.get("requestedAt") ?? "";
+    if (contextId.trim() === "") {
+      return NextResponse.json(
+        { error: "Invalid request: contextId is required" } satisfies ApiError,
+        { status: 400 },
+      );
+    }
+
+    const activeExecution = await deps.getActiveExecution(
+      resolved.projectPath,
+      resolved.sessionName,
+    );
+    if (!activeExecution) {
+      return notFound(
+        "Session does not have an active graph workflow execution",
+      );
+    }
+
+    const resolveSnapshot =
+      deps.resolveApprovalSnapshot ?? resolveApprovalSnapshot;
+    const resolution = await resolveSnapshot({
+      execution: activeExecution,
+      contextId,
+      sessionWorktreePath: resolved.session.worktreePath,
+      ...(requestedAt.trim() === "" ? {} : { requestedAt }),
+    });
+
+    // A superseded gate 404s with the others rather than getting a response
+    // kind of its own: the caller's view of the execution is simply stale, and
+    // the fix is the refetch its next state update already triggers.
+    if (
+      resolution.kind === "unknown_context" ||
+      resolution.kind === "not_awaiting_approval" ||
+      resolution.kind === "gate_superseded"
+    ) {
+      return notFound(
+        `Context "${contextId}" is not awaiting approval in the active execution`,
+      );
+    }
+
+    return NextResponse.json(resolution);
+  }
+
   async function RESOLVE_APPROVAL(
     request: Request,
     context: RouteContext,
@@ -2311,6 +2424,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
     RESET_CONTEXT,
     RESET_ASSIGNMENT,
     RESOLVE_APPROVAL,
+    APPROVAL_SNAPSHOT,
     APPROVE_DEFINITION,
     approveDefinition,
     hasPendingDefinitionApproval,
@@ -2429,6 +2543,9 @@ export const resetGraphWorkflowExecutionAssignment = withTracing(
 );
 export const resolveGraphWorkflowApproval = withTracing(
   defaultGraphWorkflowExecutionHandlers.RESOLVE_APPROVAL,
+);
+export const getGraphWorkflowApprovalSnapshot = withTracing(
+  defaultGraphWorkflowExecutionHandlers.APPROVAL_SNAPSHOT,
 );
 export const approveGraphWorkflowDefinition = withTracing(
   defaultGraphWorkflowExecutionHandlers.APPROVE_DEFINITION,

@@ -32,6 +32,7 @@ import {
 import { copyConversationRefToClipboard } from "@/lib/conversations/copy-conversation-ref";
 import { useMarkProjectConversationReadMutation } from "@/lib/project-conversations-client/mutations";
 import { useResolveApprovalMutation } from "@/lib/workflows/mutations";
+import { useApprovalScopedChanges } from "@/features/session/hooks/use-approval-gate";
 import { useNotificationsQuery } from "@/lib/notifications/queries";
 import { useDismissNotificationMutation } from "@/lib/notifications/mutations";
 import {
@@ -575,12 +576,22 @@ function ConversationSidebar({
     peekSessionName,
   );
 
+  // The peek offers live Approve/Reject, so it is fed the SAME frozen
+  // owned-path artifact the workspace panel renders — through the same hook, so
+  // the two approval surfaces cannot drift apart (R15.2).
+  const peekScopedChanges = useApprovalScopedChanges(
+    peekProjectName,
+    peekSessionName,
+    peekConversation?.pendingApproval ?? null,
+  );
+
   const peekApprovalGate = ((): PeekApprovalGate | null => {
     const standing = peekConversation?.pendingApproval ?? null;
     if (standing === null) return null;
     const contextId = standing.contextId;
     return {
       isSubmitting: peekResolveApprovalMutation.isPending,
+      scopedChanges: peekScopedChanges,
       // The standing payload carries the suspension flag — the active
       // execution list omits halted executions, so it cannot be derived here.
       executionSuspended: standing.executionSuspended,

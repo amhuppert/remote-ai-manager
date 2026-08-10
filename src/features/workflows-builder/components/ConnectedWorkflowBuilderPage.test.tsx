@@ -129,6 +129,12 @@ const fullConfig: { config: GlobalConfig; raw: Record<string, unknown> } = {
 };
 
 vi.mock("@/lib/workflows/queries", () => ({
+  // Reached through the sidebar's approval peek; no gate stands in this page's
+  // fixtures, so the query is never enabled and a quiet stub is sufficient.
+  useGraphWorkflowApprovalSnapshotQuery: () => ({
+    data: undefined,
+    error: null,
+  }),
   useScopedWorkflowDefinitionsQuery: () => ({
     data: [
       {

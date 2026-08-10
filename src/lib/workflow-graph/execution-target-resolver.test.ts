@@ -6,6 +6,7 @@ import {
   createExecutionTargetResolver,
   type ExecutionTarget,
 } from "./execution-target-resolver";
+import { SESSION_LANE_ID, SESSION_LANE_NAME } from "./lane-identity";
 
 function createSession(overrides: Partial<SessionState> = {}): SessionState {
   return {
@@ -102,6 +103,54 @@ describe("ExecutionTargetResolver", () => {
     expect(result).toEqual(expected);
   });
 
+  it("resolves the authored read-only session sentinel before looking up an assigned lane row", () => {
+    const baseExecution = createWorkflowExecution();
+    const execution: GraphWorkflowExecution = {
+      ...baseExecution,
+      workingDefinition: {
+        ...baseExecution.workingDefinition,
+        executionContexts: baseExecution.workingDefinition.executionContexts.map(
+          (context) =>
+            context.id === "context-plan"
+              ? {
+                  ...context,
+                  placement: {
+                    lane: SESSION_LANE_NAME,
+                    mode: "readOnly" as const,
+                  },
+                  outputSchema: {
+                    type: "object" as const,
+                    properties: { plan: { type: "string" as const } },
+                  },
+                }
+              : context,
+        ),
+      },
+      contextStates: {
+        ...baseExecution.contextStates,
+        "context-plan": {
+          ...baseExecution.contextStates["context-plan"]!,
+          laneId: SESSION_LANE_ID,
+        },
+      },
+      executionLanes: {},
+    };
+    const session = createSession();
+
+    const result = createExecutionTargetResolver().resolve({
+      execution,
+      contextId: "context-plan",
+      session,
+    });
+
+    expect(result).toEqual<ExecutionTarget>({
+      worktreePath: session.worktreePath,
+      branchName: session.branchName,
+      isolation: "session",
+      laneId: null,
+    });
+  });
+
   it("falls back to the session target when only worktreePath is set without branchName", () => {
     const baseExecution = createWorkflowExecution();
     const execution: GraphWorkflowExecution = {
@@ -176,11 +225,30 @@ describe("ExecutionTargetResolver", () => {
     ).toThrow(/context-missing/);
   });
 
-  it("resolves through the assigned worktree-kind lane when contextState.laneId is set", () => {
+  it("resolves a read-only group member through its assigned worktree-kind lane", () => {
     const baseExecution = createWorkflowExecution();
     const existing = baseExecution.contextStates["context-plan"]!;
     const execution: GraphWorkflowExecution = {
       ...baseExecution,
+      workingDefinition: {
+        ...baseExecution.workingDefinition,
+        executionContexts: baseExecution.workingDefinition.executionContexts.map(
+          (context) =>
+            context.id === "context-plan"
+              ? {
+                  ...context,
+                  placement: {
+                    lane: "lane-plan",
+                    mode: "readOnly" as const,
+                  },
+                  outputSchema: {
+                    type: "object" as const,
+                    properties: { plan: { type: "string" as const } },
+                  },
+                }
+              : context,
+        ),
+      },
       contextStates: {
         ...baseExecution.contextStates,
         "context-plan": {
@@ -199,6 +267,7 @@ describe("ExecutionTargetResolver", () => {
           includedContextIds: ["context-plan"],
           lastCommittingContextId: null,
           commitSnapshots: [],
+          ignoredBaseline: [],
           createdAt: "2026-03-27T12:00:00.000Z",
           updatedAt: "2026-03-27T12:00:00.000Z",
         },
@@ -244,6 +313,7 @@ describe("ExecutionTargetResolver", () => {
           includedContextIds: ["context-plan"],
           lastCommittingContextId: null,
           commitSnapshots: [],
+          ignoredBaseline: [],
           createdAt: "2026-03-27T12:00:00.000Z",
           updatedAt: "2026-03-27T12:00:00.000Z",
         },
@@ -276,6 +346,7 @@ describe("ExecutionTargetResolver", () => {
         "context-plan": { ...existing, laneId: "lane-missing" },
       },
       executionLanes: {},
+      laneReservations: {},
     };
     const session = createSession();
     const resolver = createExecutionTargetResolver();

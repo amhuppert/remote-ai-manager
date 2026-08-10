@@ -13,6 +13,7 @@
  * writing to a temp config dir. The only fakes are the two things a unit test
  * cannot run: the agent turn and CC conversation creation.
  */
+import { WHOLE_TREE_CANDIDATE_SCOPE } from "@/lib/git/diff";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -204,7 +205,11 @@ function buildHarness(): Harness {
     },
     getProjectDisplayName: () => "demo",
     async computeValidationDiffScope() {
-      return { kind: "unavailable", reason: "not needed in this test" };
+      return {
+        kind: "unavailable",
+        candidateScope: WHOLE_TREE_CANDIDATE_SCOPE,
+        reason: "not needed in this test",
+      };
     },
     async readLaneConversation() {
       return null;

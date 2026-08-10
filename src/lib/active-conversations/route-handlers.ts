@@ -250,6 +250,7 @@ interface PendingApprovalStanding {
   requestedAt: string;
   workflowName: string | null;
   executionSuspended: boolean;
+  enveloped: boolean;
   tasksCompleted: number | null;
   tasksTotal: number | null;
 }
@@ -285,6 +286,9 @@ function buildPendingApprovalStandings(
       // assembly is synchronous over state, so no name is available here.
       workflowName: null,
       executionSuspended,
+      // From the PARKED record's frozen scope, never the context's live
+      // placement — placement is editable while the gate stands (R15.2).
+      enveloped: record.approvalScope.kind !== "whole_tree",
       tasksCompleted: contextState.completedTaskCount,
       tasksTotal: contextState.totalTaskCount,
     });
