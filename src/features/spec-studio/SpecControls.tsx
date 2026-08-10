@@ -815,9 +815,11 @@ export function ExecutionPanel({
             />
           )}
 
-          {activeExecution.state === "definition_review" && (
+          {(activeExecution.state === "definition_review" ||
+            workflowCompleted) && (
             <AbandonExecutionForm
               executionId={activeExecution.id}
+              stage={workflowCompleted ? "awaiting_merge" : "definition_review"}
               pending={pendingAction === "abandon-execution"}
               onAbandon={onAbandonExecution}
             />
@@ -1408,12 +1410,31 @@ function MergeGatePanel({
   );
 }
 
+/**
+ * The two states this form is reachable from, and why only these two. A run
+ * still executing is served by the blocking-replan coordinator, which abandons
+ * and reopens a seeded replacement in one act; offering a bare abandon there
+ * would compete with it. That leaves the run whose workflow already finished,
+ * which replan no longer covers and which reaches Delivered only through a
+ * merge — so when that merge happens elsewhere, this is its only exit.
+ */
+type AbandonExecutionStage = "definition_review" | "awaiting_merge";
+
+const ABANDON_EXECUTION_RATIONALE: Record<AbandonExecutionStage, string> = {
+  definition_review:
+    "Abandonment is terminal for this run: its pinned revision and scope are retained as history, and a new execution can start from any approved revision.",
+  awaiting_merge:
+    "This run's workflow finished, so it can only record Delivered by merging its session. If that work already landed another way, or the merge will never happen, abandoning is the only way to close the run out. Its pinned revision and scope are retained as history, and a new execution can start from any approved revision.",
+};
+
 function AbandonExecutionForm({
   executionId,
+  stage,
   pending,
   onAbandon,
 }: {
   executionId: string;
+  stage: AbandonExecutionStage;
   pending: boolean;
   onAbandon(input: AbandonExecutionPanelInput): void;
 }): React.JSX.Element {
@@ -1425,9 +1446,7 @@ function AbandonExecutionForm({
         Abandon execution
       </h3>
       <p className="mt-xs mb-0 text-[0.72rem] leading-relaxed text-text-secondary">
-        Abandonment is terminal for this run: its pinned revision and scope are
-        retained as history, and a new execution can start from any approved
-        revision.
+        {ABANDON_EXECUTION_RATIONALE[stage]}
       </p>
       <FormGroup layoutClassName="mt-md">
         <FormLabel htmlFor="spec-abandon-execution-reason">

@@ -1534,6 +1534,56 @@ describe("ExecutionPanel", () => {
     ).toBeVisible();
   });
 
+  it("offers abandonment once the workflow completed, the one running state blocking replan cannot reach", async () => {
+    const detail = detailFixture("running");
+    const execution = detail.executions[0];
+    const statusExecution = detail.status.executions[0];
+    if (execution === undefined || statusExecution === undefined) {
+      throw new Error("Running execution fixture missing");
+    }
+    execution.workflowExecutionId = "workflow-execution-1";
+    detail.status.executions = [
+      {
+        ...statusExecution,
+        workflowExecutionId: "workflow-execution-1",
+        workflowStatus: "completed",
+      },
+    ];
+    const onAbandonExecution = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ExecutionPanel
+        detail={detail}
+        projectName="command-center"
+        pendingAction={null}
+        error={null}
+        onGrantWaiver={vi.fn()}
+        onSetDisposition={vi.fn()}
+        onGrantGateApproval={vi.fn()}
+        onApproveExecutionStart={vi.fn()}
+        onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={onAbandonExecution}
+      />,
+    );
+
+    // Blocking replan is gone once the workflow finished, so without this form
+    // a run whose work landed outside its lane has no way to leave `running`.
+    expect(
+      screen.queryByRole("region", { name: "Blocking replan" }),
+    ).toBeNull();
+
+    await user.type(
+      screen.getByRole("textbox", { name: "Abandonment reason" }),
+      "The work landed on main outside this lane.",
+    );
+    await user.click(screen.getByRole("button", { name: "Abandon execution" }));
+
+    expect(onAbandonExecution).toHaveBeenCalledWith({
+      executionId: "execution-1",
+      reason: "The work landed on main outside this lane.",
+    });
+  });
+
   it("offers abandonment during definition review so a stuck run can always be stopped", async () => {
     const onAbandonExecution = vi.fn();
     const user = userEvent.setup();

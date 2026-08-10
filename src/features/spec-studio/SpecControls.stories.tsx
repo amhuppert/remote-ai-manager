@@ -149,7 +149,8 @@ export const RunningExecution: Story = {
 };
 
 /** The graph workflow has published into its session, so delivery now moves
- *  through the separate session-to-target merge. */
+ *  through the separate session-to-target merge — and, when that merge happens
+ *  elsewhere or never, through the abandon form that is this run's only exit. */
 export const ReadyToMerge: Story = {
   render: () => (
     <ExecutionPanel
