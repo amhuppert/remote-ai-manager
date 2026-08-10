@@ -104,6 +104,7 @@ describe("POST conversation answer (async consume + enqueue)", () => {
     drain: ReturnType<typeof vi.fn>;
     queueMessageSpy: ReturnType<typeof vi.fn>;
     recordLaneAnswers: ReturnType<typeof vi.fn>;
+    clearPendingQuestion: ReturnType<typeof vi.fn>;
   } {
     const svc = createMessageQueueService({
       mutateConversation: (
@@ -150,6 +151,28 @@ describe("POST conversation answer (async consume + enqueue)", () => {
     const recordLaneAnswers = vi.fn(
       async (): Promise<RecordAnswersResult> => ({ ok: true }),
     );
+    // The real durable clear, over the fixture's SQLite-backed store, so a test
+    // can reload the row and see whether the marker actually went away.
+    const clearPendingQuestion = vi.fn(
+      async (input: {
+        projectPath: string;
+        sessionName: string;
+        conversationId: string;
+        questionBatchId: string;
+      }): Promise<void> => {
+        await fixture.deps.mutateConversation(
+          input.projectPath,
+          input.sessionName,
+          input.conversationId,
+          "answer.clear_pending_question",
+          (conversation) => {
+            if (conversation.pendingQuestionId !== input.questionBatchId) return;
+            conversation.pendingQuestionId = null;
+            conversation.pendingQuestions = null;
+          },
+        );
+      },
+    );
 
     const deps: AnswerRouteDeps = {
       async resolveProjectPath() {
@@ -160,13 +183,21 @@ describe("POST conversation answer (async consume + enqueue)", () => {
       queueMessage: queueMessageSpy,
       ensureConversationActorAndDrain: drain,
       recordLaneAnswers,
+      clearPendingQuestion,
       async readConfig() {
         return { defaultAgentBackend: "claude" as const };
       },
       log: createCapturingLogger(),
       ...overrides,
     };
-    return { deps, sendEvent, drain, queueMessageSpy, recordLaneAnswers };
+    return {
+      deps,
+      sendEvent,
+      drain,
+      queueMessageSpy,
+      recordLaneAnswers,
+      clearPendingQuestion,
+    };
   }
 
   describe("public session position", () => {
@@ -465,13 +496,77 @@ describe("POST conversation answer (async consume + enqueue)", () => {
         type: "CLEAR_PENDING_QUESTION",
       });
 
-      // No message was enqueued — the lane conversation's queue stays empty.
+      // No message was enqueued — the lane conversation's queue stays empty —
+      // and the marker is gone from the durable row, not merely from a live
+      // actor's memory.
       const reloaded = await fixture.deps.getConversation(
         PROJECT,
         SESSION,
         CONV,
       );
       expect(reloaded?.pendingQueue).toHaveLength(0);
+      expect(reloaded?.pendingQuestionId).toBeNull();
+    });
+
+    it("clears the marker durably when no live actor accepts the transition", async () => {
+      // The lane's asking turn has already ended, so its actor is gone and
+      // `sendConversationEvent` refuses. Nothing else clears the marker on this
+      // path — no message is queued — so a marker left standing makes the
+      // execution loop re-park the resumed lane on the batch just answered.
+      await fixture.seedConversation(
+        PROJECT,
+        SESSION,
+        seedConversation({ role: "iteration" }),
+      );
+      const { deps } = makeDeps({ sendConversationEvent: vi.fn(() => false) });
+      const { POST } = createAnswerHandlers(deps);
+
+      const res = await POST(makeRequest({ questionId: "q_b1", answers }), {
+        params,
+      });
+
+      expect(res.status).toBe(200);
+
+      const reloaded = await fixture.deps.getConversation(
+        PROJECT,
+        SESSION,
+        CONV,
+      );
+      expect(reloaded?.pendingQuestionId).toBeNull();
+      expect(reloaded?.pendingQuestions).toBeNull();
+    });
+
+    it("leaves the marker standing when the gate rejects the answer", async () => {
+      // A rejected answer was never recorded, so the question is still live and
+      // the user must be able to retry it.
+      await fixture.seedConversation(
+        PROJECT,
+        SESSION,
+        seedConversation({ role: "iteration" }),
+      );
+      const { deps } = makeDeps({
+        sendConversationEvent: vi.fn(() => false),
+        recordLaneAnswers: vi.fn(
+          async (): Promise<RecordAnswersResult> => ({
+            ok: false,
+            reason: "not_found",
+          }),
+        ),
+      });
+      const { POST } = createAnswerHandlers(deps);
+
+      const res = await POST(makeRequest({ questionId: "q_b1", answers }), {
+        params,
+      });
+
+      expect(res.status).toBe(410);
+
+      const reloaded = await fixture.deps.getConversation(
+        PROJECT,
+        SESSION,
+        CONV,
+      );
+      expect(reloaded?.pendingQuestionId).toBe("q_b1");
     });
 
     it("validator lane: also diverts to the gate", async () => {

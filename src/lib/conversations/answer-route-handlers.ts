@@ -15,9 +15,12 @@
  * - Graph-workflow lane conversation (role "iteration" | "validator"): the
  *   answer is recorded on the execution's context record via the user-input
  *   gate — no message is queued and auto-drain never fires. The conversation's
- *   pending marker is cleared through a `CLEAR_PENDING_QUESTION` machine
- *   transition; the execution loop resumes the lane from the recorded answers.
- *   A duplicate lane answer is rejected by the gate as already-answered → 410.
+ *   pending marker is then cleared durably, and a `CLEAR_PENDING_QUESTION`
+ *   machine transition syncs a live actor; with nothing queued to consume the
+ *   marker later, the durable write is what makes the clear survive an actor
+ *   that has already ended its turn. The execution loop resumes the lane from
+ *   the recorded answers. A duplicate lane answer is rejected by the gate as
+ *   already-answered → 410.
  *
  * Two scope adapters share the ordinary path: the session adapter resolves
  * project → session → conversation, the project adapter resolves the project
@@ -39,6 +42,7 @@ import {
   getConversation,
   getProjectConversation,
   getSession,
+  mutateConversation,
   getActiveGraphWorkflowExecution,
   mutateActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
@@ -127,6 +131,17 @@ export interface AnswerRouteDeps extends AnswerDeliveryDeps {
     conversationId: string,
   ): Promise<ConversationState | null>;
   recordLaneAnswers(input: RecordAnswersInput): Promise<RecordAnswersResult>;
+  /**
+   * Durably drop the conversation's pending-question marker, but only while it
+   * still names `questionBatchId` — a marker that has moved on belongs to a
+   * later ask that this answer must not silently retire.
+   */
+  clearPendingQuestion(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+    questionBatchId: string;
+  }): Promise<void>;
 }
 
 export interface ProjectAnswerRouteDeps extends AnswerDeliveryDeps {
@@ -320,6 +335,20 @@ export function createAnswerHandlers(deps: AnswerRouteDeps) {
         );
       }
 
+      // The marker is retired durably, then the machine is told. The ordinary
+      // path can lean on a refused transition because its queued answer clears
+      // the marker when the row is claimed; a lane answer queues nothing, so a
+      // refusal here — the asking turn has ended, so the actor is usually gone
+      // — would leave the marker standing forever. The execution loop reads
+      // exactly that field to decide whether a resumed lane still owes a
+      // question, so a stale marker re-parks the lane on the batch it was just
+      // handed answers for, and the run can never move past it.
+      await deps.clearPendingQuestion({
+        projectPath,
+        sessionName,
+        conversationId,
+        questionBatchId: body.questionId,
+      });
       deps.sendConversationEvent(projectPath, sessionName, conversationId, {
         type: "CLEAR_PENDING_QUESTION",
       });
@@ -407,6 +436,24 @@ const defaultHandlers = createAnswerHandlers({
   queueMessage,
   ensureConversationActorAndDrain,
   recordLaneAnswers: userInputGateService.recordAnswers,
+  clearPendingQuestion: async ({
+    projectPath,
+    sessionName,
+    conversationId,
+    questionBatchId,
+  }) => {
+    await mutateConversation(
+      projectPath,
+      sessionName,
+      conversationId,
+      "answer.clear_pending_question",
+      (conversation) => {
+        if (conversation.pendingQuestionId !== questionBatchId) return;
+        conversation.pendingQuestionId = null;
+        conversation.pendingQuestions = null;
+      },
+    );
+  },
   readConfig,
   log: logger,
 });
