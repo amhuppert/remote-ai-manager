@@ -13,7 +13,7 @@ const coordinatorHeapMb = Number.parseInt(
 // fast; the full-suite command raises it to report every failure at once.
 const testBail = Number.parseInt(process.env.CC_TEST_BAIL ?? "3", 10);
 
-if (!Number.isInteger(requestedWorkers) || requestedWorkers < 1) {
+if (!Number.isInteger(testWorkers) || testWorkers < 1) {
   throw new Error("CC_TEST_WORKERS must be a positive integer");
 }
 if (!Number.isInteger(testHeapMb) || testHeapMb < 1) {
