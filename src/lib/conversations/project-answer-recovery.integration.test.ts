@@ -417,6 +417,48 @@ describe("project answer after runtime + store teardown (R4.3)", () => {
     expect(delivered).toHaveLength(2);
   });
 
+  it("replaces an incompatible live actor before draining the answer", async () => {
+    await askOnALiveTurn();
+    const incompatibleActor = getConversationActor(
+      PROJECT_PATH,
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
+      CONVERSATION_ID,
+    );
+    expect(incompatibleActor).toBeDefined();
+    if (!incompatibleActor) {
+      throw new Error("Expected the asking actor to remain registered");
+    }
+    Object.defineProperty(incompatibleActor.getSnapshot(), "can", {
+      value: undefined,
+    });
+
+    const res = await answerHandlers().POST(
+      jsonRequest(`/api/projects/cc/conversations/${CONVERSATION_ID}/answer`, {
+        questionId: "q_gate1",
+        answers,
+      }),
+      { params },
+    );
+    expect(res.status).toBe(200);
+
+    const recoveredActor = await vi.waitFor(() => {
+      const found = getConversationActor(
+        PROJECT_PATH,
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+        CONVERSATION_ID,
+      );
+      expect(found).toBeDefined();
+      expect(found).not.toBe(incompatibleActor);
+      expect(delivered).toHaveLength(2);
+      return found;
+    });
+    expect(recoveredActor).toBeDefined();
+    expect(parseQuestionAnswersBlock(delivered[1] ?? "")).toEqual({
+      questionBatchId: "q_gate1",
+      answers,
+    });
+  });
+
   it("binds the recovered actor to the project root, not a session worktree", async () => {
     await askOnALiveTurn();
     tearDownRuntimeAndStore();

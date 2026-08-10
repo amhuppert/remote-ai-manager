@@ -360,6 +360,29 @@ describe("conversation manager", () => {
 
       expect(result).toBe(false);
     });
+
+    it("recycles an actor whose snapshot cannot evaluate event legality", () => {
+      const actor = startConversationActor(DEFAULT_INPUT);
+      Object.defineProperty(actor.getSnapshot(), "can", {
+        value: undefined,
+      });
+
+      const result = sendConversationEvent(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        DEFAULT_INPUT.conversationId,
+        { type: "CLEAR_PENDING_QUESTION" },
+      );
+
+      expect(result).toBe(false);
+      expect(
+        getConversationActor(
+          DEFAULT_INPUT.projectPath,
+          DEFAULT_INPUT.sessionName,
+          DEFAULT_INPUT.conversationId,
+        ),
+      ).toBeUndefined();
+    });
   });
 
   describe("executeConversationTurn", () => {

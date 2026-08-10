@@ -938,13 +938,21 @@ export function sendConversationEvent(
   // answer route has already recorded the answer by the time it fires here, so
   // propagating would turn a succeeded answer into a 500 the operator reads as
   // "nothing happened". An entry that cannot be interrogated refuses exactly
-  // like a dead one.
+  // like a dead one, and is evicted so the next ensure-and-drain rebuilds a
+  // usable actor instead of finding the same broken entry.
   const snapshot = readUsableSnapshot(actor);
   if (!snapshot) {
-    logger.warn("conversation-manager.unusable_actor_event_refused", {
+    logger.error("conversation-manager.incompatible_snapshot", {
       conversationId,
+      ...scopeRefFromStoreSessionName(sessionName),
       eventType: event.type,
     });
+    stopConversationActor(
+      projectPath,
+      sessionName,
+      conversationId,
+      "incompatible_snapshot",
+    );
     return false;
   }
   if (!snapshot.can(event)) return false;
