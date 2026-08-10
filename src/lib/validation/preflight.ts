@@ -11,6 +11,12 @@ export const VALIDATION_COST_EXCEEDS_LIMIT_CODE =
 export interface ValidationCommandPreflight {
   commandCosts: Readonly<Record<string, ValidationCommandConfig["cost"]>>;
   concurrencyLimit: GlobalValidationConfig["concurrencyLimit"];
+  /**
+   * The project's effective lane-merge command set. Optional only for pure
+   * unit fixtures and project-unbound callers; every production project-bound
+   * boundary supplies it through {@link createValidationCommandPreflight}.
+   */
+  laneMergeCommands?: readonly string[];
 }
 
 export interface ValidationCostExceedsLimit {
@@ -36,6 +42,9 @@ export function createValidationCommandPreflight(
       ]),
     ),
     concurrencyLimit: resolvedGlobal.concurrencyLimit,
+    laneMergeCommands: [
+      ...(repoValidation?.laneMerge ?? repoValidation?.preMerge ?? []),
+    ],
   };
 }
 

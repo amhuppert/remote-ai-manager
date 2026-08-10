@@ -32,6 +32,7 @@ import {
   executeConversationTurn,
   setEnsureConversationActorDeps,
   _resetEnsureConversationActorDepsForTesting,
+  getActorRegistry,
   type EnsureActorInputData,
 } from "./manager";
 import {
@@ -111,6 +112,32 @@ const DEFAULT_INPUT = {
   promptCount: 0,
   persistence: "durable" as const,
 };
+
+/**
+ * Put an entry in the live-actor registry whose `getSnapshot()` returns
+ * something that is NOT a machine snapshot — no `can`, no `context`.
+ *
+ * This is the shape observed in production behind a stuck graph-workflow lane:
+ * the registry held an entry for the lane conversation that answered
+ * `getSnapshot()` with a bare object, which made `sendConversationEvent` throw
+ * `getSnapshot(...).can is not a function` and `ensureConversationActor` throw
+ * `Cannot read properties of undefined (reading 'worktreePath')`. Both callers
+ * treat the registry as best-effort, so neither may propagate.
+ */
+function registerUnusableActor(): void {
+  const key = conversationRuntimeKey(
+    DEFAULT_INPUT.projectPath,
+    DEFAULT_INPUT.sessionName,
+    DEFAULT_INPUT.conversationId,
+  );
+  getActorRegistry().set(key, {
+    getSnapshot: () => ({}),
+    send: () => {
+      throw new Error("unusable actor must never be sent to");
+    },
+    stop: () => {},
+  } as unknown as ReturnType<typeof startConversationActor>);
+}
 
 describe("conversation manager", () => {
   beforeEach(() => {
@@ -315,6 +342,46 @@ describe("conversation manager", () => {
         { type: "DEBUG_COMMAND", command: { kind: "mark_reproduced" } },
       );
       expect(result).toBe(false);
+    });
+
+    it("refuses instead of throwing when the registered actor cannot be interrogated", () => {
+      // Every caller treats this as best-effort — the lane answer route in
+      // particular has already recorded the answer by the time it fires, so a
+      // throw here turns a succeeded answer into a 500. A registry entry whose
+      // snapshot is not a usable machine snapshot must refuse like a dead one.
+      registerUnusableActor();
+
+      const result = sendConversationEvent(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        DEFAULT_INPUT.conversationId,
+        { type: "CLEAR_PENDING_QUESTION" },
+      );
+
+      expect(result).toBe(false);
+    });
+
+    it("recycles an actor whose snapshot cannot evaluate event legality", () => {
+      const actor = startConversationActor(DEFAULT_INPUT);
+      Object.defineProperty(actor.getSnapshot(), "can", {
+        value: undefined,
+      });
+
+      const result = sendConversationEvent(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        DEFAULT_INPUT.conversationId,
+        { type: "CLEAR_PENDING_QUESTION" },
+      );
+
+      expect(result).toBe(false);
+      expect(
+        getConversationActor(
+          DEFAULT_INPUT.projectPath,
+          DEFAULT_INPUT.sessionName,
+          DEFAULT_INPUT.conversationId,
+        ),
+      ).toBeUndefined();
     });
   });
 
@@ -848,6 +915,30 @@ describe("conversation manager", () => {
       expect(recreated.getSnapshot().context.worktreePath).toBe(
         "/new-worktree",
       );
+      expect(loadActorInput).toHaveBeenCalledTimes(1);
+    });
+
+    it("rebuilds the actor when the existing one cannot be interrogated", async () => {
+      // An entry that cannot answer for its own worktreePath cannot be proven
+      // to match the requested target, and it is certainly not mid-turn. The
+      // dispatch must replace it rather than halt the execution loop.
+      registerUnusableActor();
+      const loadActorInput = vi.fn(
+        async () =>
+          makeActorInputData({
+            sessionWorktreePath: "/session-worktree",
+          }) satisfies EnsureActorInputData,
+      );
+      setEnsureConversationActorDeps({ loadActorInput });
+
+      const actor = await ensureConversationActor(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        DEFAULT_INPUT.conversationId,
+        { executionTarget: { worktreePath: "/lane-worktree" } },
+      );
+
+      expect(actor.getSnapshot().context.worktreePath).toBe("/lane-worktree");
       expect(loadActorInput).toHaveBeenCalledTimes(1);
     });
 

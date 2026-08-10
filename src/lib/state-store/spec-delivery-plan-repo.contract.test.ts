@@ -109,6 +109,7 @@ function maximalDiscoveredTask(): DiscoveredTask {
     coveredCriterionElementIds: ["criterion-selected"],
     dependsOnTaskElementIds: ["task-store"],
     laneGroup: "discovery",
+    executionLane: "discovery-lane",
     touchedPaths: ["src/lib/specs"],
   });
 }

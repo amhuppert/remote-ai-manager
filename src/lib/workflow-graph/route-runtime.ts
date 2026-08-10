@@ -28,6 +28,7 @@ import {
 } from "@/lib/workflow-graph/lane-readiness";
 import { skipContext } from "@/lib/workflow-graph/context-transitions";
 import type {
+  GraphWorkflowCanonicalOwnership,
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
   GraphWorkflowLandingIntent,
@@ -406,7 +407,28 @@ function classifyLanding(
   // mutation that records it leaves the trailer on the branch and the lane's
   // `includedContextIds` empty, which is precisely the case the token exists
   // to replay.
-  return classifyCommitLanding(intent, evidence);
+  return classifyCommitLanding(
+    intent,
+    evidence,
+    sharesLaneWithSiblings(state.reservedOwnership),
+  );
+}
+
+/**
+ * Whether this context's HEAD moves may belong to someone else.
+ *
+ * Range-based adoption reads "HEAD moved past my baseline" as "I committed
+ * that". On a lane one context holds alone the inference is sound. Under an
+ * ownership envelope it is not: siblings land into the same branch, so a moved
+ * HEAD is at least as likely to be theirs — and an enveloped context cannot
+ * have authored a commit anyway, since the envelope denies it `.git`. A
+ * read-only member commits nothing by definition, so every move it sees is a
+ * sibling's.
+ */
+function sharesLaneWithSiblings(
+  ownership: GraphWorkflowCanonicalOwnership | null | undefined,
+): boolean {
+  return ownership?.mode === "owned" || ownership?.mode === "readOnly";
 }
 
 /**
@@ -417,6 +439,7 @@ function classifyLanding(
 function classifyCommitLanding(
   intent: GraphWorkflowLandingIntent,
   evidence: LandingBranchEvidence | undefined,
+  laneIsShared: boolean,
 ): LandingClassification | null {
   if (!evidence) return null;
 
@@ -427,6 +450,12 @@ function classifyCommitLanding(
       headSha: evidence.headSha ?? evidence.tokenCommitSha,
     };
   }
+
+  // No token, and the branch is shared: nothing here names THIS context, so the
+  // intent stays pending and the resumed engine re-runs its landing. That is
+  // safe to do unconditionally because the pathspec landing is idempotent —
+  // work already on the branch produces an identical tree and no second commit.
+  if (laneIsShared) return null;
 
   // No token: the implementer authored the commit itself, or there was nothing
   // to commit. Both are claims about the recorded range, so an unrecorded or

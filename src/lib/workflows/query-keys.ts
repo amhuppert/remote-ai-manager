@@ -53,6 +53,34 @@ export const graphWorkflowExecutionKeys = {
     [...graphWorkflowExecutionKeys.all, projectName, sessionName] as const,
 };
 
+/**
+ * The frozen scoped change set one parked context's approval panel renders.
+ *
+ * Keyed by context because a session can park several at once, and by the
+ * gate's `requestedAt` because the SAME context parks repeatedly: rejection,
+ * remediation, and a second gate over a different frozen candidate. Without the
+ * gate in the key the second gate reads the first one's cached payload — inside
+ * the freshness window it may not refetch at all, and past it the stale bytes
+ * still render during the background refetch. Either way the human would be
+ * deciding on a candidate that is not the one now frozen.
+ */
+export const graphWorkflowApprovalSnapshotKeys = {
+  all: ["graph-workflow-approval-snapshot"] as const,
+  detail: (
+    projectName: string,
+    sessionName: string,
+    contextId: string,
+    requestedAt: string,
+  ) =>
+    [
+      ...graphWorkflowApprovalSnapshotKeys.all,
+      projectName,
+      sessionName,
+      contextId,
+      requestedAt,
+    ] as const,
+};
+
 export const graphWorkflowHistoryKeys = {
   all: ["graph-workflow-history"] as const,
   list: (projectName: string, sessionName: string) =>

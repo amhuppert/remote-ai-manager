@@ -11,16 +11,23 @@ describe("validation command preflight", () => {
         {
           commands: {
             test: {
-              command: "scripts/validate/test.sh",
+              command: {
+                full: "scripts/validate/test-full-suite.sh",
+                changed: "scripts/validate/test.sh",
+              },
               cost: 8,
-              scopeArgs: "paths",
+              pathArgs: "paths",
             },
           },
           preMerge: ["test"],
         },
         undefined,
       ),
-    ).toEqual({ commandCosts: { test: 8 }, concurrencyLimit: 8 });
+    ).toEqual({
+      commandCosts: { test: 8 },
+      concurrencyLimit: 8,
+      laneMergeCommands: ["test"],
+    });
   });
 
   it("rejects configured cost above the limit without clamping", () => {

@@ -56,6 +56,7 @@ import {
   selectLedgerDecisionRows,
   type LedgerDecisionRow,
 } from "./workflow-ledger";
+import { deriveExecutionLaneActivities } from "@/lib/workflow-graph/lane-activity";
 
 /**
  * `cctl workflow validate|create|replace|list|get|status|delete|start|templates`
@@ -174,17 +175,37 @@ const contextStateSchema = z.object({
   status: z.string(),
   totalTaskCount: z.number(),
   completedTaskCount: z.number(),
+  batchId: z.string().nullable().optional(),
+  laneId: z.string().nullable().optional(),
 });
 const executionSchema = z.object({
   id: z.string(),
   status: z.string(),
+  activeContextIds: z.array(z.string()).default([]),
   // haltReason is a structured discriminated union server-side; keep it lenient
   // here and derive a short label for display (see haltLabel).
   haltReason: z.unknown().nullish(),
   workingDefinition: z.object({
-    executionContexts: z.array(z.object({ id: z.string(), title: z.string() })),
+    executionContexts: z.array(
+      z.object({
+        id: z.string(),
+        title: z.string(),
+        placement: z.object({ lane: z.string() }).optional(),
+      }),
+    ),
   }),
   contextStates: z.record(z.string(), contextStateSchema),
+  executionLanes: z
+    .record(
+      z.string(),
+      z.object({
+        laneId: z.string(),
+        kind: z.enum(["session", "worktree"]),
+        status: z.string(),
+        includedContextIds: z.array(z.string()).default([]),
+      }),
+    )
+    .default({}),
 });
 const statusResponseSchema = z.object({
   execution: executionSchema.nullable(),
@@ -817,12 +838,14 @@ async function runWorkflowStatus(
     "execution" in result.body
       ? (result.body as { execution: unknown }).execution
       : execution;
+  const lanes = deriveExecutionLaneActivities(execution);
 
   return {
     exitCode: EXIT_OK,
     stdout: render(json, formatStatusTable(execution), {
       ok: true,
       execution: rawExecution,
+      lanes,
     }),
     stderr: "",
   };
@@ -843,6 +866,7 @@ function haltLabel(haltReason: unknown): string | null {
 }
 
 function formatStatusTable(execution: z.infer<typeof executionSchema>): string {
+  const lanes = deriveExecutionLaneActivities(execution);
   const rows = execution.workingDefinition.executionContexts.map((ctx) => {
     const state = execution.contextStates[ctx.id];
     return {
@@ -860,13 +884,30 @@ function formatStatusTable(execution: z.infer<typeof executionSchema>): string {
   const header = `${execution.id}  ${execution.status}${
     halt ? `  (halted: ${halt})` : ""
   }`;
-  const body = rows
+  const laneBody = lanes
+    .map(
+      (lane) =>
+        `  ${lane.laneId}  ${lane.status}  ${lane.members
+          .map(
+            (member) =>
+              `${member.contextId}: ${member.activity} (${member.status})`,
+          )
+          .join(", ")}`,
+    )
+    .join("\n");
+  const contextBody = rows
     .map(
       (r) =>
         `  ${r.id.padEnd(idWidth)}  ${r.status.padEnd(statusWidth)}  ${r.tasks}`,
     )
     .join("\n");
-  return rows.length === 0 ? `${header}\n` : `${header}\n${body}\n`;
+  const sections = [
+    lanes.length > 0 ? `lanes:\n${laneBody}` : null,
+    rows.length > 0 ? `contexts:\n${contextBody}` : null,
+  ].filter((section): section is string => section !== null);
+  return sections.length === 0
+    ? `${header}\n`
+    : `${header}\n${sections.join("\n")}\n`;
 }
 
 async function runWorkflowDelete(

@@ -190,6 +190,7 @@ function makeDefinition(): WorkflowSemanticDefinition {
         title: "Build the feature",
         description: "Implement the core behavior",
         acceptanceCriteria: "The feature works and is covered by tests.",
+        placement: { lane: "ctx-1", mode: "full" },
       },
     ],
     tasks: TASKS,

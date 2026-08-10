@@ -73,6 +73,44 @@ describe("collectLaneWorktreePaths", () => {
       "/proj/.worktrees/s.c",
     ]);
   });
+
+  it("preserves a shared lane when resetting only one of its remaining members", () => {
+    const a = ctx("a", "worktree", "/proj/.worktrees/s.shared");
+    const b = ctx("b", "worktree", "/proj/.worktrees/s.shared");
+    a.laneId = "shared";
+    b.laneId = "shared";
+    const execution = buildExecution({ a, b });
+
+    expect(
+      collectLaneWorktreePaths(execution, { contextIds: ["a"] }),
+    ).toEqual([]);
+  });
+
+  it("collects a named lane once at terminal cleanup even when context rows no longer carry its path", () => {
+    const execution = buildExecution({
+      a: ctx("a", "session", null),
+      b: ctx("b", "session", null),
+    });
+    execution.executionLanes = {
+      implementation: {
+        laneId: "implementation",
+        kind: "worktree",
+        status: "active",
+        worktreePath: "/proj/.worktrees/s.implementation",
+        branchName: "csm/s-implementation",
+        includedContextIds: ["a", "b"],
+        lastCommittingContextId: null,
+        commitSnapshots: [],
+        ignoredBaseline: [],
+        createdAt: "2026-03-27T12:00:00.000Z",
+        updatedAt: "2026-03-27T12:00:00.000Z",
+      },
+    };
+
+    expect(collectLaneWorktreePaths(execution)).toEqual([
+      "/proj/.worktrees/s.implementation",
+    ]);
+  });
 });
 
 describe("stopExecutionLaneDevServers", () => {

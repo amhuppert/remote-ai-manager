@@ -20,6 +20,7 @@ function makeContext(
     description:
       "Implement REST API endpoints for user management with authentication and validation.",
     acceptanceCriteria: "All REST endpoints exist and pass integration tests.",
+    placement: { lane: "ctx-1", mode: "full" },
     implementer: {
       id: "implementer",
       profile: { tier: "builtin", id: "general-implementer" },
@@ -382,6 +383,7 @@ export const AwaitingApproval: Story = {
           conversationId: "conv-1",
           requestedAt: "2026-06-10T09:00:00.000Z",
           decision: null,
+          approvalScope: { kind: "whole_tree" },
         },
         pendingUserInputs: {},
         contextId: "ctx-1",
@@ -692,6 +694,7 @@ export const ValidatorsInheritedClaude: Story = {
   args: {
     data: {
       context: {
+        placement: { lane: "ctx-1", mode: "full" as const },
         id: "ctx-1",
         title: "API Integration",
         description:
@@ -742,6 +745,7 @@ export const ValidatorsInheritedScriptAndCodex: Story = {
   args: {
     data: {
       context: {
+        placement: { lane: "ctx-1", mode: "full" as const },
         id: "ctx-1",
         title: "API Integration",
         description:
@@ -817,6 +821,7 @@ export const ApprovalGateWithValidators: Story = {
   args: {
     data: {
       context: {
+        placement: { lane: "ctx-1", mode: "full" as const },
         id: "ctx-1",
         title: "API Integration",
         description:

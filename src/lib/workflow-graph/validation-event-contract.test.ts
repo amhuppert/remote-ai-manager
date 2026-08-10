@@ -540,6 +540,7 @@ describe("non-verdict rounds publish incidents, never verdicts (R6.1)", () => {
         roundToken: {
           seq: 99,
           candidate: {
+            identityScope: "wholeTree",
             headSha: "x",
             candidateTreeHash: "y",
             taskStateHash: "z",

@@ -178,6 +178,13 @@ export interface AgentBackendConversationFacet {
   /** Session/thread lifecycle (start/validate/resumeOrRecover/fork). */
   continuity: BackendContinuityAdapter;
   capabilities: BackendConversationCapabilities;
+  /**
+   * Whether this backend's CONVERSATION runtime can mechanically confine a
+   * turn's writes to a delivered `fsWritePolicy`. Declared separately from the
+   * task facet because graph-workflow implementers dispatch conversation turns,
+   * so the confinement claim that gates them has to be about this runtime.
+   */
+  fsWriteRestriction: FsWriteRestrictionSupport;
   /** Neutral capability-cascade apply seam; translation happens inside. */
   runtimeConfig: BackendRuntimeConfigAdapter;
   transcript: BackendConversationTranscriptProjection;

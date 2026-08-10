@@ -576,6 +576,74 @@ function normalizeEvent(
       };
     }
 
+    case "graph-workflow-lane-created":
+      return {
+        key,
+        occurredAt,
+        contextId: null,
+        dot: "neutral",
+        title: `Lane created · ${event.laneId}`,
+        detail: (
+          <span>
+            {event.kind} · placement: {event.placementSource}
+          </span>
+        ),
+        expandable: null,
+      };
+
+    case "graph-workflow-lane-concurrent-admission":
+      return {
+        key,
+        occurredAt,
+        contextId: event.memberContextIds[0] ?? null,
+        dot: "task-running",
+        title: `Concurrent lane admission · ${event.laneId}`,
+        detail: (
+          <span>
+            {event.memberContextIds
+              .map((id) => contextLookup.get(id) ?? id)
+              .join(", ")}{" "}
+            · canonical check: {event.canonicalCheckResult}
+          </span>
+        ),
+        expandable: null,
+      };
+
+    case "graph-workflow-lane-landed": {
+      const contextTitle =
+        contextLookup.get(event.contextId) ?? event.contextId;
+      return {
+        key,
+        occurredAt,
+        contextId: event.contextId,
+        dot: "task-completed",
+        title: `Lane landed · ${contextTitle}`,
+        detail: (
+          <span>
+            {event.laneId} · {event.commitSha ?? "no commit"}
+            {event.ownedPathspec
+              ? ` · paths: ${event.ownedPathspec.join(", ")}`
+              : " · full worktree"}
+          </span>
+        ),
+        expandable: null,
+      };
+    }
+
+    case "graph-workflow-lane-drift-halted": {
+      const contextTitle =
+        contextLookup.get(event.contextId) ?? event.contextId;
+      return {
+        key,
+        occurredAt,
+        contextId: event.contextId,
+        dot: "task-failed",
+        title: `Lane drift halted · ${event.laneId} · ${contextTitle}`,
+        detail: <span>{event.unattributedPaths.join(", ")}</span>,
+        expandable: null,
+      };
+    }
+
     case "graph-workflow-lane-commit": {
       const contextTitle =
         contextLookup.get(event.contextId) ?? event.contextId;

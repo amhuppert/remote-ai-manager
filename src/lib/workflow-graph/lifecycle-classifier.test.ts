@@ -26,6 +26,7 @@ import {
   classifyExecutionEditability,
   explicitArchiveEligibility,
   graphWorkflowLifecycleDecision,
+  evaluateGraphWorkflowSessionDelivery,
   isResumableHalt,
   isTerminalStatus,
   replacementPolicy,
@@ -40,6 +41,7 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
       id: "ctx-1",
       title: "Ctx 1",
       acceptanceCriteria: "AC1",
+      placement: { lane: "ctx-1", mode: "full" },
       implementer: {
         id: "implementer",
         profile: { tier: "builtin", id: "general-implementer" },
@@ -128,6 +130,42 @@ function taskState(
 ): GraphWorkflowTaskState {
   return { ...INITIAL_TASK_STATE, ...patch };
 }
+
+describe("evaluateGraphWorkflowSessionDelivery", () => {
+  const blockingStatuses: GraphWorkflowStatus[] = [
+    "pending",
+    "running",
+    "paused",
+    "halted",
+  ];
+
+  for (const status of blockingStatuses) {
+    it(`blocks ${status} execution work from being delivered as a finished session`, () => {
+      expect(
+        evaluateGraphWorkflowSessionDelivery({ id: "execution-1", status }),
+      ).toEqual({
+        allowed: false,
+        executionId: "execution-1",
+        status,
+        message: `Graph workflow execution execution-1 is ${status}. Complete or abort it before merging this session.`,
+      });
+    });
+  }
+
+  for (const status of ["completed", "aborted"] as const) {
+    it(`allows session delivery after the execution is ${status}`, () => {
+      expect(
+        evaluateGraphWorkflowSessionDelivery({ id: "execution-1", status }),
+      ).toEqual({ allowed: true });
+    });
+  }
+
+  it("allows session delivery when no graph execution exists", () => {
+    expect(evaluateGraphWorkflowSessionDelivery(null)).toEqual({
+      allowed: true,
+    });
+  });
+});
 
 describe("classifyContextLifecycle", () => {
   const cases: Array<{
@@ -458,6 +496,13 @@ describe("isResumableHalt", () => {
       contextId: "refine__p3__judge",
       message: "the final allowed pass did not satisfy the until predicate",
       summary: null,
+    },
+    ownership_violation: {
+      type: "ownership_violation",
+      laneId: "lane-api",
+      contextId: "ctx-1",
+      unattributedPaths: ["scripts/deploy.sh"],
+      message: 'Lane "lane-api" has 1 change no member owns',
     },
   };
 

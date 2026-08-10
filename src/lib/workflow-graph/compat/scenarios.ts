@@ -2,6 +2,10 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { workflowSemanticDefinitionSchema } from "@/lib/workflow-graph/definition-schemas";
+import {
+  migrateRawDefinitionPlacement,
+  migrateRawExecutionPlacement,
+} from "@/lib/workflow-graph/placement-migration";
 import type { CompatibilityScenario } from "./engine-harness";
 import {
   compatibilityRecordingSchema,
@@ -46,12 +50,41 @@ function readJson(absolutePath: string): unknown {
   return JSON.parse(readFileSync(absolutePath, "utf8"));
 }
 
+/**
+ * The recorded pre-D4 definition exactly as captured, with nothing applied.
+ *
+ * Deliberately raw: these bytes are the evidence, and a reader that quietly
+ * migrated them would leave nothing able to prove a fixture is still
+ * placement-less. The migration every real load applies belongs to
+ * {@link inflateDefinitionFixture}, so a caller states which of the two it
+ * means.
+ */
 export function readDefinitionFixture(scenarioName: string): unknown {
   return readJson(fixturePath(`${scenarioName}.definition.json`));
 }
 
 export function readExecutionFixture(scenarioName: string): unknown {
   return readJson(fixturePath(`${scenarioName}.execution.json`));
+}
+
+/**
+ * A fixture as its stored-load boundary hands it to the parse.
+ *
+ * The fixtures stay exactly as they were captured — placement-less, because the
+ * field did not exist — and the migration that every real load applies is
+ * applied here too. Editing placement INTO them would delete the evidence: a
+ * pre-placement document is precisely what these files exist to be.
+ */
+export function inflateDefinitionFixture(scenarioName: string): unknown {
+  const raw = readDefinitionFixture(scenarioName);
+  migrateRawDefinitionPlacement(raw);
+  return raw;
+}
+
+export function inflateExecutionFixture(scenarioName: string): unknown {
+  const raw = readExecutionFixture(scenarioName);
+  migrateRawExecutionPlacement(raw);
+  return raw;
 }
 
 /**
@@ -98,7 +131,7 @@ export function loadCompatibilityScenario(
   return {
     name: scenarioName,
     definition: workflowSemanticDefinitionSchema.parse(
-      readDefinitionFixture(scenarioName),
+      inflateDefinitionFixture(scenarioName),
     ),
     sessionLaneEnabled: SESSION_LANE_ENABLED[scenarioName],
     agent: AGENT_SCRIPTS[scenarioName],

@@ -15,6 +15,7 @@ run_quiet npx tsc --noEmit --pretty false
 ```
 
 No conditional, no scoping, no flags depending on `$merge_base`. Always full-project.
+Register it only as `command.full`; Command Center automatically reports effective full scope for changed requests.
 
 | Flag | Purpose |
 |---|---|

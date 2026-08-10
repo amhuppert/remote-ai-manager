@@ -70,6 +70,7 @@ function createSemanticDefinition() {
         title: "Plan",
         description: "Plan the implementation",
         acceptanceCriteria: "All tasks are complete and verified.",
+        placement: { lane: "plan", mode: "full" },
         implementer: {
           id: "implementer",
           profile: { tier: "builtin", id: "general-implementer" },
@@ -111,6 +112,11 @@ function createSemanticDefinition() {
         title: "Implement",
         description: "Write the code",
         acceptanceCriteria: "Code compiles and tests pass.",
+        placement: {
+          lane: "implement",
+          mode: "owned",
+          ownedPaths: ["src/lib/workflows"],
+        },
         implementer: {
           id: "implementer",
           profile: { tier: "builtin", id: "general-implementer" },
@@ -171,6 +177,7 @@ function createResolvedDefinition() {
         title: "Plan",
         description: "Plan the implementation",
         acceptanceCriteria: "All tasks are complete and verified.",
+        placement: { lane: "context-1", mode: "full" },
         implementer: {
           id: "implementer",
           profile: { tier: "builtin", id: "general-implementer" },
@@ -210,6 +217,7 @@ function createResolvedDefinition() {
         title: "Implement",
         description: "Write the code",
         acceptanceCriteria: "Code compiles and tests pass.",
+        placement: { lane: "context-2", mode: "full" },
         implementer: {
           id: "implementer",
           profile: { tier: "builtin", id: "general-implementer" },
@@ -1282,6 +1290,7 @@ describe("graphWorkflowExecutionContextDefinitionSchema scriptValidator", () => 
     id: "ctx-1",
     title: "Context",
     acceptanceCriteria: "AC",
+    placement: { lane: "ctx-1", mode: "full" },
   };
 
   it("accepts a context that sets scriptValidator", () => {
@@ -1307,6 +1316,7 @@ describe("graphWorkflowResolvedContextSchema scriptValidator", () => {
     id: "ctx-1",
     title: "Context",
     acceptanceCriteria: "AC",
+    placement: { lane: "ctx-1", mode: "full" },
     implementer: {
       id: "implementer",
       profile: { tier: "builtin", id: "general-implementer" },
@@ -1348,6 +1358,7 @@ describe("execution context outputSchema (D2 R1)", () => {
     id: "ctx-1",
     title: "Context",
     acceptanceCriteria: "AC",
+    placement: { lane: "ctx-1", mode: "full" },
   };
 
   const resolvedBase = {
@@ -3204,6 +3215,7 @@ describe("humanApprovalGate cascade fields", () => {
       id: "ctx-1",
       title: "Context",
       acceptanceCriteria: "AC",
+      placement: { lane: "ctx-1", mode: "full" },
       humanApprovalGate: { enabled: true },
     });
     expect(result.success).toBe(true);
@@ -3217,6 +3229,7 @@ describe("humanApprovalGate cascade fields", () => {
       id: "ctx-1",
       title: "Context",
       acceptanceCriteria: "AC",
+      placement: { lane: "ctx-1", mode: "full" },
     });
     expect(result.success).toBe(true);
     if (result.success) {

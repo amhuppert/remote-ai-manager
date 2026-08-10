@@ -2,6 +2,7 @@ import { createLogger } from "@/lib/logging";
 import { transitionContextStatus } from "@/lib/workflow-graph/context-transitions";
 import type {
   GraphWorkflowApprovalDecision,
+  GraphWorkflowApprovalScope,
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
 } from "@/lib/workflow-graph/schemas";
@@ -88,7 +89,19 @@ export interface ApprovalGateService {
    */
   enterAwaitingApproval(
     execution: GraphWorkflowExecution,
-    input: { contextId: string; conversationId: string },
+    input: {
+      contextId: string;
+      conversationId: string;
+      /**
+       * How this gate's approval view is scoped, frozen here for the life of
+       * the pending record (R15.2). Required rather than defaulted, so every
+       * caller states which scope the human is deciding under instead of
+       * inheriting the whole-tree view by omission — for an enveloped member
+       * the whole-tree delta of a shared lane worktree is partly a sibling's
+       * in-progress work.
+       */
+      approvalScope: GraphWorkflowApprovalScope;
+    },
   ): EnteredAwaitingApproval;
 
   /**
@@ -195,7 +208,11 @@ export function createApprovalGateService(
 ): ApprovalGateService {
   function enterAwaitingApproval(
     execution: GraphWorkflowExecution,
-    input: { contextId: string; conversationId: string },
+    input: {
+      contextId: string;
+      conversationId: string;
+      approvalScope: GraphWorkflowApprovalScope;
+    },
   ): EnteredAwaitingApproval {
     const contextState = execution.contextStates[input.contextId];
     if (!contextState) {
@@ -212,6 +229,7 @@ export function createApprovalGateService(
       conversationId: input.conversationId,
       requestedAt,
       decision: null,
+      approvalScope: input.approvalScope,
     };
 
     // Pure: return the observability payload. The caller logs `gate.pending`

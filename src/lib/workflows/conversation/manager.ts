@@ -50,6 +50,7 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
 import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
+import type { FsWritePolicy } from "@/lib/agent-backends/task";
 
 const logger = createLogger("conversation-manager");
 
@@ -76,6 +77,13 @@ export interface ConversationTurnRequest {
   waitForBackgroundTasks?: boolean;
   documentFeedback?: DocumentFeedbackPayload;
   askUserQuestionsEnabled?: boolean;
+  /**
+   * Server-derived filesystem-write envelope for this turn, composed by the
+   * graph-workflow implementer dispatch path. Carried explicitly through this
+   * hop because absent means unrestricted: a lifecycle module that dropped it
+   * would un-confine the lane without any layer reporting a failure.
+   */
+  fsWritePolicy?: FsWritePolicy;
 }
 
 /** Stable public projection of the completed turn. */
@@ -468,6 +476,37 @@ export function hasLiveConversationActor(
 }
 
 /**
+ * The registry entry's snapshot, or null when the entry can no longer answer
+ * for itself — `getSnapshot()` throws, or returns something that is not a
+ * machine snapshot (no `can`, no `context`).
+ *
+ * The registry is a `globalThis` singleton that outlives any one module
+ * instance, so an entry can predate the current build or belong to a machine
+ * this process no longer recognizes. Callers reach for two things only —
+ * `can(event)` to test a transition and `context` to read the binding — and an
+ * entry that answers neither is not a usable actor. Returning null lets each
+ * caller apply its own recovery instead of taking a `TypeError` from deep
+ * inside a best-effort call.
+ */
+function readUsableSnapshot(
+  actor: ConversationActorRef,
+): ReturnType<ConversationActorRef["getSnapshot"]> | null {
+  let snapshot: unknown;
+  try {
+    snapshot = actor.getSnapshot();
+  } catch {
+    return null;
+  }
+  if (typeof snapshot !== "object" || snapshot === null) return null;
+  const candidate = snapshot as { can?: unknown; context?: unknown };
+  if (typeof candidate.can !== "function") return null;
+  if (typeof candidate.context !== "object" || candidate.context === null) {
+    return null;
+  }
+  return snapshot as ReturnType<ConversationActorRef["getSnapshot"]>;
+}
+
+/**
  * Settled = no turn is running and no invoked actor is live. `waitingForInput`
  * counts: the asking turn already finalized, only the pending question remains,
  * so the actor is as safe to drain against or stop/recreate as an idle one.
@@ -602,11 +641,29 @@ export async function ensureConversationActor(
   const scopeRef = scopeRefFromStoreSessionName(sessionName);
   const requestedWorktreePath = options?.executionTarget?.worktreePath;
 
-  if (existing) {
+  // An entry that cannot answer for itself is not reusable at all: it cannot be
+  // proven to match the requested target, and it cannot be shown to be
+  // mid-turn. Discard it and fall through to a fresh build — the alternative is
+  // a `TypeError` that halts the whole graph-workflow execution loop on a
+  // dispatch the conversation record could have served.
+  const existingSnapshot = existing ? readUsableSnapshot(existing) : null;
+  if (existing && existingSnapshot === null) {
+    logger.warn("conversation-manager.unusable_actor_rebuilt", {
+      conversationId,
+      ...scopeRef,
+      requestedWorktreePath: requestedWorktreePath ?? null,
+    });
+    stopConversationActor(
+      projectPath,
+      sessionName,
+      conversationId,
+      "unusable_actor",
+    );
+  } else if (existing && existingSnapshot !== null) {
     if (requestedWorktreePath === undefined) {
       return existing;
     }
-    const currentWorktreePath = existing.getSnapshot().context.worktreePath;
+    const currentWorktreePath = existingSnapshot.context.worktreePath;
     if (currentWorktreePath === requestedWorktreePath) {
       return existing;
     }
@@ -732,6 +789,9 @@ export async function executeConversationTurn(
         : {}),
       ...(input.turn.askUserQuestionsEnabled
         ? { askUserQuestionsEnabled: true }
+        : {}),
+      ...(input.turn.fsWritePolicy !== undefined
+        ? { fsWritePolicy: input.turn.fsWritePolicy }
         : {}),
     };
 
@@ -874,7 +934,28 @@ export function sendConversationEvent(
 ): boolean {
   const actor = getConversationActor(projectPath, sessionName, conversationId);
   if (!actor) return false;
-  if (!actor.getSnapshot().can(event)) return false;
+  // Every caller treats a refusal as tolerable and a throw as a bug: the lane
+  // answer route has already recorded the answer by the time it fires here, so
+  // propagating would turn a succeeded answer into a 500 the operator reads as
+  // "nothing happened". An entry that cannot be interrogated refuses exactly
+  // like a dead one, and is evicted so the next ensure-and-drain rebuilds a
+  // usable actor instead of finding the same broken entry.
+  const snapshot = readUsableSnapshot(actor);
+  if (!snapshot) {
+    logger.error("conversation-manager.incompatible_snapshot", {
+      conversationId,
+      ...scopeRefFromStoreSessionName(sessionName),
+      eventType: event.type,
+    });
+    stopConversationActor(
+      projectPath,
+      sessionName,
+      conversationId,
+      "incompatible_snapshot",
+    );
+    return false;
+  }
+  if (!snapshot.can(event)) return false;
   actor.send(event);
   return true;
 }
@@ -944,7 +1025,19 @@ export function stopConversationActor(
     unregisterRuntime(conversationId);
   }
 
-  actor.stop();
+  // Unregistering has to happen even when the actor refuses to stop: the entry
+  // being discarded is often the one that has already proved unusable, and
+  // leaving it in a `globalThis` registry would make every later lookup find
+  // the same broken actor with no way to evict it.
+  try {
+    actor.stop();
+  } catch (err) {
+    logger.warn("conversation-manager.actor_stop_error", {
+      conversationId,
+      reason,
+      error: String(err),
+    });
+  }
   cleanupConversationRuntime(key);
   getActorRegistry().delete(key);
 }

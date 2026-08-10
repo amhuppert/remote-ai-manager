@@ -99,6 +99,7 @@ function activeLaneExecution(
         includedContextIds: [],
         lastCommittingContextId: null,
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: T,
         updatedAt: T,
       },
@@ -120,8 +121,11 @@ function resolverDeps(opts: {
     readRepoValidation: async () =>
       repoValidationConfigSchema.parse({
         commands: {
-          typecheck: { command: "scripts/validate/typecheck.sh", cost: 2 },
-          test: { command: "scripts/validate/test.sh", cost: 8 },
+          typecheck: {
+            command: { full: "scripts/validate/typecheck.sh" },
+            cost: 2,
+          },
+          test: { command: { full: "scripts/validate/test.sh" }, cost: 8 },
         },
       }),
   };

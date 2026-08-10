@@ -2,7 +2,7 @@
 
 Load this reference when ESLint is detected (`eslint` in `dependencies` or `devDependencies`).
 
-## Validation wrapper invocation
+## Changed wrapper invocation
 
 Scope ESLint to the JS/TS files this branch changes. Linting unchanged files burns time on code the branch can't break and surfaces violations the author didn't introduce.
 
@@ -20,6 +20,14 @@ fi
 
 When `lint_files` is empty under a resolved merge base, skip ESLint entirely — there is nothing in this branch's diff for it to lint.
 
+## Full wrapper invocation
+
+The full wrapper does not resolve a merge base:
+
+```bash
+run_quiet npx eslint . --fix --quiet --no-color --no-warn-ignored
+```
+
 ## Flags
 
 | Flag | Purpose |
@@ -32,4 +40,4 @@ When `lint_files` is empty under a resolved merge base, skip ESLint entirely —
 ## Parallelism
 
 ESLint has no fan-out problem to fix here — it's a single process. The scoping above is the win.
-Register this wrapper with cost `1` unless project plugins make its fixed resource profile materially heavier.
+Register both wrappers under one logical profile with cost `1` unless project plugins make the maximum fixed resource profile materially heavier.

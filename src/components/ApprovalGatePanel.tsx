@@ -5,6 +5,15 @@ import {
   MultilineInput,
   type MultilineInputActionHandle,
 } from "@/components/MultilineInput";
+import {
+  DIFF_FILE_HEADER_CLASS,
+  DIFF_FILE_NAME_CLASS,
+  DIFF_FILE_SECTION_CLASS,
+  DIFF_FILE_STAT_CLASS,
+  DIFF_LINE_BASE,
+  DIFF_LINE_TYPE,
+} from "@/components/git/diff-row-classes";
+import type { SessionDiff } from "@/lib/git/schemas";
 import { cn } from "@/lib/ui/cn";
 
 // Local button recipe: the legacy `.btn.btn-sm.<variant>` plus the panel-only
@@ -27,6 +36,26 @@ const ACTION_BTN_VARIANT = {
 
 const HINT_BASE = "font-mono text-[0.7rem]";
 
+/**
+ * The change set an ENVELOPED context's reviewer decides on (R15.2): the
+ * ownership-scoped snapshot its gate froze, resolved through the approval API.
+ *
+ * A union rather than a nullable diff because the three non-ready states are
+ * things the reviewer has to be told, not absences to render as "no changes":
+ * `drifted` means the owned paths moved after the gate opened, so these are no
+ * longer the bytes the gate froze, and `unavailable` means the artifact could
+ * not be read at all. Neither ever falls back to the whole-worktree delta — in a
+ * shared lane that delta is partly a concurrent sibling's in-progress work.
+ *
+ * Null on the props for a full-access member, which keeps the whole-tree
+ * approval view the session's own diff surface already provides.
+ */
+export type ApprovalScopedChanges =
+  | { status: "loading" }
+  | { status: "ready"; ownedPaths: string[]; diff: SessionDiff }
+  | { status: "drifted" }
+  | { status: "unavailable"; reason: string };
+
 interface ApprovalGatePanelProps {
   contextTitle: string | null;
   workflowName: string | null;
@@ -35,9 +64,98 @@ interface ApprovalGatePanelProps {
   isSubmitting: boolean;
   conversationBusy: boolean;
   executionSuspended: boolean;
+  scopedChanges?: ApprovalScopedChanges | null;
   voiceProjectName?: string;
   onApprove(): void;
   onReject(message: string): void;
+}
+
+function ScopedChangesSection({
+  scopedChanges,
+}: {
+  scopedChanges: ApprovalScopedChanges;
+}) {
+  return (
+    <div
+      className="flex flex-col gap-xs rounded-md border border-solid border-border-subtle bg-bg-surface"
+      data-testid="approval-gate-scoped-changes"
+    >
+      {scopedChanges.status === "ready" && (
+        <>
+          <div className="flex flex-wrap items-baseline gap-sm px-md pt-sm font-mono text-[0.68rem] text-text-tertiary">
+            <span className="text-text-secondary">Changes under review</span>
+            <span>
+              +{scopedChanges.diff.totalAdditions} −
+              {scopedChanges.diff.totalDeletions}
+            </span>
+            <span>
+              {scopedChanges.ownedPaths.length > 0
+                ? `owned: ${scopedChanges.ownedPaths.join(", ")}`
+                : "owns no writable path"}
+            </span>
+          </div>
+          {scopedChanges.diff.files.length === 0 ? (
+            <div className={cn(HINT_BASE, "px-md pb-sm text-text-tertiary")}>
+              No changes inside the paths this context owns. Work by other
+              contexts sharing this worktree is deliberately not shown.
+            </div>
+          ) : (
+            <div className="max-h-[320px] overflow-auto pb-sm font-mono text-[0.7rem] leading-[1.5]">
+              {scopedChanges.diff.files.map((file) => (
+                <div key={file.filePath} className={DIFF_FILE_SECTION_CLASS}>
+                  <div className={DIFF_FILE_HEADER_CLASS}>
+                    <span className={DIFF_FILE_NAME_CLASS}>
+                      {file.filePath}
+                    </span>
+                    <span className={cn(DIFF_FILE_STAT_CLASS, "text-green")}>
+                      +{file.additions}
+                    </span>
+                    <span className={cn(DIFF_FILE_STAT_CLASS, "text-red")}>
+                      -{file.deletions}
+                    </span>
+                  </div>
+                  {file.hunks.map((hunk, hunkIndex) => (
+                    <div key={`${file.filePath}:${hunkIndex}`}>
+                      {hunk.lines.map((line, lineIndex) => (
+                        <div
+                          key={`${file.filePath}:${hunkIndex}:${lineIndex}`}
+                          className={cn(
+                            DIFF_LINE_BASE,
+                            DIFF_LINE_TYPE[line.type],
+                          )}
+                        >
+                          {line.content}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+      {scopedChanges.status === "loading" && (
+        <div className={cn(HINT_BASE, "px-md py-sm text-text-tertiary")}>
+          Loading the changes this context owns…
+        </div>
+      )}
+      {scopedChanges.status === "drifted" && (
+        <div className={cn(HINT_BASE, "px-md py-sm text-amber-dim")}>
+          The files this context owns have changed since it entered review, so
+          these are no longer the changes it submitted. Reject to send it back
+          for a fresh review.
+        </div>
+      )}
+      {scopedChanges.status === "unavailable" && (
+        <div className={cn(HINT_BASE, "px-md py-sm text-text-tertiary")}>
+          The changes this context owns could not be read (
+          {scopedChanges.reason}). Inspect its worktree directly before
+          deciding.
+        </div>
+      )}
+    </div>
+  );
 }
 
 function formatWaitTime(isoDate: string): string | null {
@@ -60,6 +178,7 @@ export default function ApprovalGatePanel({
   isSubmitting,
   conversationBusy,
   executionSuspended,
+  scopedChanges = null,
   voiceProjectName,
   onApprove,
   onReject,
@@ -70,6 +189,13 @@ export default function ApprovalGatePanel({
   const rejectActionRef = useRef<MultilineInputActionHandle | null>(null);
 
   const actionsDisabled = isSubmitting || conversationBusy;
+  // Approving is a decision ABOUT the frozen artifact, so it stays unavailable
+  // until that artifact is on screen: loading, drift, and an unreadable
+  // candidate all mean the reviewer cannot see what they would be approving.
+  // Rejecting is never blocked — it is the documented way out of drift.
+  const approveDisabled =
+    actionsDisabled ||
+    (scopedChanges !== null && scopedChanges.status !== "ready");
   const trimmedMessage = message.trim();
   const waitLabel = formatWaitTime(requestedAt);
 
@@ -139,7 +265,7 @@ export default function ApprovalGatePanel({
           <div className="flex shrink-0 items-center gap-sm">
             <button
               className={cn(ACTION_BTN_BASE, ACTION_BTN_VARIANT.primary)}
-              disabled={actionsDisabled}
+              disabled={approveDisabled}
               onClick={onApprove}
             >
               Approve
@@ -162,6 +288,9 @@ export default function ApprovalGatePanel({
         <div className={cn(HINT_BASE, "text-amber-dim")}>
           Execution suspended — the decision applies when the workflow resumes.
         </div>
+      )}
+      {scopedChanges !== null && (
+        <ScopedChangesSection scopedChanges={scopedChanges} />
       )}
 
       {rejecting && (

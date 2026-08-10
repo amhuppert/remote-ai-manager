@@ -20,6 +20,7 @@ import type { SessionConversationListItem } from "@/lib/state-store";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import type {
   GraphWorkflowApprovalDecision,
+  GraphWorkflowApprovalScope,
   GraphWorkflowExecution,
 } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
@@ -465,6 +466,7 @@ describe("GET /api/conversations/active pending approval standing", () => {
     requestedAt: REQUESTED_AT,
     workflowName: null,
     executionSuspended: false,
+    enveloped: false,
     tasksCompleted: 0,
     tasksTotal: 1,
   };
@@ -473,6 +475,7 @@ describe("GET /api/conversations/active pending approval standing", () => {
     opts: {
       executionStatus?: GraphWorkflowStatus;
       decision?: GraphWorkflowApprovalDecision | null;
+      approvalScope?: GraphWorkflowApprovalScope;
     } = {},
   ): GraphWorkflowExecution {
     const execution = createWorkflowExecution({
@@ -485,6 +488,7 @@ describe("GET /api/conversations/active pending approval standing", () => {
       conversationId: GATED_CONVERSATION_ID,
       requestedAt: REQUESTED_AT,
       decision: opts.decision ?? null,
+      approvalScope: opts.approvalScope ?? { kind: "whole_tree" },
     };
     return execution;
   }
@@ -504,6 +508,25 @@ describe("GET /api/conversations/active pending approval standing", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.id).toBe(GATED_CONVERSATION_ID);
     expect(rows[0]?.pendingApproval).toEqual(EXPECTED_STANDING);
+  });
+
+  it("marks the standing enveloped from the gate's FROZEN scope", async () => {
+    // The sidebar peek decides from this flag whether to fetch the frozen
+    // owned-path artifact, so it has to follow the parked record rather than a
+    // placement that can be edited while the gate stands (R15.2).
+    const rows = await listRows(
+      [gatedConversation()],
+      gatedExecution({
+        approvalScope: {
+          kind: "scoped",
+          ownedPaths: ["src/api"],
+          treeHash: "owned-digest",
+          headSha: "base-sha",
+        },
+      }),
+    );
+
+    expect(rows[0]?.pendingApproval?.enveloped).toBe(true);
   });
 
   it("keeps non-gated iteration and validator conversations hidden", async () => {
@@ -575,6 +598,7 @@ describe("GET /api/conversations/active pending approval standing", () => {
       expect(rows[0]?.pendingApproval).toEqual({
         ...EXPECTED_STANDING,
         executionSuspended: true,
+        enveloped: false,
       });
     },
   );

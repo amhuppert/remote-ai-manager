@@ -14,12 +14,14 @@ import type {
 } from "@/lib/workflow-graph/event-schemas";
 import {
   graphWorkflowAgentSessionStateSchema,
+  type GraphWorkflowApprovalScope,
   type GraphWorkflowExecution,
   type GraphWorkflowHaltReason,
   type GraphWorkflowTaskValidationFailure,
 } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowCollaborationContinuation } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
+  ContextPlacement,
   GraphWorkflowResolvedContext,
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowTaskDefinition,
@@ -68,6 +70,8 @@ import {
   type ValidationCandidateTreeResolution,
   type ValidationRoundOutcome,
 } from "@/lib/workflow-graph/validation-round";
+import { candidateScopeForPlacement } from "@/lib/workflow-graph/validation-diff-scope";
+import type { CandidateScope } from "@/lib/git/diff";
 import type {
   GraphWorkflowAdvisoryResponsePhase,
   GraphWorkflowExecutionContextState,
@@ -198,6 +202,18 @@ export interface GraphWorkflowRunAgentIterationInput {
    * session instructions advertise the tool (Req 8.1-8.4).
    */
   askUserQuestionsEnabled?: boolean;
+  /**
+   * The context's authored placement, read from the working definition as of
+   * THIS iteration's seed commit. Forwarded so the runner composes this turn's
+   * write envelope from the ownership the definition declared, before any
+   * dispatch decision (R6). Re-read per iteration rather than captured at
+   * launch: a placement change accepted by the live-edit core takes effect on
+   * the context's next turn (R10.2), and a stale copy here would run the turn
+   * under ownership the operator already revoked.
+   *
+   * Optional because an execution seeded before placement existed carries none.
+   */
+  placement?: ContextPlacement;
 }
 
 export interface GraphWorkflowAgentIterationResult {
@@ -247,16 +263,20 @@ interface IterationOrchestratorScriptValidatorService {
 
 export interface IterationOrchestratorValidationRoundService {
   /**
-   * Resolve the git identity of the tree this context's validators will
-   * inspect. Reports unavailability as its own result rather than throwing or
-   * fabricating an identity: the engine treats an unreadable tree as an
-   * infrastructure outcome, because a round that cannot say what it reviewed
-   * cannot be the deterministic thing a round is for.
+   * Resolve the git identity of the candidate this context's validators will
+   * inspect, under `candidateScope`. Reports unavailability as its own result
+   * rather than throwing or fabricating an identity: the engine treats an
+   * unreadable candidate as an infrastructure outcome, because a round that
+   * cannot say what it reviewed cannot be the deterministic thing a round is for.
+   *
+   * The scope is supplied per call rather than resolved inside, so the freeze and
+   * every later re-read of one context provably ask the same question.
    */
   resolveCandidateTree(input: {
     projectPath: string;
     sessionName: string;
     contextId: string;
+    candidateScope: CandidateScope;
     executionTarget?: ExecutionTarget;
   }): Promise<ValidationCandidateTreeResolution>;
 }
@@ -1320,6 +1340,20 @@ export function createGraphWorkflowIterationOrchestrator(
     if (configuredCommands.length === 0) {
       return "skip";
     }
+    if (contextDef.placement.mode !== "full") {
+      execLogger?.validation(
+        input.contextId,
+        "script_validation.deferred_to_lane_merge",
+        { commandCount: configuredCommands.length },
+      );
+      logger.info("graph-workflow.script_validation.deferred_to_lane_merge", {
+        executionId: execution.id,
+        contextId: input.contextId,
+        placementMode: contextDef.placement.mode,
+        commandCount: configuredCommands.length,
+      });
+      return "skip";
+    }
 
     if (!deps.scriptValidatorService) {
       throw new Error(
@@ -1577,11 +1611,16 @@ export function createGraphWorkflowIterationOrchestrator(
   }
 
   /**
-   * Resolve the candidate identity as it is RIGHT NOW: the git tree the
+   * Resolve the candidate identity as it is RIGHT NOW: the git identity the
    * validators would inspect, plus the context's current task-state generation.
    * Called at the freeze and again at each re-verification point, so the two
    * observations are produced by identical means and a difference between them
    * is a real move rather than an artefact of how each was computed.
+   *
+   * The scope comes from the context's own placement (R15), which is what makes
+   * this identity stable for a context sharing a lane worktree: an enveloped
+   * context is identified by its owned subset, so a sibling's writes and landed
+   * commits are not its drift.
    */
   async function observeCandidate(
     input: GraphWorkflowIterationInput,
@@ -1590,11 +1629,25 @@ export function createGraphWorkflowIterationOrchestrator(
     | { kind: "resolved"; candidate: GraphWorkflowValidationCandidate }
     | { kind: "unavailable"; reason: string }
   > {
+    // Looked up without throwing: an observation reports unavailability as its
+    // own result, and a context that has left the working definition is exactly
+    // the infrastructure outcome the caller is equipped to conclude on.
+    const context = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === input.contextId,
+    );
+    if (context === undefined) {
+      return {
+        kind: "unavailable",
+        reason: `execution context "${input.contextId}" is not in the working definition`,
+      };
+    }
+
     const tree: ValidationCandidateTreeResolution =
       (await deps.validationRoundService?.resolveCandidateTree({
         projectPath: input.projectPath,
         sessionName: input.sessionName,
         contextId: input.contextId,
+        candidateScope: candidateScopeForPlacement(context.placement),
         ...(input.executionTarget
           ? { executionTarget: input.executionTarget }
           : {}),
@@ -1612,6 +1665,68 @@ export function createGraphWorkflowIterationOrchestrator(
         taskStates: execution.taskStates,
         contextId: input.contextId,
       }),
+    };
+  }
+
+  /**
+   * The durable reference an ENVELOPED context's human approval gate parks on
+   * (R15.2): the owned subset it declares, plus the identity that subset had the
+   * moment the gate opened.
+   *
+   * Frozen through `observeCandidate`, the same reader a validation round
+   * freezes through, so the bytes the human is shown and the bytes the cohort
+   * certified are read under one definition of this context's change set.
+   *
+   * Null for a full-access member — it keeps the whole-tree approval view — and
+   * null when the candidate cannot be read. A gate must still open in that case
+   * (the human decision is not the engine's to skip), and the approval surface
+   * reports the missing artifact rather than silently widening to the shared
+   * lane worktree's whole-tree delta.
+   */
+  async function freezeApprovalScope(
+    input: GraphWorkflowIterationInput,
+    execution: GraphWorkflowExecution,
+  ): Promise<GraphWorkflowApprovalScope> {
+    const context = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === input.contextId,
+    );
+    if (context === undefined) return { kind: "whole_tree" };
+    if (!context.humanApprovalGate.enabled) return { kind: "whole_tree" };
+    const scope = candidateScopeForPlacement(context.placement);
+    if (scope.mode !== "owned") return { kind: "whole_tree" };
+
+    // Past this point the context IS enveloped, so every remaining path fails
+    // CLOSED. Returning the whole-tree scope for an enveloped member would let
+    // a gate that opens anyway inherit a view that is partly a sibling's work.
+    //
+    // Only the finalize that actually parks needs a candidate: the gate branch
+    // is reached with every task done and no output outstanding, so reading git
+    // for anything else spends I/O on an iteration that keeps running. A scope
+    // frozen for a branch that is not taken is simply dropped.
+    if (
+      countRemainingTasks(execution, input.contextId) > 0 ||
+      contextOwesOutput(execution, input.contextId)
+    ) {
+      return {
+        kind: "unreadable",
+        reason: "the context was not finalizing when the gate opened",
+      };
+    }
+
+    const observed = await observeCandidate(input, execution);
+    if (observed.kind !== "resolved") {
+      logger.warn("graph-workflow.approval.scoped_snapshot_unresolved", {
+        executionId: execution.id,
+        contextId: input.contextId,
+        reason: observed.reason,
+      });
+      return { kind: "unreadable", reason: observed.reason };
+    }
+    return {
+      kind: "scoped",
+      ownedPaths: [...scope.ownedPaths],
+      treeHash: observed.candidate.candidateTreeHash,
+      headSha: observed.candidate.headSha,
     };
   }
 
@@ -3807,6 +3922,15 @@ export function createGraphWorkflowIterationOrchestrator(
     let consecutiveFailureCount = 0;
     let approvalRequestedAt: string | null = null;
 
+    // Frozen BEFORE the parking mutation, because reading git inside a
+    // `mutateActive` reducer would put I/O in the write-queue critical section.
+    // The gate branch below re-derives its own condition from the latest state;
+    // a scope frozen for a branch that is not taken is simply dropped.
+    const frozenApprovalScope = await freezeApprovalScope(
+      input,
+      currentExecution,
+    );
+
     const persistedExecution = await deps.executionRepository.mutateActive(
       input.projectPath,
       input.sessionName,
@@ -3883,6 +4007,7 @@ export function createGraphWorkflowIterationOrchestrator(
           approvalGateService.enterAwaitingApproval(finalizedExecution, {
             contextId: input.contextId,
             conversationId,
+            approvalScope: frozenApprovalScope,
           });
           approvalRequestedAt =
             finalizedContextState.pendingApproval?.requestedAt ?? null;
@@ -4308,6 +4433,20 @@ export function createGraphWorkflowIterationOrchestrator(
         `Execution context "${input.contextId}" does not exist in runtime state`,
       );
     }
+    // The definition as of the SEED COMMIT, not as of the snapshot this
+    // iteration opened with. Until that commit lands, the context's persisted
+    // lifecycle still reads `unstarted`, so the live-edit core can validly
+    // accept a placement change for it while this function is awaiting
+    // conversation resolution — and there is no later turn such an edit could
+    // belong to. The seed carries the edit forward (it clones the latest
+    // execution and touches only runtime state), so this read observes it;
+    // dispatching the pre-await snapshot instead would run the turn under the
+    // superseded envelope. Everything committed after the seed sees `started`
+    // and is pause-to-edit, which the next turn's own re-read picks up.
+    const seededContext = getContextDefinition(
+      seededExecution,
+      input.contextId,
+    );
     // Pre-seed iteration count. A parked iteration must not consume an
     // iteration (Req 3.3, design 3.3 "bypasses seed/failure branches"), so the
     // park short-circuit rolls the seed increment back to this value.
@@ -4522,6 +4661,17 @@ export function createGraphWorkflowIterationOrchestrator(
         toolServer: toolServer.server,
         executionTarget: input.executionTarget,
         askUserQuestionsEnabled: context.askUserQuestions.enabled,
+        // Read from the atomically seeded definition, so this is the placement
+        // as of the moment this context became `started` — including an edit
+        // accepted since the previous turn, and including one that landed
+        // inside this iteration's own start-up window. Follow-up turns reuse
+        // this base, which is the same boundary the editability tiers draw: a
+        // started context is pause-to-edit, so its ownership cannot change
+        // underneath a turn already in flight. Absent only for an execution
+        // seeded before placement existed; every authored context declares one.
+        ...(seededContext.placement !== undefined
+          ? { placement: seededContext.placement }
+          : {}),
       } as const;
 
       async function recordTurnOutcome(

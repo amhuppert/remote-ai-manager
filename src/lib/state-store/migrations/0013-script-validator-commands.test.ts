@@ -52,13 +52,14 @@ function freshDb(projectPath: string): Db {
 
 /**
  * Rooted in the OS temp dir, not the worktree: the stored-workflow layout keys
- * each project by `base64url(projectPath)` as a SINGLE directory name (see
- * `workflowPath`, mirroring `workflow-graph/storage.ts`). Encoding inflates a
- * path by ~4/3, so a fixture under a deep worktree pushes that one component
- * past the 255-byte filename limit and every seed fails with ENAMETOOLONG.
+ * a project by `base64url(projectPath)` as ONE directory name, so the fixture's
+ * own absolute path is inflated by 4/3 into a single filename. Anchored under
+ * `process.cwd()`, a checkout whose path is merely long — a session worktree
+ * named after its branch, say — pushes that name past the 255-byte component
+ * limit and every test here dies in `mkdir`, far from the cause.
  */
 function freshFixtureRoot(): string {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "cc-script-validator-"));
+  const dir = mkdtempSync(path.join(os.tmpdir(), "cc-0013-"));
   tempDirs.push(dir);
   return dir;
 }
@@ -202,7 +203,11 @@ describe("0013-script-validator-commands", () => {
     writeJson(path.join(projectPath, "CommandCenter.json"), {
       validation: {
         commands: {
-          "pre-merge": { command: "scripts/pre-merge.sh", cost: 8 },
+          "pre-merge": {
+            command: { full: "scripts/pre-merge.sh" },
+            cost: 8,
+            pathArgs: "forbid",
+          },
         },
       },
     });
@@ -283,7 +288,11 @@ describe("0013-script-validator-commands", () => {
     writeJson(path.join(projectPath, "CommandCenter.json"), {
       validation: {
         commands: {
-          "pre-merge": { command: "scripts/pre-merge.sh", cost: 0 },
+          "pre-merge": {
+            command: { full: "scripts/pre-merge.sh" },
+            cost: 0,
+            pathArgs: "forbid",
+          },
         },
       },
     });

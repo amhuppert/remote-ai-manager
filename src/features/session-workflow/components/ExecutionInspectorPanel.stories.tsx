@@ -224,6 +224,7 @@ function makeExecution(
       },
       executionContexts: [
         {
+          placement: { lane: "ctx-1", mode: "full" as const },
           id: "ctx-1",
           title: "API Integration",
           description: `Implement REST API endpoints for **user management** with authentication and validation.
@@ -275,6 +276,7 @@ function makeExecution(
           askUserQuestions: { enabled: false },
         },
         {
+          placement: { lane: "ctx-2", mode: "full" as const },
           id: "ctx-2",
           title: "Frontend Components",
           description: "Build React components for the user management UI.",
@@ -299,6 +301,7 @@ function makeExecution(
           planRepair: { enabled: true, maxAttemptsPerContext: 2 },
         },
         {
+          placement: { lane: "ctx-3", mode: "full" as const },
           id: "ctx-3",
           title: "Database Migrations",
           acceptanceCriteria: "Schema changes applied and reversible.",
@@ -525,8 +528,8 @@ const createUserSchema = z.object({
     advisoryIndex: [],
     laneStates: {},
     executionLanes: {},
+    laneReservations: {},
     joins: {},
-    lanePlan: { continuationMap: {}, longestDownstreamPath: {} },
     machineSnapshot: null,
     startedAt: "2026-03-30T09:00:00Z",
     completedAt: null,
@@ -700,6 +703,7 @@ function makeCohortRound(): GraphWorkflowValidationRound {
   return {
     seq: 3,
     candidate: {
+      identityScope: "wholeTree",
       headSha: "9f1c2ab7",
       candidateTreeHash: "4c7d91ea0b3f",
       taskStateHash: "tasks-7",

@@ -42,6 +42,7 @@ function makeExecution(
       },
       executionContexts: [
         {
+          placement: { lane: "ctx-plan", mode: "full" as const },
           id: "ctx-plan",
           title: "Plan",
           acceptanceCriteria: "Plan approved.",
@@ -65,6 +66,7 @@ function makeExecution(
           askUserQuestions: { enabled: false },
         },
         {
+          placement: { lane: "ctx-implement", mode: "full" as const },
           id: "ctx-implement",
           title: "Implement",
           acceptanceCriteria: "All tasks pass validation.",
@@ -148,8 +150,8 @@ function makeExecution(
     advisoryIndex: [],
     laneStates: {},
     executionLanes: {},
+    laneReservations: {},
     joins: {},
-    lanePlan: { continuationMap: {}, longestDownstreamPath: {} },
     machineSnapshot: null,
     startedAt: "2026-03-30T09:00:00Z",
     completedAt: null,

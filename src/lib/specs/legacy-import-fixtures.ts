@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { workflowSemanticDefinitionSchema } from "@/lib/workflow-graph/definition-schemas";
 import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
+import { migrateRawDefinitionPlacement } from "@/lib/workflow-graph/placement-migration";
 
 import dynamicGraphPrimitivesPlan from "./legacy-import-fixtures/dynamic-graph-primitives.legacy-plan.json";
 import dynamicGraphPrimitivesDefinition from "./legacy-import-fixtures/dynamic-graph-primitives.launched-definition.json";
@@ -116,6 +117,15 @@ function toFixture(
   rawDefinition: unknown,
 ): LegacyImportFixture {
   const plan = legacyPlanFixtureSchema.parse(rawPlan);
+  // These are captured production executions, launched before placement became
+  // a required field, so the raw JSON carries none. Production reads such rows
+  // through the same backfill rather than rejecting them; applying it here is
+  // what keeps the fixture a faithful capture instead of a doctored one.
+  migrateRawDefinitionPlacement(
+    typeof rawDefinition === "object" && rawDefinition !== null
+      ? (rawDefinition as { definition?: unknown }).definition
+      : undefined,
+  );
   const launched = launchedDefinitionFixtureSchema.parse(rawDefinition);
   return {
     key,

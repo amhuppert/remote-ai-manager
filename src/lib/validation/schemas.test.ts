@@ -11,37 +11,41 @@ import {
 } from "./schemas";
 
 describe("validationCommandConfigSchema", () => {
-  it("parses a minimal entry and defaults scopeArgs to forbid", () => {
+  it("parses a full-only entry and defaults pathArgs to forbid", () => {
     const parsed = validationCommandConfigSchema.parse({
-      command: "scripts/validate/lint.sh",
+      command: { full: "scripts/validate/lint-full.sh" },
       cost: 2,
     });
 
     expect(parsed).toEqual({
-      command: "scripts/validate/lint.sh",
+      command: { full: "scripts/validate/lint-full.sh" },
       cost: 2,
-      scopeArgs: "forbid",
+      pathArgs: "forbid",
     });
   });
 
-  it("retains optional timeoutMs, description, and scopeArgs paths", () => {
+  it("retains changed/full executables and optional shared fields", () => {
     const parsed = validationCommandConfigSchema.parse({
-      command: "scripts/validate/test.sh",
+      command: {
+        full: "scripts/validate/test-full-suite.sh",
+        changed: "scripts/validate/test.sh",
+      },
       cost: 8,
       timeoutMs: 900_000,
-      description: "Scoped test suite",
-      scopeArgs: "paths",
+      description: "Unit tests",
+      pathArgs: "paths",
     });
 
     expect(parsed.timeoutMs).toBe(900_000);
-    expect(parsed.description).toBe("Scoped test suite");
-    expect(parsed.scopeArgs).toBe("paths");
+    expect(parsed.description).toBe("Unit tests");
+    expect(parsed.pathArgs).toBe("paths");
   });
 
   it("rejects a missing cost", () => {
     expect(
-      validationCommandConfigSchema.safeParse({ command: "scripts/x.sh" })
-        .success,
+      validationCommandConfigSchema.safeParse({
+        command: { full: "scripts/x.sh" },
+      }).success,
     ).toBe(false);
   });
 
@@ -50,7 +54,7 @@ describe("validationCommandConfigSchema", () => {
     (cost) => {
       expect(
         validationCommandConfigSchema.safeParse({
-          command: "scripts/x.sh",
+          command: { full: "scripts/x.sh" },
           cost,
         }).success,
       ).toBe(false);
@@ -60,34 +64,72 @@ describe("validationCommandConfigSchema", () => {
   it("rejects a non-positive timeoutMs", () => {
     expect(
       validationCommandConfigSchema.safeParse({
-        command: "scripts/x.sh",
+        command: { full: "scripts/x.sh" },
         cost: 1,
         timeoutMs: 0,
       }).success,
     ).toBe(false);
   });
 
-  it("rejects an unknown scopeArgs value", () => {
+  it("rejects the old flat registration and scopeArgs field", () => {
     expect(
       validationCommandConfigSchema.safeParse({
         command: "scripts/x.sh",
         cost: 1,
-        scopeArgs: "flags",
+      }).success,
+    ).toBe(false);
+    expect(
+      validationCommandConfigSchema.safeParse({
+        command: { full: "scripts/x.sh" },
+        cost: 1,
+        scopeArgs: "paths",
       }).success,
     ).toBe(false);
   });
 
-  it("rejects an empty command path", () => {
+  it("rejects missing or empty full executables and unknown variant keys", () => {
     expect(
-      validationCommandConfigSchema.safeParse({ command: "", cost: 1 }).success,
+      validationCommandConfigSchema.safeParse({ command: {}, cost: 1 }).success,
     ).toBe(false);
+    expect(
+      validationCommandConfigSchema.safeParse({
+        command: { full: "" },
+        cost: 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      validationCommandConfigSchema.safeParse({
+        command: { full: "scripts/x.sh", focused: "scripts/y.sh" },
+        cost: 1,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects path support without a native changed executable", () => {
+    const result = validationCommandConfigSchema.safeParse({
+      command: { full: "scripts/x-full.sh" },
+      cost: 1,
+      pathArgs: "paths",
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues).toContainEqual(
+      expect.objectContaining({ path: ["pathArgs"] }),
+    );
   });
 });
 
 describe("repoValidationConfigSchema", () => {
   const commands = {
-    lint: { command: "scripts/validate/lint.sh", cost: 2 },
-    "test-unit": { command: "scripts/validate/test.sh", cost: 8 },
+    lint: { command: { full: "scripts/validate/lint.sh" }, cost: 2 },
+    "test-unit": {
+      command: {
+        full: "scripts/validate/test-full.sh",
+        changed: "scripts/validate/test.sh",
+      },
+      cost: 8,
+    },
   };
 
   it("parses a registry and defaults preMerge to an empty list", () => {
@@ -114,7 +156,7 @@ describe("repoValidationConfigSchema", () => {
     (name) => {
       expect(
         repoValidationConfigSchema.safeParse({
-          commands: { [name]: { command: "scripts/x.sh", cost: 1 } },
+          commands: { [name]: { command: { full: "scripts/x.sh" }, cost: 1 } },
         }).success,
       ).toBe(false);
     },
@@ -284,7 +326,8 @@ describe("validation run record and lease", () => {
     finishedAt: "2026-08-05T10:02:05.000Z",
     queueMs: 5_000,
     execMs: 120_000,
-    scoped: true,
+    requestedScope: "changed",
+    effectiveScope: "changed",
     scopedPathCount: 2,
     exitCode: 0,
     timedOut: false,
@@ -309,12 +352,23 @@ describe("validation run record and lease", () => {
       finishedAt: null,
       queueMs: null,
       execMs: null,
-      scoped: false,
+      requestedScope: "changed",
+      effectiveScope: "full",
       scopedPathCount: 0,
       exitCode: null,
     };
 
     expect(validationRunRecordSchema.parse(queued)).toEqual(queued);
+  });
+
+  it("accepts null scopes as legacy ledger ambiguity", () => {
+    expect(
+      validationRunRecordSchema.parse({
+        ...record,
+        requestedScope: null,
+        effectiveScope: null,
+      }),
+    ).toMatchObject({ requestedScope: null, effectiveScope: null });
   });
 
   it("rejects a record with a non-positive cost snapshot", () => {

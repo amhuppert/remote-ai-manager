@@ -71,15 +71,25 @@ const DB_FILE_NAME = "command-center.db";
  * originally claimed 3; they are sequenced here because one number cannot fence
  * two independent cutovers, and 3 is already stamped in live databases.
  *
- * Version 5 is the spec_executions state widening: migration
+ * Version 5 is the graph-workflow lane-placement cutover: migration
+ * `0016-graph-workflow-context-placement` backfills authored placement onto
+ * every stored execution context. A build predating placement does not know
+ * the field and would write it back out stripped, dissolving an authored lane
+ * GROUP into one lane per context on the next read — so the gate refuses such a
+ * build once the migration has stamped the upgraded DB.
+ *
+ * Version 6 is the spec_executions state widening: migration
  * `0017-spec-execution-abandon-coordinator` rebuilds the table's CHECK to admit
  * `abandoning`, the abandon coordinator's in-flight cleanup state (design §10).
  * A row parked in that state is unreadable to an older build — the spec
  * execution repository throws a PersistenceError on an unknown `state` rather
  * than quarantining the row — so the gate refuses such a build once the
- * migration has stamped the upgraded DB.
+ * migration has stamped the upgraded DB. Like 3 and 4 before them, 5 and 6 were
+ * authored concurrently on two branches and both originally claimed 5; they are
+ * sequenced here because one number cannot fence two independent cutovers, and
+ * 5 is already stamped in live databases by the placement cutover.
  */
-export const KNOWN_SCHEMA_VERSION = 5;
+export const KNOWN_SCHEMA_VERSION = 6;
 
 /**
  * Marker id for the one-time legacy graph-workflow purge. Tracked in the
@@ -1204,6 +1214,8 @@ export const VALIDATION_RUNS_SCHEMA_DDL = `
     finished_at           TEXT,
     queue_ms              INTEGER,
     exec_ms               INTEGER,
+    requested_scope       TEXT CHECK (requested_scope IN ('changed', 'full')),
+    effective_scope       TEXT CHECK (effective_scope IN ('changed', 'full')),
     scoped                INTEGER NOT NULL DEFAULT 0,
     scoped_path_count     INTEGER NOT NULL DEFAULT 0,
     exit_code             INTEGER,
@@ -1889,6 +1901,16 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     table: "spec_delivery_plan_attempts",
     column: "prelaunch_json",
     type: "TEXT",
+  },
+  {
+    table: "validation_runs",
+    column: "requested_scope",
+    type: "TEXT CHECK (requested_scope IN ('changed', 'full'))",
+  },
+  {
+    table: "validation_runs",
+    column: "effective_scope",
+    type: "TEXT CHECK (effective_scope IN ('changed', 'full'))",
   },
   {
     table: "conversations",

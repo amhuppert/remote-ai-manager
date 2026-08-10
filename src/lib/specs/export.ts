@@ -221,6 +221,13 @@ function renderElement(row: SpecRevisionElement, handle: string): string {
         ...(payload.laneGroup === undefined
           ? []
           : [`- Lane group: ${payload.laneGroup}`]),
+        // Rendered only when declared, so a bundle exported before the field
+        // existed stays byte-identical and `verify --against` keeps reporting
+        // it clean; a declared lane is ordinary content that differs like any
+        // other field.
+        ...(payload.executionLane === undefined
+          ? []
+          : [`- Execution lane: ${payload.executionLane}`]),
         ...(payload.touchedPaths === undefined
           ? []
           : [`- Touched paths: ${payload.touchedPaths.join(", ") || "None"}`]),

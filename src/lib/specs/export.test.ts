@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/logging", () => ({
@@ -293,6 +294,58 @@ describe("canonical spec export and verification", () => {
       checkedRevisionIds: [revisionId],
       mismatches: [{ mismatchedElementIds: ["task-1"] }],
     });
+  });
+
+  /**
+   * R12 bundle compatibility, exercised through `spec verify --against`'s own
+   * comparator. The bundle format is unchanged in shape: a spec authored before
+   * executionLane existed carries no trace of it anywhere in the bundle, so an
+   * archived bundle still compares equal — while a lane that is actually there
+   * is ordinary bundle content and differs like any other field.
+   */
+  it("keeps a pre-executionLane bundle equal and detects a declared execution lane as a real difference", async () => {
+    const archived = renderCanonicalBundle(
+      await loadSpecExportState(exportDeps, specId),
+    );
+    expect(archived.manifest).not.toContain("executionLane");
+    expect(archived.markdownFiles[0]?.content).not.toContain("Execution lane");
+    expect(
+      isDeepStrictEqual(
+        renderCanonicalBundle(
+          await loadSpecExportState(exportDeps, specId),
+        ),
+        archived,
+      ),
+    ).toBe(true);
+
+    db.prepare(
+      `UPDATE spec_element_versions
+       SET payload_json = ?
+       WHERE revision_id = ? AND element_id = ?`,
+    ).run(
+      JSON.stringify({
+        kind: "task",
+        title: "Export the complete plan",
+        instructions: "Preserve every approved task field.",
+        tracedRequirementElementIds: ["requirement-1"],
+        tracedDecisionElementIds: [],
+        coveredCriterionElementIds: [],
+        dependsOnTaskElementIds: [],
+        laneGroup: "persistence",
+        executionLane: "persistence-lane",
+        touchedPaths: ["src/lib/specs", "src/lib/state-store"],
+      }),
+      revisionId,
+      "task-1",
+    );
+
+    const laned = renderCanonicalBundle(
+      await loadSpecExportState(exportDeps, specId),
+    );
+    expect(laned.markdownFiles[0]?.content).toContain(
+      "- Execution lane: persistence-lane",
+    );
+    expect(isDeepStrictEqual(laned, archived)).toBe(false);
   });
 
   it("detects out-of-band mutation of a frozen revision's authoring stage", async () => {

@@ -25,6 +25,7 @@ import {
 } from "@/lib/specs/authoring-service";
 import {
   MACHINE_VALIDATION_EVIDENCE_KINDS,
+  executionLaneSchema,
   sectionRoleSchema,
   specElementPayloadSchema,
   taskElementPayloadSchema,
@@ -86,6 +87,9 @@ const CREATE_USAGE =
 
 const TOUCHED_PATH_DESCRIPTION =
   "normalized repo-relative POSIX paths; directories without a trailing slash";
+
+const EXECUTION_LANE_DESCRIPTION =
+  "the lane this task's execution context runs on; tasks sharing one share a worktree and a join. /^[A-Za-z0-9_.-]+$/, not starting with '.' or '-', not containing '..', not ending with '.', '-', or '.lock'";
 
 const CREATE_DOCUMENT_ID = "create-element";
 const REMOVAL_BATCH_DOCUMENT_ID = "element-batch-removals";
@@ -195,6 +199,12 @@ function jsonSchemaOf(schema: z.ZodType): Record<string, unknown> {
       if (ctx.zodSchema === touchedPathSchema) {
         ctx.jsonSchema.description = TOUCHED_PATH_DESCRIPTION;
       }
+      // Same reason as the touched path above: the lane grammar is a
+      // `.superRefine()` that generates to a bare string, and a published shape
+      // accepting `src/lib` would teach an author to fail at compile time.
+      if (ctx.zodSchema === executionLaneSchema) {
+        ctx.jsonSchema.description = EXECUTION_LANE_DESCRIPTION;
+      }
     },
   });
   return isRecord(generated) ? generated : {};
@@ -253,6 +263,7 @@ const KIND_NOTES: Record<SpecElementKind, readonly string[]> = {
     "Legacy-only: this document describes task elements on an already-open evergreen Plan revision. Current delivery tasks use `cctl spec schema plan-edit` and `cctl spec plan edit <slug> --file <plan.json>`.",
     "All four id arrays hold elementIds, not handles; dependsOnTaskElementIds is the ordering consumed only by the legacy compiler.",
     "Legacy task touchedPaths describe review surfaces. DeliveryPlanAttempt documents declare touchedSurfaces once for the authored graph.",
+    "laneGroup and executionLane are different claims: laneGroup contracts its tasks into ONE execution context, executionLane puts contexts on ONE lane — one worktree, one join — where touchedPaths become the ownership envelope that keeps them apart. Every context on an executionLane needs a non-empty envelope, so a task on one must declare touchedPaths unless it is contracted into a laneGroup where another member does. Every member of one laneGroup must agree on the executionLane or all omit it.",
   ],
 };
 

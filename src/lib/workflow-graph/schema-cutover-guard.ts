@@ -3,6 +3,10 @@ import { workflowDefinitionRecordSchema } from "@/lib/workflow-graph/definition-
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 import { normalizeRawDefinitionEdgeIds } from "./edge-identity";
+import {
+  migrateRawDefinitionPlacement,
+  migrateRawExecutionPlacement,
+} from "./placement-migration";
 const UNCONDITIONAL_REMOVED_FIELDS = [
   "contextSoftLimitTokens",
   "contextHardLimitTokens",
@@ -309,9 +313,12 @@ export function assertDefinitionRecordSupported(
   // The inflate boundary for a stored definition (D4 decision D2): edge ids are
   // required unique for new authoring, so a document written before that rule is
   // repaired deterministically here rather than refused. Runs before the parse
-  // because the parse already requires `id`.
+  // because the parse already requires `id`. Lane placement (D5 decision D13)
+  // is repaired at the same point — this is the load path for saved templates
+  // in both scope tiers, so a pre-placement template stays startable.
   if (isRecordValue(rawRecord)) {
     normalizeRawDefinitionEdgeIds(rawRecord.definition);
+    migrateRawDefinitionPlacement(rawRecord.definition);
   }
   return workflowDefinitionRecordSchema.parse(rawRecord);
 }
@@ -340,6 +347,7 @@ export function assertExecutionSupported(
   }
   if (isRecordValue(rawExecution)) {
     normalizeRawDefinitionEdgeIds(rawExecution.workingDefinition);
+    migrateRawExecutionPlacement(rawExecution);
   }
   return graphWorkflowExecutionSchema.parse(rawExecution);
 }

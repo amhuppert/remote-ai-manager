@@ -467,6 +467,7 @@ function statusText(
       `    dependencies: ${task.dependsOn.join(", ") || "none"}`,
       ...unresolvedDependencyLines(task.unresolvedDependsOnTaskElementIds),
       `    lane group: ${task.laneGroup ?? "one task per lane"}`,
+      `    execution lane: ${task.executionLane ?? "single-member lane"}`,
       `    touched surfaces: ${task.touchedPaths.join(", ") || "not declared"}`,
       `    criterion coverage: ${task.criterionCoverage.join(", ") || "none"}`,
       ...unresolvedCoverageLines(task.unresolvedCriterionElementIds),

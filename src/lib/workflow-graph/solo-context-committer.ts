@@ -5,6 +5,7 @@ import {
 } from "@/lib/git/commits";
 import { createLogger } from "@/lib/logging";
 import { landingIntentTrailer } from "@/lib/workflow-graph/route-runtime";
+import type { GraphWorkflowCanonicalOwnership } from "@/lib/workflow-graph/schemas";
 
 const logger = createLogger("graph-workflow-solo-commit");
 
@@ -17,6 +18,14 @@ interface SoloContextCommitterInput {
    *  trailer so the landing is replayable from the branch alone. Null for a
    *  context dispatched before intents existed. */
   landingToken?: string | null;
+  /**
+   * The write envelope this context was admitted under. Only the read-only
+   * grade changes anything here: the session worktree is the one substrate a
+   * context can be placed on without being able to write it, so its dirt
+   * belongs to the user or to a concurrent reader's siblings, never to the
+   * reader whose landing is running.
+   */
+  ownership?: GraphWorkflowCanonicalOwnership | null;
 }
 
 type SoloContextCommitterResult =
@@ -47,6 +56,16 @@ export function createSoloContextCommitter(
     async commit(input) {
       const { projectPath, sessionName, contextId, sessionWorktreePath } =
         input;
+
+      if (input.ownership?.mode === "readOnly") {
+        logger.info("graph-workflow.solo_commit.read_only_skipped", {
+          projectPath,
+          sessionName,
+          contextId,
+          sessionWorktreePath,
+        });
+        return { status: "skipped" };
+      }
 
       const hasChanges = await deps.hasUncommittedChanges(sessionWorktreePath);
       if (!hasChanges) {

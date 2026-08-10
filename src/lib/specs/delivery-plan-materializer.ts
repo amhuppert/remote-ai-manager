@@ -391,6 +391,13 @@ export function materializeDeliveryPlan(
           ACCEPTANCE_CONTRACT_SERIALIZATION(
             context[MATERIALIZER_FIELDS.acceptanceContract.sourceKey],
           ),
+        // A DeliveryPlanAttempt context declares no lane and no write surface
+        // (`deliveryPlanContextSchema` is strict and carries neither), so every
+        // materialized context takes the solo placement: its own lane, full
+        // write access. That is exactly the one-worktree-per-context behaviour
+        // this path had before placement became required, so materializing a
+        // plan authored against either model produces the same graph.
+        placement: { lane: context.contextId, mode: "full" },
         origin: {
           sourceUri: `${originSourceUri}#${context.contextId}`,
           label: context.title,

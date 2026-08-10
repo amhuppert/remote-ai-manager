@@ -785,6 +785,7 @@ describe("loop budgets (R10)", () => {
       approvals.enterAwaitingApproval(execution, {
         contextId: P2_JUDGE,
         conversationId: "conversation-2",
+        approvalScope: { kind: "whole_tree" },
       });
       execution = await restart(execution);
       expect(execution.contextStates[P2_JUDGE]?.status).toBe(

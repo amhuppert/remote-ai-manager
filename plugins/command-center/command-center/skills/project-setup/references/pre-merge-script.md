@@ -1,6 +1,6 @@
 # Validation Command Wrapper Reference
 
-This reference defines the shared contract for the granular scripts registered in `validation.commands`. Generate one executable wrapper per tool or fixed resource profile under `scripts/validate/`; do not combine all tools into one script.
+This reference defines the shared contract for the granular scripts registered in `validation.commands`. Generate a fixed full wrapper and, where sound, a separate fixed changed wrapper for each logical tool/resource profile; do not combine all tools into one script.
 
 For each detected tool, also load its reference:
 
@@ -17,7 +17,7 @@ For each detected tool, also load its reference:
 | Working directory | Target session or lane worktree |
 | Timeout | Command `timeoutMs`, then the global validation default |
 | Execution method | Direct executable invocation with `execFile` semantics; a shebang and executable permission are required |
-| Arguments | No forwarded values unless the registration uses `scopeArgs: "paths"`; forwarded values may only narrow work |
+| Arguments | No forwarded values unless a native changed registration uses `pathArgs: "paths"`; forwarded paths may only narrow work |
 | Exit 0 | The command passed |
 | Non-zero exit | The command failed; complete captured diagnostics must be available |
 
@@ -38,7 +38,7 @@ For each detected tool, also load its reference:
 
 ## Shared Wrapper Prelude
 
-Each wrapper starts with the same safety and output setup. Use the diff setup in wrappers that support affected-work scoping and omit the unused arrays from wrappers such as a full-project typecheck.
+Each wrapper starts with the same safety and output setup. Use the diff setup only in changed wrappers and omit it from full wrappers.
 
 ```bash
 #!/usr/bin/env bash
@@ -101,7 +101,7 @@ fi
 - Typechecks and builds stay full when dependency analysis cannot make scoping sound.
 - Failure to resolve a merge base triggers a full safe check, never a silent pass.
 
-The registered test wrapper may additionally accept relative paths from a `scopeArgs: "paths"` registration. When paths are present, treat them as a narrower explicit test selection and do not add worker, heap, pool, or config options from forwarded arguments.
+The registered changed test wrapper may additionally accept relative paths from a `pathArgs: "paths"` registration. When paths are present, treat them as a narrower explicit test selection and do not add worker, heap, pool, or config options from forwarded arguments. Full wrappers never accept paths, and no wrapper parses Command Center's scope.
 
 ## Fixed Resource Profiles and Cost
 
@@ -119,7 +119,7 @@ Runner configuration may mirror these limits but must not own enforcement. It lo
 
 Declare about one cost unit per configured worker; an ordinary single-process wrapper normally costs one. Use the same convention for every project sharing the machine.
 
-If a project needs both a two-worker inner-loop test and an eight-worker full test, register two wrappers and two command names with costs `2` and `8`. Do not make one command dynamically change profiles.
+If a project needs both a two-worker and an eight-worker resource profile, register two logical command names with costs `2` and `8`. Full and changed scope variants within one logical profile share the same fixed cost and timeout.
 
 ## Merge-Gate Ordering
 
@@ -127,7 +127,7 @@ If a project needs both a two-worker inner-loop test and an eight-worker full te
 
 ## Key Rules
 
-- One wrapper per command or fixed resource profile under `scripts/validate/`.
+- One fixed full wrapper and, where sound, one fixed changed wrapper per logical command/resource profile under `scripts/validate/`.
 - Shebang plus executable permission for every wrapper.
 - `set -euo pipefail` and a non-zero exit on failure.
 - Silent on success, complete on failure, and no color.

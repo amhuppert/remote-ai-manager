@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type {
   GraphWorkflowApprovalDecision,
+  GraphWorkflowApprovalScope,
   GraphWorkflowExecution,
   GraphWorkflowPendingApproval,
 } from "@/lib/workflow-graph/schemas";
@@ -38,9 +39,17 @@ function buildExecution(input: {
           conversationId: CONVERSATION_ID,
           requestedAt: "2026-06-10T09:00:00.000Z",
           decision: null,
+          approvalScope: { kind: "whole_tree" },
         };
   return execution;
 }
+
+const FROZEN_SCOPED_SCOPE: GraphWorkflowApprovalScope = {
+  kind: "scoped",
+  ownedPaths: ["src/api"],
+  treeHash: "owned-digest-1",
+  headSha: "base-sha-1",
+};
 
 describe("createApprovalGateService.enterAwaitingApproval", () => {
   function buildService() {
@@ -62,6 +71,7 @@ describe("createApprovalGateService.enterAwaitingApproval", () => {
     const entered = service.enterAwaitingApproval(execution, {
       contextId: GATED_CONTEXT_ID,
       conversationId: CONVERSATION_ID,
+      approvalScope: { kind: "whole_tree" },
     });
 
     const contextState = execution.contextStates[GATED_CONTEXT_ID];
@@ -70,6 +80,9 @@ describe("createApprovalGateService.enterAwaitingApproval", () => {
       conversationId: CONVERSATION_ID,
       requestedAt: NOW,
       decision: null,
+      // A full-access member declares no ownership, so it parks on the
+      // whole-tree view it has always been reviewed under.
+      approvalScope: { kind: "whole_tree" },
     });
     // Pure helper: the `gate.pending` observability is returned as DATA for the
     // caller to log post-commit (no logging I/O inside the write-queue reducer).
@@ -90,6 +103,7 @@ describe("createApprovalGateService.enterAwaitingApproval", () => {
     service.enterAwaitingApproval(execution, {
       contextId: GATED_CONTEXT_ID,
       conversationId: CONVERSATION_ID,
+      approvalScope: { kind: "whole_tree" },
     });
 
     const gated = execution.contextStates[GATED_CONTEXT_ID];
@@ -107,6 +121,27 @@ describe("createApprovalGateService.enterAwaitingApproval", () => {
     expect(execution.status).toBe(before.status);
   });
 
+  it("persists the frozen scoped snapshot an owning member parks on", () => {
+    const service = buildService();
+    const execution = buildExecution({
+      contextStatus: "running",
+      pendingApproval: null,
+    });
+
+    service.enterAwaitingApproval(execution, {
+      contextId: GATED_CONTEXT_ID,
+      conversationId: CONVERSATION_ID,
+      approvalScope: FROZEN_SCOPED_SCOPE,
+    });
+
+    expect(execution.contextStates[GATED_CONTEXT_ID]?.pendingApproval).toEqual({
+      conversationId: CONVERSATION_ID,
+      requestedAt: NOW,
+      decision: null,
+      approvalScope: FROZEN_SCOPED_SCOPE,
+    });
+  });
+
   it("throws for an unknown context id", () => {
     const service = buildService();
     const execution = buildExecution({});
@@ -115,6 +150,7 @@ describe("createApprovalGateService.enterAwaitingApproval", () => {
       service.enterAwaitingApproval(execution, {
         contextId: "context-missing",
         conversationId: CONVERSATION_ID,
+        approvalScope: { kind: "whole_tree" },
       }),
     ).toThrow(/context-missing/);
   });
@@ -137,6 +173,7 @@ function buildExecutionWithDecision(
       conversationId: CONVERSATION_ID,
       requestedAt: "2026-06-10T09:00:00.000Z",
       decision,
+      approvalScope: { kind: "whole_tree" },
     },
   });
 }
@@ -324,6 +361,7 @@ describe("createApprovalGateService.applyRejectedDecision", () => {
     contextState.pendingApproval = {
       conversationId: CONVERSATION_ID,
       requestedAt: NOW,
+      approvalScope: { kind: "whole_tree" },
       decision: { type: "rejected", message: "Still wrong", decidedAt: NOW },
     };
     service.applyRejectedDecision(execution, GATED_CONTEXT_ID);
@@ -346,6 +384,7 @@ describe("createApprovalGateService.applyRejectedDecision", () => {
     contextState.pendingApproval = {
       conversationId: CONVERSATION_ID,
       requestedAt: NOW,
+      approvalScope: { kind: "whole_tree" },
       decision: {
         type: "rejected",
         message: "Second rejection feedback",
@@ -577,6 +616,7 @@ describe("createApprovalGateService.recordDecision", () => {
         pendingApproval: {
           conversationId: CONVERSATION_ID,
           requestedAt: "2026-06-10T09:00:00.000Z",
+          approvalScope: { kind: "whole_tree" },
           decision: priorDecision,
         },
       }),
@@ -618,7 +658,32 @@ describe("createApprovalGateService.recordDecision", () => {
       conversationId: CONVERSATION_ID,
       requestedAt: "2026-06-10T09:00:00.000Z",
       decision: { type: "approved", decidedAt: NOW },
+      approvalScope: { kind: "whole_tree" },
     });
+  });
+
+  it("keeps an owning member's frozen scoped snapshot across the decision round-trip", async () => {
+    const service = buildService();
+    const execution = buildExecution({});
+    const contextState = execution.contextStates[GATED_CONTEXT_ID];
+    if (!contextState?.pendingApproval) {
+      throw new Error("fixture missing pending approval");
+    }
+    contextState.pendingApproval.approvalScope = { ...FROZEN_SCOPED_SCOPE };
+    await seedExecution(execution);
+
+    const result = await service.recordDecision({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      contextId: GATED_CONTEXT_ID,
+      decision: { type: "approved" },
+    });
+
+    expect(result.ok).toBe(true);
+    // Reloaded from SQLite: the reference the approval surface reads its bytes
+    // through has to survive the process that froze it.
+    const reloaded = await reloadGatedContext();
+    expect(reloaded.pendingApproval?.approvalScope).toEqual(FROZEN_SCOPED_SCOPE);
   });
 
   it("records a rejected decision with its message", async () => {

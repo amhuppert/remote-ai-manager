@@ -362,6 +362,7 @@ function createCodexExecutionWithRunningTask() {
   const definition = createResolvedWorkflowDefinition({
     executionContexts: [
       {
+        placement: { lane: "context-codex-impl", mode: "full" as const },
         id: "context-codex-impl",
         title: "Codex Implement",
         description: "Codex-powered implementation",
@@ -717,6 +718,7 @@ describe("GraphWorkflowPanel — advisory index origin link (R9.4)", () => {
           validationRound: {
             seq: 3,
             candidate: {
+              identityScope: "wholeTree",
               headSha: "head-3",
               candidateTreeHash: "tree-hash-3",
               taskStateHash: "tasks-3",

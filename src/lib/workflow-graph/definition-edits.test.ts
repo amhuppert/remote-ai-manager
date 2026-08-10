@@ -1085,6 +1085,130 @@ describe("applyDefinitionEdits", () => {
       );
     });
   });
+
+  describe("placement through the saved-tier edit surface (lwp R1, R10)", () => {
+    function contextOf(
+      result: ReturnType<typeof applyDefinitionEdits>,
+      contextId: string,
+    ) {
+      if (!result.ok) throw new Error("expected the edit batch to be accepted");
+      return result.record.definition.executionContexts.find(
+        (context) => context.id === contextId,
+      );
+    }
+
+    it("round-trips an authored placement through add-context and update-context", () => {
+      const added = applyDefinitionEdits(
+        createWorkflowDefinitionRecord(),
+        ops({
+          type: "add-context",
+          id: "context-docs",
+          title: "Document",
+          acceptanceCriteria: "Docs describe the change.",
+          placement: {
+            lane: "delivery",
+            mode: "owned",
+            ownedPaths: ["docs", "README.md"],
+          },
+        }),
+      );
+      expect(contextOf(added, "context-docs")?.placement).toEqual({
+        lane: "delivery",
+        mode: "owned",
+        ownedPaths: ["docs", "README.md"],
+      });
+
+      if (!added.ok) throw new Error("expected the add batch to succeed");
+      const narrowed = applyDefinitionEdits(
+        added.record,
+        ops({
+          type: "update-context",
+          contextId: "context-docs",
+          placement: {
+            lane: "delivery",
+            mode: "owned",
+            ownedPaths: ["docs"],
+          },
+        }),
+      );
+      expect(contextOf(narrowed, "context-docs")?.placement).toEqual({
+        lane: "delivery",
+        mode: "owned",
+        ownedPaths: ["docs"],
+      });
+    });
+
+    it("leaves an existing placement untouched when update-context omits it", () => {
+      const renamed = applyDefinitionEdits(
+        createWorkflowDefinitionRecord(),
+        ops({
+          type: "update-context",
+          contextId: "context-plan",
+          title: "Plan (renamed)",
+        }),
+      );
+
+      expect(contextOf(renamed, "context-plan")?.placement).toEqual({
+        lane: "plan",
+        mode: "full",
+      });
+    });
+
+    it("refuses a placement edit that overlaps a concurrent same-lane sibling", () => {
+      // `context-plan` and `context-implement` are dependency-ordered in the
+      // fixture, so the collision needs a third context that nothing sequences.
+      const seeded = applyDefinitionEdits(
+        createWorkflowDefinitionRecord(),
+        ops({
+          type: "add-context",
+          id: "context-docs",
+          title: "Document",
+          acceptanceCriteria: "Docs describe the change.",
+          placement: { lane: "delivery", mode: "owned", ownedPaths: ["docs"] },
+        }),
+      );
+      if (!seeded.ok) throw new Error("expected the seeding batch to succeed");
+
+      const result = applyDefinitionEdits(
+        seeded.record,
+        ops({
+          type: "update-context",
+          contextId: "context-plan",
+          placement: {
+            lane: "delivery",
+            mode: "owned",
+            ownedPaths: ["docs/reference"],
+          },
+        }),
+      );
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.issues.map((issue) => issue.code)).toContain(
+        "placement-owned-paths-overlap",
+      );
+    });
+
+    it("refuses an illegal lane name with a locator naming the placement", () => {
+      const result = applyDefinitionEdits(
+        createWorkflowDefinitionRecord(),
+        ops({
+          type: "update-context",
+          contextId: "context-plan",
+          placement: { lane: "-not-a-branch-segment", mode: "full" },
+        }),
+      );
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const issue = result.issues[0];
+      if (issue === undefined) throw new Error("expected a located issue");
+      expect(issue.code).toBe("placement-lane-name-invalid");
+      expect(formatDefinitionEditIssue(issue).path).toBe(
+        "executionContexts.0.placement.lane",
+      );
+    });
+  });
 });
 
 describe("applyDefinitionEdits — edge guards and id-addressed edge edits", () => {

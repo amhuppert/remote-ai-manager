@@ -28,6 +28,7 @@ describe("workflow graph planner", () => {
               title: "Plan",
               description: "Inspect the current implementation surface.",
               acceptanceCriteria: "TBD",
+              placement: { lane: "context-plan", mode: "full" },
               implementer: {
                 id: "implementer",
                 profile: { tier: "builtin", id: "general-implementer" },
@@ -52,6 +53,7 @@ describe("workflow graph planner", () => {
               title: "Implement",
               description: "Apply the changes.",
               acceptanceCriteria: "TBD",
+              placement: { lane: "context-implement", mode: "full" },
               implementer: {
                 id: "implementer",
                 profile: { tier: "builtin", id: "general-implementer" },
@@ -133,6 +135,7 @@ describe("workflow graph planner", () => {
               id: "context-1",
               title: "Broken",
               acceptanceCriteria: "TBD",
+              placement: { lane: "context-1", mode: "full" },
               implementer: {
                 id: "implementer",
                 profile: { tier: "builtin", id: "general-implementer" },

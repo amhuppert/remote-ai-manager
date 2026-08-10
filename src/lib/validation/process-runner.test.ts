@@ -66,7 +66,9 @@ function params(
     sessionName: "session-a",
     branchName: "csm/session-a",
     targetBranch: "main",
-    scopeArgs: "forbid",
+    requestedScope: "changed",
+    effectiveScope: "changed",
+    pathArgs: "forbid",
     scopePaths: [],
     timeoutMs: 10_000,
     killGraceMs: 250,
@@ -248,8 +250,7 @@ describe("spawnValidation", () => {
     const childPid = Number(
       readFileSync(path.join(worktreeDir, "child.pid"), "utf-8").trim(),
     );
-    expect(Number.isInteger(childPid) && childPid > 0).toBe(true);
-    expect(pidAlive(childPid)).toBe(false);
+    expect(await eventually(() => !pidAlive(childPid))).toBe(true);
 
     // wait() observes the same settled outcome.
     await expect(result.handle.wait()).resolves.toEqual(outcome);
@@ -277,36 +278,36 @@ describe("spawnValidation", () => {
     expect(pidAlive(childPid)).toBe(false);
   }, 15_000);
 
-  it("rejects forwarded tokens when the command forbids scope args, spawning nothing", async () => {
+  it("rejects forwarded paths when the changed command forbids them, spawning nothing", async () => {
     writeScript("scripts/check.sh", "echo ran > marker.txt");
 
     const result = await spawnValidation(
-      params({ scopeArgs: "forbid", scopePaths: ["src/a.ts"] }),
+      params({ pathArgs: "forbid", scopePaths: ["src/a.ts"] }),
     );
 
-    expect(result.kind).toBe("scope_args_forbidden");
+    expect(result.kind).toBe("path_args_forbidden");
     expect(() =>
       readFileSync(path.join(worktreeDir, "marker.txt"), "utf-8"),
     ).toThrow();
   });
 
-  it("rejects scope tokens that violate the foundation rules before spawn", async () => {
+  it("rejects path tokens that violate the foundation rules before spawn", async () => {
     writeScript("scripts/check.sh", "echo ran > marker.txt");
 
     const escape = await spawnValidation(
-      params({ scopeArgs: "paths", scopePaths: ["../outside.ts"] }),
+      params({ pathArgs: "paths", scopePaths: ["../outside.ts"] }),
     );
     expect(escape).toMatchObject({
-      kind: "scope_args_rejected",
+      kind: "path_args_rejected",
       violation: "escapes_worktree",
       token: "../outside.ts",
     });
 
     const option = await spawnValidation(
-      params({ scopeArgs: "paths", scopePaths: ["--pool=forks"] }),
+      params({ pathArgs: "paths", scopePaths: ["--pool=forks"] }),
     );
     expect(option).toMatchObject({
-      kind: "scope_args_rejected",
+      kind: "path_args_rejected",
       violation: "option_token",
     });
     expect(() =>
@@ -314,12 +315,12 @@ describe("spawnValidation", () => {
     ).toThrow();
   });
 
-  it("forwards validated scope paths as arguments", async () => {
+  it("forwards validated paths as arguments", async () => {
     writeScript("scripts/check.sh", 'echo "args=$@"');
 
     const result = await spawnValidation(
       params({
-        scopeArgs: "paths",
+        pathArgs: "paths",
         scopePaths: ["src/a.test.ts", "src/b.test.ts"],
       }),
     );
@@ -330,6 +331,22 @@ describe("spawnValidation", () => {
     expect(outcome.kind).toBe("exited");
     if (outcome.kind !== "exited") return;
     expect(outcome.output).toContain("args=src/a.test.ts src/b.test.ts");
+  });
+
+  it("rejects paths when the resolved execution is full", async () => {
+    writeScript("scripts/check.sh", "echo ran > marker.txt");
+
+    const result = await spawnValidation(
+      params({
+        requestedScope: "changed",
+        effectiveScope: "full",
+        pathArgs: "paths",
+        scopePaths: ["src/a.test.ts"],
+      }),
+    );
+
+    expect(result.kind).toBe("path_args_require_changed");
+    expect(existsSync(path.join(worktreeDir, "marker.txt"))).toBe(false);
   });
 
   it("reports a missing script without spawning", async () => {

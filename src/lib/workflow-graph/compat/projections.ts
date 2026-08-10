@@ -197,6 +197,30 @@ export function projectTypedEvent(
       };
     case "graph-workflow-lane-status":
       return { kind: event.type, subject: event.laneId, detail: event.status };
+    case "graph-workflow-lane-created":
+      return {
+        kind: event.type,
+        subject: event.laneId,
+        detail: `${event.kind}:${event.placementSource}`,
+      };
+    case "graph-workflow-lane-concurrent-admission":
+      return {
+        kind: event.type,
+        subject: event.laneId,
+        detail: `${event.canonicalCheckResult}:${event.memberContextIds.join(",")}`,
+      };
+    case "graph-workflow-lane-landed":
+      return {
+        kind: event.type,
+        subject: event.laneId,
+        detail: `${event.contextId}:${event.commitSha ?? "no-commit"}`,
+      };
+    case "graph-workflow-lane-drift-halted":
+      return {
+        kind: event.type,
+        subject: event.laneId,
+        detail: `${event.contextId}:${event.unattributedPaths.join(",")}`,
+      };
     case "graph-workflow-lane-commit":
       return {
         kind: event.type,

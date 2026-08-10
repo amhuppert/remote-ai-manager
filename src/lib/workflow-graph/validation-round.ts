@@ -30,8 +30,15 @@ import type {
   GraphWorkflowValidationSpecialist,
 } from "@/lib/workflow-graph/schemas";
 
-/** The git half of a candidate identity, as read from a worktree. */
+/**
+ * The git half of a candidate identity, as read from a worktree.
+ *
+ * `identityScope` travels with the two hashes rather than being inferred later:
+ * the resolver knows which reading it took, and a consumer holding only the
+ * hashes could not tell a whole-tree object id from an owned-subset digest.
+ */
 export interface ValidationCandidateTree {
+  identityScope: GraphWorkflowValidationCandidate["identityScope"];
   headSha: string;
   candidateTreeHash: string;
 }
@@ -87,6 +94,7 @@ export function freezeValidationCandidate(input: {
   contextId: string;
 }): GraphWorkflowValidationCandidate {
   return {
+    identityScope: input.tree.identityScope,
     headSha: input.tree.headSha,
     candidateTreeHash: input.tree.candidateTreeHash,
     taskStateHash: computeTaskStateHash(input.taskStates, input.contextId),
@@ -326,17 +334,32 @@ export function reconcileValidationRoster(
     : { kind: "ok", assignments: resolved };
 }
 
-const CANDIDATE_COMPONENTS = [
-  "headSha",
-  "candidateTreeHash",
-  "taskStateHash",
-] as const satisfies readonly (keyof GraphWorkflowValidationCandidate)[];
+/**
+ * Which components decide identity, per scope.
+ *
+ * `identityScope` is compared under both, and first: the two identity forms are
+ * not comparable, so a scope that changed under an open round is drift, never a
+ * pair of hashes to weigh. `headSha` is absent from the `owned` set for the
+ * reason the schema records — a same-lane sibling landing its own work moves the
+ * base commit without touching anything this context owns, and a round that
+ * called that drift could never complete while a sibling was still landing.
+ */
+const CANDIDATE_COMPONENTS = {
+  wholeTree: ["identityScope", "headSha", "candidateTreeHash", "taskStateHash"],
+  owned: ["identityScope", "candidateTreeHash", "taskStateHash"],
+} as const satisfies Record<
+  GraphWorkflowValidationCandidate["identityScope"],
+  readonly (keyof GraphWorkflowValidationCandidate)[]
+>;
 
 function driftedComponents(
   frozen: GraphWorkflowValidationCandidate,
   observed: GraphWorkflowValidationCandidate,
 ): string[] {
-  return CANDIDATE_COMPONENTS.filter(
+  // Keyed off the FROZEN scope: the round's own claim about what it is reviewing
+  // is what an observation has to answer, and a mismatched observed scope is
+  // caught by the `identityScope` component every set contains.
+  return CANDIDATE_COMPONENTS[frozen.identityScope].filter(
     (component) => frozen[component] !== observed[component],
   );
 }

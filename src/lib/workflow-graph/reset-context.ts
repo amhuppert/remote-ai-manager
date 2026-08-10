@@ -3,7 +3,6 @@ import {
   resetContextStateToInitial,
 } from "@/lib/workflow-graph/context-transitions";
 import { buildInitialTaskState } from "@/lib/workflow-graph/execution-state";
-import { recomputeLanePlanForSubgraph } from "@/lib/workflow-graph/lane-plan";
 import type {
   GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
@@ -87,12 +86,6 @@ export function resetExecutionContext(
     nextLaneStates[ctxKey] = contextLanes;
   }
 
-  const nextLanePlan = recomputeLanePlanForSubgraph({
-    definition: execution.workingDefinition,
-    previousPlan: execution.lanePlan,
-    contextIds: [contextId],
-  });
-
   return {
     ...execution,
     status: "paused",
@@ -103,6 +96,5 @@ export function resetExecutionContext(
     haltReason: null,
     completedAt: null,
     machineSnapshot: null,
-    lanePlan: nextLanePlan,
   };
 }

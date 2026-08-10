@@ -1,9 +1,14 @@
 import os from "node:os";
 import { startVitest } from "vitest/node";
+import { resolveWorkerBudget } from "./worker-budget.mjs";
 
-const [scope, projectSelection, ...scopeArgs] = process.argv.slice(2);
-const requestedWorkers = Number.parseInt(process.env.CC_TEST_WORKERS ?? "", 10);
+const [mode, projectSelection, ...modeArgs] = process.argv.slice(2);
+const testWorkers = Number.parseInt(process.env.CC_TEST_WORKERS ?? "", 10);
 const testHeapMb = Number.parseInt(process.env.CC_TEST_HEAP_MB ?? "", 10);
+const coordinatorHeapMb = Number.parseInt(
+  process.env.CC_TEST_COORDINATOR_HEAP_MB ?? "",
+  10,
+);
 // 0 disables bail. Scoped runs keep the low threshold so a broken branch fails
 // fast; the full-suite command raises it to report every failure at once.
 const testBail = Number.parseInt(process.env.CC_TEST_BAIL ?? "3", 10);
@@ -14,37 +19,26 @@ if (!Number.isInteger(requestedWorkers) || requestedWorkers < 1) {
 if (!Number.isInteger(testHeapMb) || testHeapMb < 1) {
   throw new Error("CC_TEST_HEAP_MB must be a positive integer");
 }
+if (!Number.isInteger(coordinatorHeapMb) || coordinatorHeapMb < 1) {
+  throw new Error("CC_TEST_COORDINATOR_HEAP_MB must be a positive integer");
+}
 if (!Number.isInteger(testBail) || testBail < 0) {
   throw new Error("CC_TEST_BAIL must be a non-negative integer");
 }
 
-/**
- * `CC_TEST_WORKERS` is a CEILING, not an override.
- *
- * vitest.config.ts derives its fork count from RAM (~55% of total, budgeted
- * against the same per-worker heap) precisely so a full-suite run cannot
- * exhaust memory and swap. Passing the requested count straight through
- * defeated that: on a 16 GB machine the config allows 5 workers but the
- * launcher forced 8, reserving 12 GB of heap ceiling against an 8.8 GB budget.
- * Under concurrent lane validations that oversubscription starves the main
- * process and the run dies on a worker RPC timeout ("Timeout calling
- * onTaskUpdate") with every test having passed.
- *
- * Clamping is monotonic — it only ever lowers the count, so a machine with
- * enough RAM for the requested workers still gets all of them.
- */
-const WORKER_HEAP_GB = testHeapMb / 1024;
-const RAM_BUDGET_FRACTION = 0.55;
-const ramBoundedWorkers = Math.max(
-  2,
-  Math.floor(
-    ((os.totalmem() / 1024 ** 3) * RAM_BUDGET_FRACTION) / WORKER_HEAP_GB,
-  ),
-);
-const testWorkers = Math.max(
-  1,
-  Math.min(requestedWorkers, os.availableParallelism(), ramBoundedWorkers),
-);
+// The requested worker count is a ceiling request, not an instruction. Running
+// more forks than the machine's budget allows contends with the vitest main
+// process, which has its own deadline to meet: a worker whose `onTaskUpdate`
+// RPC goes unanswered for 60s fails the run on an unhandled timeout with every
+// test passing. Resolved through the same owner the vitest config uses, so the
+// two cannot disagree about what this machine can hold.
+const workers = resolveWorkerBudget({
+  requestedWorkers: testWorkers,
+  coordinatorHeapMb,
+  workerHeapMb: testHeapMb,
+  totalMemoryBytes: os.totalmem(),
+  availableParallelism: os.availableParallelism(),
+});
 
 const projectsBySelection = {
   both: ["unit-node", "unit-jsdom"],
@@ -58,11 +52,11 @@ if (!projects) {
 
 let filters = [];
 let changed;
-if (scope === "paths" && scopeArgs.length > 0) {
-  filters = scopeArgs;
-} else if (scope === "changed" && scopeArgs.length === 1) {
-  changed = scopeArgs[0];
-} else if (scope !== "full" || scopeArgs.length > 0) {
+if (mode === "paths" && modeArgs.length > 0) {
+  filters = modeArgs;
+} else if (mode === "changed" && modeArgs.length === 1) {
+  changed = modeArgs[0];
+} else if (mode !== "full" || modeArgs.length > 0) {
   throw new Error("expected full, changed <merge-base>, or paths <path...>");
 }
 
@@ -71,15 +65,15 @@ await startVitest("test", filters, {
   color: false,
   reporters: ["dot"],
   bail: testBail,
-  passWithNoTests: scope !== "full",
+  passWithNoTests: mode !== "full",
   ...(changed ? { changed } : {}),
   project: projects,
   pool: "forks",
-  maxWorkers: testWorkers,
+  maxWorkers: workers,
   minWorkers: 1,
   poolOptions: {
     forks: {
-      maxForks: testWorkers,
+      maxForks: workers,
       minForks: 1,
       execArgv: [`--max-old-space-size=${testHeapMb}`],
     },

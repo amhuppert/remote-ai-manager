@@ -76,6 +76,7 @@ function makeContext(
   overrides: Partial<GraphWorkflowResolvedContext> = {},
 ): GraphWorkflowResolvedContext {
   return {
+    placement: { lane: "context-plan", mode: "full" as const },
     id: "context-plan",
     title: "Plan",
     description: "Plan the implementation",
@@ -390,6 +391,24 @@ describe("buildIterationPrompt", () => {
     // that a lane's `git add -A` would sweep into the branch.
     expect(prompt).toContain(".cc/temp/doc.json");
     expect(prompt).not.toContain("--file <doc.json>");
+  });
+
+  it("directs session readers to keep cctl payloads in private scratch and documents the live view", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext({
+        placement: { lane: "session", mode: "readOnly" },
+      }),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+    });
+
+    expect(prompt).toContain("per-context scratch directory");
+    expect(prompt).toContain("live view");
+    expect(prompt).not.toContain(
+      "Write scratch and payload files — including the `--file` JSON the commands below read — under `.cc/temp/`",
+    );
   });
 
   it("includes `cctl workflow task add` when allowAgentTaskAdd is true", () => {

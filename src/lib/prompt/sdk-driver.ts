@@ -12,6 +12,7 @@ import type {
   BackgroundWaitSummary,
   WorkflowLaneIdentity,
 } from "@/lib/agent-backends/conversation";
+import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -541,6 +542,15 @@ export interface PromptStreamOptions {
    * non-workflow conversations keep the default autonomous-denied guidance.
    */
   askUserQuestionsEnabled?: boolean;
+  /**
+   * Server-derived filesystem-write envelope for this turn. Set only by the
+   * graph-workflow implementer runner, which composes it from the context's
+   * authored placement before any dispatch decision; every other caller leaves
+   * it unset, so an ordinary conversation keeps its unrestricted worktree.
+   * Carried onto the claimed turn, so the turn that runs is the one the
+   * envelope was composed for.
+   */
+  fsWritePolicy?: FsWritePolicy;
 }
 
 export interface PromptStreamResult {
@@ -968,6 +978,9 @@ export async function executePromptStream(
         : {}),
       ...(options?.askUserQuestionsEnabled
         ? { askUserQuestionsEnabled: true }
+        : {}),
+      ...(options?.fsWritePolicy !== undefined
+        ? { fsWritePolicy: options.fsWritePolicy }
         : {}),
     },
   });

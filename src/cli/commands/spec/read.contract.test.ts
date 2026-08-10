@@ -146,6 +146,7 @@ const snapshot: SpecRevisionSnapshot = {
           coveredCriterionElementIds: ["criterion-1"],
           dependsOnTaskElementIds: [],
           laneGroup: "cli",
+          executionLane: "cli-surface",
           touchedPaths: ["src/cli/commands/spec"],
         },
         payloadHash: "task-hash",
@@ -176,6 +177,7 @@ const snapshot: SpecRevisionSnapshot = {
           coveredCriterionElementIds: ["criterion-1"],
           dependsOnTaskElementIds: ["task-1"],
           laneGroup: "cli",
+          executionLane: "cli-surface",
           touchedPaths: ["src/cli/commands/spec/read.contract.test.ts"],
         },
         payloadHash: "task-2-hash",
@@ -1171,6 +1173,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
         handle: "T1",
         dependsOn: [],
         laneGroup: "cli",
+        executionLane: "cli-surface",
         touchedPaths: ["src/cli/commands/spec"],
         criterionCoverage: ["R1.1"],
       }),
@@ -1178,6 +1181,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
         handle: "T2",
         dependsOn: ["T1"],
         laneGroup: "cli",
+        executionLane: "cli-surface",
         touchedPaths: ["src/cli/commands/spec/read.contract.test.ts"],
         criterionCoverage: ["R1.1"],
       }),
@@ -1268,6 +1272,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
     expect(result.stdout).toContain("T2: Verify the CLI reads");
     expect(result.stdout).toContain("dependencies: T1");
     expect(result.stdout).toContain("lane group: cli");
+    expect(result.stdout).toContain("execution lane: cli-surface");
     expect(result.stdout).toContain(
       "touched surfaces: src/cli/commands/spec/read.contract.test.ts",
     );

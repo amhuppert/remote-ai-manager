@@ -40,6 +40,11 @@ import {
   resolveConfiguredCodexPricingOverrides,
 } from "./pricing";
 import type { AgentFailureClassification } from "../errors";
+import type { FsWritePolicy } from "../task";
+import {
+  buildCodexConversationFsWriteEnvelope,
+  type CodexFsWriteEnvelope,
+} from "./fs-write-envelope";
 import { createCodexFailureClassifier } from "./failure-classifier";
 import { createLogger } from "@/lib/logging";
 import {
@@ -160,6 +165,8 @@ export class CodexConversationRuntime
     | { type: "json_schema"; schema: Record<string, unknown> }
     | undefined;
   readonly alignmentVersion: number | null;
+  /** The write envelope this runtime's turns execute under; undefined when unrestricted. */
+  readonly fsWritePolicy: FsWritePolicy | undefined;
 
   private _status: "alive" | "dead" = "alive";
   private threadId: string | null;
@@ -227,6 +234,7 @@ export class CodexConversationRuntime
     this.reasoningEffort = input.reasoningEffort;
     this.outputFormat = input.outputFormat;
     this.alignmentVersion = input.alignmentVersion ?? null;
+    this.fsWritePolicy = input.fsWritePolicy;
     this.deps = deps;
 
     logger.info("codex-runtime.created", {
@@ -652,6 +660,26 @@ export class CodexConversationRuntime
     return [{ type: "text", text: finalPrompt }, ...imageInputs];
   }
 
+  /**
+   * Translate this runtime's write policy onto the Codex sandbox, or undefined
+   * when the runtime is unrestricted.
+   *
+   * Throws rather than degrading: the caller is on the turn path, and a policy
+   * Codex cannot enforce as written must fail the turn — `danger-full-access`
+   * is the alternative, and handing a confined context that would be worse than
+   * not confining it at all.
+   */
+  private buildWriteEnvelope(): CodexFsWriteEnvelope | undefined {
+    if (this.fsWritePolicy === undefined) return undefined;
+    const result = buildCodexConversationFsWriteEnvelope(this.fsWritePolicy);
+    if (result.kind === "unestablishable") {
+      throw new Error(
+        `Cannot establish the Codex write envelope for conversation ${this.conversationId}: ${result.reason}`,
+      );
+    }
+    return result.envelope;
+  }
+
   private async buildCodexOptions(
     codexFastMode: boolean,
   ): Promise<CodexOptions> {
@@ -660,9 +688,17 @@ export class CodexConversationRuntime
     // identity when this is an implementer lane, so `cctl workflow …` resolves
     // its execution/context from env without flags. Rebuilt per turn because the
     // runtime reconstructs its Codex client each turn.
+    // The sandbox excludes the ambient temp roots, so a confined run's TMPDIR is
+    // repointed into its own allowlisted temp — otherwise every temp-writing
+    // tool in the turn fails on a directory the envelope does not cover.
+    const writeEnvelope = this.buildWriteEnvelope();
     const env = this.deps.toStringEnv(
       buildSessionEnvContract({
-        baseEnv: { ...this.deps.buildChildEnv(), CLAUDECODE: "" },
+        baseEnv: {
+          ...this.deps.buildChildEnv(),
+          CLAUDECODE: "",
+          ...(writeEnvelope ? { TMPDIR: writeEnvelope.tmpDir } : {}),
+        },
         serverUrl: this.deps.getServerUrl(),
         apiToken: this.deps.getApiToken(),
         // Scope and session identity come from the DECLARED target, so a project
@@ -705,6 +741,12 @@ export class CodexConversationRuntime
       Object.assign(configMerged, this.stagedCapabilityConfig.config);
     }
 
+    // Merged last so nothing above — a staged capability config, a portable-MCP
+    // translation — can widen the sandbox it pins.
+    if (writeEnvelope) {
+      Object.assign(configMerged, writeEnvelope.config);
+    }
+
     options.config = withCodexFastMode(
       configMerged as CodexOptions["config"],
       codexFastMode,
@@ -736,13 +778,27 @@ export class CodexConversationRuntime
   }
 
   private buildThreadOptions(): ThreadOptions {
-    const options: ThreadOptions = {
-      workingDirectory: this.worktreePath,
-      sandboxMode: "danger-full-access",
-      approvalPolicy: "never",
-      webSearchMode: "disabled",
-      skipGitRepoCheck: true,
-    };
+    // A confined context drops `danger-full-access` entirely: `workspace-write`
+    // makes the run's WORKING DIRECTORY writable by construction, so the cwd
+    // moves to the context's own scratch root and the repository is reached by
+    // absolute path (the prompt carries it). A policy that cannot be translated
+    // throws, which fails the turn rather than running it unconfined.
+    const envelope = this.buildWriteEnvelope();
+    const options: ThreadOptions = envelope
+      ? {
+          workingDirectory: envelope.workingDirectory,
+          sandboxMode: "workspace-write",
+          approvalPolicy: "never",
+          webSearchMode: "disabled",
+          skipGitRepoCheck: true,
+        }
+      : {
+          workingDirectory: this.worktreePath,
+          sandboxMode: "danger-full-access",
+          approvalPolicy: "never",
+          webSearchMode: "disabled",
+          skipGitRepoCheck: true,
+        };
 
     // Always pin a model. With no model the Codex SDK falls back to its own
     // built-in default, which is rejected for ChatGPT-account auth.

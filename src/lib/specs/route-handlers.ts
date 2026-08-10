@@ -1001,6 +1001,7 @@ function taskPlanStatus(snapshot: SpecRevisionSnapshot | null) {
           .filter((elementId) => !handles.has(elementId))
           .sort(),
         laneGroup: payload.laneGroup ?? null,
+        executionLane: payload.executionLane ?? null,
         touchedPaths: payload.touchedPaths ?? [],
         criterionCoverage: covered
           .filter((elementId) => criterionIds.has(elementId))

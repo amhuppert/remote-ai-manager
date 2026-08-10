@@ -10,6 +10,7 @@ import {
   type GraphWorkflowContextValidatorInput,
 } from "./execution-validation";
 import type { ValidatorCohort } from "./config-schemas";
+import type { GraphWorkflowValidationCandidate } from "./schemas";
 import type { ValidatorRunResult } from "./validator-runner";
 
 /**
@@ -768,6 +769,7 @@ describe("graph workflow execution validation service", () => {
         round: {
           seq: 1,
           candidate: {
+            identityScope: "wholeTree",
             headSha: "head-1",
             candidateTreeHash: "tree-a",
             taskStateHash: "tasks-a",
@@ -968,7 +970,8 @@ describe("graph workflow execution validation service", () => {
   });
 
   describe("the frozen round governs dispatch", () => {
-    const FROZEN_CANDIDATE = {
+    const FROZEN_CANDIDATE: GraphWorkflowValidationCandidate = {
+      identityScope: "wholeTree",
       headSha: "head-1",
       candidateTreeHash: "tree-frozen",
       taskStateHash: "tasks-1",

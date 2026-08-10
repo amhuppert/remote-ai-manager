@@ -22,7 +22,7 @@ import type {
 import { deriveTaskRunPermissions } from "./task-run-permissions";
 import { resolveConversationPersistenceAdapter } from "./persistence-adapter";
 import { getErrorMessage } from "@/lib/shared/errors";
-import type { AgentTaskRunner } from "@/lib/agent-backends/task";
+import type { AgentTaskRunner, FsWritePolicy } from "@/lib/agent-backends/task";
 import type {
   ConversationBackendRuntime,
   ConversationBackendFactory,
@@ -641,6 +641,7 @@ export function shouldRecreateRuntime(
         reasoningEffort: unknown;
         outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
         alignmentVersion?: number | null;
+        fsWritePolicy?: FsWritePolicy;
       }
     | undefined,
   effectiveModel: string | undefined,
@@ -650,6 +651,7 @@ export function shouldRecreateRuntime(
     schema: Record<string, unknown>;
   },
   desiredAlignmentVersion: number | null = null,
+  desiredFsWritePolicy?: FsWritePolicy,
 ): boolean {
   if (!runtime || runtime.status !== "alive") return false;
   const modelChanged = runtime.modelId !== effectiveModel;
@@ -658,8 +660,31 @@ export function shouldRecreateRuntime(
   const alignmentChanged =
     (runtime.alignmentVersion ?? null) !== desiredAlignmentVersion;
   return (
-    modelChanged || effortChanged || outputFormatChanged || alignmentChanged
+    modelChanged ||
+    effortChanged ||
+    outputFormatChanged ||
+    alignmentChanged ||
+    fsWritePolicyChanged(runtime.fsWritePolicy, desiredFsWritePolicy)
   );
+}
+
+/**
+ * Whether a live runtime's baked-in write envelope differs from the one this
+ * turn must run under. Compared by VALUE because the composer builds a fresh
+ * policy object per turn, and by content because an ownership change (live edit,
+ * plan repair) has to reach an already-running lane: the envelope is established
+ * when the backend session starts, so a changed policy needs a new session, and
+ * the direction that matters most is a policy appearing where there was none —
+ * reusing the unrestricted runtime would run the turn outside its envelope.
+ */
+function fsWritePolicyChanged(
+  current: FsWritePolicy | undefined,
+  desired: FsWritePolicy | undefined,
+): boolean {
+  if (current === undefined || desired === undefined) {
+    return current !== desired;
+  }
+  return JSON.stringify(current) !== JSON.stringify(desired);
 }
 
 /**
@@ -812,6 +837,13 @@ interface DispatchTurnViaAgentCallInput {
   outputFormat: ConversationBackendTurnInput["outputFormat"];
   onEvent: ConversationBackendTurnInput["onEvent"];
   syntheticForkSeed: ConversationBackendTurnInput["syntheticForkSeed"];
+  /**
+   * The turn's write envelope, restated on the neutral request. The runtime
+   * already carries it (it was established at session start), so this is what
+   * makes the envelope OBSERVABLE at the backend-neutral boundary — the same
+   * place the task path declares it.
+   */
+  fsWritePolicy: FsWritePolicy | undefined;
 }
 
 /**
@@ -847,6 +879,9 @@ async function dispatchTurnViaAgentCall(
     writeCapability: "write_capable",
     ...(input.outputFormat?.type === "json_schema"
       ? { outputSchema: input.outputFormat.schema }
+      : {}),
+    ...(input.fsWritePolicy !== undefined
+      ? { fsWritePolicy: input.fsWritePolicy }
       : {}),
   };
 
@@ -1297,6 +1332,7 @@ export async function executePromptForMachine(
       effectiveEffort,
       input.outputFormat,
       desiredAlignmentVersion,
+      input.fsWritePolicy,
     )
   ) {
     const reason =
@@ -1307,7 +1343,12 @@ export async function executePromptForMachine(
           ? "effort_changed"
           : input.outputFormat !== backendRuntime.outputFormat
             ? "output_format_changed"
-            : "alignment_changed";
+            : fsWritePolicyChanged(
+                  backendRuntime.fsWritePolicy,
+                  input.fsWritePolicy,
+                )
+              ? "fs_write_policy_changed"
+              : "alignment_changed";
     deps.log.info("prompt.runtime_recreate", {
       ...scopeRef,
       reason,
@@ -1551,6 +1592,12 @@ export async function executePromptForMachine(
           ? { capabilities: capabilityCascadeSeed }
           : {}),
       },
+      // Established at session start, so it is create-input rather than
+      // turn-input; the recreation check above guarantees the live runtime's
+      // envelope is the one this turn asked for.
+      ...(input.fsWritePolicy !== undefined
+        ? { fsWritePolicy: input.fsWritePolicy }
+        : {}),
       ...(runtimeState.workflowContext
         ? {
             workflowExecutionId: runtimeState.workflowContext.executionId,
@@ -1880,6 +1927,7 @@ export async function executePromptForMachine(
       outputFormat: input.outputFormat,
       onEvent,
       syntheticForkSeed,
+      fsWritePolicy: input.fsWritePolicy,
     });
 
     // A failed outcome without `contentBlocks` means the failure carries no

@@ -132,6 +132,10 @@ export function createGraphWorkflowMergeRunner(
           input.validationMode.mode === "run"
             ? (input.validationMode.coveredLaneIds ?? [])
             : [],
+        validationCoveredContextIds:
+          input.validationMode.mode === "run"
+            ? (input.validationMode.coveredContextIds ?? [])
+            : [],
       });
 
       const baseMachine = buildMachine();
@@ -217,6 +221,10 @@ export function createGraphWorkflowMergeRunner(
         validationCoveredLaneIds:
           input.validationMode.mode === "run"
             ? (input.validationMode.coveredLaneIds ?? [])
+            : [],
+        validationCoveredContextIds:
+          input.validationMode.mode === "run"
+            ? (input.validationMode.coveredContextIds ?? [])
             : [],
       });
 

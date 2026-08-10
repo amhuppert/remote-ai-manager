@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { workflowSemanticDefinitionSchema } from "@/lib/workflow-graph/definition-schemas";
 import { applyDefinitionEdits } from "@/lib/workflow-graph/definition-edits";
-import { validateWorkflowDefinition } from "@/lib/workflow-graph/validation";
+import {
+  validateAuthoredDefinition,
+  validateWorkflowDefinition,
+} from "@/lib/workflow-graph/validation";
 import { projectMustRunContextIds } from "@/lib/workflow-graph/route-projection";
+import { laneIdViolation } from "@/lib/workflow-graph/lane-identity";
 import type { SpecRevisionSnapshot } from "./schemas";
 import type { ExecutionScope } from "./scope-validation";
 import {
@@ -803,6 +807,449 @@ function setTaskPayload(
   }
   element.version.payload = { ...element.version.payload, ...changes };
 }
+
+/**
+ * Re-key a task element. Element ids are caller-assigned and constrained only
+ * to be non-empty, so this is how a fixture reaches the ids the compiler has to
+ * survive; every reference to the old id moves with it.
+ */
+function renameTask(
+  targetSnapshot: SpecRevisionSnapshot,
+  fromId: string,
+  toId: string,
+): SpecRevisionSnapshot {
+  for (const row of targetSnapshot.elements) {
+    if (row.element.id === fromId) {
+      row.element.id = toId;
+      row.version.elementId = toId;
+    }
+    if (row.version.payload.kind !== "task") continue;
+    row.version.payload.dependsOnTaskElementIds =
+      row.version.payload.dependsOnTaskElementIds.map((id) =>
+        id === fromId ? toId : id,
+      );
+  }
+  return targetSnapshot;
+}
+
+/**
+ * R12.1: the plan-stage `executionLane` is the author's only handle on lane
+ * placement, and `laneGroup` keeps its unchanged contraction meaning. These
+ * cases pin the whole mapping — contraction first, then placement — and that
+ * every compiled definition survives the authored-placement choke point without
+ * hand-editing.
+ */
+describe("compileSpecExecutionPlan — executionLane placement (R12.1)", () => {
+  function compile(revisionSnapshot: SpecRevisionSnapshot) {
+    return compileSpecExecutionPlan({
+      spec: { id: "spec-native-sdd", slug: "native-sdd", name: "Native SDD" },
+      revisionSnapshot,
+      scope,
+      scopeHash: "scope-hash-1",
+      approvalRequired: true,
+    });
+  }
+
+  function placements(definition: ReturnType<typeof compile>) {
+    return definition.executionContexts.map(({ id, placement }) => ({
+      id,
+      placement,
+    }));
+  }
+
+  it("compiles a task with neither laneGroup nor executionLane onto its own single-member lane", () => {
+    const definition = compile(snapshot);
+
+    expect(placements(definition)).toEqual([
+      {
+        id: "context-task-1",
+        placement: { lane: "context-task-1", mode: "full" },
+      },
+      {
+        id: "context-task-2",
+        placement: { lane: "context-task-2", mode: "full" },
+      },
+    ]);
+    expect(validateAuthoredDefinition(definition)).toEqual({
+      ok: true,
+      errors: [],
+    });
+  });
+
+  it("keeps a lane group with no executionLane on its own contracted single-member lane", () => {
+    const grouped = structuredClone(snapshot);
+    setTaskPayload(grouped, "task-1", { laneGroup: "compiler" });
+    setTaskPayload(grouped, "task-2", { laneGroup: "compiler" });
+
+    const definition = compile(grouped);
+
+    expect(placements(definition)).toEqual([
+      {
+        id: "context-lane-compiler",
+        placement: { lane: "context-lane-compiler", mode: "full" },
+      },
+    ]);
+    expect(validateAuthoredDefinition(definition)).toEqual({
+      ok: true,
+      errors: [],
+    });
+  });
+
+  it("places distinct contexts that share an executionLane on one owned lane carrying their touched paths", () => {
+    const shared = structuredClone(snapshot);
+    setTaskPayload(shared, "task-1", {
+      executionLane: "compiler",
+      touchedPaths: ["src/lib/specs/compiler.ts"],
+    });
+    setTaskPayload(shared, "task-2", {
+      executionLane: "compiler",
+      // Independent of T1, so nothing sequences the two turns: the lane's
+      // isolation rests entirely on the ownership envelope.
+      dependsOnTaskElementIds: [],
+      touchedPaths: ["src/lib/specs/export.ts", "src/cli/commands/spec"],
+    });
+
+    const definition = compile(shared);
+
+    expect(placements(definition)).toEqual([
+      {
+        id: "context-task-1",
+        placement: {
+          lane: "compiler",
+          mode: "owned",
+          ownedPaths: ["src/lib/specs/compiler.ts"],
+        },
+      },
+      {
+        id: "context-task-2",
+        placement: {
+          lane: "compiler",
+          mode: "owned",
+          ownedPaths: ["src/lib/specs/export.ts", "src/cli/commands/spec"],
+        },
+      },
+    ]);
+    expect(definition.edges).toEqual([]);
+    expect(validateAuthoredDefinition(definition)).toEqual({
+      ok: true,
+      errors: [],
+    });
+  });
+
+  it("contracts a lane group onto its agreed executionLane with the union of every member's touched paths", () => {
+    const grouped = structuredClone(snapshot);
+    setTaskPayload(grouped, "task-1", {
+      laneGroup: "compiler",
+      executionLane: "specs",
+      touchedPaths: ["src/lib/specs/compiler.ts"],
+    });
+    setTaskPayload(grouped, "task-2", {
+      laneGroup: "compiler",
+      executionLane: "specs",
+      touchedPaths: ["src/lib/specs/compiler.ts", "src/lib/specs/export.ts"],
+    });
+
+    const definition = compile(grouped);
+
+    expect(placements(definition)).toEqual([
+      {
+        id: "context-lane-compiler",
+        placement: {
+          lane: "specs",
+          mode: "owned",
+          ownedPaths: ["src/lib/specs/compiler.ts", "src/lib/specs/export.ts"],
+        },
+      },
+    ]);
+    expect(validateAuthoredDefinition(definition)).toEqual({
+      ok: true,
+      errors: [],
+    });
+  });
+
+  it("refuses an executionLane whose context declares no touched paths, naming the tasks", () => {
+    const shared = structuredClone(snapshot);
+    setTaskPayload(shared, "task-1", {
+      executionLane: "compiler",
+      touchedPaths: ["src/lib/specs/compiler.ts"],
+    });
+    setTaskPayload(shared, "task-2", { executionLane: "compiler" });
+
+    expect(() => compile(shared)).toThrowError(
+      /executionLane "compiler".*native-sdd\/T2/s,
+    );
+  });
+
+  it("refuses a contracted lane group whose members disagree about executionLane", () => {
+    const mixed = structuredClone(snapshot);
+    setTaskPayload(mixed, "task-1", {
+      laneGroup: "compiler",
+      executionLane: "specs",
+      touchedPaths: ["src/lib/specs/compiler.ts"],
+    });
+    setTaskPayload(mixed, "task-2", {
+      laneGroup: "compiler",
+      executionLane: "cli",
+      touchedPaths: ["src/cli/commands/spec"],
+    });
+
+    expect(() => compile(mixed)).toThrowError(
+      /native-sdd\/T1.*native-sdd\/T2/s,
+    );
+  });
+
+  /**
+   * The fallback lane has to survive ids the spec surfaces genuinely accept.
+   * `laneGroup` takes any non-empty string and the compiler folds it into the
+   * context id through `encodeURIComponent`, so an authored `a-lane:b` yields
+   * `context-lane-a-lane%3Ab` — and no lane name may carry a `%`. The context id
+   * is unchanged (it addresses tasks, edges, and locked regions); only the lane
+   * derived from it is encoded for the grammar it has to satisfy.
+   */
+  it("encodes a fallback lane an authored laneGroup would otherwise make illegal", () => {
+    const grouped = structuredClone(snapshot);
+    setTaskPayload(grouped, "task-1", { laneGroup: "a-lane:b" });
+    setTaskPayload(grouped, "task-2", { laneGroup: "a-lane:b" });
+
+    const definition = compile(grouped);
+    const context = definition.executionContexts[0];
+
+    expect(context?.id).toBe("context-lane-a-lane%3Ab");
+    expect(context?.placement).toEqual({
+      lane: "context-lane-a-lane_00253Ab",
+      mode: "full",
+    });
+    expect(laneIdViolation(context?.placement.lane ?? "")).toBeNull();
+    expect(validateAuthoredDefinition(definition)).toEqual({
+      ok: true,
+      errors: [],
+    });
+  });
+
+  /**
+   * The same hole on the singleton path: element ids are caller-assigned and
+   * constrained only to be non-empty, so a compiled `context-<elementId>` can
+   * carry a space, a `..`, or a trailing dot.
+   */
+  it("encodes a fallback lane a caller-assigned element id would otherwise make illegal", () => {
+    const nasty = renameTask(structuredClone(snapshot), "task-2", "task 2..");
+
+    const definition = compileSpecExecutionPlan({
+      spec: { id: "spec-native-sdd", slug: "native-sdd", name: "Native SDD" },
+      revisionSnapshot: nasty,
+      scope: { ...scope, selectedTaskIds: ["task-1", "task 2.."] },
+      scopeHash: "scope-hash-1",
+      approvalRequired: true,
+    });
+
+    expect(placements(definition)).toEqual([
+      {
+        id: "context-task-1",
+        placement: { lane: "context-task-1", mode: "full" },
+      },
+      {
+        id: "context-task 2..",
+        placement: {
+          lane: "context-task_00202_002e_002e",
+          mode: "full",
+        },
+      },
+    ]);
+    expect(validateAuthoredDefinition(definition)).toEqual({
+      ok: true,
+      errors: [],
+    });
+  });
+
+  /**
+   * A generated fallback lane and an authored `executionLane` are drawn from one
+   * namespace: `executionLane` accepts any legal lane name, including the name a
+   * context with neither field would generate for itself. Left alone, the two
+   * contexts land on one lane — either a `placement-full-access-concurrency`
+   * refusal of a definition the author never asked for, or, once a dependency
+   * edge orders them, a silently shared "single-member" lane. Authored names win
+   * the namespace because only they were chosen; the generated one moves.
+   */
+  it("keeps a fallback lane off a name an independent context authored", () => {
+    const collided = structuredClone(snapshot);
+    setTaskPayload(collided, "task-2", {
+      executionLane: "context-task-1",
+      dependsOnTaskElementIds: [],
+      touchedPaths: ["src/lib/specs/export.ts"],
+    });
+
+    const definition = compile(collided);
+
+    expect(placements(definition)).toEqual([
+      {
+        id: "context-task-1",
+        placement: { lane: "context-task-1-2", mode: "full" },
+      },
+      {
+        id: "context-task-2",
+        placement: {
+          lane: "context-task-1",
+          mode: "owned",
+          ownedPaths: ["src/lib/specs/export.ts"],
+        },
+      },
+    ]);
+    expect(validateAuthoredDefinition(definition)).toEqual({
+      ok: true,
+      errors: [],
+    });
+  });
+
+  /**
+   * The same collision with the dependency edge the base fixture carries: the
+   * authored validator accepts two dependency-ordered lane-mates, so nothing
+   * downstream would report this one. The fallback lane still has to be a lane
+   * of one, which is the whole reason a context that asked for nothing gets one.
+   */
+  it("keeps a fallback lane off an authored name a dependency edge would otherwise hide", () => {
+    const collided = structuredClone(snapshot);
+    setTaskPayload(collided, "task-2", {
+      executionLane: "context-task-1",
+      touchedPaths: ["src/lib/specs/export.ts"],
+    });
+
+    const definition = compile(collided);
+
+    expect(placements(definition)).toEqual([
+      {
+        id: "context-task-1",
+        placement: { lane: "context-task-1-2", mode: "full" },
+      },
+      {
+        id: "context-task-2",
+        placement: {
+          lane: "context-task-1",
+          mode: "owned",
+          ownedPaths: ["src/lib/specs/export.ts"],
+        },
+      },
+    ]);
+    expect(definition.edges).toHaveLength(1);
+    expect(validateAuthoredDefinition(definition)).toEqual({
+      ok: true,
+      errors: [],
+    });
+  });
+
+  /** The disambiguated name is authored too, so the search has to keep going. */
+  it("keeps searching when the disambiguated fallback name is itself authored", () => {
+    const collided = structuredClone(snapshot);
+    setTaskPayload(collided, "task-2", {
+      executionLane: "context-task-1",
+      touchedPaths: ["src/lib/specs/export.ts"],
+    });
+    collided.elements.push(
+      revisionElement("task-3", "task", 3, null, 7, {
+        kind: "task",
+        title: "Claim the disambiguated name",
+        instructions: "Author the lane the fallback would otherwise move to.",
+        tracedRequirementElementIds: ["requirement-1"],
+        tracedDecisionElementIds: [],
+        coveredCriterionElementIds: [],
+        dependsOnTaskElementIds: [],
+        executionLane: "context-task-1-2",
+        touchedPaths: ["src/cli/commands/spec"],
+      }),
+    );
+
+    const definition = compileSpecExecutionPlan({
+      spec: { id: "spec-native-sdd", slug: "native-sdd", name: "Native SDD" },
+      revisionSnapshot: collided,
+      scope: { ...scope, selectedTaskIds: ["task-1", "task-2", "task-3"] },
+      scopeHash: "scope-hash-1",
+      approvalRequired: true,
+    });
+
+    expect(placements(definition)).toEqual([
+      {
+        id: "context-task-1",
+        placement: { lane: "context-task-1-3", mode: "full" },
+      },
+      {
+        id: "context-task-2",
+        placement: {
+          lane: "context-task-1",
+          mode: "owned",
+          ownedPaths: ["src/lib/specs/export.ts"],
+        },
+      },
+      {
+        id: "context-task-3",
+        placement: {
+          lane: "context-task-1-2",
+          mode: "owned",
+          ownedPaths: ["src/cli/commands/spec"],
+        },
+      },
+    ]);
+    expect(validateAuthoredDefinition(definition)).toEqual({
+      ok: true,
+      errors: [],
+    });
+  });
+
+  /**
+   * Reserved lane identity survives the compiler route. `session` and
+   * `__session__` are grammatical lane names, so the spec payload accepts them;
+   * the refusal that knows what they MEAN belongs to the placement choke point,
+   * and a declared executionLane always compiles to a write-capable placement,
+   * which is exactly what that choke point refuses on the session lane.
+   */
+  it.each([
+    ["session", "placement-session-lane-write-capable"],
+    ["__session__", "placement-reserved-lane-name"],
+  ])(
+    "compiles executionLane %j into a placement the authored validator refuses",
+    (lane, code) => {
+      const reserved = structuredClone(snapshot);
+      setTaskPayload(reserved, "task-1", {
+        executionLane: lane,
+        touchedPaths: ["src/lib/specs"],
+      });
+
+      const result = validateAuthoredDefinition(compile(reserved));
+
+      expect(result.ok).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.objectContaining({ code, contextId: "context-task-1" }),
+      );
+    },
+  );
+
+  /**
+   * The non-goal made mechanical: two concurrent contexts claiming the same
+   * surface is a placement refusal at the choke point, not a merge conflict
+   * discovered at the join. The compiler emits the placement the author asked
+   * for and the authored validator is what refuses it.
+   */
+  it("emits a placement the authored validator refuses when concurrent lane-mates claim one surface", () => {
+    const overlapping = structuredClone(snapshot);
+    setTaskPayload(overlapping, "task-1", {
+      executionLane: "compiler",
+      touchedPaths: ["src/lib/specs"],
+    });
+    setTaskPayload(overlapping, "task-2", {
+      executionLane: "compiler",
+      dependsOnTaskElementIds: [],
+      touchedPaths: ["src/lib/specs/export.ts"],
+    });
+
+    const result = validateAuthoredDefinition(compile(overlapping));
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({
+        code: "placement-owned-paths-overlap",
+        contextId: "context-task-1",
+      }),
+    );
+  });
+});
 
 describe("compileSpecExecutionPlan — must-run criterion coverage (R5.1)", () => {
   function compile(overrides: Partial<ExecutionScope> = {}) {

@@ -110,6 +110,15 @@ function expansionPayload(
       handle: candidate.handle,
       title: `Candidate: ${candidate.approach}`,
       acceptanceCriteria: `The ${candidate.approach} approach is implemented end to end and reports its own score.`,
+      // Tournament candidates write the SAME paths by construction, so each one
+      // keeps a single-member lane of its own — the case the spec names as the
+      // reason concurrent same-lane sharing is a validation error rather than a
+      // merge problem.
+      placement: {
+        lane: candidate.handle,
+        mode: "owned",
+        ownedPaths: [`src/${candidate.handle}`],
+      },
       outputSchema: {
         type: "object",
         properties: {
@@ -147,6 +156,15 @@ function candidateIdsFor(candidates: readonly Candidate[]): string[] {
   return candidates.map((candidate) =>
     expansionContextId(GENERATOR, REQUEST_ID, candidate.handle),
   );
+}
+
+/**
+ * The lanes the payload PLACED those candidates on. Distinct from their context
+ * ids: placement is the lane authority, so the roster a join merges is what the
+ * expansion authored, not what the engine minted.
+ */
+function candidateLanesFor(candidates: readonly Candidate[]): string[] {
+  return candidates.map((candidate) => candidate.handle);
 }
 
 function candidateByContextId(
@@ -527,15 +545,16 @@ describe("Generate-And-Filter — engine proof (R15.2)", () => {
       // The fan-out converged through a real merge, and every lane it merged
       // belongs to this graph's generator or to a candidate the expansion
       // created — nothing foreign, and at least one runtime-created lane.
+      const candidateLanes = candidateLanesFor(THREE_CANDIDATES);
       expect(filterFanIn.sourceLaneIds.length).toBeGreaterThan(1);
       expect(
         filterFanIn.sourceLaneIds.every(
-          (laneId) => laneId === GENERATOR || candidateIds.includes(laneId),
+          (laneId) => laneId === GENERATOR || candidateLanes.includes(laneId),
         ),
       ).toBe(true);
       expect(
         filterFanIn.sourceLaneIds.some((laneId) =>
-          candidateIds.includes(laneId),
+          candidateLanes.includes(laneId),
         ),
       ).toBe(true);
     }

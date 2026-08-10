@@ -971,8 +971,18 @@ describe("WorkflowInspectorPanel — validation command selectors", () => {
           {
             projectName: "alpha",
             commands: [
-              { name: "typecheck", cost: 2 },
-              { name: "test", cost: 4 },
+              {
+                name: "typecheck",
+                cost: 2,
+                pathArgs: "forbid",
+                changedScope: "full_fallback",
+              },
+              {
+                name: "test",
+                cost: 4,
+                pathArgs: "paths",
+                changedScope: "native",
+              },
             ],
           },
         ],
@@ -1097,6 +1107,7 @@ function bareContextDefinition(
         id: "context-plan",
         title: "Plan",
         acceptanceCriteria: "Plan is documented",
+        placement: { lane: "context-plan", mode: "full" },
         ...(outputSchema ? { outputSchema } : {}),
       },
     ],
@@ -1570,5 +1581,95 @@ describe("WorkflowInspectorPanel — validator cohort editor", () => {
       _useGraphWorkflowBuilderStore.getState().draftDefinition!.workflowConfig
         .contextValidator;
     expect(workflowCohort?.assignments).toHaveLength(2);
+  });
+});
+
+describe("WorkflowInspectorPanel — lane placement (lwp R1)", () => {
+  function selectedPlacement() {
+    return _useGraphWorkflowBuilderStore
+      .getState()
+      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan")
+      ?.placement;
+  }
+
+  it("shows the authored lane and grade rather than inferring them from the context id", () => {
+    resetStore();
+    const definition = createWorkflowDefinition();
+    const planned = definition.executionContexts.map((context) =>
+      context.id === "context-plan"
+        ? {
+            ...context,
+            placement: {
+              lane: "delivery",
+              mode: "owned" as const,
+              ownedPaths: ["docs"],
+            },
+          }
+        : context,
+    );
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: { ...definition, executionContexts: planned },
+    });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const editor = screen.getByTestId("placement-editor");
+    expect(within(editor).getByLabelText("Lane name")).toHaveValue("delivery");
+    expect(within(editor).getByText("docs")).toBeInTheDocument();
+  });
+
+  it("authors a lane rename into the draft definition", () => {
+    resetStore();
+    setupStore({ selectedContextId: "context-plan" });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    fireEvent.change(screen.getByLabelText("Lane name"), {
+      target: { value: "delivery" },
+    });
+
+    expect(selectedPlacement()).toEqual({ lane: "delivery", mode: "full" });
+  });
+
+  it("authors an owning grade and its owned paths", () => {
+    resetStore();
+    setupStore({ selectedContextId: "context-plan" });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole("radio", { name: "Owning" }));
+    expect(selectedPlacement()).toEqual({
+      lane: "plan",
+      mode: "owned",
+      ownedPaths: [],
+    });
+    // An owning grade with no paths is incomplete, and the editor says so
+    // rather than letting the author push a definition the gate would refuse.
+    expect(screen.getByTestId("placement-issue")).toBeInTheDocument();
+
+    const editor = screen.getByTestId("placement-editor");
+    fireEvent.change(within(editor).getByLabelText("Add owned path"), {
+      target: { value: "src/feature" },
+    });
+    fireEvent.click(within(editor).getByRole("button", { name: "Add" }));
+
+    expect(selectedPlacement()).toEqual({
+      lane: "plan",
+      mode: "owned",
+      ownedPaths: ["src/feature"],
+    });
+    expect(screen.queryByTestId("placement-issue")).not.toBeInTheDocument();
+  });
+
+  it("flags a lane name that cannot become a branch segment", () => {
+    resetStore();
+    setupStore({ selectedContextId: "context-plan" });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    fireEvent.change(screen.getByLabelText("Lane name"), {
+      target: { value: "-illegal" },
+    });
+
+    expect(screen.getByTestId("placement-issue")).toHaveTextContent(
+      "branch and worktree path segments",
+    );
   });
 });

@@ -47,6 +47,10 @@ import {
   runWithTrace,
   type TraceContext,
 } from "@/lib/logging";
+import type { LaneDriftAuditInput, LaneDriftAuditor } from "./lane-drift";
+import { DEFAULT_PLAN_REPAIR_POLICY } from "./config-schemas";
+import { isResumableHalt } from "./lifecycle-classifier";
+import { evaluatePlanRepairTrigger } from "./plan-repair/trigger";
 import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
 import { AgentTurnFailedError } from "./errors";
 import { assertLoopFence, StaleLoopFenceError } from "./loop-fence";
@@ -77,6 +81,7 @@ function createSingleContextDefinition(
         title: "Do work",
         description: "Single context",
         acceptanceCriteria: "TBD",
+        placement: { lane: "ctx-1", mode: "full" },
         implementer: {
           id: "implementer",
           profile: { tier: "builtin", id: "general-implementer" },
@@ -180,8 +185,8 @@ function createRunningExecution(
     advisoryIndex: [],
     laneStates: {},
     executionLanes: {},
+    laneReservations: {},
     joins: {},
-    lanePlan: { continuationMap: {}, longestDownstreamPath: {} },
     machineSnapshot: null,
     startedAt: "2026-03-27T12:00:00.000Z",
     completedAt: null,
@@ -298,6 +303,7 @@ function worktreeLane(
     includedContextIds,
     lastCommittingContextId: includedContextIds.at(-1) ?? null,
     commitSnapshots: [],
+    ignoredBaseline: [],
     createdAt: "2026-03-27T11:40:00.000Z",
     updatedAt: "2026-03-27T11:50:00.000Z",
   };
@@ -411,6 +417,7 @@ function createTwoParkedContextDefinition(): WorkflowSemanticDefinition {
         title: "Context one",
         description: "First",
         acceptanceCriteria: "TBD",
+        placement: { lane: "ctx-1", mode: "full" },
         implementer: {
           id: "implementer",
           profile: { tier: "builtin", id: "general-implementer" },
@@ -429,6 +436,7 @@ function createTwoParkedContextDefinition(): WorkflowSemanticDefinition {
         title: "Context two",
         description: "Second",
         acceptanceCriteria: "TBD",
+        placement: { lane: "ctx-2", mode: "full" },
         implementer: {
           id: "implementer",
           profile: { tier: "builtin", id: "general-implementer" },
@@ -521,6 +529,8 @@ interface BuildHarnessInput {
   getMaxConcurrentQueries?: GraphWorkflowExecutionLoopDeps["getMaxConcurrentQueries"];
   readRepoConfig?: GraphWorkflowExecutionLoopDeps["readRepoConfig"];
   landingEvidenceProber?: GraphWorkflowExecutionLoopDeps["landingEvidenceProber"];
+  laneDriftAuditor?: GraphWorkflowExecutionLoopDeps["laneDriftAuditor"];
+  resyncSharedIndex?: GraphWorkflowExecutionLoopDeps["resyncSharedIndex"];
 }
 
 /**
@@ -751,6 +761,13 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
     joinRunner,
     soloContextCommitter,
     laneCommitter,
+    // The default auditor reads a real worktree; every harness run needs an
+    // inert one so a lane commit does not shell out to git.
+    laneDriftAuditor: input.laneDriftAuditor ?? {
+      audit: async () => ({ unattributedPaths: [] }),
+    },
+    // Same reason: the default shells out to `git reset` in a lane worktree.
+    resyncSharedIndex: input.resyncSharedIndex ?? (async () => {}),
     executionTargetResolver,
     getSession,
     runCircuitBreakerGate: input.runCircuitBreakerGate,
@@ -2501,6 +2518,7 @@ describe("execution loop", () => {
           includedContextIds: [],
           lastCommittingContextId: null,
           commitSnapshots: [],
+          ignoredBaseline: [],
           createdAt: "2026-03-27T11:55:00.000Z",
           updatedAt: "2026-03-27T11:55:00.000Z",
         },
@@ -2574,6 +2592,7 @@ describe("execution loop", () => {
       laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
       preTurnHeadSha: null,
       landingToken: null,
+      ownership: null,
     });
     expect(mergeRunner.run).not.toHaveBeenCalled();
 
@@ -2589,6 +2608,430 @@ describe("execution loop", () => {
     expect(lane!.lastCommittingContextId).toBe("ctx-1");
     expect(lane!.includedContextIds).toContain("ctx-1");
     expect(result.contextStates["ctx-1"]?.mergeStatus).toBe("merged-success");
+    expect(result.status).toBe("completed");
+  });
+
+  it.each([
+    { grade: "full", expectResync: true },
+    { grade: "owned", expectResync: false },
+  ] as const)(
+    "resyncs the lane's shared index before a $grade member's first turn: $expectResync",
+    async ({ grade, expectResync }) => {
+      // An owned landing leaves the shared index describing the pre-landing
+      // tree (D7), and for a path it ADDED the index has no entry at all — so
+      // `git commit -a`, which a full-access agent may run, would publish that
+      // file's deletion. Repairing the index is therefore part of handing the
+      // lane to a whole-tree writer, and only to one: an enveloped member
+      // cannot write outside its prefixes, so it never runs git.
+      const definition = createSingleContextDefinition(5);
+      const initial = createRunningExecution(definition, {
+        contextStates: {
+          "ctx-1": {
+            skipReason: null,
+            landingIntent: null,
+            pendingApproval: null,
+            pendingUserInputs: {},
+            contextId: "ctx-1",
+            status: "pending",
+            totalTaskCount: 1,
+            completedTaskCount: 0,
+            iterationCount: 0,
+            consecutiveFailureCount: 0,
+            worktreePath: "/repo/.worktrees/session-1.lane-plan",
+            branchName: "csm/session-1-lane-plan",
+            isolation: "worktree",
+            batchId: null,
+            laneId: "lane-plan",
+            joinId: null,
+            mergeStatus: "pending",
+            cleanupStatus: "pending",
+            lastMergeError: null,
+            reservedOwnership:
+              grade === "full"
+                ? { mode: "full", canonicalPrefixes: [] }
+                : {
+                    mode: "owned",
+                    canonicalPrefixes: [
+                      "/repo/.worktrees/session-1.lane-plan/src/api",
+                    ],
+                  },
+          },
+        },
+      });
+
+      const resynced: string[] = [];
+      const harness = buildHarness({
+        initialExecution: initial,
+        executionTargetResolver: {
+          resolve: () => ({
+            worktreePath: "/repo/.worktrees/session-1.lane-plan",
+            branchName: "csm/session-1-lane-plan",
+            isolation: "worktree",
+            laneId: "lane-plan",
+          }),
+        },
+        mergeRunner: { run: vi.fn() },
+        resyncSharedIndex: async (worktreePath) => {
+          resynced.push(worktreePath);
+        },
+        iterationOrchestrator: {
+          async runIteration(): Promise<GraphWorkflowIterationResult> {
+            const next = structuredClone(harness.getCurrent());
+            next.contextStates["ctx-1"]!.iterationCount = 1;
+            next.contextStates["ctx-1"]!.status = "completed";
+            next.contextStates["ctx-1"]!.completedTaskCount = 1;
+            next.taskStates["task-1"]!.status = "completed";
+            next.activeContextIds = [];
+            harness.setCurrent(next);
+            return {
+              conversationId: "conv-1",
+              execution: next,
+              shouldContinueInContext: false,
+            };
+          },
+        },
+      });
+
+      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      await loop.run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: initial,
+      });
+
+      expect(resynced).toEqual(
+        expectResync ? ["/repo/.worktrees/session-1.lane-plan"] : [],
+      );
+    },
+  );
+
+  it("does not dispatch a full-access turn when the shared index cannot be resynced", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition);
+    const contextState = initial.contextStates["ctx-1"]!;
+    contextState.worktreePath = "/repo/.worktrees/session-1.lane-plan";
+    contextState.branchName = "csm/session-1-lane-plan";
+    contextState.isolation = "worktree";
+    contextState.laneId = "lane-plan";
+    contextState.reservedOwnership = {
+      mode: "full",
+      canonicalPrefixes: [],
+    };
+
+    const runIteration = vi.fn(async (): Promise<GraphWorkflowIterationResult> => {
+      throw new Error("the turn must not run against a stale index");
+    });
+    const harness = buildHarness({
+      initialExecution: initial,
+      executionTargetResolver: {
+        resolve: () => ({
+          worktreePath: "/repo/.worktrees/session-1.lane-plan",
+          branchName: "csm/session-1-lane-plan",
+          isolation: "worktree",
+          laneId: "lane-plan",
+        }),
+      },
+      resyncSharedIndex: async () => {
+        throw new Error("shared index is locked");
+      },
+      iterationOrchestrator: { runIteration },
+    });
+
+    const result = await createGraphWorkflowExecutionLoop(harness.deps).run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(runIteration).not.toHaveBeenCalled();
+    expect(result.status).toBe("halted");
+    expect(result.haltReason).toEqual({
+      type: "recovery_error",
+      message: "shared index is locked",
+    });
+  });
+
+  it.each([
+    {
+      name: "reports nothing but a sibling's own in-progress files",
+      unattributedPaths: [] as string[],
+      expectHalt: false,
+    },
+    {
+      name: "reports a path no lane member owns",
+      unattributedPaths: ["scripts/deploy.sh", "secrets.env"],
+      expectHalt: true,
+    },
+  ])(
+    "audits the lane against its members' ownership after an enveloped landing and $name",
+    async ({ unattributedPaths, expectHalt }) => {
+      const definition = createSingleContextDefinition(5);
+      const initial = createRunningExecution(definition, {
+        contextStates: {
+          "ctx-1": {
+            skipReason: null,
+            landingIntent: null,
+            pendingApproval: null,
+            pendingUserInputs: {},
+            contextId: "ctx-1",
+            status: "pending",
+            totalTaskCount: 1,
+            completedTaskCount: 0,
+            iterationCount: 0,
+            consecutiveFailureCount: 0,
+            worktreePath: "/repo/.worktrees/session-1.lane-plan",
+            branchName: "csm/session-1-lane-plan",
+            isolation: "worktree",
+            batchId: null,
+            laneId: "lane-plan",
+            joinId: null,
+            mergeStatus: "pending",
+            cleanupStatus: "pending",
+            lastMergeError: null,
+            reservedOwnership: {
+              mode: "owned",
+              canonicalPrefixes: [
+                "/repo/.worktrees/session-1.lane-plan/src/api",
+              ],
+            },
+          },
+        },
+        executionLanes: {
+          "lane-plan": {
+            laneId: "lane-plan",
+            kind: "worktree",
+            status: "active",
+            worktreePath: "/repo/.worktrees/session-1.lane-plan",
+            branchName: "csm/session-1-lane-plan",
+            includedContextIds: [],
+            lastCommittingContextId: null,
+            commitSnapshots: [],
+            ignoredBaseline: [
+              { path: "node_modules", digest: "digest-nm" },
+            ],
+            createdAt: "2026-03-27T11:55:00.000Z",
+            updatedAt: "2026-03-27T11:55:00.000Z",
+          },
+        },
+      });
+
+      const laneTarget: ExecutionTarget = {
+        worktreePath: "/repo/.worktrees/session-1.lane-plan",
+        branchName: "csm/session-1-lane-plan",
+        isolation: "worktree",
+        laneId: "lane-plan",
+      };
+
+      const auditCalls: LaneDriftAuditInput[] = [];
+      const laneDriftAuditor: LaneDriftAuditor = {
+        audit: async (auditInput) => {
+          auditCalls.push(auditInput);
+          return { unattributedPaths };
+        },
+      };
+
+      // The seed resolves this from the cascade; the shorthand definition this
+      // suite builds carries the authored (optional) shape, so the default-on
+      // policy R8.1 names is stated explicitly here.
+      initial.workingDefinition.executionContexts[0]!.planRepair =
+        DEFAULT_PLAN_REPAIR_POLICY;
+
+      const laneCommitter: GraphWorkflowExecutionLoopDeps["laneCommitter"] = {
+        commit: vi.fn(async (commitInput) => ({
+          status: "committed" as const,
+          snapshot: {
+            contextId: commitInput.contextId,
+            sha: "lane-sha-1",
+            committedAt: "2026-03-27T12:04:00.000Z",
+          },
+        })),
+        resolveHead: async () => null,
+      };
+
+      const harness = buildHarness({
+        initialExecution: initial,
+        executionTargetResolver: { resolve: () => laneTarget },
+        mergeRunner: { run: vi.fn() },
+        laneCommitter,
+        laneDriftAuditor,
+        iterationOrchestrator: {
+          async runIteration(): Promise<GraphWorkflowIterationResult> {
+            const next = structuredClone(harness.getCurrent());
+            next.contextStates["ctx-1"]!.iterationCount = 1;
+            next.contextStates["ctx-1"]!.status = "completed";
+            next.contextStates["ctx-1"]!.completedTaskCount = 1;
+            next.taskStates["task-1"]!.status = "completed";
+            next.activeContextIds = [];
+            harness.setCurrent(next);
+            return {
+              conversationId: "conv-1",
+              execution: next,
+              shouldContinueInContext: false,
+            };
+          },
+        },
+      });
+
+      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const result = await loop.run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: initial,
+      });
+
+      // The audit judges the lane against the frozen union, relativized, and
+      // carries the provisioning baseline so pre-existing ignored paths are not
+      // mistaken for a member's write. The member ids come with it: each one
+      // names a payload directory the engine injected and no member declared.
+      expect(auditCalls).toEqual([
+        {
+          laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
+          memberOwnerships: [
+            {
+              mode: "owned",
+              canonicalPrefixes: [
+                "/repo/.worktrees/session-1.lane-plan/src/api",
+              ],
+            },
+          ],
+          memberContextIds: ["ctx-1"],
+          ignoredBaseline: [
+            { path: "node_modules", digest: "digest-nm" },
+          ],
+        },
+      ]);
+      // The landing itself succeeded either way — drift is a lane-level
+      // problem, never a retraction of the commit that found it.
+      expect(result.executionLanes["lane-plan"]!.commitSnapshots).toHaveLength(
+        1,
+      );
+      expect(result.contextStates["ctx-1"]?.mergeStatus).toBe("merged-success");
+
+      if (!expectHalt) {
+        expect(result.status).toBe("completed");
+        expect(result.haltReason).toBeNull();
+        return;
+      }
+
+      expect(result.status).toBe("halted");
+      expect(result.haltReason).toEqual({
+        type: "ownership_violation",
+        laneId: "lane-plan",
+        contextId: "ctx-1",
+        unattributedPaths,
+        message: expect.stringContaining("lane-plan"),
+      });
+      // The halt an operator lands on has to be one they can act on: resumable,
+      // and eligible for the unattended repair that widens ownership.
+      expect(isResumableHalt(result.haltReason!)).toBe(true);
+      const repair = evaluatePlanRepairTrigger(result);
+      expect(repair.eligible).toBe(true);
+      if (!repair.eligible) return;
+      expect(repair.haltType).toBe("ownership_violation");
+      expect(repair.contextId).toBe("ctx-1");
+    },
+  );
+
+  it("does not audit a full-access member's landing, which owns the whole lane tree", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition, {
+      contextStates: {
+        "ctx-1": {
+          skipReason: null,
+          landingIntent: null,
+          pendingApproval: null,
+          pendingUserInputs: {},
+          contextId: "ctx-1",
+          status: "pending",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 0,
+          consecutiveFailureCount: 0,
+          worktreePath: "/repo/.worktrees/session-1.lane-plan",
+          branchName: "csm/session-1-lane-plan",
+          isolation: "worktree",
+          batchId: null,
+          laneId: "lane-plan",
+          joinId: null,
+          mergeStatus: "pending",
+          cleanupStatus: "pending",
+          lastMergeError: null,
+          reservedOwnership: { mode: "full", canonicalPrefixes: [] },
+        },
+      },
+      executionLanes: {
+        "lane-plan": {
+          laneId: "lane-plan",
+          kind: "worktree",
+          status: "active",
+          worktreePath: "/repo/.worktrees/session-1.lane-plan",
+          branchName: "csm/session-1-lane-plan",
+          includedContextIds: [],
+          lastCommittingContextId: null,
+          commitSnapshots: [],
+          ignoredBaseline: [],
+          createdAt: "2026-03-27T11:55:00.000Z",
+          updatedAt: "2026-03-27T11:55:00.000Z",
+        },
+      },
+    });
+
+    const laneDriftAuditor: LaneDriftAuditor = {
+      audit: vi.fn(async () => ({ unattributedPaths: ["never/reached.ts"] })),
+    };
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      executionTargetResolver: {
+        resolve: () => ({
+          worktreePath: "/repo/.worktrees/session-1.lane-plan",
+          branchName: "csm/session-1-lane-plan",
+          isolation: "worktree",
+          laneId: "lane-plan",
+        }),
+      },
+      mergeRunner: { run: vi.fn() },
+      laneCommitter: {
+        commit: async (commitInput) => ({
+          status: "committed" as const,
+          snapshot: {
+            contextId: commitInput.contextId,
+            sha: "lane-sha-1",
+            committedAt: "2026-03-27T12:04:00.000Z",
+          },
+        }),
+        resolveHead: async () => null,
+      },
+      laneDriftAuditor,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["ctx-1"]!.iterationCount = 1;
+          next.contextStates["ctx-1"]!.status = "completed";
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.taskStates["task-1"]!.status = "completed";
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+          return {
+            conversationId: "conv-1",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+
+    const result = await createGraphWorkflowExecutionLoop(harness.deps).run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(laneDriftAuditor.audit).not.toHaveBeenCalled();
     expect(result.status).toBe("completed");
   });
 
@@ -2628,6 +3071,7 @@ describe("execution loop", () => {
           includedContextIds: [],
           lastCommittingContextId: null,
           commitSnapshots: [],
+          ignoredBaseline: [],
           createdAt: "2026-03-27T11:55:00.000Z",
           updatedAt: "2026-03-27T11:55:00.000Z",
         },
@@ -2706,6 +3150,7 @@ describe("execution loop", () => {
       laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
       preTurnHeadSha: "head-before-turn",
       landingToken: null,
+      ownership: null,
     });
     expect(mergeRunner.run).not.toHaveBeenCalled();
 
@@ -3030,6 +3475,7 @@ describe("execution loop", () => {
           includedContextIds: [],
           lastCommittingContextId: null,
           commitSnapshots: [],
+          ignoredBaseline: [],
           createdAt: "2026-03-27T11:55:00.000Z",
           updatedAt: "2026-03-27T11:55:00.000Z",
         },
@@ -3123,6 +3569,7 @@ describe("execution loop", () => {
           includedContextIds: [],
           lastCommittingContextId: null,
           commitSnapshots: [],
+          ignoredBaseline: [],
           createdAt: "2026-03-27T11:55:00.000Z",
           updatedAt: "2026-03-27T11:55:00.000Z",
         },
@@ -3225,6 +3672,7 @@ describe("execution loop", () => {
           includedContextIds: [],
           lastCommittingContextId: null,
           commitSnapshots: [],
+          ignoredBaseline: [],
           createdAt: "2026-03-27T11:55:00.000Z",
           updatedAt: "2026-03-27T11:55:00.000Z",
         },
@@ -4082,6 +4530,7 @@ describe("execution loop", () => {
       pendingApproval: {
         conversationId: "conv-source-b",
         requestedAt: "2026-03-27T11:55:00.000Z",
+        approvalScope: { kind: "whole_tree" as const },
         decision: approvedDecision,
       },
     };
@@ -4097,6 +4546,7 @@ describe("execution loop", () => {
       pendingApproval: {
         conversationId: "conv-unrelated",
         requestedAt: "2026-03-27T11:55:00.000Z",
+        approvalScope: { kind: "whole_tree" as const },
         decision: null,
       },
     };
@@ -4441,6 +4891,7 @@ describe("execution loop", () => {
           includedContextIds: ["ctx-1"],
           lastCommittingContextId: "ctx-1",
           commitSnapshots: [],
+          ignoredBaseline: [],
           createdAt: "2026-03-27T11:55:00.000Z",
           updatedAt: "2026-03-27T11:55:00.000Z",
         },
@@ -4527,6 +4978,7 @@ describe("execution loop", () => {
           includedContextIds: ["ctx-1"],
           lastCommittingContextId: "ctx-1",
           commitSnapshots: [],
+          ignoredBaseline: [],
           createdAt: "2026-03-27T11:55:00.000Z",
           updatedAt: "2026-03-27T11:55:00.000Z",
         },
@@ -4539,6 +4991,7 @@ describe("execution loop", () => {
           includedContextIds: [],
           lastCommittingContextId: null,
           commitSnapshots: [],
+          ignoredBaseline: [],
           createdAt: "2026-03-27T11:55:00.000Z",
           updatedAt: "2026-03-27T11:55:00.000Z",
         },
@@ -4621,6 +5074,7 @@ describe("execution loop", () => {
           includedContextIds: ["ctx-1"],
           lastCommittingContextId: "ctx-1",
           commitSnapshots: [],
+          ignoredBaseline: [],
           createdAt: "2026-03-27T11:55:00.000Z",
           updatedAt: "2026-03-27T11:55:00.000Z",
         },
@@ -4734,6 +5188,7 @@ describe("execution loop", () => {
           includedContextIds: ["ctx-1"],
           lastCommittingContextId: "ctx-1",
           commitSnapshots: [],
+          ignoredBaseline: [],
           createdAt: "2026-03-27T11:55:00.000Z",
           updatedAt: "2026-03-27T11:55:00.000Z",
         },
@@ -4746,6 +5201,7 @@ describe("execution loop", () => {
           includedContextIds: [],
           lastCommittingContextId: null,
           commitSnapshots: [],
+          ignoredBaseline: [],
           createdAt: "2026-03-27T11:55:00.000Z",
           updatedAt: "2026-03-27T11:55:00.000Z",
         },
@@ -4960,6 +5416,7 @@ describe("execution loop", () => {
     const pendingApprovalRecord = {
       conversationId: "conv-1",
       requestedAt: "2026-03-27T12:01:00.000Z",
+      approvalScope: { kind: "whole_tree" as const },
       decision: null,
     };
 
@@ -5601,6 +6058,7 @@ describe("execution loop", () => {
             cs.pendingApproval = {
               conversationId: "conv-1",
               requestedAt: `2026-03-27T12:0${iterationCallCount}:00.000Z`,
+              approvalScope: { kind: "whole_tree" as const },
               decision: null,
             };
             for (const taskState of Object.values(next.taskStates)) {
@@ -5644,6 +6102,7 @@ describe("execution loop", () => {
     const pendingApprovalRecord = {
       conversationId: "conv-1",
       requestedAt: "2026-03-27T12:01:00.000Z",
+      approvalScope: { kind: "whole_tree" as const },
       decision: null,
     };
 
@@ -5937,6 +6396,7 @@ describe("execution loop", () => {
             cs.pendingApproval = {
               conversationId: "conv-2",
               requestedAt: "2026-03-27T12:05:00.000Z",
+              approvalScope: { kind: "whole_tree" as const },
               decision: null,
             };
             next.contextOutputs = {

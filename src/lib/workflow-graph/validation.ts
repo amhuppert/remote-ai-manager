@@ -17,17 +17,18 @@ import { validateEdgeGuards } from "./edge-guard-validation";
 import {
   isContextOutputCommittedToLane,
   isRouteSourceLanded,
-  isUpstreamVisibleToDownstream,
 } from "./lane-readiness";
 import {
   collectLoopBoundaryContextIds,
   validateLoopGroups,
 } from "./loop-resolver";
 import { validateContextOutputSchemas } from "./output-schema-validation";
+import { collectEnvelopedScriptCoverageIssues } from "./command-selector-validation";
 import {
   lintParameterReferences,
   validateParameterDeclarations,
 } from "./parameter-validation";
+import { validatePlacements } from "./placement-validation";
 import { validatePrerequisites } from "./prerequisite-validation";
 import { activeDependencySourceIds, routeVerdict } from "./route-projection";
 import { projectExecutionRoutes } from "./execution-routes";
@@ -69,6 +70,34 @@ function createContextIdSet(definition: ValidatableDefinition): Set<string> {
   return new Set(definition.executionContexts.map((context) => context.id));
 }
 
+function validateExplicitLaneBarrierCoverage(
+  definition: ValidatableDefinition,
+): WorkflowGraphValidationError[] {
+  const authored = "workflowConfig" in definition;
+  const barrierSelector = authored
+    ? definition.workflowConfig.laneMergeValidation?.commands
+    : definition.laneMergeValidation.commands;
+  if (barrierSelector?.mode !== "only") return [];
+
+  const workflowCommands = authored
+    ? definition.workflowConfig.scriptValidator?.commands
+    : undefined;
+  return definition.executionContexts.flatMap((context, index) => {
+    const contextCommands = context.scriptValidator?.commands;
+    const commands = contextCommands ?? workflowCommands;
+    if (commands === undefined) return [];
+    return collectEnvelopedScriptCoverageIssues({
+      context,
+      commands,
+      commandField:
+        contextCommands !== undefined
+          ? `executionContexts.${index}.scriptValidator.commands`
+          : "workflowConfig.scriptValidator.commands",
+      barrierCommands: barrierSelector.commands,
+    });
+  });
+}
+
 /**
  * Structural graph validation plus the per-context output-schema declaration
  * check. The declaration check lives HERE, not alongside in
@@ -89,6 +118,7 @@ export function validateWorkflowDefinition(
 ): WorkflowGraphValidationResult {
   const errors: WorkflowGraphValidationError[] = [
     ...validateContextOutputSchemas(definition.executionContexts),
+    ...validateExplicitLaneBarrierCoverage(definition),
     ...validateCohortWriteRestriction(definition.executionContexts, deps),
     ...validateWorkflowTierCohortWriteRestriction(definition, deps),
     ...validateEdgeGuards(definition.executionContexts, definition.edges),
@@ -286,6 +316,15 @@ export function validateWorkflowDefinition(
  * Prerequisite shape checks (`validatePrerequisites`) compose here ALONGSIDE the
  * parameter checks — neither owns the other — so both author paths and both
  * tiers reject an invalid prerequisite at the same choke point (gwt R4.4, R4.6).
+ *
+ * Placement checks (`validatePlacements`) compose here rather than inside
+ * `validateWorkflowDefinition` even though the resolved shape mirrors the field.
+ * The authored tier is where an authored placement can be WRONG — a reserved
+ * lane name, a path under `.git`, an owning grade with no paths — and this is
+ * the composite every author path reaches (validate, create, replace, and the
+ * saved-edit applier). The live tier re-asks the same checks at the live-edit
+ * frontier instead, against the post-batch working definition, where it can also
+ * see which lane siblings are actually running.
  */
 export function validateAuthoredDefinition(
   definition: WorkflowSemanticDefinition,
@@ -295,6 +334,7 @@ export function validateAuthoredDefinition(
     ...validatePrerequisites(definition.prerequisites),
     ...validateParameterDeclarations(definition.parameters),
     ...lintParameterReferences(definition),
+    ...validatePlacements(definition),
     ...validateWorkflowDefinition(definition, deps).errors,
   ];
 
@@ -326,7 +366,7 @@ export function getTerminalContextIds(
  * publish straight to the session worktree, and legacy per-context worktree
  * contexts publish via the fan-in squash merge (`mergeStatus === "merged-success"`).
  * Prefer {@link isContextOutputCommittedToLane} or
- * {@link isUpstreamVisibleToDownstream} for lane-aware callers.
+ * `isUpstreamVisibleToLane` for lane-aware callers.
  */
 export function isContextLanded(
   state: GraphWorkflowExecutionContextState,
@@ -352,6 +392,13 @@ export function isContextLanded(
  * sources of the ACTIVE incoming edges (decision D1). Reading
  * `edge.sourceContextId` directly would wait on branches the routing already
  * declined and, once loops land, on a declared exit that never runs.
+ *
+ * The LAND gate stops at "has it landed". WHERE it landed relative to this
+ * context's lane is `classifyContextSchedulability`'s call, and deliberately
+ * not repeated here: an upstream on a lane the target has not merged yet is
+ * joinable, not blocked, and the classifier's `wait-for-join` verdict is what
+ * plans that merge. Filtering the context out of eligibility would leave nobody
+ * to plan it (R3.2).
  */
 export function getEligibleContextIds(
   definition: ValidatableDefinition,
@@ -374,15 +421,7 @@ export function getEligibleContextIds(
       if (routeVerdict(projection, contextId).kind !== "eligible") return false;
 
       return activeDependencySourceIds(projection, contextId).every(
-        (upstreamId) => {
-          if (!isRouteSourceLanded(execution, upstreamId)) return false;
-          if (state.laneId === null) return true;
-          return isUpstreamVisibleToDownstream(
-            upstreamId,
-            contextId,
-            execution,
-          );
-        },
+        (upstreamId) => isRouteSourceLanded(execution, upstreamId),
       );
     });
 }

@@ -34,6 +34,8 @@ const TOPOLOGY_READERS: Readonly<Record<string, string>> = {
 
   // Authoring, validation and persistence of the drawn graph.
   "src/lib/workflow-graph/validation.ts": "structural graph validation",
+  "src/lib/workflow-graph/placement-validation.ts":
+    "accept-time placement checks over the drawn graph: same-lane ownership disjointness is only required between contexts nothing SEQUENCES, and the authored edge set is the only statement of ordering there is — a declined guard skips its target entirely, so every authored edge is exact, both tiers ask it of the same drawn topology, and no execution exists for the projection to resolve",
   "src/lib/workflow-graph/edge-guard-validation.ts":
     "authoring-time guard validation",
   "src/lib/workflow-graph/edge-identity.ts": "mints and repairs edge ids",
@@ -49,8 +51,6 @@ const TOPOLOGY_READERS: Readonly<Record<string, string>> = {
 
   // Views of the drawn graph: position, declared dependencies, provenance.
   "src/lib/workflow-graph/layout.ts": "lays out the drawn graph",
-  "src/lib/workflow-graph/lane-plan.ts":
-    "seed-time continuation plan over the authored topology",
   "src/lib/workflow-graph/live-outline.ts":
     "renders DECLARED dependencies; an unstarted context has no resolved ones",
   "src/cli/commands/workflow-outline.ts":
@@ -59,6 +59,26 @@ const TOPOLOGY_READERS: Readonly<Record<string, string>> = {
     "definition-tier upstream walk; the execution-tier resolver above it is projection-resolved",
   "src/components/workflow-graph/derive-graph.ts":
     "renders the LOGICAL edge as topology; its status follows the effective source",
+
+  // Structural-edit vocabulary, on the same footing as the definition- and
+  // live-tier editors above: an add-edge operation NAMES a source, it does not
+  // resolve one.
+  "src/lib/workflow-graph/execution-amendment.ts":
+    "declares and applies add-edge amendments; the source is the operation's authored subject, and the edge it adds has never routed",
+  "src/features/spec-studio/PostLaunchCapturePaths.tsx":
+    "the amendment authoring form — the source is typed by the operator into an edge that does not exist yet",
+
+  // Plan preview and parity: the graph a plan WOULD compile to. These run
+  // before any launch, so there is no execution for the projection to resolve
+  // against.
+  "src/lib/specs/plan-preview.ts":
+    "projects the compiled-but-unlaunched graph; nothing has routed",
+  "src/cli/commands/spec/plan-preview-text.ts":
+    "renders the preview's drawn edges as text",
+  "src/features/spec-studio/SpecPlanPreviewPanel.tsx":
+    "renders the preview's drawn edges in Studio",
+  "src/lib/specs/legacy-parity-harness.ts":
+    "compares two COMPILERS' drawn output for equivalence; the authored source is the thing under comparison",
 };
 
 /**

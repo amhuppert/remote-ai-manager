@@ -26,6 +26,8 @@ function accepted(runId: string): ValidationSubmission {
     status: "running",
     position: null,
     lease: null,
+    requestedScope: "changed",
+    effectiveScope: "changed",
   };
 }
 
@@ -171,6 +173,7 @@ describe("createScriptValidatorRunner", () => {
       1,
       expect.objectContaining({
         source: "graph_script_validator",
+        scope: "changed",
         workflow: { executionId: "exec-1", contextId: "ctx-plan" },
         target: {
           worktreePath: executionTarget.worktreePath,

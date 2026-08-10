@@ -82,6 +82,7 @@ import {
   PlanRepairEditor,
   type AgentValidationRole,
 } from "@/components/workflow-config/FieldEditors";
+import { PlacementEditor } from "@/components/workflow-config/PlacementEditor";
 import {
   CohortEditor,
   toggleCohortEnabled,
@@ -1502,6 +1503,25 @@ function ContextTabBody({
           />
           <UpstreamInputsList inputs={upstreamInputs} />
         </div>
+      </section>
+
+      <section className="mb-xl" data-section="placement">
+        <GroupHeader label="Placement" />
+        <PlacementEditor
+          value={context.placement}
+          onChange={(placement) => onUpdateContext({ placement })}
+        />
+        {/* Matched by code prefix rather than by name: the accept-time gate
+            reports six distinct placement refusals (lane grammar, reserved
+            names, the read-only output contract, ownership overlap), and this
+            block is where every one of them belongs. */}
+        <FieldError
+          error={validationErrors.find(
+            (error) =>
+              error.contextId === context.id &&
+              error.code.startsWith("placement-"),
+          )}
+        />
       </section>
 
       <section className="mb-xl" data-section="agents">

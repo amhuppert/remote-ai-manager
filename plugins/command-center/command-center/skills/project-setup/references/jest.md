@@ -2,7 +2,7 @@
 
 Load this reference when Jest is detected (`jest` in `dependencies` or `devDependencies`) and Vitest is not.
 
-Jest config covers AI-optimal output and may mirror a fixed resource profile. The registered test wrapper owns worker and heap enforcement, then scopes each run to affected tests or narrower TDD paths.
+Jest config covers AI-optimal output and may mirror a fixed resource profile. Separate full and changed wrappers share the same worker and heap enforcement. The changed wrapper scopes runs to affected tests or narrower TDD paths.
 
 AI detection uses the `CLAUDECODE` env var, which every generated validation wrapper exports explicitly.
 
@@ -42,7 +42,7 @@ Register this four-worker wrapper with cost `4`. If the project chooses another 
 
 ## Validation wrapper invocation
 
-The shared wrapper setup in `references/pre-merge-script.md` computes `$merge_base`. Register this command with `scopeArgs: "paths"`; forwarded values are already validated as relative non-option paths.
+The shared wrapper setup in `references/pre-merge-script.md` computes `$merge_base` for the changed wrapper. Register both wrappers under one logical test profile with `pathArgs: "paths"`; forwarded values reach only the changed wrapper and are already validated as relative non-option paths.
 
 ```bash
 readonly TEST_WORKERS=4
@@ -52,6 +52,7 @@ readonly TEST_HEAP_MB=2048
 export NODE_OPTIONS="--max-old-space-size=${TEST_HEAP_MB}"
 export CLAUDECODE=1
 
+# Changed wrapper only:
 if [ "$#" -gt 0 ]; then
   run_quiet npx jest --silent --no-color --bail=3 --maxWorkers="$TEST_WORKERS" --passWithNoTests --runTestsByPath "$@"
 elif [ -z "$merge_base" ]; then
@@ -61,6 +62,12 @@ elif [ -z "$merge_base" ]; then
 else
   run_quiet npx jest --silent --no-color --bail=3 --maxWorkers="$TEST_WORKERS" --changedSince="$merge_base" --passWithNoTests
 fi
+```
+
+The full wrapper uses the same fixed resource prelude and unconditionally invokes:
+
+```bash
+run_quiet npx jest --silent --no-color --bail=3 --maxWorkers="$TEST_WORKERS"
 ```
 
 | Flag | Purpose |

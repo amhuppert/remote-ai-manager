@@ -200,9 +200,9 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       validation: {
         commands: {
           typecheck: {
-            command: "scripts/validate/typecheck.sh",
+            command: { full: "scripts/validate/typecheck.sh" },
             cost: 2,
-            scopeArgs: "forbid",
+            pathArgs: "forbid",
           },
         },
         preMerge: ["typecheck"],
@@ -332,30 +332,6 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
           .graphWorkflowExecution.id,
       ).toBe("exec-new");
     }
-  });
-
-  it("seeds the lane plan from the resolved working definition at creation time", async () => {
-    const { repo } = createInMemoryRepo();
-    const execution = await repo.create("/repo", "session-1", {
-      definition: createWorkflowDefinition(),
-      definitionId: "wf-1",
-      definitionRevision: 1,
-      executionId: "exec-1",
-      startedAt: "2026-04-04T00:00:00.000Z",
-      inputs: {},
-      launchedTier: "project",
-      ownerConversationId: null,
-    });
-
-    expect(execution.lanePlan.continuationMap).toEqual({
-      "context-plan": "context-implement",
-      "context-implement": "context-verify",
-    });
-    expect(execution.lanePlan.longestDownstreamPath).toEqual({
-      "context-plan": 2,
-      "context-implement": 1,
-      "context-verify": 0,
-    });
   });
 
   it("initializes context and task state to execution-start defaults", async () => {
@@ -514,19 +490,22 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       validation: {
         commands: {
           typecheck: {
-            command: "scripts/validate/typecheck.sh",
+            command: { full: "scripts/validate/typecheck.sh" },
             cost: 2,
-            scopeArgs: "forbid",
+            pathArgs: "forbid",
           },
           test: {
-            command: "scripts/validate/test.sh",
+            command: {
+              full: "scripts/validate/test-full-suite.sh",
+              changed: "scripts/validate/test.sh",
+            },
             cost: 8,
-            scopeArgs: "paths",
+            pathArgs: "paths",
           },
           format: {
-            command: "scripts/validate/format.sh",
+            command: { full: "scripts/validate/format.sh" },
             cost: 1,
-            scopeArgs: "forbid",
+            pathArgs: "forbid",
           },
         },
         preMerge: ["typecheck", "test"],
@@ -578,19 +557,22 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       validation: {
         commands: {
           typecheck: {
-            command: "scripts/validate/typecheck.sh",
+            command: { full: "scripts/validate/typecheck.sh" },
             cost: 2,
-            scopeArgs: "forbid",
+            pathArgs: "forbid",
           },
           test: {
-            command: "scripts/validate/test.sh",
+            command: {
+              full: "scripts/validate/test-full-suite.sh",
+              changed: "scripts/validate/test.sh",
+            },
             cost: 8,
-            scopeArgs: "paths",
+            pathArgs: "paths",
           },
           format: {
-            command: "scripts/validate/format.sh",
+            command: { full: "scripts/validate/format.sh" },
             cost: 1,
-            scopeArgs: "forbid",
+            pathArgs: "forbid",
           },
         },
         preMerge: ["typecheck", "test"],
@@ -678,9 +660,9 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         validation: {
           commands: {
             typecheck: {
-              command: "scripts/validate/typecheck.sh",
+              command: { full: "scripts/validate/typecheck.sh" },
               cost: 2,
-              scopeArgs: "forbid",
+              pathArgs: "forbid",
             },
           },
           preMerge: ["typecheck"],
@@ -740,9 +722,12 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         validation: {
           commands: {
             test: {
-              command: "scripts/validate/test.sh",
+              command: {
+                full: "scripts/validate/test-full-suite.sh",
+                changed: "scripts/validate/test.sh",
+              },
               cost: 5,
-              scopeArgs: "paths",
+              pathArgs: "paths",
             },
           },
           preMerge: ["test"],
@@ -791,9 +776,9 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       validation: {
         commands: {
           typecheck: {
-            command: "scripts/validate/typecheck.sh",
+            command: { full: "scripts/validate/typecheck.sh" },
             cost: 2,
-            scopeArgs: "forbid",
+            pathArgs: "forbid",
           },
         },
         preMerge: ["typecheck"],
@@ -858,9 +843,9 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         validation: {
           commands: {
             typecheck: {
-              command: "scripts/validate/typecheck.sh",
+              command: { full: "scripts/validate/typecheck.sh" },
               cost: 2,
-              scopeArgs: "forbid",
+              pathArgs: "forbid",
             },
           },
           preMerge: ["typecheck"],

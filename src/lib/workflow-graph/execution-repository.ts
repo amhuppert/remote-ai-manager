@@ -24,7 +24,6 @@ import {
 } from "./execution-state";
 import { IllegalContextStatusTransitionError } from "./context-transitions";
 import { replacementPolicy } from "./lifecycle-classifier";
-import { computeLanePlan } from "./lane-plan";
 import { substituteContent } from "./parameter-substitution";
 import type { TemplateTier } from "./template-library-service";
 import { resolveWorkflowDefinition } from "./resolve-config";
@@ -319,7 +318,6 @@ async function createExecutionFromSeed(
 
   const contextStates = buildInitialContextStates(workingDefinition);
   const taskStates = buildInitialTaskStates(workingDefinition);
-  const lanePlan = computeLanePlan(workingDefinition);
 
   return graphWorkflowExecutionSchema.parse({
     id: seed.executionId,
@@ -344,7 +342,6 @@ async function createExecutionFromSeed(
     startedAt: seed.startedAt,
     completedAt: null,
     haltReason: null,
-    lanePlan,
   });
 }
 

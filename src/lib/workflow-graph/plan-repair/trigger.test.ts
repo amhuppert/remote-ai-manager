@@ -70,6 +70,26 @@ describe("evaluatePlanRepairTrigger", () => {
     expect(verdict.haltType).toBe("max_iterations");
   });
 
+  it("fires on an ownership_violation halt, so repair can widen the ownership the drift exposed", () => {
+    const verdict = evaluatePlanRepairTrigger(
+      haltedExecution({
+        haltReason: {
+          type: "ownership_violation",
+          laneId: "lane-api",
+          contextId: "context-implement",
+          unattributedPaths: ["scripts/deploy.sh"],
+          message:
+            'Lane "lane-api" has 1 change no member owns after context "context-implement" landed',
+        },
+      }),
+    );
+
+    expect(verdict.eligible).toBe(true);
+    if (!verdict.eligible) return;
+    expect(verdict.haltType).toBe("ownership_violation");
+    expect(verdict.contextId).toBe("context-implement");
+  });
+
   it("counts prior rounds for the context toward the attempt number", () => {
     const verdict = evaluatePlanRepairTrigger(
       haltedExecution({

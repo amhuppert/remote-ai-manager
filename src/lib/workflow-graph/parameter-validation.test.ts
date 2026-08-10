@@ -87,6 +87,7 @@ function definition(
         id: "ctx-1",
         title: "Context one",
         acceptanceCriteria: "It works",
+        placement: { lane: "ctx-1", mode: "full" },
       },
     ],
     tasks: [
@@ -343,6 +344,7 @@ describe("lintParameterReferences", () => {
             id: "ctx-1",
             title: "Context one",
             acceptanceCriteria: "Done when {{inputs.nope}}",
+            placement: { lane: "ctx-1", mode: "full" },
           },
         ],
       });
@@ -364,6 +366,7 @@ describe("lintParameterReferences", () => {
             id: "ctx-1",
             title: "Context {{inputs.nope}}",
             acceptanceCriteria: "It works",
+            placement: { lane: "ctx-1", mode: "full" },
           },
         ],
       });
@@ -385,6 +388,7 @@ describe("lintParameterReferences", () => {
             title: "Context one",
             description: "About {{inputs.nope}}",
             acceptanceCriteria: "It works",
+            placement: { lane: "ctx-1", mode: "full" },
           },
         ],
       });
@@ -591,6 +595,7 @@ describe("lintParameterReferences", () => {
             id: "ctx-1",
             title: "Build {{inputs.feature-name}}",
             acceptanceCriteria: "Done per {{inputs.brief}}",
+            placement: { lane: "ctx-1", mode: "full" },
           },
         ],
         tasks: [
@@ -1087,6 +1092,7 @@ describe("forEachScannedField visits exactly the registered surface", () => {
           title: "Context one",
           description: "About the context",
           acceptanceCriteria: "It works",
+          placement: { lane: "ctx-1", mode: "full" },
         },
       ],
       tasks: [

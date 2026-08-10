@@ -122,6 +122,7 @@ function maximalTaskPayload(): TaskElementPayload {
     coveredCriterionElementIds: ["criterion-maximal"],
     dependsOnTaskElementIds: ["task-prerequisite"],
     laneGroup: "persistence",
+    executionLane: "persistence-lane",
     touchedPaths: ["src/lib/specs", "src/lib/state-store"],
   };
 }

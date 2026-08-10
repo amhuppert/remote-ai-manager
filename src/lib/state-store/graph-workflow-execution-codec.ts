@@ -3,6 +3,7 @@ import {
   needsLegacyMigration,
 } from "@/lib/workflow-graph/migrate-legacy-execution";
 import { normalizeRawDefinitionEdgeIds } from "@/lib/workflow-graph/edge-identity";
+import { migrateRawExecutionPlacement } from "@/lib/workflow-graph/placement-migration";
 import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { getErrorMessage } from "../shared/errors";
@@ -77,10 +78,17 @@ export function decodeGraphWorkflowExecution(
   // required unique for new authoring, so a workingDefinition written before
   // that rule is repaired deterministically here rather than refused. Runs
   // before the parse because the parse already requires `id`.
+  //
+  // Lane placement (D5 decision D13) is repaired at the same point and for the
+  // same reason: it is required on the resolved context, so an execution seeded
+  // before it existed would be unreadable. This is the boundary for BOTH the
+  // active and the archived tier, so a pre-placement archive stays readable and
+  // a resumed pre-placement run continues under migrated placement.
   if (typeof upgraded === "object" && upgraded !== null) {
     normalizeRawDefinitionEdgeIds(
       (upgraded as { workingDefinition?: unknown }).workingDefinition,
     );
+    migrateRawExecutionPlacement(upgraded);
   }
 
   const parseResult = graphWorkflowExecutionSchema

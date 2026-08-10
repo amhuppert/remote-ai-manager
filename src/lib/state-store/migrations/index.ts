@@ -17,6 +17,8 @@ import { validationRunSessionName } from "./0014-validation-run-session-name";
 import { addDeliveryPlanAttempts } from "./0015-add-delivery-plan-attempts";
 import { mintGraphWorkflowEdgeIds } from "./0015-mint-graph-workflow-edge-ids";
 import { addDeliveryPlanCandidates } from "./0016-add-delivery-plan-candidates";
+import { graphWorkflowContextPlacement } from "./0016-graph-workflow-context-placement";
+import { validationRunScopes } from "./0016-validation-run-scopes";
 import { specExecutionAbandonCoordinator } from "./0017-spec-execution-abandon-coordinator";
 import { deliveryPlanPrelaunch } from "./0018-delivery-plan-prelaunch";
 import { deliveryPlanApprovalIdentity } from "./0019-delivery-plan-approval-identity";
@@ -48,6 +50,8 @@ export const migrations: readonly StateMigration[] = [
   addDeliveryPlanAttempts,
   mintGraphWorkflowEdgeIds,
   addDeliveryPlanCandidates,
+  graphWorkflowContextPlacement,
+  validationRunScopes,
   specExecutionAbandonCoordinator,
   deliveryPlanPrelaunch,
   deliveryPlanApprovalIdentity,

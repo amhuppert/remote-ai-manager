@@ -227,6 +227,7 @@ describe("spec execution contract", () => {
       id: "context-regrouped",
       title: "Regrouped lane",
       acceptanceCriteria: "Stale manually entered criteria.",
+      placement: { lane: "context-regrouped", mode: "full" },
     });
     definition.tasks[1]!.contextId = "context-regrouped";
     definition.tasks[1]!.order = 1;

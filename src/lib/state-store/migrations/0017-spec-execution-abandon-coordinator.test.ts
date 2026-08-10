@@ -251,7 +251,7 @@ describe("0017-spec-execution-abandon-coordinator", () => {
       "idx_spec_executions_spec_state",
       "uq_spec_executions_workflow_execution",
     ]);
-    expect(stampedVersion(rawDb)).toBe(5);
+    expect(stampedVersion(rawDb)).toBe(6);
   });
 
   it("leaves child tables referencing spec_executions, not the temporary rebuild table", async () => {
@@ -374,7 +374,7 @@ describe("0017-spec-execution-abandon-coordinator", () => {
       "idx_spec_executions_spec_state",
       "uq_spec_executions_workflow_execution",
     ]);
-    expect(stampedVersion(rawDb)).toBe(5);
+    expect(stampedVersion(rawDb)).toBe(6);
   });
 
   it("creates the table on a database that lacks it entirely", async () => {
@@ -404,7 +404,7 @@ describe("0017-spec-execution-abandon-coordinator", () => {
     await runMigration(rawDb);
 
     expect(canInsertAbandoning(rawDb)).toBe(true);
-    expect(stampedVersion(rawDb)).toBe(5);
+    expect(stampedVersion(rawDb)).toBe(6);
   });
 
   it("stamps the gate but changes nothing else on a floor-created database", async () => {
@@ -417,24 +417,24 @@ describe("0017-spec-execution-abandon-coordinator", () => {
     expect(canInsertAbandoning(fixture.db)).toBe(true);
     // A fresh DB already has the wide vocabulary; without the stamp an older
     // build could still open it and choke on an `abandoning` row.
-    expect(stampedVersion(fixture.db)).toBe(5);
+    expect(stampedVersion(fixture.db)).toBe(6);
   });
 
-  it("publishes the fail-closed external barrier for version 5 on a file-backed database", async () => {
+  it("publishes the fail-closed external barrier for version 6 on a file-backed database", async () => {
     const { db, dir } = legacyFileBackedDb();
     insertExecution(db, "execution-existing", "running", "wf-exec-existing");
 
     await runMigration(db, dir);
 
-    expect(existsSync(schemaCompatibilityBarrierPath(dir, 5))).toBe(true);
+    expect(existsSync(schemaCompatibilityBarrierPath(dir, 6))).toBe(true);
     expect(canInsertAbandoning(db)).toBe(true);
-    expect(stampedVersion(db)).toBe(5);
+    expect(stampedVersion(db)).toBe(6);
   });
 
   it("refuses under the write lock when the ledger records a newer version, leaving the barrier published and the table untouched", async () => {
     const { db, dir } = legacyFileBackedDb();
     db.prepare(
-      "INSERT INTO schema_migrations (version, description) VALUES (6, 'future build')",
+      "INSERT INTO schema_migrations (version, description) VALUES (7, 'future build')",
     ).run();
 
     await expect(runMigration(db, dir)).rejects.toThrow(
@@ -444,13 +444,13 @@ describe("0017-spec-execution-abandon-coordinator", () => {
     // Barrier-before-mutation: refusal happens inside the transaction, after
     // the barrier published (fail-closed is the safe direction) and before
     // any rebuild touched the legacy table.
-    expect(existsSync(schemaCompatibilityBarrierPath(dir, 5))).toBe(true);
+    expect(existsSync(schemaCompatibilityBarrierPath(dir, 6))).toBe(true);
     expect(canInsertAbandoning(db)).toBe(false);
   });
 
   it("refuses when the config directory already carries a newer external barrier", async () => {
     const { db, dir } = legacyFileBackedDb();
-    await publishSchemaCompatibilityBarrier(dir, 6);
+    await publishSchemaCompatibilityBarrier(dir, 7);
 
     await expect(runMigration(db, dir)).rejects.toThrow(
       SchemaVersionConflictError,

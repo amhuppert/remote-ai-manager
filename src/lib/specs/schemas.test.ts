@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { laneIdViolation } from "@/lib/workflow-graph/lane-identity";
 import {
   MACHINE_VALIDATION_EVIDENCE_KINDS,
+  executionLaneSchema,
   actorProvenanceSchema,
   evidenceEvaluatedStateSchema,
   evidenceKindSchema,
@@ -59,6 +61,7 @@ const validPayloads = {
     coveredCriterionElementIds: ["criterion-1", "criterion-2"],
     dependsOnTaskElementIds: ["task-1"],
     laneGroup: "persistence",
+    executionLane: "persistence-lane",
     touchedPaths: ["src/lib/specs", "src/lib/state-store/specs-repo.ts"],
   },
 } as const;
@@ -98,8 +101,50 @@ describe("spec element payload schemas", () => {
     ["task", { ...validPayloads.task, touchedPaths: ["src/lib/specs/"] }],
     ["task", { ...validPayloads.task, touchedPaths: ["src/../specs"] }],
     ["task", { ...validPayloads.task, touchedPaths: ["src\\lib\\specs"] }],
+    ["task", { ...validPayloads.task, executionLane: "src/lib/specs" }],
+    ["task", { ...validPayloads.task, executionLane: "-lead" }],
+    ["task", { ...validPayloads.task, executionLane: "" }],
   ])("rejects a malformed %s payload", (_kind, payload) => {
     expect(specElementPayloadSchema.safeParse(payload).success).toBe(false);
+  });
+
+  it("accepts a task payload that omits executionLane", () => {
+    const { executionLane: _omitted, ...withoutLane } = validPayloads.task;
+    expect(specElementPayloadSchema.parse(withoutLane)).toEqual(withoutLane);
+  });
+});
+
+/**
+ * R12: an executionLane becomes a compiled context's placement lane, and from
+ * there a git branch name and a worktree path segment. Its grammar is mirrored
+ * from `laneIdViolation` rather than imported (this module is deliberately
+ * dependency-free apart from Zod), so the mirror is pinned here: a name the
+ * lane machinery would refuse must never reach a compiled placement.
+ */
+describe("execution lane schema", () => {
+  it.each([
+    "compiler",
+    "lane-1",
+    "Lane_1",
+    "a.b",
+    "session",
+    "__session__",
+    "x",
+    "",
+    "src/lib",
+    "lane group",
+    ".hidden",
+    "-lead",
+    "trail-",
+    "trail.",
+    "a..b",
+    "lane.lock",
+    "lane\\name",
+    "läne",
+  ])("agrees with the lane-id grammar for %j", (candidate) => {
+    expect(executionLaneSchema.safeParse(candidate).success).toBe(
+      candidate.length > 0 && laneIdViolation(candidate) === null,
+    );
   });
 });
 

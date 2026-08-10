@@ -171,6 +171,8 @@ function makePublishDeps(
       overrides.runSessionLifecycleOperation ??
       ((_projectPath, _sessionName, operation) => operation()),
     setSessionFinished: overrides.setSessionFinished ?? vi.fn(async () => {}),
+    getActiveGraphWorkflowExecution:
+      overrides.getActiveGraphWorkflowExecution ?? vi.fn(async () => null),
     reconcileTicketSessionLifecycle:
       overrides.reconcileTicketSessionLifecycle ?? vi.fn(async () => {}),
     retargetOrphanedChildren:
@@ -183,6 +185,56 @@ function makePublishDeps(
 }
 
 describe("runPublish", () => {
+  it("does not publish a session while its graph workflow still owns unfinished work", async () => {
+    const publish = vi.fn(async () => ({
+      kind: "published" as const,
+      mergeHash: "merge-abc",
+    }));
+    const setFinished = vi.fn(async () => {});
+    const deps = makePublishDeps({
+      publishPreparedMerge: publish,
+      setSessionFinished: setFinished,
+      getActiveGraphWorkflowExecution: vi.fn().mockResolvedValue({
+        id: "execution-1",
+        status: "running",
+      }),
+    });
+
+    const out = await runPublish(deps, basePublishInput);
+
+    expect(out).toEqual({
+      status: "failed",
+      error:
+        "Graph workflow execution execution-1 is running. Complete or abort it before merging this session.",
+    });
+    expect(publish).not.toHaveBeenCalled();
+    expect(setFinished).not.toHaveBeenCalled();
+  });
+
+  it("allows graph-owned lane merges that do not finalize the session", async () => {
+    const publish = vi.fn(async () => ({
+      kind: "published" as const,
+      mergeHash: "merge-abc",
+    }));
+    const getActiveGraphWorkflowExecution = vi.fn().mockResolvedValue({
+      id: "execution-1",
+      status: "running",
+    });
+    const deps = makePublishDeps({
+      publishPreparedMerge: publish,
+      getActiveGraphWorkflowExecution,
+    });
+
+    const out = await runPublish(deps, {
+      ...basePublishInput,
+      finalizeSession: false,
+    });
+
+    expect(out).toEqual({ status: "completed", mergeHash: "merge-abc" });
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(getActiveGraphWorkflowExecution).not.toHaveBeenCalled();
+  });
+
   it("returns ready-to-land without acquiring the lock when target is dirty", async () => {
     const acquire = vi.fn(() => () => {});
     const publish = vi.fn(async () => ({

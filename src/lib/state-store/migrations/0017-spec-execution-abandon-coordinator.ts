@@ -5,7 +5,10 @@ import {
 import { KNOWN_SCHEMA_VERSION, SPEC_EXECUTIONS_SCHEMA_DDL } from "../state-db";
 import type { StateMigration } from "./types";
 
-const MIGRATION_SCHEMA_VERSION = 5;
+// 6, not 5: the lane-placement cutover (`0016`) already fences at 5 and is
+// stamped in live databases, and one version cannot fence two independent
+// cutovers.
+const MIGRATION_SCHEMA_VERSION = 6;
 const MIGRATION_SCHEMA_DESCRIPTION =
   "spec_executions state vocabulary widened with abandoning + cleanup coordinator columns";
 
@@ -40,7 +43,7 @@ const MIGRATION_SCHEMA_DESCRIPTION =
  *
  * A row parked in `abandoning` is unreadable to a build whose enum lacks it —
  * the spec execution repository throws rather than quarantining — so the up
- * stamps `schema_migrations` version 5 unconditionally (fresh floor-created
+ * stamps `schema_migrations` version 6 unconditionally (fresh floor-created
  * databases included, since their tables already admit the new value) and
  * `KNOWN_SCHEMA_VERSION` is bumped in lockstep. Rebuild and stamp share one
  * immediate transaction: failure at any stage restores the narrow table and

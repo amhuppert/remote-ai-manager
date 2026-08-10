@@ -324,6 +324,10 @@ type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {};
 
+export const ProofComplete: Story = {
+  args: { criteria: [provenCriterion], dispositions: [] },
+};
+
 export const NothingProvesItYet: Story = {
   args: { criteria: [unprovenCriterion], dispositions: [] },
 };

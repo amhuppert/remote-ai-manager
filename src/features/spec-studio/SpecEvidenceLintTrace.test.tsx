@@ -282,6 +282,21 @@ describe("SpecEvidencePanel", () => {
     ).toBeVisible();
   });
 
+  it("does not claim the candidate-specific merge gate is open from revision proof alone", () => {
+    render(<SpecEvidencePanel criteria={[proofViews()[0]!]} />);
+
+    const readiness = screen.getByRole("region", {
+      name: "Evidence readiness",
+    });
+    expect(within(readiness).getByText("Proof complete")).toBeVisible();
+    expect(
+      within(readiness).getByText(
+        "All in-scope criteria have current proof; candidate freshness is checked at publish.",
+      ),
+    ).toBeVisible();
+    expect(within(readiness).queryByText("Merge gate open")).toBeNull();
+  });
+
   it("filters proven criteria while retaining every unresolved or dispositioned state", async () => {
     const user = userEvent.setup();
     render(

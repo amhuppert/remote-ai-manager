@@ -269,6 +269,62 @@ describe("candidate-proof closure over the wired merge bridge", () => {
     ).toHaveLength(1);
   });
 
+  it("issues commit evidence for each synthetic prepared candidate", async () => {
+    setCriterionStrategy(["commit", "validator_verdict"]);
+    setTrees({
+      "feature-a": "tree-a",
+      "prepared-a": "tree-a",
+      "prepared-a-rebased": "tree-a",
+    });
+    const candidateA = validationFact("a", "feature-a", "tree-a");
+    const scenario: MergeScenario = {
+      validation: candidateA,
+      preparations: [
+        prepared("prepared-a", "target-a"),
+        prepared("prepared-a-rebased", "target-a-rebased"),
+      ],
+      publications: [
+        { status: "cas-lost", actualTargetSha: "target-a-rebased" },
+        { status: "completed", mergeHash: "merge-a" },
+      ],
+      publishedCandidates: [],
+    };
+
+    const published = await runMerge("merge-job-candidate-commit", scenario);
+
+    expect(published).toMatchObject({
+      status: "completed",
+      mergeHash: "merge-a",
+    });
+    expect(scenario.publishedCandidates).toEqual([
+      "prepared-a",
+      "prepared-a-rebased",
+    ]);
+    const evidence = deliveryRepo.findEvidenceByCriterionRevision(
+      criterionId,
+      revisionId,
+    );
+    expect(evidence.map((record) => record.kind).sort()).toEqual([
+      "commit",
+      "commit",
+      "validator_verdict",
+    ]);
+    expect(
+      evidence
+        .filter((record) => record.kind === "commit")
+        .map((record) => record.ref_json),
+    ).toEqual([
+      '{"objectId":"prepared-a","type":"git_object"}',
+      '{"objectId":"prepared-a-rebased","type":"git_object"}',
+    ]);
+    expect(
+      deliveryRepo.findProofVerdictsByCriterionRevision(
+        criterionId,
+        revisionId,
+      ),
+    ).toHaveLength(2);
+  });
+
   it("gates every source in a multi-source final join and delivers only on the delivery-target merge", async () => {
     setTrees({
       "feature-a": "tree-a",
@@ -441,7 +497,7 @@ describe("candidate-proof closure over the wired merge bridge", () => {
           validationStrategy: criterion.version.payload.validationStrategy,
         };
       },
-      gitObjectExists: async () => false,
+      gitObjectExists: async (ref) => ref.objectId.startsWith("prepared-"),
       workflowEventExists: async () => false,
       async mergeValidationFactExists(ref, expectedExecution) {
         const source = jobsRepo.findMergeValidationByExecutionIdAndRef(
@@ -481,7 +537,8 @@ describe("candidate-proof closure over the wired merge bridge", () => {
       writeQueue,
       runInImmediateTransaction: (operation) => operation(),
       gitProbesForProject: () => ({
-        isAncestor: async () => false,
+        isAncestor: async (ancestorSha, descendantSha) =>
+          ancestorSha === descendantSha,
         async relevantTreeHash(commitSha) {
           const tree = treeByCommit.get(commitSha);
           if (tree === undefined) {
@@ -572,6 +629,23 @@ describe("candidate-proof closure over the wired merge bridge", () => {
 
   function setTrees(trees: Record<string, string>): void {
     treeByCommit = new Map(Object.entries(trees));
+  }
+
+  function setCriterionStrategy(kinds: string[]): void {
+    db.prepare(
+      `UPDATE spec_element_versions
+          SET payload_json = ?
+        WHERE revision_id = ?
+          AND element_id = ?`,
+    ).run(
+      JSON.stringify({
+        kind: "criterion",
+        text: "The final candidate passes deterministic validation.",
+        validationStrategy: { kinds },
+      }),
+      revisionId,
+      criterionId,
+    );
   }
 });
 
@@ -818,6 +892,7 @@ function workflowLane(
     includedContextIds: [],
     lastCommittingContextId: null,
     commitSnapshots: [],
+    ignoredBaseline: [],
     createdAt: now,
     updatedAt: now,
   };

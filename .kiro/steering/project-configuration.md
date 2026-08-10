@@ -28,12 +28,14 @@ Per-project config at repo root. Optional — all fields nullable. Read on deman
 
 ### `validation` — Registered validation commands
 
-- `validation.commands` maps stable command names to `{ command, cost, timeoutMs?, description?, scopeArgs? }`.
+- `validation.commands` maps stable command names to `{ command: { full, changed? }, cost, timeoutMs?, description?, pathArgs? }`.
 - `validation.preMerge` selects the ordered commands used by Smart Merge and Smart Commit.
 - `validation.laneMerge` optionally selects graph lane-merge commands and falls back to `preMerge` when absent.
 - Graph context `scriptValidator.commands` is an independent ordered selection. An empty list disables the deterministic context gate.
 - Every consumer submits registered names through `getValidationService()`; feature code never executes the scripts directly.
-- The service resolves command paths from the canonical project root, runs them with the target worktree as cwd, enforces the global weighted budget, and captures combined output.
+- Every invocation requests `changed` or `full`; agent omission defaults to changed and orchestrator callers pass changed explicitly.
+- The service selects `command.changed` for a changed request or falls back to `command.full`, resolves that path from the canonical project root, runs it with the target worktree as cwd, enforces the global weighted budget, and captures combined output.
+- Explicit paths can narrow only a native changed execution whose profile declares `pathArgs: "paths"`; wrappers implement one fixed mode and never parse the Command Center scope.
 - Graph script-validator failures are written to `.cc/workflow/<executionId>/<command>-<timestamp>-<runId>.log` and reopen a remediation task. Unknown names fail closed with `script_validator_unknown_command`.
 
 ### `devServers` — Dev server declarations

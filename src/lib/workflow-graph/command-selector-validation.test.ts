@@ -25,6 +25,7 @@ function resolvedContext(
   overrides: Partial<GraphWorkflowResolvedContext> = {},
 ): GraphWorkflowResolvedContext {
   return {
+    placement: { lane: "context-api", mode: "full" as const },
     id: "context-api",
     title: "API",
     acceptanceCriteria: "done",

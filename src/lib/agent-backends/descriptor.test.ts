@@ -95,6 +95,7 @@ function makeDescriptor(
         externalTurns: true,
         capabilityKinds: [{ kind: "skills", applyTiming: "idle_live" }],
       },
+      fsWriteRestriction: "unsupported",
       runtimeConfig: {
         backend,
         apply: async () => ({ status: "applied" }),

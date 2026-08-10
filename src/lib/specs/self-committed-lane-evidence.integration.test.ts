@@ -70,7 +70,13 @@ describe("self-committed lane work evidence chain (R13, R20.2, R21.2)", () => {
           "commitChanges must not run — the implementer already committed",
         );
       },
+      commitOwnedPaths: async () => {
+        throw new Error(
+          "commitOwnedPaths must not run — this member has full lane access",
+        );
+      },
       resolveHeadSha: async () => SELF_SHA,
+      realpath: async (target) => target,
       now: () => AT,
     });
     const commitResult = await committer.commit({
@@ -80,6 +86,7 @@ describe("self-committed lane work evidence chain (R13, R20.2, R21.2)", () => {
       laneId: LANE_ID,
       laneWorktreePath: LANE_WORKTREE,
       preTurnHeadSha: FORK_SHA,
+      ownership: { mode: "full", canonicalPrefixes: [] },
     });
     if (commitResult.status !== "adopted") {
       throw new Error(
@@ -322,6 +329,7 @@ function executionWithLane(): GraphWorkflowExecution {
         includedContextIds: [],
         lastCommittingContextId: null,
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: AT,
         updatedAt: AT,
       },

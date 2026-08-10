@@ -8,6 +8,7 @@ import {
   askQuestionAnswerSchema,
   askQuestionItemSchema,
 } from "@/lib/conversations/schemas";
+import { sessionDiffSchema } from "@/lib/git/schemas";
 import {
   agentBackendIdShapeSchema,
   agentBackendSchema,
@@ -287,6 +288,24 @@ export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
      */
     summary: z.string().nullable().default(null),
   }),
+  /**
+   * A landing found worktree changes that no current lane member's declared
+   * ownership, scratch, or payload directory accounts for (lightweight
+   * parallelism R8). Raised per LANE, not per context: git cannot attribute a
+   * shared worktree's changes to an agent, so `contextId` is the member whose
+   * landing noticed — the reporter, never an accusation.
+   *
+   * Resumable and repairable by construction: the sanctioned remedy is to widen
+   * a member's ownership through the live-edit path (or to remove the write)
+   * and resume, which is exactly what plan repair is able to do unattended.
+   */
+  z.object({
+    type: z.literal("ownership_violation"),
+    laneId: z.string().trim().min(1),
+    contextId: z.string().trim().min(1),
+    unattributedPaths: z.array(z.string().min(1)).max(50).default([]),
+    message: z.string(),
+  }),
   z.object({
     type: z.literal("collaboration_failure"),
     status: z.enum([
@@ -332,6 +351,29 @@ export type GraphWorkflowExecutionLaneCommitSnapshot = z.infer<
   typeof graphWorkflowExecutionLaneCommitSnapshotSchema
 >;
 
+/**
+ * One entry of a lane's provisioning-time ignored baseline: an ignored path as
+ * the ignore rules name it, plus a digest of the files it actually contained.
+ *
+ * The digest is what makes the baseline usable. Git names a wholly-ignored
+ * directory by the directory alone however many files are inside it, so a
+ * baseline of names could only ever answer "was `node_modules` here?" — never
+ * "is what is under it still what provisioning installed?". Recording the names
+ * of all those files instead would put a repo-sized list in the execution's
+ * persisted state; a digest over them costs one line and answers the same
+ * question, at the price of naming the directory rather than the new file when
+ * they differ.
+ */
+export const graphWorkflowIgnoredBaselineEntrySchema = z.object({
+  /** Repo-relative, no trailing slash even for a directory. */
+  path: z.string().min(1),
+  /** Over the sorted paths and byte/filesystem fingerprints beneath it. */
+  digest: z.string().min(1),
+});
+export type GraphWorkflowIgnoredBaselineEntry = z.infer<
+  typeof graphWorkflowIgnoredBaselineEntrySchema
+>;
+
 export const graphWorkflowExecutionLaneStateSchema = z.object({
   laneId: graphWorkflowExecutionLaneIdSchema,
   kind: graphWorkflowExecutionLaneKindSchema,
@@ -343,6 +385,18 @@ export const graphWorkflowExecutionLaneStateSchema = z.object({
   commitSnapshots: z
     .array(graphWorkflowExecutionLaneCommitSnapshotSchema)
     .default([]),
+  /**
+   * The ignored content this lane's worktree already held when it was
+   * provisioned (R8, decision D8). Drift classification gives `.gitignore` no
+   * blanket exemption, so it needs to know which ignored content predates the
+   * members — everything else ignored and unowned is a write nobody declared.
+   *
+   * Empty on the session lane and on every lane recorded before the field
+   * existed, which reads as "no ignored path is pre-existing". That is the
+   * fail-closed direction: it can only surface a halt an operator dismisses,
+   * never hide a write.
+   */
+  ignoredBaseline: z.array(graphWorkflowIgnoredBaselineEntrySchema).default([]),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -399,6 +453,14 @@ export const graphWorkflowExecutionJoinResolvedConflictSchema = z.object({
 export type GraphWorkflowExecutionJoinResolvedConflict = z.infer<
   typeof graphWorkflowExecutionJoinResolvedConflictSchema
 >;
+export const graphWorkflowExecutionJoinValidationEvidenceSchema = z.object({
+  sourceLaneIds: z.array(graphWorkflowExecutionLaneIdSchema).min(1),
+  contextIds: z.array(z.string().trim().min(1)),
+  recordedAt: z.string(),
+});
+export type GraphWorkflowExecutionJoinValidationEvidence = z.infer<
+  typeof graphWorkflowExecutionJoinValidationEvidenceSchema
+>;
 export const graphWorkflowExecutionJoinStateSchema = z.object({
   joinId: graphWorkflowExecutionJoinIdSchema,
   kind: graphWorkflowExecutionJoinKindSchema,
@@ -416,6 +478,22 @@ export const graphWorkflowExecutionJoinStateSchema = z.object({
   validationDebtSourceLaneIds: z
     .array(graphWorkflowExecutionLaneIdSchema)
     .default([]),
+  // Membership snapshot taken when the join intent is planned. The lane's
+  // mutable includedContextIds remains useful operational state, but barrier
+  // coverage expands through this frozen map so a replay proves which members
+  // the original intent covered. The planner always populates this map;
+  // recovery treats its absence as unknown coverage and uses lane state.
+  sourceLaneContextIds: z
+    .record(
+      graphWorkflowExecutionLaneIdSchema,
+      z.array(z.string().trim().min(1)),
+    )
+    .optional(),
+  // Append-only successful barrier records. Evidence is absent until the first
+  // validating merge completes.
+  validationEvidence: z
+    .array(graphWorkflowExecutionJoinValidationEvidenceSchema)
+    .optional(),
   status: graphWorkflowExecutionJoinStatusSchema,
   errorMessage: z.string().nullable().default(null),
   conflicts: graphWorkflowExecutionJoinConflictDetailSchema
@@ -460,13 +538,123 @@ export type GraphWorkflowApprovalDecision = z.infer<
   typeof graphWorkflowApprovalDecisionSchema
 >;
 
+/**
+ * How one parked context's approval view is scoped — decided WHEN THE GATE
+ * OPENS and frozen with the pending record (R15, decision D9).
+ *
+ * Frozen rather than re-derived, because a context's placement stays
+ * live-editable while its gate stands: pausing an execution and re-placing a
+ * parked context must not re-scope the bytes a human is already deciding on.
+ * Reading the live placement at render time would do exactly that.
+ *
+ * One union rather than a nullable snapshot for the same reason. A full-access
+ * member and an enveloped member whose candidate could not be read are
+ * different answers, and a null cannot tell them apart — disambiguating them
+ * after the fact by consulting the live placement reintroduces the drift this
+ * field exists to prevent. Making the three states explicit means the surface
+ * never has to guess.
+ *
+ * For `scoped`, this is a reference and not the bytes: `treeHash` is the
+ * owned-subset identity computed from the same temporary index the patch is
+ * read from, so the approval surface can re-read the patch and PROVE it is the
+ * frozen one instead of persisting a copy of it in the execution blob.
+ * `headSha` is recorded for the operator and deliberately NOT compared — a
+ * concurrent same-lane sibling landing moves HEAD without touching anything
+ * this context owns, and treating that as drift would blank the approval view
+ * every time a sibling lands. An EMPTY `ownedPaths` is the read-only grade,
+ * whose change set is empty by construction, not a degenerate whole-tree one.
+ */
+export const graphWorkflowApprovalScopeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("whole_tree") }).strict(),
+  z
+    .object({
+      kind: z.literal("scoped"),
+      ownedPaths: z.array(z.string().trim().min(1)),
+      treeHash: z.string().trim().min(1),
+      headSha: z.string().trim().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("unreadable"),
+      reason: z.string().trim().min(1),
+    })
+    .strict(),
+]);
+export type GraphWorkflowApprovalScope = z.infer<
+  typeof graphWorkflowApprovalScopeSchema
+>;
+
 export const graphWorkflowPendingApprovalSchema = z.object({
   conversationId: z.string().trim().min(1),
   requestedAt: z.string().trim().min(1),
   decision: graphWorkflowApprovalDecisionSchema.nullable().default(null),
+  /**
+   * Defaulted rather than optional: every record written before this field
+   * existed belongs to a full-access member (authored placement arrives with
+   * this same change), so an absent field has exactly one correct reading.
+   */
+  approvalScope: graphWorkflowApprovalScopeSchema.default({
+    kind: "whole_tree",
+  }),
 });
 export type GraphWorkflowPendingApproval = z.infer<
   typeof graphWorkflowPendingApprovalSchema
+>;
+
+/**
+ * The change set the human approval surface renders for an ENVELOPED context:
+ * exactly the paths that context owns, at the identity its gate froze (R15.2).
+ *
+ * `treeHash` travels with the patch for the same reason it travels with a
+ * validation round's: it is the identity the bytes were read under, so a reader
+ * can say what the diff is a diff OF. It is only ever the frozen one — a read
+ * that disagrees is reported as drift instead, never rendered.
+ */
+export const graphWorkflowApprovalSnapshotSchema = z
+  .object({
+    contextId: z.string().trim().min(1),
+    ownedPaths: z.array(z.string().trim().min(1)),
+    treeHash: z.string().trim().min(1),
+    diff: sessionDiffSchema,
+  })
+  .strict();
+export type GraphWorkflowApprovalSnapshot = z.infer<
+  typeof graphWorkflowApprovalSnapshotSchema
+>;
+
+/**
+ * What the approval API answers with for one parked context.
+ *
+ * The union is the point. `whole_tree` is not an absent snapshot but a positive
+ * statement that this member reviews the whole worktree — what a full-access
+ * member has always reviewed, and what the session's own diff view shows.
+ * `drifted` is fail-closed and deliberately carries no patch: the gate's claim
+ * is that the human decides on the candidate it froze, and a re-read that no
+ * longer matches that identity is not that candidate.
+ *
+ * Lives here rather than beside the server-side resolver because the client
+ * parses it, and the resolver reaches git.
+ */
+export const graphWorkflowApprovalSnapshotResponseSchema = z.discriminatedUnion(
+  "kind",
+  [
+    z.object({
+      kind: z.literal("scoped"),
+      snapshot: graphWorkflowApprovalSnapshotSchema,
+    }),
+    z.object({ kind: z.literal("whole_tree"), contextId: z.string() }),
+    z.object({
+      kind: z.literal("drifted"),
+      contextId: z.string(),
+      frozenTreeHash: z.string(),
+      observedTreeHash: z.string(),
+    }),
+    z.object({ kind: z.literal("unavailable"), reason: z.string() }),
+  ],
+);
+export type GraphWorkflowApprovalSnapshotResponse = z.infer<
+  typeof graphWorkflowApprovalSnapshotResponseSchema
 >;
 
 export const graphWorkflowDefinitionApprovalSchema = z.object({
@@ -690,24 +878,42 @@ export function buildGraphWorkflowValidationReviewArtifact(input: {
 /**
  * The exact thing a validation round reviews.
  *
- * `candidateTreeHash` is the git tree written from the SAME temporary index the
- * diff pipeline builds (`computeCandidateTreeHash`), so untracked content and
- * file modes are inside the identity while gitignored build artifacts and lane
- * logs are outside it — coextensive with what the validators actually see.
- * `headSha` pins the base commit and `taskStateHash` covers the context's task
- * tuples, so a task completed or reopened mid-round moves the identity too.
+ * `candidateTreeHash` is read from the SAME temporary index the diff pipeline
+ * builds (`computeCandidateTreeHash`), so untracked content and file modes are
+ * inside the identity while gitignored build artifacts and lane logs are outside
+ * it — coextensive with what the validators actually see. `headSha` pins the base
+ * commit and `taskStateHash` covers the context's task tuples, so a task
+ * completed or reopened mid-round moves the identity too.
  *
- * All three components are required. A round exists to make "every specialist
- * judged THIS tree" checkable, and an identity with a missing tree component
- * cannot support that claim — so an unresolvable tree is an infrastructure
- * outcome that prevents the round from opening, never a candidate with holes in
- * it that later compares equal to itself.
+ * `identityScope` says which reading of "the candidate" the other components
+ * carry, and it is what makes the identity usable by a context confined to part
+ * of a shared lane worktree (R15):
+ *  - `wholeTree` — `candidateTreeHash` is the git tree object written from the
+ *    whole index, and `headSha` is load-bearing: the base commit moving means the
+ *    candidate moved;
+ *  - `owned` — `candidateTreeHash` is a digest over exactly the context's owned
+ *    subset, and `headSha` is recorded for the operator but NOT compared. A
+ *    concurrent same-lane sibling landing its own work moves HEAD without
+ *    touching anything this context owns, and charging that as drift would make
+ *    an enveloped context's round un-completable whenever a sibling lands.
+ *
+ * The two identity forms are never comparable, which is why the scope is part of
+ * the identity rather than context a reader has to supply. It defaults to
+ * `wholeTree` so every round frozen before ownership existed reads back as the
+ * whole-tree candidate it actually was.
+ *
+ * Every component is required. A round exists to make "every specialist judged
+ * THIS candidate" checkable, and an identity with a missing component cannot
+ * support that claim — so an unresolvable candidate is an infrastructure outcome
+ * that prevents the round from opening, never a candidate with holes in it that
+ * later compares equal to itself.
  */
 export const graphWorkflowValidationCandidateSchema = z
   .object({
     headSha: z.string().trim().min(1),
     candidateTreeHash: z.string().trim().min(1),
     taskStateHash: z.string().trim().min(1),
+    identityScope: z.enum(["wholeTree", "owned"]).default("wholeTree"),
   })
   .strict();
 export type GraphWorkflowValidationCandidate = z.infer<
@@ -1026,6 +1232,58 @@ export type GraphWorkflowLandingIntent = z.infer<
   typeof graphWorkflowLandingIntentSchema
 >;
 
+/**
+ * A placement's write surface as the scheduler FROZE it: symlink-resolved
+ * absolute paths under the lane worktree, decided once at admission.
+ *
+ * Persisted because it is load-bearing twice over. Admission compares a
+ * candidate against it, so a concurrent scheduler and a later pass judge
+ * collisions against the same bytes; and dispatch composes the turn's write
+ * envelope from it rather than re-resolving, so a symlink retargeted between
+ * admission and dispatch cannot widen what the turn may write.
+ *
+ * `canonicalPrefixes` is empty for both non-owning grades, which mean opposite
+ * things — `full` writes everywhere, `readOnly` writes nowhere — so the grade
+ * travels with the set instead of being inferred from it.
+ */
+export const graphWorkflowCanonicalOwnershipSchema = z.object({
+  mode: z.enum(["full", "owned", "readOnly"]),
+  canonicalPrefixes: z.array(z.string().min(1)).default([]),
+});
+export type GraphWorkflowCanonicalOwnership = z.infer<
+  typeof graphWorkflowCanonicalOwnershipSchema
+>;
+
+/**
+ * A lane claimed by a scheduling batch that has not finalized yet.
+ *
+ * Context-level reservation stamps alone cannot carry this: a stamped context
+ * has no `laneId` until finalize, so a concurrent scheduler cannot tell which
+ * lane it is about to occupy, nor that the lane's worktree is already being
+ * provisioned by someone else. Keying the claim by LANE answers both — later
+ * members of the same batch coalesce behind it, and a different batch waits
+ * rather than racing `git worktree add` for the same path (decision D5).
+ */
+export const graphWorkflowLaneReservationSchema = z.object({
+  laneId: z.string().trim().min(1),
+  /** The batch that owns this reservation; only it may finalize or release it. */
+  batchId: z.string().trim().min(1),
+  /** Whether the owning batch is provisioning this lane's worktree and branch. */
+  provisioning: z.boolean().default(false),
+  members: z
+    .array(
+      z.object({
+        contextId: z.string().trim().min(1),
+        ownership: graphWorkflowCanonicalOwnershipSchema,
+      }),
+    )
+    .default([]),
+  createdAt: z.string(),
+});
+export type GraphWorkflowLaneReservation = z.infer<
+  typeof graphWorkflowLaneReservationSchema
+>;
+
 export const graphWorkflowExecutionContextStateSchema = z.object({
   contextId: z.string().trim().min(1),
   status: graphWorkflowContextStatusSchema,
@@ -1047,6 +1305,14 @@ export const graphWorkflowExecutionContextStateSchema = z.object({
    * leftover. Optional/absent means unreserved.
    */
   reservedByBatchId: z.string().nullable().optional(),
+  /**
+   * The write envelope this context was ADMITTED under, frozen at reservation
+   * and consumed unchanged by dispatch (decision D4). Null on a context that
+   * has never been admitted, and on every row written before the field existed.
+   */
+  reservedOwnership: graphWorkflowCanonicalOwnershipSchema
+    .nullable()
+    .optional(),
   laneId: graphWorkflowExecutionLaneIdSchema.nullable().default(null),
   joinId: graphWorkflowExecutionJoinIdSchema.nullable().default(null),
   mergeStatus: z
@@ -1268,6 +1534,10 @@ export const planRepairRoundSchema = z.object({
     // re-run, so counting per context would give every fresh pass a fresh
     // budget of repairs.
     "loop_limit_reached",
+    // Lane drift (lightweight parallelism R8). Accounted per CONTEXT like the
+    // other two context halts — the reporting member is the subject whose
+    // ownership the repair widens.
+    "ownership_violation",
   ]),
   /** The loop a `loop_limit_reached` round repairs; null for context halts. */
   loopGroupId: z.string().trim().min(1).nullable().default(null),
@@ -1598,15 +1868,6 @@ export type GraphWorkflowLoopState = z.infer<
   typeof graphWorkflowLoopStateSchema
 >;
 
-// fan-out point so restarts make the same call. See
-// `src/lib/workflow-graph/lane-plan.ts`.
-const graphWorkflowLanePlanSchema = z.object({
-  continuationMap: z.record(z.string(), z.string()).default({}),
-  longestDownstreamPath: z
-    .record(z.string(), z.number().int().min(0))
-    .default({}),
-});
-
 /**
  * Vocabulary of the lifecycle contract (design §10). The decision table itself
  * lives in `lifecycle-classifier.ts` — the single module allowed to decide any
@@ -1665,7 +1926,6 @@ export const graphWorkflowLifecycleDecisionSchema = z.object({
 export type GraphWorkflowLifecycleDecision = z.infer<
   typeof graphWorkflowLifecycleDecisionSchema
 >;
-
 export const graphWorkflowExecutionSchema = z.object({
   id: z.string().trim().min(1),
   seedDefinitionId: z.string().trim().min(1),
@@ -1810,13 +2070,17 @@ export const graphWorkflowExecutionSchema = z.object({
   executionLanes: z
     .record(z.string(), graphWorkflowExecutionLaneStateSchema)
     .default({}),
+  /**
+   * Lanes claimed by an in-flight scheduling batch, keyed by lane id. Empty in
+   * the steady state: a reservation exists only between a batch's reserve and
+   * its finalize (or its compensating release).
+   */
+  laneReservations: z
+    .record(z.string(), graphWorkflowLaneReservationSchema)
+    .default({}),
   joins: z
     .record(z.string(), graphWorkflowExecutionJoinStateSchema)
     .default({}),
-  lanePlan: graphWorkflowLanePlanSchema.default({
-    continuationMap: {},
-    longestDownstreamPath: {},
-  }),
   machineSnapshot: z.unknown().nullable().default(null),
   startedAt: z.string(),
   completedAt: z.string().nullable().default(null),

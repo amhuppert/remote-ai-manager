@@ -1,10 +1,11 @@
-import { mkdtemp, rm, writeFile, rename } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  candidateScopeForPlacement,
   computeValidationDiffScope,
   renderDiffScopeSection,
   type ValidationDiffScope,
@@ -13,6 +14,8 @@ import {
 import {
   computeCandidateTreeHash,
   _resetDiffCacheForTesting,
+  WHOLE_TREE_CANDIDATE_SCOPE,
+  type CandidateScope,
 } from "@/lib/git/diff";
 import { buildChildEnv } from "@/lib/shared/child-env";
 import type { FileDiff, SessionDiff } from "@/lib/git/schemas";
@@ -69,7 +72,11 @@ describe("computeValidationDiffScope", () => {
       })),
     };
 
-    const scope = await computeValidationDiffScope("/wt", deps);
+    const scope = await computeValidationDiffScope(
+      "/wt",
+      WHOLE_TREE_CANDIDATE_SCOPE,
+      deps,
+    );
 
     expect(scope.kind).toBe("available");
     if (scope.kind !== "available") throw new Error("expected available");
@@ -91,7 +98,11 @@ describe("computeValidationDiffScope", () => {
       })),
     };
 
-    const scope = await computeValidationDiffScope("/wt", deps);
+    const scope = await computeValidationDiffScope(
+      "/wt",
+      WHOLE_TREE_CANDIDATE_SCOPE,
+      deps,
+    );
 
     expect(scope.kind).toBe("empty");
     if (scope.kind !== "empty") throw new Error("expected empty");
@@ -107,7 +118,11 @@ describe("computeValidationDiffScope", () => {
       })),
     };
 
-    const scope = await computeValidationDiffScope("/wt", deps);
+    const scope = await computeValidationDiffScope(
+      "/wt",
+      WHOLE_TREE_CANDIDATE_SCOPE,
+      deps,
+    );
 
     expect(scope.kind).toBe("unavailable");
     if (scope.kind !== "unavailable") throw new Error("expected unavailable");
@@ -122,7 +137,11 @@ describe("computeValidationDiffScope", () => {
       computeCandidateSnapshot: vi.fn(async () => null),
     };
 
-    const scope = await computeValidationDiffScope("/wt", deps);
+    const scope = await computeValidationDiffScope(
+      "/wt",
+      WHOLE_TREE_CANDIDATE_SCOPE,
+      deps,
+    );
 
     expect(scope.kind).toBe("unavailable");
     if (scope.kind !== "unavailable") throw new Error("expected unavailable");
@@ -135,7 +154,11 @@ describe("computeValidationDiffScope", () => {
       computeCandidateSnapshot: vi.fn(async () => null),
     };
 
-    const scope = await computeValidationDiffScope("/wt", deps);
+    const scope = await computeValidationDiffScope(
+      "/wt",
+      WHOLE_TREE_CANDIDATE_SCOPE,
+      deps,
+    );
 
     expect(scope.kind).toBe("unavailable");
     if (scope.kind !== "unavailable") throw new Error("expected unavailable");
@@ -150,7 +173,11 @@ describe("computeValidationDiffScope", () => {
       }),
     };
 
-    const scope = await computeValidationDiffScope("/wt", deps);
+    const scope = await computeValidationDiffScope(
+      "/wt",
+      WHOLE_TREE_CANDIDATE_SCOPE,
+      deps,
+    );
 
     expect(scope.kind).toBe("unavailable");
     if (scope.kind !== "unavailable") throw new Error("expected unavailable");
@@ -162,6 +189,7 @@ describe("renderDiffScopeSection", () => {
   it("renders the diffstat, instructions, and a fenced patch for an available scope", () => {
     const scope: ValidationDiffScope = {
       kind: "available",
+      candidateScope: WHOLE_TREE_CANDIDATE_SCOPE,
       treeHash: "tree-1",
       diff: sessionDiff([
         fileDiff("src/a.ts", ["const a = 1;"], ["const a = 0;"]),
@@ -193,6 +221,7 @@ describe("renderDiffScopeSection", () => {
     );
     const scope: ValidationDiffScope = {
       kind: "available",
+      candidateScope: WHOLE_TREE_CANDIDATE_SCOPE,
       treeHash: "tree-1",
       diff: sessionDiff([
         fileDiff("src/first.ts", big),
@@ -223,6 +252,7 @@ describe("renderDiffScopeSection", () => {
   it("renders a no-changes message for an empty scope", () => {
     const rendered = renderDiffScopeSection({
       kind: "empty",
+      candidateScope: WHOLE_TREE_CANDIDATE_SCOPE,
       treeHash: "tree-clean",
     });
 
@@ -235,6 +265,7 @@ describe("renderDiffScopeSection", () => {
   it("renders an explicit unavailable note carrying the reason", () => {
     const rendered = renderDiffScopeSection({
       kind: "unavailable",
+      candidateScope: WHOLE_TREE_CANDIDATE_SCOPE,
       reason: "status probe failed: boom",
     });
 
@@ -347,5 +378,137 @@ describe("computeValidationDiffScope (real git repo)", () => {
     const rendered = renderDiffScopeSection(second).section;
     expect(rendered).toContain("+export const SECOND = 2;");
     expect(rendered).not.toContain("+export const FIRST = 2;");
+  });
+});
+
+describe("candidateScopeForPlacement", () => {
+  it("keeps whole-tree semantics for a full-access member", () => {
+    expect(
+      candidateScopeForPlacement({ lane: "impl", mode: "full" }),
+    ).toEqual<CandidateScope>({ mode: "wholeTree" });
+  });
+
+  it("scopes an owning member to its declared paths", () => {
+    expect(
+      candidateScopeForPlacement({
+        lane: "impl",
+        mode: "owned",
+        ownedPaths: ["src/a", "src/b.ts"],
+      }),
+    ).toEqual<CandidateScope>({
+      mode: "owned",
+      ownedPaths: ["src/a", "src/b.ts"],
+    });
+  });
+
+  it("scopes a read-only member to nothing at all", () => {
+    // Not whole-tree: a read-only context shares the session worktree with
+    // everything else running there, so the whole-tree delta is other contexts'
+    // work, never its own.
+    expect(
+      candidateScopeForPlacement({ lane: "session", mode: "readOnly" }),
+    ).toEqual<CandidateScope>({ mode: "owned", ownedPaths: [] });
+  });
+
+  it("falls back to whole-tree for a context seeded before placement existed", () => {
+    expect(candidateScopeForPlacement(undefined)).toEqual<CandidateScope>({
+      mode: "wholeTree",
+    });
+  });
+});
+
+describe("computeValidationDiffScope scoped to ownership (real repo)", () => {
+  let repoPath: string;
+  const scopeA: CandidateScope = { mode: "owned", ownedPaths: ["a"] };
+
+  async function git(...args: string[]): Promise<string> {
+    const { stdout } = await execFileAsync("git", args, {
+      cwd: repoPath,
+      env: buildChildEnv(),
+    });
+    return stdout;
+  }
+
+  beforeEach(async () => {
+    _resetDiffCacheForTesting();
+    repoPath = await mkdtemp(join(tmpdir(), "cc-scoped-validation-"));
+    await git("init");
+    await git("config", "user.email", "test@example.com");
+    await git("config", "user.name", "Test");
+    await mkdir(join(repoPath, "a"), { recursive: true });
+    await mkdir(join(repoPath, "b"), { recursive: true });
+    await writeFile(join(repoPath, "a", "owned.ts"), "export const a = 1;\n");
+    await writeFile(join(repoPath, "b", "sibling.ts"), "export const b = 1;\n");
+    await git("add", "-A");
+    await git("commit", "-m", "baseline");
+  });
+
+  afterEach(async () => {
+    await rm(repoPath, { recursive: true, force: true });
+  });
+
+  it("shows only the owned patch and holds its identity while a sibling writes and lands", async () => {
+    await writeFile(join(repoPath, "a", "owned.ts"), "export const a = 2;\n");
+    await writeFile(join(repoPath, "b", "sibling.ts"), "export const b = 2;\n");
+
+    const scope = await computeValidationDiffScope(repoPath, scopeA);
+    expect(scope.kind).toBe("available");
+    if (scope.kind !== "available") throw new Error("expected available");
+    expect(scope.diff.files.map((file) => file.filePath)).toEqual([
+      "a/owned.ts",
+    ]);
+    expect(scope.fileCount).toBe(1);
+
+    const rendered = renderDiffScopeSection(scope).section;
+    expect(rendered).toContain("+export const a = 2;");
+    expect(rendered).not.toContain("+export const b = 2;");
+    // The validator is told the diff is ownership-scoped and which paths it
+    // covers, so it cannot read a sibling's absent work as this context's
+    // omission.
+    expect(rendered).toContain("owned paths");
+    expect(rendered).toContain("- a");
+
+    // B lands mid-round: HEAD moves, A's frozen identity does not.
+    await git("add", "b/sibling.ts");
+    await git("commit", "-m", "sibling lands");
+    const reread = await computeValidationDiffScope(repoPath, scopeA);
+    expect(reread.kind).toBe("available");
+    expect(scope.treeHash).toBe(
+      await computeCandidateTreeHash(repoPath, scopeA),
+    );
+    if (reread.kind !== "available") throw new Error("expected available");
+    expect(reread.treeHash).toBe(scope.treeHash);
+  });
+
+  it("reports an untouched owned subset as empty even when siblings are dirty", async () => {
+    await writeFile(join(repoPath, "b", "sibling.ts"), "export const b = 2;\n");
+
+    const scope = await computeValidationDiffScope(repoPath, scopeA);
+
+    // Unscoped, the porcelain probe would call this dirty and then find no
+    // owned patch to show — reported as a degraded read rather than a no-op.
+    expect(scope.kind).toBe("empty");
+    if (scope.kind !== "empty") throw new Error("expected empty");
+    expect(scope.treeHash).toBe(
+      await computeCandidateTreeHash(repoPath, scopeA),
+    );
+  });
+
+  it("keeps the whole-tree diff for a full-access member of the same worktree", async () => {
+    await writeFile(join(repoPath, "a", "owned.ts"), "export const a = 2;\n");
+    await writeFile(join(repoPath, "b", "sibling.ts"), "export const b = 2;\n");
+
+    const scope = await computeValidationDiffScope(
+      repoPath,
+      candidateScopeForPlacement({ lane: "impl", mode: "full" }),
+    );
+
+    expect(scope.kind).toBe("available");
+    if (scope.kind !== "available") throw new Error("expected available");
+    expect(scope.diff.files.map((file) => file.filePath).sort()).toEqual([
+      "a/owned.ts",
+      "b/sibling.ts",
+    ]);
+    expect(scope.treeHash).toBe(await computeCandidateTreeHash(repoPath));
   });
 });

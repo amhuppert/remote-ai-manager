@@ -41,10 +41,36 @@ const TEST_CONFIG: GlobalConfig = {
   defaultAgentBackend: "claude",
 };
 
+const OWNED_PATHS = ["src/api"];
+const SCOPED_DIFF = {
+  files: [
+    {
+      filePath: "src/api/handler.ts",
+      additions: 1,
+      deletions: 0,
+      hunks: [
+        {
+          header: "@@ -1 +1,2 @@",
+          lines: [
+            { type: "hunk-header" as const, content: "@@ -1 +1,2 @@" },
+            { type: "add" as const, content: "export const handler = 2;" },
+          ],
+        },
+      ],
+    },
+  ],
+  totalAdditions: 1,
+  totalDeletions: 0,
+};
+
 function gatedExecution(
   opts: {
     executionStatus?: GraphWorkflowStatus;
     decision?: GraphWorkflowApprovalDecision | null;
+    ownedPaths?: string[];
+    requestedAt?: string;
+    /** Live-edit the placement to full access while the gate stands. */
+    placementEditedToFull?: boolean;
   } = {},
 ): GraphWorkflowExecution {
   const execution = createWorkflowExecution({
@@ -55,9 +81,26 @@ function gatedExecution(
   contextState.status = "awaiting_approval";
   contextState.pendingApproval = {
     conversationId: GATED_CONVERSATION_ID,
-    requestedAt: REQUESTED_AT,
+    requestedAt: opts.requestedAt ?? REQUESTED_AT,
     decision: opts.decision ?? null,
+    approvalScope: opts.ownedPaths
+      ? {
+          kind: "scoped",
+          ownedPaths: opts.ownedPaths,
+          treeHash: "owned-digest",
+          headSha: "base-sha",
+        }
+      : { kind: "whole_tree" },
   };
+  if (opts.ownedPaths) {
+    const context = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === GATED_CONTEXT_ID,
+    );
+    if (!context) throw new Error("fixture missing gated context definition");
+    context.placement = opts.placementEditedToFull
+      ? { lane: "solo", mode: "full" }
+      : { lane: "impl", mode: "owned", ownedPaths: opts.ownedPaths };
+  }
   return execution;
 }
 
@@ -77,9 +120,31 @@ describe("deriveApprovalGateStanding", () => {
         contextId: GATED_CONTEXT_ID,
         contextTitle: "Implement",
         requestedAt: REQUESTED_AT,
+        enveloped: false,
       });
     },
   );
+
+  it("marks a context under a file-ownership envelope", () => {
+    expect(
+      deriveApprovalGateStanding(
+        gatedExecution({ ownedPaths: ["src/api"] }),
+        GATED_CONVERSATION_ID,
+      )?.enveloped,
+    ).toBe(true);
+  });
+
+  it("keeps a parked gate enveloped when its placement is live-edited to full access", () => {
+    expect(
+      deriveApprovalGateStanding(
+        gatedExecution({
+          ownedPaths: ["src/api"],
+          placementEditedToFull: true,
+        }),
+        GATED_CONVERSATION_ID,
+      )?.enveloped,
+    ).toBe(true);
+  });
 
   it.each(["pending", "completed", "aborted"] as const)(
     "returns null when the execution is %s",
@@ -127,7 +192,10 @@ describe("useApprovalGate", () => {
     vi.restoreAllMocks();
   });
 
-  function stubFetch() {
+  /** Answer the snapshot request from the URL, so a test can serve per gate. */
+  type SnapshotResponder = (url: string) => unknown;
+
+  function stubFetch(snapshot?: unknown, respond?: SnapshotResponder) {
     const calls: { url: string; init: RequestInit | undefined }[] = [];
     vi.stubGlobal(
       "fetch",
@@ -136,6 +204,20 @@ describe("useApprovalGate", () => {
         calls.push({ url, init });
         if (url.includes("/resolve-approval")) {
           return Response.json({ recorded: true });
+        }
+        if (url.includes("/approval-snapshot")) {
+          if (respond) return Response.json(respond(url));
+          return Response.json(
+            snapshot ?? {
+              kind: "scoped",
+              snapshot: {
+                contextId: GATED_CONTEXT_ID,
+                ownedPaths: OWNED_PATHS,
+                treeHash: "owned-digest",
+                diff: SCOPED_DIFF,
+              },
+            },
+          );
         }
         if (url.includes("/workflows/")) {
           const item = createWorkflowDefinitionRecord({ name: "Review Flow" });
@@ -255,6 +337,185 @@ describe("useApprovalGate", () => {
         contextId: GATED_CONTEXT_ID,
         decision: "reject",
         message: "needs more tests",
+      });
+    });
+  });
+
+  it("feeds the panel the owned-path-scoped change set, never the whole-session diff", async () => {
+    const calls = stubFetch();
+    const { result } = renderGateHook({
+      execution: gatedExecution({ ownedPaths: OWNED_PATHS }),
+    });
+
+    await waitFor(() => {
+      expect(result.current?.scopedChanges).toEqual({
+        status: "ready",
+        ownedPaths: OWNED_PATHS,
+        diff: SCOPED_DIFF,
+      });
+    });
+
+    const snapshotCall = calls.find((c) =>
+      c.url.includes("/approval-snapshot"),
+    );
+    expect(snapshotCall?.url).toContain(
+      "/api/projects/proj/sessions/sess/graph-workflow/approval-snapshot?contextId=context-implement",
+    );
+    // The mutable whole-session delta is exactly what an enveloped context must
+    // not be reviewed through: in a shared lane it is partly a sibling's work.
+    expect(calls.some((c) => /\/sessions\/sess\/diff/.test(c.url))).toBe(false);
+  });
+
+  it("leaves a full-access member on the whole-tree approval view", async () => {
+    const calls = stubFetch();
+    const { result } = renderGateHook({ execution: gatedExecution() });
+
+    await waitFor(() => {
+      expect(result.current?.workflowName).toBe("Review Flow");
+    });
+    expect(result.current?.scopedChanges).toBeNull();
+    expect(calls.some((c) => c.url.includes("/approval-snapshot"))).toBe(false);
+  });
+
+  it("keeps requesting the frozen artifact after the placement is live-edited to full access", async () => {
+    // Pausing an execution and re-placing a parked context must not hand the
+    // reviewer a whole-tree view of a decision that was frozen under an
+    // envelope. Standing follows the PARKED record, not the live placement.
+    const calls = stubFetch();
+    const { result } = renderGateHook({
+      execution: gatedExecution({
+        ownedPaths: OWNED_PATHS,
+        placementEditedToFull: true,
+      }),
+    });
+
+    await waitFor(() => {
+      expect(result.current?.scopedChanges).toEqual({
+        status: "ready",
+        ownedPaths: OWNED_PATHS,
+        diff: SCOPED_DIFF,
+      });
+    });
+    expect(calls.some((c) => c.url.includes("/approval-snapshot"))).toBe(true);
+  });
+
+  it("fetches the new gate's artifact instead of reusing the previous gate's cached payload", async () => {
+    const SECOND_REQUESTED_AT = "2026-06-10T11:00:00.000Z";
+    const SECOND_DIFF = {
+      files: [
+        {
+          filePath: "src/api/handler.ts",
+          additions: 3,
+          deletions: 1,
+          hunks: [
+            {
+              header: "@@ -1 +1,4 @@",
+              lines: [
+                { type: "hunk-header" as const, content: "@@ -1 +1,4 @@" },
+                { type: "add" as const, content: "export const handler = 9;" },
+              ],
+            },
+          ],
+        },
+      ],
+      totalAdditions: 3,
+      totalDeletions: 1,
+    };
+    // Served per gate identity: a client that does not say WHICH gate it is
+    // asking about cannot be handed the second gate's bytes at all.
+    stubFetch(undefined, (url) => {
+      const requestedAt = new URL(url, "http://localhost").searchParams.get(
+        "requestedAt",
+      );
+      const second = requestedAt === SECOND_REQUESTED_AT;
+      return {
+        kind: "scoped",
+        snapshot: {
+          contextId: GATED_CONTEXT_ID,
+          ownedPaths: OWNED_PATHS,
+          treeHash: second ? "owned-digest-2" : "owned-digest",
+          diff: second ? SECOND_DIFF : SCOPED_DIFF,
+        },
+      };
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result, rerender } = renderHook(
+      ({ execution }: { execution: GraphWorkflowExecution }) =>
+        useApprovalGate({
+          projectName: "proj",
+          sessionName: "sess",
+          conversationId: GATED_CONVERSATION_ID,
+          execution,
+          conversationBusy: false,
+        }),
+      {
+        wrapper,
+        initialProps: {
+          execution: gatedExecution({ ownedPaths: OWNED_PATHS }),
+        },
+      },
+    );
+
+    await waitFor(() => {
+      expect(result.current?.scopedChanges).toEqual({
+        status: "ready",
+        ownedPaths: OWNED_PATHS,
+        diff: SCOPED_DIFF,
+      });
+    });
+
+    // The context is rejected, remediates, and parks again on a NEW candidate.
+    rerender({
+      execution: gatedExecution({
+        ownedPaths: OWNED_PATHS,
+        requestedAt: SECOND_REQUESTED_AT,
+      }),
+    });
+
+    await waitFor(() => {
+      expect(result.current?.scopedChanges).toEqual({
+        status: "ready",
+        ownedPaths: OWNED_PATHS,
+        diff: SECOND_DIFF,
+      });
+    });
+  });
+
+  it("surfaces drift rather than rendering bytes that are not the frozen candidate", async () => {
+    stubFetch({
+      kind: "drifted",
+      contextId: GATED_CONTEXT_ID,
+      frozenTreeHash: "owned-digest",
+      observedTreeHash: "owned-digest-moved",
+    });
+    const { result } = renderGateHook({
+      execution: gatedExecution({ ownedPaths: OWNED_PATHS }),
+    });
+
+    await waitFor(() => {
+      expect(result.current?.scopedChanges).toEqual({ status: "drifted" });
+    });
+  });
+
+  it("reports an unavailable scoped artifact instead of silently widening", async () => {
+    stubFetch({
+      kind: "unavailable",
+      reason: "the candidate tree could not be read",
+    });
+    const { result } = renderGateHook({
+      execution: gatedExecution({ ownedPaths: OWNED_PATHS }),
+    });
+
+    await waitFor(() => {
+      expect(result.current?.scopedChanges).toEqual({
+        status: "unavailable",
+        reason: "the candidate tree could not be read",
       });
     });
   });

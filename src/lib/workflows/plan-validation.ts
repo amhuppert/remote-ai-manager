@@ -233,7 +233,7 @@ function describeAssignmentRole(
   };
 }
 
-function describeAssignmentSite(
+function describeIssueUseSite(
   body: unknown,
   path: readonly PropertyKey[],
 ): AssignmentSiteDescription | null {
@@ -255,22 +255,31 @@ function describeAssignmentSite(
     );
     const contextId = readNonEmptyString(readField(context, "id"));
     if (contextId === null) return null;
-    return describeAssignmentRole(
-      context,
-      { kind: "context", contextId },
-      path.slice(3),
+    return (
+      describeAssignmentRole(
+        context,
+        { kind: "context", contextId },
+        path.slice(3),
+      ) ?? {
+        // Not an assignment field. The context itself is the use site: a shape
+        // refusal mounted on the context — an absent `placement`, a malformed
+        // routing policy — reads identically wherever it was authored, and an
+        // array index is not what an author calls the context.
+        useSite: `the context "${escapeDiagnosticValue(contextId)}"`,
+        profile: null,
+      }
     );
   }
   return null;
 }
 
 /** `<schema message> Use site: the context "x" validator assignment "y", agent profile builtin:z.` */
-function withAssignmentUseSite(
+function withUseSite(
   message: string,
   body: unknown,
   path: readonly PropertyKey[],
 ): string {
-  const site = describeAssignmentSite(body, path);
+  const site = describeIssueUseSite(body, path);
   if (!site) return message;
   const profile =
     site.profile !== null ? `, agent profile ${site.profile}` : "";
@@ -306,7 +315,7 @@ export function validateWorkflowPlan(
       ok: false,
       issues: parsed.error.issues.map((issue) => ({
         path: issue.path.join("."),
-        message: withAssignmentUseSite(issue.message, rawBody, issue.path),
+        message: withUseSite(issue.message, rawBody, issue.path),
       })),
     };
   }

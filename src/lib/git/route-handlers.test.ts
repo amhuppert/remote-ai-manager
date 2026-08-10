@@ -63,6 +63,7 @@ function makeDeps(overrides: Partial<GitRouteDeps> = {}): GitRouteDeps {
   return {
     resolveProjectPath: vi.fn().mockResolvedValue("/repo"),
     getSession: vi.fn().mockResolvedValue(makeSession()),
+    getActiveGraphWorkflowExecution: vi.fn().mockResolvedValue(null),
     computeDiff: vi.fn().mockResolvedValue(EMPTY_DIFF),
     getCommitLog: vi.fn().mockResolvedValue([]),
     getCommitDiff: vi.fn().mockResolvedValue(EMPTY_DIFF),
@@ -307,6 +308,34 @@ describe("commitSession", () => {
 });
 
 describe("mergeSession", () => {
+  it("refuses to merge while a graph workflow still owns unfinished work", async () => {
+    const dispatchMergeJob = vi
+      .fn()
+      .mockReturnValue({ ok: true, value: { jobId: "job-2" } });
+    const deps = makeDeps({
+      dispatchMergeJob,
+      getActiveGraphWorkflowExecution: vi.fn().mockResolvedValue({
+        id: "execution-1",
+        status: "running",
+      }),
+    });
+    const handlers = createGitRouteHandlers(deps);
+
+    const res = await handlers.mergeSession(
+      postRequest({ autoResolve: true }),
+      routeContext(sessionParams),
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error:
+        "Graph workflow execution execution-1 is running. Complete or abort it before merging this session.",
+      code: "GRAPH_WORKFLOW_ACTIVE",
+      details: { executionId: "execution-1", status: "running" },
+    });
+    expect(dispatchMergeJob).not.toHaveBeenCalled();
+  });
+
   it("400s on an invalid body", async () => {
     const handlers = createGitRouteHandlers(makeDeps());
     const res = await handlers.mergeSession(

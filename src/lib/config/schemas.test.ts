@@ -168,12 +168,19 @@ describe("agent backend config", () => {
 describe("validation config composition", () => {
   const registry = {
     commands: {
-      lint: { command: "scripts/validate/lint.sh", cost: 2 },
+      lint: {
+        command: { full: "scripts/validate/lint.sh" },
+        cost: 2,
+        pathArgs: "forbid",
+      },
       test: {
-        command: "scripts/validate/test.sh",
+        command: {
+          full: "scripts/validate/test-full-suite.sh",
+          changed: "scripts/validate/test.sh",
+        },
         cost: 8,
         timeoutMs: 900_000,
-        scopeArgs: "paths",
+        pathArgs: "paths",
       },
     },
     preMerge: ["lint", "test"],
@@ -185,8 +192,8 @@ describe("validation config composition", () => {
 
     expect(parsed.validation?.preMerge).toEqual(["lint", "test"]);
     expect(parsed.validation?.laneMerge).toEqual(["test"]);
-    expect(parsed.validation?.commands.test?.scopeArgs).toBe("paths");
-    expect(parsed.validation?.commands.lint?.scopeArgs).toBe("forbid");
+    expect(parsed.validation?.commands.test?.pathArgs).toBe("paths");
+    expect(parsed.validation?.commands.lint?.pathArgs).toBe("forbid");
   });
 
   it("rejects preMergeCommand with an actionable registry replacement", () => {
@@ -209,7 +216,12 @@ describe("validation config composition", () => {
     expect(
       perRepoConfigSchema.safeParse({
         validation: {
-          commands: { lint: { command: "scripts/validate/lint.sh" } },
+          commands: {
+            lint: {
+              command: { full: "scripts/validate/lint.sh" },
+              pathArgs: "forbid",
+            },
+          },
         },
       }).success,
     ).toBe(false);

@@ -49,6 +49,28 @@ describe("createSoloContextCommitter", () => {
     expect(commitChanges).not.toHaveBeenCalled();
   });
 
+  it("skips a read-only context entirely, so a dirty session worktree it never wrote to is not committed under its name", async () => {
+    const hasUncommittedChanges = vi.fn(async () => true);
+    const commitChanges = vi.fn(async () => ({ hash: "never" }));
+
+    const committer = createSoloContextCommitter({
+      hasUncommittedChanges,
+      commitChanges,
+    });
+
+    const result = await committer.commit({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "ctx-reader",
+      sessionWorktreePath: "/repo/.worktrees/session-1",
+      ownership: { mode: "readOnly", canonicalPrefixes: [] },
+    });
+
+    expect(result).toEqual({ status: "skipped" });
+    expect(commitChanges).not.toHaveBeenCalled();
+    expect(hasUncommittedChanges).not.toHaveBeenCalled();
+  });
+
   it("returns failed status with error message when the commit throws", async () => {
     const hasUncommittedChanges = vi.fn(async () => true);
     const commitChanges = vi.fn(async () => {

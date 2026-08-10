@@ -20,6 +20,7 @@ export interface RunMergeValidationMode {
   source: MergeValidationSource;
   selection: ValidationCommandSelection;
   coveredLaneIds?: string[];
+  coveredContextIds?: string[];
 }
 
 export type MergeValidationMode = { mode: "skip" } | RunMergeValidationMode;

@@ -16,7 +16,9 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/ui/cn";
 import { useOverlayScope } from "@/hooks/useOverlayScope";
-import ApprovalGatePanel from "@/components/ApprovalGatePanel";
+import ApprovalGatePanel, {
+  type ApprovalScopedChanges,
+} from "@/components/ApprovalGatePanel";
 import AskQuestionPanel from "@/components/AskQuestionPanel";
 import MessageRow from "@/components/conversation/MessageRow";
 import TypingIndicator from "@/components/conversation/TypingIndicator";
@@ -43,6 +45,14 @@ type ActiveConversationStatus = ActiveConversation["status"];
 export interface PeekApprovalGate {
   isSubmitting: boolean;
   executionSuspended: boolean;
+  /**
+   * The frozen owned-path artifact for an enveloped context, null for a
+   * full-access one (R15.2). Required rather than optional: the peek offers
+   * live Approve/Reject controls, so it is a real approval surface, and a
+   * surface that can decide has to state what it is deciding on instead of
+   * defaulting into showing nothing.
+   */
+  scopedChanges: ApprovalScopedChanges | null;
   onApprove(): void;
   onReject(message: string): void;
 }
@@ -490,6 +500,7 @@ export default function PeekPopover({
                       isSubmitting={approvalGate.isSubmitting}
                       conversationBusy={conversation.status === "running"}
                       executionSuspended={approvalGate.executionSuspended}
+                      scopedChanges={approvalGate.scopedChanges}
                       onApprove={approvalGate.onApprove}
                       onReject={approvalGate.onReject}
                       voiceProjectName={conversation.projectName}

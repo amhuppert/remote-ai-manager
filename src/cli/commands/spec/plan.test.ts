@@ -657,6 +657,7 @@ describe("cctl spec plan preview --stage", () => {
             id: "ctx-only",
             title: "Everything",
             acceptanceCriteria: "It is observable.",
+            placement: { lane: "ctx-only", mode: "full" },
           },
         ],
         tasks: [

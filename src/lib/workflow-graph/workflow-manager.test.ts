@@ -15,6 +15,8 @@ import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowDefinitionRecord,
 } from "@/lib/workflow-graph/definition-schemas";
+import { resolvedWorkflowSemanticDefinitionSchema } from "@/lib/workflow-graph/definition-schemas";
+import { migrateRawDefinitionPlacement } from "@/lib/workflow-graph/placement-migration";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowDefinition,
@@ -39,6 +41,10 @@ import type {
   ProvisionResult,
 } from "@/lib/workflow-graph/parallel-worktrees";
 import type { DirtyPath } from "@/lib/workflow-graph/errors";
+import {
+  SESSION_LANE_ID,
+  SESSION_LANE_NAME,
+} from "@/lib/workflow-graph/lane-identity";
 import {
   createGraphWorkflowManager,
   WorkflowDefinitionApprovalRequiredError,
@@ -243,6 +249,93 @@ function createRepository(
       return archiveCalls;
     },
   };
+}
+
+/**
+ * The default three-context chain re-authored onto ONE lane — a lane GROUP.
+ * Sequential reuse is declared by that shared lane name: the first member to
+ * run provisions the worktree, and the members after it inherit it.
+ */
+function sharedLaneDefinition(): ResolvedWorkflowSemanticDefinition {
+  const base = createResolvedWorkflowDefinition();
+  return {
+    ...base,
+    executionContexts: base.executionContexts.map((context) => ({
+      ...context,
+      placement: { lane: "delivery", mode: "full" as const },
+    })),
+  };
+}
+
+/**
+ * Place the named contexts onto one lane, leaving every other context as
+ * authored. Lane REUSE is what a shared placement buys, so a test that expects a
+ * downstream to land in an upstream's worktree has to say so in the definition.
+ */
+function withContextsOnLane(
+  definition: ResolvedWorkflowSemanticDefinition,
+  lane: string,
+  contextIds: readonly string[],
+): ResolvedWorkflowSemanticDefinition {
+  return {
+    ...definition,
+    executionContexts: definition.executionContexts.map((context) =>
+      contextIds.includes(context.id)
+        ? { ...context, placement: { lane, mode: "full" as const } }
+        : context,
+    ),
+  };
+}
+
+/**
+ * A pre-placement definition as its stored-load boundary hands it to the parse:
+ * the field stripped the way a legacy document has it, repaired by the same
+ * transformer every real load runs, then strictly parsed. The lane name under
+ * test is therefore chosen by production, not written by the test.
+ */
+function inflatePrePlacement(
+  definition: ResolvedWorkflowSemanticDefinition,
+): ResolvedWorkflowSemanticDefinition {
+  const raw = structuredClone(definition) as {
+    executionContexts: Array<Record<string, unknown>>;
+  };
+  for (const context of raw.executionContexts) {
+    delete context.placement;
+  }
+  migrateRawDefinitionPlacement(raw);
+  return resolvedWorkflowSemanticDefinitionSchema.parse(raw);
+}
+
+/** Rename a context everywhere a definition addresses it. */
+function renameContext(
+  definition: ResolvedWorkflowSemanticDefinition,
+  from: string,
+  to: string,
+): ResolvedWorkflowSemanticDefinition {
+  return {
+    ...definition,
+    executionContexts: definition.executionContexts.map((context) =>
+      context.id === from ? { ...context, id: to } : context,
+    ),
+    tasks: definition.tasks.map((task) =>
+      task.contextId === from ? { ...task, contextId: to } : task,
+    ),
+    edges: definition.edges.map((edge) => ({
+      ...edge,
+      ...(edge.sourceContextId === from ? { sourceContextId: to } : {}),
+      ...(edge.targetContextId === from ? { targetContextId: to } : {}),
+    })),
+  };
+}
+
+function renameContextState(
+  contextStates: GraphWorkflowExecution["contextStates"],
+  from: string,
+  to: string,
+): GraphWorkflowExecution["contextStates"] {
+  const { [from]: renamed, ...rest } = contextStates;
+  if (renamed === undefined) return contextStates;
+  return { ...rest, [to]: { ...renamed, contextId: to } };
 }
 
 function invalidRegroupedSpecDefinition(approvalRequired = false) {
@@ -2412,6 +2505,7 @@ describe("graph workflow manager", () => {
       pendingApproval: {
         conversationId: "conversation-1",
         requestedAt: "2026-03-27T15:01:00.000Z",
+        approvalScope: { kind: "whole_tree" as const },
         decision: {
           type: "rejected" as const,
           message: "needs more tests",
@@ -2537,6 +2631,7 @@ describe("graph workflow manager", () => {
               includedContextIds: ["context-plan"],
               lastCommittingContextId: "context-plan",
               commitSnapshots: [],
+              ignoredBaseline: [],
               createdAt: "2026-03-27T15:00:00.000Z",
               updatedAt: "2026-03-27T15:00:00.000Z",
             },
@@ -2737,6 +2832,7 @@ describe("graph workflow manager", () => {
             includedContextIds: ["context-plan"],
             lastCommittingContextId: "context-plan",
             commitSnapshots: [],
+            ignoredBaseline: [],
             createdAt: "2026-03-27T15:00:00.000Z",
             updatedAt: "2026-03-27T15:00:00.000Z",
           },
@@ -2749,6 +2845,7 @@ describe("graph workflow manager", () => {
             includedContextIds: ["context-implement"],
             lastCommittingContextId: "context-implement",
             commitSnapshots: [],
+            ignoredBaseline: [],
             createdAt: "2026-03-27T15:00:00.000Z",
             updatedAt: "2026-03-27T15:00:00.000Z",
           },
@@ -2761,6 +2858,7 @@ describe("graph workflow manager", () => {
             includedContextIds: [],
             lastCommittingContextId: null,
             commitSnapshots: [],
+            ignoredBaseline: [],
             createdAt: "2026-03-27T15:00:00.000Z",
             updatedAt: "2026-03-27T15:00:00.000Z",
           },
@@ -2908,6 +3006,7 @@ describe("graph workflow manager", () => {
             includedContextIds: [],
             lastCommittingContextId: null,
             commitSnapshots: [],
+            ignoredBaseline: [],
             createdAt: "2026-03-27T15:00:00.000Z",
             updatedAt: "2026-03-27T15:00:00.000Z",
           },
@@ -2978,6 +3077,7 @@ describe("graph workflow manager", () => {
             includedContextIds: [],
             lastCommittingContextId: null,
             commitSnapshots: [],
+            ignoredBaseline: [],
             createdAt: "2026-03-27T15:00:00.000Z",
             updatedAt: "2026-03-27T15:00:00.000Z",
           },
@@ -3292,6 +3392,7 @@ describe("graph workflow manager", () => {
     return {
       seq: 2,
       candidate: {
+        identityScope: "wholeTree",
         headSha: "head-1",
         candidateTreeHash: "tree-a",
         taskStateHash: "hash-1",
@@ -4761,6 +4862,7 @@ describe("graph workflow manager", () => {
         return {
           worktreePath: `${input.projectPath}/.worktrees/${input.sessionDir}.${input.contextId}`,
           branchName: `csm/${input.sessionDir}-${input.contextId}`,
+          ignoredBaseline: [],
         };
       }
 
@@ -4940,8 +5042,29 @@ describe("graph workflow manager", () => {
       expect(parallelWorktrees.provisionCalls).toEqual([]);
     });
 
-    it("schedules a single eligible context inside the session worktree without a sub-worktree", async () => {
-      const baseExecution = createWorkflowExecution();
+    it("schedules a context authored onto the session lane inside the session worktree without a sub-worktree", async () => {
+      // The session lane IS the session worktree: it is never provisioned and
+      // never lands through a join, which is why only a read-only context may
+      // be authored onto it. A group lane, by contrast, always costs a worktree.
+      const sessionLaneDefinition = createResolvedWorkflowDefinition();
+      const baseExecution = createWorkflowExecution({
+        workingDefinition: {
+          ...sessionLaneDefinition,
+          executionContexts: sessionLaneDefinition.executionContexts.map(
+            (context) =>
+              context.id === "context-plan"
+                ? {
+                    ...context,
+                    placement: { lane: SESSION_LANE_NAME, mode: "readOnly" },
+                    outputSchema: {
+                      type: "object" as const,
+                      properties: { plan: { type: "string" as const } },
+                    },
+                  }
+                : context,
+          ),
+        },
+      });
       const repository = createRepository(
         createWorkflowExecution({
           ...baseExecution,
@@ -4970,7 +5093,6 @@ describe("graph workflow manager", () => {
       const result = await manager.scheduleEligibleContexts({
         projectPath: "/repo",
         sessionName: "session-1",
-        sessionLaneEnabled: true,
       });
 
       expect(result.scheduled).toEqual({
@@ -4984,6 +5106,9 @@ describe("graph workflow manager", () => {
       expect(planState?.worktreePath).toBeNull();
       expect(planState?.branchName).toBeNull();
       expect(planState?.batchId).toBeNull();
+      expect(planState?.laneId).toBeNull();
+      expect(planState?.landingIntent).toBeNull();
+      expect(result.execution.executionLanes[SESSION_LANE_ID]).toBeUndefined();
       expect(parallelWorktrees.provisionCalls).toEqual([]);
     });
 
@@ -5047,13 +5172,13 @@ describe("graph workflow manager", () => {
       expect(verifyState?.status).toBe("running");
       expect(verifyState?.isolation).toBe("worktree");
       expect(verifyState?.worktreePath).toBe(
-        "/repo/.worktrees/feature-abc.context-verify",
+        "/repo/.worktrees/feature-abc.verify",
       );
-      expect(verifyState?.branchName).toBe("csm/feature-abc-context-verify");
+      expect(verifyState?.branchName).toBe("csm/feature-abc-verify");
       expect(verifyState?.batchId).toBe(result.scheduled.batchId);
 
       expect(parallelWorktrees.provisionCalls.map((c) => c.contextId)).toEqual([
-        "context-verify",
+        "verify",
       ]);
 
       const implState = result.execution.contextStates["context-implement"];
@@ -5123,11 +5248,11 @@ describe("graph workflow manager", () => {
       expect(verifyState?.status).toBe("running");
       expect(verifyState?.isolation).toBe("worktree");
       expect(verifyState?.worktreePath).toBe(
-        "/repo/.worktrees/feature-abc.context-verify",
+        "/repo/.worktrees/feature-abc.verify",
       );
 
       expect(parallelWorktrees.provisionCalls.map((c) => c.contextId)).toEqual([
-        "context-verify",
+        "verify",
       ]);
     });
 
@@ -5193,11 +5318,11 @@ describe("graph workflow manager", () => {
       expect(verifyState?.status).toBe("running");
       expect(verifyState?.isolation).toBe("worktree");
       expect(verifyState?.worktreePath).toBe(
-        "/repo/.worktrees/feature-abc.context-verify",
+        "/repo/.worktrees/feature-abc.verify",
       );
 
       expect(parallelWorktrees.provisionCalls.map((c) => c.contextId)).toEqual([
-        "context-verify",
+        "verify",
       ]);
     });
 
@@ -5359,7 +5484,7 @@ describe("graph workflow manager", () => {
       expect(result.scheduled.kind).toBe("parallel");
       expect(
         parallelWorktrees.provisionCalls.map((c) => c.contextId).sort(),
-      ).toEqual(["context-implement", "context-verify"]);
+      ).toEqual(["implement", "verify"]);
 
       // The concurrent scheduler saw both contexts as reserved → nothing to
       // schedule, and it provisioned nothing (no double-provision).
@@ -5475,7 +5600,7 @@ describe("graph workflow manager", () => {
       expect(retry.scheduled.kind).toBe("parallel");
       expect(
         parallelWorktrees.provisionCalls.map((c) => c.contextId).sort(),
-      ).toEqual(["context-implement", "context-verify"]);
+      ).toEqual(["implement", "verify"]);
     });
 
     it("provisions a worktree per eligible context and assigns a shared batchId when ≥2 are eligible", async () => {
@@ -5553,35 +5678,33 @@ describe("graph workflow manager", () => {
       expect(implState?.status).toBe("running");
       expect(implState?.isolation).toBe("worktree");
       expect(implState?.worktreePath).toBe(
-        "/repo/.worktrees/feature-abc.context-implement",
+        "/repo/.worktrees/feature-abc.implement",
       );
-      expect(implState?.branchName).toBe("csm/feature-abc-context-implement");
+      expect(implState?.branchName).toBe("csm/feature-abc-implement");
       expect(implState?.batchId).toBe(result.scheduled.batchId);
 
       const verifyState = result.execution.contextStates["context-verify"];
       expect(verifyState?.status).toBe("running");
       expect(verifyState?.isolation).toBe("worktree");
       expect(verifyState?.worktreePath).toBe(
-        "/repo/.worktrees/feature-abc.context-verify",
+        "/repo/.worktrees/feature-abc.verify",
       );
-      expect(verifyState?.branchName).toBe("csm/feature-abc-context-verify");
+      expect(verifyState?.branchName).toBe("csm/feature-abc-verify");
       expect(verifyState?.batchId).toBe(result.scheduled.batchId);
 
       // Every provisioned worktree is a lane — terminal contexts included —
       // so their work publishes through the gated final_publish join instead
       // of the legacy laneId-null fan-in that bypasses the delivery gate.
-      expect(implState?.laneId).toBe("context-implement");
-      expect(verifyState?.laneId).toBe("context-verify");
-      expect(result.execution.executionLanes["context-implement"]?.kind).toBe(
+      expect(implState?.laneId).toBe("implement");
+      expect(verifyState?.laneId).toBe("verify");
+      expect(result.execution.executionLanes["implement"]?.kind).toBe(
         "worktree",
       );
-      expect(result.execution.executionLanes["context-verify"]?.kind).toBe(
-        "worktree",
-      );
+      expect(result.execution.executionLanes["verify"]?.kind).toBe("worktree");
 
       expect(
         parallelWorktrees.provisionCalls.map((c) => c.contextId).sort(),
-      ).toEqual(["context-implement", "context-verify"]);
+      ).toEqual(["implement", "verify"]);
       expect(parallelWorktrees.disposeCalls).toEqual([]);
     });
 
@@ -5619,7 +5742,7 @@ describe("graph workflow manager", () => {
       });
       const repository = createRepository(initialExecution);
       const parallelWorktrees = createParallelWorktreesStub({
-        failOnContextId: "context-verify",
+        failOnContextId: "verify",
         failureMessage: "disk full",
       });
 
@@ -5645,7 +5768,7 @@ describe("graph workflow manager", () => {
       ).rejects.toThrow(/disk full/);
 
       expect(parallelWorktrees.disposeCalls.map((c) => c.branchName)).toEqual([
-        "csm/feature-abc-context-implement",
+        "csm/feature-abc-implement",
       ]);
 
       const persisted = repository.read();
@@ -5705,11 +5828,11 @@ describe("graph workflow manager", () => {
       // then fails, triggering compensation. The loop generation is NOT bumped,
       // so the release commits (it is not fenced out).
       const parallelWorktrees = createParallelWorktreesStub({
-        failOnContextId: "context-verify",
+        failOnContextId: "verify",
         failureMessage: "disk full",
-        failDisposeBranchNames: ["csm/feature-abc-context-implement"],
+        failDisposeBranchNames: ["csm/feature-abc-implement"],
         async onProvision(input) {
-          if (input.contextId !== "context-implement") return;
+          if (input.contextId !== "implement") return;
           const persisted = repository.read();
           if (!persisted) return;
           const ownBatchId =
@@ -5752,7 +5875,7 @@ describe("graph workflow manager", () => {
 
       // The failing disposal was still ATTEMPTED (best-effort).
       expect(parallelWorktrees.disposeCalls.map((c) => c.branchName)).toEqual([
-        "csm/feature-abc-context-implement",
+        "csm/feature-abc-implement",
       ]);
 
       const persisted = repository.read();
@@ -5857,13 +5980,10 @@ describe("graph workflow manager", () => {
       // finalize refused to commit and disposed them as compensation.
       expect(
         parallelWorktrees.provisionCalls.map((c) => c.contextId).sort(),
-      ).toEqual(["context-implement", "context-verify"]);
+      ).toEqual(["implement", "verify"]);
       expect(
         parallelWorktrees.disposeCalls.map((c) => c.branchName).sort(),
-      ).toEqual([
-        "csm/feature-abc-context-implement",
-        "csm/feature-abc-context-verify",
-      ]);
+      ).toEqual(["csm/feature-abc-implement", "csm/feature-abc-verify"]);
 
       // The superseded generation committed no running/lane state for the batch.
       const persisted = repository.read();
@@ -5920,8 +6040,8 @@ describe("graph workflow manager", () => {
         // BOTH lanes' disposal rejects; the first rejection must not abort the
         // second attempt.
         failDisposeBranchNames: [
-          "csm/feature-abc-context-implement",
-          "csm/feature-abc-context-verify",
+          "csm/feature-abc-implement",
+          "csm/feature-abc-verify",
         ],
         async onProvision() {
           const persisted = repository.read();
@@ -5970,16 +6090,14 @@ describe("graph workflow manager", () => {
       // disposal is best-effort across every lane.
       expect(
         parallelWorktrees.disposeCalls.map((c) => c.branchName).sort(),
-      ).toEqual([
-        "csm/feature-abc-context-implement",
-        "csm/feature-abc-context-verify",
-      ]);
+      ).toEqual(["csm/feature-abc-implement", "csm/feature-abc-verify"]);
     });
 
     it("rejects scheduling before any worktree is created when a contextId is unsafe", async () => {
       const unsafeDefinition = createResolvedWorkflowDefinition({
         executionContexts: [
           {
+            placement: { lane: "context-plan", mode: "full" as const },
             id: "context-plan",
             title: "Plan",
             acceptanceCriteria: "Plan complete",
@@ -6009,6 +6127,7 @@ describe("graph workflow manager", () => {
             planRepair: { enabled: true, maxAttemptsPerContext: 2 },
           },
           {
+            placement: { lane: "..escape", mode: "full" as const },
             id: "..escape",
             title: "Bad",
             acceptanceCriteria: "n/a",
@@ -6038,6 +6157,7 @@ describe("graph workflow manager", () => {
             planRepair: { enabled: true, maxAttemptsPerContext: 2 },
           },
           {
+            placement: { lane: "context-other", mode: "full" as const },
             id: "context-other",
             title: "Other",
             acceptanceCriteria: "n/a",
@@ -6237,7 +6357,7 @@ describe("graph workflow manager", () => {
           projectPath: "/repo",
           sessionName: "session-1",
         }),
-      ).rejects.toThrow(/contextId/i);
+      ).rejects.toThrow(/laneId/i);
 
       expect(parallelWorktrees.provisionCalls).toEqual([]);
       expect(parallelWorktrees.disposeCalls).toEqual([]);
@@ -6309,7 +6429,7 @@ describe("graph workflow manager", () => {
       expect(result.execution.activeContextIds).toEqual(["context-implement"]);
     });
 
-    it("reuses the upstream's lane (no provisioning) when its output is lane-committed and downstream targets that lane", async () => {
+    it("reuses the upstream's lane (no provisioning) when its output is lane-committed and downstream is placed on that lane", async () => {
       const lane = {
         laneId: "lane-plan",
         kind: "worktree" as const,
@@ -6319,10 +6439,17 @@ describe("graph workflow manager", () => {
         includedContextIds: ["context-plan"],
         lastCommittingContextId: "context-plan",
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: "2026-03-27T15:00:00.000Z",
         updatedAt: "2026-03-27T15:00:00.000Z",
       };
-      const baseExecution = createWorkflowExecution();
+      const baseExecution = createWorkflowExecution({
+        workingDefinition: withContextsOnLane(
+          createResolvedWorkflowDefinition(),
+          "lane-plan",
+          ["context-plan", "context-implement"],
+        ),
+      });
       const repository = createRepository(
         createWorkflowExecution({
           ...baseExecution,
@@ -6379,7 +6506,9 @@ describe("graph workflow manager", () => {
       expect(parallelWorktrees.provisionCalls).toEqual([]);
     });
 
-    it("schedules onto the post-join common target lane when two upstreams have been joined into it", async () => {
+    it("forks the authored lane from the post-join common target once two upstreams are joined into it", async () => {
+      // Authored placement is the only lane authority: the converged lane is
+      // the fork BASE that carries both upstreams' work, never the destination.
       const branchedDefinition = createResolvedWorkflowDefinition({
         edges: [
           {
@@ -6403,6 +6532,7 @@ describe("graph workflow manager", () => {
         includedContextIds: ["context-plan"],
         lastCommittingContextId: "context-plan",
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: "2026-03-27T15:00:00.000Z",
         updatedAt: "2026-03-27T15:00:00.000Z",
       };
@@ -6415,6 +6545,7 @@ describe("graph workflow manager", () => {
         includedContextIds: ["context-implement"],
         lastCommittingContextId: "context-implement",
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: "2026-03-27T15:00:00.000Z",
         updatedAt: "2026-03-27T15:00:00.000Z",
       };
@@ -6427,6 +6558,7 @@ describe("graph workflow manager", () => {
         includedContextIds: [],
         lastCommittingContextId: null,
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: "2026-03-27T15:00:00.000Z",
         updatedAt: "2026-03-27T15:00:00.000Z",
       };
@@ -6515,12 +6647,22 @@ describe("graph workflow manager", () => {
 
       const verifyState = result.execution.contextStates["context-verify"];
       expect(verifyState?.status).toBe("running");
-      expect(verifyState?.laneId).toBe("lane-target");
+      expect(verifyState?.laneId).toBe("verify");
       expect(verifyState?.isolation).toBe("worktree");
-      expect(verifyState?.worktreePath).toBe(laneTarget.worktreePath);
-      expect(verifyState?.branchName).toBe(laneTarget.branchName);
 
-      expect(parallelWorktrees.provisionCalls).toEqual([]);
+      // One worktree, branched off the converged lane so both upstreams are in
+      // its history — and the fork inherits their context ids for visibility.
+      expect(
+        parallelWorktrees.provisionCalls.map((call) => ({
+          contextId: call.contextId,
+          sessionBranch: call.sessionBranch,
+        })),
+      ).toEqual([
+        { contextId: "verify", sessionBranch: laneTarget.branchName },
+      ]);
+      expect(
+        result.execution.executionLanes.verify?.includedContextIds.sort(),
+      ).toEqual(["context-implement", "context-plan"]);
     });
 
     it("returns kind 'none' when capacityRemaining is 0 even with eligible contexts", async () => {
@@ -6605,21 +6747,21 @@ describe("graph workflow manager", () => {
       expect(implState?.isolation).toBe("worktree");
       // The forked worktree is a lane like every provisioned worktree, so its
       // output publishes through the gated final_publish join.
-      expect(implState?.laneId).toBe("context-implement");
+      expect(implState?.laneId).toBe("implement");
       expect(implState?.worktreePath).toBe(
-        "/repo/.worktrees/feature-abc.context-implement",
+        "/repo/.worktrees/feature-abc.implement",
       );
 
-      expect(result.execution.executionLanes["context-implement"]?.kind).toBe(
+      expect(result.execution.executionLanes["implement"]?.kind).toBe(
         "worktree",
       );
 
       expect(parallelWorktrees.provisionCalls.map((c) => c.contextId)).toEqual([
-        "context-implement",
+        "implement",
       ]);
     });
 
-    it("schedules both fan-out children in one pass: inheritor reuses the parent lane, non-inheritor forks a new worktree lane from the parent's branch", async () => {
+    it("schedules both fan-out children in one pass: each forks its own worktree lane from the parent's branch because neither is placed on the parent lane", async () => {
       const fanOutDefinition = createResolvedWorkflowDefinition({
         edges: [
           {
@@ -6643,6 +6785,7 @@ describe("graph workflow manager", () => {
         includedContextIds: ["context-plan"],
         lastCommittingContextId: "context-plan",
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: "2026-03-27T15:00:00.000Z",
         updatedAt: "2026-03-27T15:00:00.000Z",
       };
@@ -6694,8 +6837,8 @@ describe("graph workflow manager", () => {
 
       expect(result.scheduled.kind).toBe("parallel");
       if (result.scheduled.kind !== "parallel") return;
-      // With no continuationMap entry the inheritor defaults to definition
-      // order: context-implement reuses lane-plan, context-verify forks.
+      // Each child is placed on its own lane, so neither takes the parent's:
+      // both fork from its committed head into a worktree of their own.
       expect(result.scheduled.contextIds.slice().sort()).toEqual([
         "context-implement",
         "context-verify",
@@ -6703,59 +6846,80 @@ describe("graph workflow manager", () => {
 
       const inheritState = result.execution.contextStates["context-implement"];
       expect(inheritState?.status).toBe("running");
-      expect(inheritState?.laneId).toBe("lane-plan");
+      expect(inheritState?.laneId).toBe("implement");
       expect(inheritState?.isolation).toBe("worktree");
-      expect(inheritState?.worktreePath).toBe(lane.worktreePath);
-      expect(inheritState?.branchName).toBe(lane.branchName);
+      expect(inheritState?.worktreePath).toBe(
+        "/repo/.worktrees/feature-abc.implement",
+      );
+      expect(inheritState?.branchName).toBe("csm/feature-abc-implement");
 
       const forkState = result.execution.contextStates["context-verify"];
       expect(forkState?.status).toBe("running");
-      expect(forkState?.laneId).toBe("context-verify");
+      expect(forkState?.laneId).toBe("verify");
       expect(forkState?.isolation).toBe("worktree");
       expect(forkState?.worktreePath).toBe(
-        "/repo/.worktrees/feature-abc.context-verify",
+        "/repo/.worktrees/feature-abc.verify",
       );
-      expect(forkState?.branchName).toBe("csm/feature-abc-context-verify");
+      expect(forkState?.branchName).toBe("csm/feature-abc-verify");
 
-      const forkedLane = result.execution.executionLanes["context-verify"];
+      const forkedLane = result.execution.executionLanes["verify"];
       expect(forkedLane).toBeDefined();
       expect(forkedLane?.kind).toBe("worktree");
       expect(forkedLane?.status).toBe("active");
       expect(forkedLane?.worktreePath).toBe(
-        "/repo/.worktrees/feature-abc.context-verify",
+        "/repo/.worktrees/feature-abc.verify",
       );
-      expect(forkedLane?.branchName).toBe("csm/feature-abc-context-verify");
+      expect(forkedLane?.branchName).toBe("csm/feature-abc-verify");
       expect(forkedLane?.includedContextIds).toEqual(["context-plan"]);
       expect(forkedLane?.lastCommittingContextId).toBe("context-plan");
       expect(forkedLane?.commitSnapshots).toEqual([]);
 
-      // Parent lane retained as-is; fork is a separate entry.
+      // Parent lane retained as-is; each fork is a separate entry.
       expect(result.execution.executionLanes["lane-plan"]).toEqual(lane);
+      expect(
+        result.execution.executionLanes["implement"]?.includedContextIds,
+      ).toEqual(["context-plan"]);
 
-      // One worktree provisioned for the loser, with the parent lane's branch
-      // as the base — that's the fork-from-committed-head semantics.
-      expect(parallelWorktrees.provisionCalls).toHaveLength(1);
-      const forkCall = parallelWorktrees.provisionCalls[0]!;
-      expect(forkCall.contextId).toBe("context-verify");
+      // One worktree per child, each based on the parent lane's branch — that's
+      // the fork-from-committed-head semantics.
+      expect(parallelWorktrees.provisionCalls).toHaveLength(2);
+      expect(
+        parallelWorktrees.provisionCalls.map((c) => c.contextId).sort(),
+      ).toEqual(["implement", "verify"]);
+      for (const call of parallelWorktrees.provisionCalls) {
+        expect(call.sessionBranch).toBe(lane.branchName);
+      }
+      const forkCall = parallelWorktrees.provisionCalls.find(
+        (c) => c.contextId === "verify",
+      )!;
+      expect(forkCall.contextId).toBe("verify");
       expect(forkCall.sessionBranch).toBe(lane.branchName);
       expect(forkCall.sessionDir).toBe("feature-abc");
     });
 
-    it("uses lanePlan.continuationMap to pick the inheriting child at fan-out, even when it is later in definition order", async () => {
-      const fanOutDefinition = createResolvedWorkflowDefinition({
-        edges: [
-          {
-            id: "edge-plan-implement",
-            sourceContextId: "context-plan",
-            targetContextId: "context-implement",
-          },
-          {
-            id: "edge-plan-verify",
-            sourceContextId: "context-plan",
-            targetContextId: "context-verify",
-          },
-        ],
-      });
+    // Two siblings PLACED on the same lane contend for its one worktree. The
+    // first in definition order takes it; the other waits for a later pass
+    // rather than forking, because a fork would mint a second lane under the
+    // name their shared placement already owns.
+    it("gives the contested lane to the first sibling in definition order at fan-out, holding the other back", async () => {
+      const fanOutDefinition = withContextsOnLane(
+        createResolvedWorkflowDefinition({
+          edges: [
+            {
+              id: "edge-plan-implement",
+              sourceContextId: "context-plan",
+              targetContextId: "context-implement",
+            },
+            {
+              id: "edge-plan-verify",
+              sourceContextId: "context-plan",
+              targetContextId: "context-verify",
+            },
+          ],
+        }),
+        "lane-plan",
+        ["context-implement", "context-verify"],
+      );
       const lane = {
         laneId: "lane-plan",
         kind: "worktree" as const,
@@ -6765,6 +6929,7 @@ describe("graph workflow manager", () => {
         includedContextIds: ["context-plan"],
         lastCommittingContextId: "context-plan",
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: "2026-03-27T15:00:00.000Z",
         updatedAt: "2026-03-27T15:00:00.000Z",
       };
@@ -6777,17 +6942,6 @@ describe("graph workflow manager", () => {
           status: "running",
           workingDefinition: fanOutDefinition,
           executionLanes: { "lane-plan": lane },
-          // Plan elects the later-in-definition-order sibling. If the
-          // scheduler honors the plan, context-verify must claim the lane
-          // even though context-implement comes first in eligible order.
-          lanePlan: {
-            continuationMap: { "context-plan": "context-verify" },
-            longestDownstreamPath: {
-              "context-plan": 1,
-              "context-implement": 0,
-              "context-verify": 0,
-            },
-          },
           contextStates: {
             ...baseExecution.contextStates,
             "context-plan": {
@@ -6827,46 +6981,26 @@ describe("graph workflow manager", () => {
 
       expect(result.scheduled.kind).toBe("parallel");
       if (result.scheduled.kind !== "parallel") return;
-      // Plan elects context-verify as inheritor; context-implement (the
-      // non-inheritor sibling) must fork rather than wait.
-      expect(result.scheduled.contextIds.slice().sort()).toEqual([
-        "context-implement",
-        "context-verify",
+      // Only the winner is scheduled this pass.
+      expect(result.scheduled.contextIds).toEqual(["context-implement"]);
+
+      const winnerState = result.execution.contextStates["context-implement"];
+      expect(winnerState?.laneId).toBe("lane-plan");
+      expect(winnerState?.status).toBe("running");
+
+      const heldBackState = result.execution.contextStates["context-verify"];
+      expect(heldBackState?.status).not.toBe("running");
+      expect(heldBackState?.laneId).toBeNull();
+
+      // The shared lane already exists, so nothing is provisioned and no second
+      // lane appears under its name.
+      expect(parallelWorktrees.provisionCalls).toEqual([]);
+      expect(Object.keys(result.execution.executionLanes)).toEqual([
+        "lane-plan",
       ]);
-
-      const verifyState = result.execution.contextStates["context-verify"];
-      expect(verifyState?.status).toBe("running");
-      expect(verifyState?.laneId).toBe("lane-plan");
-      expect(verifyState?.isolation).toBe("worktree");
-      expect(verifyState?.worktreePath).toBe(lane.worktreePath);
-
-      const implState = result.execution.contextStates["context-implement"];
-      expect(implState?.status).toBe("running");
-      expect(implState?.laneId).toBe("context-implement");
-      expect(implState?.isolation).toBe("worktree");
-      expect(implState?.worktreePath).toBe(
-        "/repo/.worktrees/feature-abc.context-implement",
-      );
-      expect(implState?.branchName).toBe("csm/feature-abc-context-implement");
-
-      const forkedLane = result.execution.executionLanes["context-implement"];
-      expect(forkedLane).toBeDefined();
-      expect(forkedLane?.kind).toBe("worktree");
-      expect(forkedLane?.status).toBe("active");
-      expect(forkedLane?.includedContextIds).toEqual(["context-plan"]);
-      expect(forkedLane?.lastCommittingContextId).toBe("context-plan");
-      expect(forkedLane?.worktreePath).toBe(
-        "/repo/.worktrees/feature-abc.context-implement",
-      );
-      expect(forkedLane?.branchName).toBe("csm/feature-abc-context-implement");
-
-      expect(parallelWorktrees.provisionCalls).toHaveLength(1);
-      const forkCall = parallelWorktrees.provisionCalls[0]!;
-      expect(forkCall.contextId).toBe("context-implement");
-      expect(forkCall.sessionBranch).toBe(lane.branchName);
     });
 
-    it("falls back to definition-order inheritor at fan-out when lanePlan.continuationMap has no entry for the parent, forking the sibling", async () => {
+    it("deterministically restarts a fan-out: the same two forked lanes on a fresh scheduling pass", async () => {
       const fanOutDefinition = createResolvedWorkflowDefinition({
         edges: [
           {
@@ -6890,123 +7024,9 @@ describe("graph workflow manager", () => {
         includedContextIds: ["context-plan"],
         lastCommittingContextId: "context-plan",
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: "2026-03-27T15:00:00.000Z",
         updatedAt: "2026-03-27T15:00:00.000Z",
-      };
-      const baseExecution = createWorkflowExecution({
-        workingDefinition: fanOutDefinition,
-      });
-      const repository = createRepository(
-        createWorkflowExecution({
-          ...baseExecution,
-          status: "running",
-          workingDefinition: fanOutDefinition,
-          executionLanes: { "lane-plan": lane },
-          lanePlan: {
-            continuationMap: {},
-            longestDownstreamPath: {},
-          },
-          contextStates: {
-            ...baseExecution.contextStates,
-            "context-plan": {
-              ...baseExecution.contextStates["context-plan"]!,
-              status: "completed",
-              isolation: "worktree",
-              laneId: "lane-plan",
-              worktreePath: lane.worktreePath,
-              branchName: lane.branchName,
-              mergeStatus: "merged-success",
-              completedTaskCount: 1,
-              iterationCount: 1,
-            },
-          },
-        }),
-      );
-      const parallelWorktrees = createParallelWorktreesStub();
-
-      const manager = createGraphWorkflowManager({
-        executionRepository: repository,
-        async loadDefinition() {
-          return null;
-        },
-        parallelWorktrees,
-        async getSession() {
-          return createSession({
-            worktreePath: "/repo/.worktrees/feature-abc",
-            branchName: "csm/feature-abc",
-          });
-        },
-      });
-
-      const result = await manager.scheduleEligibleContexts({
-        projectPath: "/repo",
-        sessionName: "session-1",
-      });
-
-      expect(result.scheduled.kind).toBe("parallel");
-      if (result.scheduled.kind !== "parallel") return;
-      expect(result.scheduled.contextIds.slice().sort()).toEqual([
-        "context-implement",
-        "context-verify",
-      ]);
-
-      const inheritState = result.execution.contextStates["context-implement"];
-      expect(inheritState?.laneId).toBe("lane-plan");
-      expect(inheritState?.status).toBe("running");
-
-      const forkState = result.execution.contextStates["context-verify"];
-      expect(forkState?.status).toBe("running");
-      expect(forkState?.laneId).toBe("context-verify");
-      expect(forkState?.isolation).toBe("worktree");
-
-      const forkedLane = result.execution.executionLanes["context-verify"];
-      expect(forkedLane?.kind).toBe("worktree");
-      expect(forkedLane?.includedContextIds).toEqual(["context-plan"]);
-      expect(forkedLane?.lastCommittingContextId).toBe("context-plan");
-
-      expect(parallelWorktrees.provisionCalls).toHaveLength(1);
-      expect(parallelWorktrees.provisionCalls[0]?.contextId).toBe(
-        "context-verify",
-      );
-      expect(parallelWorktrees.provisionCalls[0]?.sessionBranch).toBe(
-        lane.branchName,
-      );
-    });
-
-    it("deterministically restarts a fan-out with persisted continuationMap: same inheritor + forked sibling on a fresh scheduling pass", async () => {
-      const fanOutDefinition = createResolvedWorkflowDefinition({
-        edges: [
-          {
-            id: "edge-plan-implement",
-            sourceContextId: "context-plan",
-            targetContextId: "context-implement",
-          },
-          {
-            id: "edge-plan-verify",
-            sourceContextId: "context-plan",
-            targetContextId: "context-verify",
-          },
-        ],
-      });
-      const lane = {
-        laneId: "lane-plan",
-        kind: "worktree" as const,
-        status: "active" as const,
-        worktreePath: "/repo/.worktrees/feature-abc.lane-plan",
-        branchName: "csm/feature-abc-lane-plan",
-        includedContextIds: ["context-plan"],
-        lastCommittingContextId: "context-plan",
-        commitSnapshots: [],
-        createdAt: "2026-03-27T15:00:00.000Z",
-        updatedAt: "2026-03-27T15:00:00.000Z",
-      };
-      const persistedPlan = {
-        continuationMap: { "context-plan": "context-verify" },
-        longestDownstreamPath: {
-          "context-plan": 1,
-          "context-implement": 0,
-          "context-verify": 0,
-        },
       };
       const baseExecution = createWorkflowExecution({
         workingDefinition: fanOutDefinition,
@@ -7020,7 +7040,6 @@ describe("graph workflow manager", () => {
           status: "running",
           workingDefinition: fanOutDefinition,
           executionLanes: { "lane-plan": lane },
-          lanePlan: persistedPlan,
           contextStates: {
             ...baseExecution.contextStates,
             "context-plan": {
@@ -7071,32 +7090,33 @@ describe("graph workflow manager", () => {
           "context-verify",
         ]);
 
-        const inheritState = result.execution.contextStates["context-verify"];
-        expect(inheritState?.laneId).toBe("lane-plan");
+        const implementState =
+          result.execution.contextStates["context-implement"];
+        expect(implementState?.laneId).toBe("implement");
+        expect(implementState?.isolation).toBe("worktree");
 
-        const forkState = result.execution.contextStates["context-implement"];
-        expect(forkState?.laneId).toBe("context-implement");
-        expect(forkState?.isolation).toBe("worktree");
+        const verifyState = result.execution.contextStates["context-verify"];
+        expect(verifyState?.laneId).toBe("verify");
+        expect(verifyState?.isolation).toBe("worktree");
 
+        for (const laneId of ["implement", "verify"]) {
+          expect(result.execution.executionLanes[laneId]).toBeDefined();
+          expect(
+            result.execution.executionLanes[laneId]?.includedContextIds,
+          ).toEqual(["context-plan"]);
+        }
+
+        expect(parallelWorktrees.provisionCalls).toHaveLength(2);
         expect(
-          result.execution.executionLanes["context-implement"],
-        ).toBeDefined();
-        expect(
-          result.execution.executionLanes["context-implement"]
-            ?.includedContextIds,
-        ).toEqual(["context-plan"]);
-
-        expect(parallelWorktrees.provisionCalls).toHaveLength(1);
-        expect(parallelWorktrees.provisionCalls[0]?.contextId).toBe(
-          "context-implement",
-        );
-        expect(parallelWorktrees.provisionCalls[0]?.sessionBranch).toBe(
-          lane.branchName,
-        );
+          parallelWorktrees.provisionCalls.map((c) => c.contextId).sort(),
+        ).toEqual(["implement", "verify"]);
+        for (const call of parallelWorktrees.provisionCalls) {
+          expect(call.sessionBranch).toBe(lane.branchName);
+        }
       }
     });
 
-    it("skips fork for a non-inheritor sibling whose parent lane is session-kind: only the inheritor is scheduled", async () => {
+    it("gives each fan-out sibling its own authored lane, both forked from the session-kind parent's branch", async () => {
       const fanOutDefinition = createResolvedWorkflowDefinition({
         edges: [
           {
@@ -7120,6 +7140,7 @@ describe("graph workflow manager", () => {
         includedContextIds: ["context-plan"],
         lastCommittingContextId: "context-plan",
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: "2026-03-27T15:00:00.000Z",
         updatedAt: "2026-03-27T15:00:00.000Z",
       };
@@ -7171,24 +7192,30 @@ describe("graph workflow manager", () => {
 
       expect(result.scheduled.kind).toBe("parallel");
       if (result.scheduled.kind !== "parallel") return;
-      expect(result.scheduled.contextIds).toEqual(["context-implement"]);
+      expect([...result.scheduled.contextIds].sort()).toEqual([
+        "context-implement",
+        "context-verify",
+      ]);
 
-      const inheritState = result.execution.contextStates["context-implement"];
-      expect(inheritState?.laneId).toBe("lane-session");
-      expect(inheritState?.isolation).toBe("session");
-
-      const sibling = result.execution.contextStates["context-verify"];
-      expect(sibling?.status).toBe("ready");
-      expect(sibling?.laneId).toBeNull();
-      expect(sibling?.worktreePath).toBeNull();
-
-      expect(result.execution.executionLanes["context-verify"]).toBeUndefined();
-      expect(parallelWorktrees.provisionCalls).toEqual([]);
+      // Authored placement, not a continuation contest: neither sibling
+      // inherits the parent lane, and each gets the lane it declared.
+      expect(result.execution.contextStates["context-implement"]?.laneId).toBe(
+        "implement",
+      );
+      expect(result.execution.contextStates["context-verify"]?.laneId).toBe(
+        "verify",
+      );
+      expect(
+        parallelWorktrees.provisionCalls.map((c) => c.contextId).sort(),
+      ).toEqual(["implement", "verify"]);
+      for (const call of parallelWorktrees.provisionCalls) {
+        expect(call.sessionBranch).toBe(sessionLane.branchName);
+      }
     });
 
-    it("routes a session-kind target lane with isolation=session and no worktree provisioning", async () => {
+    it("routes a context authored onto the session lane with isolation=session and no worktree provisioning", async () => {
       const sessionLane = {
-        laneId: "lane-session",
+        laneId: SESSION_LANE_ID,
         kind: "session" as const,
         status: "active" as const,
         worktreePath: null,
@@ -7196,22 +7223,46 @@ describe("graph workflow manager", () => {
         includedContextIds: ["context-plan"],
         lastCommittingContextId: "context-plan",
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: "2026-03-27T15:00:00.000Z",
         updatedAt: "2026-03-27T15:00:00.000Z",
       };
-      const baseExecution = createWorkflowExecution();
+      const sessionPlacedDefinition = createResolvedWorkflowDefinition();
+      const definition = {
+        ...sessionPlacedDefinition,
+        executionContexts: sessionPlacedDefinition.executionContexts.map(
+          (context) =>
+            context.id === "context-implement"
+              ? {
+                  ...context,
+                  placement: {
+                    lane: SESSION_LANE_NAME,
+                    mode: "readOnly" as const,
+                  },
+                  outputSchema: {
+                    type: "object" as const,
+                    properties: { review: { type: "string" as const } },
+                  },
+                }
+              : context,
+        ),
+      };
+      const baseExecution = createWorkflowExecution({
+        workingDefinition: definition,
+      });
       const repository = createRepository(
         createWorkflowExecution({
           ...baseExecution,
           status: "running",
-          executionLanes: { "lane-session": sessionLane },
+          workingDefinition: definition,
+          executionLanes: { [SESSION_LANE_ID]: sessionLane },
           contextStates: {
             ...baseExecution.contextStates,
             "context-plan": {
               ...baseExecution.contextStates["context-plan"]!,
               status: "completed",
               isolation: "session",
-              laneId: "lane-session",
+              laneId: SESSION_LANE_ID,
               worktreePath: null,
               branchName: null,
               mergeStatus: "not-applicable",
@@ -7242,43 +7293,223 @@ describe("graph workflow manager", () => {
         sessionName: "session-1",
       });
 
-      expect(result.scheduled.kind).toBe("parallel");
-      if (result.scheduled.kind !== "parallel") return;
-      expect(result.scheduled.contextIds).toEqual(["context-implement"]);
+      expect(result.scheduled).toEqual({
+        kind: "solo",
+        contextId: "context-implement",
+      });
 
       const implState = result.execution.contextStates["context-implement"];
       expect(implState?.status).toBe("running");
-      expect(implState?.laneId).toBe("lane-session");
+      expect(implState?.laneId).toBeNull();
       expect(implState?.isolation).toBe("session");
       expect(implState?.worktreePath).toBeNull();
       expect(implState?.branchName).toBeNull();
+      expect(implState?.landingIntent).toBeNull();
 
       expect(parallelWorktrees.provisionCalls).toEqual([]);
     });
 
+    /**
+     * R11.1's charset clause, at the production path rather than on the migrated
+     * data alone. A legacy context id may be any non-empty string, and this one
+     * is not spliceable into a git branch name or a worktree path — so the lane
+     * the migration minted for it is the only legal name available. Provisioning
+     * that keyed off the context id instead would make the sanitization dead
+     * code and refuse the migrated definition outright, which is the opposite of
+     * "existing templates remain startable".
+     */
+    it("provisions a migrated pre-placement context whose id is outside the lane-id charset under its sanitized lane name", async () => {
+      const legacyId = "build api";
+      const definition = inflatePrePlacement(
+        renameContext(
+          createResolvedWorkflowDefinition(),
+          "context-plan",
+          legacyId,
+        ),
+      );
+      // The transformer chose this, not the test.
+      expect(
+        definition.executionContexts.find((ctx) => ctx.id === legacyId)
+          ?.placement.lane,
+      ).toBe("build_api");
+
+      const base = createWorkflowExecution({ workingDefinition: definition });
+      const repository = createRepository({
+        ...base,
+        status: "running",
+        contextStates: renameContextState(
+          base.contextStates,
+          "context-plan",
+          legacyId,
+        ),
+      });
+      const parallelWorktrees = createParallelWorktreesStub();
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return null;
+        },
+        parallelWorktrees,
+        async getSession() {
+          return createSession({
+            worktreePath: "/repo/.worktrees/feature-abc",
+            branchName: "csm/feature-abc",
+          });
+        },
+      });
+
+      const scheduled = await manager.scheduleEligibleContexts({
+        projectPath: "/repo",
+        sessionName: "session-1",
+      });
+
+      expect(scheduled.scheduled.kind).toBe("parallel");
+      if (scheduled.scheduled.kind !== "parallel") return;
+      expect(scheduled.scheduled.contextIds).toEqual([legacyId]);
+
+      expect(parallelWorktrees.provisionCalls).toHaveLength(1);
+      expect(parallelWorktrees.provisionCalls[0]?.contextId).toBe("build_api");
+
+      const state = scheduled.execution.contextStates[legacyId];
+      expect(state?.laneId).toBe("build_api");
+      expect(state?.isolation).toBe("worktree");
+      expect(state?.worktreePath).toBe(
+        "/repo/.worktrees/feature-abc.build_api",
+      );
+      expect(state?.branchName).toBe("csm/feature-abc-build_api");
+      expect(scheduled.execution.executionLanes["build_api"]?.kind).toBe(
+        "worktree",
+      );
+    });
+
+    /**
+     * R11.1's execution clause: a pre-placement definition migrates to one
+     * single-member lane per context, and that is what the run must cost — one
+     * worktree per context, exactly as the definition behaved before placement
+     * existed.
+     *
+     * The downstream is the case that matters. Its upstream landed on a worktree
+     * lane, so the classifier offers that lane; admitting the downstream onto it
+     * would silently merge two single-member lanes into one and hand the
+     * downstream a worktree its placement never claimed. It forks onto its own
+     * lane from the upstream's committed head instead, which is how it still
+     * sees the upstream's work.
+     */
+    it("provisions one worktree per context across a migrated pre-placement chain: each downstream forks onto its own single-member lane", async () => {
+      const definition = inflatePrePlacement(
+        createResolvedWorkflowDefinition(),
+      );
+      // Migration names each lane after its context, so no two contexts share one.
+      expect(
+        definition.executionContexts.map((ctx) => ctx.placement.lane),
+      ).toEqual(["context-plan", "context-implement", "context-verify"]);
+
+      const base = createWorkflowExecution({ workingDefinition: definition });
+      const repository = createRepository({ ...base, status: "running" });
+      const parallelWorktrees = createParallelWorktreesStub();
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return null;
+        },
+        parallelWorktrees,
+        async getSession() {
+          return createSession({
+            worktreePath: "/repo/.worktrees/feature-abc",
+            branchName: "csm/feature-abc",
+          });
+        },
+      });
+
+      const first = await manager.scheduleEligibleContexts({
+        projectPath: "/repo",
+        sessionName: "session-1",
+      });
+      expect(first.scheduled.kind).toBe("parallel");
+      if (first.scheduled.kind !== "parallel") return;
+      expect(first.scheduled.contextIds).toEqual(["context-plan"]);
+      const planState = first.execution.contextStates["context-plan"];
+      expect(planState?.laneId).toBe("context-plan");
+      expect(parallelWorktrees.provisionCalls).toHaveLength(1);
+
+      // context-plan commits on its lane and completes.
+      const afterPlan = first.execution;
+      const planLane = afterPlan.executionLanes["context-plan"]!;
+      await repository.update("/repo", "session-1", {
+        ...afterPlan,
+        contextStates: {
+          ...afterPlan.contextStates,
+          "context-plan": {
+            ...afterPlan.contextStates["context-plan"]!,
+            status: "completed",
+            mergeStatus: "merged-success",
+            completedTaskCount: 1,
+            iterationCount: 1,
+            landingIntent: {
+              ...afterPlan.contextStates["context-plan"]!.landingIntent!,
+              state: "landed",
+              evidence: "commit",
+              headSha: "plan-head",
+              settledAt: "2026-01-01T00:00:00.000Z",
+            },
+          },
+        },
+        executionLanes: {
+          ...afterPlan.executionLanes,
+          "context-plan": {
+            ...planLane,
+            includedContextIds: ["context-plan"],
+            lastCommittingContextId: "context-plan",
+          },
+        },
+        activeContextIds: afterPlan.activeContextIds.filter(
+          (id) => id !== "context-plan",
+        ),
+      });
+
+      const second = await manager.scheduleEligibleContexts({
+        projectPath: "/repo",
+        sessionName: "session-1",
+      });
+      expect(second.scheduled.kind).toBe("parallel");
+      if (second.scheduled.kind !== "parallel") return;
+      expect(second.scheduled.contextIds).toEqual(["context-implement"]);
+
+      const implState = second.execution.contextStates["context-implement"];
+      expect(implState?.laneId).toBe("context-implement");
+      expect(implState?.isolation).toBe("worktree");
+      expect(implState?.worktreePath).toBe(
+        "/repo/.worktrees/feature-abc.context-implement",
+      );
+
+      // A second worktree, forked from the upstream lane's branch so the
+      // upstream's committed work is visible in it.
+      expect(parallelWorktrees.provisionCalls).toHaveLength(2);
+      expect(parallelWorktrees.provisionCalls[1]?.contextId).toBe(
+        "context-implement",
+      );
+      expect(parallelWorktrees.provisionCalls[1]?.sessionBranch).toBe(
+        planLane.branchName,
+      );
+
+      const forkedLane = second.execution.executionLanes["context-implement"];
+      expect(forkedLane?.kind).toBe("worktree");
+      expect(forkedLane?.includedContextIds).toEqual(["context-plan"]);
+      expect(forkedLane?.lastCommittingContextId).toBe("context-plan");
+    });
+
     it("reuses a single worktree lane across a linear context chain (sequential lane reuse) so only the root provisions a lane", async () => {
       // Topology: context-plan -> context-implement -> context-verify (default
-      // fixture). With a populated lanePlan.continuationMap, the root should
-      // be minted into a worktree lane up front; each downstream then reuses
-      // it without provisioning a new worktree or going through a session
-      // merge.
-      const baseExecution = createWorkflowExecution();
-      const linearLanePlan = {
-        continuationMap: {
-          "context-plan": "context-implement",
-          "context-implement": "context-verify",
-        },
-        longestDownstreamPath: {
-          "context-plan": 2,
-          "context-implement": 1,
-          "context-verify": 0,
-        },
-      };
+      // fixture), all three authored onto ONE lane. The root should be minted
+      // into a worktree lane up front; each downstream then reuses it without
+      // provisioning a new worktree or going through a session merge.
+      const baseExecution = createWorkflowExecution({
+        workingDefinition: sharedLaneDefinition(),
+      });
       const repository = createRepository(
         createWorkflowExecution({
           ...baseExecution,
           status: "running",
-          lanePlan: linearLanePlan,
         }),
       );
       const parallelWorktrees = createParallelWorktreesStub();
@@ -7298,7 +7529,7 @@ describe("graph workflow manager", () => {
       });
 
       // Pass 1: only context-plan is eligible. It should be provisioned into
-      // a fresh worktree lane whose id matches the root's contextId.
+      // a fresh worktree lane named by the group's authored placement.
       const first = await manager.scheduleEligibleContexts({
         projectPath: "/repo",
         sessionName: "session-1",
@@ -7308,18 +7539,18 @@ describe("graph workflow manager", () => {
       expect(first.scheduled.contextIds).toEqual(["context-plan"]);
 
       const planState = first.execution.contextStates["context-plan"];
-      expect(planState?.laneId).toBe("context-plan");
+      expect(planState?.laneId).toBe("delivery");
       expect(planState?.isolation).toBe("worktree");
-      const mintedLane = first.execution.executionLanes["context-plan"];
+      const mintedLane = first.execution.executionLanes["delivery"];
       expect(mintedLane).toBeDefined();
       expect(mintedLane?.kind).toBe("worktree");
       expect(mintedLane?.status).toBe("active");
       expect(mintedLane?.includedContextIds).toEqual([]);
       expect(mintedLane?.lastCommittingContextId).toBeNull();
       expect(mintedLane?.worktreePath).toBe(
-        "/repo/.worktrees/feature-abc.context-plan",
+        "/repo/.worktrees/feature-abc.delivery",
       );
-      expect(mintedLane?.branchName).toBe("csm/feature-abc-context-plan");
+      expect(mintedLane?.branchName).toBe("csm/feature-abc-delivery");
       expect(parallelWorktrees.provisionCalls).toHaveLength(1);
 
       // Simulate runLaneCommit: context-plan finishes, lane records its
@@ -7350,7 +7581,7 @@ describe("graph workflow manager", () => {
         },
         executionLanes: {
           ...afterPlan.executionLanes,
-          "context-plan": {
+          delivery: {
             ...mintedLane!,
             includedContextIds: ["context-plan"],
             lastCommittingContextId: "context-plan",
@@ -7362,8 +7593,8 @@ describe("graph workflow manager", () => {
       });
 
       // Pass 2: context-implement is now eligible. Its upstream landed in the
-      // worktree lane "context-plan"; classifier returns targetLaneId =
-      // "context-plan" → scheduler reuses without minting. No new provision.
+      // worktree lane "delivery"; classifier returns targetLaneId =
+      // "delivery" → scheduler reuses without minting. No new provision.
       const second = await manager.scheduleEligibleContexts({
         projectPath: "/repo",
         sessionName: "session-1",
@@ -7373,12 +7604,12 @@ describe("graph workflow manager", () => {
       expect(second.scheduled.contextIds).toEqual(["context-implement"]);
 
       const implState = second.execution.contextStates["context-implement"];
-      expect(implState?.laneId).toBe("context-plan");
+      expect(implState?.laneId).toBe("delivery");
       expect(implState?.isolation).toBe("worktree");
       expect(implState?.worktreePath).toBe(
-        "/repo/.worktrees/feature-abc.context-plan",
+        "/repo/.worktrees/feature-abc.delivery",
       );
-      expect(implState?.branchName).toBe("csm/feature-abc-context-plan");
+      expect(implState?.branchName).toBe("csm/feature-abc-delivery");
       expect(parallelWorktrees.provisionCalls).toHaveLength(1);
 
       // Simulate runLaneCommit for context-implement: lane absorbs another
@@ -7405,8 +7636,8 @@ describe("graph workflow manager", () => {
         },
         executionLanes: {
           ...afterImpl.executionLanes,
-          "context-plan": {
-            ...afterImpl.executionLanes["context-plan"]!,
+          delivery: {
+            ...afterImpl.executionLanes["delivery"]!,
             includedContextIds: ["context-plan", "context-implement"],
             lastCommittingContextId: "context-implement",
           },
@@ -7427,20 +7658,18 @@ describe("graph workflow manager", () => {
       expect(third.scheduled.contextIds).toEqual(["context-verify"]);
 
       const verifyState = third.execution.contextStates["context-verify"];
-      expect(verifyState?.laneId).toBe("context-plan");
+      expect(verifyState?.laneId).toBe("delivery");
       expect(verifyState?.isolation).toBe("worktree");
       expect(verifyState?.worktreePath).toBe(
-        "/repo/.worktrees/feature-abc.context-plan",
+        "/repo/.worktrees/feature-abc.delivery",
       );
 
       // No additional provisioning across the whole linear chain.
       expect(parallelWorktrees.provisionCalls).toHaveLength(1);
-      expect(parallelWorktrees.provisionCalls[0]!.contextId).toBe(
-        "context-plan",
-      );
+      expect(parallelWorktrees.provisionCalls[0]!.contextId).toBe("delivery");
       // No fresh worktree lanes were minted for downstream consumers.
       expect(Object.keys(third.execution.executionLanes).sort()).toEqual([
-        "context-plan",
+        "delivery",
       ]);
     });
 
@@ -7516,21 +7745,14 @@ describe("graph workflow manager", () => {
 
       it("emits a lane.created lifecycle event when minting a fresh worktree lane with the laneId, branchName, worktreePath, and originating contextId", async () => {
         _resetRegistryForTesting();
-        const baseExecution = createWorkflowExecution();
-        const linearLanePlan = {
-          continuationMap: { "context-plan": "context-implement" },
-          longestDownstreamPath: {
-            "context-plan": 1,
-            "context-implement": 0,
-            "context-verify": 0,
-          },
-        };
+        const baseExecution = createWorkflowExecution({
+          workingDefinition: sharedLaneDefinition(),
+        });
         const repository = createRepository(
           createWorkflowExecution({
             ...baseExecution,
             id: "exec-obs-lane-created",
             status: "running",
-            lanePlan: linearLanePlan,
           }),
         );
         const { logger, calls } = createCapturingLogger(
@@ -7563,10 +7785,10 @@ describe("graph workflow manager", () => {
         );
         expect(laneCreated).toBeDefined();
         expect(laneCreated?.data).toMatchObject({
-          laneId: "context-plan",
+          laneId: "delivery",
           contextId: "context-plan",
-          branchName: "csm/feature-abc-context-plan",
-          worktreePath: "/repo/.worktrees/feature-abc.context-plan",
+          branchName: "csm/feature-abc-delivery",
+          worktreePath: "/repo/.worktrees/feature-abc.delivery",
           kind: "worktree",
         });
         unregisterExecutionLogger("exec-obs-lane-created");
@@ -7574,7 +7796,15 @@ describe("graph workflow manager", () => {
 
       it("emits a lane.reused lifecycle event when a downstream context inherits an upstream worktree lane so operators can audit lane handoff", async () => {
         _resetRegistryForTesting();
-        const baseExecution = createWorkflowExecution();
+        // Handoff happens between contexts SHARING a lane, so the definition
+        // places both on the one the fixture below provisions.
+        const baseExecution = createWorkflowExecution({
+          workingDefinition: withContextsOnLane(
+            createResolvedWorkflowDefinition(),
+            "context-plan",
+            ["context-plan", "context-implement"],
+          ),
+        });
         const repository = createRepository(
           createWorkflowExecution({
             ...baseExecution,
@@ -7590,6 +7820,7 @@ describe("graph workflow manager", () => {
                 includedContextIds: ["context-plan"],
                 lastCommittingContextId: "context-plan",
                 commitSnapshots: [],
+                ignoredBaseline: [],
                 createdAt: "2026-03-27T15:00:00.000Z",
                 updatedAt: "2026-03-27T15:00:00.000Z",
               },
@@ -8515,6 +8746,7 @@ describe("graph workflow manager", () => {
                 id: "ctx-1",
                 title: "One",
                 acceptanceCriteria: "ok",
+                placement: { lane: "ctx-1", mode: "full" },
                 implementer: {
                   id: "implementer",
                   profile: { tier: "builtin", id: "general-implementer" },
@@ -8538,6 +8770,7 @@ describe("graph workflow manager", () => {
                 id: "ctx-2",
                 title: "Two",
                 acceptanceCriteria: "ok",
+                placement: { lane: "ctx-2", mode: "full" },
                 implementer: {
                   id: "implementer",
                   profile: { tier: "builtin", id: "general-implementer" },

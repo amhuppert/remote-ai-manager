@@ -64,33 +64,78 @@ const HERMETIC_CONFIG: CodexConfig = {
   skills: { bundled: { enabled: false }, include_instructions: false },
 };
 
+/** The sandbox half every Codex envelope shares. */
+function sandboxConfigFor(policy: FsWritePolicy): CodexConfig {
+  return {
+    approval_policy: "never",
+    sandbox_mode: "workspace-write",
+    sandbox_workspace_write: {
+      writable_roots: [...policy.allowWrite],
+      exclude_tmpdir_env_var: true,
+      exclude_slash_tmp: true,
+    },
+  };
+}
+
+/**
+ * The allowlist is ordered by its composer: the run's own root first, its temp
+ * last. A single-entry allowlist makes both the same path, which is the correct
+ * degenerate case rather than a special one. Absence is impossible once
+ * {@link checkFsWritePolicy} has passed, and is reported rather than asserted
+ * so the invariant stays checked.
+ */
+function rootsOf(
+  policy: FsWritePolicy,
+): { workingDirectory: string; tmpDir: string } | null {
+  const [workingDirectory] = policy.allowWrite;
+  const tmpDir = policy.allowWrite[policy.allowWrite.length - 1];
+  if (workingDirectory === undefined || tmpDir === undefined) return null;
+  return { workingDirectory, tmpDir };
+}
+
+const NO_WRITABLE_ROOT: CodexFsWriteEnvelopeResult = {
+  kind: "unestablishable",
+  reason: "the write policy allows no path at all",
+};
+
 export function buildCodexFsWriteEnvelope(
   policy: FsWritePolicy,
 ): CodexFsWriteEnvelopeResult {
   const check = checkFsWritePolicy(policy);
   if (check.kind === "unestablishable") return check;
-
-  // The allowlist is ordered by its composer: the run's own root first, its
-  // temp last. A single-entry allowlist makes both the same path, which is the
-  // correct degenerate case rather than a special one.
-  const workingDirectory = policy.allowWrite[0]!;
-  const tmpDir = policy.allowWrite[policy.allowWrite.length - 1]!;
+  const roots = rootsOf(policy);
+  if (roots === null) return NO_WRITABLE_ROOT;
 
   return {
     kind: "envelope",
     envelope: {
-      workingDirectory,
-      tmpDir,
-      config: {
-        ...HERMETIC_CONFIG,
-        approval_policy: "never",
-        sandbox_mode: "workspace-write",
-        sandbox_workspace_write: {
-          writable_roots: [...policy.allowWrite],
-          exclude_tmpdir_env_var: true,
-          exclude_slash_tmp: true,
-        },
-      },
+      ...roots,
+      config: { ...HERMETIC_CONFIG, ...sandboxConfigFor(policy) },
     },
+  };
+}
+
+/**
+ * The same sandbox for a CONVERSATION turn — a graph-workflow implementer
+ * confined to the prefixes its context owns.
+ *
+ * The hermetic half is deliberately absent. A review lane executes CC's
+ * composition and nothing else, so blanking the machine's project docs, skills,
+ * and memories is part of its correctness; an implementer is doing the
+ * project's own work and needs the project's own instructions (`AGENTS.md`
+ * first among them). Blanking them would change what the lane builds, which is
+ * not what a write envelope is for.
+ */
+export function buildCodexConversationFsWriteEnvelope(
+  policy: FsWritePolicy,
+): CodexFsWriteEnvelopeResult {
+  const check = checkFsWritePolicy(policy);
+  if (check.kind === "unestablishable") return check;
+  const roots = rootsOf(policy);
+  if (roots === null) return NO_WRITABLE_ROOT;
+
+  return {
+    kind: "envelope",
+    envelope: { ...roots, config: sandboxConfigFor(policy) },
   };
 }

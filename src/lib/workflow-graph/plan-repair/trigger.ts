@@ -22,7 +22,11 @@ export type PlanRepairHaltType =
   // A loop that exhausted a pass budget (D4 R12). Its remedies are the three
   // loop-control ops rather than a context edit: the halt names a pass instance
   // that will never run again.
-  | "loop_limit_reached";
+  | "loop_limit_reached"
+  // Drift on a shared lane (lightweight parallelism R8). Repairable for the
+  // same reason it is resumable: the fix is an ownership widening on a context
+  // through `update-context`, which is already in the repair agent's vocabulary.
+  | "ownership_violation";
 
 export type PlanRepairTriggerVerdict =
   | {
@@ -134,7 +138,8 @@ export function evaluatePlanRepairTrigger(
   if (
     haltReason.type !== "circuit_breaker" &&
     haltReason.type !== "max_iterations" &&
-    haltReason.type !== "loop_limit_reached"
+    haltReason.type !== "loop_limit_reached" &&
+    haltReason.type !== "ownership_violation"
   ) {
     return { eligible: false, reason: "halt_kind" };
   }

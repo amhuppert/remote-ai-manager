@@ -8,7 +8,10 @@ import {
   type ValidationListResponse,
   type ValidationPollResponse,
 } from "@/lib/validation/api-schemas";
-import type { ValidationRunResult } from "@/lib/validation/schemas";
+import type {
+  ValidationRunResult,
+  ValidationScope,
+} from "@/lib/validation/schemas";
 import { conversationTargetApiBase } from "@/lib/conversations/conversation-target";
 import { dispatchGroup } from "../dispatch";
 import { flagNamesFor } from "../help-registry";
@@ -159,7 +162,10 @@ function renderList(listed: ValidationListResponse, json: boolean): CliResult {
   const capacity = `${listed.capacity.inUse} of ${listed.capacity.limit} capacity units in use; queue depth ${listed.capacity.queueDepth}`;
   const commandLines = listed.commands.map((command) => {
     const description = command.description ? ` — ${command.description}` : "";
-    return `${command.name}  cost ${command.cost}  ${command.enabled ? "enabled" : "disabled"}${description}`;
+    const changed =
+      command.changedScope === "native" ? "changed native" : "changed → full";
+    const paths = command.pathArgs === "paths" ? "  paths" : "";
+    return `${command.name}  cost ${command.cost}  ${changed}${paths}  ${command.enabled ? "enabled" : "disabled"}${description}`;
   });
   return {
     exitCode: EXIT_OK,
@@ -305,10 +311,12 @@ function terminalRunResult(
     }
   >,
   json: boolean,
+  scope: { requestedScope: ValidationScope; effectiveScope: ValidationScope },
 ): CliResult {
+  let rendered: CliResult;
   switch (result.kind) {
     case "passed":
-      return {
+      rendered = {
         exitCode: EXIT_OK,
         stdout: render(json, humanLine(result.output), {
           ok: true,
@@ -317,8 +325,9 @@ function terminalRunResult(
         }),
         stderr: "",
       };
+      break;
     case "failed":
-      return validationFailure(
+      rendered = validationFailure(
         {
           exitCode: EXIT_OPERATION_FAILED,
           message: `Validation failed${result.exitCode === null ? " before the command started" : ` with exit ${result.exitCode}`}.`,
@@ -332,8 +341,9 @@ function terminalRunResult(
           output: result.output,
         },
       );
+      break;
     case "timed_out":
-      return validationFailure(
+      rendered = validationFailure(
         {
           exitCode: EXIT_OPERATION_FAILED,
           message: `Validation timed out after ${result.timeoutMs}ms.`,
@@ -343,8 +353,9 @@ function terminalRunResult(
         },
         { ...result },
       );
+      break;
     case "cancelled":
-      return validationFailure(
+      rendered = validationFailure(
         {
           exitCode: EXIT_OPERATION_FAILED,
           message: `Validation run ${result.runId} was cancelled.`,
@@ -353,8 +364,9 @@ function terminalRunResult(
         },
         { runId: result.runId },
       );
+      break;
     case "interrupted":
-      return validationFailure(
+      rendered = validationFailure(
         {
           exitCode: EXIT_OPERATION_FAILED,
           message: `Validation run ${result.runId} was interrupted.`,
@@ -363,7 +375,9 @@ function terminalRunResult(
         },
         { runId: result.runId },
       );
+      break;
   }
+  return withJsonPayload(rendered, json, scope);
 }
 
 function addProgress(
@@ -418,6 +432,7 @@ async function pollToTerminal(
   runId: string,
   leaseToken: string,
   initialPosition: number | null,
+  scope: { requestedScope: ValidationScope; effectiveScope: ValidationScope },
   json: boolean,
   host: CliHost,
 ): Promise<CliResult> {
@@ -515,7 +530,7 @@ async function pollToTerminal(
           terminal.kind === "interrupted"
         ) {
           return addProgress(
-            terminalRunResult(terminal, json),
+            terminalRunResult(terminal, json, scope),
             queuePositions,
             json,
             host,
@@ -558,6 +573,19 @@ async function runValidateRun(
       flags.json,
     );
   }
+  const requestedScope = values["scope"] ?? "changed";
+  if (requestedScope !== "changed" && requestedScope !== "full") {
+    return usageFailure(
+      '--scope must be either "changed" or "full"',
+      flags.json,
+    );
+  }
+  if (requestedScope === "full" && passthrough.length > 0) {
+    return usageFailure(
+      "validated paths require --scope changed and cannot narrow a full run",
+      flags.json,
+    );
+  }
   const workflowExecutionId = env["CC_WORKFLOW_EXECUTION_ID"];
   const workflowContextId = env["CC_WORKFLOW_CONTEXT_ID"];
   if (
@@ -581,6 +609,7 @@ async function runValidateRun(
     path: validationPath(resolved.context),
     body: {
       commandName,
+      scope: requestedScope,
       wait,
       ...(passthrough.length > 0 ? { scopePaths: passthrough } : {}),
       ...(env["CC_VALIDATION_RUN_ID"]
@@ -663,6 +692,10 @@ async function runValidateRun(
       parsed.data.runId,
       parsed.data.lease.token,
       parsed.data.position,
+      {
+        requestedScope: parsed.data.requestedScope,
+        effectiveScope: parsed.data.effectiveScope,
+      },
       flags.json,
       host,
     );
@@ -678,7 +711,13 @@ function renderActiveStatus(
   const lines = listed.runs.map((run) => {
     const position =
       run.position === null ? "" : `  queue position ${run.position + 1}`;
-    return `${run.runId}  ${run.commandName}  ${run.status}  cost ${run.cost}${position}`;
+    const scope =
+      run.requestedScope === null || run.effectiveScope === null
+        ? "scope unknown"
+        : run.requestedScope === run.effectiveScope
+          ? `scope ${run.effectiveScope}`
+          : `scope ${run.requestedScope} → ${run.effectiveScope}`;
+    return `${run.runId}  ${run.commandName}  ${run.status}  cost ${run.cost}  ${scope}${position}`;
   });
   return {
     exitCode: EXIT_OK,
@@ -703,12 +742,22 @@ function renderOneStatus(
 ): CliResult {
   const position =
     status.position === null ? "" : ` (queue position ${status.position + 1})`;
+  const scope =
+    status.requestedScope === null || status.effectiveScope === null
+      ? "scope unknown"
+      : status.requestedScope === status.effectiveScope
+        ? `scope ${status.effectiveScope}`
+        : `scope ${status.requestedScope} → ${status.effectiveScope}`;
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, `${status.runId}  ${status.status}${position}\n`, {
-      ok: true,
-      ...status,
-    }),
+    stdout: render(
+      json,
+      `${status.runId}  ${status.status}  ${scope}${position}\n`,
+      {
+        ok: true,
+        ...status,
+      },
+    ),
     stderr: "",
   };
 }

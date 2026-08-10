@@ -31,6 +31,7 @@ import {
   validateResolvedWorkflow,
   validateWorkflowDefinition,
 } from "./validation";
+import { validatePlacements } from "./placement-validation";
 import {
   classifyContextLifecycle,
   classifyContextLifecycleFromPin,
@@ -47,7 +48,6 @@ import {
   buildInitialContextState,
   buildInitialTaskState,
 } from "./execution-state";
-import { computeLanePlan, recomputeLanePlanForSubgraph } from "./lane-plan";
 import { ensureLoopState } from "./loop-budgets";
 import {
   LOOP_PASS_ENTRY_EDGE_SUFFIX,
@@ -56,6 +56,14 @@ import {
   validateExpansionPayloadLoopDeclarations,
   type LoopActivationReader,
 } from "./loop-resolver";
+import { executionLaneIdFor } from "./lane-identity";
+import {
+  laneClosure,
+  laneClosureFromPin,
+  pinLaneClosure,
+  LANE_CLOSED_CODE,
+  type LaneClosurePin,
+} from "./lane-lifecycle";
 import { mintEdgeId } from "./edge-identity";
 import { resolvedContextConfig } from "./generated-child-config";
 import { findCriteriaWithoutMustRunCoverage } from "./criterion-coverage";
@@ -71,6 +79,7 @@ import { applyCharterContentEdit } from "./definition-edits";
 import {
   collectValidationCommandIssuesForResolvedContext,
   collectLaneMergeValidationCommandIssues,
+  ENVELOPED_SCRIPT_VALIDATION_NOT_COVERED_CODE,
 } from "./command-selector-validation";
 import {
   VALIDATION_COST_EXCEEDS_LIMIT_CODE,
@@ -264,8 +273,8 @@ export function createGraphWorkflowRuntimeEditService(
 
     // The lane-agent entry point is one `add-task` over the shared live-edit
     // core (doc 06 — one core, multiple entry points). The entry-point policy
-    // above is enforced here; the core owns task placement, runtime-map sync,
-    // and lanePlan recompute. `laneAgentContextId` lets the add bypass the
+    // above is enforced here; the core owns task placement and runtime-map
+    // sync. `laneAgentContextId` lets the add bypass the
     // started-context quiescence gate (this context is running, active, and
     // `allowAgentTaskAdd` — all just checked) and stamps the task `source: agent`.
     // Pre-minting the id keeps parity with the prior slug-or-mint behavior and
@@ -502,6 +511,16 @@ interface LiveEditOpContext {
    */
   laneMergeTouched: boolean;
   /**
+   * Set by any op that establishes or rewrites a placement, so the frontier
+   * re-runs the placement grammar and lane-disjointness checks. A boolean rather
+   * than a context set because the pairwise refusal names the LOWER-indexed
+   * member of the colliding pair, which need not be the context the batch
+   * touched — filtering by touched id would drop exactly the collisions this
+   * exists to catch. Gating on it at all keeps an unrelated edit from tripping
+   * over a legacy execution's pre-placement state.
+   */
+  placementTouched: boolean;
+  /**
    * Contexts this batch itself created. A task added into one of them is the
    * initiating agent's own work (provenance `agent`), and the append-only
    * structural exception is scoped by it.
@@ -563,6 +582,7 @@ function liveEditTouchedPaths(
           "acceptanceCriteria",
           "outputSchema",
           "routing",
+          "placement",
           "implementer",
           "contextValidator",
           "scriptValidator",
@@ -763,7 +783,6 @@ function runLiveEditOps(
   const next = cloneExecution(execution);
   const affectedContextIds = new Set<string>();
   const validationTouchedContextIds = new Set<string>();
-  let hasStructuralOp = false;
 
   const opContext: LiveEditOpContext = {
     quiescent,
@@ -773,6 +792,7 @@ function runLiveEditOps(
     affectedContextIds,
     validationTouchedContextIds,
     laneMergeTouched: false,
+    placementTouched: false,
     batchCreatedContextIds: new Set<string>(),
     laneAgentContextId: options.laneAgentContextId,
     structuralSource: options.structuralSource,
@@ -822,9 +842,6 @@ function runLiveEditOps(
     if (rejection) {
       return { ok: false, code: rejection.code, issues: rejection.issues };
     }
-    if (isStructuralLiveOp(operation.type)) {
-      hasStructuralOp = true;
-    }
   }
 
   // The route-control revision of every source whose outgoing conditional edges
@@ -837,18 +854,6 @@ function runLiveEditOps(
     execution.workingDefinition,
     next.workingDefinition,
   );
-
-  // lanePlan: full recompute for structural batches (edge topology changed),
-  // subgraph recompute for task-only batches (matches today's add_task).
-  if (hasStructuralOp) {
-    next.lanePlan = computeLanePlan(next.workingDefinition);
-  } else if (affectedContextIds.size > 0) {
-    next.lanePlan = recomputeLanePlanForSubgraph({
-      definition: next.workingDefinition,
-      previousPlan: execution.lanePlan,
-      contextIds: Array.from(affectedContextIds),
-    });
-  }
 
   return { ok: true, next, opContext };
 }
@@ -890,7 +895,7 @@ function validateLiveEditBatch(
  * Apply an ordered, atomic batch of live edits to a launched execution. Pure —
  * clones the input, applies ops sequentially (so a later op sees an earlier
  * one's result), and rejects the whole batch on the first failing op. On success
- * the runtime maps and lanePlan are re-synced and the whole execution is
+ * the runtime maps are re-synced and the whole execution is
  * re-parsed. `liveRevision` is NOT touched here (the route/wrapper owns exactly
  * one increment per accepted mutation).
  */
@@ -1013,6 +1018,24 @@ interface PreparedFrontierWitness {
   >;
   /** Lock state of every task the delta's definition footprint covers. */
   readonly taskLocks: Readonly<Record<string, boolean>>;
+  /**
+   * Every lane the delta makes a context ARRIVE on, pinned so closure can be
+   * re-derived inside the lock (R10, decision D11).
+   *
+   * `structuralRevision` cannot stand in for this one. A lane closes when a join
+   * intent names it as a source, and planning a join writes `joins` and the
+   * downstream context's `joinId` — never `workingDefinition` — so the fence
+   * that covers every other prepare-time decision does not move. Without this,
+   * a member validated against an open lane installs onto a lane whose content
+   * was already promised to a merge it will miss.
+   */
+  readonly laneArrivals: readonly PreparedLaneArrival[];
+}
+
+/** One context's arrival onto a lane, with the evidence to re-check its closure. */
+interface PreparedLaneArrival {
+  readonly contextId: string;
+  readonly pin: LaneClosurePin;
 }
 
 /**
@@ -1030,6 +1053,7 @@ export type PreparedEditsRepreparReason =
   | { kind: "editability_changed" }
   | { kind: "context_lifecycle_changed"; contextId: string }
   | { kind: "task_lock_changed"; taskId: string }
+  | { kind: "lane_closed"; laneId: string; contextId: string }
   | { kind: "concurrent_write"; field: string }
   | { kind: "unmergeable_change"; field: string };
 
@@ -1238,6 +1262,42 @@ function collectDeltaFootprint(
   return { contextIds, taskIds };
 }
 
+/**
+ * Every context the batch places on a lane it was not already on — a new
+ * context, or one whose placement moved. DERIVED by diffing the validated result
+ * against the snapshot, so it is exactly the set {@link refuseClosedLaneArrival}
+ * gated at validation: same-lane residents are not arrivals, and a lane's
+ * closure has never applied to the members it already holds.
+ */
+function collectLaneArrivals(
+  base: GraphWorkflowExecution,
+  next: GraphWorkflowExecution,
+): PreparedLaneArrival[] {
+  const baseLaneByContext = new Map(
+    base.workingDefinition.executionContexts.map((context) => [
+      context.id,
+      context.placement.lane,
+    ]),
+  );
+
+  // Keyed by lane, not by context: closure is a property of the lane, and a
+  // fan-out placing eight readers on one group lane asks the same question eight
+  // times. The first arrival's id rides along for the reprepare diagnostic.
+  const arrivals = new Map<string, PreparedLaneArrival>();
+  for (const context of next.workingDefinition.executionContexts) {
+    const before = baseLaneByContext.get(context.id);
+    const lane = context.placement.lane;
+    const laneId = executionLaneIdFor(lane);
+    if (before !== undefined && executionLaneIdFor(before) === laneId) continue;
+    if (arrivals.has(laneId)) continue;
+    arrivals.set(laneId, {
+      contextId: context.id,
+      pin: pinLaneClosure(base, lane),
+    });
+  }
+  return Array.from(arrivals.values());
+}
+
 function describeEditability(execution: GraphWorkflowExecution): string {
   const editability = classifyExecutionEditability(execution);
   return editability.kind === "editable"
@@ -1276,6 +1336,7 @@ function captureFrontierWitness(
     editability: describeEditability(base),
     contextLifecycles,
     taskLocks,
+    laneArrivals: collectLaneArrivals(base, next),
   };
 }
 
@@ -1379,6 +1440,18 @@ function checkDeltaPreconditions(
   for (const [taskId, locked] of Object.entries(witness.taskLocks)) {
     if (isLiveTaskLocked(current, taskId) !== locked) {
       return { kind: "task_lock_changed", taskId };
+    }
+  }
+
+  // Re-derived rather than fenced by a counter: no revision moves when a join
+  // intent freezes a lane, so this is the only evidence that the lane the batch
+  // validated against still accepts members. Ordered after the structural check
+  // so the pins — whose loop membership is definition-derived — are known to
+  // describe the definition `current` actually carries. O(arrivals × joins);
+  // both are payload-sized, and nothing here walks the graph.
+  for (const { contextId, pin } of witness.laneArrivals) {
+    if (laneClosureFromPin(current, pin) !== null) {
+      return { kind: "lane_closed", laneId: pin.laneId, contextId };
     }
   }
 
@@ -1615,6 +1688,54 @@ function findLiveContext(
 ): GraphWorkflowResolvedContext | undefined {
   return execution.workingDefinition.executionContexts.find(
     (entry) => entry.id === contextId,
+  );
+}
+
+/**
+ * The lane-membership freeze (lwp R10, decision D11) — the shared gate every
+ * placement-establishing op passes through, so a lane agent's expansion, an
+ * operator's live edit, and the plan-repair supervisor are all refused on the
+ * same evidence and told the same typed code.
+ *
+ * Closure gates ARRIVALS, not residents: a context that is already on the lane
+ * may keep editing its own envelope, because nothing new is joining a merge that
+ * has already been promised. Only a placement naming a DIFFERENT lane than the
+ * context currently sits on is an arrival.
+ *
+ * The engine's loop-pass unrolling is deliberately not routed through here. It
+ * writes its instances into the definition directly, and the lane they inherit
+ * cannot be closed: `planContextJoin` and `planFinalPublishJoin` both refuse to
+ * consume a lane while its loop is open, so the freeze cannot fire before the
+ * loop concludes.
+ */
+function refuseClosedLaneArrival(
+  next: GraphWorkflowExecution,
+  input: {
+    contextId: string;
+    lane: string;
+    /** Where the context sits today; absent when the op is creating it. */
+    currentLane?: string | undefined;
+    index: number;
+  },
+): LiveEditRejection | null {
+  if (
+    input.currentLane !== undefined &&
+    executionLaneIdFor(input.currentLane) === executionLaneIdFor(input.lane)
+  ) {
+    return null;
+  }
+
+  const closure = laneClosure(next, input.lane);
+  if (closure === null) return null;
+
+  return rejectLiveEdit(
+    "invalid_edit",
+    liveEditIssue(
+      LANE_CLOSED_CODE,
+      `Lane "${input.lane}" no longer accepts members (${closure.reason}): its content is already committed to a join, and there is no reopen verb. Place "${input.contextId}" on a new lane instead`,
+      input.index,
+      { contextId: input.contextId },
+    ),
   );
 }
 
@@ -2019,6 +2140,22 @@ function applyUpdateContext(
     delete context.routing;
   } else if (op.routing !== undefined) {
     context.routing = op.routing;
+  }
+  // Wholesale replacement (the grade discriminates on `mode`, so there is no
+  // partial merge) and never a clear. WHEN it may change is already decided by
+  // the editability gate above — unstarted freely, started only at quiescence;
+  // WHETHER the new envelope can coexist with the lane's other members is the
+  // frontier's question, because only the post-batch graph knows (lwp R10.2).
+  if (op.placement !== undefined) {
+    const closed = refuseClosedLaneArrival(next, {
+      contextId: op.contextId,
+      lane: op.placement.lane,
+      currentLane: context.placement.lane,
+      index,
+    });
+    if (closed) return closed;
+    context.placement = op.placement;
+    ctx.placementTouched = true;
   }
   const priorAgentValidation = context.agentValidation;
   applyLiveConfigBlocks(context, op, ctx.deps);
@@ -2442,6 +2579,16 @@ function applyAddContext(
     );
   }
 
+  // Ahead of the config seeding: an add onto a frozen lane is refused on the
+  // lane alone, so it should not first resolve a config source it will discard.
+  const placement = op.placement ?? { lane: op.id, mode: "full" as const };
+  const closed = refuseClosedLaneArrival(next, {
+    contextId: op.id,
+    lane: placement.lane,
+    index,
+  });
+  if (closed) return closed;
+
   let base: ResolvedContextConfig;
   if (op.configFromContextId !== undefined) {
     const source = findLiveContext(next, op.configFromContextId);
@@ -2478,6 +2625,15 @@ function applyAddContext(
     // Same reason: a routing policy describes this context's own outgoing edge
     // set, so it is never seeded from `configFromContextId`.
     ...(op.routing !== undefined ? { routing: op.routing } : {}),
+    // Never seeded from `configFromContextId` either — a lane and its owned
+    // prefixes are the one thing two contexts must NOT share by accident, and
+    // sharing a lane is a claim about concurrency and ownership between two
+    // specific contexts that copying config cannot establish. Without an
+    // authored placement the context gets a single-member lane of its own,
+    // matching the saved-tier add (`definition-edits.ts`) and the shape a
+    // live-added context had before placement was authored; the frontier
+    // validates the result either way.
+    placement,
     implementer:
       op.implementer === undefined
         ? base.implementer
@@ -2513,6 +2669,9 @@ function applyAddContext(
   ctx.affectedContextIds.add(op.id);
   ctx.validationTouchedContextIds.add(op.id);
   ctx.batchCreatedContextIds.add(op.id);
+  // An add always establishes a placement, authored or fallback, so the lane it
+  // joins is checked here rather than at provisioning time.
+  ctx.placementTouched = true;
   return null;
 }
 
@@ -3445,6 +3604,11 @@ function checkLiveEditFrontier(
     return { code: "invalid_edit", issues: resolved.errors };
   }
 
+  const placementIssues = checkPlacements(next, ctx);
+  if (placementIssues.length > 0) {
+    return { code: "invalid_edit", issues: placementIssues };
+  }
+
   const commandIssues = checkValidationCommandSelections(next, ctx);
   if (commandIssues.length > 0) {
     const hasOversizedCommand = commandIssues.some(
@@ -3468,6 +3632,31 @@ function checkLiveEditFrontier(
     return { code: "invalid_edit", issues: coverageIssues };
   }
   return null;
+}
+
+/**
+ * Frontier check — placement (lwp R1, R10.2), asked of the POST-BATCH working
+ * definition through the same composite the authored tier uses, so a lane name,
+ * an owned prefix, or a read-only grade means the same thing whether it arrived
+ * in a plan or in a live edit.
+ *
+ * Only a batch that established or rewrote a placement is judged. The check is
+ * whole-definition by nature — the pairwise disjointness question is about a
+ * PAIR, and the refusal names the lower-indexed member, which need not be the
+ * context the batch touched — so running it on every edit would let an execution
+ * seeded before placement existed refuse edits that have nothing to do with it.
+ *
+ * "Concurrent" here is decided by dependency reachability, not by which contexts
+ * happen to be running: two lane members that nothing sequences can hold the
+ * lane's one worktree at the same time, and an active sibling is exactly the
+ * case where that has already happened.
+ */
+function checkPlacements(
+  next: GraphWorkflowExecution,
+  ctx: LiveEditOpContext,
+): WorkflowGraphValidationError[] {
+  if (!ctx.placementTouched) return [];
+  return validatePlacements(next.workingDefinition);
 }
 
 /**
@@ -3642,7 +3831,11 @@ function checkValidationCommandSelections(
     const context = findLiveContext(next, contextId);
     if (!context) continue;
     errors.push(
-      ...collectValidationCommandIssuesForResolvedContext(context, preflight),
+      ...collectValidationCommandIssuesForResolvedContext(
+        context,
+        preflight,
+        next.workingDefinition.laneMergeValidation.commands,
+      ),
     );
   }
   if (ctx.laneMergeTouched) {
@@ -3652,6 +3845,19 @@ function checkValidationCommandSelections(
         preflight,
       ),
     );
+    for (const context of next.workingDefinition.executionContexts) {
+      if (ctx.validationTouchedContextIds.has(context.id)) continue;
+      errors.push(
+        ...collectValidationCommandIssuesForResolvedContext(
+          context,
+          preflight,
+          next.workingDefinition.laneMergeValidation.commands,
+        ).filter(
+          (issue) =>
+            issue.code === ENVELOPED_SCRIPT_VALIDATION_NOT_COVERED_CODE,
+        ),
+      );
+    }
   }
   return errors;
 }

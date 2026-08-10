@@ -18,12 +18,11 @@ const parallelLogger = createLogger("graph-workflow-parallel");
 
 /**
  * Heavy, near-static fields of a {@link GraphWorkflowExecution} — the working
- * definition, charter, and lane plan plus the execution's identity and the
- * seed-time audit snapshot (`boundInputs`, `launchedTier`,
- * `ownerConversationId`). Written to `definition_json` only when its content
- * hash changes (the definition rarely mutates after a workflow starts;
- * `boundInputs`, `launchedTier`, and `ownerConversationId` are fixed at seed and
- * never mutate).
+ * definition and charter plus the execution's identity and the seed-time audit
+ * snapshot (`boundInputs`, `launchedTier`, `ownerConversationId`). Written to
+ * `definition_json` only when its content hash changes (the definition rarely
+ * mutates after a workflow starts; `boundInputs`, `launchedTier`, and
+ * `ownerConversationId` are fixed at seed and never mutate).
  */
 export const DEFINITION_TIER_KEYS = [
   "id",
@@ -35,7 +34,6 @@ export const DEFINITION_TIER_KEYS = [
   "startedAt",
   "workingDefinition",
   "charter",
-  "lanePlan",
 ] as const satisfies readonly (keyof GraphWorkflowExecution)[];
 
 /**
@@ -65,6 +63,7 @@ export const RUNTIME_TIER_KEYS = [
   "advisoryIndex",
   "laneStates",
   "executionLanes",
+  "laneReservations",
   "joins",
   "machineSnapshot",
   "completedAt",

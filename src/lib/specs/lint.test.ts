@@ -49,6 +49,7 @@ const task = (
     coveredCriterionElementIds?: string[];
     dependsOnTaskElementIds?: string[];
     laneGroup?: string;
+    executionLane?: string;
     touchedPaths?: string[];
     payloadHash?: string;
   } = {},
@@ -71,6 +72,9 @@ const task = (
     ...(options.laneGroup === undefined
       ? {}
       : { laneGroup: options.laneGroup }),
+    ...(options.executionLane === undefined
+      ? {}
+      : { executionLane: options.executionLane }),
     ...(options.touchedPaths === undefined
       ? {}
       : { touchedPaths: options.touchedPaths }),
@@ -566,6 +570,67 @@ describe("lint", () => {
       elementHandle: "T1",
       message: "Lane-group cycle: api → ui → api.",
     });
+  });
+
+  /**
+   * R12: contraction and lane sharing compose only if their interaction is a
+   * validation rule. Members of one laneGroup become ONE context, which can sit
+   * on exactly one lane, so disagreement has no compilable answer — it has to be
+   * refused before the compiler has to guess.
+   */
+  it("9.11 blocks a lane group whose members disagree about executionLane", () => {
+    const draft = snapshot([
+      requirement("requirement-1", "R1"),
+      criterion("criterion-1", "R1.1", "requirement-1"),
+      task("task-1", "T1", { laneGroup: "api", executionLane: "backend" }),
+      task("task-2", "T2", { laneGroup: "api", executionLane: "frontend" }),
+    ]);
+
+    expect(lint(draft, records())).toContainEqual({
+      ruleId: "9.11.lane-group-execution-lane-mismatch",
+      severity: "blocks_propose",
+      elementHandle: "T1",
+      message:
+        "Lane group api mixes execution lanes: T1 → backend, T2 → frontend. Members contracted into one context must all declare the same executionLane or all omit it.",
+    });
+  });
+
+  it("9.11 blocks a lane group in which only some members declare executionLane", () => {
+    const draft = snapshot([
+      requirement("requirement-1", "R1"),
+      criterion("criterion-1", "R1.1", "requirement-1"),
+      task("task-1", "T1", { laneGroup: "api", executionLane: "backend" }),
+      task("task-2", "T2", { laneGroup: "api" }),
+    ]);
+
+    expect(lint(draft, records())).toContainEqual({
+      ruleId: "9.11.lane-group-execution-lane-mismatch",
+      severity: "blocks_propose",
+      elementHandle: "T1",
+      message:
+        "Lane group api mixes execution lanes: T1 → backend, T2 → none. Members contracted into one context must all declare the same executionLane or all omit it.",
+    });
+  });
+
+  it("9.11 admits agreeing and absent executionLane declarations", () => {
+    const draft = snapshot([
+      requirement("requirement-1", "R1"),
+      criterion("criterion-1", "R1.1", "requirement-1"),
+      task("task-1", "T1", { laneGroup: "api", executionLane: "backend" }),
+      task("task-2", "T2", { laneGroup: "api", executionLane: "backend" }),
+      task("task-3", "T3", { laneGroup: "ui" }),
+      task("task-4", "T4", { laneGroup: "ui" }),
+      // Ungrouped tasks are never contracted together, so different lanes here
+      // are the ordinary shared-lane case rather than a conflict.
+      task("task-5", "T5", { executionLane: "backend" }),
+      task("task-6", "T6", { executionLane: "frontend" }),
+    ]);
+
+    expect(
+      lint(draft, records()).filter((finding) =>
+        finding.ruleId.endsWith("execution-lane-mismatch"),
+      ),
+    ).toEqual([]);
   });
 
   it("9.12 advises when three or more tasks contract to a serialized plan", () => {

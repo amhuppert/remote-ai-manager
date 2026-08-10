@@ -481,6 +481,34 @@ describe("cctl spec schema", () => {
     }
   });
 
+  /**
+   * The same trap as the touched path above, with a worse failure: an
+   * executionLane becomes a branch name and a worktree path segment, so a
+   * published bare string invites `src/lib` and the refusal only arrives at
+   * compile time, after the plan is approved.
+   */
+  it("publishes the execution-lane grammar the server enforces", async () => {
+    const documents = await readDocuments();
+    const task = documents.find(({ id }) => id === "task");
+    const executionLaneNode = z
+      .object({
+        properties: z.object({
+          payload: z.object({
+            properties: z.object({
+              executionLane: z.record(z.string(), z.unknown()),
+            }),
+          }),
+        }),
+      })
+      .loose()
+      .parse(task?.jsonSchema).properties.payload.properties.executionLane;
+
+    expect(executionLaneNode).toMatchObject({
+      type: "string",
+      description: expect.stringContaining("/^[A-Za-z0-9_.-]+$/"),
+    });
+  });
+
   it("ships a worked example that the server's own input schema accepts", async () => {
     const documents = await readDocuments();
 

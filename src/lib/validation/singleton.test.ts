@@ -100,6 +100,7 @@ function activeLaneExecution(
         includedContextIds: [],
         lastCommittingContextId: null,
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: T,
         updatedAt: T,
       },
@@ -121,8 +122,16 @@ function resolverDeps(opts: {
     readRepoValidation: async () =>
       repoValidationConfigSchema.parse({
         commands: {
-          typecheck: { command: "scripts/validate/typecheck.sh", cost: 2 },
-          test: { command: "scripts/validate/test.sh", cost: 8 },
+          typecheck: {
+            command: { full: "scripts/validate/typecheck.sh" },
+            cost: 2,
+            pathArgs: "forbid",
+          },
+          test: {
+            command: { full: "scripts/validate/test.sh" },
+            cost: 8,
+            pathArgs: "forbid",
+          },
         },
       }),
   };
@@ -463,10 +472,15 @@ function createPersistedPolicyService(
         repoValidationConfigSchema.parse({
           commands: {
             typecheck: {
-              command: "scripts/validate/typecheck.sh",
+              command: { full: "scripts/validate/typecheck.sh" },
               cost: 2,
+              pathArgs: "forbid",
             },
-            test: { command: "scripts/validate/test.sh", cost: 3 },
+            test: {
+              command: { full: "scripts/validate/test.sh" },
+              cost: 3,
+              pathArgs: "forbid",
+            },
           },
           preMerge: ["typecheck", "test"],
         }),
@@ -476,10 +490,15 @@ function createPersistedPolicyService(
         repoValidationConfigSchema.parse({
           commands: {
             typecheck: {
-              command: "scripts/validate/typecheck.sh",
+              command: { full: "scripts/validate/typecheck.sh" },
               cost: 2,
+              pathArgs: "forbid",
             },
-            test: { command: "scripts/validate/test.sh", cost: 3 },
+            test: {
+              command: { full: "scripts/validate/test.sh" },
+              cost: 3,
+              pathArgs: "forbid",
+            },
           },
           preMerge: ["typecheck", "test"],
         }),
@@ -498,6 +517,152 @@ function createPersistedPolicyService(
 }
 
 describe("persisted graph policy through ValidationService", () => {
+  it("turns every registered command into a no-op for every role of an enveloped context", async () => {
+    const fixture = createPersistenceFixture();
+    try {
+      fixture.seedProject(POLICY_PROJECT_PATH);
+      fixture.seedSession(POLICY_PROJECT_PATH, GRAPH_SESSION, {
+        targetBranch: "main",
+      });
+      const execution = policyExecution();
+      execution.workingDefinition.executionContexts =
+        execution.workingDefinition.executionContexts.map((context) =>
+          context.id === "context-implement"
+            ? {
+                ...context,
+                placement: {
+                  lane: "lane-1",
+                  mode: "owned" as const,
+                  ownedPaths: ["src"],
+                },
+                agentValidation: {
+                  ...context.agentValidation!,
+                  contextValidator: {
+                    value: {
+                      mode: "only" as const,
+                      commands: ["typecheck"],
+                    },
+                    source: "per-node" as const,
+                    commands: ["typecheck"],
+                  },
+                },
+              }
+            : context,
+        );
+      fixture.graphWorkflowExecutions.setActive(
+        POLICY_PROJECT_PATH,
+        GRAPH_SESSION,
+        execution,
+        T,
+      );
+      const spawns: SpawnValidationParams[] = [];
+      const service = createPersistedPolicyService(fixture, spawns);
+
+      const result = await service.submit({
+        source: "agent_cli",
+        commandName: "typecheck",
+        caller: {
+          projectPath: POLICY_PROJECT_PATH,
+          sessionName: GRAPH_SESSION,
+          conversationId: "conv-implementer",
+        },
+      });
+
+      expect(result).toMatchObject({
+        kind: "not_started",
+        result: { kind: "skipped_by_policy" },
+      });
+      expect(spawns).toEqual([]);
+      expect(
+        createValidationRunsRepo(fixture.db).findById("policy-run-1"),
+      ).toBeNull();
+
+      const validatorResult = await service.submit({
+        source: "agent_cli",
+        commandName: "typecheck",
+        caller: {
+          projectPath: POLICY_PROJECT_PATH,
+          sessionName: GRAPH_SESSION,
+          conversationId: "conv-validator",
+        },
+      });
+
+      expect(validatorResult).toMatchObject({
+        kind: "not_started",
+        result: { kind: "skipped_by_policy" },
+      });
+      expect(spawns).toEqual([]);
+      expect(
+        createValidationRunsRepo(fixture.db).findById("policy-run-1"),
+      ).toBeNull();
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("keeps configured context-validator commands enabled for a full-access context", async () => {
+    const fixture = createPersistenceFixture();
+    try {
+      fixture.seedProject(POLICY_PROJECT_PATH);
+      fixture.seedSession(POLICY_PROJECT_PATH, GRAPH_SESSION, {
+        targetBranch: "main",
+      });
+      const execution = policyExecution();
+      execution.workingDefinition.executionContexts =
+        execution.workingDefinition.executionContexts.map((context) =>
+          context.id === "context-implement"
+            ? {
+                ...context,
+                agentValidation: {
+                  ...context.agentValidation!,
+                  contextValidator: {
+                    value: {
+                      mode: "only" as const,
+                      commands: ["typecheck"],
+                    },
+                    source: "per-node" as const,
+                    commands: ["typecheck"],
+                  },
+                },
+              }
+            : context,
+        );
+      fixture.graphWorkflowExecutions.setActive(
+        POLICY_PROJECT_PATH,
+        GRAPH_SESSION,
+        execution,
+        T,
+      );
+      const spawns: SpawnValidationParams[] = [];
+      const service = createPersistedPolicyService(fixture, spawns);
+
+      const result = await service.submit({
+        source: "agent_cli",
+        commandName: "typecheck",
+        caller: {
+          projectPath: POLICY_PROJECT_PATH,
+          sessionName: GRAPH_SESSION,
+          conversationId: "conv-validator",
+        },
+      });
+
+      expect(result.kind).toBe("accepted");
+      expect(spawns).toHaveLength(1);
+      expect(spawns[0]).toMatchObject({
+        commandName: "typecheck",
+        contextId: "context-implement",
+      });
+      expect(
+        createValidationRunsRepo(fixture.db).findById("policy-run-1"),
+      ).toMatchObject({
+        workflowContextId: "context-implement",
+        workflowRole: "context_validator",
+      });
+    } finally {
+      fixture.close();
+    }
+  });
+
   it("enforces lane snapshots, leaves non-graph sessions unrestricted, and rejects stale conversations", async () => {
     const fixture = createPersistenceFixture();
     try {
@@ -683,7 +848,13 @@ function fakeService(overrides: Partial<ValidationService>): ValidationService {
       message: "fake",
     }),
     waitForCompletion: async (runId) => ({ kind: "cancelled", runId }),
-    poll: () => ({ status: null, position: null, result: null }),
+    poll: () => ({
+      status: null,
+      position: null,
+      result: null,
+      requestedScope: null,
+      effectiveScope: null,
+    }),
     cancel: async () => ({ authorization: "not_found" }),
     cancelSystemOwned: async () => false,
     sweepExpiredLeases: async () => 0,

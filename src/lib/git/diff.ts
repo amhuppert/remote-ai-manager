@@ -106,26 +106,146 @@ export async function computeDiff(
   );
 }
 
+/**
+ * How much of a worktree a candidate identity and patch cover.
+ *
+ * `wholeTree` is the historical reading and stays the reading for a full-access
+ * context: everything `add -A` stages. `owned` is the reading for a context
+ * confined by a file-ownership envelope, where the worktree is shared with
+ * concurrent siblings — so "the candidate" has to mean the context's own
+ * declared subset, and nothing a sibling is doing in its own paths (R15).
+ *
+ * An `owned` scope with no paths is the read-only grade, not a degenerate
+ * whole-tree one: a context with no write surface produces no changes, and
+ * showing it the shared worktree's whole delta would show it every sibling's
+ * work as if it were its own.
+ */
+export type CandidateScope =
+  | { mode: "wholeTree" }
+  | { mode: "owned"; ownedPaths: readonly string[] };
+
+export const WHOLE_TREE_CANDIDATE_SCOPE: CandidateScope = { mode: "wholeTree" };
+
+/**
+ * Owned repo-relative paths as git pathspecs.
+ *
+ * `:(literal)` is load-bearing: an authored ownership entry is a literal path
+ * (a glob is a spec non-goal), so a filename containing `*`, `?`, or `[` must
+ * match itself and nothing else. Passed raw, `a/st*ar.txt` would also pull
+ * `a/steer.txt` into the subset, widening what a validator reviews and what the
+ * frozen identity covers.
+ */
+function ownedPathspecs(ownedPaths: readonly string[]): string[] {
+  return ownedPaths.map((ownedPath) => `:(literal)${ownedPath}`);
+}
+
 interface TemporaryIndexOpts {
   maxBuffer: number;
   env: { GIT_INDEX_FILE: string };
 }
 
 /**
+ * The owned pathspecs that currently match something `add` would stage.
+ *
+ * `add` dies on a pathspec matching nothing, and an owned path a context has
+ * not created yet is perfectly legitimate — so each spec is probed before it
+ * reaches `add`. The probe is `ls-files`, which tolerates an unmatched
+ * pathspec, run one spec at a time against the same temporary index so the
+ * MATCH decision stays inside git's own pathspec engine. Comparing `ls-files`
+ * output against the declared paths in JS instead would be a lexical fallback
+ * that disagrees with `add` wherever the two resolve differently — under
+ * `core.ignorecase` most obviously — and a spec wrongly judged unmatched would
+ * leave real owned changes outside both the patch and the frozen identity.
+ *
+ * Between `--cached` and `--others --exclude-standard` the probe sees exactly
+ * what `add -A` would stage: tracked entries, including ones deleted from the
+ * worktree, plus untracked non-ignored files.
+ */
+async function stageableOwnedPathspecs(
+  worktreePath: string,
+  ownedPaths: readonly string[],
+  deps: ComputeDiffDeps,
+  tmpOpts: TemporaryIndexOpts,
+): Promise<string[]> {
+  const probed = await Promise.all(
+    ownedPathspecs(ownedPaths).map(async (spec) => {
+      const { stdout } = await deps.gitClient.git(
+        [
+          "ls-files",
+          "-z",
+          "--cached",
+          "--others",
+          "--exclude-standard",
+          "--",
+          spec,
+        ],
+        worktreePath,
+        tmpOpts,
+      );
+      return stdout.length > 0 ? spec : null;
+    }),
+  );
+  return probed.filter((spec): spec is string => spec !== null);
+}
+
+/**
+ * Bring the temporary index up to the working tree for exactly what the scope
+ * covers.
+ *
+ * Restricting the staging of an owned scope is a correctness requirement, not
+ * an optimization. `add -A` reads every path in the worktree, and an enveloped
+ * context's worktree is shared with siblings that are writing theirs right now:
+ * a file replaced, truncated, removed, or created in a form git cannot index
+ * aborts the whole command ("fatal: adding files failed"). Staged unscoped, a
+ * sibling mid-turn would therefore collapse THIS context's candidate into an
+ * unresolvable one over work it does not own — and a validation round cannot
+ * open, or re-verify, against a candidate it cannot read (R15).
+ *
+ * A read-only scope stages nothing at all: it owns no path that could differ
+ * from HEAD, so there is nothing about the shared worktree it needs to read.
+ */
+async function stageScope(
+  worktreePath: string,
+  scope: CandidateScope,
+  deps: ComputeDiffDeps,
+  tmpOpts: TemporaryIndexOpts,
+): Promise<void> {
+  if (scope.mode === "wholeTree") {
+    await deps.gitClient.git(["add", "-A"], worktreePath, tmpOpts);
+    return;
+  }
+  if (scope.ownedPaths.length === 0) return;
+  const specs = await stageableOwnedPathspecs(
+    worktreePath,
+    scope.ownedPaths,
+    deps,
+    tmpOpts,
+  );
+  if (specs.length === 0) return;
+  await deps.gitClient.git(
+    ["add", "-A", "--", ...specs],
+    worktreePath,
+    tmpOpts,
+  );
+}
+
+/**
  * Build the temporary index every reader of "the working tree as a candidate"
- * shares — seeded from the HEAD tree, then brought up to the working tree with
- * `add -A` — and hand it to `run` as the git options that address it.
+ * shares — seeded from the HEAD tree, then brought up to the working tree over
+ * the scope's paths — and hand it to `run` as the git options that address it.
  *
  * The real index is never touched, which is what lets a caller stage untracked
- * files without disturbing the session's own staging area. What `add -A` stages
- * is exactly what lands inside the resulting content: untracked files and file
- * modes are in, gitignored paths are out.
+ * files without disturbing the session's own staging area. What is staged is
+ * exactly what lands inside the resulting content: untracked files and file
+ * modes are in, gitignored paths are out, and under an owned scope so is every
+ * path the context does not own.
  *
  * Shared rather than duplicated so the diff a validator reads and the tree hash
  * a validation round freezes on cannot describe two different candidates.
  */
 async function withTemporaryIndex<T>(
   worktreePath: string,
+  scope: CandidateScope,
   deps: ComputeDiffDeps,
   run: (opts: TemporaryIndexOpts) => Promise<T>,
 ): Promise<T | null> {
@@ -136,7 +256,7 @@ async function withTemporaryIndex<T>(
       env: { GIT_INDEX_FILE: tmpIndex },
     };
     await deps.gitClient.git(["read-tree", "HEAD"], worktreePath, tmpOpts);
-    await deps.gitClient.git(["add", "-A"], worktreePath, tmpOpts);
+    await stageScope(worktreePath, scope, deps, tmpOpts);
     return await run(tmpOpts);
   } catch {
     return null;
@@ -145,14 +265,145 @@ async function withTemporaryIndex<T>(
   }
 }
 
+/** Byte-order comparison, so an identity does not depend on the host locale. */
+function compareStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+interface OwnedIndexEntry {
+  mode: string;
+  objectId: string;
+  path: string;
+}
+
 /**
- * The git tree hash of the worktree's candidate content: the tree object
- * written from the same temporary index {@link computeDiff} builds.
+ * Parse `ls-files -s -z` records (`<mode> <objectId> <stage>\t<path>`).
+ *
+ * An unparseable record throws rather than being skipped. A dropped entry would
+ * make a real owned change invisible to the identity, which is the one failure
+ * mode a frozen candidate cannot tolerate; the throw surfaces as an unresolvable
+ * candidate, and an unresolvable candidate stops a round from opening.
+ */
+function parseOwnedIndexEntries(raw: string): OwnedIndexEntry[] {
+  const entries: OwnedIndexEntry[] = [];
+  for (const record of raw.split("\0")) {
+    if (record.length === 0) continue;
+    // `.` spans newlines: `-z` output is unquoted, so a filename may contain one.
+    const [, mode, objectId, , path] =
+      /^(\d+) ([0-9a-f]+) (\d+)\t(.+)$/s.exec(record) ?? [];
+    if (mode === undefined || objectId === undefined || path === undefined) {
+      throw new Error(`unparseable index entry: ${JSON.stringify(record)}`);
+    }
+    entries.push({ mode, objectId, path });
+  }
+  return entries;
+}
+
+/**
+ * The content identity of an owned subset: the declared paths plus the index
+ * entry (mode, blob id, path) each one currently resolves to.
+ *
+ * The declared paths are inside the digest, not just the entries, so widening
+ * ownership to a still-empty directory is drift rather than a silent no-op. A
+ * deletion is carried by absence — an owned path present at the lane base and
+ * gone now contributes no entry, which is a different digest from the one where
+ * it is still there.
+ *
+ * Length-prefixed fields so no path or mode can forge a field boundary: two
+ * different subsets cannot collide by embedding a delimiter in a filename.
+ */
+function digestOwnedSubset(
+  ownedPaths: readonly string[],
+  entries: readonly OwnedIndexEntry[],
+): string {
+  const field = (value: string): string =>
+    `${Buffer.byteLength(value, "utf8")}:${value}`;
+  const canonical = [
+    ...[...ownedPaths]
+      .sort(compareStrings)
+      .map((path) => `path ${field(path)}`),
+    ...[...entries]
+      .sort((left, right) => compareStrings(left.path, right.path))
+      .map(
+        (entry) =>
+          `entry ${field(entry.mode)}${field(entry.objectId)}${field(entry.path)}`,
+      ),
+  ].join("\n");
+  return createHash("sha256").update(canonical, "utf8").digest("hex");
+}
+
+/**
+ * Read a scope's identity out of an already-built temporary index.
+ *
+ * A whole-tree scope writes the index as a tree object. An owned scope cannot:
+ * the index is still seeded from the whole HEAD tree, so `write-tree` would
+ * hash every path in the repository and move whenever a sibling landed a commit
+ * — one of the two things a scoped identity exists to be stable under.
+ * Restricting the READ as well (`ls-files` under the owned pathspecs) yields an
+ * identity over exactly the subset, from the same index the patch is read from.
+ */
+async function readScopeIdentity(
+  worktreePath: string,
+  scope: CandidateScope,
+  deps: ComputeDiffDeps,
+  tmpOpts: TemporaryIndexOpts,
+): Promise<string> {
+  if (scope.mode === "wholeTree") {
+    const { stdout } = await deps.gitClient.git(
+      ["write-tree"],
+      worktreePath,
+      tmpOpts,
+    );
+    return stdout.trim();
+  }
+  if (scope.ownedPaths.length === 0) return digestOwnedSubset([], []);
+  const { stdout } = await deps.gitClient.git(
+    ["ls-files", "-s", "-z", "--", ...ownedPathspecs(scope.ownedPaths)],
+    worktreePath,
+    tmpOpts,
+  );
+  return digestOwnedSubset(scope.ownedPaths, parseOwnedIndexEntries(stdout));
+}
+
+/** The patch a scope covers, read out of the same already-built index. */
+async function readScopeRawDiff(
+  worktreePath: string,
+  scope: CandidateScope,
+  deps: ComputeDiffDeps,
+  tmpOpts: TemporaryIndexOpts,
+): Promise<string> {
+  // No pathspec means "every path" to git, so an empty owned subset must never
+  // reach the command: a read-only context would be handed the shared
+  // worktree's entire delta as its own change set.
+  if (scope.mode === "owned" && scope.ownedPaths.length === 0) return "";
+  const { stdout } = await deps.gitClient.git(
+    [
+      "diff",
+      "--cached",
+      "HEAD",
+      "--unified=3",
+      ...(scope.mode === "owned"
+        ? ["--", ...ownedPathspecs(scope.ownedPaths)]
+        : []),
+    ],
+    worktreePath,
+    tmpOpts,
+  );
+  return stdout;
+}
+
+/**
+ * The identity of the worktree's candidate content, read from the same
+ * temporary index {@link computeDiff} builds.
  *
  * This is a content identity for "what a reviewer is looking at" — it moves for
  * any change the rendered diff would show, including a content-only edit to an
  * already-modified file, which the porcelain-based diff cache token cannot see.
  * For that reason it deliberately does not participate in that cache.
+ *
+ * Its FORM follows the scope: a git tree object id for a whole-tree scope, and
+ * an owned-subset digest for a scoped one. The two are never comparable, which
+ * is why a caller that persists one also records which scope produced it.
  *
  * Null when git state cannot be resolved (not a repository, no HEAD, git
  * failure): the caller decides what an unresolvable identity means rather than
@@ -160,20 +411,55 @@ async function withTemporaryIndex<T>(
  */
 export async function computeCandidateTreeHash(
   worktreePath: string,
+  scope: CandidateScope = WHOLE_TREE_CANDIDATE_SCOPE,
   deps: ComputeDiffDeps = defaultComputeDiffDeps,
 ): Promise<string | null> {
-  const hash = await withTemporaryIndex(worktreePath, deps, async (tmpOpts) => {
-    const { stdout } = await deps.gitClient.git(
-      ["write-tree"],
-      worktreePath,
-      tmpOpts,
-    );
-    return stdout.trim();
-  });
+  const hash = await withTemporaryIndex(worktreePath, scope, deps, (tmpOpts) =>
+    readScopeIdentity(worktreePath, scope, deps, tmpOpts),
+  );
   return hash === null || hash.length === 0 ? null : hash;
 }
 
-/** A candidate's content identity together with the patch that identity spans. */
+/**
+ * Whether anything inside the scope is uncommitted — the cheap porcelain probe
+ * that tells a genuinely clean candidate apart from a degraded read.
+ *
+ * Scoped for the same reason the patch is: in a shared lane worktree a sibling's
+ * dirt is not this context's dirt, and an unscoped probe would report a clean
+ * owned subset as dirty and then find nothing to show for it. A read-only scope
+ * is clean by construction and asks git nothing.
+ *
+ * Throws when git itself cannot answer, so an unavailable git is distinguishable
+ * from a clean worktree.
+ */
+export async function hasCandidateScopeChanges(
+  worktreePath: string,
+  scope: CandidateScope = WHOLE_TREE_CANDIDATE_SCOPE,
+  deps: ComputeDiffDeps = defaultComputeDiffDeps,
+): Promise<boolean> {
+  if (scope.mode === "owned" && scope.ownedPaths.length === 0) return false;
+  const { stdout } = await deps.gitClient.git(
+    [
+      "status",
+      "--porcelain",
+      "--untracked-files=all",
+      ...(scope.mode === "owned"
+        ? ["--", ...ownedPathspecs(scope.ownedPaths)]
+        : []),
+    ],
+    worktreePath,
+    { maxBuffer: MAX_BUFFER },
+  );
+  return stdout.trim().length > 0;
+}
+
+/**
+ * A candidate's content identity together with the patch that identity spans.
+ *
+ * `treeHash` is whatever {@link computeCandidateTreeHash} yields for the scope
+ * the snapshot was read under — a git tree object id whole-tree, an owned-subset
+ * digest scoped.
+ */
 export interface CandidateSnapshot {
   treeHash: string;
   diff: SessionDiff;
@@ -193,23 +479,32 @@ export interface CandidateSnapshot {
  *
  * Null when the temporary-index sequence fails, so an unresolvable candidate is
  * distinguishable from a clean one rather than collapsing into an empty diff.
+ *
+ * `scope` decides what "the candidate" means. Under an owned scope both reads
+ * are restricted to the same owned pathspecs, so the identity a round freezes
+ * and the bytes its validators are shown describe one and the same subset — and
+ * a sibling writing or landing its own paths moves neither.
  */
 export async function computeCandidateSnapshot(
   worktreePath: string,
+  scope: CandidateScope = WHOLE_TREE_CANDIDATE_SCOPE,
   deps: ComputeDiffDeps = defaultComputeDiffDeps,
 ): Promise<CandidateSnapshot | null> {
   const snapshot = await withTemporaryIndex(
     worktreePath,
+    scope,
     deps,
     async (tmpOpts) => {
-      const { stdout: treeHash } = await deps.gitClient.git(
-        ["write-tree"],
+      const treeHash = await readScopeIdentity(
         worktreePath,
+        scope,
+        deps,
         tmpOpts,
       );
-      const { stdout: rawDiff } = await deps.gitClient.git(
-        ["diff", "--cached", "HEAD", "--unified=3"],
+      const rawDiff = await readScopeRawDiff(
         worktreePath,
+        scope,
+        deps,
         tmpOpts,
       );
       return { treeHash: treeHash.trim(), rawDiff };
@@ -232,6 +527,7 @@ async function computeDiffImpl(
 ): Promise<SessionDiff> {
   const rawDiff = await withTemporaryIndex(
     worktreePath,
+    WHOLE_TREE_CANDIDATE_SCOPE,
     deps,
     async (tmpOpts) => {
       // Diff the temp index (working tree) against HEAD — uncommitted changes only

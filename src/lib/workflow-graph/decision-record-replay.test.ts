@@ -113,6 +113,7 @@ function classifyDefinition(): WorkflowSemanticDefinition {
     title,
     description: title,
     acceptanceCriteria: `${title} is done`,
+    placement: { lane: id, mode: "full" as const },
     implementer: makeImplementerAssignment(AGENT),
     mutability: { allowAgentTaskAdd: false },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
@@ -277,6 +278,11 @@ function expansionRequest(
         handle: "candidate-a",
         title: "Candidate A",
         acceptanceCriteria: "Candidate A is implemented and self-checked",
+        placement: {
+          lane: "candidate-a",
+          mode: "owned",
+          ownedPaths: ["src/candidate-a"],
+        },
       },
     ],
     tasks: [
@@ -302,6 +308,7 @@ function overCapRequest(): GraphExpansionRequest {
       handle,
       title: `Over ${handle}`,
       acceptanceCriteria: `${handle} is done`,
+      placement: { lane: handle, mode: "full" },
     })),
     tasks: handles.map((handle) => ({
       contextHandle: handle,

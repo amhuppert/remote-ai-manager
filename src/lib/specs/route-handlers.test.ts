@@ -2442,6 +2442,7 @@ describe("spec read route handlers", () => {
           dependsOn: [],
           unresolvedDependsOnTaskElementIds: [],
           laneGroup: null,
+          executionLane: null,
           touchedPaths: [],
           criterionCoverage: ["R1.1"],
           unresolvedCriterionElementIds: [],
@@ -2474,6 +2475,48 @@ describe("spec read route handlers", () => {
         totalInScope: 0,
       },
     });
+  });
+
+  /**
+   * R12: the compiler reads executionLane to decide lane placement, so a plan
+   * status that omits it hides the mapping from the author who has to audit it.
+   */
+  it("carries the authored execution lane into the plan status", async () => {
+    const lanedSnapshot: SpecRevisionSnapshot = {
+      revision,
+      elements: snapshot.elements.map((row) =>
+        row.element.id === "task-1" && row.version.payload.kind === "task"
+          ? {
+              ...row,
+              version: {
+                ...row.version,
+                payload: {
+                  ...row.version.payload,
+                  executionLane: "read-surface",
+                  touchedPaths: ["src/lib/specs"],
+                },
+              },
+            }
+          : row,
+      ),
+    };
+    const handlers = createSpecRouteHandlers(
+      createDeps({ getRevisionSnapshot: async () => lanedSnapshot }),
+    );
+
+    const response = await handlers.getSpecStatusGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/status"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    const status = specStatusViewSchema.parse(await response.json());
+    expect(status.taskPlan).toEqual([
+      expect.objectContaining({
+        handle: "T1",
+        executionLane: "read-surface",
+        touchedPaths: ["src/lib/specs"],
+      }),
+    ]);
   });
 
   /**

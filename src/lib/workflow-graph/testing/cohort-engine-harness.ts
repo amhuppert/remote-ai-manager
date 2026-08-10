@@ -36,7 +36,13 @@ import {
 import {
   createGraphWorkflowIterationOrchestrator,
   type GraphWorkflowIterationResult,
+  type IterationOrchestratorValidationRoundService,
 } from "@/lib/workflow-graph/iteration-orchestrator";
+
+/** What the engine asks a candidate-tree probe, exactly as the port declares it. */
+export type ResolveCandidateTreeInput = Parameters<
+  IterationOrchestratorValidationRoundService["resolveCandidateTree"]
+>[0];
 import { createGraphWorkflowValidationService } from "@/lib/workflow-graph/execution-validation";
 import type { GraphWorkflowContextValidatorInput } from "@/lib/workflow-graph/execution-validation";
 import type { ValidatorRunResult } from "@/lib/workflow-graph/validator-runner";
@@ -201,6 +207,7 @@ export function createCohortExecution(
 
 export const TREE_A: ValidationCandidateTreeResolution = {
   kind: "resolved",
+  identityScope: "wholeTree",
   headSha: "head-1",
   candidateTreeHash: "tree-a",
 };
@@ -233,6 +240,8 @@ export function withOpenRound(
   contextState.validationRound = {
     seq: params.seq ?? 1,
     candidate: {
+      identityScope:
+        TREE_A.kind === "resolved" ? TREE_A.identityScope : "wholeTree",
       headSha: TREE_A.kind === "resolved" ? TREE_A.headSha : "",
       candidateTreeHash:
         TREE_A.kind === "resolved" ? TREE_A.candidateTreeHash : "",
@@ -366,8 +375,14 @@ export function createHarness(params: {
     input: GraphWorkflowContextValidatorInput,
   ) => Promise<ValidatorRunResult>;
   scriptValidatorOutcome?: () => Promise<ScriptValidatorOutcome>;
-  /** The candidate tree each probe resolves; defaults to {@link TREE_A}. */
-  resolveCandidateTree?: () => ValidationCandidateTreeResolution;
+  /**
+   * The candidate tree each probe resolves; defaults to {@link TREE_A}. Receives
+   * the probe's own input, so a test can assert what the engine ASKED for — the
+   * candidate scope in particular, which the engine derives from placement.
+   */
+  resolveCandidateTree?: (
+    input: ResolveCandidateTreeInput,
+  ) => ValidationCandidateTreeResolution;
   /**
    * The user-input gate the orchestrator AND the manager share. Injected when a
    * test needs to observe the parked-question lifecycle (withdrawals, machine
@@ -457,7 +472,8 @@ export function createHarness(params: {
     },
     validationRoundService: {
       resolveCandidateTree: vi.fn(
-        async () => params.resolveCandidateTree?.() ?? TREE_A,
+        async (input: ResolveCandidateTreeInput) =>
+          params.resolveCandidateTree?.(input) ?? TREE_A,
       ),
     },
     ...(params.userInputGateService

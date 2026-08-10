@@ -11,8 +11,9 @@ import {
 } from "./floor";
 import {
   COMPATIBILITY_SCENARIOS,
+  inflateDefinitionFixture,
+  inflateExecutionFixture,
   readDefinitionFixture,
-  readExecutionFixture,
 } from "./scenarios";
 
 const DORMANT_DEFINITION_FLOOR = {
@@ -33,11 +34,41 @@ describe("pre-D4 parse floor", () => {
     for (const scenarioName of COMPATIBILITY_SCENARIOS) {
       it(`parses "${scenarioName}" at the dormant floor`, () => {
         const parsed = workflowSemanticDefinitionSchema.parse(
-          readDefinitionFixture(scenarioName),
+          inflateDefinitionFixture(scenarioName),
         );
 
         expect(projectDefinitionFloor(parsed)).toEqual(
           DORMANT_DEFINITION_FLOOR,
+        );
+      });
+
+      /**
+       * D5 R11.1's half of the floor: the fixtures carry no placement, because
+       * the field did not exist when they were captured. Only the load boundary
+       * may supply one, and what it supplies must be the semantics the fixture
+       * was authored under — one full-access lane per context.
+       */
+      it(`inflates "${scenarioName}" onto one single-member lane per context`, () => {
+        const raw = readDefinitionFixture(scenarioName) as {
+          executionContexts: Array<Record<string, unknown>>;
+        };
+        expect(
+          raw.executionContexts.every(
+            (context) => context.placement === undefined,
+          ),
+        ).toBe(true);
+
+        const parsed = workflowSemanticDefinitionSchema.parse(
+          inflateDefinitionFixture(scenarioName),
+        );
+
+        expect(
+          parsed.executionContexts.map((context) => context.placement),
+        ).toEqual(
+          parsed.executionContexts.map((context) => ({
+            lane: context.id,
+            mode: "full",
+          })),
         );
       });
     }
@@ -46,7 +77,7 @@ describe("pre-D4 parse floor", () => {
   describe("persisted execution tier", () => {
     it("parses a pre-D4 execution blob at the dormant floor", () => {
       const parsed = graphWorkflowExecutionSchema.parse(
-        readExecutionFixture("linear-chain"),
+        inflateExecutionFixture("linear-chain"),
       );
 
       expect(projectExecutionTierFloor(parsed)).toEqual({
@@ -58,7 +89,7 @@ describe("pre-D4 parse floor", () => {
 
     it("keeps the resolved working definition at the floor after a schema round trip", () => {
       const parsed = graphWorkflowExecutionSchema.parse(
-        readExecutionFixture("linear-chain"),
+        inflateExecutionFixture("linear-chain"),
       );
       const reparsed = resolvedWorkflowSemanticDefinitionSchema.parse(
         parsed.workingDefinition,
@@ -81,7 +112,7 @@ describe("pre-D4 parse floor", () => {
   describe("dormant defaults materialized", () => {
     it("holds the definition floor when every D4 field parses to its disabled default", () => {
       const definition = workflowSemanticDefinitionSchema.parse(
-        readDefinitionFixture("linear-chain"),
+        inflateDefinitionFixture("linear-chain"),
       );
 
       expect(
@@ -103,7 +134,7 @@ describe("pre-D4 parse floor", () => {
 
     it("holds the execution floor when every D4 runtime field parses to its dormant default", () => {
       const execution = graphWorkflowExecutionSchema.parse(
-        readExecutionFixture("linear-chain"),
+        inflateExecutionFixture("linear-chain"),
       );
       const routeControlRevisions = graphWorkflowExecutionSchema.parse({
         ...execution,

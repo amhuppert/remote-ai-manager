@@ -90,8 +90,9 @@ function invalidServiceResult(
   const statuses: Record<ValidationSubmitInvalidReason, number> = {
     identity_unresolved: 403,
     nested_invocation: 400,
-    scope_args_forbidden: 400,
-    scope_args_rejected: 400,
+    path_args_forbidden: 400,
+    path_args_rejected: 400,
+    path_args_require_changed: 400,
     service_unavailable: 503,
   };
   return errorResponse(
@@ -166,6 +167,7 @@ function createValidationHandlers(
     const submission = await deps.service.submit({
       source: "agent_cli",
       commandName: parsed.data.commandName,
+      scope: parsed.data.scope,
       ...(parsed.data.scopePaths === undefined
         ? {}
         : { scopePaths: parsed.data.scopePaths }),
@@ -223,6 +225,8 @@ function createValidationHandlers(
       status: polled.status,
       position: polled.position,
       result: polled.result,
+      requestedScope: polled.requestedScope,
+      effectiveScope: polled.effectiveScope,
     };
     return NextResponse.json(response);
   }
@@ -454,6 +458,11 @@ export function createValidationCommandsRouteHandlers(
           .map(([name, command]) => ({
             name,
             cost: command.cost,
+            pathArgs: command.pathArgs,
+            changedScope:
+              command.command.changed === undefined
+                ? ("full_fallback" as const)
+                : ("native" as const),
             ...(command.description !== undefined
               ? { description: command.description }
               : {}),

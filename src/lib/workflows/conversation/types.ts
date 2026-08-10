@@ -84,6 +84,16 @@ export interface ConversationTurnActive {
    *  AND lane-can-ask). Set only by graph-workflow runners; selects the enabled
    *  asking-questions session-instruction variant. Unset for every other turn. */
   askUserQuestionsEnabled?: boolean;
+  /**
+   * Server-derived filesystem-write envelope for this implementer turn, composed
+   * by the graph-workflow implementer runner from the context's authored
+   * placement. Claimed onto the active turn rather than re-read from the event
+   * at dispatch, for the same reason {@link TaskRunActive.fsWritePolicy} is: a
+   * turn that lost its policy between claim and dispatch would run
+   * unrestricted. Absent for every turn outside an owning or read-only
+   * graph-workflow context.
+   */
+  fsWritePolicy?: FsWritePolicy;
 }
 
 /** Single-shot task run: a non-streaming, structured-output execution invoked
@@ -208,6 +218,8 @@ export type ConversationEvent =
       queuedDelivery?: QueuedDeliveryMetadata;
       documentFeedback?: DocumentFeedbackPayload;
       askUserQuestionsEnabled?: boolean;
+      /** See {@link ConversationTurnActive.fsWritePolicy}. */
+      fsWritePolicy?: FsWritePolicy;
     }
   | {
       type: "SUBMIT_TASK_RUN";
@@ -412,6 +424,8 @@ export interface ExecutePromptInput {
    *  AND lane-can-ask). Selects the enabled asking-questions session-instruction
    *  variant. Set only by graph-workflow runners; unset for every other turn. */
   askUserQuestionsEnabled?: boolean;
+  /** See {@link ConversationTurnActive.fsWritePolicy}. */
+  fsWritePolicy?: FsWritePolicy;
 }
 
 /** Input for the prepareTurn actor (resource acquisition). */
