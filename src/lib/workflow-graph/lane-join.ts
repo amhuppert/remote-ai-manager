@@ -9,7 +9,10 @@ import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
-import { routeUpstreamContextIds } from "./execution-routes";
+import {
+  projectExecutionRoutes,
+  routeUpstreamContextIds,
+} from "./execution-routes";
 import {
   isUpstreamVisibleToLane,
   landGatedPublishSettlement,
@@ -272,8 +275,12 @@ export function findContextsWithUnfinishedTasks(
 /**
  * Collect lanes that contain partial or unvalidated context work. This
  * join/publication safety predicate is intentionally broader than the
- * scheduler's lane-busy check: every unsettled context blocks a merge,
- * including parked and halted contexts that do not have a live agent turn.
+ * scheduler's lane-busy check: every unsettled source-lane member blocks a
+ * merge, including parked and halted contexts that do not have a live agent
+ * turn and authored members that have not been dispatched yet. An unassigned
+ * context a context_merge is meant to unblock is excluded: it has not written
+ * to its target lane, and counting it would make the prerequisite join wait on
+ * its own downstream work. Once assigned, it blocks like any other member.
  *
  * "Unsettled" is the land-gated publish settlement (decision D1): a context is
  * settled when it contributed (completed) or when the routing declined it AND
@@ -285,18 +292,66 @@ export function findContextsWithUnfinishedTasks(
 function collectLanesWithIncompleteContextWork(
   execution: GraphWorkflowExecution,
   publish: RoutePublishSettlement,
+  excludedUnassignedContextIds: ReadonlySet<string>,
 ): Set<string> {
   const settled = new Set([
     ...publish.contributingContextIds,
     ...publish.skippedContextIds,
   ]);
+  const authoredLaneIds = new Map(
+    execution.workingDefinition.executionContexts.map((context) => [
+      context.id,
+      executionLaneIdFor(context.placement.lane),
+    ]),
+  );
   const laneIds = new Set<string>();
   for (const state of Object.values(execution.contextStates)) {
-    if (state.laneId === null) continue;
+    if (
+      state.laneId === null &&
+      excludedUnassignedContextIds.has(state.contextId)
+    ) {
+      continue;
+    }
     if (settled.has(state.contextId)) continue;
-    laneIds.add(state.laneId);
+    const laneId = state.laneId ?? authoredLaneIds.get(state.contextId);
+    if (laneId === undefined) continue;
+    laneIds.add(laneId);
   }
   return laneIds;
+}
+
+/**
+ * A context merge exists to unblock its target and everything downstream of
+ * that target. Unassigned members in that dependency cone cannot have written
+ * to an authored source lane yet, and waiting for them would deadlock the join
+ * they depend on. Independent future members remain outside this set and keep
+ * the shared source lane open until they land. The cone follows effective
+ * projection sources so omitted branches disappear and concluded-loop exits
+ * continue from the pass that actually ran.
+ */
+function collectJoinDependentContextIds(
+  execution: GraphWorkflowExecution,
+  contextId: string | null,
+): Set<string> {
+  if (contextId === null) return new Set();
+  const targetsBySource = new Map<string, string[]>();
+  for (const edge of projectExecutionRoutes(execution).edges) {
+    if (edge.resolution.kind === "omitted") continue;
+    const sourceId = edge.effectiveSourceId ?? edge.logicalSourceId;
+    const targets = targetsBySource.get(sourceId) ?? [];
+    targets.push(edge.targetContextId);
+    targetsBySource.set(sourceId, targets);
+  }
+
+  const dependentContextIds = new Set<string>();
+  const pending = [contextId];
+  while (pending.length > 0) {
+    const current = pending.shift()!;
+    if (dependentContextIds.has(current)) continue;
+    dependentContextIds.add(current);
+    pending.push(...(targetsBySource.get(current) ?? []));
+  }
+  return dependentContextIds;
 }
 
 /**
@@ -310,6 +365,7 @@ export function findBusyJoinSourceLaneIds(
   const incompleteLaneIds = collectLanesWithIncompleteContextWork(
     execution,
     landGatedPublishSettlement(execution),
+    collectJoinDependentContextIds(execution, join.contextId),
   );
   const seen = new Set<string>();
   const busyLaneIds: string[] = [];
@@ -373,6 +429,7 @@ export function planFinalPublishJoin(
   const lanesWithIncompleteWork = collectLanesWithIncompleteContextWork(
     execution,
     publish,
+    new Set(),
   );
 
   // Between two passes every materialized context reads complete, so the

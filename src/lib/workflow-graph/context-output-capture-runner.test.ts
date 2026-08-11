@@ -4,6 +4,7 @@ import { createWorkflowExecution } from "./test-fixtures";
 import { createGraphWorkflowOutputCaptureRunner } from "./context-output-capture-runner";
 import { AgentTurnFailedError } from "./errors";
 import type { GraphWorkflowExecution } from "./schemas";
+import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-envelope";
 
 /** The single dispatched task-run input, narrowed from the spy's untyped call
  *  record so each assertion reads against the real request contract. */
@@ -89,6 +90,7 @@ describe("graph workflow output capture runner", () => {
     // Lane continuity: the format turn reuses the context's work conversation.
     expect(dispatched.conversationId).toBe("conversation-lane");
     expect(dispatched.kind).toBe("task_run");
+    expect(dispatched.fsWritePolicy).toBeUndefined();
     expect(dispatched.prompt).toContain('"summary"');
     expect(dispatched.prompt).toContain("JSON object ONLY");
 
@@ -97,6 +99,148 @@ describe("graph workflow output capture runner", () => {
       value: { summary: "done", risks: [] },
       parse: { source: "raw_json" },
     });
+  });
+
+  it("retains a confined implementer's write envelope on the format turn", async () => {
+    const executeWorkflowTaskRun = vi.fn(async () => ({
+      kind: "structured" as const,
+      structuredOutput: { summary: "done", risks: [] },
+      text: "",
+      usage: {
+        costUsd: null,
+        durationMs: null,
+        contextTokens: null,
+        contextWindowMax: null,
+        inputTokens: null,
+        outputTokens: null,
+        cachedInputTokens: null,
+      },
+      backendRef: null,
+      continuationDisposition: "retain" as const,
+    }));
+    const execution = executionWithSchema();
+    const context = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-plan",
+    );
+    if (!context) throw new Error("fixture missing context-plan");
+    context.placement = { lane: "reports", mode: "readOnly" };
+    const executionTarget = {
+      worktreePath: process.cwd(),
+      branchName: "test-output-capture",
+      isolation: "worktree" as const,
+      laneId: "reports",
+    };
+
+    const runner = createGraphWorkflowOutputCaptureRunner({
+      executeWorkflowTaskRun,
+    });
+    await runner.captureContextOutput({
+      ...captureInput(execution),
+      executionTarget,
+    });
+
+    const expectedPolicy = composeImplementerLaneWriteEnvelope({
+      executionId: execution.id,
+      contextId: context.id,
+      worktreePath: executionTarget.worktreePath,
+      ownedPaths: [],
+      payloadLocation: "scratch",
+    }).policy;
+    expect(dispatchedInput(executeWorkflowTaskRun).fsWritePolicy).toEqual(
+      expectedPolicy,
+    );
+  });
+
+  it("composes an owned-lane envelope from the resolved execution target", async () => {
+    const executeWorkflowTaskRun = vi.fn(async () => ({
+      kind: "structured" as const,
+      structuredOutput: { summary: "done", risks: [] },
+      text: "",
+      usage: {
+        costUsd: null,
+        durationMs: null,
+        contextTokens: null,
+        contextWindowMax: null,
+        inputTokens: null,
+        outputTokens: null,
+        cachedInputTokens: null,
+      },
+      backendRef: null,
+      continuationDisposition: "retain" as const,
+    }));
+    const execution = executionWithSchema();
+    const context = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-plan",
+    );
+    if (!context) throw new Error("fixture missing context-plan");
+    context.placement = {
+      lane: "shared",
+      mode: "owned",
+      ownedPaths: ["reports"],
+    };
+    const policy = {
+      mode: "allowlist" as const,
+      allowWrite: ["/scratch", "/lane/reports", "/scratch/tmp"],
+      denyWrite: ["/lane/.git"],
+    };
+    const composeWriteEnvelope = vi.fn(() => ({
+      policy,
+      worktreeRoot: "/lane",
+      contextScratchDir: "/scratch",
+      contextTmpDir: "/scratch/tmp",
+      payloadDir: "/lane/.cc/temp/context-plan",
+      ownedPrefixes: ["/lane/reports"],
+    }));
+    const runner = createGraphWorkflowOutputCaptureRunner({
+      executeWorkflowTaskRun,
+      composeWriteEnvelope,
+    });
+
+    await runner.captureContextOutput({
+      ...captureInput(execution),
+      executionTarget: {
+        worktreePath: "/lane",
+        branchName: "shared",
+        isolation: "worktree",
+        laneId: "shared",
+      },
+    });
+
+    expect(composeWriteEnvelope).toHaveBeenCalledWith({
+      executionId: execution.id,
+      contextId: "context-plan",
+      worktreePath: "/lane",
+      ownedPaths: ["reports"],
+      payloadLocation: "worktree",
+    });
+    expect(dispatchedInput(executeWorkflowTaskRun).fsWritePolicy).toEqual(
+      policy,
+    );
+  });
+
+  it("fails closed when an owned capture has no execution target", async () => {
+    const executeWorkflowTaskRun = vi.fn();
+    const resolveWorktreePath = vi.fn(async () => "/session-worktree");
+    const execution = executionWithSchema();
+    const context = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-plan",
+    );
+    if (!context) throw new Error("fixture missing context-plan");
+    context.placement = {
+      lane: "shared",
+      mode: "owned",
+      ownedPaths: ["reports"],
+    };
+    const runner = createGraphWorkflowOutputCaptureRunner({
+      executeWorkflowTaskRun,
+      resolveWorktreePath,
+    });
+
+    await expect(
+      runner.captureContextOutput(captureInput(execution)),
+    ).rejects.toThrow(/no execution target/i);
+    expect(resolveWorktreePath).not.toHaveBeenCalled();
+    expect(executeWorkflowTaskRun).not.toHaveBeenCalled();
   });
 
   it("renders the previous rejection into a retry turn's prompt", async () => {

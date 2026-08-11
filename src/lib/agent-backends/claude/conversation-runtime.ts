@@ -854,6 +854,7 @@ const claudeConversationBackendFactory = {
       : undefined;
 
     const idleTtlMs = resolveIdleTtlMs(input.workflowExecutionId);
+    const trustedServerUrl = getServerBaseUrl();
 
     const sessionOptions: QuerySessionOptions = {
       conversationId: input.conversationId,
@@ -874,7 +875,7 @@ const claudeConversationBackendFactory = {
       canUseTool: canUseTool as never,
       env: buildSessionEnvContract({
         baseEnv: buildChildEnv(),
-        serverUrl: getServerBaseUrl(),
+        serverUrl: trustedServerUrl,
         apiToken: getCachedInstanceToken(),
         // Scope and session identity come from the DECLARED target, so a project
         // conversation still exports a neutralized CC_SESSION. Only the
@@ -907,6 +908,7 @@ const claudeConversationBackendFactory = {
         ? {
             fsWritePolicy: input.fsWritePolicy,
             mcpServerKeys: Object.keys(translatedServers),
+            trustedServerUrl,
           }
         : {}),
       externalTurnHandler,

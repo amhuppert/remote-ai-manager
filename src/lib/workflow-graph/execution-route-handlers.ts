@@ -39,6 +39,7 @@ import {
 } from "@/lib/state-store";
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import { createGraphLaneStore } from "@/lib/workflow-graph/graph-lane-store";
+import { resyncSharedIndexToHead } from "@/lib/git/shared-index";
 import {
   resolveConfiguredAgentBackendDefaults,
   type ConversationTurnConfig,
@@ -309,6 +310,11 @@ const validatorRunner = createValidatorRunner({
 });
 const implementerRunner = createGraphWorkflowImplementerRunner();
 const outputCaptureRunner = createGraphWorkflowOutputCaptureRunner({
+  async resolveWorktreePath(projectPath, sessionName) {
+    const session = await defaultGetSession(projectPath, sessionName);
+    if (!session) throw new Error("Session not found");
+    return session.worktreePath;
+  },
   async resolveTimeoutMs(backend) {
     const config = await readConfig();
     return resolveConfiguredAgentBackendDefaults(config, backend).timeoutMs;
@@ -560,6 +566,7 @@ const joinRunner = createJoinRunner({
   mergeRunner,
   sessionGitLock,
   mergeMutex,
+  resyncSharedIndex: resyncSharedIndexToHead,
 });
 const executionTargetResolver = createExecutionTargetResolver();
 

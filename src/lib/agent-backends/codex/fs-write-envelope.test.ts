@@ -53,6 +53,12 @@ describe("buildCodexFsWriteEnvelope", () => {
     });
   });
 
+  it("allows sandboxed cctl commands to reach Command Center", () => {
+    expect(envelopeOf(policy()).config.sandbox_workspace_write).toMatchObject({
+      network_access: true,
+    });
+  });
+
   it("pins the sandbox mode in config so an inherited user config cannot widen it", () => {
     expect(envelopeOf(policy()).config).toMatchObject({
       sandbox_mode: "workspace-write",

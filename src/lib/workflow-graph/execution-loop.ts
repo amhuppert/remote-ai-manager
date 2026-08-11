@@ -155,6 +155,7 @@ export interface GraphWorkflowExecutionLoopWorkflowManager {
     sessionName: string;
     sessionLaneEnabled?: boolean;
     capacityRemaining?: number;
+    excludedContextIds: readonly string[];
   }): Promise<ScheduleEligibleContextsResult>;
   send(
     projectPath: string,
@@ -254,11 +255,10 @@ export interface GraphWorkflowExecutionLoopDeps {
   ) => CircuitBreakerGateResult;
   /**
    * Resolve the current SDK query-concurrency limit. The loop bounds each
-   * parallel scheduling pass to `limit - inFlight.size` so a single execution
-   * never schedules more concurrent contexts than the global query semaphore
-   * can admit (which would otherwise leave the surplus queued until they hit
-   * the semaphore's acquisition timeout). Defaults to the semaphore's
-   * configured limit.
+   * parallel scheduling pass to the permits not held or reserved by this
+   * execution. Parked approval and user-input pollers remain in the lifecycle
+   * set but release their query permit until they can resume. Defaults to the
+   * semaphore's configured limit.
    */
   getMaxConcurrentQueries?: () => Promise<number>;
   createJobId?: () => string;
@@ -340,6 +340,263 @@ export interface GraphWorkflowExecutionLoopDeps {
     sessionName: string,
     conversationId: string,
   ): () => void;
+}
+
+type QueryCapacityLeaseState = "held" | "released" | "waiting";
+
+interface QueryCapacityWaiter {
+  contextId: string;
+  resolve(acquired: boolean): void;
+  signal: AbortSignal;
+  abort(): void;
+}
+
+interface QueryCapacityProgressWait {
+  promise: Promise<void>;
+  cancel(): void;
+}
+
+interface QueryCapacityTransientLease {
+  release(): void;
+}
+
+interface QueryCapacitySnapshot {
+  generation: number;
+  held: number;
+  released: number;
+  waiting: number;
+  reserved: number;
+  transient: number;
+  available: number;
+}
+
+/**
+ * Local admission ledger for one execution loop. `inFlight` continues to own
+ * lifecycle and join safety; this ledger answers only whether a runner can
+ * issue another SDK query. Scheduler reservations and gate resumptions share
+ * one synchronous authority so they cannot both claim the last permit across
+ * an awaited scheduling mutation.
+ */
+function createQueryCapacityCoordinator(limit: number) {
+  const leases = new Map<string, QueryCapacityLeaseState>();
+  const reacquireQueue: QueryCapacityWaiter[] = [];
+  const progressWaiters = new Set<() => void>();
+  let schedulerReservations = 0;
+  let transientReservations = 0;
+  let generation = 0;
+
+  function count(state: QueryCapacityLeaseState): number {
+    let total = 0;
+    for (const current of leases.values()) {
+      if (current === state) total++;
+    }
+    return total;
+  }
+
+  function available(): number {
+    return Math.max(
+      0,
+      limit - count("held") - schedulerReservations - transientReservations,
+    );
+  }
+
+  function signalProgress(): void {
+    generation++;
+    const waiters = [...progressWaiters];
+    progressWaiters.clear();
+    for (const resolve of waiters) resolve();
+  }
+
+  function removeReacquireWaiter(
+    contextId: string,
+  ): QueryCapacityWaiter | null {
+    const index = reacquireQueue.findIndex(
+      (waiter) => waiter.contextId === contextId,
+    );
+    if (index < 0) return null;
+    return reacquireQueue.splice(index, 1)[0] ?? null;
+  }
+
+  function grantReacquireWaiters(): void {
+    while (available() > 0 && reacquireQueue.length > 0) {
+      const waiter = reacquireQueue.shift()!;
+      if (waiter.signal.aborted) {
+        leases.set(waiter.contextId, "released");
+        waiter.resolve(false);
+        continue;
+      }
+      waiter.signal.removeEventListener("abort", waiter.abort);
+      leases.set(waiter.contextId, "held");
+      waiter.resolve(true);
+    }
+  }
+
+  function snapshot(): QueryCapacitySnapshot {
+    return {
+      generation,
+      held: count("held"),
+      released: count("released"),
+      waiting: count("waiting"),
+      reserved: schedulerReservations,
+      transient: transientReservations,
+      available: available(),
+    };
+  }
+
+  function createProgressWait(
+    observedGeneration: number,
+  ): QueryCapacityProgressWait {
+    if (generation !== observedGeneration) {
+      return { promise: Promise.resolve(), cancel() {} };
+    }
+    let resolvePromise!: () => void;
+    const promise = new Promise<void>((resolve) => {
+      resolvePromise = resolve;
+    });
+    const resolve = () => {
+      progressWaiters.delete(resolve);
+      resolvePromise();
+    };
+    progressWaiters.add(resolve);
+    if (generation !== observedGeneration) resolve();
+    return {
+      promise,
+      cancel() {
+        progressWaiters.delete(resolve);
+      },
+    };
+  }
+
+  return {
+    snapshot,
+    createProgressWait,
+
+    tryAcquireTransient(): QueryCapacityTransientLease | null {
+      // A gate resumption that was already queued owns FIFO priority over
+      // orchestration work that has not started yet.
+      grantReacquireWaiters();
+      if (available() <= 0) return null;
+      transientReservations++;
+      let released = false;
+      return {
+        release() {
+          if (released) return;
+          released = true;
+          transientReservations--;
+          grantReacquireWaiters();
+          signalProgress();
+        },
+      };
+    },
+
+    reserveForScheduler(): number {
+      grantReacquireWaiters();
+      const reserved = available();
+      schedulerReservations += reserved;
+      return reserved;
+    },
+
+    settleSchedulerReservation(
+      reserved: number,
+      scheduledContextIds: readonly string[],
+    ): void {
+      if (
+        reserved > schedulerReservations ||
+        scheduledContextIds.length > reserved
+      ) {
+        throw new Error(
+          `Invalid query-capacity reservation settlement: reserved=${reserved}, outstanding=${schedulerReservations}, scheduled=${scheduledContextIds.length}`,
+        );
+      }
+      for (const contextId of scheduledContextIds) {
+        if (leases.has(contextId)) {
+          throw new Error(
+            `Context "${contextId}" already owns query-capacity state`,
+          );
+        }
+      }
+      schedulerReservations -= reserved;
+      for (const contextId of scheduledContextIds) {
+        leases.set(contextId, "held");
+      }
+      grantReacquireWaiters();
+    },
+
+    cancelSchedulerReservation(reserved: number): void {
+      if (reserved > schedulerReservations) {
+        throw new Error(
+          `Invalid query-capacity reservation cancellation: reserved=${reserved}, outstanding=${schedulerReservations}`,
+        );
+      }
+      schedulerReservations -= reserved;
+      grantReacquireWaiters();
+    },
+
+    registerReleased(contextId: string): void {
+      const current = leases.get(contextId);
+      if (current === "released") return;
+      if (current !== undefined) {
+        throw new Error(
+          `Context "${contextId}" cannot enter a parked query-capacity wait from ${current}`,
+        );
+      }
+      leases.set(contextId, "released");
+    },
+
+    release(contextId: string): void {
+      const current = leases.get(contextId);
+      if (current === "released" || current === "waiting") return;
+      if (current !== "held") {
+        throw new Error(
+          `Context "${contextId}" cannot release missing query capacity`,
+        );
+      }
+      leases.set(contextId, "released");
+      grantReacquireWaiters();
+      signalProgress();
+    },
+
+    reacquire(contextId: string, signal: AbortSignal): Promise<boolean> {
+      const current = leases.get(contextId);
+      if (current === "held") return Promise.resolve(true);
+      if (current !== "released") {
+        throw new Error(
+          `Context "${contextId}" cannot reacquire query capacity from ${current ?? "missing"}`,
+        );
+      }
+      if (signal.aborted) return Promise.resolve(false);
+
+      leases.set(contextId, "waiting");
+      return new Promise<boolean>((resolve) => {
+        const waiter: QueryCapacityWaiter = {
+          contextId,
+          resolve,
+          signal,
+          abort() {
+            const removed = removeReacquireWaiter(contextId);
+            if (removed === null) return;
+            leases.set(contextId, "released");
+            resolve(false);
+          },
+        };
+        reacquireQueue.push(waiter);
+        signal.addEventListener("abort", waiter.abort, { once: true });
+        grantReacquireWaiters();
+      });
+    },
+
+    finish(contextId: string): void {
+      const previous = leases.get(contextId);
+      const waiter = removeReacquireWaiter(contextId);
+      if (waiter !== null) {
+        waiter.signal.removeEventListener("abort", waiter.abort);
+        waiter.resolve(false);
+      }
+      if (!leases.delete(contextId)) return;
+      grantReacquireWaiters();
+      if (previous === "held") signalProgress();
+    },
+  };
 }
 
 // -- Active loop registry -----------------------------------------------------
@@ -650,8 +907,10 @@ export function createGraphWorkflowExecutionLoop(
     // and embeds its own answers block. Deleted on drain — one resume.
     const pendingResumeUserInput = new Map<string, ConsumeAnswersResult[]>();
     const inFlight = new Map<string, Promise<void>>();
+    const pendingContextTaskErrors: unknown[] = [];
     const deferredJoinBusySignatures = new Map<string, string>();
     const maxConcurrency = await getMaxConcurrentQueries();
+    const queryCapacity = createQueryCapacityCoordinator(maxConcurrency);
     const execLogger = getExecutionLogger(execution.id);
 
     execLogger?.lifecycle("loop.started", {
@@ -1034,6 +1293,46 @@ export function createGraphWorkflowExecutionLoop(
           input.sessionName,
         ),
       );
+    }
+
+    async function reacquireQueryCapacity(contextId: string): Promise<boolean> {
+      const acquired = await queryCapacity.reacquire(
+        contextId,
+        loopAbortController.signal,
+      );
+      if (!acquired) return false;
+      await refreshExecution();
+      return (
+        execution.status === "running" && execution.pendingHaltReason === null
+      );
+    }
+
+    async function waitForInFlightOrCapacityProgress(
+      observedGeneration: number,
+    ): Promise<void> {
+      const progress = queryCapacity.createProgressWait(observedGeneration);
+      try {
+        await Promise.race([...inFlight.values(), progress.promise]);
+      } finally {
+        progress.cancel();
+      }
+    }
+
+    function startContextTask(contextId: string): void {
+      const task = runContextTask(contextId);
+      inFlight.set(contextId, task);
+      const finish = () => {
+        queryCapacity.finish(contextId);
+        inFlight.delete(contextId);
+      };
+      // Keep the ORIGINAL task in `inFlight`: if it rejects, Promise.race must
+      // observe that failure before the capacity-progress signal emitted by
+      // cleanup. Chaining `.finally()` into the stored promise lets that signal
+      // win the race and silently turns a failed turn into a reschedule loop.
+      void task.then(finish, (error) => {
+        pendingContextTaskErrors.push(error);
+        finish();
+      });
     }
 
     async function waitForPendingCollaborationProgress(): Promise<void> {
@@ -1891,6 +2190,10 @@ export function createGraphWorkflowExecutionLoop(
       execLogger?.lifecycle("parallel.context_started", {
         contextId,
       });
+      logger.info("graph-workflow.parallel.context_started", {
+        executionId: execution.id,
+        contextId,
+      });
 
       let isolation: "session" | "worktree" = "session";
       let featureWorktreePath: string | null = null;
@@ -2019,6 +2322,7 @@ export function createGraphWorkflowExecutionLoop(
           if (
             execution.contextStates[contextId]?.status === "awaiting_approval"
           ) {
+            queryCapacity.release(contextId);
             const outcome = await waitForApprovalResolution(contextId);
             if (
               outcome.kind === "execution_exited" ||
@@ -2026,6 +2330,7 @@ export function createGraphWorkflowExecutionLoop(
             ) {
               return;
             }
+            if (!(await reacquireQueryCapacity(contextId))) return;
 
             const conversationId =
               execution.contextStates[contextId]?.pendingApproval
@@ -2107,6 +2412,12 @@ export function createGraphWorkflowExecutionLoop(
               )) &&
             !pendingResumeUserInput.has(contextId)
           ) {
+            if (
+              execution.contextStates[contextId]?.status ===
+              "awaiting_user_input"
+            ) {
+              queryCapacity.release(contextId);
+            }
             const outcome = await waitForUserInputResolution(contextId);
             if (
               outcome.kind === "execution_exited" ||
@@ -2122,6 +2433,7 @@ export function createGraphWorkflowExecutionLoop(
               // is no longer parked and this runner has no work to resume.
               return;
             }
+            if (!(await reacquireQueryCapacity(contextId))) return;
             // Answers observed — consume them (clears the answered records, and
             // flips to running once no lane is left parked) and re-iterate. An
             // empty consume means the records vanished between the wait and
@@ -2390,6 +2702,11 @@ export function createGraphWorkflowExecutionLoop(
         }
       } finally {
         execLogger?.lifecycle("parallel.context_finished", {
+          contextId,
+          isolation,
+        });
+        logger.info("graph-workflow.parallel.context_finished", {
+          executionId: execution.id,
           contextId,
           isolation,
         });
@@ -3050,248 +3367,254 @@ export function createGraphWorkflowExecutionLoop(
       plannedFor: "context" | "final_publish",
       alreadyPersisted: boolean,
     ): Promise<Exclude<JoinRunOutcome, "none">> {
-      type ClaimDeferralReason =
-        | "execution_not_running"
-        | "pending_halt"
-        | "active_join_changed"
-        | "candidate_changed"
-        | "busy_source_lanes"
-        | "stale_final_publish_superseded";
-      const claim: {
-        join: GraphWorkflowExecutionJoinState | null;
-        deferredJoin: GraphWorkflowExecutionJoinState | null;
-        busyLaneIds: string[];
-        reason: ClaimDeferralReason | null;
-      } = {
-        join: null,
-        deferredJoin: null,
-        busyLaneIds: [],
-        reason: null,
-      };
-      const claimedExecution = await deps.workflowManager.mutateActive(
-        input.projectPath,
-        input.sessionName,
-        (current) => {
-          if (current.status !== "running") {
-            claim.reason = "execution_not_running";
-            return current;
-          }
-          if (current.pendingHaltReason !== null) {
-            claim.reason = "pending_halt";
-            return current;
-          }
-
-          const active = findActiveJoin(current);
-          let currentJoin: GraphWorkflowExecutionJoinState | null = null;
-          if (alreadyPersisted) {
-            if (!active || active.joinId !== join.joinId) {
-              claim.reason = "active_join_changed";
+      const capacityLease = queryCapacity.tryAcquireTransient();
+      if (capacityLease === null) return "retry";
+      try {
+        type ClaimDeferralReason =
+          | "execution_not_running"
+          | "pending_halt"
+          | "active_join_changed"
+          | "candidate_changed"
+          | "busy_source_lanes"
+          | "stale_final_publish_superseded";
+        const claim: {
+          join: GraphWorkflowExecutionJoinState | null;
+          deferredJoin: GraphWorkflowExecutionJoinState | null;
+          busyLaneIds: string[];
+          reason: ClaimDeferralReason | null;
+        } = {
+          join: null,
+          deferredJoin: null,
+          busyLaneIds: [],
+          reason: null,
+        };
+        const claimedExecution = await deps.workflowManager.mutateActive(
+          input.projectPath,
+          input.sessionName,
+          (current) => {
+            if (current.status !== "running") {
+              claim.reason = "execution_not_running";
               return current;
             }
-            // A final_publish persisted before a halt window may be restored
-            // while a source-eligible context still has unstarted tasks (a
-            // never-started downstream, or a context reset during the halt).
-            // Running it would deliver a candidate that structurally excludes
-            // that work, so supersede it: mark it failed and let the next pass
-            // re-plan from current state (ticket #28 / F25).
-            if (active.kind === "final_publish") {
-              const unfinished = findContextsWithUnfinishedTasks(current);
-              if (unfinished.length > 0) {
-                claim.reason = "stale_final_publish_superseded";
-                return applyJoinProgress(
-                  current,
-                  active.joinId,
-                  new Date().toISOString(),
-                  {
-                    status: "failed",
-                    errorMessage: `Superseded: ${unfinished.length} context(s) still have unfinished tasks (${unfinished
-                      .map((state) => state.contextId)
-                      .join(
-                        ", ",
-                      )}). The final publish is re-planned after that work completes.`,
-                  },
-                );
-              }
-            }
-            currentJoin = active;
-          } else {
-            if (active !== null) {
-              claim.reason = "active_join_changed";
+            if (current.pendingHaltReason !== null) {
+              claim.reason = "pending_halt";
               return current;
             }
 
-            if (plannedFor === "context") {
-              const contextId = join.contextId;
-              const eligibleIds = getEligibleContextIds(
-                current.workingDefinition,
-                current,
-              );
-              if (contextId === null || !eligibleIds.includes(contextId)) {
-                claim.reason = "candidate_changed";
+            const active = findActiveJoin(current);
+            let currentJoin: GraphWorkflowExecutionJoinState | null = null;
+            if (alreadyPersisted) {
+              if (!active || active.joinId !== join.joinId) {
+                claim.reason = "active_join_changed";
                 return current;
               }
-              const classification = classifyContextSchedulability({
-                contextId,
-                definition: current.workingDefinition,
-                execution: current,
-              });
-              if (classification.kind !== "wait-for-join") {
-                claim.reason = "candidate_changed";
-                return current;
+              // A final_publish persisted before a halt window may be restored
+              // while a source-eligible context still has unstarted tasks (a
+              // never-started downstream, or a context reset during the halt).
+              // Running it would deliver a candidate that structurally excludes
+              // that work, so supersede it: mark it failed and let the next pass
+              // re-plan from current state (ticket #28 / F25).
+              if (active.kind === "final_publish") {
+                const unfinished = findContextsWithUnfinishedTasks(current);
+                if (unfinished.length > 0) {
+                  claim.reason = "stale_final_publish_superseded";
+                  return applyJoinProgress(
+                    current,
+                    active.joinId,
+                    new Date().toISOString(),
+                    {
+                      status: "failed",
+                      errorMessage: `Superseded: ${unfinished.length} context(s) still have unfinished tasks (${unfinished
+                        .map((state) => state.contextId)
+                        .join(
+                          ", ",
+                        )}). The final publish is re-planned after that work completes.`,
+                    },
+                  );
+                }
               }
-              currentJoin = planContextJoin({
-                contextId,
-                execution: current,
-                now: () => new Date().toISOString(),
-                generateJoinId: () => join.joinId,
-              });
+              currentJoin = active;
             } else {
-              currentJoin = planFinalPublishJoin({
-                execution: current,
-                sessionLaneId: SESSION_LANE_ID,
-                now: () => new Date().toISOString(),
-                generateJoinId: () => join.joinId,
-              });
+              if (active !== null) {
+                claim.reason = "active_join_changed";
+                return current;
+              }
+
+              if (plannedFor === "context") {
+                const contextId = join.contextId;
+                const eligibleIds = getEligibleContextIds(
+                  current.workingDefinition,
+                  current,
+                );
+                if (contextId === null || !eligibleIds.includes(contextId)) {
+                  claim.reason = "candidate_changed";
+                  return current;
+                }
+                const classification = classifyContextSchedulability({
+                  contextId,
+                  definition: current.workingDefinition,
+                  execution: current,
+                });
+                if (classification.kind !== "wait-for-join") {
+                  claim.reason = "candidate_changed";
+                  return current;
+                }
+                currentJoin = planContextJoin({
+                  contextId,
+                  execution: current,
+                  now: () => new Date().toISOString(),
+                  generateJoinId: () => join.joinId,
+                });
+              } else {
+                currentJoin = planFinalPublishJoin({
+                  execution: current,
+                  sessionLaneId: SESSION_LANE_ID,
+                  now: () => new Date().toISOString(),
+                  generateJoinId: () => join.joinId,
+                });
+              }
+
+              if (!currentJoin) {
+                claim.reason = "candidate_changed";
+                return current;
+              }
             }
 
-            if (!currentJoin) {
-              claim.reason = "candidate_changed";
+            const busyLaneIds = findBusyJoinSourceLaneIds(currentJoin, current);
+            if (busyLaneIds.length > 0) {
+              claim.deferredJoin = currentJoin;
+              claim.busyLaneIds = busyLaneIds;
+              claim.reason = "busy_source_lanes";
               return current;
             }
+
+            const withJoin = alreadyPersisted
+              ? current
+              : appendPendingJoin(current, currentJoin);
+            claim.join = currentJoin;
+            return applyJoinProgress(
+              withJoin,
+              currentJoin.joinId,
+              new Date().toISOString(),
+              { status: "running" },
+            );
+          },
+        );
+        adoptExecution(claimedExecution);
+
+        const claimedJoin = claim.join;
+        if (!claimedJoin) {
+          if (claim.deferredJoin && claim.busyLaneIds.length > 0) {
+            logBlockedContextJoins([
+              {
+                join: claim.deferredJoin,
+                alreadyPersisted,
+                busyLaneIds: claim.busyLaneIds,
+              },
+            ]);
           }
-
-          const busyLaneIds = findBusyJoinSourceLaneIds(currentJoin, current);
-          if (busyLaneIds.length > 0) {
-            claim.deferredJoin = currentJoin;
-            claim.busyLaneIds = busyLaneIds;
-            claim.reason = "busy_source_lanes";
-            return current;
-          }
-
-          const withJoin = alreadyPersisted
-            ? current
-            : appendPendingJoin(current, currentJoin);
-          claim.join = currentJoin;
-          return applyJoinProgress(
-            withJoin,
-            currentJoin.joinId,
-            new Date().toISOString(),
-            { status: "running" },
-          );
-        },
-      );
-      adoptExecution(claimedExecution);
-
-      const claimedJoin = claim.join;
-      if (!claimedJoin) {
-        if (claim.deferredJoin && claim.busyLaneIds.length > 0) {
-          logBlockedContextJoins([
-            {
-              join: claim.deferredJoin,
-              alreadyPersisted,
-              busyLaneIds: claim.busyLaneIds,
-            },
-          ]);
+          logger.info("graph-workflow.join.claim_deferred", {
+            executionId: execution.id,
+            joinId: join.joinId,
+            kind: join.kind,
+            plannedFor,
+            reason: claim.reason,
+            busyLaneIds: claim.busyLaneIds,
+          });
+          return "retry";
         }
-        logger.info("graph-workflow.join.claim_deferred", {
+        deferredJoinBusySignatures.delete(
+          claimedJoin.contextId ?? claimedJoin.joinId,
+        );
+
+        if (!alreadyPersisted) {
+          execLogger?.lifecycle("join.planned", {
+            joinId: claimedJoin.joinId,
+            kind: claimedJoin.kind,
+            contextId: claimedJoin.contextId,
+            sourceLaneIds: claimedJoin.sourceLaneIds,
+            targetLaneId: claimedJoin.targetLaneId,
+          });
+          logger.info("graph-workflow.join.planned", {
+            executionId: execution.id,
+            joinId: claimedJoin.joinId,
+            kind: claimedJoin.kind,
+            plannedFor,
+            sourceLaneIds: claimedJoin.sourceLaneIds,
+            targetLaneId: claimedJoin.targetLaneId,
+          });
+        }
+
+        execLogger?.lifecycle("join.started", {
+          joinId: claimedJoin.joinId,
+          kind: claimedJoin.kind,
+          sourceLaneIds: claimedJoin.sourceLaneIds,
+          targetLaneId: claimedJoin.targetLaneId,
+        });
+        logger.info("graph-workflow.join.started", {
           executionId: execution.id,
-          joinId: join.joinId,
-          kind: join.kind,
-          plannedFor,
-          reason: claim.reason,
-          busyLaneIds: claim.busyLaneIds,
-        });
-        return "retry";
-      }
-      deferredJoinBusySignatures.delete(
-        claimedJoin.contextId ?? claimedJoin.joinId,
-      );
-
-      if (!alreadyPersisted) {
-        execLogger?.lifecycle("join.planned", {
-          joinId: claimedJoin.joinId,
-          kind: claimedJoin.kind,
-          contextId: claimedJoin.contextId,
-          sourceLaneIds: claimedJoin.sourceLaneIds,
-          targetLaneId: claimedJoin.targetLaneId,
-        });
-        logger.info("graph-workflow.join.planned", {
-          executionId: execution.id,
-          joinId: claimedJoin.joinId,
-          kind: claimedJoin.kind,
-          plannedFor,
-          sourceLaneIds: claimedJoin.sourceLaneIds,
-          targetLaneId: claimedJoin.targetLaneId,
-        });
-      }
-
-      execLogger?.lifecycle("join.started", {
-        joinId: claimedJoin.joinId,
-        kind: claimedJoin.kind,
-        sourceLaneIds: claimedJoin.sourceLaneIds,
-        targetLaneId: claimedJoin.targetLaneId,
-      });
-      logger.info("graph-workflow.join.started", {
-        executionId: execution.id,
-        joinId: claimedJoin.joinId,
-        kind: claimedJoin.kind,
-      });
-
-      const result = await deps.joinRunner.run({
-        projectPath: input.projectPath,
-        projectName: input.projectName,
-        sessionName: input.sessionName,
-        joinId: claimedJoin.joinId,
-        mutateActive: (mutator) =>
-          deps.workflowManager.mutateActive(
-            input.projectPath,
-            input.sessionName,
-            mutator,
-          ),
-        lifecycle: (event, fields) => execLogger?.lifecycle(event, fields),
-      });
-
-      await refreshExecution();
-
-      if (result.status === "succeeded") {
-        execLogger?.lifecycle("join.completed", {
           joinId: claimedJoin.joinId,
           kind: claimedJoin.kind,
         });
-        return "ran";
-      }
 
-      const haltResult = await deps.workflowManager.recordPendingHaltReason({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        reason: result.haltReason ?? {
-          type: "join_failure",
+        const result = await deps.joinRunner.run({
+          projectPath: input.projectPath,
+          projectName: input.projectName,
+          sessionName: input.sessionName,
           joinId: claimedJoin.joinId,
-          joinKind: claimedJoin.kind,
-          contextId: claimedJoin.contextId,
-          sourceLaneIds: claimedJoin.sourceLaneIds,
-          targetLaneId: claimedJoin.targetLaneId,
-          message: result.message,
+          mutateActive: (mutator) =>
+            deps.workflowManager.mutateActive(
+              input.projectPath,
+              input.sessionName,
+              mutator,
+            ),
+          lifecycle: (event, fields) => execLogger?.lifecycle(event, fields),
+        });
+
+        await refreshExecution();
+
+        if (result.status === "succeeded") {
+          execLogger?.lifecycle("join.completed", {
+            joinId: claimedJoin.joinId,
+            kind: claimedJoin.kind,
+          });
+          return "ran";
+        }
+
+        const haltResult = await deps.workflowManager.recordPendingHaltReason({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          reason: result.haltReason ?? {
+            type: "join_failure",
+            joinId: claimedJoin.joinId,
+            joinKind: claimedJoin.kind,
+            contextId: claimedJoin.contextId,
+            sourceLaneIds: claimedJoin.sourceLaneIds,
+            targetLaneId: claimedJoin.targetLaneId,
+            message: result.message,
+            conflictFiles: result.conflictFiles,
+          },
+        });
+        adoptExecution(haltResult.execution);
+        execLogger?.lifecycle("join.failed", {
+          joinId: claimedJoin.joinId,
+          kind: claimedJoin.kind,
+          failedSourceLaneId: result.failedSourceLaneId,
           conflictFiles: result.conflictFiles,
-        },
-      });
-      adoptExecution(haltResult.execution);
-      execLogger?.lifecycle("join.failed", {
-        joinId: claimedJoin.joinId,
-        kind: claimedJoin.kind,
-        failedSourceLaneId: result.failedSourceLaneId,
-        conflictFiles: result.conflictFiles,
-        haltReasonType: result.haltReason?.type ?? null,
-      });
-      logger.error("graph-workflow.join.failed", {
-        executionId: execution.id,
-        joinId: claimedJoin.joinId,
-        kind: claimedJoin.kind,
-        message: result.message,
-        conflictFiles: result.conflictFiles.length,
-        haltReasonType: result.haltReason?.type ?? null,
-      });
-      return "halted";
+          haltReasonType: result.haltReason?.type ?? null,
+        });
+        logger.error("graph-workflow.join.failed", {
+          executionId: execution.id,
+          joinId: claimedJoin.joinId,
+          kind: claimedJoin.kind,
+          message: result.message,
+          conflictFiles: result.conflictFiles.length,
+          haltReasonType: result.haltReason?.type ?? null,
+        });
+        return "halted";
+      } finally {
+        capacityLease.release();
+      }
     }
 
     async function runEligibleContextJoinIfAny(): Promise<JoinRunOutcome> {
@@ -3426,6 +3749,9 @@ export function createGraphWorkflowExecutionLoop(
       // drain.
       // eslint-disable-next-line no-constant-condition
       while (true) {
+        if (pendingContextTaskErrors.length > 0) {
+          throw pendingContextTaskErrors.shift();
+        }
         if (execution.status !== "running") {
           if (inFlight.size > 0) {
             await Promise.race(inFlight.values());
@@ -3494,18 +3820,30 @@ export function createGraphWorkflowExecutionLoop(
           }
         }
 
-        // Bound the parallel batch to the SDK query-concurrency limit minus
-        // what is already running. The loop reschedules every iteration as
-        // in-flight contexts settle, so this caps each execution to a sliding
-        // window of `maxConcurrency` concurrent contexts and the surplus never
-        // queues on the global semaphore until it times out.
-        const capacityRemaining = Math.max(0, maxConcurrency - inFlight.size);
-        execLogger?.lifecycle("loop.schedule_capacity", {
-          maxConcurrency,
-          inFlight: inFlight.size,
-          capacityRemaining,
-        });
-        if (capacityRemaining > 0) {
+        // A live runner can transiently make itself scheduler-eligible while
+        // handing work back (for example, approval exposed a replaced output
+        // contract). Let that runner retire before a new pass claims the same
+        // context; unrelated parked runners do not enter this branch because
+        // parked statuses are not scheduler-eligible.
+        const eligibleContextIdsWithRunner = getEligibleContextIds(
+          execution.workingDefinition,
+          execution,
+        ).filter((contextId) => inFlight.has(contextId));
+        if (eligibleContextIdsWithRunner.length > 0) {
+          await Promise.race(
+            eligibleContextIdsWithRunner.map(
+              (contextId) => inFlight.get(contextId)!,
+            ),
+          );
+          await refreshExecution();
+          continue;
+        }
+
+        // Parked gates stay in `inFlight` for lifecycle and join safety, but
+        // their agent query has ended. The capacity ledger releases only that
+        // query permit and retains the runner that owns the durable wait.
+        const observedCapacityGeneration = queryCapacity.snapshot().generation;
+        if (queryCapacity.snapshot().available > 0) {
           const eagerJoinOutcome = await runEligibleContextJoinIfAny();
           if (
             eagerJoinOutcome === "ran" ||
@@ -3515,15 +3853,62 @@ export function createGraphWorkflowExecutionLoop(
             continue;
           }
         }
-        const scheduleResult =
-          await deps.workflowManager.scheduleEligibleContexts({
+
+        // Reserve before the asynchronous scheduling mutation. A parked
+        // runner whose answer arrives during that await cannot claim the same
+        // last permit; it queues for reacquisition behind this reservation.
+        const capacityRemaining = queryCapacity.reserveForScheduler();
+        const capacitySnapshot = queryCapacity.snapshot();
+        execLogger?.lifecycle("loop.schedule_capacity", {
+          maxConcurrency,
+          inFlight: inFlight.size,
+          held: capacitySnapshot.held,
+          released: capacitySnapshot.released,
+          waiting: capacitySnapshot.waiting,
+          reserved: capacitySnapshot.reserved,
+          transient: capacitySnapshot.transient,
+          available: capacitySnapshot.available,
+          capacityRemaining,
+        });
+        let reservationOutstanding = true;
+        let scheduleResult: ScheduleEligibleContextsResult;
+        let scheduledContextIds: string[] = [];
+        try {
+          scheduleResult = await deps.workflowManager.scheduleEligibleContexts({
             projectPath: input.projectPath,
             sessionName: input.sessionName,
             sessionLaneEnabled: input.sessionLaneEnabled,
             capacityRemaining,
+            excludedContextIds: [...inFlight.keys()],
           });
-        adoptExecution(scheduleResult.execution);
+          adoptExecution(scheduleResult.execution);
+          scheduledContextIds =
+            scheduleResult.scheduled.kind === "none"
+              ? []
+              : scheduleResult.scheduled.kind === "solo"
+                ? [scheduleResult.scheduled.contextId]
+                : scheduleResult.scheduled.contextIds;
+          queryCapacity.settleSchedulerReservation(
+            capacityRemaining,
+            scheduledContextIds,
+          );
+          reservationOutstanding = false;
+          // A parked runner can resolve and commit while the scheduler's
+          // asynchronous mutation is returning. Re-read after fence-checking
+          // the scheduler result so an older parked snapshot cannot re-enter
+          // a context whose decision or answers already landed.
+          await refreshExecution();
+        } finally {
+          if (reservationOutstanding) {
+            queryCapacity.cancelSchedulerReservation(capacityRemaining);
+          }
+        }
 
+        // An in-flight runner can finish between a refresh capturing its
+        // parked state and this pass observing that its local task is gone.
+        // Re-read at that handoff boundary before creating a recovery runner;
+        // otherwise the captured park can be applied a second time after the
+        // durable decision or answers already cleared it.
         // The scheduler only seeds pending/ready contexts, so a context
         // restored as awaiting_approval (a park persisted across a pause,
         // halt, or restart) gets its runner here and re-enters the gate
@@ -3533,6 +3918,14 @@ export function createGraphWorkflowExecutionLoop(
           if (contextState.status !== "awaiting_approval") continue;
           const contextId = contextState.contextId;
           if (inFlight.has(contextId)) continue;
+          await refreshExecution();
+          if (
+            execution.contextStates[contextId]?.status !==
+              "awaiting_approval" ||
+            inFlight.has(contextId)
+          ) {
+            continue;
+          }
           execLogger?.iteration(contextId, "gate.reentered", {
             conversationId:
               contextState.pendingApproval?.conversationId ?? null,
@@ -3541,10 +3934,8 @@ export function createGraphWorkflowExecutionLoop(
             executionId: execution.id,
             contextId,
           });
-          const task = runContextTask(contextId).finally(() => {
-            inFlight.delete(contextId);
-          });
-          inFlight.set(contextId, task);
+          queryCapacity.registerReleased(contextId);
+          startContextTask(contextId);
         }
 
         // The same re-entry for user-input parks: a context restored as
@@ -3558,6 +3949,14 @@ export function createGraphWorkflowExecutionLoop(
           if (contextState.status !== "awaiting_user_input") continue;
           const contextId = contextState.contextId;
           if (inFlight.has(contextId)) continue;
+          await refreshExecution();
+          if (
+            execution.contextStates[contextId]?.status !==
+              "awaiting_user_input" ||
+            inFlight.has(contextId)
+          ) {
+            continue;
+          }
           execLogger?.iteration(contextId, "user_input.reentered", {
             laneKeys: pendingUserInputEntries(contextState).map(
               (entry) => entry.laneKey,
@@ -3567,15 +3966,13 @@ export function createGraphWorkflowExecutionLoop(
             executionId: execution.id,
             contextId,
           });
-          const task = runContextTask(contextId).finally(() => {
-            inFlight.delete(contextId);
-          });
-          inFlight.set(contextId, task);
+          queryCapacity.registerReleased(contextId);
+          startContextTask(contextId);
         }
 
         if (scheduleResult.scheduled.kind === "none") {
           if (inFlight.size > 0) {
-            await Promise.race(inFlight.values());
+            await waitForInFlightOrCapacityProgress(observedCapacityGeneration);
             continue;
           }
           if (execution.pendingHaltReason !== null) {
@@ -3741,17 +4138,9 @@ export function createGraphWorkflowExecutionLoop(
           break;
         }
 
-        const scheduledContextIds =
-          scheduleResult.scheduled.kind === "solo"
-            ? [scheduleResult.scheduled.contextId]
-            : scheduleResult.scheduled.contextIds;
-
         for (const contextId of scheduledContextIds) {
           if (inFlight.has(contextId)) continue;
-          const task = runContextTask(contextId).finally(() => {
-            inFlight.delete(contextId);
-          });
-          inFlight.set(contextId, task);
+          startContextTask(contextId);
         }
 
         // Wait for the next in-flight context or merge event to settle, then
@@ -3759,7 +4148,7 @@ export function createGraphWorkflowExecutionLoop(
         // picked up immediately instead of being held behind the slowest peer
         // in the current wave.
         if (inFlight.size > 0) {
-          await Promise.race(inFlight.values());
+          await waitForInFlightOrCapacityProgress(observedCapacityGeneration);
         }
 
         await refreshExecution();

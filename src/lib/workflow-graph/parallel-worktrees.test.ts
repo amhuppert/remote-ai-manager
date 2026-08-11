@@ -131,12 +131,10 @@ describe("createParallelWorktrees lane ignored baseline (R8, decision D8)", () =
   }
 
   function provision() {
-    let captured:
-      | {
-          roots: readonly string[];
-          entries: readonly { path: string; fingerprint: string }[];
-        }
-      | null = null;
+    let captured: {
+      roots: readonly string[];
+      entries: readonly { path: string; fingerprint: string }[];
+    } | null = null;
     const result = createParallelWorktrees({
       gitClient: makeIgnoredContentClient(),
       existsSync: () => false,
@@ -171,6 +169,39 @@ describe("createParallelWorktrees lane ignored baseline (R8, decision D8)", () =
       "node_modules/other/lib.js",
       "node_modules/pkg/index.js",
     ]);
+  });
+
+  it("prepares managed skills before freezing the ignored baseline", async () => {
+    const order: string[] = [];
+    const client: GitClient = {
+      git: async (args: readonly string[]) => {
+        const command = args.join(" ");
+        if (command.includes("ls-files") && command.includes("--ignored")) {
+          order.push("baseline");
+        }
+        return { stdout: "", stderr: "" };
+      },
+    };
+    const provisioner = createParallelWorktrees({
+      gitClient: client,
+      existsSync: () => false,
+      readGlobalConfig: async () => ({ branchPrefix: "csm" }),
+      readRepoConfig: async () => null,
+      prepareManagedSkillsCheckout: async () => {
+        order.push("managed-skills");
+      },
+    });
+
+    await provisioner.provisionLane({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      sessionDir: "session-1",
+      sessionBranch: "csm/session-1",
+      laneId: "lane-a",
+    });
+
+    expect(order[0]).toBe("managed-skills");
+    expect(order).toContain("baseline");
   });
 
   it("reuses the provisioning-time ignored baseline when an existing lane worktree is recovered", async () => {

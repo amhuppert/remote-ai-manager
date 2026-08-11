@@ -742,7 +742,7 @@ describe("CodexTaskRunner", () => {
     expect(result.transcript).toBeUndefined();
   });
 
-  it("passes the outputSchema to Codex unmodified — identity projection, no keyword stripping (T3.3)", async () => {
+  it("passes supported outputSchema keywords to Codex without stripping them (T3.3)", async () => {
     const schema = {
       type: "object",
       properties: {
@@ -763,6 +763,37 @@ describe("CodexTaskRunner", () => {
       outputSchema?: unknown;
     };
     expect(runOptions.outputSchema).toEqual(schema);
+  });
+
+  it("adds the provider-required type to const-only output schema nodes without mutating the authored schema", async () => {
+    const schema = {
+      type: "object",
+      properties: {
+        marker: { const: "D5-LIVE-READER-TWO-6385" },
+      },
+      required: ["marker"],
+      additionalProperties: false,
+    };
+
+    await runner.run(makeRequest({ outputSchema: schema }));
+
+    const runOptions = runMock.mock.calls[0]?.[1] as {
+      outputSchema?: unknown;
+    };
+    expect(runOptions.outputSchema).toEqual({
+      type: "object",
+      properties: {
+        marker: {
+          const: "D5-LIVE-READER-TWO-6385",
+          type: "string",
+        },
+      },
+      required: ["marker"],
+      additionalProperties: false,
+    });
+    expect(schema.properties.marker).toEqual({
+      const: "D5-LIVE-READER-TWO-6385",
+    });
   });
 
   it("aborts the running thread when an external signal fires", async () => {

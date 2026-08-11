@@ -45,7 +45,7 @@
  *       src/lib/workflow-graph/validator-write-envelope-enforcement.live.test.ts
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   chmodSync,
   existsSync,
@@ -69,8 +69,22 @@ import type {
 } from "@/lib/agent-backends/task";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { composeValidatorLaneWriteEnvelope } from "./lane-write-policy";
+import {
+  _resetServerBaseUrlForTesting,
+  recordServerBaseUrl,
+} from "@/lib/agent-gateway/server-url";
 
 const LIVE = process.env.CC_LIVE_ENFORCEMENT_TESTS === "1";
+
+beforeEach(() => {
+  recordServerBaseUrl({
+    CC_SERVER_URL: process.env.CC_SERVER_URL ?? "http://127.0.0.1:3000",
+  });
+});
+
+afterEach(() => {
+  _resetServerBaseUrlForTesting();
+});
 
 /** Long enough for a real multi-tool turn on either backend. */
 const RUN_TIMEOUT_MS = 300_000;

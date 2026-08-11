@@ -465,6 +465,12 @@ export interface ScheduleEligibleContextsInput {
    */
   capacityRemaining?: number;
   /**
+   * Contexts whose runners already hold an execution-loop lease. They may
+   * still look dependency-eligible in the persisted snapshot while a parked
+   * gate is resolving, but this scheduling pass must not reserve them again.
+   */
+  excludedContextIds?: readonly string[];
+  /**
    * Whether the scheduler may place a context on the session worktree.
    * Defaults to `true`. When `false`, classifier results that would otherwise
    * land on the session lane are routed to a freshly forked worktree lane.
@@ -1884,6 +1890,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     input: ScheduleEligibleContextsInput,
   ): Promise<ScheduleEligibleContextsResult> {
     const { projectPath, sessionName } = input;
+    const excludedContextIds = new Set(input.excludedContextIds ?? []);
     // Session-lane participation is opt-in per the accepted orchestration
     // design (decision 10). Default off keeps every parallel chain on its
     // own worktree lane and merges into the session branch only at final
@@ -1999,7 +2006,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         for (const contextId of getEligibleContextIds(
           snapshot.workingDefinition,
           snapshot,
-        )) {
+        ).filter((contextId) => !excludedContextIds.has(contextId))) {
           const placement = snapshot.workingDefinition.executionContexts.find(
             (context) => context.id === contextId,
           )?.placement;
@@ -2081,7 +2088,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         const eligibleContextIds = getEligibleContextIds(
           running.workingDefinition,
           running,
-        );
+        ).filter((contextId) => !excludedContextIds.has(contextId));
         readySetEligibleContextIds = [...eligibleContextIds];
 
         if (eligibleContextIds.length === 0) {

@@ -81,6 +81,10 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { getConversationBackendFactory } from "@/lib/agent-backends/registry";
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
+import {
+  _resetServerBaseUrlForTesting,
+  recordServerBaseUrl,
+} from "@/lib/agent-gateway/server-url";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
 import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-envelope";
 
@@ -163,6 +167,7 @@ async function runIterationCapturingOptions(
 }
 
 beforeEach(() => {
+  recordServerBaseUrl({ CC_SERVER_URL: "http://127.0.0.1:3000" });
   claudeQueryMock.mockReset();
   claudeQueryMock.mockImplementation(() => ({
     [Symbol.asyncIterator]: async function* () {},
@@ -189,6 +194,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  _resetServerBaseUrlForTesting();
   rmSync(fixtureRoot, { recursive: true, force: true });
 });
 
@@ -280,6 +286,9 @@ describe("the implementer dispatch path composes the envelope before dispatching
       expect(prompt).toContain(canonicalRoot);
       expect(prompt).toContain(
         path.join(canonicalRoot, ".cc", "temp", "context-build"),
+      );
+      expect(prompt).toContain(
+        "Treat every relative repository path in the task as relative to Repository above and address it by absolute path.",
       );
       expect(prompt).toContain("Implement the context");
     });
@@ -580,6 +589,7 @@ describe("both conversation runtimes establish the delivered policy natively", (
       writable_roots: policy.allowWrite,
       exclude_tmpdir_env_var: true,
       exclude_slash_tmp: true,
+      network_access: true,
     });
   });
 

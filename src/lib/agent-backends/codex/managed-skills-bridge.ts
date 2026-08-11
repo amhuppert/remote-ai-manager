@@ -171,6 +171,39 @@ function isCcOwnedTarget(target: string, ccOwnedPrefix: string): boolean {
 }
 
 /**
+ * Attest the bridge path only when the current on-disk object is a symlink into
+ * the server-published bundle area. Project content and foreign symlinks are
+ * collisions, not adapter ownership, and therefore return no path.
+ */
+export async function listCodexManagedSkillsOwnedCheckoutPaths(
+  checkoutPath: string,
+): Promise<readonly string[]> {
+  const bundle = getPublishedManagedSkillBundle();
+  if (!bundle) return [];
+
+  const linkPath = path.join(
+    /* turbopackIgnore: true */ checkoutPath,
+    MANAGED_SKILLS_LINK_RELATIVE,
+  );
+  try {
+    const existing = await lstat(/* turbopackIgnore: true */ linkPath);
+    if (!existing.isSymbolicLink()) return [];
+
+    const target = await readlink(/* turbopackIgnore: true */ linkPath);
+    const ccOwnedTargetPrefix = path.dirname(bundle.root) + path.sep;
+    const owned = isCcOwnedTarget(target, ccOwnedTargetPrefix);
+    logger.debug("codex_managed_skills.checkout_ownership_attested", {
+      checkoutPath,
+      linkPath,
+      owned,
+    });
+    return owned ? [MANAGED_SKILLS_LINK_RELATIVE] : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Launch-path entrypoint for the Codex conversation runtime and task runner:
  * reconcile against the startup-published bundle and never throw — a bridge
  * failure degrades the launch to skill-less, it does not block the turn.

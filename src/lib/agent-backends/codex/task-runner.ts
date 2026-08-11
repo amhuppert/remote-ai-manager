@@ -40,6 +40,7 @@ import {
 } from "./pricing";
 import {
   CODEX_DEFAULT_STALL_TIMEOUT_MS,
+  projectSchemaForCodex,
   toSdkModelReasoningEffort,
   toStringEnv,
 } from "./shared";
@@ -686,7 +687,9 @@ export class CodexTaskRunner implements AgentTaskRunner {
       }
 
       const turn = await runCodexTurn(thread, prompt, {
-        ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
+        ...(input.outputSchema
+          ? { outputSchema: projectSchemaForCodex(input.outputSchema) }
+          : {}),
         signal: abortController.signal,
         onActivity: () => stallWatchdog.touch(),
       });

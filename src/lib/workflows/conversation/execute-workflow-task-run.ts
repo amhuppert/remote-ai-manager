@@ -51,9 +51,9 @@ export interface ExecuteWorkflowTaskRunInput {
   timeoutMs?: number;
   /**
    * Server-derived filesystem-write envelope for this turn (see
-   * {@link FsWritePolicy}). Composed by the caller from the LANE'S ROLE — a
-   * validator lane always supplies one, an implementer lane never does — and
-   * carried unchanged to the runner. Omitting it leaves the turn unrestricted.
+   * {@link FsWritePolicy}). Composed by the caller from the turn's lane role
+   * and carried unchanged to the runner. Validators and graph output-capture
+   * turns always supply one; omitting it leaves the turn unrestricted.
    */
   fsWritePolicy?: FsWritePolicy;
   /** Override the agent model on this turn. */

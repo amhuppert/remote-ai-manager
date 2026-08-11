@@ -439,7 +439,7 @@ describe("same-lane concurrency and ownership disjointness (R5)", () => {
     const definition = definitionOf(
       [
         makeContext("context-a", { lane: "shared", mode: "full" }),
-        makeContext("context-relay", { lane: "other", mode: "full" }),
+        makeContext("context-relay", { lane: "shared", mode: "full" }),
         owning("context-b", "shared", ["src/lib/b"]),
       ],
       [edge("context-a", "context-relay"), edge("context-relay", "context-b")],
@@ -559,5 +559,53 @@ describe("same-lane concurrency and ownership disjointness (R5)", () => {
     expect(messages).toHaveLength(2);
     expect(messages.some((m) => m.includes("context-b"))).toBe(true);
     expect(messages.some((m) => m.includes("context-c"))).toBe(true);
+  });
+});
+
+describe("lane dependency acyclicity", () => {
+  it("rejects a context DAG whose authored lanes contract into a cycle", () => {
+    const definition = definitionOf(
+      [
+        makeContext("context-a", { lane: "shared", mode: "full" }),
+        makeContext("context-x", { lane: "target", mode: "full" }),
+        makeContext("context-c", { lane: "target", mode: "full" }),
+        makeContext("context-b", { lane: "shared", mode: "full" }),
+      ],
+      [
+        edge("context-a", "context-c"),
+        edge("context-x", "context-c"),
+        edge("context-c", "context-b"),
+      ],
+    );
+
+    const result = validateAuthoredDefinition(definition);
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({
+        code: "placement-lane-dependency-cycle",
+        message: expect.stringContaining("shared → target → shared"),
+      }),
+    );
+  });
+
+  it("does not contract the read-only session sentinel into the group-lane graph", () => {
+    const definition = definitionOf(
+      [
+        makeContext("context-a", { lane: "build", mode: "full" }),
+        makeContext(
+          "context-reader",
+          { lane: "session", mode: "readOnly" },
+          { outputSchema: { type: "object" } },
+        ),
+        makeContext("context-b", { lane: "build", mode: "full" }),
+      ],
+      [
+        edge("context-a", "context-reader"),
+        edge("context-reader", "context-b"),
+      ],
+    );
+
+    expect(validateAuthoredDefinition(definition).errors).toEqual([]);
   });
 });

@@ -1208,6 +1208,50 @@ describe("applyDefinitionEdits", () => {
         "executionContexts.0.placement.lane",
       );
     });
+
+    it("refuses an edge-only edit that makes authored lane dependencies cyclic", () => {
+      const seeded = applyDefinitionEdits(
+        createWorkflowDefinitionRecord(),
+        ops(
+          {
+            type: "add-context",
+            id: "context-return",
+            title: "Return to planning lane",
+            acceptanceCriteria: "Follow-up work is complete.",
+            placement: { lane: "plan", mode: "full" },
+          },
+          {
+            type: "add-task",
+            id: "task-return",
+            contextId: "context-return",
+            title: "Finish follow-up",
+            instructions: "Finish the follow-up work.",
+          },
+          {
+            type: "add-edge",
+            sourceContextId: "context-plan",
+            targetContextId: "context-return",
+          },
+        ),
+      );
+      expect(seeded.ok).toBe(true);
+      if (!seeded.ok) return;
+
+      const result = applyDefinitionEdits(
+        seeded.record,
+        ops({
+          type: "add-edge",
+          sourceContextId: "context-implement",
+          targetContextId: "context-return",
+        }),
+      );
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.issues.map((issue) => issue.code)).toContain(
+        "placement-lane-dependency-cycle",
+      );
+    });
   });
 });
 

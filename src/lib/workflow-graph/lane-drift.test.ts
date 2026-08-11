@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { IgnoredEntry, WorktreeStatusEntry } from "@/lib/git/worktree";
 import {
   classifyLaneDrift,
+  createLaneDriftAuditor,
   laneOwnedPrefixes,
   laneReservedPrefixes,
   summarizeIgnoredContents,
@@ -133,6 +134,35 @@ describe("classifyLaneDrift", () => {
         ],
       }).unattributedPaths,
     ).toEqual([]);
+  });
+
+  it("does not exempt a managed-skills collision that appeared after provisioning", () => {
+    expect(
+      classify([], {
+        ignoredFiles: [".agents/skills/command-center"],
+      }).unattributedPaths,
+    ).toEqual([".agents/skills/command-center"]);
+  });
+
+  it("baselines an unchanged managed-skills conflict but reports later mutation", () => {
+    const bridgePath = ".agents/skills/command-center";
+    const baseline = provisionedWith(
+      [bridgePath],
+      [ignoredFile(bridgePath, "project-owned")],
+    );
+
+    expect(
+      classify([], {
+        ignoredEntries: [ignoredFile(bridgePath, "project-owned")],
+        ignoredBaseline: baseline,
+      }).unattributedPaths,
+    ).toEqual([]);
+    expect(
+      classify([], {
+        ignoredEntries: [ignoredFile(bridgePath, "mutated")],
+        ignoredBaseline: baseline,
+      }).unattributedPaths,
+    ).toEqual([bridgePath]);
   });
 
   it("reports a write into CC's namespace that no engine directory and no member's payload directory accounts for", () => {
@@ -356,6 +386,39 @@ describe("laneReservedPrefixes", () => {
       ".cc/workflow",
       ".cc/temp/context-api",
     ]);
+  });
+});
+
+describe("createLaneDriftAuditor managed checkout ownership", () => {
+  function auditor(ownedCheckoutPaths: readonly string[]) {
+    return createLaneDriftAuditor({
+      readStatus: async () => [],
+      readIgnoredEntries: async () => [
+        ignoredFile(".agents/skills/command-center"),
+      ],
+      realpath: async (target) => target,
+      listManagedSkillsOwnedCheckoutPaths: async () => ownedCheckoutPaths,
+    });
+  }
+
+  const input = {
+    laneWorktreePath: "/repo/.worktrees/session.lane-a",
+    memberOwnerships: [],
+    memberContextIds: [],
+    ignoredBaseline: [],
+    ignoredBaselineEntries: [],
+  } as const;
+
+  it("exempts an exact checkout path attested by the backend registry", async () => {
+    await expect(
+      auditor([".agents/skills/command-center"]).audit(input),
+    ).resolves.toEqual({ unattributedPaths: [] });
+  });
+
+  it("reports the same path when no backend attests ownership", async () => {
+    await expect(auditor([]).audit(input)).resolves.toEqual({
+      unattributedPaths: [".agents/skills/command-center"],
+    });
   });
 });
 

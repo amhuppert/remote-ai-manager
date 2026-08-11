@@ -15,7 +15,10 @@ import {
   createExecutionTargetResolver,
   type ExecutionTarget,
 } from "@/lib/workflow-graph/execution-target-resolver";
-import type { GraphMergeRunner } from "@/lib/workflow-graph/graph-merge-runner";
+import type {
+  GraphMergeRunner,
+  GraphMergeRunnerInput,
+} from "@/lib/workflow-graph/graph-merge-runner";
 import { applyJoinProgress } from "@/lib/workflow-graph/context-transitions";
 import {
   createJoinRunner,
@@ -2169,10 +2172,15 @@ describe("execution loop — parallel integration", () => {
     );
   });
 
-  it("scenario 12: a gated context parks in the wait while an independent sibling completes and merges, its dependent never starts, the loop stays in-flight, and abort exits the wait unresolved", async () => {
+  it("scenario 12: a gated context releases query capacity while independent siblings complete and merge, its dependent never starts, the loop stays in-flight, and abort exits the wait unresolved", async () => {
     _resetActiveLoopsForTesting();
 
-    const definition = createParallelDefinition(["ctx-a", "ctx-b", "ctx-c"]);
+    const definition = createParallelDefinition([
+      "ctx-a",
+      "ctx-b",
+      "ctx-d",
+      "ctx-c",
+    ]);
     definition.executionContexts.find(
       (ctx) => ctx.id === "ctx-a",
     )!.humanApprovalGate = { enabled: true };
@@ -2266,6 +2274,7 @@ describe("execution loop — parallel integration", () => {
         resolveHead: async () => null,
       },
       executionTargetResolver: createExecutionTargetResolver(),
+      getMaxConcurrentQueries: async () => 1,
       async getSession() {
         return createSession();
       },
@@ -2281,32 +2290,40 @@ describe("execution loop — parallel integration", () => {
       execution: initial,
     });
 
-    await vi.waitFor(() => {
-      const current = repository.read();
-      expect(current?.contextStates["ctx-b"]?.mergeStatus).toBe(
-        "merged-success",
-      );
-      expect(current?.contextStates["ctx-a"]?.status).toBe("awaiting_approval");
-    });
+    let result: GraphWorkflowExecution | null = null;
+    try {
+      await vi.waitFor(() => {
+        const current = repository.read();
+        for (const contextId of ["ctx-b", "ctx-d"]) {
+          expect(current?.contextStates[contextId]?.mergeStatus).toBe(
+            "merged-success",
+          );
+        }
+        expect(current?.contextStates["ctx-a"]?.status).toBe(
+          "awaiting_approval",
+        );
+      });
 
-    expect(runIterationCalls.filter((id) => id === "ctx-a")).toHaveLength(1);
-    expect(runIterationCalls).toContain("ctx-b");
-    expect(runIterationCalls).not.toContain("ctx-c");
-    // ctx-b's work is lane-committed; its publish waits for quiescence, which
-    // the parked gate prevents — so no session merge runs.
-    expect(mergeOrder).toEqual([]);
+      expect(runIterationCalls.filter((id) => id === "ctx-a")).toHaveLength(1);
+      expect(runIterationCalls).toContain("ctx-b");
+      expect(runIterationCalls).toContain("ctx-d");
+      expect(runIterationCalls).not.toContain("ctx-c");
+      // The siblings' work is lane-committed; their publish waits for
+      // quiescence, which the parked gate prevents — so no session merge runs.
+      expect(mergeOrder).toEqual([]);
 
-    const raceOutcome = await Promise.race([
-      runPromise.then(() => "settled" as const),
-      new Promise<"pending">((resolve) =>
-        setTimeout(() => resolve("pending"), 30),
-      ),
-    ]);
-    expect(raceOutcome).toBe("pending");
+      const raceOutcome = await Promise.race([
+        runPromise.then(() => "settled" as const),
+        new Promise<"pending">((resolve) =>
+          setTimeout(() => resolve("pending"), 30),
+        ),
+      ]);
+      expect(raceOutcome).toBe("pending");
+    } finally {
+      await manager.send("/repo", "session-1", { type: "abort" });
+      result = await runPromise;
+    }
 
-    await manager.send("/repo", "session-1", { type: "abort" });
-
-    const result = await runPromise;
     expect(result.status).toBe("aborted");
     expect(result.contextStates["ctx-a"]?.status).toBe("awaiting_approval");
     expect(result.contextStates["ctx-a"]?.pendingApproval).toEqual(
@@ -2608,6 +2625,150 @@ describe("execution loop — parallel integration", () => {
         contextId: "shared",
         branchName: "csm/session-1-shared",
       },
+    ]);
+  });
+
+  it("scenario 16b: a shared lane waits for every authored member before a downstream join closes it", async () => {
+    _resetActiveLoopsForTesting();
+
+    const definition = createParallelDefinition([
+      "ctx-a",
+      "ctx-target",
+      "ctx-b",
+      "ctx-c",
+    ]);
+    definition.executionContexts = definition.executionContexts.map(
+      (context) => ({
+        ...context,
+        placement: {
+          lane:
+            context.id === "ctx-a" || context.id === "ctx-b"
+              ? "shared"
+              : "target",
+          mode: "full" as const,
+        },
+      }),
+    );
+    definition.edges = [
+      {
+        id: "edge-a-c",
+        sourceContextId: "ctx-a",
+        targetContextId: "ctx-c",
+      },
+      {
+        id: "edge-target-c",
+        sourceContextId: "ctx-target",
+        targetContextId: "ctx-c",
+      },
+    ];
+    const initial = createInitialExecution(definition);
+    const repository = createRepository(initial);
+    const parallelWorktrees = createParallelWorktreesStub();
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      parallelWorktrees,
+      async getSession() {
+        return createSession();
+      },
+    });
+
+    const iterationOrder: string[] = [];
+    const iterationOrchestrator = {
+      async runIteration(input: {
+        contextId: string;
+      }): Promise<GraphWorkflowIterationResult> {
+        iterationOrder.push(input.contextId);
+        const next = await manager.mutateActive("/repo", "session-1", (e) => {
+          const updated = structuredClone(e);
+          const cs = updated.contextStates[input.contextId];
+          if (cs) {
+            cs.iterationCount = 1;
+            cs.status = "completed";
+            cs.completedTaskCount = 1;
+          }
+          const ts = updated.taskStates[`task-${input.contextId}`];
+          if (ts) {
+            ts.status = "completed";
+            ts.completedAt = "2026-03-27T12:01:00.000Z";
+          }
+          return updated;
+        });
+        return {
+          conversationId: `conv-${input.contextId}`,
+          execution: next,
+          shouldContinueInContext: false,
+        };
+      },
+    };
+
+    const mergeCalls: GraphMergeRunnerInput[] = [];
+    const mergeRunner: GraphMergeRunner = {
+      async run(input) {
+        mergeCalls.push(structuredClone(input));
+        return buildSuccessMergeOutput();
+      },
+    };
+    const mergeMutex = createPerSessionMergeMutex();
+    const sessionGitLock = createSessionGitLock({
+      acquireSessionLock: () => () => {},
+    });
+    const loop = createGraphWorkflowExecutionLoop({
+      workflowManager: manager,
+      iterationOrchestrator,
+      parallelWorktrees,
+      mergeMutex,
+      sessionGitLock,
+      mergeRunner,
+      joinRunner: createJoinRunner({
+        mergeRunner,
+        sessionGitLock,
+        mergeMutex,
+      }),
+      soloContextCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      laneCommitter: {
+        commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
+      },
+      executionTargetResolver: createExecutionTargetResolver(),
+      getMaxConcurrentQueries: async () => 1,
+      async getSession() {
+        return createSession();
+      },
+    });
+
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(iterationOrder).toEqual(["ctx-a", "ctx-target", "ctx-b", "ctx-c"]);
+
+    const contextJoin = Object.values(result.joins).find(
+      (join) => join.kind === "context_merge" && join.contextId === "ctx-c",
+    );
+    expect(contextJoin?.status).toBe("succeeded");
+    expect(contextJoin?.sourceLaneContextIds?.shared).toEqual([
+      "ctx-a",
+      "ctx-b",
+    ]);
+
+    const finalPublish = Object.values(result.joins).find(
+      (join) => join.kind === "final_publish",
+    );
+    expect(finalPublish?.status).toBe("succeeded");
+    expect(finalPublish?.sourceLaneIds).toEqual(["target"]);
+    expect(mergeCalls.map((input) => input.branchName)).toEqual([
+      "csm/session-1-shared",
+      "csm/session-1-target",
     ]);
   });
 

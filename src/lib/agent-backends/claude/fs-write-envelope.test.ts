@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { FsWritePolicy } from "../task";
 import {
   CLAUDE_FS_RESTRICTED_MUTATION_TOOLS,
+  buildClaudeConversationFsWriteEnvelope,
   buildClaudeFsWriteEnvelope,
 } from "./fs-write-envelope";
 
 const SCRATCH = "/private/tmp/cc-validator-lanes/exec/ctx/reviewer";
 const LANE_TMP = `${SCRATCH}/tmp`;
 const WORKTREE = "/private/volumes/repo/worktree";
+const SERVER_URL = "http://127.0.0.1:3000";
 
 function policy(overrides?: Partial<FsWritePolicy>): FsWritePolicy {
   return {
@@ -18,8 +20,11 @@ function policy(overrides?: Partial<FsWritePolicy>): FsWritePolicy {
   };
 }
 
-function envelopeOf(input: FsWritePolicy) {
-  const result = buildClaudeFsWriteEnvelope(input);
+function envelopeOf(
+  input: FsWritePolicy,
+  trustedServerUrl: string | null = SERVER_URL,
+) {
+  const result = buildClaudeFsWriteEnvelope(input, trustedServerUrl);
   if (result.kind !== "envelope") {
     throw new Error(`expected an envelope, got: ${result.reason}`);
   }
@@ -35,6 +40,45 @@ describe("buildClaudeFsWriteEnvelope", () => {
       failIfUnavailable: true,
       allowUnsandboxedCommands: false,
     });
+  });
+
+  it.each([
+    ["http://127.0.0.1:3000", "127.0.0.1"],
+    ["http://localhost:3000", "localhost"],
+    ["http://[::1]:3000", "::1"],
+    ["https://cc.tailnet.example:8443/base", "cc.tailnet.example"],
+  ])(
+    "allows sandboxed cctl commands to reach only the trusted server host from %s",
+    (trustedServerUrl, expectedHost) => {
+      expect(envelopeOf(policy(), trustedServerUrl).sandbox.network).toEqual({
+        allowedDomains: [expectedHost],
+        strictAllowlist: true,
+      });
+    },
+  );
+
+  it("does not confuse Bash network confinement with Claude's WebFetch permission rules", () => {
+    const taskEnvelope = envelopeOf(policy());
+    const conversation = buildClaudeConversationFsWriteEnvelope({
+      policy: policy(),
+      mcpServerKeys: [],
+      trustedServerUrl: SERVER_URL,
+    });
+
+    expect(
+      taskEnvelope.permissions.allow.filter((rule) =>
+        rule.startsWith("WebFetch(domain:"),
+      ),
+    ).toEqual([]);
+    expect(conversation.kind).toBe("envelope");
+    if (conversation.kind === "envelope") {
+      expect(conversation.envelope.permissions.allow).toContain("WebFetch");
+      expect(
+        conversation.envelope.permissions.allow.filter((rule) =>
+          rule.startsWith("WebFetch(domain:"),
+        ),
+      ).toEqual([]);
+    }
   });
 
   it("carries the policy onto the sandbox filesystem allowlist with an explicit deny", () => {
@@ -94,15 +138,27 @@ describe("buildClaudeFsWriteEnvelope", () => {
   });
 
   describe("fail-closed establishment", () => {
+    it.each([null, "not a URL", "ftp://cc.example", "http://*.example.com"])(
+      "refuses an absent or invalid trusted server URL (%s)",
+      (trustedServerUrl) => {
+        expect(
+          buildClaudeFsWriteEnvelope(policy(), trustedServerUrl).kind,
+        ).toBe("unestablishable");
+      },
+    );
+
     it("refuses an empty allowlist rather than emitting a sandbox with no writable path", () => {
-      expect(buildClaudeFsWriteEnvelope(policy({ allowWrite: [] })).kind).toBe(
-        "unestablishable",
-      );
+      expect(
+        buildClaudeFsWriteEnvelope(policy({ allowWrite: [] }), SERVER_URL).kind,
+      ).toBe("unestablishable");
     });
 
     it("refuses a relative allowlist entry, which a permission rule cannot anchor", () => {
       expect(
-        buildClaudeFsWriteEnvelope(policy({ allowWrite: ["scratch"] })).kind,
+        buildClaudeFsWriteEnvelope(
+          policy({ allowWrite: ["scratch"] }),
+          SERVER_URL,
+        ).kind,
       ).toBe("unestablishable");
     });
 
@@ -110,6 +166,7 @@ describe("buildClaudeFsWriteEnvelope", () => {
       expect(
         buildClaudeFsWriteEnvelope(
           policy({ allowWrite: [`${WORKTREE}/reports`] }),
+          SERVER_URL,
         ).kind,
       ).toBe("unestablishable");
     });
@@ -117,7 +174,10 @@ describe("buildClaudeFsWriteEnvelope", () => {
     it("refuses a path containing a glob character, which would widen the rule it is pasted into", () => {
       // Rule content is a glob, so an unsanitized `*` in a path is a wildcard.
       expect(
-        buildClaudeFsWriteEnvelope(policy({ allowWrite: ["/tmp/lane*"] })).kind,
+        buildClaudeFsWriteEnvelope(
+          policy({ allowWrite: ["/tmp/lane*"] }),
+          SERVER_URL,
+        ).kind,
       ).toBe("unestablishable");
     });
   });

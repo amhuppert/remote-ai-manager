@@ -73,6 +73,7 @@ function sandboxConfigFor(policy: FsWritePolicy): CodexConfig {
       writable_roots: [...policy.allowWrite],
       exclude_tmpdir_env_var: true,
       exclude_slash_tmp: true,
+      network_access: true,
     },
   };
 }

@@ -142,6 +142,9 @@ export interface CodexDescriptorDeps {
   runtimeConfig: BackendRuntimeConfigAdapter;
   taskRunner: AgentTaskRunner;
   prepareManagedSkillsCheckout(checkoutPath: string): Promise<void>;
+  listManagedSkillsOwnedCheckoutPaths?(
+    checkoutPath: string,
+  ): Promise<readonly string[]>;
   /** `codexMcpCapabilities` in production; injected because the MCP registry
    * module is server-only while this module's literals are client-imported. */
   mcp: McpBackendCapabilities;
@@ -172,6 +175,9 @@ export function createCodexBackendDescriptor(
       conversations: "bundled",
       tasks: "bundled",
       prepareCheckout: deps.prepareManagedSkillsCheckout,
+      ...(deps.listManagedSkillsOwnedCheckoutPaths
+        ? { listOwnedCheckoutPaths: deps.listManagedSkillsOwnedCheckoutPaths }
+        : {}),
     },
     mcp: deps.mcp,
     errors: deps.failureClassifier,

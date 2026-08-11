@@ -155,6 +155,9 @@ function renderWriteEnvelopeBriefing(
     `Scratch directory: ${envelope.contextScratchDir}`,
     `Payload directory (write \`--file\` JSON and scratch files here): ${envelope.payloadDir}`,
     "",
+    "Shell commands run from Scratch directory, not Repository.",
+    "Treat every relative repository path in the task as relative to Repository above and address it by absolute path.",
+    "",
     "Writable repository paths (everything else in the repository is read-only, enforced by the OS):",
     owned,
   ].join("\n");

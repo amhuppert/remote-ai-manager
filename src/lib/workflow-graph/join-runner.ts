@@ -62,6 +62,10 @@ export interface JoinRunnerDeps {
   /** Aborts an unconcluded `git merge` (MERGE_HEAD present); returns whether
    *  an abort happened. Defaults to the real git helper. */
   abortInProgressMerge?(worktreePath: string): Promise<boolean>;
+  /** Repairs private-index landing residue before a graph-owned worktree lane
+   *  becomes either side of a merge. Production composition supplies the git
+   *  helper; merge-runner tests that use synthetic paths may omit it. */
+  resyncSharedIndex?(worktreePath: string): Promise<void>;
   readRepoConfig?: ReadLaneMergeRepoConfig;
   logger?: Logger;
   createJobId?(): string;
@@ -89,6 +93,7 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
   const now = deps.now ?? (() => new Date().toISOString());
   const abortInProgressMerge =
     deps.abortInProgressMerge ?? defaultAbortInProgressMerge;
+  const resyncSharedIndex = deps.resyncSharedIndex;
   const readRepoConfig = deps.readRepoConfig ?? defaultReadRepoConfig;
   const logger = deps.logger ?? defaultLogger;
 
@@ -259,6 +264,30 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
               deps.sessionGitLock.withSessionGitLock(
                 { projectPath, sessionName },
                 async () => {
+                  if (
+                    sourceLane.kind === "worktree" &&
+                    resyncSharedIndex !== undefined
+                  ) {
+                    await resyncSharedIndex(sourceWorktreePath);
+                    logger.info("graph-workflow.join.source_index_resynced", {
+                      joinId,
+                      sourceLaneId,
+                      sourceWorktreePath,
+                    });
+                  }
+
+                  if (
+                    targetLane.kind === "worktree" &&
+                    resyncSharedIndex !== undefined
+                  ) {
+                    await resyncSharedIndex(targetWorktreePath);
+                    logger.info("graph-workflow.join.target_index_resynced", {
+                      joinId,
+                      targetLaneId: currentJoin.targetLaneId,
+                      targetWorktreePath,
+                    });
+                  }
+
                   // Self-healing preflight: a previously failed resolution
                   // leaves the source worktree mid-merge, and git refuses to
                   // start a new merge over one. An operator who resolved

@@ -3258,6 +3258,56 @@ describe("applyLiveExecutionEdits — placement (lwp R10.2)", () => {
     )?.placement;
   }
 
+  it("refuses an edge-only live edit that makes authored lane dependencies cyclic", () => {
+    const base = createWorkflowExecution({ status: "paused" });
+    const planImplementEdge = base.workingDefinition.edges.find(
+      (edge) => edge.id === "edge-plan-implement",
+    );
+    if (planImplementEdge === undefined) {
+      throw new Error("fixture lost edge-plan-implement");
+    }
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      workingDefinition: {
+        ...base.workingDefinition,
+        executionContexts: base.workingDefinition.executionContexts.map(
+          (context) =>
+            context.id === "context-verify"
+              ? {
+                  ...context,
+                  placement: { lane: "plan", mode: "full" as const },
+                }
+              : context,
+        ),
+        edges: [
+          planImplementEdge,
+          {
+            id: "edge-plan-verify",
+            sourceContextId: "context-plan",
+            targetContextId: "context-verify",
+          },
+        ],
+      },
+    };
+    const before = structuredClone(execution);
+
+    const result = apply(execution, [
+      {
+        type: "add-edge",
+        sourceContextId: "context-implement",
+        targetContextId: "context-verify",
+      },
+    ]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("invalid_edit");
+    expect(result.issues.map((issue) => issue.code)).toContain(
+      "placement-lane-dependency-cycle",
+    );
+    expect(execution).toEqual(before);
+  });
+
   it("accepts a placement change for a not-started context while the execution runs", () => {
     const execution = withImplementRunning(
       sharedLaneExecution({ status: "running" }),

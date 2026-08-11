@@ -662,6 +662,109 @@ describe("findBusyJoinSourceLaneIds", () => {
 
     expect(findBusyJoinSourceLaneIds(join, execution)).toEqual([]);
   });
+
+  it("ignores an unassigned downstream context authored onto a source lane", () => {
+    const base = createWorkflowExecution();
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      workingDefinition: {
+        ...base.workingDefinition,
+        executionContexts: base.workingDefinition.executionContexts.map(
+          (context) => ({
+            ...context,
+            placement: {
+              lane:
+                context.id === "context-implement"
+                  ? "lane-target"
+                  : "lane-source",
+              mode: "full" as const,
+            },
+          }),
+        ),
+      },
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "completed",
+          completedTaskCount:
+            base.contextStates["context-plan"]!.totalTaskCount,
+          laneId: "lane-source",
+        },
+        "context-implement": {
+          ...base.contextStates["context-implement"]!,
+          status: "ready",
+          laneId: null,
+        },
+        "context-verify": {
+          ...base.contextStates["context-verify"]!,
+          status: "pending",
+          laneId: null,
+        },
+      },
+    };
+    const join = makeJoin({
+      joinId: "join-downstream",
+      contextId: "context-implement",
+      targetLaneId: "lane-target",
+      sourceLaneIds: ["lane-source", "lane-target"],
+    });
+
+    expect(findBusyJoinSourceLaneIds(join, execution)).toEqual([]);
+  });
+
+  it("keeps an independent unassigned member's authored source lane busy", () => {
+    const base = createWorkflowExecution();
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      workingDefinition: {
+        ...base.workingDefinition,
+        executionContexts: base.workingDefinition.executionContexts.map(
+          (context) => ({
+            ...context,
+            placement: {
+              lane:
+                context.id === "context-implement"
+                  ? "lane-target"
+                  : "lane-source",
+              mode: "full" as const,
+            },
+          }),
+        ),
+        edges: base.workingDefinition.edges.filter(
+          (edge) => edge.targetContextId !== "context-verify",
+        ),
+      },
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "completed",
+          completedTaskCount:
+            base.contextStates["context-plan"]!.totalTaskCount,
+          laneId: "lane-source",
+        },
+        "context-implement": {
+          ...base.contextStates["context-implement"]!,
+          status: "ready",
+          laneId: null,
+        },
+        "context-verify": {
+          ...base.contextStates["context-verify"]!,
+          status: "ready",
+          laneId: null,
+        },
+      },
+    };
+    const join = makeJoin({
+      joinId: "join-independent-member",
+      contextId: "context-implement",
+      targetLaneId: "lane-target",
+      sourceLaneIds: ["lane-source", "lane-target"],
+    });
+
+    expect(findBusyJoinSourceLaneIds(join, execution)).toEqual(["lane-source"]);
+  });
 });
 
 describe("planContextJoin", () => {

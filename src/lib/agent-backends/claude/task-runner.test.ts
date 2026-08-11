@@ -924,6 +924,7 @@ describe("ClaudeTaskRunner", () => {
     const SCRATCH = "/private/tmp/cc-validator-lanes/exec/ctx/reviewer";
     const LANE_TMP = `${SCRATCH}/tmp`;
     const WORKTREE = "/test/workspace";
+    const SERVER_URL = "https://cc.tailnet.example:8443";
     const POLICY = {
       mode: "allowlist" as const,
       allowWrite: [SCRATCH, LANE_TMP],
@@ -934,6 +935,12 @@ describe("ClaudeTaskRunner", () => {
       mockQuery.mockReturnValue(
         makeStream([successResultMessage()]) as ReturnType<typeof query>,
       );
+      runner = new ClaudeTaskRunner({
+        runQuery: (args) => query(args),
+        getServerUrl: () => SERVER_URL,
+        getApiToken: () => null,
+        getConfigDir: () => "/cc/config",
+      });
     });
 
     function deliveredOptions() {
@@ -951,6 +958,10 @@ describe("ClaudeTaskRunner", () => {
           allowWrite: [SCRATCH, LANE_TMP],
           denyWrite: [WORKTREE],
         },
+      });
+      expect(deliveredOptions()?.sandbox?.network).toEqual({
+        allowedDomains: ["cc.tailnet.example"],
+        strictAllowlist: true,
       });
     });
 
@@ -999,6 +1010,70 @@ describe("ClaudeTaskRunner", () => {
       expect(deliveredOptions()?.cwd).toBe(WORKTREE);
     });
 
+    it("uses the policy working root when the candidate cwd is not wholly denied", async () => {
+      const implementerScratch =
+        "/private/tmp/cc-implementer-contexts/exec/ctx";
+      const ownedPath = `${WORKTREE}/src/owned`;
+
+      await runner.run(
+        makeRequest({
+          resumeRef: { backend: "claude", ref: "session-confined" },
+          fsWritePolicy: {
+            mode: "allowlist",
+            allowWrite: [
+              implementerScratch,
+              ownedPath,
+              `${implementerScratch}/tmp`,
+            ],
+            denyWrite: [`${WORKTREE}/.git`],
+          },
+        }),
+      );
+
+      // A partial-worktree implementer cannot run from the worktree: Claude's
+      // sandbox makes cwd writable by default, bypassing the path allowlist.
+      // The same cwd also keeps its persisted session discoverable on a
+      // follow-up structured-output turn.
+      expect(deliveredOptions()?.cwd).toBe(implementerScratch);
+      expect(deliveredOptions()?.resume).toBe("session-confined");
+      expect(deliveredOptions()?.persistSession).toBe(true);
+      expect(deliveredOptions()?.env).toMatchObject({
+        CLAUDE_CODE_TMPDIR: `${implementerScratch}/tmp`,
+        TMPDIR: `${implementerScratch}/tmp`,
+      });
+    });
+
+    it("uses one server-owned URL snapshot for the sandbox and scoped child environment", async () => {
+      const getServerUrl = vi
+        .fn<() => string | null>()
+        .mockReturnValueOnce(SERVER_URL)
+        .mockReturnValue("https://changed.example:9443");
+      runner = new ClaudeTaskRunner({
+        runQuery: (args) => query(args),
+        getServerUrl,
+        getApiToken: () => "instance-token",
+        getConfigDir: () => "/cc/config",
+      });
+
+      await runner.run(
+        makeRequest({
+          fsWritePolicy: POLICY,
+          ccSessionScope: {
+            project: "command-center",
+            session: "csm/collab-session",
+            conversationId: "conv-originating",
+          },
+        }),
+      );
+
+      expect(getServerUrl).toHaveBeenCalledTimes(1);
+      expect(deliveredOptions()?.env?.["CC_SERVER_URL"]).toBe(SERVER_URL);
+      expect(deliveredOptions()?.sandbox?.network).toEqual({
+        allowedDomains: ["cc.tailnet.example"],
+        strictAllowlist: true,
+      });
+    });
+
     it("leaves an unrestricted run exactly as it was", async () => {
       await runner.run(makeRequest());
 
@@ -1012,6 +1087,23 @@ describe("ClaudeTaskRunner", () => {
     });
 
     describe("fail-closed establishment", () => {
+      it("refuses to start a query when the trusted server URL is unavailable", async () => {
+        const runnerWithoutServer = new ClaudeTaskRunner({
+          runQuery: (args) => query(args),
+          getServerUrl: () => null,
+          getApiToken: () => null,
+          getConfigDir: () => "/cc/config",
+        });
+
+        const result = await runnerWithoutServer.run(
+          makeRequest({ fsWritePolicy: POLICY }),
+        );
+
+        expect(result.error).toMatch(/write envelope/i);
+        expect(result.failure).not.toBeNull();
+        expect(mockQuery).not.toHaveBeenCalled();
+      });
+
       it("refuses to start a query when the policy cannot be translated", async () => {
         const result = await runner.run(
           makeRequest({ fsWritePolicy: { ...POLICY, allowWrite: [] } }),

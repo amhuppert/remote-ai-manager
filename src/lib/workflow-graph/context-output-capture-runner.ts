@@ -12,6 +12,7 @@
  */
 
 import { createLogger } from "@/lib/logging";
+import { getErrorMessage } from "@/lib/shared/errors";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { GraphWorkflowContextOutputCaptureInput } from "@/lib/workflow-graph/iteration-orchestrator";
 import {
@@ -20,6 +21,10 @@ import {
   type GraphWorkflowContextOutputCaptureOutcome,
 } from "@/lib/workflow-graph/context-output-capture";
 import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
+import {
+  composeImplementerLaneWriteEnvelope,
+  type ImplementerLaneWriteEnvelope,
+} from "@/lib/workflow-graph/implementer-lane-write-envelope";
 import {
   executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun,
   type ExecuteWorkflowTaskRunInput,
@@ -41,6 +46,11 @@ interface ExecuteWorkflowTaskRunFn {
 
 export interface GraphWorkflowOutputCaptureRunnerDeps {
   executeWorkflowTaskRun?: ExecuteWorkflowTaskRunFn;
+  composeWriteEnvelope?: typeof composeImplementerLaneWriteEnvelope;
+  resolveWorktreePath?(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<string>;
   /** Per-turn wall-clock bound, resolved from the same backend defaults the
    *  validator turn uses. Omitted leaves the actor's own default in force.
    *  Typed as `AgentBackendId` — the resolved context already carries one, so
@@ -53,6 +63,8 @@ export function createGraphWorkflowOutputCaptureRunner(
 ) {
   const executeWorkflowTaskRun =
     deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
+  const composeWriteEnvelope =
+    deps.composeWriteEnvelope ?? composeImplementerLaneWriteEnvelope;
 
   async function captureContextOutput(
     input: GraphWorkflowContextOutputCaptureInput,
@@ -76,6 +88,52 @@ export function createGraphWorkflowOutputCaptureRunner(
     const timeoutMs = await deps.resolveTimeoutMs?.(
       context.implementer.agent.backend,
     );
+    let writeEnvelope: ImplementerLaneWriteEnvelope | null = null;
+    if (context.placement.mode !== "full") {
+      const worktreePath =
+        input.executionTarget?.worktreePath ??
+        (context.placement.lane === "session" &&
+        context.placement.mode === "readOnly"
+          ? await deps.resolveWorktreePath?.(
+              input.projectPath,
+              input.sessionName,
+            )
+          : undefined);
+      if (worktreePath === undefined) {
+        throw new Error(
+          `Cannot establish the output-capture write envelope for context "${input.contextId}": no execution target or session worktree was available`,
+        );
+      }
+      try {
+        writeEnvelope = composeWriteEnvelope({
+          executionId: input.execution.id,
+          contextId: input.contextId,
+          worktreePath,
+          ownedPaths:
+            context.placement.mode === "owned"
+              ? context.placement.ownedPaths
+              : [],
+          payloadLocation:
+            context.placement.mode === "readOnly" ? "scratch" : "worktree",
+        });
+      } catch (error) {
+        const message = `Cannot establish the output-capture write envelope for context "${input.contextId}": ${getErrorMessage(error)}`;
+        logger.error("graph-workflow.output_capture.write_envelope_failed", {
+          executionId: input.execution.id,
+          contextId: input.contextId,
+          conversationId: input.conversationId,
+          backend: context.implementer.agent.backend,
+          worktreePath,
+          error: getErrorMessage(error),
+        });
+        throw new AgentTurnFailedError(message, {
+          contextId: input.contextId,
+          engine: context.implementer.agent.backend,
+          cause: "unknown",
+          originalMessage: message,
+        });
+      }
+    }
 
     logger.info("graph-workflow.output_capture.turn_started", {
       executionId: input.execution.id,
@@ -83,6 +141,7 @@ export function createGraphWorkflowOutputCaptureRunner(
       conversationId: input.conversationId,
       backend: context.implementer.agent.backend,
       retry: input.previousRejection !== undefined,
+      fsWriteRestricted: writeEnvelope !== null,
     });
 
     const result = await executeWorkflowTaskRun({
@@ -97,6 +156,9 @@ export function createGraphWorkflowOutputCaptureRunner(
       outputFormat: { type: "json_schema", schema: input.outputSchema },
       modelId: context.implementer.agent.model,
       effort: context.implementer.agent.reasoningEffort,
+      ...(writeEnvelope !== null
+        ? { fsWritePolicy: writeEnvelope.policy }
+        : {}),
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       ...(input.executionTarget !== undefined
         ? { worktreePath: input.executionTarget.worktreePath }

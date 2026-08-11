@@ -353,6 +353,74 @@ function createEagerJoinFixture(options: { sourceBCompleted?: boolean } = {}): {
   return { definition, initialExecution };
 }
 
+function createApprovalJoinCapacityFixture(): GraphWorkflowExecution {
+  const definition = createTestDefinition(
+    ["source-a", "source-b", "unrelated", "downstream", "integration"],
+    [
+      ["source-a", "downstream"],
+      ["source-b", "downstream"],
+      ["downstream", "integration"],
+    ],
+  );
+  const parkedState = (
+    contextId: "source-b" | "unrelated",
+    laneId: string,
+    decision: { type: "approved"; decidedAt: string } | null,
+  ) => ({
+    ...baseContextState(contextId),
+    status: "awaiting_approval" as const,
+    completedTaskCount: 1,
+    iterationCount: 1,
+    worktreePath: `/repo/.worktrees/session-1.${laneId}`,
+    branchName: `csm/session-1-${laneId}`,
+    isolation: "worktree" as const,
+    laneId,
+    pendingApproval: {
+      conversationId: `conv-${contextId}`,
+      requestedAt: "2026-03-27T11:55:00.000Z",
+      approvalScope: { kind: "whole_tree" as const },
+      decision,
+    },
+  });
+
+  return createRunningExecution(definition, {
+    contextStates: {
+      "source-a": completedWorktreeContext("source-a", "lane-a"),
+      "source-b": parkedState("source-b", "lane-b", {
+        type: "approved",
+        decidedAt: "2026-03-27T11:58:00.000Z",
+      }),
+      unrelated: parkedState("unrelated", "lane-unrelated", null),
+      downstream: baseContextState("downstream"),
+      integration: baseContextState("integration"),
+    },
+    taskStates: {
+      "task-source-a": {
+        ...baseTaskState("task-source-a", "source-a"),
+        status: "completed",
+        completedAt: "2026-03-27T11:45:00.000Z",
+      },
+      "task-source-b": {
+        ...baseTaskState("task-source-b", "source-b"),
+        status: "completed",
+        completedAt: "2026-03-27T11:55:00.000Z",
+      },
+      "task-unrelated": {
+        ...baseTaskState("task-unrelated", "unrelated"),
+        status: "completed",
+        completedAt: "2026-03-27T11:55:00.000Z",
+      },
+      "task-downstream": baseTaskState("task-downstream", "downstream"),
+      "task-integration": baseTaskState("task-integration", "integration"),
+    },
+    executionLanes: {
+      "lane-a": worktreeLane("lane-a", ["source-a"]),
+      "lane-b": worktreeLane("lane-b", []),
+      "lane-unrelated": worktreeLane("lane-unrelated", []),
+    },
+  });
+}
+
 function scheduleDisjointUpstreams(
   execution: GraphWorkflowExecution,
 ): ScheduleEligibleContextsResult {
@@ -565,31 +633,34 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
     current = e;
   };
 
-  const defaultScheduleEligibleContexts =
-    async (): Promise<ScheduleEligibleContextsResult> => {
-      const e = getCurrent();
-      if (e.status !== "running") {
-        return { execution: e, scheduled: { kind: "none" } };
-      }
-      const ctx = e.contextStates["ctx-1"];
-      if (!ctx) {
-        return { execution: e, scheduled: { kind: "none" } };
-      }
-      if (
-        ctx.status === "completed" ||
-        ctx.completedTaskCount >= ctx.totalTaskCount
-      ) {
-        return { execution: e, scheduled: { kind: "none" } };
-      }
-      const next = structuredClone(e);
-      next.activeContextIds = ["ctx-1"];
-      next.contextStates["ctx-1"]!.status = "running";
-      setCurrent(next);
-      return {
-        execution: next,
-        scheduled: { kind: "solo", contextId: "ctx-1" },
-      };
+  const defaultScheduleEligibleContexts = async ({
+    excludedContextIds,
+  }: Parameters<
+    GraphWorkflowExecutionLoopWorkflowManager["scheduleEligibleContexts"]
+  >[0]): Promise<ScheduleEligibleContextsResult> => {
+    const e = getCurrent();
+    if (e.status !== "running") {
+      return { execution: e, scheduled: { kind: "none" } };
+    }
+    const ctx = e.contextStates["ctx-1"];
+    if (!ctx || excludedContextIds.includes("ctx-1")) {
+      return { execution: e, scheduled: { kind: "none" } };
+    }
+    if (
+      ctx.status === "completed" ||
+      ctx.completedTaskCount >= ctx.totalTaskCount
+    ) {
+      return { execution: e, scheduled: { kind: "none" } };
+    }
+    const next = structuredClone(e);
+    next.activeContextIds = ["ctx-1"];
+    next.contextStates["ctx-1"]!.status = "running";
+    setCurrent(next);
+    return {
+      execution: next,
+      scheduled: { kind: "solo", contextId: "ctx-1" },
     };
+  };
 
   const scheduleEligibleContextsSpy = vi.fn(
     input.scheduleEligibleContexts ?? defaultScheduleEligibleContexts,
@@ -658,7 +729,7 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
 
   const mutateActive: GraphWorkflowExecutionLoopWorkflowManager["mutateActive"] =
     async (_p, _s, fn) => {
-      const result = await fn(getCurrent());
+      const result = fn(getCurrent());
       if ("execution" in result && "events" in result) {
         setCurrent(result.execution);
         appendedEvents.push(...result.events);
@@ -921,6 +992,202 @@ describe("execution loop", () => {
     expect(
       harness.scheduleEligibleContextsSpy.mock.calls[0]?.[0]?.capacityRemaining,
     ).toBe(3);
+  });
+
+  it("observes held-capacity completion that lands while the scheduler is awaiting", async () => {
+    const baseDefinition = createTestDefinition(["fast", "parked"], []);
+    const definition: WorkflowSemanticDefinition = {
+      ...baseDefinition,
+      executionContexts: baseDefinition.executionContexts.map((context) => ({
+        ...context,
+        placement: { ...context.placement, mode: "readOnly" as const },
+      })),
+    };
+    const initial = createRunningExecution(definition, {
+      contextStates: {
+        fast: baseContextState("fast"),
+        parked: baseContextState("parked"),
+      },
+      taskStates: {
+        "task-fast": baseTaskState("task-fast", "fast"),
+        "task-parked": baseTaskState("task-parked", "parked"),
+      },
+    });
+    let releaseFast!: () => void;
+    const fastRelease = new Promise<void>((resolve) => {
+      releaseFast = resolve;
+    });
+    let signalFastFinished!: () => void;
+    const fastFinished = new Promise<void>((resolve) => {
+      signalFastFinished = resolve;
+    });
+    let releaseParked!: () => void;
+    const parkedRelease = new Promise<void>((resolve) => {
+      releaseParked = resolve;
+    });
+    let signalSecondScheduler!: () => void;
+    const secondScheduler = new Promise<void>((resolve) => {
+      signalSecondScheduler = resolve;
+    });
+    let releaseSecondScheduler!: () => void;
+    const secondSchedulerRelease = new Promise<void>((resolve) => {
+      releaseSecondScheduler = resolve;
+    });
+    let signalThirdScheduler!: () => void;
+    const thirdScheduler = new Promise<void>((resolve) => {
+      signalThirdScheduler = resolve;
+    });
+    let scheduleCallCount = 0;
+
+    const executionLogger: ExecutionLogger = {
+      executionId: initial.id,
+      logDir: "/tmp/capacity-finish-during-scheduler",
+      writeManifest() {},
+      lifecycle() {},
+      iteration(contextId, event) {
+        if (
+          contextId === "fast" &&
+          event === "read_only.completed_without_commit"
+        ) {
+          signalFastFinished();
+        }
+      },
+      task() {},
+      validation() {},
+      writePrompt() {},
+      writeValidatorResponse() {},
+      writeValidatorTranscript() {},
+      decision() {},
+    };
+    registerExecutionLogger(executionLogger);
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      getMaxConcurrentQueries: async () => 2,
+      scheduleEligibleContexts: async () => {
+        scheduleCallCount++;
+        if (scheduleCallCount === 1) {
+          const next = structuredClone(harness.getCurrent());
+          next.activeContextIds = ["fast", "parked"];
+          for (const contextId of next.activeContextIds) {
+            next.contextStates[contextId]!.status = "running";
+          }
+          harness.setCurrent(next);
+          return {
+            execution: next,
+            scheduled: {
+              kind: "parallel",
+              batchId: "batch-capacity-race",
+              contextIds: ["fast", "parked"],
+            },
+          };
+        }
+        if (scheduleCallCount === 2) {
+          signalSecondScheduler();
+          await secondSchedulerRelease;
+          return {
+            execution: harness.getCurrent(),
+            scheduled: { kind: "none" },
+          };
+        }
+
+        signalThirdScheduler();
+        const next = structuredClone(harness.getCurrent());
+        next.status = "aborted";
+        harness.setCurrent(next);
+        return {
+          execution: next,
+          scheduled: { kind: "none" },
+        };
+      },
+      waitForApprovalProgress: async ({ contextId }) => {
+        expect(contextId).toBe("parked");
+        await parkedRelease;
+      },
+      executionTargetResolver: {
+        resolve() {
+          return {
+            worktreePath: "/repo/.worktrees/session-1",
+            branchName: "csm/session-1",
+            isolation: "session",
+            laneId: null,
+          };
+        },
+      },
+      iterationOrchestrator: {
+        async runIteration({
+          contextId,
+        }): Promise<GraphWorkflowIterationResult> {
+          if (contextId === "fast") {
+            await fastRelease;
+            const next = completeTestContext(harness.getCurrent(), contextId);
+            harness.setCurrent(next);
+            return {
+              conversationId: "conv-fast",
+              execution: next,
+              shouldContinueInContext: false,
+            };
+          }
+
+          const next = structuredClone(harness.getCurrent());
+          const state = next.contextStates.parked!;
+          state.status = "awaiting_approval";
+          state.completedTaskCount = 1;
+          state.iterationCount = 1;
+          state.pendingApproval = {
+            conversationId: "conv-parked",
+            requestedAt: "2026-03-27T12:00:00.000Z",
+            approvalScope: { kind: "whole_tree" },
+            decision: null,
+          };
+          next.taskStates["task-parked"]!.status = "completed";
+          next.activeContextIds = next.activeContextIds.filter(
+            (activeContextId) => activeContextId !== "parked",
+          );
+          harness.setCurrent(next);
+          return {
+            conversationId: "conv-parked",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+
+    try {
+      const runPromise = createGraphWorkflowExecutionLoop(harness.deps).run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: initial,
+      });
+
+      await secondScheduler;
+      releaseFast();
+      await fastFinished;
+      await Promise.resolve();
+      await Promise.resolve();
+      releaseSecondScheduler();
+      const observedCompletion = await Promise.race([
+        thirdScheduler.then(() => true),
+        new Promise<false>((resolve) => {
+          setTimeout(() => resolve(false), 25);
+        }),
+      ]);
+      if (!observedCompletion) {
+        const next = structuredClone(harness.getCurrent());
+        next.status = "aborted";
+        harness.setCurrent(next);
+      }
+      releaseParked();
+      const result = await runPromise;
+
+      expect(scheduleCallCount).toBeGreaterThanOrEqual(3);
+      expect(observedCompletion).toBe(true);
+      expect(result.status).toBe("aborted");
+    } finally {
+      unregisterExecutionLogger(initial.id);
+    }
   });
 
   it("halts instead of completing when a context is still incomplete and nothing is schedulable", async () => {
@@ -4498,7 +4765,7 @@ describe("execution loop", () => {
     expect(result.contextStates.downstream?.status).toBe("pending");
   });
 
-  it("does not start an eager join when query capacity is exhausted", async () => {
+  it("does not start an eager join while resumed approval work holds query capacity", async () => {
     const definition = createTestDefinition(
       ["source-a", "source-b", "unrelated", "downstream", "integration"],
       [
@@ -4577,16 +4844,23 @@ describe("execution loop", () => {
       },
     });
 
-    let signalCapacityExhausted!: () => void;
-    const capacityExhausted = new Promise<void>((resolve) => {
-      signalCapacityExhausted = resolve;
+    let signalSourceBCommitStarted!: () => void;
+    const sourceBCommitStarted = new Promise<void>((resolve) => {
+      signalSourceBCommitStarted = resolve;
+    });
+    let releaseSourceBCommit!: () => void;
+    const sourceBCommitRelease = new Promise<void>((resolve) => {
+      releaseSourceBCommit = resolve;
     });
     let releaseUnrelated!: () => void;
     const unrelatedRelease = new Promise<void>((resolve) => {
       releaseUnrelated = resolve;
     });
+    let signalUnrelatedDecisionStored!: () => void;
+    const unrelatedDecisionStored = new Promise<void>((resolve) => {
+      signalUnrelatedDecisionStored = resolve;
+    });
     const callOrder: string[] = [];
-    const observedCapacities: number[] = [];
     const joinRunSpy = vi.fn(
       async (
         runInput: Parameters<JoinRunner["run"]>[0],
@@ -4610,12 +4884,7 @@ describe("execution loop", () => {
       initialExecution: initial,
       getMaxConcurrentQueries: async () => 1,
       joinRunner: { run: joinRunSpy },
-      scheduleEligibleContexts: async ({ capacityRemaining }) => {
-        observedCapacities.push(capacityRemaining ?? -1);
-        if (capacityRemaining === 0) {
-          callOrder.push("capacity-exhausted");
-          signalCapacityExhausted();
-        }
+      scheduleEligibleContexts: async () => {
         return {
           execution: harness.getCurrent(),
           scheduled: { kind: "none" },
@@ -4630,6 +4899,20 @@ describe("execution loop", () => {
           decidedAt: "2026-03-27T12:01:00.000Z",
         };
         harness.setCurrent(next);
+        callOrder.push("unrelated-decision-stored");
+        signalUnrelatedDecisionStored();
+      },
+      laneCommitter: {
+        async commit({ contextId }) {
+          if (contextId === "source-b") {
+            callOrder.push("source-b-commit-started");
+            signalSourceBCommitStarted();
+            await sourceBCommitRelease;
+            callOrder.push("source-b-commit-finished");
+          }
+          return { status: "skipped" };
+        },
+        resolveHead: async () => null,
       },
       isConversationBusy: () => false,
       acquireConversationLock: () => () => {},
@@ -4660,16 +4943,142 @@ describe("execution loop", () => {
       execution: initial,
     });
 
-    await capacityExhausted;
+    await sourceBCommitStarted;
     expect(joinRunSpy).not.toHaveBeenCalled();
-    expect(observedCapacities).toEqual([1, 0]);
 
     releaseUnrelated();
+    await unrelatedDecisionStored;
+    expect(joinRunSpy).not.toHaveBeenCalled();
+
+    releaseSourceBCommit();
     const result = await runPromise;
 
-    expect(callOrder).toEqual(["capacity-exhausted", "join"]);
+    expect(callOrder).toEqual([
+      "source-b-commit-started",
+      "unrelated-decision-stored",
+      "source-b-commit-finished",
+      "join",
+    ]);
     expect(joinRunSpy).toHaveBeenCalledTimes(1);
     expect(result.status).toBe("aborted");
+  });
+
+  it("holds query capacity for an eager join before resuming parked approval work", async () => {
+    vi.useFakeTimers();
+    try {
+      const initial = createApprovalJoinCapacityFixture();
+      const callOrder: string[] = [];
+      let releaseUnrelated!: () => void;
+      const unrelatedRelease = new Promise<void>((resolve) => {
+        releaseUnrelated = resolve;
+      });
+      let signalUnrelatedDecisionStored!: () => void;
+      const unrelatedDecisionStored = new Promise<void>((resolve) => {
+        signalUnrelatedDecisionStored = resolve;
+      });
+      let signalJoinStarted!: () => void;
+      const joinStarted = new Promise<void>((resolve) => {
+        signalJoinStarted = resolve;
+      });
+      const joinRunSpy = vi.fn(
+        async (
+          runInput: Parameters<JoinRunner["run"]>[0],
+        ): ReturnType<JoinRunner["run"]> => {
+          callOrder.push("join-started");
+          signalJoinStarted();
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 1);
+          });
+          callOrder.push("join-finished");
+          await runInput.mutateActive((execution) =>
+            applyJoinProgress(
+              execution,
+              runInput.joinId,
+              "2026-03-27T12:00:00.000Z",
+              { status: "succeeded" },
+            ),
+          );
+          return { status: "succeeded" };
+        },
+      );
+
+      const harness = buildHarness({
+        initialExecution: initial,
+        getMaxConcurrentQueries: async () => 1,
+        joinRunner: { run: joinRunSpy },
+        scheduleEligibleContexts: async () => ({
+          execution: harness.getCurrent(),
+          scheduled: { kind: "none" },
+        }),
+        waitForApprovalProgress: async ({ contextId }) => {
+          expect(contextId).toBe("unrelated");
+          await unrelatedRelease;
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates.unrelated!.pendingApproval!.decision = {
+            type: "approved",
+            decidedAt: "2026-03-27T12:01:00.000Z",
+          };
+          harness.setCurrent(next);
+          callOrder.push("unrelated-decision-stored");
+          signalUnrelatedDecisionStored();
+        },
+        laneCommitter: {
+          async commit({ contextId }) {
+            callOrder.push(`${contextId}-commit`);
+            if (contextId === "unrelated") {
+              const next = structuredClone(harness.getCurrent());
+              next.status = "aborted";
+              harness.setCurrent(next);
+            }
+            return { status: "skipped" };
+          },
+          resolveHead: async () => null,
+        },
+        isConversationBusy: () => false,
+        acquireConversationLock: () => () => {},
+        executionTargetResolver: {
+          resolve({ execution, contextId }) {
+            const state = execution.contextStates[contextId]!;
+            return {
+              worktreePath: state.worktreePath!,
+              branchName: state.branchName!,
+              isolation: "worktree",
+              laneId: state.laneId,
+            };
+          },
+        },
+        iterationOrchestrator: {
+          async runIteration(): Promise<GraphWorkflowIterationResult> {
+            throw new Error(
+              "persisted approval contexts must not seed an iteration",
+            );
+          },
+        },
+      });
+
+      const runPromise = createGraphWorkflowExecutionLoop(harness.deps).run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: initial,
+      });
+
+      await joinStarted;
+      releaseUnrelated();
+      await unrelatedDecisionStored;
+      await vi.advanceTimersByTimeAsync(1);
+      const result = await runPromise;
+
+      expect(callOrder.indexOf("join-started")).toBeLessThan(
+        callOrder.indexOf("unrelated-decision-stored"),
+      );
+      expect(callOrder.indexOf("join-finished")).toBeLessThan(
+        callOrder.indexOf("unrelated-commit"),
+      );
+      expect(result.status).toBe("aborted");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("converges a terminal fan-in through a context merge and publishes only after its work completes (ticket #28)", async () => {

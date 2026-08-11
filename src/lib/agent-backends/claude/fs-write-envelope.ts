@@ -156,11 +156,54 @@ function tmpDirOf(policy: FsWritePolicy): string | null {
   return policy.allowWrite[policy.allowWrite.length - 1] ?? null;
 }
 
-function sandboxFor(policy: FsWritePolicy): SandboxSettings {
+function trustedServerHost(
+  trustedServerUrl: string | null,
+):
+  | { kind: "trusted"; host: string }
+  | { kind: "unestablishable"; reason: string } {
+  if (trustedServerUrl === null) {
+    return {
+      kind: "unestablishable",
+      reason: "the trusted Command Center server URL is unavailable",
+    };
+  }
+
+  try {
+    const parsed = new URL(trustedServerUrl);
+    if (
+      (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+      parsed.hostname === "" ||
+      parsed.hostname.includes("*")
+    ) {
+      return {
+        kind: "unestablishable",
+        reason: "the trusted Command Center server URL is not HTTP or HTTPS",
+      };
+    }
+    return {
+      kind: "trusted",
+      host: parsed.hostname.replace(/^\[|\]$/g, ""),
+    };
+  } catch {
+    return {
+      kind: "unestablishable",
+      reason: "the trusted Command Center server URL is invalid",
+    };
+  }
+}
+
+function sandboxFor(
+  policy: FsWritePolicy,
+  trustedHost: string,
+): SandboxSettings {
   return {
     enabled: true,
     failIfUnavailable: true,
     allowUnsandboxedCommands: false,
+    network: {
+      allowedDomains: [trustedHost],
+      strictAllowlist: true,
+    },
     filesystem: {
       allowWrite: [...policy.allowWrite],
       denyWrite: [...policy.denyWrite],
@@ -177,9 +220,12 @@ function mutationRulesFor(paths: readonly string[]): string[] {
 
 export function buildClaudeFsWriteEnvelope(
   policy: FsWritePolicy,
+  trustedServerUrl: string | null,
 ): ClaudeFsWriteEnvelopeResult {
   const reason = unestablishableReason(policy);
   if (reason !== null) return { kind: "unestablishable", reason };
+  const trustedServer = trustedServerHost(trustedServerUrl);
+  if (trustedServer.kind === "unestablishable") return trustedServer;
   const workingDirectory = workingRootOf(policy);
   const tmpDir = tmpDirOf(policy);
   if (workingDirectory === null || tmpDir === null) {
@@ -192,7 +238,7 @@ export function buildClaudeFsWriteEnvelope(
   return {
     kind: "envelope",
     envelope: {
-      sandbox: sandboxFor(policy),
+      sandbox: sandboxFor(policy, trustedServer.host),
       permissions: {
         allow: [
           ...REVIEWER_ALLOWED_TOOLS,
@@ -230,9 +276,13 @@ export function buildClaudeConversationFsWriteEnvelope(input: {
   policy: FsWritePolicy;
   /** MCP server keys bound to this conversation, pre-approved wholesale. */
   mcpServerKeys: readonly string[];
+  /** Server-owned URL whose exact host is the only network destination. */
+  trustedServerUrl: string | null;
 }): ClaudeFsWriteEnvelopeResult {
   const reason = unestablishableReason(input.policy);
   if (reason !== null) return { kind: "unestablishable", reason };
+  const trustedServer = trustedServerHost(input.trustedServerUrl);
+  if (trustedServer.kind === "unestablishable") return trustedServer;
   const workingDirectory = workingRootOf(input.policy);
   const tmpDir = tmpDirOf(input.policy);
   if (workingDirectory === null || tmpDir === null) {
@@ -245,7 +295,7 @@ export function buildClaudeConversationFsWriteEnvelope(input: {
   return {
     kind: "envelope",
     envelope: {
-      sandbox: sandboxFor(input.policy),
+      sandbox: sandboxFor(input.policy, trustedServer.host),
       permissions: {
         allow: [
           ...IMPLEMENTER_ALLOWED_TOOLS,

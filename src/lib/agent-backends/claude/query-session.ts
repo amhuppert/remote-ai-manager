@@ -267,6 +267,11 @@ export interface QuerySessionOptions {
    * the caller gets a failed turn instead of an unconfined session.
    */
   fsWritePolicy?: FsWritePolicy;
+  /**
+   * Server-owned URL paired with `fsWritePolicy`. Its exact hostname becomes
+   * the sandbox's only allowed network destination; callers cannot supply it.
+   */
+  trustedServerUrl?: string | null;
   /** MCP server keys pre-approved wholesale when a policy is in force. */
   mcpServerKeys?: readonly string[];
   /** Idle TTL in ms — session is closed after this much inactivity (default: 5 min) */
@@ -468,6 +473,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     const result = buildClaudeConversationFsWriteEnvelope({
       policy: options.fsWritePolicy,
       mcpServerKeys: options.mcpServerKeys ?? Object.keys(options.mcpServers),
+      trustedServerUrl: options.trustedServerUrl ?? null,
     });
     if (result.kind === "unestablishable") {
       throw new Error(

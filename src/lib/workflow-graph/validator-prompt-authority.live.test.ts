@@ -45,7 +45,7 @@
  */
 import { WHOLE_TREE_CANDIDATE_SCOPE } from "@/lib/git/diff";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   mkdirSync,
   mkdtempSync,
@@ -72,6 +72,10 @@ import {
   setActorDeps,
   _resetActorDepsForTesting,
 } from "@/lib/workflows/conversation/actor-implementations";
+import {
+  _resetServerBaseUrlForTesting,
+  recordServerBaseUrl,
+} from "@/lib/agent-gateway/server-url";
 import { createActorImplementationDepsFixture } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 import {
   createValidatorRunner,
@@ -338,8 +342,15 @@ async function runAdversarialValidator(
   });
 }
 
+beforeEach(() => {
+  recordServerBaseUrl({
+    CC_SERVER_URL: process.env.CC_SERVER_URL ?? "http://127.0.0.1:3000",
+  });
+});
+
 afterEach(() => {
   _resetActorDepsForTesting();
+  _resetServerBaseUrlForTesting();
 });
 
 describe.skipIf(!LIVE).each(["claude", "codex"] as const)(

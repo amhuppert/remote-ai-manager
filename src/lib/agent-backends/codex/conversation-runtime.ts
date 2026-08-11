@@ -62,7 +62,7 @@ import type { ConversationTarget } from "@/lib/conversations/conversation-target
 import { getCachedInstanceToken } from "@/lib/agent-gateway/token";
 import { getServerBaseUrl } from "@/lib/agent-gateway/server-url";
 import { getConfigDirPath, readConfig } from "@/lib/config/loader";
-import { toStringEnv } from "./shared";
+import { projectSchemaForCodex, toStringEnv } from "./shared";
 import { translatePortableMcpToCodex } from "./mcp-translation";
 import {
   buildCodexMcpServersConfig,
@@ -321,7 +321,7 @@ export class CodexConversationRuntime
       const streamed = await thread.runStreamed(promptInput, {
         signal: input.signal,
         ...(this.outputFormat
-          ? { outputSchema: this.outputFormat.schema }
+          ? { outputSchema: projectSchemaForCodex(this.outputFormat.schema) }
           : {}),
       });
 

@@ -25,13 +25,20 @@
 import type {
   ContextPlacement,
   GraphWorkflowContextEdge,
+  ResolvedWorkflowSemanticDefinition,
   WorkflowGraphValidationError,
+  WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 import {
   laneIdViolation,
   SESSION_LANE_ID,
   SESSION_LANE_NAME,
 } from "./lane-identity";
+import {
+  LOOP_PASS_ENTRY_EDGE_SUFFIX,
+  loopInstanceId,
+  parseLoopInstanceId,
+} from "./loop-resolver";
 
 /**
  * The slice of a context these checks read, structural so BOTH tiers satisfy it:
@@ -53,6 +60,10 @@ interface PlacementValidatableDefinition {
   readonly executionContexts: readonly PlacementValidatableContext[];
   readonly edges: readonly GraphWorkflowContextEdge[];
 }
+
+type LaneDependencyValidatableDefinition =
+  | WorkflowSemanticDefinition
+  | ResolvedWorkflowSemanticDefinition;
 
 /** A context that declares a placement — the only kind these checks judge. */
 interface PlacedContext extends PlacementValidatableContext {
@@ -256,6 +267,143 @@ function validateLaneConcurrency(
     });
   }
   return errors;
+}
+
+/**
+ * A context DAG may become cyclic after contexts are contracted by authored
+ * lane. Such a cycle cannot execute safely: consuming one lane freezes its
+ * membership, while the cycle promises a later context will return to it.
+ * The session sentinel is not a group lane and never participates in joins.
+ * A resolved loop's template is included because future passes clone it, but
+ * the engine-owned edge between passes is not: open-loop lane handling keeps
+ * those lanes alive across sequential passes, so that recurrence is safe.
+ */
+export function validateLaneDependencyAcyclicity(
+  definition: LaneDependencyValidatableDefinition,
+): WorkflowGraphValidationError[] {
+  const contexts: PlacementValidatableContext[] = [
+    ...definition.executionContexts,
+  ];
+  const edges: Array<{
+    edge: GraphWorkflowContextEdge;
+    field: string;
+  }> = definition.edges.map((edge, index) => ({
+    edge,
+    field: `edges.${index}`,
+  }));
+
+  for (const [groupIndex, group] of (definition.loopGroups ?? []).entries()) {
+    if (!("template" in group)) continue;
+    contexts.push(...group.template.contexts);
+    edges.push(
+      ...group.template.edges.map((edge, edgeIndex) => ({
+        edge,
+        field: `loopGroups.${groupIndex}.template.edges.${edgeIndex}`,
+      })),
+    );
+  }
+
+  const laneByContextId = new Map(
+    contexts.flatMap((context) =>
+      context.placement === undefined
+        ? []
+        : ([[context.id, context.placement.lane]] as const),
+    ),
+  );
+  const targetsBySource = new Map<string, Set<string>>();
+  const witnessByPair = new Map<
+    string,
+    { edge: GraphWorkflowContextEdge; field: string }
+  >();
+
+  for (const witness of edges) {
+    const generatedLoopEntry = (definition.loopGroups ?? []).some((group) => {
+      if (!("template" in group)) return false;
+      const target = parseLoopInstanceId(witness.edge.targetContextId, [
+        group.id,
+      ]);
+      if (target === null || target.pass <= 1) return false;
+      return (
+        target.authoredId === group.entryContextId &&
+        witness.edge.sourceContextId ===
+          loopInstanceId(group.id, target.pass - 1, group.exitContextId) &&
+        witness.edge.id ===
+          loopInstanceId(group.id, target.pass, LOOP_PASS_ENTRY_EDGE_SUFFIX)
+      );
+    });
+    if (generatedLoopEntry) continue;
+
+    const sourceLane = laneByContextId.get(witness.edge.sourceContextId);
+    const targetLane = laneByContextId.get(witness.edge.targetContextId);
+    if (sourceLane === undefined || targetLane === undefined) continue;
+    if (sourceLane === targetLane) continue;
+    if (sourceLane === SESSION_LANE_NAME || targetLane === SESSION_LANE_NAME) {
+      continue;
+    }
+
+    const targets = targetsBySource.get(sourceLane) ?? new Set<string>();
+    targets.add(targetLane);
+    targetsBySource.set(sourceLane, targets);
+    witnessByPair.set(`${sourceLane}\0${targetLane}`, witness);
+  }
+
+  const state = new Map<string, "visiting" | "visited">();
+  const stack: string[] = [];
+  type CycleFinding = {
+    cycle: string[];
+    closingWitness:
+      | { edge: GraphWorkflowContextEdge; field: string }
+      | undefined;
+  };
+
+  const visit = (lane: string): CycleFinding | null => {
+    state.set(lane, "visiting");
+    stack.push(lane);
+    const targets = [...(targetsBySource.get(lane) ?? [])].sort();
+    for (const target of targets) {
+      if (state.get(target) === "visited") continue;
+      if (state.get(target) === "visiting") {
+        const start = stack.indexOf(target);
+        return {
+          cycle: [...stack.slice(start), target],
+          closingWitness: witnessByPair.get(`${lane}\0${target}`),
+        };
+      }
+      const nested = visit(target);
+      if (nested !== null) return nested;
+    }
+    stack.pop();
+    state.set(lane, "visited");
+    return null;
+  };
+
+  const lanes = new Set<string>();
+  for (const [source, targets] of targetsBySource) {
+    lanes.add(source);
+    for (const target of targets) lanes.add(target);
+  }
+  let finding: CycleFinding | null = null;
+  for (const lane of [...lanes].sort()) {
+    if (state.has(lane)) continue;
+    finding = visit(lane);
+    if (finding !== null) break;
+  }
+
+  if (finding === null) return [];
+  return [
+    {
+      code: "placement-lane-dependency-cycle",
+      message: `Authored lane dependencies form a cycle (${finding.cycle.join(
+        " → ",
+      )}); a lane consumed by a join cannot accept a later member, so place the returning work on a new lane`,
+      ...(finding.closingWitness === undefined
+        ? {}
+        : {
+            edgeId: finding.closingWitness.edge.id,
+            field: finding.closingWitness.field,
+          }),
+    },
+  ];
 }
 
 /**

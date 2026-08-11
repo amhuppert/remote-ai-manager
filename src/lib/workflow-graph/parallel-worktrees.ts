@@ -24,6 +24,7 @@ import {
 import type { GraphWorkflowIgnoredBaselineEntry } from "@/lib/workflow-graph/schemas";
 import type { DirtyPath } from "@/lib/workflow-graph/errors";
 import { validateLaneId } from "@/lib/workflow-graph/lane-identity";
+import { prepareManagedSkillsCheckout as defaultPrepareManagedSkillsCheckout } from "@/lib/agent-backends/registry";
 
 type ExecFileAsync = (
   cmd: string,
@@ -124,6 +125,7 @@ export interface ParallelWorktreesDeps {
   execFileAsync?: ExecFileAsync;
   ignoredBaselineStore?: LaneIgnoredBaselineStore;
   buildChildEnv?(): NodeJS.ProcessEnv;
+  prepareManagedSkillsCheckout?(worktreePath: string): Promise<void>;
   logger?: Logger;
   fastRemoveWorktree?: typeof defaultFastRemoveWorktree;
   /**
@@ -183,6 +185,8 @@ export function createParallelWorktrees(
   const readGlobalConfig = deps.readGlobalConfig ?? defaultReadGlobalConfig;
   const execFileAsync = deps.execFileAsync ?? defaultExecFileAsync;
   const buildChildEnv = deps.buildChildEnv ?? defaultBuildChildEnv;
+  const prepareManagedSkillsCheckout =
+    deps.prepareManagedSkillsCheckout ?? defaultPrepareManagedSkillsCheckout;
   const logger = deps.logger ?? defaultLogger;
   const ignoredBaselineStore =
     deps.ignoredBaselineStore ??
@@ -324,6 +328,19 @@ export function createParallelWorktrees(
         branchName: targets.branchName,
       });
       throw err;
+    }
+
+    // The backend bridge materializes ignored checkout-local discovery state.
+    // Freeze it with the rest of provisioning so a later agent launch cannot
+    // appear to the ownership auditor as a member's undeclared write.
+    try {
+      await prepareManagedSkillsCheckout(targets.worktreePath);
+    } catch (error) {
+      logger.warn("provision_managed_skills_checkout_prepare_failed", {
+        laneId: input.laneId,
+        worktreePath: targets.worktreePath,
+        error: getErrorMessage(error),
+      });
     }
 
     // After the init script, so everything provisioning itself installed is

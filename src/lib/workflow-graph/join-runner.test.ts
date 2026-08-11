@@ -1,4 +1,10 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { defaultGitClient } from "@/lib/git/client";
+import { commitOwnedPaths } from "@/lib/git/owned-landing";
+import { resyncSharedIndexToHead } from "@/lib/git/shared-index";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionJoinState,
@@ -17,6 +23,42 @@ import type {
 import type { MergeOutput } from "@/lib/workflows/merge/types";
 
 const t0 = "2026-03-27T12:00:00.000Z";
+
+async function git(repo: string, args: string[]): Promise<string> {
+  const { stdout } = await defaultGitClient.git(args, repo);
+  return stdout.trim();
+}
+
+async function createPrivateIndexResidueRepo(
+  prefix: string,
+  branchName: string,
+  cleanupPaths: string[],
+): Promise<string> {
+  const repo = await mkdtemp(path.join(tmpdir(), prefix));
+  cleanupPaths.push(repo);
+  await git(repo, ["init", `--initial-branch=${branchName}`, "."]);
+  await git(repo, ["config", "user.email", "engine@command-center.test"]);
+  await git(repo, ["config", "user.name", "Command Center"]);
+  await writeFile(path.join(repo, "README.md"), "base\n", "utf-8");
+  await git(repo, ["add", "README.md"]);
+  await git(repo, ["commit", "-m", "base"]);
+
+  await mkdir(path.join(repo, "owned"), { recursive: true });
+  await writeFile(
+    path.join(repo, "owned", "result.txt"),
+    `${branchName}\n`,
+    "utf-8",
+  );
+  const landed = await commitOwnedPaths({
+    worktreePath: repo,
+    message: `Land ${branchName}`,
+    ownedPaths: ["owned"],
+  });
+  if (landed.status !== "committed") {
+    throw new Error(`Expected private-index landing in ${repo}`);
+  }
+  return repo;
+}
 
 function makeLane(
   overrides: Partial<GraphWorkflowExecutionLaneState> &
@@ -181,6 +223,163 @@ function setupExecutionWithJoin(
 }
 
 describe("join-runner", () => {
+  it("resyncs both worktree indexes before merging a sibling lane", async () => {
+    const execution = setupExecutionWithJoin(
+      makeJoin({
+        joinId: "join-private-index",
+        targetLaneId: "lane-target",
+        sourceLaneIds: ["lane-target", "lane-source"],
+      }),
+      {
+        "lane-target": makeLane({
+          laneId: "lane-target",
+          branchName: "csm/lane-target",
+          worktreePath: "/tmp/lane-target",
+        }),
+        "lane-source": makeLane({
+          laneId: "lane-source",
+          branchName: "csm/lane-source",
+          worktreePath: "/tmp/lane-source",
+        }),
+      },
+    );
+    const calls: string[] = [];
+    const persist = createInMemoryPersist(execution);
+    const runner = createJoinRunner({
+      mergeRunner: {
+        async run() {
+          calls.push("merge");
+          return completed();
+        },
+      },
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeMutex: createPerSessionMergeMutex(),
+      async resyncSharedIndex(worktreePath) {
+        calls.push(`resync:${worktreePath}`);
+      },
+      now: () => t0,
+    });
+
+    const result = await runner.run({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      joinId: "join-private-index",
+      mutateActive: persist.mutateActive,
+    });
+
+    expect(result).toEqual({ status: "succeeded" });
+    expect(calls).toEqual([
+      "resync:/tmp/lane-source",
+      "resync:/tmp/lane-target",
+      "merge",
+    ]);
+  });
+
+  it("repairs real private-index residue on both worktree sides before merge dispatch", async () => {
+    const cleanupPaths: string[] = [];
+    try {
+      const targetWorktreePath = await createPrivateIndexResidueRepo(
+        "cc-join-target-index-",
+        "lane-target",
+        cleanupPaths,
+      );
+      const sourceWorktreePath = await createPrivateIndexResidueRepo(
+        "cc-join-source-index-",
+        "lane-source",
+        cleanupPaths,
+      );
+
+      expect(
+        await git(targetWorktreePath, [
+          "status",
+          "--porcelain=v1",
+          "--untracked-files=all",
+        ]),
+      ).not.toBe("");
+      expect(
+        await git(sourceWorktreePath, [
+          "status",
+          "--porcelain=v1",
+          "--untracked-files=all",
+        ]),
+      ).not.toBe("");
+
+      const execution = setupExecutionWithJoin(
+        makeJoin({
+          joinId: "join-real-private-index",
+          targetLaneId: "lane-target",
+          sourceLaneIds: ["lane-target", "lane-source"],
+        }),
+        {
+          "lane-target": makeLane({
+            laneId: "lane-target",
+            branchName: "lane-target",
+            worktreePath: targetWorktreePath,
+          }),
+          "lane-source": makeLane({
+            laneId: "lane-source",
+            branchName: "lane-source",
+            worktreePath: sourceWorktreePath,
+          }),
+        },
+      );
+      const persist = createInMemoryPersist(execution);
+      let mergeDispatched = false;
+      const runner = createJoinRunner({
+        mergeRunner: {
+          async run(input) {
+            expect(input.featureWorktreePath).toBe(sourceWorktreePath);
+            expect(input.targetWorktreePath).toBe(targetWorktreePath);
+            expect(
+              await git(sourceWorktreePath, [
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+              ]),
+            ).toBe("");
+            expect(
+              await git(targetWorktreePath, [
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+              ]),
+            ).toBe("");
+            mergeDispatched = true;
+            return completed();
+          },
+        },
+        sessionGitLock: createSessionGitLock({
+          acquireSessionLock: () => () => {},
+        }),
+        mergeMutex: createPerSessionMergeMutex(),
+        abortInProgressMerge: async () => false,
+        resyncSharedIndex: resyncSharedIndexToHead,
+        readRepoConfig: async () => null,
+        now: () => t0,
+      });
+
+      const result = await runner.run({
+        projectPath: targetWorktreePath,
+        projectName: "repo",
+        sessionName: "session",
+        joinId: "join-real-private-index",
+        mutateActive: persist.mutateActive,
+      });
+
+      expect(result).toEqual({ status: "succeeded" });
+      expect(mergeDispatched).toBe(true);
+    } finally {
+      await Promise.all(
+        cleanupPaths.map((cleanupPath) =>
+          rm(cleanupPath, { recursive: true, force: true }),
+        ),
+      );
+    }
+  });
+
   it("defers final-only validation until the last source and resolves project commands at submission", async () => {
     const execution = setupExecutionWithJoin(
       makeJoin({

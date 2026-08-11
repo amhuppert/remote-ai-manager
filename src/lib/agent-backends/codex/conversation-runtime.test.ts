@@ -1521,6 +1521,37 @@ describe("CodexConversationRuntime", () => {
       expect(thread.capturedTurnOptions).toBeDefined();
       expect(thread.capturedTurnOptions!.outputSchema).toEqual(schema);
     });
+
+    it("adds the provider-required type to const-only schema nodes while retaining the authored output format", async () => {
+      const schema = {
+        type: "object",
+        properties: {
+          marker: { const: "fixed" },
+        },
+        required: ["marker"],
+        additionalProperties: false,
+      };
+      const outputFormat = { type: "json_schema" as const, schema };
+      const thread = makeCapturingThread(minimalSuccessEvents());
+      startThreadFn.mockReturnValue(thread);
+
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({ outputFormat }),
+        deps,
+      );
+      await runtime.sendTurn(makeTurnInput());
+
+      expect(runtime.outputFormat).toBe(outputFormat);
+      expect(thread.capturedTurnOptions?.outputSchema).toEqual({
+        type: "object",
+        properties: {
+          marker: { const: "fixed", type: "string" },
+        },
+        required: ["marker"],
+        additionalProperties: false,
+      });
+      expect(schema.properties.marker).toEqual({ const: "fixed" });
+    });
   });
 
   // --------------------------------------------------------

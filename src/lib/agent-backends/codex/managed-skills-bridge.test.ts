@@ -16,9 +16,11 @@ import os from "node:os";
 import path from "node:path";
 
 import type { ManagedSkillBundle } from "@/lib/managed-skills/schemas";
+import { setPublishedManagedSkillBundle } from "@/lib/managed-skills/service";
 
 import {
   ensureCodexManagedSkillsBridge,
+  listCodexManagedSkillsOwnedCheckoutPaths,
   MANAGED_SKILLS_EXCLUDE_PATTERN,
   MANAGED_SKILLS_LINK_RELATIVE,
 } from "./managed-skills-bridge";
@@ -116,9 +118,11 @@ describe("ensureCodexManagedSkillsBridge", () => {
       path.join(tempDir, "config"),
       "aaaa000000000001",
     );
+    setPublishedManagedSkillBundle(bundle);
   });
 
   afterEach(async () => {
+    setPublishedManagedSkillBundle(null);
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -197,6 +201,30 @@ describe("ensureCodexManagedSkillsBridge", () => {
 
     expect(result.status).toBe("conflict");
     expect(await readlink(linkPath())).toBe(foreignTarget);
+  });
+
+  it("attests only a symlink into the published bundle area as checkout ownership", async () => {
+    await ensureCodexManagedSkillsBridge({ checkoutPath: checkout, bundle });
+
+    await expect(
+      listCodexManagedSkillsOwnedCheckoutPaths(checkout),
+    ).resolves.toEqual([MANAGED_SKILLS_LINK_RELATIVE]);
+  });
+
+  it("does not attest project content or a foreign symlink as checkout ownership", async () => {
+    await mkdir(linkPath(), { recursive: true });
+    await writeFile(path.join(linkPath(), "SKILL.md"), "project-owned");
+    await expect(
+      listCodexManagedSkillsOwnedCheckoutPaths(checkout),
+    ).resolves.toEqual([]);
+
+    await rm(linkPath(), { recursive: true, force: true });
+    const foreignTarget = path.join(tempDir, "somewhere-else");
+    await mkdir(foreignTarget, { recursive: true });
+    await symlink(foreignTarget, linkPath());
+    await expect(
+      listCodexManagedSkillsOwnedCheckoutPaths(checkout),
+    ).resolves.toEqual([]);
   });
 
   it("skips without touching the filesystem when the checkout is not a git repo", async () => {

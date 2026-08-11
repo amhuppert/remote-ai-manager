@@ -28,7 +28,10 @@ import {
   lintParameterReferences,
   validateParameterDeclarations,
 } from "./parameter-validation";
-import { validatePlacements } from "./placement-validation";
+import {
+  validateLaneDependencyAcyclicity,
+  validatePlacements,
+} from "./placement-validation";
 import { validatePrerequisites } from "./prerequisite-validation";
 import { activeDependencySourceIds, routeVerdict } from "./route-projection";
 import { projectExecutionRoutes } from "./execution-routes";
@@ -118,6 +121,7 @@ export function validateWorkflowDefinition(
 ): WorkflowGraphValidationResult {
   const errors: WorkflowGraphValidationError[] = [
     ...validateContextOutputSchemas(definition.executionContexts),
+    ...validateLaneDependencyAcyclicity(definition),
     ...validateExplicitLaneBarrierCoverage(definition),
     ...validateCohortWriteRestriction(definition.executionContexts, deps),
     ...validateWorkflowTierCohortWriteRestriction(definition, deps),

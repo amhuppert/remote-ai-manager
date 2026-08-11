@@ -318,6 +318,51 @@ function makeManager(input: {
 }
 
 describe("scheduleEligibleContexts lane admission", () => {
+  it("does not re-admit a context the execution loop already owns", async () => {
+    const projectPath = makeProjectRoot();
+    const implWorktree = laneWorktreePath(projectPath, "impl");
+    mkdirSync(path.join(implWorktree, "src/api"), { recursive: true });
+    mkdirSync(path.join(implWorktree, "src/ui"), { recursive: true });
+
+    const { execution } = makeFixture({
+      projectPath,
+      implementPlacement: {
+        lane: "impl",
+        mode: "owned",
+        ownedPaths: ["src/api"],
+      },
+      verifyPlacement: { lane: "impl", mode: "owned", ownedPaths: ["src/ui"] },
+      existingLaneIds: ["impl"],
+    });
+    const worktrees = createWorktreesStub(projectPath);
+    const { manager, repository } = makeManager({
+      projectPath,
+      execution,
+      worktrees,
+    });
+
+    const result = await manager.scheduleEligibleContexts({
+      projectPath,
+      sessionName: SESSION_NAME,
+      excludedContextIds: ["context-implement"],
+    });
+
+    expect(result.scheduled).toMatchObject({
+      kind: "parallel",
+      contextIds: ["context-verify"],
+    });
+    const persisted = repository.read();
+    expect(persisted.contextStates["context-implement"]).toMatchObject({
+      status: "pending",
+      laneId: null,
+    });
+    expect(
+      persisted.contextStates["context-implement"]?.reservedByBatchId,
+    ).toBeUndefined();
+    expect(persisted.contextStates["context-verify"]?.laneId).toBe("impl");
+    expect(persisted.laneReservations).toEqual({});
+  });
+
   it("admits two ownership-disjoint members of one lane in a single pass", async () => {
     const projectPath = makeProjectRoot();
     const implWorktree = laneWorktreePath(projectPath, "impl");

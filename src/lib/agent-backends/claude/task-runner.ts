@@ -1,4 +1,6 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { realpathSync } from "node:fs";
+import path from "node:path";
 import type {
   Options,
   SDKMessage,
@@ -42,10 +44,51 @@ import { createClaudeFailureClassifier } from "./failure-classifier";
 import { createStallWatchdog } from "../stall-watchdog";
 import { resolveClaudeManagedSkillsForLaunch } from "./managed-skills";
 import { mapErrorSubtype } from "./process-message";
-import { buildClaudeFsWriteEnvelope } from "./fs-write-envelope";
+import {
+  buildClaudeFsWriteEnvelope,
+  type ClaudeFsWriteEnvelope,
+} from "./fs-write-envelope";
 
 const logger = createLogger("claude:task-runner");
 const claudeFailureClassifier = createClaudeFailureClassifier();
+
+function isInsideOrEqual(ancestor: string, candidate: string): boolean {
+  const relative = path.relative(
+    path.resolve(ancestor),
+    path.resolve(candidate),
+  );
+  return (
+    relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) &&
+      relative !== ".." &&
+      !path.isAbsolute(relative))
+  );
+}
+
+/**
+ * A reviewer policy denies its entire candidate root, so that explicit deny
+ * neutralizes Claude's writable-cwd default and relative inspection paths stay
+ * useful. An implementer policy can deny only `.git` while allowing owned
+ * prefixes inside the candidate; it must therefore use the policy's external
+ * working root or cwd itself would reopen the whole worktree for writes.
+ */
+function resolveRestrictedWorkingDirectory(
+  inputWorkingDirectory: string,
+  restricted: ClaudeFsWriteEnvelope,
+): string {
+  let canonicalInputWorkingDirectory: string;
+  try {
+    canonicalInputWorkingDirectory = realpathSync(inputWorkingDirectory);
+  } catch {
+    canonicalInputWorkingDirectory = path.resolve(inputWorkingDirectory);
+  }
+  const inputRootIsDenied = restricted.sandbox.filesystem?.denyWrite?.some(
+    (deniedPath) => isInsideOrEqual(deniedPath, canonicalInputWorkingDirectory),
+  );
+  return inputRootIsDenied
+    ? inputWorkingDirectory
+    : restricted.workingDirectory;
+}
 
 function resolveTaskContinuation(
   backendRef: AgentSessionRef | null,
@@ -78,9 +121,9 @@ export interface ClaudeTaskRunnerDeps {
     options: Options;
   }): AsyncIterable<SDKMessage>;
   /**
-   * Server coordinates and config location for the session env contract, read
-   * here (never from the request) so a scoped run cannot be handed credentials
-   * by its caller. Only consulted for a run carrying a `ccSessionScope`.
+   * Server coordinates and config location for the session env and write
+   * envelope contracts, read here (never from the request) so a scoped run
+   * cannot be handed credentials or a network destination by its caller.
    */
   getServerUrl(): string | null;
   getApiToken(): string | null;
@@ -110,6 +153,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
   private resolveChildEnv(
     input: AgentTaskRequest,
     isolatedOneShot: boolean,
+    trustedServerUrl: string | null,
   ):
     | { kind: "resolved"; env: Record<string, string> }
     | { kind: "invalid_scope"; invalidFields: string } {
@@ -141,7 +185,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       kind: "resolved",
       env: buildSessionEnvContract({
         baseEnv: neutralizedEnv,
-        serverUrl: this.deps.getServerUrl(),
+        serverUrl: trustedServerUrl,
         apiToken: this.deps.getApiToken(),
         // The scope names a session-keyed identity, so it crosses into the
         // public target vocabulary through the one sanctioned adapter: a task
@@ -159,6 +203,10 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
 
   async run(input: AgentTaskRequest): Promise<AgentTaskResult> {
     const isolatedOneShot = input.executionProfile === "isolated-one-shot";
+    const trustedServerUrl =
+      input.fsWritePolicy !== undefined || input.ccSessionScope !== undefined
+        ? this.deps.getServerUrl()
+        : null;
 
     logger.info("claude-task-runner.start", {
       workingDirectory: input.workingDirectory,
@@ -177,7 +225,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
     // rules only ever tighten what that profile already allows.
     const writeEnvelope =
       input.fsWritePolicy !== undefined
-        ? buildClaudeFsWriteEnvelope(input.fsWritePolicy)
+        ? buildClaudeFsWriteEnvelope(input.fsWritePolicy, trustedServerUrl)
         : null;
     if (writeEnvelope?.kind === "unestablishable") {
       const error = `Cannot establish the Claude filesystem write envelope: ${writeEnvelope.reason}`;
@@ -195,6 +243,18 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
     }
     const restricted =
       writeEnvelope?.kind === "envelope" ? writeEnvelope : null;
+    const workingDirectory = restricted
+      ? resolveRestrictedWorkingDirectory(
+          input.workingDirectory,
+          restricted.envelope,
+        )
+      : input.workingDirectory;
+    if (workingDirectory !== input.workingDirectory) {
+      logger.info("claude-task-runner.write_envelope_cwd_relocated", {
+        requestedWorkingDirectory: input.workingDirectory,
+        effectiveWorkingDirectory: workingDirectory,
+      });
+    }
 
     let validatedReasoningEffort: ClaudeEffortLevel | undefined;
     if (input.reasoningEffort !== undefined) {
@@ -295,7 +355,11 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       ? appendStructuredOutputInstruction(input.prompt, input.outputSchema)
       : input.prompt;
 
-    const childEnv = this.resolveChildEnv(input, isolatedOneShot);
+    const childEnv = this.resolveChildEnv(
+      input,
+      isolatedOneShot,
+      trustedServerUrl,
+    );
     if (childEnv.kind === "invalid_scope") {
       const error = `Invalid ccSessionScope for a Claude task run: ${childEnv.invalidFields}`;
       logger.error("claude-task-runner.invalid_session_scope", {
@@ -375,7 +439,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
           // overridden by an explicit deny. A policy that allows part of the
           // tree it runs in cannot be confined that way and must run from
           // `envelope.workingDirectory` instead — see the conversation path.
-          cwd: input.workingDirectory,
+          cwd: workingDirectory,
           systemPrompt: {
             type: "preset",
             preset: "claude_code",
@@ -425,7 +489,13 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
           persistSession: !isolatedOneShot,
           mcpServers: mcpServers as Record<string, never>,
           abortController,
-          env: childEnv.env,
+          env: restricted
+            ? {
+                ...childEnv.env,
+                CLAUDE_CODE_TMPDIR: restricted.envelope.tmpDir,
+                TMPDIR: restricted.envelope.tmpDir,
+              }
+            : childEnv.env,
         },
       });
 

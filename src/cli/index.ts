@@ -3,19 +3,69 @@
 import { chmod, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  fetch as undiciFetch,
+  ProxyAgent,
+  type Dispatcher,
+  type RequestInit as UndiciRequestInit,
+} from "undici";
+import { createLogger } from "@/lib/logging";
 import { sleep } from "@/lib/shared/sleep";
 import { runCli } from "./core";
+import { resolveSandboxProxyUrl } from "./sandbox-proxy";
+
+const logger = createLogger("cli.transport");
+const sandboxProxyDispatchers = new Map<string, Dispatcher>();
+let loggedUnavailableSandboxProxy = false;
+
+function sandboxProxyDispatcherFor(url: string): Dispatcher | undefined {
+  const proxyUrl = resolveSandboxProxyUrl(process.env, url);
+  if (proxyUrl === null) {
+    if (
+      process.env["SANDBOX_RUNTIME"] === "1" &&
+      !loggedUnavailableSandboxProxy
+    ) {
+      loggedUnavailableSandboxProxy = true;
+      logger.warn("cli.transport.sandbox_proxy_unavailable", {
+        hasHttpProxy:
+          process.env["HTTP_PROXY"] !== undefined ||
+          process.env["http_proxy"] !== undefined,
+        hasHttpsProxy:
+          process.env["HTTPS_PROXY"] !== undefined ||
+          process.env["https_proxy"] !== undefined,
+      });
+    }
+    return undefined;
+  }
+
+  const existing = sandboxProxyDispatchers.get(proxyUrl);
+  if (existing !== undefined) return existing;
+
+  const dispatcher = new ProxyAgent(proxyUrl);
+  sandboxProxyDispatchers.set(proxyUrl, dispatcher);
+  const parsedProxyUrl = new URL(proxyUrl);
+  logger.info("cli.transport.sandbox_proxy_enabled", {
+    protocol: parsedProxyUrl.protocol,
+    host: parsedProxyUrl.hostname,
+  });
+  return dispatcher;
+}
 
 const result = await runCli(process.argv.slice(2), process.env, {
   fetch: (url, init) => {
     const { timeoutMs, rawBody, ...requestInit } = init;
-    return fetch(url, {
+    const sandboxProxyDispatcher = sandboxProxyDispatcherFor(url);
+    const nativeInit = {
       ...requestInit,
       ...(rawBody !== undefined ? { body: rawBody } : {}),
       ...(timeoutMs !== undefined
         ? { signal: AbortSignal.timeout(timeoutMs) }
         : {}),
-    });
+      ...(sandboxProxyDispatcher !== undefined
+        ? { dispatcher: sandboxProxyDispatcher }
+        : {}),
+    } satisfies UndiciRequestInit;
+    return undiciFetch(url, nativeInit) as unknown as Promise<Response>;
   },
   async readTextFile(filePath) {
     // `--file -` reads the payload from stdin, so an agent can pipe a small

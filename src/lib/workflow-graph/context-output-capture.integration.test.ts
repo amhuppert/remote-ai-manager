@@ -44,9 +44,14 @@ import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import { createWorkflowExecution } from "./test-fixtures";
 import { createGraphWorkflowOutputCaptureRunner } from "./context-output-capture-runner";
+import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-envelope";
 import { createGraphWorkflowIterationOrchestrator } from "./iteration-orchestrator";
 
 const NOW = "2026-03-27T16:10:00.000Z";
+const RESUMED_BACKEND_REF = {
+  backend: "claude" as const,
+  ref: "sess-existing-lane",
+};
 
 const PLAN_OUTPUT_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -115,7 +120,7 @@ function productionTaskRun(
       worktreePath: input.worktreePath ?? "/repo",
       conversationId: input.conversationId,
       agentBackend: "claude",
-      backendRef: null,
+      backendRef: RESUMED_BACKEND_REF,
       promptText: input.prompt,
       modelId: input.modelId ?? null,
       effort: input.effort ?? null,
@@ -124,6 +129,9 @@ function productionTaskRun(
         : {}),
       ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
       ...(input.origin !== undefined ? { origin: input.origin } : {}),
+      ...(input.fsWritePolicy !== undefined
+        ? { fsWritePolicy: input.fsWritePolicy }
+        : {}),
     });
 
     return mapToTaskRunResult(
@@ -324,6 +332,67 @@ describe("context output capture against a fake agent backend (R2.1)", () => {
     expect(captureRequest?.outputSchema).toEqual(PLAN_OUTPUT_SCHEMA);
     expect(captureRequest?.prompt).toContain("Final Output");
   });
+
+  it.each([
+    {
+      label: "owned",
+      placement: {
+        lane: "shared",
+        mode: "owned" as const,
+        ownedPaths: ["reports"],
+      },
+      ownedPaths: ["reports"],
+      payloadLocation: "worktree" as const,
+    },
+    {
+      label: "read-only",
+      placement: { lane: "reports", mode: "readOnly" as const },
+      ownedPaths: [],
+      payloadLocation: "scratch" as const,
+    },
+  ])(
+    "carries the exact $label write policy and existing lane ref to the backend request",
+    async ({ placement, ownedPaths, payloadLocation }) => {
+      const execution = executionWithSchema();
+      const context = execution.workingDefinition.executionContexts.find(
+        (entry) => entry.id === "context-plan",
+      );
+      if (!context) throw new Error("fixture missing context-plan");
+      context.placement = placement;
+
+      const executionTarget = {
+        worktreePath: process.cwd(),
+        branchName: "integration-output-capture",
+        isolation: "worktree" as const,
+        laneId: placement.lane,
+      };
+      const expectedPolicy = composeImplementerLaneWriteEnvelope({
+        executionId: execution.id,
+        contextId: context.id,
+        worktreePath: executionTarget.worktreePath,
+        ownedPaths,
+        payloadLocation,
+      }).policy;
+      const repository = createRepository(execution);
+      const capture = { requests: [] as AgentTaskRequest[] };
+      const runner = fakeBackend(
+        ['{"summary":"Policy retained","risks":[]}'],
+        capture,
+      );
+
+      await buildOrchestrator(repository, runner).runIteration({
+        ...ITERATION_INPUT,
+        executionTarget,
+      });
+
+      expect(capture.requests).toHaveLength(1);
+      expect(capture.requests[0]).toMatchObject({
+        workingDirectory: executionTarget.worktreePath,
+        resumeRef: RESUMED_BACKEND_REF,
+        fsWritePolicy: expectedPolicy,
+      });
+    },
+  );
 
   it("does not complete the context when the backend's payload cannot satisfy the schema, and records the gate's issues", async () => {
     const repository = createRepository(executionWithSchema());

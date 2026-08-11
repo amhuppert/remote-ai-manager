@@ -122,6 +122,7 @@ const SESSION_NAME = "envelope-session";
 const WORKTREE_PATH = "/private/volumes/repo/worktree";
 const LANE_SCRATCH_DIR = "/private/tmp/cc-lane-scratch/exec/ctx/reviewer";
 const LANE_TMP_DIR = `${LANE_SCRATCH_DIR}/tmp`;
+const TRUSTED_SERVER_URL = "http://127.0.0.1:3000";
 
 const EXPECTED_POLICY = {
   mode: "allowlist" as const,
@@ -183,6 +184,7 @@ afterEach(() => {
 function realTaskRunner(backend: AgentBackendId): AgentTaskRunner {
   if (backend === "claude") {
     return createScriptedClaudeTaskRunner({
+      getServerUrl: () => TRUSTED_SERVER_URL,
       runQuery: (args) => claudeQueryMock(args) as AsyncIterable<never>,
     });
   }

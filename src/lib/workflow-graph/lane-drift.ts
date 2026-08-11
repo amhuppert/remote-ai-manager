@@ -64,16 +64,16 @@ import type {
   GraphWorkflowCanonicalOwnership,
   GraphWorkflowIgnoredBaselineEntry,
 } from "@/lib/workflow-graph/schemas";
+import { listManagedSkillsOwnedCheckoutPaths as defaultListManagedSkillsOwnedCheckoutPaths } from "@/lib/agent-backends/registry";
 
 /**
- * The worktree namespace CC writes its own artifacts into, which no authored
- * ownership can claim (`.cc` is refused at definition validation).
+ * Exact worktree surfaces CC itself materializes, which no lane member owns.
  *
  * Enumerated rather than exempting `.cc` wholesale, because "CC's namespace" is
  * not the same claim as "any path beginning with `.cc`": a server-mediated
  * write to `.cc/anything-else` is exactly the unattributable write this check
  * exists to catch, and a blanket exemption would swallow it. Each entry below
- * is a directory the engine itself materializes into a lane worktree during a
+ * is a surface the engine itself materializes into a lane worktree during a
  * run — the charter and shared documents, and validation/script logs.
  */
 export const ENGINE_RESERVED_PREFIXES: readonly string[] = [
@@ -199,9 +199,7 @@ export function classifyLaneDrift(
   const currentGrouped = new Map<
     GraphWorkflowIgnoredBaselineEntry,
     IgnoredEntry[]
-  >(
-    input.ignoredBaseline.map((entry) => [entry, []]),
-  );
+  >(input.ignoredBaseline.map((entry) => [entry, []]));
   const baselineGrouped = new Map<
     GraphWorkflowIgnoredBaselineEntry,
     IgnoredEntry[]
@@ -365,6 +363,9 @@ export interface LaneDriftAuditorDeps {
   readStatus(worktreePath: string): Promise<WorktreeStatusEntry[]>;
   readIgnoredEntries(worktreePath: string): Promise<IgnoredEntry[]>;
   realpath(target: string): Promise<string>;
+  listManagedSkillsOwnedCheckoutPaths?(
+    checkoutPath: string,
+  ): Promise<readonly string[]>;
   readIgnoredBaselineEntries?(
     worktreePath: string,
   ): Promise<IgnoredWorktreeContents | null>;
@@ -388,27 +389,32 @@ export function createLaneDriftAuditor(
   const readIgnoredBaselineEntries =
     deps.readIgnoredBaselineEntries ??
     ((worktreePath: string) => baselineStore.read(worktreePath));
+  const listManagedSkillsOwnedCheckoutPaths =
+    deps.listManagedSkillsOwnedCheckoutPaths ??
+    defaultListManagedSkillsOwnedCheckoutPaths;
 
   return {
     async audit(input) {
       const canonicalRoot = await deps.realpath(input.laneWorktreePath);
       const union = laneOwnedPrefixes(canonicalRoot, input.memberOwnerships);
-      const [entries, ignoredEntries, storedBaseline] = await Promise.all([
-        deps.readStatus(input.laneWorktreePath),
-        deps.readIgnoredEntries(input.laneWorktreePath),
-        input.ignoredBaselineEntries === undefined
-          ? input.ignoredBaseline.length === 0
-            ? Promise.resolve({ roots: [], entries: [] })
-            : readIgnoredBaselineEntries(input.laneWorktreePath)
-          : Promise.resolve(
-              input.ignoredBaselineEntries === null
-                ? null
-                : {
-                    roots: input.ignoredBaseline.map((entry) => entry.path),
-                    entries: input.ignoredBaselineEntries,
-                  },
-            ),
-      ]);
+      const [entries, ignoredEntries, storedBaseline, managedSkillsOwnedPaths] =
+        await Promise.all([
+          deps.readStatus(input.laneWorktreePath),
+          deps.readIgnoredEntries(input.laneWorktreePath),
+          input.ignoredBaselineEntries === undefined
+            ? input.ignoredBaseline.length === 0
+              ? Promise.resolve({ roots: [], entries: [] })
+              : readIgnoredBaselineEntries(input.laneWorktreePath)
+            : Promise.resolve(
+                input.ignoredBaselineEntries === null
+                  ? null
+                  : {
+                      roots: input.ignoredBaseline.map((entry) => entry.path),
+                      entries: input.ignoredBaselineEntries,
+                    },
+              ),
+          listManagedSkillsOwnedCheckoutPaths(input.laneWorktreePath),
+        ]);
       const recoveredSummary =
         storedBaseline === null
           ? null
@@ -419,18 +425,23 @@ export function createLaneDriftAuditor(
         recoveredSummary.every((entry) =>
           input.ignoredBaseline.some(
             (persisted) =>
-              persisted.path === entry.path && persisted.digest === entry.digest,
+              persisted.path === entry.path &&
+              persisted.digest === entry.digest,
           ),
         );
       return classifyLaneDrift({
         entries,
         ignoredEntries,
         ownedPrefixes: union.ownedPrefixes,
-        reservedPrefixes: laneReservedPrefixes(input.memberContextIds),
+        reservedPrefixes: [
+          ...laneReservedPrefixes(input.memberContextIds),
+          ...managedSkillsOwnedPaths,
+        ],
         ignoredBaseline: input.ignoredBaseline,
-        ignoredBaselineEntries: baselineMatchesState && storedBaseline !== null
-          ? storedBaseline.entries
-          : null,
+        ignoredBaselineEntries:
+          baselineMatchesState && storedBaseline !== null
+            ? storedBaseline.entries
+            : null,
         hasFullAccessMember: union.hasFullAccessMember,
       });
     },

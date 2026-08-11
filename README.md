@@ -4,7 +4,7 @@ A web-based control plane for managing remote Claude Code coding sessions. Creat
 
 ## Prerequisites
 
-- Node.js 18+
+- Node.js 20.9+ for the Command Center server (the bundled `cctl` CLI supports Node.js 18.17+)
 - [Tailscale](https://tailscale.com/) installed and connected to your tailnet
 - Claude Code CLI installed on the host machine
 - (Optional) [Codex CLI](https://github.com/openai/codex) installed and authenticated on the host machine if you want to enable the Codex delegation tool

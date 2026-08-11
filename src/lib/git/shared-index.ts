@@ -16,12 +16,14 @@
  * stale blob or a lingering entry survives `commit -a` as an ordinary
  * modification; only the added-path shape destroys content.
  *
- * So the index is resynced at the one moment it is provably safe: when the
- * engine hands the lane to a full-access member, before its first turn. Lane
- * placement forbids a full-access member from running concurrently with any
- * other write-capable member, so at that instant nobody else's staged state
- * exists to clobber. Enveloped members never need this — they cannot write
- * outside their own prefixes, so they cannot run git at all.
+ * So the index is resynced only at moments the engine has made safe: when it
+ * hands the lane to a full-access member before the first turn, or when a
+ * quiescent worktree lane becomes either side of a join. Lane placement forbids a
+ * full-access member from running concurrently with any other write-capable
+ * member, and join admission waits for its source lanes to become idle, so no
+ * sibling's staged state exists to clobber. Enveloped members never need this
+ * for their own turns — they cannot write outside their prefixes, so they
+ * cannot run git at all.
  *
  * Idempotent and derived: it recomputes from HEAD every time, so a failure or a
  * crash is repaired by the next dispatch rather than leaving a gap that later

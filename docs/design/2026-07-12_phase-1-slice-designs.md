@@ -180,7 +180,7 @@ All new tests colocated per `structure.md`. Red-first entries marked **[RED]** m
 
 - **T3.1 [RED]** `claude/task-runner.test.ts`: dispatch a task with `outputSchema` containing `minItems`/`minimum` → the `outputFormat.schema` captured at the injected `query` boundary carries none of the unsupported keywords and is otherwise deep-equal to the input.
 - **T3.2 [RED]** `claude/conversation-runtime.test.ts`: create a runtime with a keyword-carrying `outputFormat` → the QuerySession options schema is projected (both the options path at `conversation-runtime.ts:711` and the constructor-held copy at `:723` observe the projected schema).
-- **T3.3** codex task-runner counterpart: the same schema passes through the Codex adapter **unmodified** (identity projection pinned so a future "helpful" global strip fails a test).
+- **T3.3** codex task-runner counterpart: the same schema passes through the Codex adapter without keyword stripping. Provider-required, semantically redundant augmentation remains backend-local so the authored contract stays unchanged.
 
 #### T4 — facade gate migration (`workflows/primitives/agent-call-facade.test.ts`, extend)
 

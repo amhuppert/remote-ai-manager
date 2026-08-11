@@ -119,7 +119,9 @@ describe("workflow builder draft helpers", () => {
       "context-plan",
     );
     expect(cycle.ok).toBe(false);
-    expect(cycle.errors[0]?.code).toBe("cycle-detected");
+    expect(cycle.errors).toContainEqual(
+      expect.objectContaining({ code: "cycle-detected" }),
+    );
   });
 
   it("adds tasks and preserves ordered reordering within the selected context", () => {

@@ -95,6 +95,7 @@ import {
 
 const PROJECT_PATH = "/repo-prompt-authority";
 const SESSION_NAME = "prompt-authority-session";
+const TRUSTED_SERVER_URL = "http://127.0.0.1:3000";
 
 /** The context under review, and the criterion the harness owns. */
 const CONTEXT_ID = "context-plan";
@@ -202,6 +203,7 @@ function claudeStream(): AsyncGenerator<unknown, void, unknown> {
 function taskRunnerFor(backend: AgentBackendId): AgentTaskRunner {
   if (backend === "claude") {
     return createScriptedClaudeTaskRunner({
+      getServerUrl: () => TRUSTED_SERVER_URL,
       runQuery: (args) => {
         capture.claudeCalls.push(args as (typeof capture.claudeCalls)[number]);
         return claudeStream() as AsyncIterable<never>;
