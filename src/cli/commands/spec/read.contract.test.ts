@@ -69,6 +69,7 @@ const revision: SpecRevision = {
   contentHash: null,
   proposedAt: null,
   approvedAt: null,
+  externalDelivery: null,
   createdAt: CREATED_AT,
 };
 
@@ -215,6 +216,7 @@ const approvedPredecessor: SpecRevision = {
   contentHash: "approved-hash",
   proposedAt: CREATED_AT,
   approvedAt: CREATED_AT,
+  externalDelivery: null,
   createdAt: CREATED_AT,
 };
 
@@ -402,6 +404,7 @@ const lineageRevisions: SpecRevision[] = [
     contentHash: "lineage-hash-1",
     proposedAt: CREATED_AT,
     approvedAt: CREATED_AT,
+    externalDelivery: null,
     createdAt: CREATED_AT,
   },
   {
@@ -414,6 +417,7 @@ const lineageRevisions: SpecRevision[] = [
     contentHash: "lineage-hash-2",
     proposedAt: CREATED_AT,
     approvedAt: null,
+    externalDelivery: null,
     createdAt: CREATED_AT,
   },
   {
@@ -426,6 +430,7 @@ const lineageRevisions: SpecRevision[] = [
     contentHash: null,
     proposedAt: null,
     approvedAt: null,
+    externalDelivery: null,
     createdAt: CREATED_AT,
   },
 ];

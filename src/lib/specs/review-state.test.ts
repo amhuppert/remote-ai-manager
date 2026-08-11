@@ -21,6 +21,7 @@ const REVISION: SpecRevision = {
   contentHash: null,
   proposedAt: null,
   approvedAt: null,
+  externalDelivery: null,
   createdAt: NOW,
 };
 

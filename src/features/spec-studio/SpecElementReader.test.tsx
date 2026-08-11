@@ -189,6 +189,34 @@ describe("SpecElementReader", () => {
     ).not.toBeInTheDocument();
   });
 
+  /**
+   * An imported spec's requirement is settled without this system ever proving
+   * it. The reader has to say so in its own words: the green Proven chip is the
+   * one presentation it may never borrow (R9.4).
+   */
+  it("reads an externally-delivered requirement as delivered externally, never as proven", () => {
+    const detail = specElementReaderDetailFixture();
+    detail.elementStatuses = {
+      ...detail.elementStatuses,
+      requirements: detail.elementStatuses.requirements.map((entry) => ({
+        ...entry,
+        status: { ...entry.status, proof: "delivered_externally" as const },
+      })),
+    };
+
+    renderReader(detail, "requirements");
+
+    const requirement = screen.getByRole("article", {
+      name: "R1 requirement",
+    });
+    const chip = within(requirement).getByText("Delivered externally");
+    expect(chip).toHaveAttribute("data-tone", "neutral");
+    expect(within(requirement).queryByText("Proven")).not.toBeInTheDocument();
+    expect(
+      within(requirement).queryByText("Proof partial"),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders decision approach, rationale, and rejected alternatives", () => {
     renderReader(specElementReaderDetailFixture(), "decisions");
 

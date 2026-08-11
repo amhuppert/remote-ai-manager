@@ -26,6 +26,7 @@ function revision(
     contentHash: state === "draft" ? null : `hash-${number}`,
     proposedAt: state === "draft" ? null : "2026-08-01T10:00:00.000Z",
     approvedAt: state === "approved" ? "2026-08-01T11:00:00.000Z" : null,
+    externalDelivery: null,
     createdAt: "2026-08-01T09:00:00.000Z",
   };
 }

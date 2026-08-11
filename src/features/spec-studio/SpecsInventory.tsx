@@ -251,8 +251,11 @@ function SpecInventoryRow({
 }): React.JSX.Element {
   const { spec, phase, delivery, linkedWork } = item;
   const href = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(spec.slug)}`;
-  const partialDelivery =
-    delivery.provenCount > 0 && delivery.provenCount < delivery.totalInScope;
+  // Any landed delivery gets the tally, not just a partial one: an import's
+  // criteria are delivered on external testimony, and a row that showed the
+  // count only while it was incomplete would go silent exactly when the whole
+  // scope rests on that testimony.
+  const showsDeliveryTally = delivery.deliveredCount > 0;
   const executionLabels = [
     countLabel(linkedWork.workflowExecutions, "workflow"),
     countLabel(linkedWork.mergeJobs, "merge job"),
@@ -298,6 +301,13 @@ function SpecInventoryRow({
           <span className="ml-xs inline-flex rounded-full border border-dashed border-border-default px-[7px] py-[1px] text-[0.62rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase">
             Exploratory
           </span>
+        )}
+        {item.imported && (
+          // Neutral, because this is provenance rather than a status: amber
+          // means awaiting the user, and an imported spec asks for nothing.
+          <StatusChip tone="neutral" layoutClassName="ml-xs">
+            Imported
+          </StatusChip>
         )}
       </div>
 
@@ -385,9 +395,9 @@ function SpecInventoryRow({
             ? executionLabels.join(" · ")
             : "Not started"}
         </span>
-        {partialDelivery && (
+        {showsDeliveryTally && (
           <span className="mt-xs block text-green max-768:mt-0 max-768:ml-xs max-768:inline">
-            {delivery.provenCount}/{delivery.totalInScope} delivered
+            {delivery.deliveredCount}/{delivery.totalInScope} delivered
           </span>
         )}
         {delivery.allWaived && (

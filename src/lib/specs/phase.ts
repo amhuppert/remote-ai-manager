@@ -13,6 +13,14 @@ import {
 export const deliveryCriterionStateSchema = z.enum([
   "pending",
   "proven_and_merged",
+  /**
+   * The criterion's work shipped outside this system, on the strength of an
+   * imported spec's external-delivery record. It is its own state rather than
+   * a second way to be `proven_and_merged` because nothing here verified it:
+   * it discharges the criterion's obligation to be pending, never its
+   * obligation to be proven.
+   */
+  "delivered_externally",
   "waived",
 ]);
 export type DeliveryCriterionState = z.infer<
@@ -23,6 +31,22 @@ export const deliveryCriterionSchema = z
   .object({ state: deliveryCriterionStateSchema })
   .strict();
 export type DeliveryCriterion = z.infer<typeof deliveryCriterionSchema>;
+
+/**
+ * A delivery criterion the display can name. The phase projection reads only
+ * `state` and keeps the bare shape; the display carries the element id because
+ * a surface asked to render one criterion as delivered externally has to know
+ * which one, and a tally cannot say.
+ */
+export const identifiedDeliveryCriterionSchema = z
+  .object({
+    criterionElementId: z.string().min(1),
+    state: deliveryCriterionStateSchema,
+  })
+  .strict();
+export type IdentifiedDeliveryCriterion = z.infer<
+  typeof identifiedDeliveryCriterionSchema
+>;
 
 export const specPhaseInputSchema = z
   .object({
@@ -67,8 +91,26 @@ export type SpecPhaseProjection = z.infer<typeof specPhaseProjectionSchema>;
 export const deliveryDisplaySchema = z
   .object({
     allWaived: z.boolean(),
+    /**
+     * Criteria whose delivery has landed by any route — merged proof or an
+     * import's external testimony. This is the tally a "delivered" label reads.
+     */
+    deliveredCount: z.number().int().nonnegative(),
+    /**
+     * Criteria this system proved and saw merged. Kept apart from
+     * `deliveredCount` so a proof-oriented surface cannot report external
+     * testimony as proof it never took.
+     */
     provenCount: z.number().int().nonnegative(),
     totalInScope: z.number().int().nonnegative(),
+    /**
+     * The criteria whose delivery rests on an import's external testimony,
+     * named rather than merely counted so a surface can render exactly those
+     * as delivered externally. Required rather than defaulted: an empty
+     * default would read a truncated payload as nothing delivered externally,
+     * which is the direction that hides import provenance.
+     */
+    deliveredExternallyCriterionIds: z.array(z.string().min(1)),
   })
   .strict();
 export type DeliveryDisplay = z.infer<typeof deliveryDisplaySchema>;
@@ -76,7 +118,13 @@ export type DeliveryDisplay = z.infer<typeof deliveryDisplaySchema>;
 const requirementCriterionStatusInputSchema = z
   .object({
     covered: z.boolean(),
-    proof: z.enum(["pending", "proven", "waived"]),
+    /**
+     * `delivered_externally` is carried into the rollup rather than folded into
+     * `proven` on the way: the rollup is a proof surface, and a criterion that
+     * shipped on an import's testimony has to stay distinguishable from one
+     * this system verified.
+     */
+    proof: z.enum(["pending", "proven", "waived", "delivered_externally"]),
   })
   .strict();
 
@@ -94,12 +142,20 @@ export const requirementStatusSchema = z
   .object({
     approval: z.union([z.literal("unapproved"), specApprovalValiditySchema]),
     coverage: z.enum(["uncovered", "partial", "covered"]),
+    /**
+     * `delivered_externally` names a fully settled requirement whose settlement
+     * leans, in whole or in part, on an import's external testimony. It is not
+     * a fourth way to be proven: the weakest warrant names the rollup, so a
+     * requirement mixing merged proof with external delivery reads as delivered
+     * externally rather than proven.
+     */
     proof: z.enum([
       "pending",
       "partial",
       "proven",
       "waived",
       "proven_and_waived",
+      "delivered_externally",
     ]),
   })
   .strict();
@@ -172,14 +228,21 @@ export function projectSpecPhase(input: SpecPhaseInput): SpecPhaseProjection {
 }
 
 export function projectDeliveryDisplay(
-  criteria: DeliveryCriterion[],
+  criteria: IdentifiedDeliveryCriterion[],
 ): DeliveryDisplay {
   return {
     allWaived:
       criteria.length > 0 && criteria.every(({ state }) => state === "waived"),
+    deliveredCount: criteria.filter(
+      ({ state }) =>
+        state === "proven_and_merged" || state === "delivered_externally",
+    ).length,
     provenCount: criteria.filter(({ state }) => state === "proven_and_merged")
       .length,
     totalInScope: criteria.length,
+    deliveredExternallyCriterionIds: criteria
+      .filter(({ state }) => state === "delivered_externally")
+      .map(({ criterionElementId }) => criterionElementId),
   };
 }
 
@@ -193,11 +256,19 @@ export function projectRequirementStatus(
   const waivedCount = input.criteria.filter(
     ({ proof }) => proof === "waived",
   ).length;
+  const deliveredExternallyCount = input.criteria.filter(
+    ({ proof }) => proof === "delivered_externally",
+  ).length;
 
   return {
     approval: input.approvalValidity ?? "unapproved",
     coverage: projectCoverage(coveredCount, input.criteria.length),
-    proof: projectProof(provenCount, waivedCount, input.criteria.length),
+    proof: projectProof({
+      provenCount,
+      waivedCount,
+      deliveredExternallyCount,
+      totalCount: input.criteria.length,
+    }),
   };
 }
 
@@ -281,13 +352,28 @@ function projectCoverage(
   return "partial";
 }
 
-function projectProof(
-  provenCount: number,
-  waivedCount: number,
-  totalCount: number,
-): RequirementStatus["proof"] {
-  if (totalCount === 0 || provenCount + waivedCount === 0) {
+function projectProof({
+  provenCount,
+  waivedCount,
+  deliveredExternallyCount,
+  totalCount,
+}: {
+  provenCount: number;
+  waivedCount: number;
+  deliveredExternallyCount: number;
+  totalCount: number;
+}): RequirementStatus["proof"] {
+  const settledCount = provenCount + waivedCount + deliveredExternallyCount;
+  if (totalCount === 0 || settledCount === 0) {
     return "pending";
+  }
+  if (settledCount < totalCount) {
+    return "partial";
+  }
+  // Ahead of the proof answers on purpose: once external testimony settles any
+  // part of a requirement, no label above it can be honestly claimed.
+  if (deliveredExternallyCount > 0) {
+    return "delivered_externally";
   }
   if (provenCount === totalCount) {
     return "proven";
@@ -295,9 +381,6 @@ function projectProof(
   if (waivedCount === totalCount) {
     return "waived";
   }
-  if (provenCount + waivedCount === totalCount) {
-    return "proven_and_waived";
-  }
 
-  return "partial";
+  return "proven_and_waived";
 }

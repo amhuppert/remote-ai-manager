@@ -13,12 +13,13 @@ import {
 } from "@/lib/specs/authoring-service";
 import {
   explainInvalidElementHandle,
+  formatBareElementHandle,
   formatElementHandle,
   isWellFormedElementHandle,
   parseElementHandle,
   specSlugSchema,
 } from "@/lib/specs/handles";
-import { draftHealth } from "@/lib/specs/draft-health";
+import { LINT_SEVERITY_LABEL, draftHealth } from "@/lib/specs/draft-health";
 import { postLaunchPathActs } from "@/lib/specs/delivery-plan";
 import {
   deliveryPlanEditRequestSchema,
@@ -29,6 +30,7 @@ import {
 } from "@/lib/specs/delivery-plan-views";
 import { approvalRequestReceiptSchema } from "@/lib/specs/review-service";
 import {
+  importBundleSchema,
   specAliasSchema,
   specElementSchema,
   specElementVersionSchema,
@@ -41,6 +43,7 @@ import {
   taskElementPayloadSchema,
 } from "@/lib/specs/schemas";
 import {
+  lintFindingSchema,
   specAssumptionViewSchema,
   specEditContextViewSchema,
   specLintViewSchema,
@@ -255,6 +258,58 @@ const captureResponseSchema = z
 const renameResponseSchema = z
   .object({ spec: specSchema, alias: specAliasSchema })
   .strict();
+/** What the import counted into the spec it created, per element family. */
+const importCountsSchema = z
+  .object({
+    sections: z.number().int().nonnegative(),
+    requirements: z.number().int().nonnegative(),
+    criteria: z.number().int().nonnegative(),
+    decisions: z.number().int().nonnegative(),
+    questions: z.number().int().nonnegative(),
+    assumptions: z.number().int().nonnegative(),
+  })
+  .strict();
+type ImportCountsView = z.infer<typeof importCountsSchema>;
+const importReceiptSchema = z
+  .object({
+    spec: specSchema,
+    revision: specRevisionSchema,
+    counts: importCountsSchema,
+  })
+  .strict();
+const importHandleEntrySchema = z
+  .object({ handle: z.string().min(1), summary: z.string() })
+  .strict();
+const importPreviewSchema = z
+  .object({
+    dryRun: z.literal(true),
+    preview: z
+      .object({
+        counts: importCountsSchema,
+        handles: z
+          .object({
+            requirements: z.array(importHandleEntrySchema),
+            criteria: z.array(importHandleEntrySchema),
+            decisions: z.array(importHandleEntrySchema),
+            questions: z.array(importHandleEntrySchema),
+            assumptions: z.array(importHandleEntrySchema),
+          })
+          .strict(),
+        findings: z.array(lintFindingSchema),
+        blocking: z.number().int().nonnegative(),
+      })
+      .strict(),
+  })
+  .strict();
+/**
+ * A rehearsal and a real import answer the same action, and the transport
+ * unwraps the performed result to the receipt itself — so the two are told
+ * apart by shape rather than by a discriminator the server never sends.
+ */
+const importResponseSchema = z.union([
+  importPreviewSchema,
+  importReceiptSchema,
+]);
 const writeStatusSchema = z
   .object({
     openQuestions: z.array(
@@ -350,6 +405,12 @@ function invalidFileResult(
   description: string,
   json: boolean,
   error: z.ZodError,
+  /**
+   * The one published document this file must match, when the command accepts
+   * exactly one. Without it the caller is sent to the whole schema index and
+   * has to work out which of its documents this verb reads.
+   */
+  schemaDocument?: string,
 ): CliResult {
   // The failing paths are the actionable part of the refusal: without them the
   // caller can only re-derive the mismatch by re-reading `spec schema` and
@@ -366,7 +427,9 @@ function invalidFileResult(
       `spec ${command}: ${description} file ${JSON.stringify(filePath)} does not match the required schema`,
       ...issues,
       ...(overflow > 0 ? [`  …and ${overflow} more`] : []),
-      "  run `cctl spec schema` for the accepted document shapes",
+      schemaDocument === undefined
+        ? "  run `cctl spec schema` for the accepted document shapes"
+        : `  run \`cctl spec schema ${schemaDocument}\` for the accepted document shape`,
     ].join("\n"),
     json,
   );
@@ -960,6 +1023,223 @@ export async function runSpecCreate(
     "created",
     created,
   );
+}
+
+const IMPORT_SCHEMA_DOCUMENT = "import-bundle";
+
+/**
+ * The numbering the import allocated, read back from what it counted. A new
+ * spec starts every counter at zero, so a family's count IS its handle range —
+ * except criteria, which are numbered inside their requirement, and which no
+ * single range could honestly report.
+ */
+function importHandleLines(counts: ImportCountsView): string[] {
+  const requirement = (number: number) =>
+    formatBareElementHandle({ kind: "requirement", requirementNumber: number });
+  const numbered =
+    (kind: "decision" | "question" | "assumption") => (number: number) =>
+      formatBareElementHandle({ kind, number });
+  const family = (
+    label: string,
+    count: number,
+    handle: (number: number) => string,
+  ) =>
+    count === 0
+      ? `  ${label}: 0`
+      : count === 1
+        ? `  ${label}: 1 (${handle(1)})`
+        : `  ${label}: ${count} (${handle(1)}–${handle(count)})`;
+  return [
+    // Sections carry no handle at all: they are addressed by element id.
+    `  sections: ${counts.sections}`,
+    family("requirements", counts.requirements, requirement),
+    `  criteria: ${counts.criteria}`,
+    family("decisions", counts.decisions, numbered("decision")),
+    family("questions", counts.questions, numbered("question")),
+    family("assumptions", counts.assumptions, numbered("assumption")),
+  ];
+}
+
+function importReceiptResult(
+  receipt: z.infer<typeof importReceiptSchema>,
+  sourceLabel: string,
+  json: boolean,
+): CliResult {
+  const { spec, revision, counts } = receipt;
+  const delivery = revision.externalDelivery;
+  return mutationResult(
+    json,
+    {
+      // Approved on provenance, never on an approval: the spec is born past its
+      // authoring gates because an agent imported it, and no approval row was
+      // written for anyone to mistake for a human one.
+      changed: `imported spec ${spec.slug} from ${sourceLabel} — revision ${revision.number} is approved on import provenance, not on a human approval`,
+      items: importHandleLines(counts),
+      state:
+        delivery === null
+          ? `revision ${revision.number} is approved at the ${revision.authoringStage} stage; no external delivery recorded`
+          : `revision ${revision.number} is approved at the ${revision.authoringStage} stage; external delivery recorded from ${delivery.source.label} at ${delivery.at} — provenance, not proof`,
+      tokens: { spec: spec.slug, revision: revision.id },
+      actsNext: "agent",
+      blocked: null,
+      // A source that already shipped owes nothing here; one that has not still
+      // owes its delivery, which is authored as a plan.
+      next:
+        delivery === null
+          ? `cctl spec plan open ${spec.slug}`
+          : `cctl spec show ${spec.slug}`,
+    },
+    "import",
+    receipt,
+  );
+}
+
+/**
+ * The step that ends the rehearsal. A bundle that declares its own `dryRun`
+ * rehearses on every invocation of this command, so for that bundle the
+ * terminating act is an edit to the document — offering the bare re-run would
+ * advise a rehearsal that repeats forever.
+ */
+function importDryRunHint(
+  blocking: number,
+  filePath: string,
+  declaredInBundle: boolean,
+): string {
+  const owed = [
+    ...(blocking === 0
+      ? []
+      : [`fix the ${countOf(blocking, "blocking finding")} above`]),
+    ...(declaredInBundle
+      ? [`set "dryRun": false in ${filePath} (or drop the field)`]
+      : []),
+  ];
+  const perform = `cctl spec import --file ${filePath}`;
+  if (owed.length === 0) return `${perform} — nothing here refuses it`;
+  return `${owed.join(" and ")}, then ${perform}${
+    blocking === 0 ? " — nothing else here refuses it" : ""
+  }`;
+}
+
+function importDryRunResult(
+  preview: z.infer<typeof importPreviewSchema>["preview"],
+  slug: string,
+  filePath: string,
+  declaredInBundle: boolean,
+  json: boolean,
+): CliResult {
+  const health = draftHealth(preview.findings);
+  const { handles } = preview;
+  const allocated = [
+    ...handles.requirements,
+    ...handles.criteria,
+    ...handles.decisions,
+    ...handles.questions,
+    ...handles.assumptions,
+  ];
+  // The numbering is what an agent authoring cross-references in the bundle
+  // needs before any of it exists, so it is listed entry by entry rather than
+  // summarized the way a performed import's receipt summarizes it.
+  const lines = [
+    `dry run — nothing was written. spec ${slug} would be created from this bundle`,
+    ...(allocated.length === 0
+      ? []
+      : [
+          "handles it would allocate:",
+          ...allocated.map((entry) => `  ${entry.handle}  ${entry.summary}`),
+        ]),
+    ...importHandleLines(preview.counts),
+    `findings: ${health.total}, ${health.blocking} blocking`,
+    ...health.groups.flatMap((group) => [
+      `${LINT_SEVERITY_LABEL[group.severity]} (${group.findings.length})${
+        group.severity === "blocks_propose" ? " — would refuse the import" : ""
+      }:`,
+      ...group.findings.map(
+        (finding) =>
+          `  ${finding.elementHandle} [${finding.ruleId}]: ${finding.message}`,
+      ),
+    ]),
+  ];
+  logger.debug("cli.spec.import_dry_run", {
+    findingCount: health.total,
+    blockingCount: health.blocking,
+  });
+  return {
+    exitCode: EXIT_OK,
+    // The hint travels on the envelope alone: `render` owns the hint tier and
+    // prints the `hint:` line itself in text mode.
+    stdout: render(json, `${lines.join("\n")}\n`, {
+      ok: true,
+      dryRun: true,
+      preview,
+      hint: importDryRunHint(health.blocking, filePath, declaredInBundle),
+    }),
+    stderr: "",
+  };
+}
+
+export async function runSpecImport(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("spec import"), json);
+  if (denied) return denied;
+  const extra = noExtraPositionals(rest, 0, "import", json);
+  if (extra) return extra;
+  const filePath = values["file"];
+  if (filePath === undefined) {
+    return usageFailure(
+      "spec import requires --file <bundle.json> — the bundle names the spec it creates, so this command takes no slug",
+      json,
+    );
+  }
+  const file = await readJsonObjectFile(host, filePath, "import bundle", json);
+  if (!file.ok) return file.result;
+  const parsed = importBundleSchema.safeParse(file.value);
+  if (!parsed.success) {
+    return invalidFileResult(
+      "import",
+      filePath,
+      "import bundle",
+      json,
+      parsed.error,
+      IMPORT_SCHEMA_DOCUMENT,
+    );
+  }
+  const bundle = parsed.data;
+  // The flag and the document can each ask for a rehearsal, and neither
+  // cancels the other's ask: a bundle authored `"dryRun": true` must not be
+  // performed for real because the flag was left off the invocation.
+  const dryRun = bundle.dryRun || values["dry-run"] !== undefined;
+  const resolved = await resolveProjectConversationContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const response = await requestTyped(
+    host,
+    resolved.context,
+    env,
+    {
+      method: "POST",
+      path: `/api/specs/${encodePathSegment(resolved.context.project)}/actions/import`,
+      body: { ...bundle, dryRun },
+      schema: importResponseSchema,
+      command: "import",
+    },
+    json,
+  );
+  if (!response.ok) return response.result;
+  const result = response.value;
+  return "dryRun" in result
+    ? importDryRunResult(
+        result.preview,
+        bundle.slug,
+        filePath,
+        bundle.dryRun,
+        json,
+      )
+    : importReceiptResult(result, bundle.source.label, json);
 }
 
 export async function runSpecAmend(

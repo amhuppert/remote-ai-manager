@@ -29,6 +29,7 @@ import {
   specGatePolicySchema,
   specGatePresetSchema,
   specGateSchema,
+  specImportedCountsSchema,
   specProofVerdictRowSchema,
   specQuestionStatusSchema,
   specRevisionElementSchema,
@@ -146,6 +147,19 @@ export const revisionSignOffSchema = z
   })
   .strict();
 
+/**
+ * A subject an import admission settles rather than a human approval. Carried
+ * on the wire beside the outstanding subjects because absence from those is
+ * how a surface concludes "approved", and no human approved these.
+ */
+const importCarriedApprovalSchema = z
+  .object({
+    gate: specGateSchema,
+    subject: z.string(),
+    elementId: z.string().min(1),
+  })
+  .strict();
+
 const pendingGateBlockSchema = z
   .object({
     gate: specGateSchema,
@@ -153,6 +167,9 @@ const pendingGateBlockSchema = z
     state: z.enum(["pending", "admitted", "not_required"]),
     applicability: specGateApplicabilitySchema,
     subjects: z.array(z.string()),
+    // Defaulted so a payload written before this field still satisfies the
+    // strict parse; a spec no import created carries none.
+    importCarriedSubjects: z.array(z.string()).default([]),
   })
   .strict();
 
@@ -607,6 +624,12 @@ export const specStatusViewSchema = z
       .nullable()
       .default(null),
     pendingApprovals: z.array(pendingApprovalSchema),
+    /**
+     * Consulted subjects an import admission settles — never approvals. A
+     * surface that reports "all approved" from an empty `pendingApprovals`
+     * must subtract these first.
+     */
+    importCarriedApprovals: z.array(importCarriedApprovalSchema).default([]),
     /** The gates this revision's transition consults, in gate order. */
     applicableGates: z.array(specGateSchema).default([]),
     revisionSignOff: revisionSignOffSchema.nullable().default(null),
@@ -620,6 +643,16 @@ export const specStatusViewSchema = z
     draftHealth: draftHealthTierSchema.nullable().default(null),
     coverage: specCoverageSchema,
     delivery: deliveryDisplaySchema,
+    /**
+     * Whether this spec entered the system by import, derived server-side from
+     * the `import`-basis gate admissions on the current approved revision's
+     * lineage. It stores nothing new: it is the one bit the surfaces that never
+     * load admissions — the inventory row, the review header — need in order to
+     * attribute imported content to import rather than to a human. Required
+     * rather than defaulted: a default is fail-open in the one direction that
+     * matters, parsing a truncated payload as natively authored.
+     */
+    imported: z.boolean(),
   })
   .strict();
 export type SpecStatusView = z.infer<typeof specStatusViewSchema>;
@@ -694,6 +727,10 @@ export const specSummaryViewSchema = z
     approvalState: z.enum(["complete", "pending"]),
     delivery: deliveryDisplaySchema,
     linkedWork: linkedWorkRollupSchema,
+    /** The status view's import provenance, carried so an inventory row can
+     * mark an imported spec without loading the whole detail. Required for the
+     * same reason the status field is. */
+    imported: z.boolean(),
   })
   .strict();
 export type SpecSummaryView = z.infer<typeof specSummaryViewSchema>;
@@ -727,6 +764,24 @@ export const liveProposalViewSchema = z
   })
   .strict();
 export type LiveProposalView = z.infer<typeof liveProposalViewSchema>;
+
+/**
+ * What the durable `spec_imported` event knows and nothing else: the source
+ * label and the content counts exist nowhere but that event. Which revision the
+ * import created is deliberately absent — the basis-`import` gate admissions
+ * already state it, and a second copy on the wire is a provenance source that
+ * can drift from the one the gates are actually keyed to. Consumers that need
+ * the imported revision read the admissions.
+ */
+export const specImportRecordViewSchema = z
+  .object({
+    occurredAt: z.string().min(1),
+    /** The external document the bundle named, verbatim. */
+    sourceLabel: z.string().min(1),
+    counts: specImportedCountsSchema,
+  })
+  .strict();
+export type SpecImportRecordView = z.infer<typeof specImportRecordViewSchema>;
 
 export const specDetailViewSchema = z
   .object({
@@ -776,6 +831,14 @@ export const specDetailViewSchema = z
     linkedTickets: z.array(linkedTicketReadThroughSchema),
     questions: z.array(specQuestionViewSchema).default([]),
     assumptions: z.array(specAssumptionViewSchema).default([]),
+    /**
+     * Null for every spec authored here, and null for an imported spec whose
+     * event payload is unreadable — this carries the import's *detail*, not the
+     * fact of it. The fact lives in `gateAdmissions`, so a null here narrows
+     * what History can say without ever letting an imported revision read as a
+     * human sign-off.
+     */
+    importRecord: specImportRecordViewSchema.nullable(),
   })
   .strict();
 export type SpecDetailView = z.infer<typeof specDetailViewSchema>;

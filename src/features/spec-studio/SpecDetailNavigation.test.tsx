@@ -5,7 +5,10 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
-import { specControlsDetailFixture } from "./SpecControls.fixtures";
+import {
+  importedDeliveredSpecDetailFixture,
+  specControlsDetailFixture,
+} from "./SpecControls.fixtures";
 import SpecDetailViews, { type DetailView } from "./SpecDetailViews";
 
 /**
@@ -156,6 +159,42 @@ describe("SpecDetailViews", () => {
       "2 items need attention",
     );
     expect(within(questionsButton).getByText("2")).toBeVisible();
+  });
+
+  it("asks for nothing on a fully-disposed delivered import", () => {
+    renderDetailViews("overview", importedDeliveredSpecDetailFixture());
+
+    const navigation = screen.getByRole("navigation", { name: "Spec views" });
+    expect(
+      within(navigation).getByRole("button", { name: "Review" }),
+    ).not.toHaveAccessibleDescription();
+    expect(
+      within(navigation).getByRole("button", {
+        name: "Questions & assumptions",
+      }),
+    ).not.toHaveAccessibleDescription();
+  });
+
+  /**
+   * Import provenance is not an exemption from the badge: a bundle may arrive
+   * with a question it never answered, and that answer is owed here.
+   */
+  it("still asks for a question the import left open", () => {
+    const detail = importedDeliveredSpecDetailFixture();
+    const question = detail.questions[0];
+    if (question === undefined) throw new Error("Import fixture needs a Q");
+    detail.questions = [
+      { ...question, status: "open", answer: null, answeredAt: null },
+    ];
+
+    renderDetailViews("overview", detail);
+
+    expect(
+      within(screen.getByRole("navigation", { name: "Spec views" })).getByRole(
+        "button",
+        { name: "Questions & assumptions" },
+      ),
+    ).toHaveAccessibleDescription("1 item needs attention");
   });
 
   it("suppresses actionable attention counts on abandoned specs", () => {

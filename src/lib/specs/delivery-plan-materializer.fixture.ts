@@ -125,6 +125,7 @@ export function pinnedRevisionSnapshot(): SpecRevisionSnapshot {
       contentHash: "content-revision-materializer-2",
       proposedAt: TS,
       approvedAt: TS,
+      externalDelivery: null,
       createdAt: TS,
     },
     elements: rows.map((row, index) => ({

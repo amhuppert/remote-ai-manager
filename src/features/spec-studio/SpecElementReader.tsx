@@ -1066,6 +1066,11 @@ function requirementProofPresentation(
       return { label: "Waived", tone: "amber" };
     case "proven_and_waived":
       return { label: "Proven + waived", tone: "green" };
+    // Neutral rather than green: the requirement is settled, but on an import's
+    // testimony, and green is this system's success tone for work it saw
+    // merged.
+    case "delivered_externally":
+      return { label: "Delivered externally", tone: "neutral" };
     case "partial":
       return { label: "Proof partial", tone: "amber" };
     case "pending":

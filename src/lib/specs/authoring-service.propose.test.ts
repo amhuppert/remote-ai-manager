@@ -224,6 +224,9 @@ describe("AuthoringService propose transaction", () => {
           governanceBaseRevisionId: null,
         },
         subjects: ["R1"],
+        // A natively authored spec carries no import admission, so nothing is
+        // settled by anything other than a human act.
+        importCarriedSubjects: [],
       },
       {
         gate: "plan",
@@ -234,6 +237,7 @@ describe("AuthoringService propose transaction", () => {
           governanceBaseRevisionId: null,
         },
         subjects: ["plan"],
+        importCarriedSubjects: [],
       },
     ]);
     expect(result.pendingBlock?.outstandingSubjects).toEqual([

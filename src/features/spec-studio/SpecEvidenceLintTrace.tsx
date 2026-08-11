@@ -135,6 +135,7 @@ const severityTone: Record<LintFinding["severity"], StatusChipTone> = {
 export function SpecEvidencePanel({
   criteria,
   dispositions = [],
+  deliveredExternallyCriterionIds = [],
   initialFilter = "unproven",
   revisionLabel = null,
   emptyMessage = "No acceptance criteria are present in this revision.",
@@ -142,6 +143,12 @@ export function SpecEvidencePanel({
 }: {
   criteria: CriterionProofView[];
   dispositions?: SpecCriterionDispositionRow[];
+  /**
+   * The criteria an import's external-delivery record accounts for, named by
+   * the delivery projection. The panel cannot derive this from a criterion's
+   * evidence, because there is none: that is exactly the claim.
+   */
+  deliveredExternallyCriterionIds?: readonly string[];
   initialFilter?: EvidenceFilter;
   revisionLabel?: string | null;
   emptyMessage?: string;
@@ -149,11 +156,13 @@ export function SpecEvidencePanel({
 }): React.JSX.Element {
   const [filter, setFilter] = useState<EvidenceFilter>(initialFilter);
   const dispositionByCriterion = latestDispositions(dispositions);
+  const deliveredExternally = new Set(deliveredExternallyCriterionIds);
   const views = criteria.map((criterion) => ({
     criterion,
     state: criterionProofState(
       criterion,
       dispositionByCriterion.get(criterion.elementId),
+      deliveredExternally.has(criterion.elementId),
     ),
   }));
   const inScope = views.filter(({ state }) => state.inScope);
@@ -291,6 +300,12 @@ type CriterionProofStateKind =
   | "waived"
   | "deferred"
   | "delivered_elsewhere"
+  /**
+   * Distinct from `delivered_elsewhere`, which is a delivery-plan disposition
+   * this system recorded about its own work. This one is an import's testimony
+   * that the criterion shipped before Command Center ever saw it.
+   */
+  | "delivered_externally"
   | "awaiting_verdict"
   | "unproven";
 
@@ -415,6 +430,11 @@ function CriterionProofCard({
           Nothing proves this criterion yet.
         </p>
       )}
+      {state.kind === "delivered_externally" && (
+        <p className="m-0 font-mono text-[0.72rem] text-text-tertiary">
+          Delivered outside this system, unproven here.
+        </p>
+      )}
       {state.kind === "awaiting_verdict" && (
         <p className="m-0 font-mono text-[0.7rem] text-amber">
           Evidence is attached, but no current verdict satisfies the strategy.
@@ -493,6 +513,7 @@ function latestDispositions(
 function criterionProofState(
   criterion: CriterionProofView,
   disposition: SpecCriterionDispositionRow | undefined,
+  deliveredExternally = false,
 ): CriterionProofState {
   const inScope =
     disposition === undefined || disposition.disposition === "in_scope";
@@ -540,6 +561,18 @@ function criterionProofState(
       kind: "waived",
       label: "Waived — not proof",
       tone: "amber",
+      inScope,
+      disposition,
+    };
+  }
+  // Below proof and waiver on purpose: anything this system recorded about the
+  // criterion outranks the import's account of it. Neutral rather than the
+  // green this card gives merged work — the state is settled, not verified.
+  if (deliveredExternally) {
+    return {
+      kind: "delivered_externally",
+      label: "Delivered externally",
+      tone: "neutral",
       inScope,
       disposition,
     };

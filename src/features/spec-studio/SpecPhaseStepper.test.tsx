@@ -12,6 +12,8 @@ import type {
 
 import {
   SPEC_CONTROLS_FIXTURE_NOW,
+  importedDeliveredSpecDetailFixture,
+  importedThenAmendedSpecDetailFixture,
   specControlsDetailFixture,
   strandedProposalDetailFixture,
 } from "./SpecControls.fixtures";
@@ -427,7 +429,9 @@ describe("SpecPhaseStepper", () => {
             ],
             delivery: {
               allWaived: false,
+              deliveredCount: 1,
               provenCount: 1,
+              deliveredExternallyCriterionIds: [],
               totalInScope: 1,
             },
           },
@@ -456,7 +460,9 @@ describe("SpecPhaseStepper", () => {
             phase: { primary: "delivered" },
             delivery: {
               allWaived: true,
+              deliveredCount: 0,
               provenCount: 0,
+              deliveredExternallyCriterionIds: [],
               totalInScope: 2,
             },
           },
@@ -467,6 +473,134 @@ describe("SpecPhaseStepper", () => {
     expect(step("Deliver")).toHaveTextContent("2 criteria waived");
     expect(screen.getByText(/Delivered:/)).toHaveTextContent(
       "all 2 in-scope criteria waived",
+    );
+  });
+
+  /**
+   * An import reaches Delivered with nothing proven here. The delivery step
+   * reporting only "0/2 criteria proven" would describe the spec by what it
+   * lacks and never name the record it actually rests on (R9.4).
+   */
+  it("reports an externally-delivered spec by its external record rather than as unproven", () => {
+    const detail = specControlsDetailFixture();
+
+    render(
+      <SpecPhaseStepper
+        detail={{
+          ...detail,
+          status: {
+            ...detail.status,
+            imported: true,
+            phase: { primary: "delivered" },
+            delivery: {
+              allWaived: false,
+              deliveredCount: 2,
+              provenCount: 0,
+              deliveredExternallyCriterionIds: ["criterion-1", "criterion-2"],
+              totalInScope: 2,
+            },
+          },
+        }}
+      />,
+    );
+
+    expect(step("Deliver")).toHaveTextContent(
+      "2/2 criteria delivered externally",
+    );
+    expect(step("Deliver")).not.toHaveTextContent("proven");
+    expect(screen.getByText(/Delivered:/)).toHaveTextContent(
+      "2/2 in-scope criteria delivered externally, none proven here",
+    );
+  });
+
+  it("attributes an imported spec's authoring stages to import rather than approval", () => {
+    // An imported spec carries zero approval rows, so a stage that reads
+    // "approved rev 1" would present import provenance as a human act.
+    render(<SpecPhaseStepper detail={importedDeliveredSpecDetailFixture()} />);
+
+    for (const label of ["Requirements", "Design"]) {
+      expect(step(label)).not.toHaveTextContent("approved rev");
+      expect(step(label)).toHaveTextContent("rev 1 admitted by import");
+    }
+  });
+
+  it("still says approved for a natively authored spec's stages", () => {
+    render(<SpecPhaseStepper detail={specControlsDetailFixture()} />);
+
+    expect(step("Requirements")).toHaveTextContent("approved rev");
+  });
+
+  it("credits the human who approved an amendment to an imported spec", () => {
+    // The spec-level `imported` bit stays true for the whole lineage, so a
+    // stage that reads it rather than the named revision's own admission
+    // hands the import credit for a human sign-off it never performed.
+    render(
+      <SpecPhaseStepper detail={importedThenAmendedSpecDetailFixture()} />,
+    );
+
+    expect(step("Design")).toHaveTextContent("approved rev 2");
+    expect(step("Design")).not.toHaveTextContent("admitted by import");
+    // The requirements stage still names revision 1, and revision 1 really was
+    // admitted by the import — attribution follows the revision, not the spec.
+    expect(step("Requirements")).toHaveTextContent("rev 1 admitted by import");
+  });
+
+  it("does not claim a run completed here for an import that never executed", () => {
+    const detail = specControlsDetailFixture();
+
+    render(
+      <SpecPhaseStepper
+        detail={{
+          ...detail,
+          executions: [],
+          status: {
+            ...detail.status,
+            imported: true,
+            phase: { primary: "delivered" },
+            executions: [],
+            delivery: {
+              allWaived: false,
+              deliveredCount: 2,
+              provenCount: 0,
+              deliveredExternallyCriterionIds: ["criterion-1", "criterion-2"],
+              totalInScope: 2,
+            },
+          },
+        }}
+      />,
+    );
+
+    expect(step("Execute")).not.toHaveTextContent("run complete");
+  });
+
+  it("keeps proof and external delivery apart when a delivered spec has both", () => {
+    const detail = specControlsDetailFixture();
+
+    render(
+      <SpecPhaseStepper
+        detail={{
+          ...detail,
+          status: {
+            ...detail.status,
+            imported: true,
+            phase: { primary: "delivered" },
+            delivery: {
+              allWaived: false,
+              deliveredCount: 3,
+              provenCount: 1,
+              deliveredExternallyCriterionIds: ["criterion-2", "criterion-3"],
+              totalInScope: 3,
+            },
+          },
+        }}
+      />,
+    );
+
+    expect(step("Deliver")).toHaveTextContent(
+      "1/3 criteria proven · 2 delivered externally",
+    );
+    expect(screen.getByText(/Delivered:/)).toHaveTextContent(
+      "1/3 in-scope criteria proven, 2 delivered externally",
     );
   });
 

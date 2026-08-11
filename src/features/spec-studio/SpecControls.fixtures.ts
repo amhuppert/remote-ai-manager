@@ -268,6 +268,7 @@ export function planPreviewResponseFixture(body: unknown): SpecPlanPreviewView {
     contentHash: `${revisionId}-hash`,
     proposedAt: SPEC_CONTROLS_FIXTURE_NOW,
     approvedAt: null,
+    externalDelivery: null,
     createdAt: SPEC_CONTROLS_FIXTURE_NOW,
   });
 }
@@ -365,6 +366,7 @@ export function specControlsDetailFixture(
     contentHash: "revision-hash",
     proposedAt: SPEC_CONTROLS_FIXTURE_NOW,
     approvedAt: SPEC_CONTROLS_FIXTURE_NOW,
+    externalDelivery: null,
     createdAt: SPEC_CONTROLS_FIXTURE_NOW,
   };
   const elements = [
@@ -484,6 +486,7 @@ export function specControlsDetailFixture(
     status: {
       specId: "spec-1",
       slug: "native-sdd",
+      imported: false,
       phase: { primary: executionState === "none" ? "approved" : "executing" },
       executions: executions.map((execution) => ({
         id: execution.id,
@@ -501,6 +504,7 @@ export function specControlsDetailFixture(
       // The fixture spec's current revision is approved, so no draft is open.
       authoringSequence: null,
       pendingApprovals: [],
+      importCarriedApprovals: [],
       applicableGates: [],
       revisionSignOff: null,
       pendingBlock: null,
@@ -517,7 +521,13 @@ export function specControlsDetailFixture(
         top: [],
       },
       coverage: { coveredCriteria: 1, totalCriteria: 1, percentage: 100 },
-      delivery: { allWaived: false, provenCount: 0, totalInScope: 1 },
+      delivery: {
+        allWaived: false,
+        deliveredCount: 0,
+        provenCount: 0,
+        deliveredExternallyCriterionIds: [],
+        totalInScope: 1,
+      },
     },
     questions: [],
     assumptions: [],
@@ -538,6 +548,7 @@ export function specControlsDetailFixture(
           ],
     waivers: [],
     gateAdmissions: [],
+    importRecord: null,
   };
 }
 
@@ -714,7 +725,9 @@ export function denseSpecControlsDetailFixture(
   );
   detail.status.delivery = {
     allWaived: false,
+    deliveredCount: 1,
     provenCount: 1,
+    deliveredExternallyCriterionIds: [],
     totalInScope: 3,
   };
   return detail;
@@ -778,6 +791,156 @@ export function approvedAwaitingProofSpecControlsDetailFixture(): SpecDetailView
 }
 
 /**
+ * A spec born by import and already delivered outside this system, with every
+ * imported question answered and every imported assumption disposed in the
+ * bundle. Its gates were crossed on the source document's word, so it carries
+ * import-basis admissions and no approval rows at all: an import writes none,
+ * and a fixture that invented one would let a surface pass a human sign-off
+ * the import never performed.
+ */
+export function importedDeliveredSpecDetailFixture(): SpecDetailView {
+  const detail = specControlsDetailFixture();
+  const snapshot = detail.currentApprovedRevision;
+  if (snapshot === null) throw new Error("Approved fixture missing");
+  detail.approvals = [];
+  detail.gateAdmissions = [
+    policyAdmissionViewFixture({
+      id: "admission-import-requirements",
+      gate: "requirements",
+      basis: "import",
+      approvalId: null,
+      revisionId: snapshot.revision.id,
+      actor: { kind: "agent", conversationId: "conversation-1" },
+    }),
+    policyAdmissionViewFixture({
+      id: "admission-import-design",
+      gate: "design",
+      basis: "import",
+      approvalId: null,
+      revisionId: snapshot.revision.id,
+      actor: { kind: "agent", conversationId: "conversation-1" },
+    }),
+  ];
+  detail.importRecord = {
+    occurredAt: SPEC_CONTROLS_FIXTURE_NOW,
+    sourceLabel: "kiro:.kiro/specs/shipped-feature",
+    counts: {
+      sections: 1,
+      requirements: 1,
+      criteria: 1,
+      decisions: 0,
+      questions: 1,
+      assumptions: 1,
+    },
+  };
+  // The import writes the record and its answer in one transaction, so an
+  // imported answer carries the import instant exactly.
+  detail.questions = [
+    {
+      id: "question-1",
+      number: 1,
+      handle: "Q1",
+      elementId: null,
+      text: "Which retention window applies?",
+      status: "answered",
+      answer: "Thirty days, per the source spec.",
+      answeredAt: SPEC_CONTROLS_FIXTURE_NOW,
+      provenance: { kind: "agent", conversationId: "conversation-1" },
+      createdAt: SPEC_CONTROLS_FIXTURE_NOW,
+      updatedAt: SPEC_CONTROLS_FIXTURE_NOW,
+    },
+  ];
+  detail.assumptions = [
+    {
+      id: "assumption-1",
+      number: 1,
+      handle: "A1",
+      elementId: null,
+      text: "Retention defaults to 30 days.",
+      disposition: "confirmed",
+      disposedAt: SPEC_CONTROLS_FIXTURE_NOW,
+      proposedBy: { kind: "agent", conversationId: "conversation-1" },
+      createdAt: SPEC_CONTROLS_FIXTURE_NOW,
+      updatedAt: SPEC_CONTROLS_FIXTURE_NOW,
+    },
+  ];
+  detail.status.imported = true;
+  detail.status.phase = { primary: "delivered" };
+  detail.status.delivery = {
+    allWaived: false,
+    deliveredCount: 1,
+    provenCount: 0,
+    deliveredExternallyCriterionIds: ["criterion-1"],
+    totalInScope: 1,
+  };
+  return specDetailViewSchema.parse(detail);
+}
+
+/** The human sign-off on the amendment lands after the import committed. */
+const AMENDMENT_APPROVED_AT = "2026-07-19T09:30:00.000Z";
+
+/**
+ * A spec born by import that a human later amended here: revision 1 crossed its
+ * gates on the source document's word, revision 2 was authored natively and
+ * signed off by a human. The spec-level `imported` bit stays true for the whole
+ * lineage, so this is the shape that separates "this spec entered by import"
+ * from "this revision was admitted by import" — a surface that reads the bit
+ * instead of the revision's own admission credits the import with a human act.
+ */
+export function importedThenAmendedSpecDetailFixture(): SpecDetailView {
+  const detail = importedDeliveredSpecDetailFixture();
+  const imported = detail.currentApprovedRevision;
+  if (imported === null) throw new Error("Imported fixture missing");
+  const amendment = {
+    revision: {
+      ...imported.revision,
+      id: "revision-2",
+      number: 2,
+      // The amendment reopens design, the stage its content changes.
+      authoringStage: "design" as const,
+      basedOnRevisionId: imported.revision.id,
+      contentHash: "revision-2-hash",
+      proposedAt: AMENDMENT_APPROVED_AT,
+      approvedAt: AMENDMENT_APPROVED_AT,
+      createdAt: AMENDMENT_APPROVED_AT,
+    },
+    elements: imported.elements,
+  };
+  detail.revisions = [imported.revision, amendment.revision];
+  detail.baseRevision = imported;
+  detail.currentRevision = amendment;
+  detail.currentApprovedRevision = amendment;
+  detail.executionRevisionSnapshots = [amendment];
+  detail.approvals = [
+    {
+      id: "approval-design-2",
+      spec_id: "spec-1",
+      subject_kind: "revision",
+      element_id: null,
+      revision_id: amendment.revision.id,
+      approver: "alex",
+      granted_at: AMENDMENT_APPROVED_AT,
+      validity: "valid",
+    },
+  ];
+  detail.gateAdmissions = [
+    ...detail.gateAdmissions,
+    policyAdmissionViewFixture({
+      id: "admission-design-human",
+      gate: "design",
+      basis: "human_approval",
+      approvalId: "approval-design-2",
+      revisionId: amendment.revision.id,
+      revisionNumber: amendment.revision.number,
+      actor: { kind: "human" },
+      createdAt: AMENDMENT_APPROVED_AT,
+    }),
+  ];
+  detail.status.phase = { primary: "approved" };
+  return specDetailViewSchema.parse(detail);
+}
+
+/**
  * The fixture spec with an open draft revision pinned at `pinnedStage`,
  * carrying the remaining-sequence projection the server computes under the
  * spec's *current* policy — so a consumer that echoes the stored sequence
@@ -799,6 +962,7 @@ export function draftingSpecControlsDetailFixture(
       basedOnRevisionId: approved.revision.id,
       proposedAt: null,
       approvedAt: null,
+      externalDelivery: null,
     },
     elements: approved.elements,
   };

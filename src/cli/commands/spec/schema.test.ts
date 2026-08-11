@@ -7,7 +7,12 @@ import {
   draftElementDocumentSchema,
 } from "@/lib/specs/authoring-service";
 import {
+  IMPORTED_VALIDATION_STRATEGY_NOTE,
   MACHINE_VALIDATION_EVIDENCE_KINDS,
+  importBundleSchema,
+  requirementPrioritySchema,
+  sectionRoleSchema,
+  specAssumptionDispositionSchema,
   specElementKindSchema,
   taskElementPayloadSchema,
   touchedPathSchema,
@@ -80,10 +85,127 @@ describe("cctl spec schema", () => {
       "element-batch",
       "element-batch-removals",
       "create-element",
+      "import-bundle",
       "discovered-task",
       "plan-edit",
       "guidance",
     ]);
+  });
+
+  /**
+   * The bundle is authored from OUTSIDE this repository — that is the whole
+   * point of the verb — so the published document is the only thing standing
+   * between an authoring agent and reading `src/lib/specs`.
+   */
+  it("publishes the import bundle in the index and as a selectable document", async () => {
+    const documents = await readDocuments();
+    const bundle = documents.find(({ id }) => id === "import-bundle");
+
+    expect(bundle?.usedBy).toEqual([
+      "cctl spec import --file <bundle.json>",
+      "cctl spec import --file <bundle.json> --dry-run",
+    ]);
+    expect(bundle?.jsonSchema).toMatchObject({
+      type: "object",
+      required: expect.arrayContaining([
+        "slug",
+        "name",
+        "source",
+        "sections",
+        "requirements",
+        "decisions",
+        "questions",
+        "assumptions",
+      ]),
+    });
+    // The enums come out of the generated schema, so an author never has to
+    // guess a role, priority, risk, or disposition value.
+    const enums = Object.fromEntries(
+      (bundle?.enums ?? []).map((fact) => [fact.path, fact.values]),
+    );
+    expect(enums["sections[].role"]).toEqual(sectionRoleSchema.options);
+    expect(enums["requirements[].priority"]).toEqual(
+      requirementPrioritySchema.options,
+    );
+    expect(enums["assumptions[].disposition"]).toEqual(
+      specAssumptionDispositionSchema.options,
+    );
+
+    const notes = bundle?.notes.join(" ") ?? "";
+    expect(notes).toContain('"delivered": false');
+    expect(notes).toContain("ref");
+    expect(notes).toContain(IMPORTED_VALIDATION_STRATEGY_NOTE);
+    expect(notes).toContain("new specs");
+
+    const text = await runCli(
+      ["spec", "schema", "import-bundle"],
+      env,
+      offlineHost(),
+    );
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("document: import-bundle");
+    expect(text.stdout).toContain("cctl spec import --file <bundle.json>");
+  });
+
+  /**
+   * Mapping an arbitrary external source must need no Command Center source
+   * reading, which is only true if the worked example shows every artifact a
+   * bundle can carry — including the two that are easiest to omit: a criterion
+   * that leans on the imported-strategy default, and a decision whose trace
+   * resolves against a bundle-local ref.
+   */
+  it("works the import example through every artifact a bundle carries", async () => {
+    const documents = await readDocuments();
+    const bundle = documents.find(({ id }) => id === "import-bundle");
+
+    const parsed = importBundleSchema.safeParse(bundle?.example);
+    expect(parsed.success ? null : parsed.error.issues).toBeNull();
+    if (!parsed.success) return;
+    const example = parsed.data;
+
+    expect(example.source.label.length).toBeGreaterThan(0);
+    expect(example.delivered).toBe(true);
+    expect(example.sections.length).toBeGreaterThan(0);
+
+    const requirement = example.requirements[0];
+    expect(requirement?.ref).toBeDefined();
+    expect(requirement?.criteria).toHaveLength(2);
+    // One criterion states its own obligation; the other leans on the default
+    // an import supplies, which is the pair an author has to see to choose.
+    expect(
+      requirement?.criteria.filter(
+        ({ validationStrategy }) => validationStrategy !== undefined,
+      ),
+    ).toHaveLength(1);
+    expect(
+      requirement?.criteria.filter(
+        ({ validationStrategy }) => validationStrategy === undefined,
+      ),
+    ).toHaveLength(1);
+
+    const decision = example.decisions[0];
+    expect(decision?.rejectedAlternatives.length).toBeGreaterThan(0);
+    // The trace resolves inside the bundle: every ref it names is declared.
+    const declaredRefs = new Set(
+      example.requirements.flatMap(({ ref }) =>
+        ref === undefined ? [] : [ref],
+      ),
+    );
+    expect(decision?.traces.length).toBeGreaterThan(0);
+    for (const trace of decision?.traces ?? []) {
+      expect(declaredRefs.has(trace), `trace "${trace}" is not declared`).toBe(
+        true,
+      );
+    }
+
+    expect(
+      example.questions.filter(({ answer }) => answer !== undefined),
+    ).toHaveLength(1);
+    expect(
+      example.assumptions.filter(
+        ({ disposition }) => disposition === "confirmed",
+      ),
+    ).toHaveLength(1);
   });
 
   it("publishes the materializer, lint, and evidence registries as one offline guidance document", async () => {

@@ -293,6 +293,36 @@ export const SPEC_EXECUTIONS_SCHEMA_DDL = `
     WHERE workflow_execution_id IS NOT NULL;
 `;
 
+/**
+ * Gate-admission storage. Exported so the migration that widens the `basis`
+ * vocabulary rebuilds the table from this one definition instead of a
+ * hand-synced copy (the 0017 precedent).
+ */
+export const SPEC_GATE_ADMISSIONS_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS spec_gate_admissions (
+    id            TEXT PRIMARY KEY,
+    spec_id       TEXT NOT NULL,
+    gate          TEXT NOT NULL CHECK (gate IN (
+      'requirements', 'design', 'plan', 'execution_start', 'delivery'
+    )),
+    basis         TEXT NOT NULL CHECK (basis IN (
+      'human_approval', 'notify_policy', 'off_policy', 'import'
+    )),
+    approval_id   TEXT,
+    revision_id   TEXT,
+    execution_id  TEXT,
+    actor_json    TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (approval_id) REFERENCES spec_approvals(id),
+    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id),
+    FOREIGN KEY (execution_id) REFERENCES spec_executions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_gate_admissions_spec_gate
+    ON spec_gate_admissions (spec_id, gate, created_at DESC);
+`;
+
 const SPEC_SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS specs (
     id                TEXT PRIMARY KEY,
@@ -365,6 +395,7 @@ const SPEC_SCHEMA_DDL = `
     content_hash          TEXT,
     proposed_at           TEXT,
     approved_at           TEXT,
+    external_delivery_json TEXT,
     created_at            TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (spec_id, number),
     FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
@@ -436,28 +467,7 @@ const SPEC_SCHEMA_DDL = `
   CREATE INDEX IF NOT EXISTS idx_spec_approvals_subject
     ON spec_approvals (spec_id, subject_kind, element_id);
 
-  CREATE TABLE IF NOT EXISTS spec_gate_admissions (
-    id            TEXT PRIMARY KEY,
-    spec_id       TEXT NOT NULL,
-    gate          TEXT NOT NULL CHECK (gate IN (
-      'requirements', 'design', 'plan', 'execution_start', 'delivery'
-    )),
-    basis         TEXT NOT NULL CHECK (basis IN (
-      'human_approval', 'notify_policy', 'off_policy'
-    )),
-    approval_id   TEXT,
-    revision_id   TEXT,
-    execution_id  TEXT,
-    actor_json    TEXT NOT NULL,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (approval_id) REFERENCES spec_approvals(id),
-    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id),
-    FOREIGN KEY (execution_id) REFERENCES spec_executions(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_gate_admissions_spec_gate
-    ON spec_gate_admissions (spec_id, gate, created_at DESC);
+  ${SPEC_GATE_ADMISSIONS_SCHEMA_DDL}
 
   CREATE TABLE IF NOT EXISTS spec_questions (
     id               TEXT PRIMARY KEY,
@@ -1866,6 +1876,11 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     column: "authoring_stage",
     type: "TEXT NOT NULL DEFAULT 'plan' CHECK (authoring_stage IN ('requirements', 'design', 'plan'))",
   },
+  // The external-delivery claim an imported revision carries. Additive and
+  // nullable with no back-fill: every revision this system authored has no such
+  // claim, so null is the meaningful legacy value and there is nothing to
+  // reconstruct for the rows that predate the column.
+  { table: "spec_revisions", column: "external_delivery_json", type: "TEXT" },
   {
     table: "spec_executions",
     column: "execution_start_dial",

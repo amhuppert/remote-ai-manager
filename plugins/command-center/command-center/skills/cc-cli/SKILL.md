@@ -434,6 +434,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec export <slug> [--out <bundle.json>] [--stdout]`
   - `cctl spec verify <slug> [--against <bundle.json>]`
   - `cctl spec create --slug <slug> --name <name> --preset <preset> --file <element.json>`
+  - `cctl spec import --file <bundle.json> [--dry-run]`
   - `cctl spec amend <slug>`
   - `cctl spec draft <slug> --file <element.json>`
   - `cctl spec remove <slug> <handle...>`
@@ -486,6 +487,9 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec verify <slug> [--against <bundle.json>]`
 - `cctl spec create` — create a durable spec from its first draft save
   - `cctl spec create --slug <slug> --name <name> --preset <contract-bearing|exploratory|fast-path> --file <element.json>`
+- `cctl spec import` — create a new spec in one act from an external source bundle
+  - `cctl spec import --file <bundle.json>`
+  - `cctl spec import --file <bundle.json> --dry-run`
 - `cctl spec amend` — reopen authoring on an approved spec as an amendment draft
   - `cctl spec amend <slug>`
 - `cctl spec draft` — save a draft element at the version it replaces

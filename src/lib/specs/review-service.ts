@@ -1484,6 +1484,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       policy: spec.gatePolicy,
       snapshot,
       governanceBaseSnapshot: loaded.governanceBaseSnapshot,
+      importBaselineRows: loaded.importBaselineRows,
       approvals: deps.review.findApprovalsBySpecId(spec.id),
       admissions: deps.review.findGateAdmissionsBySpecId(spec.id),
       currentExecution: currentExecution(
@@ -2041,6 +2042,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
               policy: target.spec.gatePolicy,
               snapshot,
               governanceBaseSnapshot: loaded?.governanceBaseSnapshot ?? null,
+              importBaselineRows: loaded?.importBaselineRows ?? null,
               approvals,
               admissions: deps.review.findGateAdmissionsBySpecId(
                 target.spec.id,

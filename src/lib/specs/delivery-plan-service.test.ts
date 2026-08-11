@@ -151,6 +151,7 @@ function pinnedSnapshot(): SpecRevisionSnapshot {
       contentHash: "sha256:pinned",
       proposedAt: null,
       approvedAt: PINNED_AT,
+      externalDelivery: null,
       createdAt: PINNED_AT,
     },
     elements: pinnedElements(),

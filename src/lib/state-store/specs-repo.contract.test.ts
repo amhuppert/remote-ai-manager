@@ -344,6 +344,11 @@ describe("maximal persistence contracts", () => {
           contentHash: "derived-by-propose",
           proposedAt: PROPOSED_AT,
           approvedAt: APPROVED_AT,
+          externalDelivery: {
+            at: APPROVED_AT,
+            actor: { kind: "agent", conversationId: "conversation-import" },
+            source: { label: "kiro:.kiro/specs/native-sdd" },
+          },
           createdAt: UPDATED_AT,
         }),
       persist: async (maximal) => {
@@ -361,14 +366,53 @@ describe("maximal persistence contracts", () => {
           revisionId: maximal.id,
           proposedAt: requireFixtureString(maximal.proposedAt, "proposedAt"),
         });
-        return repo.approveRevision({
+        await repo.approveRevision({
           revisionId: maximal.id,
           approvedAt: requireFixtureString(maximal.approvedAt, "approvedAt"),
+        });
+        if (maximal.externalDelivery === null) {
+          throw new Error("maximal fixture requires externalDelivery");
+        }
+        return repo.recordExternalDelivery({
+          revisionId: maximal.id,
+          externalDelivery: maximal.externalDelivery,
         });
       },
       reload: (expected) => repo.findRevision(expected.id),
       fieldPolicies: { contentHash: "derived-on-write" },
     });
+  });
+
+  it("reloads an ordinarily-authored revision with no external-delivery record", async () => {
+    const created = await createSpec({ id: "spec-revision-no-external" });
+
+    const reloaded = await repo.findRevision(created.revision.id);
+
+    // Null is the meaningful value for every revision this system authored:
+    // external delivery is a claim only an import can make, and a missing
+    // column value must never read back as an empty record that looks like one.
+    expect(reloaded?.externalDelivery).toBeNull();
+  });
+
+  it("refuses to persist an external-delivery claim dated in free text", async () => {
+    const created = await createSpec({ id: "spec-revision-bad-date" });
+
+    // The write path validates, not just the schema in isolation: an
+    // unparseable date reaching the column would be durable forever, and no
+    // later reader could order it against this system's own timestamps.
+    await expect(
+      repo.recordExternalDelivery({
+        revisionId: created.revision.id,
+        externalDelivery: {
+          at: "not-an-iso-timestamp",
+          actor: { kind: "human" },
+          source: { label: "kiro:.kiro/specs/imported-feature" },
+        },
+      }),
+    ).rejects.toThrow();
+    expect(
+      (await repo.findRevision(created.revision.id))?.externalDelivery,
+    ).toBeNull();
   });
 
   it("round-trips every persisted supersession-marker field through a dismissal", async () => {

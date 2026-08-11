@@ -3,11 +3,7 @@ import { z } from "zod";
 
 import { apiFetch, apiFetchOptional } from "@/lib/api/fetcher";
 
-import {
-  deliveryDisplaySchema,
-  specPhaseProjectionSchema,
-  taskWorkStatusSchema,
-} from "./phase";
+import { specPhaseProjectionSchema, taskWorkStatusSchema } from "./phase";
 import { deliveryDeltaProjectionSchema } from "./delivery-delta";
 import { deliveryPlanReviewViewSchema } from "./delivery-plan-review";
 import { deliveryPlanSnapshotDiffViewSchema } from "./delivery-plan-views";
@@ -21,7 +17,6 @@ import {
   specQuestionStatusSchema,
   specRevisionElementSchema,
   specRevisionSchema,
-  specSchema,
   specWaiverRowSchema,
 } from "./schemas";
 import {
@@ -29,7 +24,9 @@ import {
   specDetailViewSchema,
   specPlanPreviewViewSchema,
   specStatusViewSchema,
+  specSummaryViewSchema,
   type SpecDetailView,
+  type SpecSummaryView,
 } from "./view-schemas";
 
 export { specStatusViewSchema };
@@ -67,41 +64,8 @@ export const specAssumptionViewSchema = z
   .strict();
 export type SpecAssumptionView = z.infer<typeof specAssumptionViewSchema>;
 
-const elementCountsSchema = z
-  .object({
-    requirements: z.number().int().nonnegative(),
-    criteria: z.number().int().nonnegative(),
-    decisions: z.number().int().nonnegative(),
-    tasks: z.number().int().nonnegative(),
-  })
-  .strict();
-
-const linkedWorkRollupSchema = z
-  .object({
-    tickets: z.number().int().nonnegative(),
-    conversations: z.number().int().nonnegative(),
-    sessions: z.number().int().nonnegative(),
-    workflowExecutions: z.number().int().nonnegative(),
-    mergeJobs: z.number().int().nonnegative(),
-  })
-  .strict();
-
-export const specSummaryViewSchema = z
-  .object({
-    spec: specSchema,
-    phase: specPhaseProjectionSchema,
-    currentRevision: specRevisionSchema.nullable(),
-    counts: elementCountsSchema,
-    pendingApprovalCount: z.number().int().nonnegative(),
-    approvalState: z.enum(["complete", "pending"]),
-    delivery: deliveryDisplaySchema,
-    linkedWork: linkedWorkRollupSchema,
-  })
-  .strict();
-export type SpecSummaryView = z.infer<typeof specSummaryViewSchema>;
-
-export { specDetailViewSchema };
-export type { SpecDetailView };
+export { specDetailViewSchema, specSummaryViewSchema };
+export type { SpecDetailView, SpecSummaryView };
 
 const evidenceStateSchema = z
   .object({

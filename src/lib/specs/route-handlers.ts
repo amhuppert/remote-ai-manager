@@ -96,10 +96,12 @@ import {
   parseProvenance,
   type PendingApproval,
 } from "./gate-projection";
+import { importBaselineRevisionId } from "./import-baseline";
 import {
   authoringReviewProjection,
   type AuthoringNextAction,
   type AuthoringPendingBlock,
+  type ImportCarriedApproval,
   type ProjectedGateStatus,
   type RevisionSignOffProjection,
 } from "./authoring-review-projection";
@@ -127,6 +129,7 @@ import {
   type LinkedTicketReadThrough,
 } from "./links-service";
 import { loadDeliveryDelta } from "./delivery-delta-query";
+import type { ImportService } from "./import-service";
 import type { LintFinding } from "./lint";
 import type { SpecMeasuresReport } from "./measures";
 import { createMeasuresQuery } from "./measures-query";
@@ -142,6 +145,8 @@ import {
   projectSpecPhase,
   projectTaskWorkStatus,
   type DeliveryCriterion,
+  type IdentifiedDeliveryCriterion,
+  type RequirementStatusInput,
   type SpecPhaseProjection,
 } from "./phase";
 import { liveProposalProjection } from "./proposal-integrity";
@@ -185,6 +190,7 @@ import type {
   SpecEditContextView,
   SpecExecutionView,
   SpecGateAdmissionView,
+  SpecImportRecordView,
   SpecSearchHit,
   SpecStartedExecutionView,
   SpecStatusExecution,
@@ -192,8 +198,10 @@ import type {
 } from "./view-schemas";
 import {
   actorProvenanceSchema,
+  importBundleSchema,
   specCriterionDispositionSchema,
   specAuthoringStageSchema,
+  specImportedEventPayloadSchema,
   taskElementPayloadSchema,
   type ActorProvenance,
   type Refusal,
@@ -329,6 +337,7 @@ interface SpecStatusView {
   gates: ProjectedGateStatus[];
   authoringSequence: RemainingAuthoringSequence | null;
   pendingApprovals: PendingApproval[];
+  importCarriedApprovals: ImportCarriedApproval[];
   applicableGates: SpecGate[];
   revisionSignOff: RevisionSignOffProjection | null;
   pendingBlock: AuthoringPendingBlock | null;
@@ -351,6 +360,7 @@ interface SpecStatusView {
   draftHealth: PublishedSpecStatusView["draftHealth"];
   coverage: SpecCoverage;
   delivery: ReturnType<typeof projectDeliveryDisplay>;
+  imported: PublishedSpecStatusView["imported"];
 }
 
 interface SpecLinkedWorkRollup {
@@ -702,8 +712,10 @@ function deliveryCriteria(
   deps: SpecRouteDeps,
   currentApprovedSnapshot: SpecRevisionSnapshot | null,
   executions: readonly SpecExecutionRow[],
-): Array<DeliveryCriterion & { criterionId: string }> {
+): IdentifiedDeliveryCriterion[] {
   const currentApprovedRevisionId = currentApprovedSnapshot?.revision.id;
+  const externalDelivery =
+    currentApprovedSnapshot?.revision.externalDelivery ?? null;
   const deliveredDispositions = executions
     .filter(
       (execution) =>
@@ -722,7 +734,7 @@ function deliveryCriteria(
           currentApprovedSnapshot.revision.id,
         );
         if (waiver?.stale === 0) {
-          return { criterionId: element.id, state: "waived" as const };
+          return { criterionElementId: element.id, state: "waived" as const };
         }
 
         const proven = deliveredDispositions.some(
@@ -731,10 +743,25 @@ function deliveryCriteria(
             (disposition.disposition === "in_scope" ||
               disposition.disposition === "delivered_elsewhere"),
         );
-        return {
-          criterionId: element.id,
-          state: proven ? ("proven_and_merged" as const) : ("pending" as const),
-        };
+        if (proven) {
+          return {
+            criterionElementId: element.id,
+            state: "proven_and_merged" as const,
+          };
+        }
+
+        // The imported spec's own testimony that this content shipped
+        // elsewhere. It is read from the revision the criterion belongs to, so
+        // an amendment — which forks a revision carrying no record — drops back
+        // to pending until delivery is proven here.
+        if (externalDelivery !== null) {
+          return {
+            criterionElementId: element.id,
+            state: "delivered_externally" as const,
+          };
+        }
+
+        return { criterionElementId: element.id, state: "pending" as const };
       }) ?? []
   );
 }
@@ -807,18 +834,26 @@ function latestApprovalValidity(
 function criterionProofState(
   deps: SpecRouteDeps,
   criterionElementId: string,
-  revisionId: string,
-): "pending" | "proven" | "waived" {
+  revision: SpecRevisionSnapshot["revision"],
+): RequirementStatusInput["criteria"][number]["proof"] {
   const waiver = deps.findWaiverForCriterionRevision(
     criterionElementId,
-    revisionId,
+    revision.id,
   );
   if (waiver?.stale === 0) return "waived";
-  return deps
-    .findProofVerdictsByCriterionRevision(criterionElementId, revisionId)
-    .some((verdict) => verdict.stale_at === null)
-    ? "proven"
-    : "pending";
+  if (
+    deps
+      .findProofVerdictsByCriterionRevision(criterionElementId, revision.id)
+      .some((verdict) => verdict.stale_at === null)
+  ) {
+    return "proven";
+  }
+  // Same order the delivery projection uses: work this system proved wins, and
+  // otherwise the revision's own external-delivery record explains the
+  // criterion. Read off the revision, so an amendment carrying no record drops
+  // its criteria back to pending.
+  if (revision.externalDelivery !== null) return "delivered_externally";
+  return "pending";
 }
 
 function buildElementStatuses(
@@ -879,7 +914,7 @@ function buildElementStatuses(
             proof: criterionProofState(
               deps,
               criterion.element.id,
-              snapshotRevisionId,
+              snapshot.revision,
             ),
           })),
         }),
@@ -919,6 +954,35 @@ function buildElementStatuses(
     });
 
   return { requirements, tasks };
+}
+
+/**
+ * Whether this spec entered the system by import. Read from the `import`-basis
+ * gate admissions over the current approved revision's lineage rather than
+ * from a stored flag: the admissions ARE the record of how the revision came
+ * to be past its authoring gates, and reading them over the lineage is what
+ * keeps an amendment — which writes no admission of its own — from laundering
+ * the origin of the content it forked (R9.1).
+ */
+function importedProvenance(
+  revisions: readonly SpecRevision[],
+  currentApprovedRevisionId: string | undefined,
+  admissions: readonly SpecGateAdmissionRow[],
+): boolean {
+  if (currentApprovedRevisionId === undefined) return false;
+  // A snapshot whose revision the listing does not carry has no walkable
+  // ancestry, so provenance is read from that revision alone rather than
+  // failing the whole status read over a lineage question.
+  const lineage = revisions.some(({ id }) => id === currentApprovedRevisionId)
+    ? ancestorIds(revisions, currentApprovedRevisionId)
+    : new Set<string>();
+  lineage.add(currentApprovedRevisionId);
+  return admissions.some(
+    (admission) =>
+      admission.basis === "import" &&
+      admission.revision_id !== null &&
+      lineage.has(admission.revision_id),
+  );
 }
 
 function phase(
@@ -1209,6 +1273,43 @@ function verdictEvidenceResolves(
   return ids.data.every((id) => resolvableEvidenceIds.has(id));
 }
 
+/**
+ * The spec's origin import, read back from its durable event. First rather than
+ * last: an import creates the spec and can never run against an existing one,
+ * so the earliest such row is the origin and a later one could only be a
+ * duplicate record of it.
+ */
+function importRecordView(
+  events: readonly SpecEventRow[],
+  specId: string,
+): SpecImportRecordView | null {
+  const imported = events.find((event) => event.event_type === "spec_imported");
+  if (imported === undefined) return null;
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(imported.payload_json);
+  } catch {
+    raw = undefined;
+  }
+  const payload = specImportedEventPayloadSchema.safeParse(raw);
+  if (!payload.success) {
+    // The provenance is still true — the admissions carry it — but its detail
+    // is unreadable, so history says nothing rather than guessing at counts.
+    logger.warn("specs.routes.detail.import_record_unreadable", {
+      specId,
+      eventId: imported.id,
+    });
+    return null;
+  }
+
+  return {
+    occurredAt: imported.occurred_at,
+    sourceLabel: payload.data.source.label,
+    counts: payload.data.counts,
+  };
+}
+
 function parseExecutionScope(raw: string): ExecutionScope | null {
   try {
     const parsed = executionScopeSchema.safeParse(JSON.parse(raw));
@@ -1301,6 +1402,17 @@ async function buildStatus(
   const admissions =
     loadedAdmissions ?? deps.findGateAdmissionsBySpecId(spec.id);
   const applies = await loadApprovalApplicability(deps, state, approvals);
+  // The revision an import created, read even when it is no longer the
+  // governance base: the elements nobody has touched since the import are
+  // still admitted by it alone, and the status read must owe exactly what
+  // sign-off owes.
+  const importBaselineRevision = importBaselineRevisionId(admissions);
+  const importBaselineSnapshot =
+    importBaselineRevision === null
+      ? null
+      : await deps.getRevisionSnapshot(importBaselineRevision);
+  const importBaselineRows =
+    importBaselineSnapshot === null ? null : toDiffRows(importBaselineSnapshot);
   // Sign-off is blocked by unresolved blocking threads and sign-off lint as
   // well as by outstanding subjects, so the status projection reads the same
   // three sources the sign-off transition does. The findings tier rides this
@@ -1315,6 +1427,7 @@ async function buildStatus(
     policy: spec.gatePolicy,
     snapshot: state.currentSnapshot,
     governanceBaseSnapshot: state.governanceBaseSnapshot,
+    importBaselineRows,
     approvals,
     admissions,
     currentExecution: selectedExecution,
@@ -1344,8 +1457,8 @@ async function buildStatus(
   const displayCriteria =
     deliveryScopeCriterionIds === null
       ? criteria
-      : criteria.filter(({ criterionId }) =>
-          deliveryScopeCriterionIds.has(criterionId),
+      : criteria.filter(({ criterionElementId }) =>
+          deliveryScopeCriterionIds.has(criterionElementId),
         );
   return {
     specId: spec.id,
@@ -1368,6 +1481,7 @@ async function buildStatus(
             governanceBaseSnapshot: state.governanceBaseSnapshot,
           }),
     pendingApprovals: projection.pendingApprovals,
+    importCarriedApprovals: projection.importCarriedApprovals,
     applicableGates: projection.applicableGates,
     revisionSignOff: projection.revisionSignOff,
     pendingBlock: projection.pendingBlock,
@@ -1407,6 +1521,11 @@ async function buildStatus(
           },
     coverage: coverage(state.currentSnapshot),
     delivery: projectDeliveryDisplay(displayCriteria),
+    imported: importedProvenance(
+      state.revisions,
+      state.currentApprovedSnapshot?.revision.id,
+      admissions,
+    ),
   };
 }
 
@@ -1463,6 +1582,7 @@ async function buildSummary(deps: SpecRouteDeps, spec: Spec) {
     approvalState: pendingApprovalCount === 0 ? "complete" : "pending",
     delivery: status.delivery,
     linkedWork: linkedWork(deps.findLinksBySpecId(spec.id)),
+    imported: status.imported,
   };
 }
 
@@ -1750,10 +1870,28 @@ export function createSpecRouteHandlers(
     const revisionNumberById = new Map(
       state.revisions.map((candidate) => [candidate.id, candidate.number]),
     );
+    // Pinned revisions alone are not enough. An imported spec has no execution,
+    // so nothing pins its revision and every basis-`import` admission fell off
+    // the wire — leaving the surfaces that must attribute imported content to
+    // import (History's policy-admissions view, the Q&A provenance register)
+    // with nothing to read, and no way to tell an import from a human sign-off.
+    // The current approved revision's lineage is carried for that reason.
+    const admissionRevisionIds = new Set(pinnedRevisionIds);
+    const approvedRevisionId = state.currentApprovedSnapshot?.revision.id;
+    if (approvedRevisionId !== undefined) {
+      admissionRevisionIds.add(approvedRevisionId);
+      // A snapshot the listing does not carry has no walkable ancestry; the
+      // revision itself still answers for its own admissions.
+      if (state.revisions.some(({ id }) => id === approvedRevisionId)) {
+        for (const id of ancestorIds(state.revisions, approvedRevisionId)) {
+          admissionRevisionIds.add(id);
+        }
+      }
+    }
     const gateAdmissions = admissions.filter(
       (admission) =>
         admission.revision_id !== null &&
-        pinnedRevisionIds.has(admission.revision_id),
+        admissionRevisionIds.has(admission.revision_id),
     );
     // The merge gate honors waivers for each run's pinned revision, so the
     // detail view must carry those too — loading only the proof snapshot's
@@ -1790,12 +1928,13 @@ export function createSpecRouteHandlers(
         )
         .map((candidate) => [candidate.revision.id, candidate]),
     );
+    const specEvents = deps.findEventsBySpecId(resolved.value.spec.id);
     const liveProposals = await buildLiveProposals(
       deps,
       state.revisions,
       snapshotsByRevisionId,
       resolved.value.spec.id,
-      deps.findEventsBySpecId(resolved.value.spec.id),
+      specEvents,
     );
     const executionById = new Map(
       executions.map((execution) => [execution.id, execution]),
@@ -1876,6 +2015,7 @@ export function createSpecRouteHandlers(
       assumptions: deps
         .findAssumptionsBySpecId(resolved.value.spec.id)
         .map(toAssumptionView),
+      importRecord: importRecordView(specEvents, resolved.value.spec.id),
     });
   }
 
@@ -2656,6 +2796,12 @@ export interface SpecMutationServices {
     | "getSpecLinkedTickets"
     | "getTicketReadThrough"
   >;
+  /**
+   * The one-shot spec import. It sits beside the other entry paths rather than
+   * inside `authoring` because it creates a whole approved spec in one
+   * transaction instead of continuing an authoring line.
+   */
+  import: Pick<ImportService, "importSpec">;
   deliveryPlan: DeliveryPlanService;
   ingestEvidenceBestEffort(executionId: string): Promise<unknown>;
   verify(specId: string): Promise<IntegrityReport>;
@@ -3285,6 +3431,18 @@ export function createSpecWriteRouteHandlers(
         case "graduate-ticket":
           return invokeAction(request, graduateTicketBodySchema, (input) =>
             services.links.graduateTicket({ ...input, actor: actor.value }),
+          );
+        // Deliberately absent from HUMAN_ONLY_ACTIONS: an import is agent work
+        // by construction — it authors a bundle from an external source — and
+        // the spec it creates is born past its authoring gates on import
+        // provenance, never on an approval a human would have to grant here.
+        case "import":
+          return invokeAction(request, importBundleSchema, (bundle) =>
+            services.import.importSpec({
+              projectPath: project.value.projectPath,
+              bundle,
+              actor: actor.value,
+            }),
           );
         default:
           return notFound("Spec action not found");

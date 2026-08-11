@@ -222,7 +222,13 @@ function deliveredDetail(): SpecDetailView {
           workflowStatus: "completed",
         },
       ],
-      delivery: { allWaived: false, provenCount: 1, totalInScope: 1 },
+      delivery: {
+        allWaived: false,
+        deliveredCount: 1,
+        provenCount: 1,
+        deliveredExternallyCriterionIds: [],
+        totalInScope: 1,
+      },
     },
   });
 }

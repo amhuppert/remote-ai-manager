@@ -2,12 +2,17 @@ import { describe, expect, it } from "vitest";
 
 import type { SpecDetailView } from "@/lib/specs/queries";
 
-import { specControlsDetailFixture } from "./SpecControls.fixtures";
+import {
+  importedDeliveredSpecDetailFixture,
+  importedThenAmendedSpecDetailFixture,
+  specControlsDetailFixture,
+} from "./SpecControls.fixtures";
 import { reviewView } from "./delivery-plan-review.fixtures";
 import {
   buildRailGroups,
   detailStatePresentation,
   resolveDeepLinkId,
+  revisionLine,
 } from "./SpecDetailPage";
 
 describe("buildRailGroups", () => {
@@ -61,6 +66,60 @@ describe("buildRailGroups", () => {
     expect(groups[2]?.items.map((item) => item.handle)).toEqual(["Q1", "A1"]);
     expect(groups[3]?.items.map((item) => item.handle)).toEqual(["T1"]);
   });
+
+  /**
+   * The rail is the detail's at-a-glance proof column. An imported
+   * requirement's obligation is settled but unproven, so it takes neither the
+   * green Proven badge nor the amber unfinished ones (R9.4).
+   */
+  it("labels an externally-delivered requirement without claiming proof", () => {
+    const detail: SpecDetailView = {
+      ...specControlsDetailFixture(),
+      elementStatuses: {
+        requirements: [
+          {
+            elementId: "requirement-1",
+            status: {
+              approval: "valid",
+              coverage: "covered",
+              proof: "delivered_externally",
+            },
+          },
+        ],
+        tasks: [],
+      },
+    };
+
+    const requirement = buildRailGroups(detail)[0]?.items[0];
+
+    expect(requirement?.status).toBe("Delivered externally");
+    expect(requirement?.statusTone).toBe("neutral");
+  });
+});
+
+describe("revisionLine", () => {
+  it("attributes an imported revision to import rather than to approval", () => {
+    // Zero approval rows back an imported revision, so the header line must
+    // not read like a human signed it off.
+    const line = revisionLine(importedDeliveredSpecDetailFixture(), 1);
+
+    expect(line).not.toMatch(/\brev 1 approved\b/);
+    expect(line).toContain("admitted by import");
+  });
+
+  it("still reports approval for a natively authored revision", () => {
+    expect(revisionLine(specControlsDetailFixture(), 1)).toContain("approved");
+  });
+
+  it("attributes each revision of an amended import to its own admission", () => {
+    // Revision 2 was authored here and signed off by a human while the
+    // spec-level `imported` bit stays true, so the same line must credit the
+    // human for revision 2 and the import for the revision 1 it is based on.
+    const line = revisionLine(importedThenAmendedSpecDetailFixture(), 2);
+
+    expect(line).toContain("rev 2 approved");
+    expect(line).toContain("rev 1 admitted by import");
+  });
 });
 
 describe("detailStatePresentation", () => {
@@ -102,6 +161,71 @@ describe("detailStatePresentation", () => {
     });
     expect(detailStatePresentation("delivered", []).action).toBeNull();
     expect(detailStatePresentation("abandoned", []).action).toBeNull();
+  });
+
+  it("never calls an externally delivered spec proven", () => {
+    // An imported spec reaches `delivered` on the source's testimony with no
+    // proof taken here, so the banner that speaks for the whole phase must not
+    // borrow the vocabulary of proof this system never performed.
+    const presentation = detailStatePresentation(
+      "delivered",
+      [],
+      "design",
+      undefined,
+      {
+        allWaived: false,
+        deliveredCount: 35,
+        provenCount: 0,
+        totalInScope: 35,
+        deliveredExternallyCriterionIds: Array.from(
+          { length: 35 },
+          (_, index) => `criterion-${index + 1}`,
+        ),
+      },
+    );
+
+    expect(presentation.banner).toBe("Delivered externally");
+    expect(presentation.banner).not.toContain("proven");
+    expect(presentation.description).toContain("delivered externally");
+    // "none proven here" denies proof rather than claiming it, so the check is
+    // on what the copy asserts, not on whether the word appears.
+    expect(presentation.description).toContain("none proven here");
+    expect(presentation.description).not.toContain("is proven");
+  });
+
+  it("does not call an imported spec's frozen stage approved", () => {
+    // A bundle imported with "delivered": false lands in the approved phase
+    // with zero approval rows behind it, so the banner that speaks for the
+    // whole phase must not read like a human froze it.
+    const presentation = detailStatePresentation(
+      "approved",
+      [],
+      "requirements",
+      undefined,
+      undefined,
+      true,
+    );
+
+    expect(presentation.banner).not.toContain("approved");
+    expect(presentation.banner).toBe("Requirements admitted by import");
+  });
+
+  it("still reports proof for a spec this system actually proved", () => {
+    const presentation = detailStatePresentation(
+      "delivered",
+      [],
+      "design",
+      undefined,
+      {
+        allWaived: false,
+        deliveredCount: 4,
+        provenCount: 4,
+        totalInScope: 4,
+        deliveredExternallyCriterionIds: [],
+      },
+    );
+
+    expect(presentation.banner).toBe("Delivery proven");
   });
 
   it("keeps execution unavailable until the delivery-plan candidate is approved", () => {

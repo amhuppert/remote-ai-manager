@@ -9,12 +9,17 @@ import { renderWithQuery } from "@/test/component-mocks";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 
 import {
+  importedDeliveredSpecDetailFixture,
   liveProposalsFixture,
   planPreviewRequestRevisionId,
   planPreviewResponseFixture,
   specControlsDetailFixture,
+  strandedProposalDetailFixture,
 } from "./SpecControls.fixtures";
-import SpecReviewMode, { bulkApprovalSubjects } from "./SpecReviewMode";
+import SpecReviewMode, {
+  bulkApprovalSubjects,
+  reviewAttentionCount,
+} from "./SpecReviewMode";
 
 vi.mock(
   "next/link",
@@ -351,6 +356,119 @@ function renderReview(blocked = true): void {
 }
 
 describe("SpecReviewMode", () => {
+  /**
+   * An import admission settles a subject without approving it: no human read
+   * the content and no approval row exists. The readiness surface derives
+   * "approved" from absence in `pendingApprovals`, so it has to subtract what
+   * the server reports as import-carried or it credits a human with an act
+   * nobody performed.
+   */
+  it("counts an import-carried subject apart from the approvals a human recorded", () => {
+    const fixture = reviewDetailFixture(false);
+    const detail: SpecDetailView = {
+      ...fixture,
+      status: {
+        ...fixture.status,
+        pendingApprovals: [],
+        importCarriedApprovals: [
+          { gate: "design", subject: "D1", elementId: "decision-1" },
+        ],
+      },
+      // The decision's approval row is gone: the import carried it, so the
+      // fixture must not hand Studio an approval the server never wrote.
+      approvals: fixture.approvals.filter(
+        (approval) => approval.element_id !== "decision-1",
+      ),
+    };
+
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    expect(screen.queryByText("All approved")).not.toBeInTheDocument();
+    expect(screen.queryByText("Approvals complete")).not.toBeInTheDocument();
+    expect(screen.getByText("2/3 approved")).toBeInTheDocument();
+    expect(screen.getAllByText("1 carried from import").length).toBeGreaterThan(
+      0,
+    );
+  });
+
+  /**
+   * The unchanged-element panel is the other place absence from
+   * `pendingApprovals` reads as an approval: it captions itself "approvals
+   * carried forward quietly" and gives every element a green check. An
+   * import-carried subject is unchanged and unapproved at once, so it needs its
+   * own chip and a caption that does not call it an approval.
+   */
+  it("marks an unchanged import-carried subject as carried from the import, not approved", async () => {
+    const user = userEvent.setup();
+    const fixture = reviewDetailFixture(false);
+    const base = fixture.baseRevision;
+    const current = fixture.currentRevision;
+    if (base === null || current === null) {
+      throw new Error("Fixture requires both revisions");
+    }
+    const decision = current.elements.find(
+      (entry) => entry.element.id === "decision-1",
+    );
+    if (decision === undefined)
+      throw new Error("Fixture requires the decision");
+    // The same decision on both revisions, byte for byte: that is what makes
+    // the diff call it unchanged and the import carry it forward.
+    const baseWithDecision = {
+      ...base,
+      elements: [
+        ...base.elements,
+        {
+          ...decision,
+          version: { ...decision.version, revisionId: base.revision.id },
+        },
+      ],
+    };
+    const detail: SpecDetailView = {
+      ...fixture,
+      baseRevision: baseWithDecision,
+      currentApprovedRevision: baseWithDecision,
+      // The review surface diffs the snapshots the proposal selector hands it,
+      // so the amended base has to reach it through the live proposals too.
+      liveProposals: liveProposalsFixture(
+        [baseWithDecision.revision, current.revision],
+        [baseWithDecision, current],
+      ),
+      status: {
+        ...fixture.status,
+        pendingApprovals: [],
+        importCarriedApprovals: [
+          { gate: "design", subject: "D1", elementId: "decision-1" },
+        ],
+      },
+      approvals: fixture.approvals.filter(
+        (approval) => approval.element_id !== "decision-1",
+      ),
+    };
+
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    const unchanged = screen.getByRole("button", {
+      name: /unchanged element/i,
+    });
+    expect(unchanged).toHaveTextContent(/carried from the import/i);
+    expect(unchanged).not.toHaveTextContent(/approvals carried forward/i);
+
+    await user.click(unchanged);
+    expect(screen.getByText("D1 — carried from import")).toBeVisible();
+  });
+
   it("describes an approved revision as having nothing awaiting review", () => {
     const fixture = reviewDetailFixture(false);
     if (fixture.currentRevision === null || fixture.baseRevision === null) {
@@ -1674,5 +1792,35 @@ describe("SpecReviewMode combined approve-and-sign-off", () => {
     } finally {
       api.restore();
     }
+  });
+});
+
+describe("reviewAttentionCount", () => {
+  /**
+   * An import that arrived fully disposed owes the reviewer nothing: every
+   * question came answered, every assumption came disposed, and the revision is
+   * approved rather than proposed. A non-zero badge here would send a human to
+   * a Review screen with no act to perform (R9.7).
+   */
+  it("is zero for a fully-disposed delivered import", () => {
+    expect(reviewAttentionCount(importedDeliveredSpecDetailFixture())).toBe(0);
+  });
+
+  /**
+   * The zero above is not "imports are exempt": a proposal the import's
+   * approved revision forked past is still one dismissal a human owes, and it
+   * has to survive the import provenance to stay visible (#50).
+   */
+  it("still counts a proposal stranded past an imported revision", () => {
+    const imported = importedDeliveredSpecDetailFixture();
+    const stranded = strandedProposalDetailFixture();
+
+    expect(
+      reviewAttentionCount({
+        ...stranded,
+        importRecord: imported.importRecord,
+        gateAdmissions: imported.gateAdmissions,
+      }),
+    ).toBeGreaterThan(0);
   });
 });

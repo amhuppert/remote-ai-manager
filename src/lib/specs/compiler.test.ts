@@ -29,6 +29,7 @@ const snapshot: SpecRevisionSnapshot = {
     contentHash: "approved-content-hash",
     proposedAt: timestamp,
     approvedAt: timestamp,
+    externalDelivery: null,
     createdAt: timestamp,
   },
   elements: [

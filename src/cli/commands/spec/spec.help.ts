@@ -22,6 +22,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       "cctl spec export <slug> [--out <bundle.json>] [--stdout]",
       "cctl spec verify <slug> [--against <bundle.json>]",
       "cctl spec create --slug <slug> --name <name> --preset <preset> --file <element.json>",
+      "cctl spec import --file <bundle.json> [--dry-run]",
       "cctl spec amend <slug>",
       "cctl spec draft <slug> --file <element.json>",
       "cctl spec remove <slug> <handle...>",
@@ -286,6 +287,11 @@ export const specHelpEntries: CommandHelpEntry[] = [
         command: "spec create",
         oneLiner: "create a spec once no existing one covers the work",
       },
+      {
+        command: "spec import",
+        oneLiner:
+          "bring an external spec in whole once no existing one covers the work",
+      },
     ],
   },
   {
@@ -365,6 +371,11 @@ export const specHelpEntries: CommandHelpEntry[] = [
           "read the document `cctl spec create` takes — the same element without a baseElementVersion, because the revision it opens has no version to compare against",
       },
       {
+        invocation: "cctl spec schema import-bundle",
+        explanation:
+          "read the whole-spec document `cctl spec import` takes, with a worked example covering every artifact a bundle can carry",
+      },
+      {
         invocation: "cctl spec schema --json",
         explanation:
           "return every input document at once for a machine that is about to author",
@@ -385,6 +396,10 @@ export const specHelpEntries: CommandHelpEntry[] = [
       {
         command: "spec create",
         oneLiner: "create a spec from a first element of this shape",
+      },
+      {
+        command: "spec import",
+        oneLiner: "create a whole spec from a bundle of this shape",
       },
       {
         command: "spec start",
@@ -586,6 +601,73 @@ export const specHelpEntries: CommandHelpEntry[] = [
         oneLiner: "continue authoring a spec that already exists",
       },
       { command: "spec show", oneLiner: "read the created object" },
+      {
+        command: "spec import",
+        oneLiner: "create a whole spec at once from an external source",
+      },
+    ],
+  },
+  {
+    path: ["spec", "import"],
+    summary: "create a new spec in one act from an external source bundle",
+    description:
+      'Translate an external spec — a Kiro directory, an RFC, a design doc, anything you can read — into one bundle document and import it as a new native spec. The spec is born approved at the design stage on IMPORT PROVENANCE: the revision records that an agent imported it and from which source, and no approval row of any kind is written, so every human gate on it stays exactly as strong as on a spec authored here. Delivery is the same kind of testimony — `delivered` records that the external source shipped, and the delivery gate never reads it. Import creates new specs ONLY: a taken slug or alias refuses with slug_taken, including one an abandoned spec holds, and there is no revival or amendment path through this verb. Refusals: slug_taken for a taken slug; lint_blocked with the same findings a propose would return, because an import is a propose and an approval in one act; validation for a bundle that misses the schema, declares one requirement ref twice, traces a ref no requirement declares, or claims delivery with no acceptance criterion to record it against — that last one clears by giving the bundle a criterion or by setting `"delivered": false`. Nothing is written on any refusal.',
+    usage: [
+      "cctl spec import --file <bundle.json>",
+      "cctl spec import --file <bundle.json> --dry-run",
+    ],
+    flags: [
+      {
+        name: "file",
+        kind: "value",
+        valuePlaceholder: "<bundle.json>",
+        description:
+          "the whole import in one document — slug, name, source label, sections, requirements with criteria, decisions, questions, assumptions, and the delivered flag. Run `cctl spec schema import-bundle` for its generated schema and a worked example covering every artifact; the document is refused locally against that schema before any request.",
+      },
+      {
+        name: "dry-run",
+        kind: "boolean",
+        description:
+          'rehearse instead of importing: run every validation the real import runs, report the findings and the handles it would allocate, and write nothing. The bundle may also set `"dryRun": true` itself; either asking rehearses, and neither cancels the other\'s request — so a bundle that declares it rehearses on every invocation of this command, and only `"dryRun": false` in the document (or dropping the field) performs the import.',
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          "cctl spec import --file .cc/temp/bundle.json --dry-run --json",
+        explanation:
+          "rehearse first: read the blocking findings and the R/D/Q/A numbering the import would allocate, so cross-references in the bundle can be written against real handles",
+      },
+      {
+        invocation: "cctl spec import --file .cc/temp/bundle.json --json",
+        explanation:
+          "perform the import and read back the created slug, its approved revision, and whether an external delivery was recorded",
+      },
+    ],
+    domainContext:
+      "This is the only way a spec enters Command Center already past its authoring gates, and it is not a seed: `cctl spec plan open <slug> --seed-from last` seeds a delivery plan from work this system already ran, on a spec that already exists here. Import is for content that has never been in CC at all. Handles are allocated in bundle order — requirements R1…Rn, criteria numbered within each requirement, decisions D1…Dn, questions Q1…Qn, assumptions A1…An — and decisions trace requirements by a bundle-local `ref` the importer resolves to real element ids. The receipt names what to do next: `cctl spec show <slug>` for a delivered import, which owes nothing further, and `cctl spec plan open <slug>` for one that has not shipped and still owes delivery here.",
+    related: [
+      {
+        command: "spec list",
+        oneLiner: "check whether the slug is already taken before importing",
+      },
+      {
+        command: "spec search",
+        oneLiner: "find whether this content already exists as a spec here",
+      },
+      {
+        command: "spec amend",
+        oneLiner: "change a spec that already exists — import never will",
+      },
+      {
+        command: "spec schema",
+        oneLiner: "print the import-bundle schema and its worked example",
+      },
+      {
+        command: "spec plan open",
+        oneLiner: "author delivery for an imported spec that has not shipped",
+      },
+      { command: "spec show", oneLiner: "read the imported spec back" },
     ],
   },
   {
@@ -620,6 +702,11 @@ export const specHelpEntries: CommandHelpEntry[] = [
       {
         command: "spec create",
         oneLiner: "create a spec that does not exist yet",
+      },
+      {
+        command: "spec import",
+        oneLiner:
+          "bring a spec authored outside CC in as a new one — import never amends",
       },
       {
         command: "spec request-approval",

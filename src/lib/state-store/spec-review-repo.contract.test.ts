@@ -376,6 +376,29 @@ describe("spec-review-repo durability contract", () => {
     },
   );
 
+  it("persists an import-basis admission that no approval row backs", () => {
+    // An imported spec crosses its authoring gates on an external document's
+    // word: the row records that provenance and deliberately carries no
+    // approval id, so the storage layer has to accept the basis with a null
+    // approval rather than only alongside a human grant.
+    const imported = specGateAdmissionRowSchema.parse({
+      ...maximalGateAdmission(),
+      id: "admission-review-import",
+      gate: "design",
+      basis: "import",
+      approval_id: null,
+      execution_id: null,
+      actor_json: JSON.stringify({
+        kind: "agent",
+        conversationId: "conversation-import",
+      }),
+    });
+
+    repo.insertGateAdmission(imported);
+
+    expect(repo.findGateAdmissionById(imported.id)).toEqual(imported);
+  });
+
   it("reads every admission a spec ever recorded, across its revisions, in one query", () => {
     seedSecondRevision();
     seedForeignSpec();

@@ -18,6 +18,7 @@ import {
   createApprovalApplicability,
   type ApprovalApplicability,
 } from "./approval-applicability";
+import { importBaselineRevisionId } from "./import-baseline";
 import type { RevisionElement as DiffRevisionElement } from "./revision-diff";
 import { ancestorIds, nearestApprovedAncestor } from "./revision-lineage";
 import type { SignOffReviewSnapshot } from "./transitions";
@@ -175,6 +176,12 @@ export interface LoadedProposalState {
   governanceBaseSnapshot: SpecRevisionSnapshot | null;
   /** The one authority on whether an approval satisfies this revision. */
   approvalApplies: ApprovalApplicability;
+  /**
+   * The import baseline revision's rows, null for a spec no import created.
+   * Carried on the loaded state because the sign-off preconditions and the
+   * status projection must read the same baseline.
+   */
+  importBaselineRows: DiffRevisionElement[] | null;
 }
 
 export type ProposalStateRepo = Pick<
@@ -205,6 +212,15 @@ export function loadProposalState(
   );
   const governanceBaseSnapshot =
     governanceBase === null ? null : loadSnapshot(governanceBase.id);
+  const importBaselineRevision = importBaselineRevisionId(
+    review.findGateAdmissionsBySpecId(spec.id),
+  );
+  const importBaselineSnapshot =
+    importBaselineRevision === null
+      ? null
+      : loadSnapshot(importBaselineRevision);
+  const importBaselineRows =
+    importBaselineSnapshot === null ? null : toDiffRows(importBaselineSnapshot);
   const draft = toLintSnapshot(spec, snapshot, review);
   const baseDraft =
     baseSnapshot === null
@@ -298,6 +314,7 @@ export function loadProposalState(
     governanceBaseRevisionRows:
       governanceBaseSnapshot === null ? [] : toDiffRows(governanceBaseSnapshot),
     revisionRows: toDiffRows(snapshot),
+    importBaselineRows,
     blockingThreads: review
       .findCommentsByRevision(snapshot.revision.id)
       .filter((comment) => comment.blocking === 1)
@@ -324,6 +341,7 @@ export function loadProposalState(
     reviewSnapshot,
     reviewBaseSnapshot: baseSnapshot,
     governanceBaseSnapshot,
+    importBaselineRows,
     approvalApplies: createApprovalApplicability({
       revisionId: snapshot.revision.id,
       ancestorRevisionIds: ancestorIds(revisions, snapshot.revision.id),

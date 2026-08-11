@@ -168,7 +168,14 @@ interface ReviewChangeGroup {
 }
 
 interface ReviewReadiness {
+  /** Subjects a human approved — never the ones an import carried forward. */
   approved: number;
+  /**
+   * Subjects the server reports as settled by an import admission. They owe
+   * nobody an act, and no human approved them, so they are counted here rather
+   * than folded into `approved`.
+   */
+  importCarried: number;
   total: number;
   approvalsReady: boolean;
   combined: boolean;
@@ -424,6 +431,12 @@ export default function SpecReviewMode({
       pending.elementId === null ? [] : [pending.elementId],
     ),
   );
+  // Absence from the outstanding set is not an approval on an imported spec:
+  // these elements are settled by the import's admission, and every surface
+  // that would otherwise read them as approved has to subtract them.
+  const importCarriedElementIds = new Set(
+    detail.status.importCarriedApprovals.map((carried) => carried.elementId),
+  );
   const unchangedViews = unchangedElementViews(diff, currentSnapshot);
   const awaitingCards = awaitingApprovalCards(
     unchangedViews,
@@ -467,7 +480,15 @@ export default function SpecReviewMode({
             {readiness.combined ? (
               <StatusChip tone="green">Sign-off approves all items</StatusChip>
             ) : remainingSubjects.length === 0 ? (
-              <StatusChip tone="green">All approved</StatusChip>
+              // "All approved" would credit a human with the subjects the
+              // import carried, which no human read.
+              readiness.importCarried > 0 ? (
+                <StatusChip tone="green">
+                  {readiness.importCarried} carried from import
+                </StatusChip>
+              ) : (
+                <StatusChip tone="green">All approved</StatusChip>
+              )
             ) : (
               <StatusChip tone="amber">
                 {remainingSubjects.length} awaiting approval
@@ -690,7 +711,10 @@ export default function SpecReviewMode({
                   </section>
                 )}
 
-                <UnchangedApprovals views={quietUnchangedViews} />
+                <UnchangedApprovals
+                  views={quietUnchangedViews}
+                  importCarriedElementIds={importCarriedElementIds}
+                />
               </>
             )}
           </section>
@@ -745,9 +769,16 @@ export default function SpecReviewMode({
                 <span className="font-mono text-[0.78rem] font-bold text-text-primary tabular-nums">
                   {readiness.approved}/{readiness.total} approved
                 </span>
+                {readiness.importCarried > 0 && (
+                  <StatusChip tone="neutral">
+                    {readiness.importCarried} carried from import
+                  </StatusChip>
+                )}
                 <StatusChip tone={readiness.approvalsReady ? "green" : "amber"}>
                   {readiness.approvalsReady
-                    ? "Approvals complete"
+                    ? readiness.importCarried > 0
+                      ? "Nothing awaiting approval"
+                      : "Approvals complete"
                     : "Approvals incomplete"}
                 </StatusChip>
               </>
@@ -853,7 +884,9 @@ export default function SpecReviewMode({
                 <CheckIcon size={12} className="text-green" />
                 {readiness.combined
                   ? "Combined approval — this sign-off approves every item"
-                  : `${readiness.approved}/${readiness.total} review approvals recorded`}
+                  : readiness.importCarried > 0
+                    ? `${readiness.approved}/${readiness.total} review approvals recorded, ${readiness.importCarried} carried from import`
+                    : `${readiness.approved}/${readiness.total} review approvals recorded`}
               </span>
               <span className="flex items-center gap-sm">
                 <CheckIcon size={12} className="text-green" />
@@ -1416,36 +1449,57 @@ function awaitingApprovalCards(
 }
 
 /**
- * Unchanged elements whose approvals genuinely carry forward. Elements the
- * server still owes an approval for are promoted to full review cards in the
- * awaiting-approval section instead (#58), so a chip here always means
- * approved and carried.
+ * Unchanged elements nobody is being asked to approve. Elements the server
+ * still owes an approval for are promoted to full review cards in the
+ * awaiting-approval section instead (#58), so a chip here is either an
+ * approval carried forward or a subject the import admitted — never an
+ * outstanding one.
  */
 function UnchangedApprovals({
   views,
+  importCarriedElementIds,
 }: {
   views: ReviewElementView[];
+  /**
+   * Unchanged and unapproved at once: the import that created these admitted
+   * them, so nobody is being asked for them and no human ever read them. The
+   * green check and the "approvals carried forward" caption would claim the
+   * act that never happened, which is why they get a chip of their own.
+   */
+  importCarriedElementIds: ReadonlySet<string>;
 }): React.JSX.Element | null {
   if (views.length === 0) return null;
+
+  const importCarriedCount = views.filter((view) =>
+    importCarriedElementIds.has(view.entry.element.id),
+  ).length;
 
   return (
     <div className="mt-lg rounded-md border border-dashed border-border-default px-md py-sm">
       <Collapsible>
         <CollapsibleTrigger layoutClassName="w-full">
-          {views.length} unchanged {pluralize(views.length, "element")} —
-          approvals carried forward quietly
+          {views.length} unchanged {pluralize(views.length, "element")} —{" "}
+          {importCarriedCount > 0
+            ? `${importCarriedCount} carried from the import, approved by no human`
+            : "approvals carried forward quietly"}
         </CollapsibleTrigger>
         <CollapsibleContent>
           <div className="flex flex-wrap gap-xs pt-sm">
-            {views.map((view) => (
-              <StatusChip
-                key={view.entry.element.id}
-                tone="green"
-                icon={<CheckIcon size={12} className="text-green" />}
-              >
-                {view.handle}
-              </StatusChip>
-            ))}
+            {views.map((view) =>
+              importCarriedElementIds.has(view.entry.element.id) ? (
+                <StatusChip key={view.entry.element.id} tone="neutral">
+                  {view.handle} — carried from import
+                </StatusChip>
+              ) : (
+                <StatusChip
+                  key={view.entry.element.id}
+                  tone="green"
+                  icon={<CheckIcon size={12} className="text-green" />}
+                >
+                  {view.handle}
+                </StatusChip>
+              ),
+            )}
           </div>
         </CollapsibleContent>
       </Collapsible>
@@ -1545,7 +1599,11 @@ export function reviewAttentionCount(detail: SpecDetailView): number {
   const readiness = reviewReadiness(detail);
   return (
     stranded +
-    (readiness.combined ? 0 : readiness.total - readiness.approved) +
+    // An import-carried subject asks nobody for anything, so it is not
+    // attention owed even though no human approved it.
+    (readiness.combined
+      ? 0
+      : readiness.total - readiness.approved - readiness.importCarried) +
     readiness.blockingThreadCount +
     readiness.rejectedAssumptionCount +
     readiness.openQuestionCount +
@@ -1558,6 +1616,7 @@ function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
   if (snapshot === null) {
     return {
       approved: 0,
+      importCarried: 0,
       total: 0,
       approvalsReady: false,
       combined: false,
@@ -1616,9 +1675,17 @@ function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
     }
   }
 
-  const approved = subjects.filter(
+  // Absence from the outstanding list is not an approval on its own: an import
+  // admission settles a subject with no approval row behind it, so those are
+  // subtracted here and reported separately.
+  const carried = importCarriedSubjects(detail);
+  const settled = subjects.filter(
     (subject) => !outstanding.has(subjectKey(subject)),
+  );
+  const importCarried = settled.filter((subject) =>
+    carried.has(subjectKey(subject)),
   ).length;
+  const approved = settled.length - importCarried;
   const blockingThreadCount = groupThreads(detail).filter((thread) =>
     thread.comments.some(
       (comment) =>
@@ -1644,7 +1711,7 @@ function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
   const undisposedAssumptionCount = detail.assumptions.filter(
     (assumption) => assumption.disposition === "proposed",
   ).length;
-  const approvalsReady = approved === subjects.length;
+  const approvalsReady = approved + importCarried === subjects.length;
   const conditionsReady =
     blockingThreadCount === 0 &&
     rejectedAssumptionCount === 0 &&
@@ -1653,6 +1720,7 @@ function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
 
   return {
     approved,
+    importCarried,
     total: subjects.length,
     approvalsReady,
     combined,
@@ -1787,6 +1855,35 @@ function outstandingApprovalSubjects(
       pending.gate === "requirements" ||
       pending.gate === "design" ||
       pending.gate === "plan",
+  );
+}
+
+/**
+ * The subjects an import admission settles rather than a human approval, read
+ * from the server's projection. They are absent from `pendingApprovals` — no
+ * human is being asked for them — but crediting that absence to a human is
+ * exactly the claim the import never earned.
+ */
+function importCarriedSubjects(detail: SpecDetailView): Set<string> {
+  return new Set(
+    detail.status.importCarriedApprovals.flatMap((carried) => {
+      if (carried.gate === "requirements") {
+        return [
+          subjectKey({
+            subjectKind: "requirement",
+            elementId: carried.elementId,
+          }),
+        ];
+      }
+      return carried.gate === "design"
+        ? [
+            subjectKey({
+              subjectKind: "decision",
+              elementId: carried.elementId,
+            }),
+          ]
+        : [];
+    }),
   );
 }
 

@@ -32,7 +32,14 @@ function summary(
     counts: { requirements: 3, criteria: 5, decisions: 1, tasks: 4 },
     pendingApprovalCount: 0,
     approvalState: "complete",
-    delivery: { allWaived: false, provenCount: 0, totalInScope: 5 },
+    delivery: {
+      allWaived: false,
+      deliveredCount: 0,
+      provenCount: 0,
+      deliveredExternallyCriterionIds: [],
+      totalInScope: 5,
+    },
+    imported: false,
     linkedWork: {
       tickets: 0,
       conversations: 0,
@@ -56,7 +63,14 @@ const inventory = [
     {
       pendingApprovalCount: 2,
       approvalState: "pending",
-      delivery: { allWaived: false, provenCount: 7, totalInScope: 12 },
+      delivery: {
+        allWaived: false,
+        deliveredCount: 7,
+        provenCount: 7,
+        deliveredExternallyCriterionIds: [],
+        totalInScope: 12,
+      },
+      imported: false,
       linkedWork: {
         tickets: 2,
         conversations: 1,
@@ -69,6 +83,43 @@ const inventory = [
   summary("prompt-audit", "Prompt audit trail", { primary: "approved" }),
   summary("session-handoff", "Session handoff", { primary: "draft" }),
 ];
+
+/**
+ * An import arrives already delivered and already disposed: its criteria were
+ * delivered outside this system and its questions came answered. The row has to
+ * say where that state came from without borrowing the vocabulary of the gates
+ * it never passed — no pending-approval badge it did not earn, and no proof
+ * tally it cannot back (R9.3).
+ */
+const importedDelivered = summary(
+  "checkout-rewrite",
+  "Checkout rewrite",
+  { primary: "delivered" },
+  {
+    delivery: {
+      allWaived: false,
+      deliveredCount: 4,
+      provenCount: 0,
+      deliveredExternallyCriterionIds: [
+        "criterion-1",
+        "criterion-2",
+        "criterion-3",
+        "criterion-4",
+      ],
+      totalInScope: 4,
+    },
+    imported: true,
+    linkedWork: {
+      tickets: 0,
+      conversations: 0,
+      sessions: 0,
+      workflowExecutions: 0,
+      mergeJobs: 0,
+    },
+  },
+);
+
+const importedInventory = [...inventory, importedDelivered];
 
 describe("SpecsInventory", () => {
   it("renders the desktop inventory as the prototype's dense flat table", () => {
@@ -169,6 +220,48 @@ describe("SpecsInventory", () => {
       "true",
     );
     expect(screen.getByTestId("spec-row-session-handoff")).toBeInTheDocument();
+    expect(screen.queryByTestId("spec-row-native-sdd")).not.toBeInTheDocument();
+  });
+
+  it("marks an imported row with an Imported chip and leaves every other row unmarked", () => {
+    render(
+      <SpecsInventory specs={importedInventory} projectName="command-center" />,
+    );
+
+    const imported = within(
+      screen.getByTestId("spec-row-checkout-rewrite"),
+    ).getByText("Imported");
+    // Provenance, not attention: amber is reserved for awaiting the user, and
+    // this row is waiting on nobody.
+    expect(imported).toHaveAttribute("data-tone", "neutral");
+
+    for (const slug of ["native-sdd", "prompt-audit", "session-handoff"]) {
+      expect(
+        within(screen.getByTestId(`spec-row-${slug}`)).queryByText("Imported"),
+      ).not.toBeInTheDocument();
+    }
+  });
+
+  it("counts externally-delivered criteria in the imported row's delivered tally without a pending-approval badge", () => {
+    render(
+      <SpecsInventory specs={importedInventory} projectName="command-center" />,
+    );
+
+    const row = screen.getByTestId("spec-row-checkout-rewrite");
+    expect(within(row).getByText("4/4 delivered")).toBeInTheDocument();
+    expect(within(row).queryByText(/pending/)).not.toBeInTheDocument();
+    expect(within(row).getByText("Complete")).toBeInTheDocument();
+  });
+
+  it("lists an imported delivered spec under the delivered phase filter", async () => {
+    const user = userEvent.setup();
+    render(
+      <SpecsInventory specs={importedInventory} projectName="command-center" />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Delivered 1" }));
+
+    expect(screen.getByTestId("spec-row-checkout-rewrite")).toBeInTheDocument();
     expect(screen.queryByTestId("spec-row-native-sdd")).not.toBeInTheDocument();
   });
 

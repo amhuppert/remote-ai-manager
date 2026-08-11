@@ -62,6 +62,7 @@ function snapshotIn(
       contentHash: "content-hash-4",
       proposedAt: timestamp,
       approvedAt: state === "approved" ? timestamp : null,
+      externalDelivery: null,
       createdAt: timestamp,
     },
     elements: [
@@ -390,6 +391,7 @@ function wideSnapshot(): {
         contentHash: "content-hash-wide",
         proposedAt: timestamp,
         approvedAt: timestamp,
+        externalDelivery: null,
         createdAt: timestamp,
       },
       elements,

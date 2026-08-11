@@ -17,6 +17,7 @@ import type { ExecutionScope, ScopePlan } from "./scope-validation";
 import {
   admitDraftWrite,
   advanceAuthoringStage,
+  approvalUnmetConditions,
   approveElement,
   changePolicy,
   claimTaskComplete,
@@ -143,6 +144,7 @@ function reviewSnapshot(): SignOffReviewSnapshot {
     governanceBaseRevisionId: "revision-1",
     governanceBaseRevisionRows: revisionRows(),
     revisionRows: revisionRows(),
+    importBaselineRows: null,
     blockingThreads: [],
     approvals: [
       {
@@ -1291,6 +1293,141 @@ describe("transition predicates", () => {
           expect(evaluateDeliveryGate(deliveryContext(policy)).ok).toBe(false);
         }
       }
+    });
+  });
+
+  /**
+   * An imported revision is born past its authoring gates on import basis, so
+   * no approval row backs any of its elements. Without carry-forward the first
+   * amendment would hand a human every imported requirement and decision to
+   * re-approve; with it, only what the amendment actually changed is owed.
+   */
+  describe("approval carry-forward from an import baseline", () => {
+    const importedRows = (): DiffRevisionElement[] => [
+      diffElement("requirement-1", requirementPayload),
+      diffElement("criterion-1", criterionPayload, "requirement-1"),
+      diffElement("decision-1", decisionPayload),
+    ];
+
+    const edited = (row: DiffRevisionElement): DiffRevisionElement => ({
+      ...row,
+      payloadHash: `${row.elementId}-hash-edited`,
+    });
+
+    const addedRequirement = (): DiffRevisionElement =>
+      diffElement("requirement-2", requirementPayload);
+
+    const addedCriterion = (): DiffRevisionElement =>
+      diffElement("criterion-2", criterionPayload, "requirement-1");
+
+    const handles = new Map([
+      ["requirement-1", "R1"],
+      ["requirement-2", "R2"],
+      ["decision-1", "D1"],
+    ]);
+
+    function conditionsFor(
+      revisionRows: DiffRevisionElement[],
+      importBaselineRows: DiffRevisionElement[] | null,
+    ): string[] {
+      return approvalUnmetConditions({
+        policy: contractPolicy,
+        authoringStage: "design",
+        revisionId: "revision-2",
+        governanceBaseRevisionRows: importedRows(),
+        revisionRows,
+        // An import writes no approval rows at all — that is the whole point
+        // of the basis — so the amendment starts from an empty approval set.
+        approvals: [],
+        handles,
+        approvalApplies: createApprovalApplicability({
+          revisionId: "revision-2",
+          ancestorRevisionIds: new Set(["revision-1"]),
+          revisionRows,
+          rowsForRevision: (revisionId) =>
+            revisionId === "revision-1" ? importedRows() : null,
+        }),
+        importBaselineRows,
+      });
+    }
+
+    it("owes approval only for the element the amendment changed", () => {
+      const conditions = conditionsFor(
+        [edited(importedRows()[0]!), ...importedRows().slice(1)],
+        importedRows(),
+      );
+
+      expect(conditions).toEqual([
+        "Requirement R1 needs a valid approval for revision-2.",
+      ]);
+    });
+
+    it("owes approval for an element the import baseline never carried", () => {
+      const conditions = conditionsFor(
+        [...importedRows(), addedRequirement()],
+        importedRows(),
+      );
+
+      expect(conditions).toEqual([
+        "Requirement R2 needs a valid approval for revision-2.",
+      ]);
+    });
+
+    /**
+     * Approving a requirement approves what would satisfy it, so its criteria
+     * are part of the subject a human read — exactly what `subjectFingerprint`
+     * says of a native approval. A carry-forward that compared the requirement
+     * payload alone would let an amendment rewrite, add, or delete criteria
+     * under an untouched statement and owe nobody anything.
+     */
+    it("owes approval for a requirement whose criterion the amendment rewrote", () => {
+      const conditions = conditionsFor(
+        [
+          importedRows()[0]!,
+          edited(importedRows()[1]!),
+          ...importedRows().slice(2),
+        ],
+        importedRows(),
+      );
+
+      expect(conditions).toEqual([
+        "Requirement R1 needs a valid approval for revision-2.",
+      ]);
+    });
+
+    it("owes approval for a requirement the amendment added a criterion to", () => {
+      const conditions = conditionsFor(
+        [...importedRows(), addedCriterion()],
+        importedRows(),
+      );
+
+      expect(conditions).toEqual([
+        "Requirement R1 needs a valid approval for revision-2.",
+      ]);
+    });
+
+    it("owes approval for a requirement the amendment deleted a criterion from", () => {
+      const conditions = conditionsFor(
+        importedRows().filter((row) => row.elementId !== "criterion-1"),
+        importedRows(),
+      );
+
+      expect(conditions).toEqual([
+        "Requirement R1 needs a valid approval for revision-2.",
+      ]);
+    });
+
+    it("leaves a natively authored spec owing every consulted subject", () => {
+      const conditions = conditionsFor(
+        [...importedRows(), addedRequirement()],
+        null,
+      );
+
+      expect(conditions).toEqual([
+        "Requirement R1 needs a valid approval for revision-2.",
+        "Requirement R2 needs a valid approval for revision-2.",
+        "Decision D1 needs a valid approval for revision-2.",
+      ]);
     });
   });
 

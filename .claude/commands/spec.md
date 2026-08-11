@@ -62,6 +62,51 @@ element id stays the spec's, so re-saving it with `"reintroduceHistorical":
 true` and a null base version brings it back with its original number and
 handle.
 
+## Importing a spec authored outside Command Center
+
+`cctl spec import --file <bundle.json>` brings an external spec — a Kiro
+directory, an RFC, a design doc — in whole as one new native spec, born
+approved at design on import provenance: it records that an agent
+imported the content and from which source, and writes no approval of any
+kind, so every human gate on it stays as strong as on a spec authored
+here. Read `cctl spec import --help` and `cctl spec schema import-bundle`
+before authoring the document.
+
+Run the workflow in order. Check `cctl spec list` and `cctl spec search
+--all <query>` first and stop if an existing spec already covers the work.
+Author the bundle from the source documents yourself: you are the parser,
+and the server never reads a source file. Iterate with `cctl spec import
+--file <bundle.json> --dry-run` until it reports no blocking finding — the
+rehearsal also prints the handles the import would allocate, so bundle
+cross-references can be written against the real numbering. Then import
+once and read the receipt: it names the created spec and what it still
+owes. Treat a refusal as unfinished work — nothing was written, so follow
+the named remedy and import again.
+
+Import creates new specs only. A slug or alias this project already uses
+refuses with `slug_taken`, including one an abandoned spec holds; change
+an existing spec with `cctl spec amend <slug>` instead. Import is never an
+approval shortcut for work authored here — content drafted in this
+conversation earns its approval through `cctl spec propose` and human
+sign-off, never through a bundle. Import is also not the legacy
+delivery-plan seed: `cctl spec plan open <slug> --seed-from last` seeds
+delivery from a plan this system already ran, on a spec that exists here,
+while import is for content that has never been in Command Center at all.
+
+Author the bundle so a delivered import owes a human no review pass.
+`delivered` defaults to true, because a spec worth importing has usually
+already shipped; it records external-delivery provenance rather than
+machine proof, and the delivery gate never reads it. Opt out explicitly
+with `"delivered": false` when the source carries no acceptance criterion
+to record delivery against, which is the one shape the default refuses.
+Import a question already answered when the source holds the answer, and
+import an assumption with its real disposition — confirmed included —
+when the source shows it held. Carrying a source's disposition across is
+provenance capture, not the human disposition act: disposing an
+assumption here stays a Spec Studio act, so never invent a disposition
+the source does not show. An import authored this way arrives with zero
+open review items.
+
 ## Staged authoring
 
 `cctl spec status` reports the draft's authoring stage, and that stage is

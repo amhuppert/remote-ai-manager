@@ -78,6 +78,7 @@ function revisionIn(state: SpecRevision["state"]): SpecRevision {
     contentHash: state === "approved" ? "content-hash" : null,
     proposedAt: state === "draft" ? null : CREATED_AT,
     approvedAt: state === "approved" ? CREATED_AT : null,
+    externalDelivery: null,
     createdAt: CREATED_AT,
   };
 }

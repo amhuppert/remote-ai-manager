@@ -1554,6 +1554,7 @@ export function createAuthoringService(
             policy: spec.gatePolicy,
             snapshot: { ...snapshot, revision: proposed },
             governanceBaseSnapshot: loaded.governanceBaseSnapshot,
+            importBaselineRows: loaded.importBaselineRows,
             approvals: deps.review.findApprovalsBySpecId(spec.id),
             admissions: deps.review.findGateAdmissionsByRevision(revision.id),
             // A propose speaks for the authoring gates; the execution-scoped

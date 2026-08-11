@@ -58,6 +58,7 @@ import type { SpecPhasePrimary } from "@/lib/specs/phase";
 import { cn } from "@/lib/ui/cn";
 
 import { strandedProposals } from "./live-proposals";
+import { revisionAdmittedByImport } from "./presentation";
 import SpecDetailViews, {
   initialDetailViewForDeepLink,
   type DetailView,
@@ -281,6 +282,11 @@ export function SpecDetailContent({
       detail.currentRevision?.revision.authoringStage ??
       detail.currentApprovedRevision?.revision.authoringStage,
     planReviewQuery.data,
+    detail.status.delivery,
+    revisionAdmittedByImport(
+      detail.gateAdmissions,
+      detail.currentApprovedRevision?.revision.id,
+    ),
   );
   const detailHref = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}`;
   const gateHref = `${detailHref}?view=gate`;
@@ -925,7 +931,7 @@ function ForwardIcon(): React.JSX.Element {
   );
 }
 
-function revisionLine(detail: SpecDetailView, revision: number): string {
+export function revisionLine(detail: SpecDetailView, revision: number): string {
   const snapshot = detail.currentRevision;
   if (snapshot === null) return `rev ${revision} unavailable`;
   const current = snapshot.revision;
@@ -937,11 +943,22 @@ function revisionLine(detail: SpecDetailView, revision: number): string {
         : current.createdAt;
   const base = detail.baseRevision?.revision;
   const baseDate = base?.approvedAt;
+  // An imported revision is admitted on the source's word with no approval row
+  // behind it, so it names the admission instead of reading like a human signed
+  // it off. Each revision this line mentions answers for itself: an amendment
+  // approved here and the imported revision it is based on can appear in the
+  // same line, and only one of them is the import's.
+  const approvedWord = (revisionId: string): string =>
+    revisionAdmittedByImport(detail.gateAdmissions, revisionId)
+      ? "admitted by import"
+      : "approved";
   const baseSummary =
     base === undefined || baseDate === null || baseDate === undefined
       ? ""
-      : ` · rev ${base.number} approved ${formatDate(baseDate)}`;
-  return `rev ${revision} ${current.state}${stateDate === null ? "" : ` ${formatDate(stateDate)}`}${baseSummary}`;
+      : ` · rev ${base.number} ${approvedWord(base.id)} ${formatDate(baseDate)}`;
+  const stateLabel =
+    current.state === "approved" ? approvedWord(current.id) : current.state;
+  return `rev ${revision} ${stateLabel}${stateDate === null ? "" : ` ${formatDate(stateDate)}`}${baseSummary}`;
 }
 
 function formatDate(timestamp: string): string {
@@ -953,7 +970,22 @@ export function detailStatePresentation(
   pendingApprovals: SpecDetailView["status"]["pendingApprovals"],
   authoringStage?: SpecAuthoringStage,
   deliveryPlan?: DeliveryPlanReviewView | null,
+  delivery?: SpecDetailView["status"]["delivery"],
+  /**
+   * Whether the frozen revision this banner speaks for — the current approved
+   * one — is the revision an import admitted. Asked of that revision rather
+   * than of the spec: an imported spec a human later amended is still imported,
+   * while the revision the banner names was approved here.
+   */
+  frozenRevisionImported?: boolean,
 ): DetailStatePresentation {
+  // An imported stage is frozen on the source's word with no approval row
+  // behind it, so every banner names the admission instead of reading like a
+  // human froze it.
+  const frozenBanner = (subject: string): string =>
+    frozenRevisionImported === true
+      ? `${subject} admitted by import`
+      : `${subject} approved`;
   switch (phase) {
     case "draft":
       return {
@@ -976,7 +1008,7 @@ export function detailStatePresentation(
       if (authoringStage === "requirements") {
         return {
           tone: "green",
-          banner: "Requirements approved",
+          banner: frozenBanner("Requirements"),
           description:
             "The requirements are frozen. Design is next; delivery planning stays locked until design is approved.",
           action: null,
@@ -986,9 +1018,11 @@ export function detailStatePresentation(
       if (authoringStage !== "design" && authoringStage !== "plan") {
         return {
           tone: "green",
-          banner: "Revision approved",
+          banner: frozenBanner("Revision"),
           description:
-            "The approved revision is frozen. Execution requires an approved delivery-plan candidate.",
+            frozenRevisionImported === true
+              ? "The imported revision is frozen. Execution requires an approved delivery-plan candidate."
+              : "The approved revision is frozen. Execution requires an approved delivery-plan candidate.",
           action: null,
           view: null,
         };
@@ -996,7 +1030,7 @@ export function detailStatePresentation(
       if (deliveryPlan === undefined) {
         return {
           tone: "green",
-          banner: "Design approved",
+          banner: frozenBanner("Design"),
           description: "The design is frozen. Checking delivery-plan status.",
           action: null,
           view: null,
@@ -1005,7 +1039,7 @@ export function detailStatePresentation(
       if (deliveryPlan === null) {
         return {
           tone: "green",
-          banner: "Design approved",
+          banner: frozenBanner("Design"),
           description:
             authoringStage === "plan"
               ? "The legacy Plan revision remains readable as history. Open a delivery plan attempt to author the executable graph."
@@ -1091,7 +1125,28 @@ export function detailStatePresentation(
         action: "Open evidence",
         view: "evidence",
       };
-    case "delivered":
+    case "delivered": {
+      // `delivered` is reached either by proof taken here or by an import's
+      // external testimony, and the rollup keeps `provenCount` apart from
+      // `deliveredExternallyCriterionIds` precisely so this banner cannot
+      // report testimony as proof it never took.
+      if (
+        delivery !== undefined &&
+        delivery.deliveredExternallyCriterionIds.length > 0
+      ) {
+        const externalCount = delivery.deliveredExternallyCriterionIds.length;
+        const noun = delivery.totalInScope === 1 ? "criterion" : "criteria";
+        return {
+          tone: "green",
+          banner: "Delivered externally",
+          description:
+            delivery.provenCount === 0
+              ? `${externalCount}/${delivery.totalInScope} in-scope ${noun} delivered externally, none proven here.`
+              : `${delivery.provenCount}/${delivery.totalInScope} in-scope ${noun} proven, ${externalCount} delivered externally.`,
+          action: null,
+          view: null,
+        };
+      }
       return {
         tone: "green",
         banner: "Delivery proven",
@@ -1099,6 +1154,7 @@ export function detailStatePresentation(
         action: null,
         view: null,
       };
+    }
     case "abandoned":
       return {
         tone: "red",
@@ -1954,6 +2010,11 @@ function requirementStatusPresentation(
   }
   if (status?.proof === "proven_and_waived") {
     return { status: "Proven + waived", statusTone: "green" };
+  }
+  // Settled, but by an import's testimony rather than by proof taken here, so
+  // it takes neither the green proof badge nor the amber unfinished ones.
+  if (status?.proof === "delivered_externally") {
+    return { status: "Delivered externally", statusTone: "neutral" };
   }
   if (status?.proof === "partial") {
     return { status: "Proof partial", statusTone: "amber" };

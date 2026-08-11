@@ -49,6 +49,7 @@ const revision: SpecRevision = {
   contentHash: null,
   proposedAt: null,
   approvedAt: null,
+  externalDelivery: null,
   createdAt: "2026-07-18T00:00:00.000Z",
 };
 
@@ -1905,6 +1906,7 @@ describe("spec read route handlers", () => {
       authoringStage: "requirements",
       contentHash: "revision-1-hash",
       approvedAt: revision.createdAt,
+      externalDelivery: null,
     };
     const amendment: SpecRevision = {
       ...revision,
@@ -2463,6 +2465,7 @@ describe("spec read route handlers", () => {
     await expect(response.json()).resolves.toMatchObject({
       delivery: {
         allWaived: false,
+        deliveredCount: 0,
         provenCount: 0,
         totalInScope: 1,
       },
@@ -3116,7 +3119,12 @@ describe("spec read route handlers", () => {
         {
           spec: { id: spec.id },
           counts: { requirements: 1, criteria: 1, decisions: 1, tasks: 1 },
-          delivery: { allWaived: false, provenCount: 0, totalInScope: 0 },
+          delivery: {
+            allWaived: false,
+            deliveredCount: 0,
+            provenCount: 0,
+            totalInScope: 0,
+          },
           linkedWork: {
             tickets: 1,
             conversations: 1,

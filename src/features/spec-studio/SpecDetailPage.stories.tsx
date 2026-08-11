@@ -506,7 +506,13 @@ function detailFor(
       },
       delivery:
         phase === "delivered"
-          ? { allWaived: false, provenCount: 1, totalInScope: 1 }
+          ? {
+              allWaived: false,
+              deliveredCount: 1,
+              provenCount: 1,
+              deliveredExternallyCriterionIds: [],
+              totalInScope: 1,
+            }
           : base.status.delivery,
     },
     executions:

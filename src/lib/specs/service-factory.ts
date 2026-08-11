@@ -56,6 +56,7 @@ import { createExecutionService } from "./execution-service";
 import { readSpecExecutionOriginMap } from "./execution-origin-map";
 import { evaluateEvidenceFreshness, type GitProbes } from "./freshness";
 import { resolveCriterionBareHandle } from "./handles";
+import { createImportService } from "./import-service";
 import { createLinksService } from "./links-service";
 import { toLintSnapshot } from "./review-state";
 import { createReviewService } from "./review-service";
@@ -699,6 +700,13 @@ export async function createProductionSpecRouteServices(
     now: () => new Date().toISOString(),
   });
 
+  const specImport = createImportService({
+    specs,
+    review: reviewRepo,
+    links: linksRepo,
+    events,
+  });
+
   const services: SpecMutationServices = {
     authoring,
     review,
@@ -706,6 +714,7 @@ export async function createProductionSpecRouteServices(
     execution,
     links,
     deliveryPlan,
+    import: specImport,
     ingestEvidenceBestEffort(executionId) {
       return ingest.ingestBestEffort(executionId);
     },

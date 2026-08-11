@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createApprovalApplicability } from "./approval-applicability";
 import { authoringReviewProjection } from "./authoring-review-projection";
+import { importBaselineRevisionId } from "./import-baseline";
 import type { LintFinding } from "./lint";
 import { toDiffRows } from "./review-state";
 import { ancestorIds } from "./revision-lineage";
@@ -28,6 +29,7 @@ function revision(
     contentHash: null,
     proposedAt: AT,
     approvedAt: null,
+    externalDelivery: null,
     createdAt: AT,
     ...overrides,
   };
@@ -103,6 +105,40 @@ function decision(
   };
 }
 
+function criterion(
+  revisionId: string,
+  id: string,
+  number: number,
+  text: string,
+  parentElementId: string,
+  position: number,
+): SpecRevisionElement {
+  return {
+    element: {
+      id,
+      specId: SPEC_ID,
+      kind: "criterion",
+      number,
+      parentElementId,
+      createdAt: AT,
+    },
+    version: {
+      revisionId,
+      elementId: id,
+      position,
+      payload: {
+        kind: "criterion",
+        text,
+        validationStrategy: { kinds: ["test_run"] },
+      },
+      payloadHash: `${id}:${text}`,
+      elementVersion: 1,
+      createdAt: AT,
+      updatedAt: AT,
+    },
+  };
+}
+
 function approval(
   overrides: Pick<SpecApprovalRow, "id" | "revision_id" | "subject_kind"> &
     Partial<SpecApprovalRow>,
@@ -150,6 +186,7 @@ function withdrawnAttemptChain(requirementStatement: string): Chain {
     state: "approved",
     authoringStage: "requirements",
     approvedAt: AT,
+    externalDelivery: null,
   });
   const withdrawn = revision({
     id: "revision-2",
@@ -194,6 +231,75 @@ function withdrawnAttemptChain(requirementStatement: string): Chain {
   };
 }
 
+/**
+ * An imported spec: revision 1 is born approved past the authoring gates on
+ * import basis with no approval row anywhere, and revision 2 amends exactly
+ * one of its requirements.
+ */
+function importedAmendmentChain(amendment: {
+  statement?: string;
+  criterionText?: string;
+}): Chain {
+  const imported = revision({
+    id: "revision-1",
+    number: 1,
+    state: "approved",
+    approvedAt: AT,
+  });
+  const amended = revision({
+    id: "revision-2",
+    number: 2,
+    basedOnRevisionId: imported.id,
+  });
+  const elementsFor = (
+    revisionId: string,
+    statement: string,
+    criterionText: string,
+  ) => [
+    requirement(revisionId, "requirement-1", 1, statement, 0),
+    criterion(revisionId, "criterion-1", 1, criterionText, "requirement-1", 1),
+    requirement(revisionId, "requirement-2", 2, "Imports stay honest.", 2),
+    decision(revisionId, "decision-1", 1, "The server owns gates.", 3),
+  ];
+  const IMPORTED_STATEMENT = "Imported specs are native.";
+  const IMPORTED_CRITERION = "The import writes no approval row.";
+  return {
+    revisions: [imported, amended],
+    snapshots: [
+      {
+        revision: imported,
+        elements: elementsFor(
+          imported.id,
+          IMPORTED_STATEMENT,
+          IMPORTED_CRITERION,
+        ),
+      },
+      {
+        revision: amended,
+        elements: elementsFor(
+          amended.id,
+          amendment.statement ?? IMPORTED_STATEMENT,
+          amendment.criterionText ?? IMPORTED_CRITERION,
+        ),
+      },
+    ],
+  };
+}
+
+const importAdmissions = (): SpecGateAdmissionRow[] =>
+  (["requirements", "design"] as const).map((gate, index) =>
+    admission({
+      id: `admission-import-${index + 1}`,
+      gate,
+      revision_id: "revision-1",
+      basis: "import",
+      actor_json: JSON.stringify({
+        kind: "agent",
+        conversationId: "conversation-import",
+      }),
+    }),
+  );
+
 /** The same chain with its latest revision moved to another state. */
 function withCurrentState(chain: Chain, state: SpecRevision["state"]): Chain {
   const current = chain.revisions[chain.revisions.length - 1]!;
@@ -232,12 +338,24 @@ function project(
     ]),
   );
   const approvals = options.approvals ?? [];
+  const admissions = options.admissions ?? [];
+  // Derived exactly as production does: the import baseline is whichever
+  // revision the import-basis admissions name, not simply the governance base.
+  const importBaselineRevision = importBaselineRevisionId(admissions);
+  const importBaselineSnapshot =
+    chain.snapshots.find(
+      ({ revision: candidate }) => candidate.id === importBaselineRevision,
+    ) ?? null;
   return authoringReviewProjection({
     policy: options.policy ?? { preset: "contract-bearing" },
     snapshot,
     governanceBaseSnapshot,
     approvals,
-    admissions: options.admissions ?? [],
+    admissions,
+    importBaselineRows:
+      importBaselineSnapshot === null
+        ? null
+        : toDiffRows(importBaselineSnapshot),
     currentExecution: null,
     revisionNumberById: new Map(
       chain.revisions.map((candidate) => [candidate.id, candidate.number]),
@@ -263,6 +381,179 @@ const gateOf = (
 };
 
 describe("authoringReviewProjection", () => {
+  /**
+   * The status read and the sign-off preconditions must answer "what is still
+   * outstanding" identically. A pending list that re-asks for an untouched
+   * imported requirement would send a human at an approval the sign-off does
+   * not want, and one that hides a changed element would hide a real gate.
+   */
+  describe("an amendment of an imported baseline", () => {
+    it("owes only the changed subject, in both the pending list and sign-off", () => {
+      const projection = project(
+        importedAmendmentChain({ statement: "Imported specs are amendable." }),
+        { admissions: importAdmissions() },
+      );
+
+      expect(projection.pendingApprovals).toEqual([
+        {
+          gate: "requirements",
+          subject: "R1",
+          elementId: "requirement-1",
+        },
+      ]);
+      expect(projection.revisionSignOff?.unmetConditions).toEqual([
+        "Requirement R1 needs a valid approval for revision-2.",
+      ]);
+      expect(projection.revisionSignOff?.outstandingSubjectCount).toBe(1);
+      // The gates stay pending — the revision still owes its human sign-off —
+      // while the only subject either of them names is the changed one.
+      expect(
+        projection.pendingBlock?.gates.map(({ gate, subjects }) => [
+          gate,
+          subjects,
+        ]),
+      ).toEqual([
+        ["requirements", ["R1"]],
+        ["design", []],
+      ]);
+      expect(projection.pendingBlock?.actsNext).toBe("human");
+    });
+
+    /**
+     * Approving a requirement approves the criteria that would satisfy it, so
+     * rewriting one changes the subject a human would have to read — the same
+     * rule `subjectFingerprint` applies to a native approval.
+     */
+    it("owes the parent requirement when only its criterion changed", () => {
+      const projection = project(
+        importedAmendmentChain({
+          criterionText: "The import writes no approval row, ever.",
+        }),
+        { admissions: importAdmissions() },
+      );
+
+      expect(projection.pendingApprovals).toEqual([
+        {
+          gate: "requirements",
+          subject: "R1",
+          elementId: "requirement-1",
+        },
+      ]);
+      expect(projection.revisionSignOff?.unmetConditions).toEqual([
+        "Requirement R1 needs a valid approval for revision-2.",
+      ]);
+    });
+
+    /**
+     * Honest provenance: a carried-forward subject is settled, not approved. It
+     * leaves the pending list — no human is asked for it — but it must stay
+     * visible as import-carried, or a surface reading only `pendingApprovals`
+     * reports "all approved" about content no human ever read.
+     */
+    it("reports the untouched imported subjects as import-carried, never as approved", () => {
+      const projection = project(
+        importedAmendmentChain({ statement: "Imported specs are amendable." }),
+        {
+          admissions: importAdmissions(),
+          approvals: [
+            approval({
+              id: "approval-1",
+              revision_id: "revision-2",
+              subject_kind: "requirement",
+              element_id: "requirement-1",
+            }),
+          ],
+        },
+      );
+
+      expect(projection.pendingApprovals).toEqual([]);
+      expect(projection.importCarriedApprovals).toEqual([
+        {
+          gate: "requirements",
+          subject: "R2",
+          elementId: "requirement-2",
+        },
+        {
+          gate: "design",
+          subject: "D1",
+          elementId: "decision-1",
+        },
+      ]);
+      expect(
+        projection.pendingBlock?.gates.map(
+          ({ gate, subjects, importCarriedSubjects }) => [
+            gate,
+            subjects,
+            importCarriedSubjects,
+          ],
+        ),
+      ).toEqual([
+        ["requirements", [], ["R2"]],
+        ["design", [], ["D1"]],
+      ]);
+      // The only subject a human approved is R1; the sentence a surface renders
+      // must not extend that act to the two the import carried.
+      expect(projection.pendingBlock?.display).not.toContain(
+        "every consulted subject approved",
+      );
+      expect(projection.pendingBlock?.display).toContain(
+        "2 carried forward from the import",
+      );
+      expect(projection.revisionSignOff?.state).toBe("ready");
+    });
+
+    it("claims no import carry-forward when every subject was humanly approved", () => {
+      const projection = project(
+        importedAmendmentChain({ statement: "Imported specs are amendable." }),
+        {
+          admissions: importAdmissions(),
+          approvals: [
+            approval({
+              id: "approval-1",
+              revision_id: "revision-2",
+              subject_kind: "requirement",
+              element_id: "requirement-1",
+            }),
+            approval({
+              id: "approval-2",
+              revision_id: "revision-2",
+              subject_kind: "requirement",
+              element_id: "requirement-2",
+            }),
+            approval({
+              id: "approval-3",
+              revision_id: "revision-2",
+              subject_kind: "decision",
+              element_id: "decision-1",
+            }),
+          ],
+        },
+      );
+
+      expect(projection.importCarriedApprovals).toEqual([]);
+      expect(projection.pendingBlock?.display).toContain(
+        "every consulted subject approved",
+      );
+    });
+
+    it("owes every subject when the same amendment carries no import basis", () => {
+      const projection = project(
+        importedAmendmentChain({ statement: "Imported specs are amendable." }),
+        {
+          admissions: importAdmissions().map((row) => ({
+            ...row,
+            basis: "human_approval" as const,
+          })),
+        },
+      );
+
+      expect(projection.pendingApprovals.map(({ subject }) => subject)).toEqual(
+        ["R1", "R2", "D1"],
+      );
+      expect(projection.importCarriedApprovals).toEqual([]);
+    });
+  });
+
   it("keeps an earlier stage applicable when its change arrived through a withdrawn ancestor", () => {
     const projection = project(
       withdrawnAttemptChain("Gates survive a withdrawn attempt."),

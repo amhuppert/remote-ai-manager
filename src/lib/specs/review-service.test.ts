@@ -535,6 +535,7 @@ describe("ReviewService", () => {
         policy: created.spec.gatePolicy,
         snapshot: signedOff,
         governanceBaseSnapshot: loaded.governanceBaseSnapshot,
+        importBaselineRows: loaded.importBaselineRows,
         approvals: reviewRepo.findApprovalsBySpecId(created.spec.id),
         admissions: reviewRepo.findGateAdmissionsBySpecId(created.spec.id),
         currentExecution: null,

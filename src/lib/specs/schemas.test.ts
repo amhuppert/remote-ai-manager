@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { laneIdViolation } from "@/lib/workflow-graph/lane-identity";
 import {
+  IMPORTED_VALIDATION_STRATEGY_NOTE,
   MACHINE_VALIDATION_EVIDENCE_KINDS,
   executionLaneSchema,
   actorProvenanceSchema,
   evidenceEvaluatedStateSchema,
   evidenceKindSchema,
+  externalDeliverySchema,
+  importBundleSchema,
   isMachineValidationEvidenceKind,
   refusalCodeSchema,
+  resolveImportedValidationStrategy,
+  specGateAdmissionBasisSchema,
   refusalSchema,
   specElementPayloadSchema,
   specAuthoringStageSchema,
@@ -168,6 +173,7 @@ describe("spec authoring stage schema", () => {
         content_hash: null,
         proposed_at: null,
         approved_at: null,
+        external_delivery_json: null,
         created_at: "2026-07-22T12:00:00.000Z",
       }).authoring_stage,
     ).toBe("design");
@@ -182,6 +188,7 @@ describe("spec authoring stage schema", () => {
         contentHash: null,
         proposedAt: null,
         approvedAt: null,
+        externalDelivery: null,
         createdAt: "2026-07-22T12:00:00.000Z",
       }).authoringStage,
     ).toBe("design");
@@ -308,5 +315,208 @@ describe("shared spec contracts", () => {
     "spec-review-revision-signed-off",
   ])("registers durable event type %s", (eventType) => {
     expect(specEventTypeSchema.safeParse(eventType).success).toBe(true);
+  });
+});
+
+describe("import provenance contracts", () => {
+  it("admits an import basis alongside the human and policy bases", () => {
+    expect(specGateAdmissionBasisSchema.options).toEqual([
+      "human_approval",
+      "notify_policy",
+      "off_policy",
+      "import",
+    ]);
+  });
+
+  it("registers the durable spec_imported event type", () => {
+    expect(specEventTypeSchema.safeParse("spec_imported").success).toBe(true);
+  });
+
+  it("carries the external-delivery record as actor-attributed source provenance", () => {
+    const record = {
+      at: "2026-08-10T09:00:00.000Z",
+      actor: { kind: "agent", conversationId: "conversation-import" },
+      source: { label: "kiro:.kiro/specs/imported-feature" },
+    };
+
+    expect(externalDeliverySchema.parse(record)).toEqual(record);
+  });
+
+  it("refuses an external-delivery record without a source label or with unknown keys", () => {
+    const base = {
+      at: "2026-08-10T09:00:00.000Z",
+      actor: { kind: "human" },
+      source: { label: "external" },
+    };
+
+    expect(
+      externalDeliverySchema.safeParse({ ...base, source: { label: "" } })
+        .success,
+    ).toBe(false);
+    expect(
+      externalDeliverySchema.safeParse({ ...base, verdict: "passed" }).success,
+    ).toBe(false);
+  });
+
+  it.each([
+    "not-an-iso-timestamp",
+    "2026-08-10",
+    "10/08/2026",
+    "2026-08-10 09:00:00",
+    "",
+  ])("refuses %j as an external-delivery timestamp", (at) => {
+    // The claim's whole content is when the work shipped and who says so. A
+    // free-text `at` would persist an unorderable, uncomparable date that no
+    // surface could honestly render against this system's own timestamps.
+    expect(
+      externalDeliverySchema.safeParse({
+        at,
+        actor: { kind: "human" },
+        source: { label: "external" },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+const maximalBundle = {
+  slug: "imported-feature",
+  name: "Imported feature",
+  gatePolicy: { preset: "exploratory", overrides: { delivery: "notify" } },
+  source: { label: "kiro:.kiro/specs/imported-feature" },
+  sections: [
+    {
+      role: "intent_problem",
+      title: "Problem",
+      body: "The external spec has no native record.",
+    },
+    {
+      role: "design_narrative",
+      title: "Approach",
+      body: "Translate the external document into native elements.",
+    },
+  ],
+  requirements: [
+    {
+      ref: "R1",
+      statement: "The importer creates a new spec.",
+      priority: "must",
+      risk: "high",
+      criteria: [
+        {
+          text: "An existing slug is refused.",
+          validationStrategy: {
+            kinds: ["test_run"],
+            note: "Covered by the refusal tests.",
+          },
+        },
+        { text: "The imported revision is born at design." },
+      ],
+    },
+  ],
+  decisions: [
+    {
+      title: "Import is one-shot",
+      chosenApproach: "Write the whole bundle in one transaction.",
+      rejectedAlternatives: [
+        { label: "Incremental import", reason: "Leaves half-imported specs." },
+      ],
+      reason: "A partial import cannot be reviewed honestly.",
+      traces: ["R1"],
+    },
+  ],
+  questions: [
+    { text: "Which external formats ship first?", answer: "Kiro only." },
+    { text: "Does import ever amend?" },
+  ],
+  assumptions: [
+    {
+      text: "The external spec was reviewed by a human.",
+      disposition: "proposed",
+    },
+    { text: "External delivery already shipped." },
+  ],
+  delivered: false,
+  dryRun: true,
+} as const;
+
+describe("import bundle schema", () => {
+  it("parses a maximal bundle unchanged", () => {
+    expect(importBundleSchema.parse(maximalBundle)).toEqual(maximalBundle);
+  });
+
+  it("defaults the gate policy to the contract-bearing preset and delivered to true", () => {
+    const parsed = importBundleSchema.parse({
+      slug: "minimal-import",
+      name: "Minimal import",
+      source: { label: "external" },
+      sections: [],
+      requirements: [],
+      decisions: [],
+      questions: [],
+      assumptions: [],
+    });
+
+    expect(parsed.gatePolicy).toEqual({ preset: "contract-bearing" });
+    expect(parsed.delivered).toBe(true);
+    // A bundle that says nothing about rehearsing must import for real. The
+    // opposite default would let a caller believe it had imported a spec that
+    // was only ever previewed.
+    expect(parsed.dryRun).toBe(false);
+  });
+
+  it("refuses a non-canonical slug, an empty source label, and unknown keys", () => {
+    expect(
+      importBundleSchema.safeParse({ ...maximalBundle, slug: "Not A Slug" })
+        .success,
+    ).toBe(false);
+    expect(
+      importBundleSchema.safeParse({ ...maximalBundle, source: { label: "" } })
+        .success,
+    ).toBe(false);
+    expect(
+      importBundleSchema.safeParse({ ...maximalBundle, extra: "surprise" })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe("imported criterion validation strategy", () => {
+  it("defaults an absent strategy to a machine-provable kind with an honest imported note", () => {
+    const defaulted = resolveImportedValidationStrategy(undefined);
+
+    expect(defaulted).toEqual({
+      kinds: ["validator_verdict"],
+      note: IMPORTED_VALIDATION_STRATEGY_NOTE,
+    });
+    expect(defaulted.kinds.some(isMachineValidationEvidenceKind)).toBe(true);
+    expect(IMPORTED_VALIDATION_STRATEGY_NOTE).toBe(
+      "Imported; not machine-verified.",
+    );
+  });
+
+  it("passes an explicit bundle strategy through untouched", () => {
+    const explicit = validationStrategySchema.parse({
+      kinds: ["test_run", "commit"],
+      note: "Proven by the import round-trip test.",
+    });
+
+    expect(resolveImportedValidationStrategy(explicit)).toEqual(explicit);
+  });
+
+  it("keeps an explicit strategy that omits its note noteless", () => {
+    expect(
+      resolveImportedValidationStrategy({ kinds: ["validator_verdict"] }),
+    ).toEqual({ kinds: ["validator_verdict"] });
+  });
+
+  it("hands every caller its own default rather than one shared object", () => {
+    const first = resolveImportedValidationStrategy(undefined);
+    first.kinds.push("commit");
+
+    // A shared constant would carry one caller's edit into the obligation
+    // every later imported criterion is born with.
+    expect(resolveImportedValidationStrategy(undefined).kinds).toEqual([
+      "validator_verdict",
+    ]);
   });
 });

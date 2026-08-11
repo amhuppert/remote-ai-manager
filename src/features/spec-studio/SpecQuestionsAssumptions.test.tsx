@@ -16,6 +16,7 @@ import SpecQuestionsAssumptionsPanel, {
 import { SpecDetailContent } from "./SpecDetailPage";
 import {
   SPEC_CONTROLS_FIXTURE_NOW as NOW,
+  importedDeliveredSpecDetailFixture,
   specControlsDetailFixture as detailFixture,
 } from "./SpecControls.fixtures";
 
@@ -64,6 +65,9 @@ function renderStudio(
 } {
   const onAnswerQuestion = vi.fn();
   const onDisposeAssumption = vi.fn();
+  // Pulled out of the spread: `Partial` widens it to include `undefined`, and
+  // the prop is a two-state claim — imported at this instant, or not imported.
+  const { importedAt = null, ...rest } = overrides;
   render(
     <SpecQuestionsAssumptions
       questions={[questionFixture()]}
@@ -74,9 +78,10 @@ function renderStudio(
       elementHandlesById={new Map([["requirement-1", "R1"]])}
       pendingAction={null}
       error={null}
+      importedAt={importedAt}
       onAnswerQuestion={onAnswerQuestion}
       onDisposeAssumption={onDisposeAssumption}
-      {...overrides}
+      {...rest}
     />,
   );
   return { onAnswerQuestion, onDisposeAssumption };
@@ -212,6 +217,100 @@ describe("SpecQuestionsAssumptions", () => {
     });
   });
 
+  /**
+   * An imported answer was written in the external source and an imported
+   * disposition was taken there too. Neither is an act anybody performed on
+   * this surface, so both name the import (R9.7).
+   */
+  describe("import provenance", () => {
+    const IMPORTED_AT = "2026-07-18T09:00:00.000Z";
+    const ANSWERED_HERE_AT = "2026-07-19T09:00:00.000Z";
+
+    it("attributes an answer and a disposition that arrived with the import to the import", () => {
+      renderStudio({
+        importedAt: IMPORTED_AT,
+        questions: [
+          questionFixture({
+            status: "answered",
+            answer: "Thirty days, per the source spec.",
+            answeredAt: IMPORTED_AT,
+            createdAt: IMPORTED_AT,
+          }),
+        ],
+        assumptions: [
+          assumptionFixture({
+            disposition: "confirmed",
+            disposedAt: IMPORTED_AT,
+            createdAt: IMPORTED_AT,
+          }),
+        ],
+      });
+
+      const q1 = document.getElementById("Q1");
+      const a1 = document.getElementById("A1");
+      if (q1 === null || a1 === null) throw new Error("Expected Q/A cards");
+
+      expect(within(q1).getByText("Answered at import")).toBeVisible();
+      expect(within(q1).queryByText("Answer")).not.toBeInTheDocument();
+      expect(
+        within(q1).getByText("Thirty days, per the source spec."),
+      ).toBeVisible();
+      expect(within(a1).getByText("Confirmed at import")).toBeVisible();
+      // The register never claims a person: an operator attribution here would
+      // present imported content as a human decision.
+      expect(screen.queryByText(/Operator/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/^Confirmed$/)).not.toBeInTheDocument();
+    });
+
+    it("leaves an answer and a disposition recorded here after the import unmarked", () => {
+      renderStudio({
+        importedAt: IMPORTED_AT,
+        questions: [
+          questionFixture({
+            status: "answered",
+            answer: "Thirty days, decided here.",
+            answeredAt: ANSWERED_HERE_AT,
+            createdAt: IMPORTED_AT,
+          }),
+        ],
+        assumptions: [
+          assumptionFixture({
+            disposition: "confirmed",
+            disposedAt: ANSWERED_HERE_AT,
+            createdAt: IMPORTED_AT,
+          }),
+        ],
+      });
+
+      expect(screen.queryByText("Answered at import")).not.toBeInTheDocument();
+      expect(screen.queryByText("Confirmed at import")).not.toBeInTheDocument();
+      expect(screen.getByText("Answer")).toBeVisible();
+      expect(screen.getByText("Confirmed")).toBeVisible();
+    });
+
+    it("marks nothing on a spec that was never imported", () => {
+      renderStudio({
+        questions: [
+          questionFixture({
+            status: "answered",
+            answer: "Thirty days.",
+            answeredAt: NOW,
+            createdAt: NOW,
+          }),
+        ],
+        assumptions: [
+          assumptionFixture({
+            disposition: "confirmed",
+            disposedAt: NOW,
+            createdAt: NOW,
+          }),
+        ],
+      });
+
+      expect(screen.queryByText(/at import/)).not.toBeInTheDocument();
+    });
+  });
+
   it("surfaces the server refusal verbatim", () => {
     const refusal =
       "A1 is cited by approved content and cannot change in place. " +
@@ -270,6 +369,53 @@ describe("SpecQuestionsAssumptionsPanel", () => {
     expect(
       screen.queryByRole("button", { name: "Save disposition for A1" }),
     ).not.toBeInTheDocument();
+  });
+
+  /**
+   * The import instant comes from the basis-`import` gate admissions, not from
+   * the `spec_imported` event: that event's projection is null whenever its
+   * payload is unreadable, and attribution that vanishes with the event detail
+   * would silently re-present imported answers as acts taken here.
+   */
+  it.each([
+    ["the import event is readable", true],
+    ["the import event's detail is unreadable", false],
+  ])(
+    "reads the import instant off the admissions when %s",
+    (_case, withRecord) => {
+      const imported = importedDeliveredSpecDetailFixture();
+      const detail = {
+        ...imported,
+        importRecord: withRecord ? imported.importRecord : null,
+      };
+
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <SpecQuestionsAssumptionsPanel
+            detail={detail}
+            projectName="command-center"
+          />
+        </QueryClientProvider>,
+      );
+
+      expect(screen.getByText("Answered at import")).toBeVisible();
+      expect(screen.getByText("Confirmed at import")).toBeVisible();
+    },
+  );
+
+  it("marks nothing when no gate was admitted by import", () => {
+    const imported = importedDeliveredSpecDetailFixture();
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <SpecQuestionsAssumptionsPanel
+          detail={{ ...imported, gateAdmissions: [] }}
+          projectName="command-center"
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.queryByText(/at import/)).not.toBeInTheDocument();
   });
 
   it("posts dispose-assumption through the spec action route", async () => {

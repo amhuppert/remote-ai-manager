@@ -519,6 +519,64 @@ describe("cctl spec help nodes", () => {
     expect(text).toContain("cctl spec plan reopen");
   });
 
+  /**
+   * Import is the one verb that creates a spec already past its authoring
+   * gates, so every way it refuses has to be readable before the call — and the
+   * delivered-without-criteria refusal is only actionable if its opt-out is
+   * named beside it.
+   */
+  it("documents the import verb's flags, refusals, and the opt-out each one names", async () => {
+    const text = await helpText(["spec", "import"]);
+
+    expect(text).toContain("cctl spec import --file <bundle.json>");
+    expect(text).toContain("--dry-run");
+    for (const code of ["slug_taken", "lint_blocked", "validation"]) {
+      expect(text, `spec import help omits ${code}`).toContain(code);
+    }
+    // The refusal an agent hits importing a criteria-less source, and the one
+    // field that clears it.
+    expect(text).toContain('"delivered": false');
+    expect(text).toContain("cctl spec schema import-bundle");
+    // Nothing the import writes may read as a human approval.
+    expect(text).toMatch(/import provenance/i);
+    // A bundle that declares its own rehearsal rehearses on every invocation,
+    // so the field that ends it has to be named where the flag is documented.
+    expect(text).toContain('"dryRun": false');
+  });
+
+  /**
+   * A spec that already exists is amended, never imported: an agent that reads
+   * import as an upsert would reach for it to update a spec and get slug_taken
+   * with no route onward.
+   */
+  it("routes import at the verbs for a spec that already exists", async () => {
+    const text = await helpText(["spec", "import"]);
+
+    for (const command of [
+      "spec list",
+      "spec search",
+      "spec amend",
+      "spec schema",
+    ]) {
+      expect(text, `spec import help omits ${command}`).toContain(command);
+    }
+    // The neighbouring seed path, which imports nothing from outside CC.
+    expect(text).toContain("cctl spec plan open");
+    expect(text).toContain("--seed-from last");
+  });
+
+  /**
+   * The two receipts route differently — a delivered import owes nothing, an
+   * undelivered one owes a delivery plan — so the help has to name both rather
+   * than leaving the second to be discovered from a receipt nobody read.
+   */
+  it("names both next steps an import receipt hands back", async () => {
+    const text = await helpText(["spec", "import"]);
+
+    expect(text).toContain("cctl spec show <slug>");
+    expect(text).toContain("cctl spec plan open <slug>");
+  });
+
   it("reaches the delta from the spec group node", async () => {
     const text = await helpText(["spec"]);
 

@@ -24,13 +24,16 @@ import {
   type DraftElementInput,
 } from "@/lib/specs/authoring-service";
 import {
+  IMPORTED_VALIDATION_STRATEGY_NOTE,
   MACHINE_VALIDATION_EVIDENCE_KINDS,
   executionLaneSchema,
+  importBundleSchema,
   sectionRoleSchema,
   specElementPayloadSchema,
   taskElementPayloadSchema,
   touchedPathSchema,
   validationStrategyKindsSchema,
+  type ImportBundle,
   type SectionRole,
   type SpecAuthoringStage,
   type SpecElementKind,
@@ -84,6 +87,8 @@ const REMOVAL_BATCH_USAGE = "cctl spec draft <slug> --file <batch.json>";
 const REMOVE_USAGE = "cctl spec remove <slug> <handle...>";
 const CREATE_USAGE =
   "cctl spec create --slug <slug> --name <name> --preset <preset> --file <element.json>";
+const IMPORT_USAGE = "cctl spec import --file <bundle.json>";
+const IMPORT_DRY_RUN_USAGE = "cctl spec import --file <bundle.json> --dry-run";
 
 const TOUCHED_PATH_DESCRIPTION =
   "normalized repo-relative POSIX paths; directories without a trailing slash";
@@ -93,6 +98,7 @@ const EXECUTION_LANE_DESCRIPTION =
 
 const CREATE_DOCUMENT_ID = "create-element";
 const REMOVAL_BATCH_DOCUMENT_ID = "element-batch-removals";
+const IMPORT_BUNDLE_DOCUMENT_ID = "import-bundle";
 
 /**
  * What the compare-and-swap version is, and the trap in reading one: element
@@ -620,6 +626,111 @@ function createDocument(): SchemaDocument {
   };
 }
 
+/**
+ * Every artifact a bundle can carry, in one document an agent can copy and
+ * edit. The two easiest omissions are deliberate here: the second criterion
+ * states no `validationStrategy`, so the imported default is visible beside an
+ * explicit one, and the decision's `traces` names the requirement's
+ * bundle-local `ref` rather than an element id that does not exist yet.
+ */
+const IMPORT_BUNDLE_EXAMPLE: ImportBundle = {
+  slug: "audit-log-retention",
+  name: "Audit log retention",
+  gatePolicy: { preset: "contract-bearing" },
+  source: { label: "kiro:.kiro/specs/audit-log-retention" },
+  sections: [
+    {
+      role: "intent_problem",
+      title: "Problem",
+      body: "Audit records were pruned on no stated schedule, so an incident review could not say whether a missing entry was never written or already deleted.",
+    },
+    {
+      role: "design_narrative",
+      title: "Approach",
+      body: "Retention is a per-project policy evaluated by one scheduled sweep; the sweep writes its own audit entry so a deletion is itself accountable.",
+    },
+  ],
+  requirements: [
+    {
+      ref: "retention-policy",
+      statement:
+        "A project states how long audit records are kept, and the sweep deletes nothing outside that window.",
+      priority: "must",
+      risk: "high",
+      criteria: [
+        {
+          text: "A record older than the project's window is deleted by the sweep, and one inside it is not.",
+          validationStrategy: {
+            kinds: ["test_run"],
+            note: "Covered by the retention sweep's boundary test.",
+          },
+        },
+        {
+          text: "Each sweep writes an audit entry naming what it deleted and under which policy.",
+        },
+      ],
+    },
+  ],
+  decisions: [
+    {
+      title: "One scheduled sweep, not deletion at write time",
+      chosenApproach:
+        "A single scheduled sweep evaluates the policy for every project.",
+      rejectedAlternatives: [
+        {
+          label: "Delete on write",
+          reason:
+            "Puts an unbounded scan on the latency path of every audit write.",
+        },
+      ],
+      reason:
+        "Retention is a property of the record set over time, so it is answered once per sweep rather than once per write.",
+      traces: ["retention-policy"],
+    },
+  ],
+  questions: [
+    {
+      text: "Does the window differ for security-relevant records?",
+      answer:
+        "No — the external design states one window per project, and a per-kind window was left to a later spec.",
+    },
+  ],
+  assumptions: [
+    {
+      text: "Projects have at most one retention policy in force at a time.",
+      disposition: "confirmed",
+    },
+  ],
+  delivered: true,
+  dryRun: false,
+};
+
+/**
+ * The one document an import reads. Published here because the agent that
+ * authors it is translating an external source from a repository that is not
+ * Command Center, so this text and its example are the whole mapping contract.
+ */
+function importBundleDocument(): SchemaDocument {
+  const jsonSchema = jsonSchemaOf(importBundleSchema);
+  return {
+    id: IMPORT_BUNDLE_DOCUMENT_ID,
+    title: "spec import bundle document",
+    usedBy: [IMPORT_USAGE, IMPORT_DRY_RUN_USAGE],
+    jsonSchema,
+    enums: collectEnums(jsonSchema, ""),
+    example: IMPORT_BUNDLE_EXAMPLE,
+    notes: [
+      "Import creates new specs only. A slug or alias this project already uses — including one an abandoned spec holds — refuses with slug_taken, and there is no revival or amendment path through this verb; change an existing spec with `cctl spec amend <slug>`.",
+      "The imported spec is born approved at the design stage on IMPORT PROVENANCE. No approval of any kind is written, so every human gate on it stays exactly as strong as on a spec authored here.",
+      'delivered defaults to TRUE: a spec worth importing has usually already shipped, and the record it writes is external-delivery provenance rather than machine proof — the delivery gate never reads it. A source with no acceptance criterion to record delivery against is refused; give the bundle a criterion, or set `"delivered": false` to import it as approved without claiming delivery.',
+      "requirements[].ref is a BUNDLE-LOCAL label, not an element id: it exists only so decisions[].traces can point at a requirement before any element id exists. Every ref a trace names must be declared by exactly one requirement in the same bundle — a duplicate or an unresolved ref refuses before anything is written.",
+      `A criterion that states no validationStrategy is born with a machine-provable default whose note reads "${IMPORTED_VALIDATION_STRATEGY_NOTE}" — state one explicitly whenever the external source names the obligation, because an authoring agent that read the source knows it better than the default does.`,
+      "Handles are allocated in bundle order: requirements R1…Rn, criteria numbered within each requirement (R1.1, R1.2), decisions D1…Dn, questions Q1…Qn, assumptions A1…An. Run the import with --dry-run to see the exact numbering before writing cross-references against it.",
+      "dryRun: true rehearses the whole import — every validation, the findings, and the handles it would allocate — and writes nothing. `--dry-run` sets it; either asking rehearses, and neither cancels the other.",
+    ],
+  };
+}
+
 function otherDocuments(): SchemaDocument[] {
   const discoveredTaskSchema = jsonSchemaOf(
     taskElementPayloadSchema.omit({ kind: true }),
@@ -685,6 +796,7 @@ function allDocuments(): SchemaDocument[] {
     batchDocument(),
     removalBatchDocument(),
     createDocument(),
+    importBundleDocument(),
     ...otherDocuments(),
   ];
 }

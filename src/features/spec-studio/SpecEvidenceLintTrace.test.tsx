@@ -282,6 +282,59 @@ describe("SpecEvidencePanel", () => {
     ).toBeVisible();
   });
 
+  /**
+   * An imported spec's criteria shipped outside this system. The card has to
+   * name that warrant in its own words — the green Proven chip and the merged
+   * "Delivered elsewhere" disposition both claim something nothing here saw
+   * (R9.4).
+   */
+  it("renders an externally-delivered criterion as delivered externally, never as proven", () => {
+    render(
+      <SpecEvidencePanel
+        criteria={proofViews()}
+        deliveredExternallyCriterionIds={["criterion-2"]}
+        initialFilter="all"
+      />,
+    );
+
+    const external = screen.getByRole("article", { name: "R1.2 proof" });
+    const chip = within(external).getByText("Delivered externally");
+    expect(chip).toHaveAttribute("data-tone", "neutral");
+    expect(within(external).queryByText("Proven")).not.toBeInTheDocument();
+    expect(
+      within(external).getByText(
+        "Delivered outside this system, unproven here.",
+      ),
+    ).toBeVisible();
+
+    // The criterion this system did prove keeps its own warrant: an import's
+    // testimony never relabels work that was actually verified here.
+    expect(
+      within(screen.getByRole("article", { name: "R1.1 proof" })).getByText(
+        "Proven",
+      ),
+    ).toBeVisible();
+  });
+
+  it("keeps an externally-delivered criterion out of the proven readiness tally", () => {
+    render(
+      <SpecEvidencePanel
+        criteria={proofViews()}
+        deliveredExternallyCriterionIds={["criterion-2"]}
+        initialFilter="all"
+      />,
+    );
+
+    // Seven criteria, one of them proven here. External testimony does not move
+    // the proven count, so the readiness summary reads exactly as it would
+    // without it.
+    expect(
+      within(
+        screen.getByRole("region", { name: "Evidence readiness" }),
+      ).getByText("1 / 7 in-scope proven"),
+    ).toBeVisible();
+  });
+
   it("does not claim the candidate-specific merge gate is open from revision proof alone", () => {
     render(<SpecEvidencePanel criteria={[proofViews()[0]!]} />);
 

@@ -69,6 +69,7 @@ function snapshotOf(
       contentHash: `content-${revisionId}`,
       proposedAt: TS,
       approvedAt: TS,
+      externalDelivery: null,
       createdAt: TS,
     },
     elements: [

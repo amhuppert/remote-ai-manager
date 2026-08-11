@@ -1,4 +1,8 @@
 import { z } from "zod";
+// The one canonical spec-slug definition. `handles` is itself zod-only, so the
+// module's dependency set stays {zod} rather than gaining a second slug regex
+// that could drift from the one every other caller validates against.
+import { specSlugSchema } from "./handles";
 
 const idSchema = z.string().min(1);
 const timestampSchema = z.string().min(1);
@@ -316,6 +320,30 @@ export const actorProvenanceSchema = z.discriminatedUnion("kind", [
 ]);
 export type ActorProvenance = z.infer<typeof actorProvenanceSchema>;
 
+/**
+ * The claim that an imported spec's work already shipped outside this system.
+ * It carries who recorded the claim and which source it came from, and nothing
+ * else: there is no verdict, evidence ref, or criterion closure here, because
+ * external delivery is testimony rather than proof and the delivery gate never
+ * reads it.
+ */
+export const externalDeliverySchema = z
+  .object({
+    /**
+     * Stricter than this module's general `timestampSchema`, which only demands
+     * a non-empty string. Every other spec timestamp is minted by this system;
+     * this one arrives from an external document by way of an authoring agent,
+     * so it is the one date nothing here has already validated. Free text would
+     * persist an unorderable value no surface could honestly render beside the
+     * system's own timestamps.
+     */
+    at: z.iso.datetime(),
+    actor: actorProvenanceSchema,
+    source: z.object({ label: z.string().min(1) }).strict(),
+  })
+  .strict();
+export type ExternalDelivery = z.infer<typeof externalDeliverySchema>;
+
 export const refusalCodeSchema = z.enum([
   "gate_blocked",
   "stage_blocked",
@@ -447,11 +475,54 @@ export type SpecDeliveryPlanEventType = z.infer<
   typeof specDeliveryPlanEventTypeSchema
 >;
 
+/**
+ * Durable-only record that a spec entered the system by import rather than by
+ * authoring. It is not part of the SSE union: an import commits before any
+ * subscriber can be watching the spec it creates, and the row exists so the
+ * origin of a born-approved spec is reconstructable from the event log alone.
+ */
+export const specImportEventTypeSchema = z.enum(["spec_imported"]);
+export type SpecImportEventType = z.infer<typeof specImportEventTypeSchema>;
+
+/**
+ * What an import counted into the spec, as it rides the durable
+ * `spec_imported` payload. A schema rather than a bare interface because the
+ * only reader of a committed payload is a parser: history renders these counts
+ * back from the event log, and an unparsed shape would let a drifted payload
+ * render as a confident wrong number.
+ */
+export const specImportedCountsSchema = z
+  .object({
+    sections: z.number().int().nonnegative(),
+    requirements: z.number().int().nonnegative(),
+    criteria: z.number().int().nonnegative(),
+    decisions: z.number().int().nonnegative(),
+    questions: z.number().int().nonnegative(),
+    assumptions: z.number().int().nonnegative(),
+  })
+  .strict();
+export type SpecImportedCounts = z.infer<typeof specImportedCountsSchema>;
+
+/**
+ * The durable `spec_imported` payload. Not `.strict()`: this schema speaks only
+ * for the fields the provenance surfaces read, and a payload that later carries
+ * more must still parse here.
+ */
+export const specImportedEventPayloadSchema = z.object({
+  source: z.object({ label: z.string().min(1) }),
+  revisionId: idSchema,
+  counts: specImportedCountsSchema,
+});
+export type SpecImportedEventPayload = z.infer<
+  typeof specImportedEventPayloadSchema
+>;
+
 export const specEventTypeSchema = z.union([
   specSseEventTypeSchema,
   specReviewEventTypeSchema,
   specInterventionEventTypeSchema,
   specDeliveryPlanEventTypeSchema,
+  specImportEventTypeSchema,
 ]);
 export type SpecEventType = z.infer<typeof specEventTypeSchema>;
 
@@ -485,10 +556,17 @@ export type SpecApprovalSubjectKind = z.infer<
 export const specApprovalValiditySchema = z.enum(["valid", "stale", "closed"]);
 export type SpecApprovalValidity = z.infer<typeof specApprovalValiditySchema>;
 
+/**
+ * Why a gate is admitted. `import` records that an imported spec was born past
+ * an authoring gate on the strength of an external document — it is provenance,
+ * never a human act and never proof: no approval row backs it, and the delivery
+ * gate does not read admissions on this basis.
+ */
 export const specGateAdmissionBasisSchema = z.enum([
   "human_approval",
   "notify_policy",
   "off_policy",
+  "import",
 ]);
 export type SpecGateAdmissionBasis = z.infer<
   typeof specGateAdmissionBasisSchema
@@ -649,6 +727,8 @@ export const specRevisionRowSchema = z.object({
   content_hash: z.string().nullable(),
   proposed_at: nullableTimestampSchema,
   approved_at: nullableTimestampSchema,
+  /** `externalDeliverySchema`; null for every revision authored here. */
+  external_delivery_json: jsonColumnSchema.nullable(),
   created_at: timestampSchema,
 });
 export type SpecRevisionRow = z.infer<typeof specRevisionRowSchema>;
@@ -739,6 +819,20 @@ export const specRevisionSchema = z
     contentHash: z.string().nullable(),
     proposedAt: nullableTimestampSchema,
     approvedAt: nullableTimestampSchema,
+    /**
+     * The external-delivery claim an import carried in, or null. It sits beside
+     * the lifecycle timestamps rather than among them because it proves
+     * nothing: `approvedAt` is this system's own act, this is testimony about
+     * another one.
+     *
+     * Defaulted rather than required so a payload producer older than the field
+     * still satisfies the strict parse, reading as the claim it actually makes:
+     * none. Absent can only ever mean null here — the sole writer is the import
+     * path, and defaulting the other way would invent a delivery nobody
+     * claimed. The row schema keeps the column required, so a repository that
+     * stopped mapping it still fails the round-trip contract.
+     */
+    externalDelivery: externalDeliverySchema.nullable().default(null),
     createdAt: timestampSchema,
   })
   .strict();
@@ -1133,3 +1227,133 @@ export const specEventRowSchema = z.object({
   payload_json: jsonColumnSchema,
 });
 export type SpecEventRow = z.infer<typeof specEventRowSchema>;
+
+/**
+ * What an imported criterion's obligation says when the bundle names none. The
+ * kind is machine-provable so the delivery gate can still discharge it, and the
+ * note says plainly where the criterion came from: nothing in the import ever
+ * presents itself as already verified.
+ */
+export const IMPORTED_VALIDATION_STRATEGY_NOTE =
+  "Imported; not machine-verified.";
+
+/**
+ * Resolve the validation strategy an imported criterion is born with. An
+ * explicit bundle strategy always wins — an authoring agent that read the
+ * external source knows the obligation better than any default can.
+ *
+ * The default is built per call rather than shared: `kinds` is a mutable array,
+ * and one caller reaching into a shared constant would rewrite the obligation
+ * every later imported criterion is born with.
+ */
+export function resolveImportedValidationStrategy(
+  strategy: ValidationStrategy | undefined,
+): ValidationStrategy {
+  return (
+    strategy ?? {
+      kinds: ["validator_verdict"],
+      note: IMPORTED_VALIDATION_STRATEGY_NOTE,
+    }
+  );
+}
+
+/**
+ * A bundle-local requirement handle. Import bundles are authored before any
+ * element id exists, so decisions trace requirements by a label the bundle
+ * itself defines and the importer resolves to real element ids on write.
+ */
+const bundleRefSchema = z.string().min(1);
+
+export const importBundleCriterionSchema = z
+  .object({
+    text: z.string().min(1),
+    validationStrategy: validationStrategySchema.optional(),
+  })
+  .strict();
+export type ImportBundleCriterion = z.infer<typeof importBundleCriterionSchema>;
+
+export const importBundleRequirementSchema = z
+  .object({
+    ref: bundleRefSchema.optional(),
+    statement: z.string().min(1),
+    priority: requirementPrioritySchema,
+    risk: requirementRiskSchema,
+    criteria: z.array(importBundleCriterionSchema),
+  })
+  .strict();
+export type ImportBundleRequirement = z.infer<
+  typeof importBundleRequirementSchema
+>;
+
+export const importBundleDecisionSchema = z
+  .object({
+    title: z.string().min(1),
+    chosenApproach: z.string().min(1),
+    rejectedAlternatives: z.array(rejectedAlternativeSchema),
+    reason: z.string().min(1),
+    traces: z.array(bundleRefSchema),
+  })
+  .strict();
+export type ImportBundleDecision = z.infer<typeof importBundleDecisionSchema>;
+
+/**
+ * The one document a spec import reads. It is source-agnostic on purpose: the
+ * authoring agent translates whatever external format it was pointed at into
+ * this shape, and `source.label` is the only place the origin is named — as
+ * provenance, never as an approval.
+ *
+ * Section roles span the whole vocabulary including `design_narrative`: an
+ * imported revision is born at the design stage, so it may carry intent and
+ * design content in the same bundle.
+ */
+export const importBundleSchema = z
+  .object({
+    slug: specSlugSchema,
+    name: z.string().min(1),
+    gatePolicy: specGatePolicySchema.default({ preset: "contract-bearing" }),
+    source: z.object({ label: z.string().min(1) }).strict(),
+    sections: z.array(
+      z
+        .object({
+          role: sectionRoleSchema,
+          title: z.string(),
+          body: z.string(),
+        })
+        .strict(),
+    ),
+    requirements: z.array(importBundleRequirementSchema),
+    decisions: z.array(importBundleDecisionSchema),
+    questions: z.array(
+      z
+        .object({ text: z.string().min(1), answer: z.string().optional() })
+        .strict(),
+    ),
+    assumptions: z.array(
+      z
+        .object({
+          text: z.string().min(1),
+          disposition: specAssumptionDispositionSchema.optional(),
+        })
+        .strict(),
+    ),
+    /**
+     * Whether the external source already shipped. It defaults to true because
+     * a spec worth importing has usually been delivered; the record it produces
+     * is external-delivery provenance, never machine proof.
+     */
+    delivered: z.boolean().default(true),
+    /**
+     * Rehearse the import instead of performing it: run every validation the
+     * real import runs, report the findings and the handles it would allocate,
+     * and write nothing.
+     *
+     * It rides on the bundle rather than beside it because the bundle document
+     * is the whole import request — the action's transport parses its body with
+     * this schema — so an agent moves between rehearsing and importing by
+     * flipping one field on the document it already authored, rather than by
+     * reaching for a second envelope this schema does not describe.
+     */
+    dryRun: z.boolean().default(false),
+  })
+  .strict();
+export type ImportBundle = z.infer<typeof importBundleSchema>;

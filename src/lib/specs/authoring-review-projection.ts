@@ -7,6 +7,7 @@ import {
   parseProvenance,
   type PendingApproval,
 } from "./gate-projection";
+import { elementApprovalBasis } from "./import-baseline";
 import type { LintFinding } from "./lint";
 import {
   authoringApprovalsCollapseIntoSignOff,
@@ -14,6 +15,7 @@ import {
   resolveDial,
 } from "./policy";
 import { toDiffRows } from "./review-state";
+import type { RevisionElement } from "./revision-diff";
 import {
   specGateSchema,
   type ActorProvenance,
@@ -116,6 +118,25 @@ export interface PendingGateBlock {
   applicability: SpecGateApplicability;
   /** The outstanding subject handles this gate is waiting on. */
   subjects: string[];
+  /**
+   * Subject handles this gate asks nobody for because the import that created
+   * them admitted them. Reported beside `subjects`, never folded into it or
+   * silently dropped: absence from the outstanding list is how a surface
+   * concludes "approved", and no human approved these.
+   */
+  importCarriedSubjects: string[];
+}
+
+/**
+ * A subject settled by an import admission rather than by a human. It is
+ * neither pending — nobody is being asked for it — nor approved: no approval
+ * row exists and no human read the content. Surfaces render it from here so
+ * they can say what is true of it.
+ */
+export interface ImportCarriedApproval {
+  gate: SpecGate;
+  subject: string;
+  elementId: string;
 }
 
 /**
@@ -155,6 +176,11 @@ export interface AuthoringReviewProjection {
   applicableGates: SpecGate[];
   gates: ProjectedGateStatus[];
   pendingApprovals: PendingApproval[];
+  /**
+   * Consulted subjects an import admission settles. Empty for every natively
+   * authored spec, and empty again once a human approves the subject itself.
+   */
+  importCarriedApprovals: ImportCarriedApproval[];
   revisionSignOff: RevisionSignOffProjection | null;
   pendingBlock: AuthoringPendingBlock | null;
   nextAction: AuthoringNextAction;
@@ -168,6 +194,12 @@ export interface AuthoringReviewProjectionInput {
   governanceBaseSnapshot: SpecRevisionSnapshot | null;
   approvals: readonly SpecApprovalRow[];
   admissions: readonly SpecGateAdmissionRow[];
+  /**
+   * The import baseline revision's rows, null for a spec no import created —
+   * the same authority the sign-off preconditions read, so a subject cannot be
+   * outstanding here and settled there.
+   */
+  importBaselineRows: readonly RevisionElement[] | null;
   currentExecution: Pick<
     SpecExecutionRow,
     | "id"
@@ -312,16 +344,18 @@ function projectGates(
 
 /**
  * The approvals a human still owes for the current revision (or the selected
- * run). Read off the projected gate states, so a gate that is not consulted
+ * run), and — separately — the consulted subjects an import admission settles
+ * instead. Read off the projected gate states, so a gate that is not consulted
  * cannot contribute a subject and a consulted one cannot hide its subjects.
  */
 function projectPendingApprovals(
   input: AuthoringReviewProjectionInput,
   gates: readonly ProjectedGateStatus[],
-): PendingApproval[] {
+): { pending: PendingApproval[]; importCarried: ImportCarriedApproval[] } {
   const snapshot = input.snapshot;
-  if (snapshot === null) return [];
+  if (snapshot === null) return { pending: [], importCarried: [] };
   const pending: PendingApproval[] = [];
+  const importCarried: ImportCarriedApproval[] = [];
   const gatePending = (gate: SpecGate) =>
     gates.some((status) => status.gate === gate && status.state === "pending");
   // R11.5: under the combined dial the sign-off act is itself the approval of
@@ -338,33 +372,46 @@ function projectPendingApprovals(
       elementHandle(snapshot, row),
     ]),
   );
-  for (const row of snapshot.elements) {
-    if (
-      row.element.kind === "requirement" &&
-      subjectPending("requirements") &&
-      !approvalHeld(
+  const revisionRows = toDiffRows(snapshot);
+  // One authority, asked exactly as `approvalUnmetConditions` asks it: a
+  // subject the sign-off no longer owes must not be listed here, and a subject
+  // it does owe must not be hidden here.
+  const settlement = (
+    row: SpecRevisionSnapshot["elements"][number],
+    subjectKind: "requirement" | "decision",
+  ) =>
+    elementApprovalBasis({
+      approvalHeld: approvalHeld(
         input.approvals,
         input.applies,
-        "requirement",
+        subjectKind,
         row.element.id,
-      )
-    ) {
-      pending.push({
-        gate: "requirements",
-        subject: handles.get(row.element.id) ?? row.element.id,
-        elementId: row.element.id,
-      });
+      ),
+      subject: { subjectKind, elementId: row.element.id },
+      revisionRows,
+      importBaselineRows: input.importBaselineRows,
+    });
+  const recordSubject = (
+    gate: "requirements" | "design",
+    row: SpecRevisionSnapshot["elements"][number],
+    subjectKind: "requirement" | "decision",
+  ): void => {
+    const subject = handles.get(row.element.id) ?? row.element.id;
+    const basis = settlement(row, subjectKind);
+    if (basis === null) {
+      pending.push({ gate, subject, elementId: row.element.id });
+      return;
     }
-    if (
-      row.element.kind === "decision" &&
-      subjectPending("design") &&
-      !approvalHeld(input.approvals, input.applies, "decision", row.element.id)
-    ) {
-      pending.push({
-        gate: "design",
-        subject: handles.get(row.element.id) ?? row.element.id,
-        elementId: row.element.id,
-      });
+    if (basis === "import_carry_forward") {
+      importCarried.push({ gate, subject, elementId: row.element.id });
+    }
+  };
+  for (const row of snapshot.elements) {
+    if (row.element.kind === "requirement" && subjectPending("requirements")) {
+      recordSubject("requirements", row, "requirement");
+    }
+    if (row.element.kind === "decision" && subjectPending("design")) {
+      recordSubject("design", row, "decision");
     }
   }
   if (
@@ -382,7 +429,7 @@ function projectPendingApprovals(
       pending.push({ gate, subject: gate, elementId: null });
     }
   }
-  return pending;
+  return { pending, importCarried };
 }
 
 function projectSignOff(
@@ -440,6 +487,7 @@ function projectSignOff(
               ]),
             ),
             approvalApplies: input.applies,
+            importBaselineRows: input.importBaselineRows,
           }),
         ];
   return {
@@ -461,11 +509,11 @@ function projectSignOff(
  * Gate order, never the authoring stage: an earlier stage consulted through a
  * withdrawn ancestor is acted on before the stage the revision sits at.
  */
-function orderedPendingApprovals(
-  pending: readonly PendingApproval[],
-): PendingApproval[] {
+function inGateOrder<Subject extends { gate: SpecGate }>(
+  subjects: readonly Subject[],
+): Subject[] {
   return specGateSchema.options.flatMap((gate) =>
-    pending.filter((subject) => subject.gate === gate),
+    subjects.filter((subject) => subject.gate === gate),
   );
 }
 
@@ -480,6 +528,7 @@ function projectPendingBlock(
   gates: readonly ProjectedGateStatus[],
   applicableGates: readonly SpecGate[],
   pending: readonly PendingApproval[],
+  importCarried: readonly ImportCarriedApproval[],
   signOff: RevisionSignOffProjection | null,
 ): AuthoringPendingBlock | null {
   const signOffOutstanding =
@@ -504,6 +553,9 @@ function projectPendingBlock(
       subjects: pending
         .filter((subject) => subject.gate === gate.gate)
         .map((subject) => subject.subject),
+      importCarriedSubjects: importCarried
+        .filter((subject) => subject.gate === gate.gate)
+        .map((subject) => subject.subject),
     }));
   const first = pending[0];
   // An open draft owes a propose before it owes anything to a human: the
@@ -523,7 +575,12 @@ function projectPendingBlock(
         ? `${revisionLabel} cannot be signed off yet: ${signOff.unmetConditions.length} unmet condition${signOff.unmetConditions.length === 1 ? "" : "s"}`
         : collapsed
           ? `${revisionLabel} awaits one human sign-off, which approves every item under this policy`
-          : `${revisionLabel} has every consulted subject approved and awaits explicit human sign-off`
+          : // An import admission settles a subject without approving it, so a
+            // revision carrying one has not had every subject approved and must
+            // not be described as though a human had read them.
+            importCarried.length > 0
+            ? `${revisionLabel} has every consulted subject settled — ${importCarried.length} carried forward from the import rather than approved by a human — and awaits explicit human sign-off`
+            : `${revisionLabel} has every consulted subject approved and awaits explicit human sign-off`
       : `${revisionLabel} needs ${pending.length} human approval${pending.length === 1 ? "" : "s"} — ${subjectSentence(pending)}`;
   const instruction = draft
     ? "Propose the draft revision when it is ready for review."
@@ -573,7 +630,7 @@ function projectNextAction(
       instruction: "Propose the draft revision when it is ready for review.",
     };
   }
-  const first = orderedPendingApprovals(pending)[0];
+  const first = inGateOrder(pending)[0];
   if (first !== undefined) {
     return {
       kind: "approve_subject",
@@ -643,9 +700,9 @@ export function authoringReviewProjection(
         gate.applicability.reason === "changed_since_governance_base",
     )
     .map((gate) => gate.gate);
-  const pending = orderedPendingApprovals(
-    projectPendingApprovals(input, gates),
-  );
+  const subjects = projectPendingApprovals(input, gates);
+  const pending = inGateOrder(subjects.pending);
+  const importCarried = inGateOrder(subjects.importCarried);
   const signOff = projectSignOff(
     input,
     pending.filter((subject) => isAuthoringGate(subject.gate)).length,
@@ -654,12 +711,14 @@ export function authoringReviewProjection(
     applicableGates,
     gates,
     pendingApprovals: pending,
+    importCarriedApprovals: importCarried,
     revisionSignOff: signOff,
     pendingBlock: projectPendingBlock(
       input,
       gates,
       applicableGates,
       pending,
+      importCarried,
       signOff,
     ),
     nextAction: projectNextAction(input, pending, signOff),

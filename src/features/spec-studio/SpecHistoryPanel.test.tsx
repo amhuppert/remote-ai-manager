@@ -7,6 +7,7 @@ import type { SpecDetailView } from "@/lib/specs/queries";
 
 import {
   SPEC_CONTROLS_FIXTURE_NOW,
+  importedDeliveredSpecDetailFixture,
   policyAdmissionViewFixture,
   specControlsDetailFixture,
   strandedProposalDetailFixture,
@@ -67,6 +68,19 @@ describe("buildSpecHistory", () => {
       emphasis: "policy",
       tone: "amber",
     });
+  });
+
+  it("attributes an import-basis admission to import provenance rather than a human approval", () => {
+    const detail = specControlsDetailFixture("running");
+    const events = buildSpecHistory({
+      ...detail,
+      gateAdmissions: [policyAdmissionViewFixture({ basis: "import" })],
+    });
+
+    const admission = events.find((event) => event.kind === "admission");
+    expect(admission).toMatchObject({ emphasis: "policy", tone: "amber" });
+    expect(admission?.label).toContain("import");
+    expect(admission?.label).not.toContain("approval");
   });
 
   it("does not duplicate a creation timestamp when a revision is proposed at creation", () => {
@@ -190,6 +204,191 @@ describe("buildSpecHistory", () => {
     );
     expect(screen.getByText(/admitted by notify policy/i)).toBeVisible();
     expect(screen.queryByText(/Execution started/i)).not.toBeInTheDocument();
+  });
+
+  /**
+   * An imported spec crossed its authoring gates on an external document's
+   * word. History is where that has to be legible: the admissions say import,
+   * and the import itself is a row of its own naming the source and what it
+   * brought in (R9.5, R9.6).
+   */
+  function importedDetailFixture(): SpecDetailView {
+    const detail = specControlsDetailFixture();
+    return {
+      ...detail,
+      approvals: [],
+      gateAdmissions: [
+        policyAdmissionViewFixture({
+          id: "admission-import-requirements",
+          basis: "import",
+          gate: "requirements",
+        }),
+        policyAdmissionViewFixture({
+          id: "admission-import-design",
+          basis: "import",
+          gate: "design",
+        }),
+      ],
+      importRecord: {
+        occurredAt: SPEC_CONTROLS_FIXTURE_NOW,
+        sourceLabel: "kiro:.kiro/specs/shipped-feature",
+        counts: {
+          sections: 2,
+          requirements: 3,
+          criteria: 5,
+          decisions: 1,
+          questions: 2,
+          assumptions: 0,
+        },
+      },
+    };
+  }
+
+  it("renders both import-basis admissions as admitted by import, naming no approver", async () => {
+    const user = userEvent.setup();
+    render(
+      <SpecHistoryPanel
+        detail={importedDetailFixture()}
+        projectName="command-center"
+      />,
+    );
+
+    await user.click(screen.getByRole("radio", { name: "Policy admissions" }));
+
+    expect(
+      screen.getByText("Requirements admitted by import provenance"),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Design admitted by import provenance"),
+    ).toBeVisible();
+    expect(screen.queryByText("Human approval")).not.toBeInTheDocument();
+    expect(screen.queryByText(/approved/i)).not.toBeInTheDocument();
+  });
+
+  it("renders the spec-imported event once with its source label and imported-content counts", () => {
+    render(
+      <SpecHistoryPanel
+        detail={importedDetailFixture()}
+        projectName="command-center"
+      />,
+    );
+
+    // One row per import: the record is a single durable event, and a feed that
+    // repeated it would read as two imports.
+    expect(screen.getAllByText("Spec imported")).toHaveLength(1);
+    const row = screen.getByText("Spec imported").closest("article");
+    if (row === null) throw new Error("The imported row has no history entry");
+    expect(
+      within(row).getByText(/kiro:\.kiro\/specs\/shipped-feature/),
+    ).toBeVisible();
+    expect(within(row).getByText(/3 requirements/)).toBeVisible();
+    expect(within(row).getByText(/5 criteria/)).toBeVisible();
+    // Nothing arrived under that heading, so the summary does not invent one.
+    expect(within(row).queryByText(/assumption/)).not.toBeInTheDocument();
+  });
+
+  /**
+   * The imported revision is born approved without a human ever signing it
+   * off. History's legend reads a filled marker as "human act", so presenting
+   * that revision as a sign-off is the honest-provenance failure this row is
+   * closest to committing (R9.1).
+   */
+  it("records the imported revision as import provenance rather than a human sign-off", () => {
+    render(
+      <SpecHistoryPanel
+        detail={importedDetailFixture()}
+        projectName="command-center"
+      />,
+    );
+
+    expect(screen.queryByText(/signed off/i)).not.toBeInTheDocument();
+    const row = screen
+      .getByText("Revision 1 admitted by import")
+      .closest("article");
+    if (row === null) throw new Error("The imported revision has no row");
+    expect(row).toHaveAttribute("data-emphasis", "policy");
+    expect(within(row).getByText(/no human signed/i)).toBeVisible();
+  });
+
+  /**
+   * The sweep R9.1 asks for, stated as one assertion: for a spec that entered
+   * by import, the filter that selects human acts has nothing to show. Every
+   * settled thing about it — the revision, the answers, the dispositions —
+   * arrived on the source document's word.
+   */
+  it("leaves an imported spec with no human act to filter to", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <SpecHistoryPanel
+        detail={importedDeliveredSpecDetailFixture()}
+        projectName="command-center"
+      />,
+    );
+
+    const answered = screen
+      .getByText("Q1 answered at import")
+      .closest("article");
+    const disposed = screen
+      .getByText("A1 confirmed at import")
+      .closest("article");
+    if (answered === null || disposed === null) {
+      throw new Error("Imported Q/A rows are missing from history");
+    }
+    expect(answered).toHaveAttribute("data-emphasis", "policy");
+    expect(disposed).toHaveAttribute("data-emphasis", "policy");
+    expect(
+      screen.queryByText(/A human disposition was recorded/),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: "Human approvals" }));
+
+    // The Q/A records themselves stay listed — a reader still needs to see what
+    // the spec carries — but not one of them is marked as an act a human took.
+    expect(container.querySelectorAll("article")).not.toHaveLength(0);
+    expect(
+      container.querySelectorAll('article[data-emphasis="human"]'),
+    ).toHaveLength(0);
+  });
+
+  /**
+   * `importRecordView` returns null when the `spec_imported` payload is
+   * unreadable, but the admissions that crossed the gates are still there and
+   * still say import. Deriving attribution from the event would fail open in
+   * exactly that state: the revision would read as a human sign-off and the
+   * dispositions as human acts, which is the honest-provenance failure.
+   */
+  it("attributes to the import when the import event's detail is unreadable", () => {
+    const detail = importedDeliveredSpecDetailFixture();
+    detail.importRecord = null;
+
+    render(<SpecHistoryPanel detail={detail} projectName="command-center" />);
+
+    expect(screen.queryByText(/signed off/i)).not.toBeInTheDocument();
+    expect(screen.getByText("Revision 1 admitted by import")).toBeVisible();
+    expect(screen.getByText("Q1 answered at import")).toBeVisible();
+    expect(screen.getByText("A1 confirmed at import")).toBeVisible();
+    // The detail is what was lost, so the row that reports it stays away.
+    expect(screen.queryByText("Spec imported")).not.toBeInTheDocument();
+  });
+
+  it("keeps a natively settled revision, answer, and disposition human acts", () => {
+    // The same shape as the imported fixture with the import removed, so the
+    // assertion above cannot pass by the feed simply having no human rows.
+    const detail = importedDeliveredSpecDetailFixture();
+    detail.importRecord = null;
+    detail.gateAdmissions = [];
+
+    render(<SpecHistoryPanel detail={detail} projectName="command-center" />);
+
+    for (const label of [
+      "Revision 1 signed off",
+      "Q1 answered",
+      "A1 confirmed",
+    ]) {
+      const row = screen.getByText(label).closest("article");
+      if (row === null) throw new Error(`${label} has no history row`);
+      expect(row).toHaveAttribute("data-emphasis", "human");
+    }
   });
 
   it("links a proposal row to the Review entry that can act on it", () => {

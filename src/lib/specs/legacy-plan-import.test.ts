@@ -99,6 +99,7 @@ function snapshotOf(
       contentHash: "sha256:legacy",
       proposedAt: AT,
       approvedAt: AT,
+      externalDelivery: null,
       createdAt: AT,
     },
     elements: [

@@ -100,6 +100,7 @@ import {
   createEvidenceService,
 } from "./evidence-service";
 import { createSpecEventsPublisher } from "./events";
+import { createImportService } from "./import-service";
 import {
   discoveredTaskSchema,
   specGateDialSchema,
@@ -289,6 +290,7 @@ export interface SpecSpineWorld {
   ): Promise<Response>;
   getRoute(
     handler:
+      | "listSpecsGET"
       | "getSpecGET"
       | "getSpecStatusGET"
       | "getSpecElementGET"
@@ -1051,6 +1053,7 @@ export function createSpecSpineWorld(
     execution,
     links: failingLinks,
     deliveryPlan,
+    import: createImportService({ specs, review, links, events, newId, now }),
     ingestEvidenceBestEffort: (executionId) =>
       ingest.ingestBestEffort(executionId),
     async verify(specId) {
@@ -1328,6 +1331,7 @@ export function createSpecSpineWorld(
 
   async function getRoute(
     handler:
+      | "listSpecsGET"
       | "getSpecGET"
       | "getSpecStatusGET"
       | "getSpecElementGET"

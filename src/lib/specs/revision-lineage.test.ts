@@ -21,6 +21,7 @@ function revision(
     contentHash: null,
     proposedAt: null,
     approvedAt: null,
+    externalDelivery: null,
     createdAt: "2026-07-18T12:00:00.000Z",
     ...input,
   };

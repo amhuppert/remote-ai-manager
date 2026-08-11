@@ -123,6 +123,7 @@ describe("native-SDD refusals-name-remedy checklist", () => {
         governanceBaseRevisionId: null,
         governanceBaseRevisionRows: [],
         revisionRows: [],
+        importBaselineRows: null,
         blockingThreads: [],
         approvals: [],
       },

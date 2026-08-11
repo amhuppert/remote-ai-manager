@@ -134,7 +134,13 @@ const detailRevision = {
 
 function detailPayload(
   sectionBody = "Lifecycle spine: draft, review, execution, delivery.",
-  delivery = { allWaived: false, provenCount: 7, totalInScope: 12 },
+  delivery = {
+    allWaived: false,
+    deliveredCount: 7,
+    provenCount: 7,
+    deliveredExternallyCriterionIds: [] as string[],
+    totalInScope: 12,
+  },
 ) {
   return {
     spec: executingSpec,
@@ -389,7 +395,9 @@ function detailPayload(
       openQuestions: [],
       coverage: { coveredCriteria: 1, totalCriteria: 1, percentage: 100 },
       delivery,
+      imported: false,
     },
+    importRecord: null,
   };
 }
 
@@ -687,8 +695,16 @@ describe("Spec Studio detail routes", () => {
         pendingApprovals: [],
         openQuestions: [],
         coverage: { coveredCriteria: 0, totalCriteria: 0, percentage: 0 },
-        delivery: { allWaived: false, provenCount: 0, totalInScope: 0 },
+        delivery: {
+          allWaived: false,
+          deliveredCount: 0,
+          provenCount: 0,
+          deliveredExternallyCriterionIds: [],
+          totalInScope: 0,
+        },
+        imported: false,
       },
+      importRecord: null,
     });
 
     renderWithQuery(<SpecDetailPage />);

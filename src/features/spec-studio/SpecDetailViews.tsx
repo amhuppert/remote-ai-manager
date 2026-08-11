@@ -291,6 +291,16 @@ export default function SpecDetailViews({
                 evidenceTarget?.executionId !== null &&
                 row.execution_id === evidenceTarget?.executionId,
             )}
+            // The delivery projection names these over the current approved
+            // revision, so they only describe the criteria on screen while that
+            // is the revision being read; an execution-pinned older one is
+            // outside what the projection speaks for.
+            deliveredExternallyCriterionIds={
+              evidenceTarget?.snapshot.revision.id ===
+              detail.currentApprovedRevision?.revision.id
+                ? detail.status.delivery.deliveredExternallyCriterionIds
+                : []
+            }
             revisionLabel={
               evidenceTarget === null
                 ? null

@@ -27,6 +27,7 @@ const EXPECTED_SECTIONS = [
   "Removal and reintroduction symmetry",
   "Withdraw-proposal vs dismiss-superseded",
   "Element-id/handle/version semantics",
+  "Importing a spec authored outside CC",
   "Consistency sweep and `propose --notes` protocol",
   "Finding classes and bounded terminal rounds",
   "Three capture paths",

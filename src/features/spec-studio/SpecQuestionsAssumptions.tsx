@@ -23,6 +23,7 @@ import type {
 } from "@/lib/specs/schemas";
 import { cn } from "@/lib/ui/cn";
 
+import { importProvenance, settledAtImport } from "./presentation";
 import SpecReadOnlyNotice from "./SpecReadOnlyNotice";
 
 const logger = createClientLogger("spec-studio-questions");
@@ -85,6 +86,7 @@ export function SpecQuestionsAssumptions({
   elementHandlesById,
   pendingAction,
   error,
+  importedAt,
   onAnswerQuestion,
   onDisposeAssumption,
   readOnly = false,
@@ -97,6 +99,8 @@ export function SpecQuestionsAssumptions({
   elementHandlesById: ReadonlyMap<string, string>;
   pendingAction: QaPendingAction;
   error: string | null;
+  /** When the spec was imported, or null for a spec authored here. */
+  importedAt: string | null;
   onAnswerQuestion(input: AnswerQuestionPanelInput): void;
   onDisposeAssumption(input: DisposeAssumptionPanelInput): void;
   readOnly?: boolean;
@@ -139,6 +143,7 @@ export function SpecQuestionsAssumptions({
                 revision={revision}
                 elementHandlesById={elementHandlesById}
                 pendingAction={pendingAction}
+                importedAt={importedAt}
                 onAnswerQuestion={onAnswerQuestion}
                 readOnly={readOnly}
               />
@@ -174,6 +179,7 @@ export function SpecQuestionsAssumptions({
                 revision={revision}
                 elementHandlesById={elementHandlesById}
                 pendingAction={pendingAction}
+                importedAt={importedAt}
                 onDisposeAssumption={onDisposeAssumption}
                 readOnly={readOnly}
               />
@@ -212,6 +218,7 @@ function QuestionCard({
   revision,
   elementHandlesById,
   pendingAction,
+  importedAt,
   onAnswerQuestion,
   readOnly,
 }: {
@@ -221,12 +228,14 @@ function QuestionCard({
   revision: number;
   elementHandlesById: ReadonlyMap<string, string>;
   pendingAction: QaPendingAction;
+  importedAt: string | null;
   onAnswerQuestion(input: AnswerQuestionPanelInput): void;
   readOnly: boolean;
 }): React.JSX.Element {
   const [answer, setAnswer] = useState("");
   const status = questionStatusPresentation[question.status];
   const askedBy = provenanceLabel(question.provenance);
+  const answeredAtImport = settledAtImport(question.answeredAt, importedAt);
 
   return (
     <article
@@ -276,7 +285,7 @@ function QuestionCard({
       {question.status === "answered" ? (
         <div className="mt-md rounded-md border border-solid border-border-dim bg-bg-surface px-md py-sm">
           <span className="font-mono text-[0.64rem] tracking-[0.06em] text-text-tertiary uppercase">
-            Answer
+            {answeredAtImport ? "Answered at import" : "Answer"}
           </span>
           <div className="mt-xs min-w-0">
             <CompactMarkdown content={question.answer ?? ""} />
@@ -327,6 +336,7 @@ function AssumptionCard({
   revision,
   elementHandlesById,
   pendingAction,
+  importedAt,
   onDisposeAssumption,
   readOnly,
 }: {
@@ -336,6 +346,7 @@ function AssumptionCard({
   revision: number;
   elementHandlesById: ReadonlyMap<string, string>;
   pendingAction: QaPendingAction;
+  importedAt: string | null;
   onDisposeAssumption(input: DisposeAssumptionPanelInput): void;
   readOnly: boolean;
 }): React.JSX.Element {
@@ -344,6 +355,7 @@ function AssumptionCard({
   >(assumption.disposition === "proposed" ? "" : assumption.disposition);
   const disposition = dispositionPresentation[assumption.disposition];
   const proposedBy = provenanceLabel(assumption.proposedBy);
+  const disposedAtImport = settledAtImport(assumption.disposedAt, importedAt);
   const canSave =
     selectedDisposition !== "" &&
     selectedDisposition !== assumption.disposition;
@@ -361,7 +373,14 @@ function AssumptionCard({
             <span className="font-mono text-[0.72rem] font-bold text-cyan">
               {assumption.handle}
             </span>
-            <StatusChip tone={disposition.tone}>{disposition.label}</StatusChip>
+            {/* The tone still encodes the disposition, which is real; only the
+                label says who took it. Neutralising the pill would hide a
+                settled assumption behind its provenance. */}
+            <StatusChip tone={disposition.tone}>
+              {disposedAtImport
+                ? `${disposition.label} at import`
+                : disposition.label}
+            </StatusChip>
             <AttachmentChip
               elementId={assumption.elementId}
               elementHandlesById={elementHandlesById}
@@ -555,6 +574,7 @@ export default function SpecQuestionsAssumptionsPanel({
         elementHandlesById={elementHandleIndex(detail)}
         pendingAction={pendingAction}
         error={actionFailure?.message ?? null}
+        importedAt={importProvenance(detail.gateAdmissions)?.at ?? null}
         onAnswerQuestion={(input) =>
           answerQuestion.mutate(input, mutationCallbacks("answer-question"))
         }

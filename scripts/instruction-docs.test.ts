@@ -11,10 +11,130 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveConfig as resolveVitestConfig } from "vitest/node";
 
+import {
+  renderRuntimeSpecInstructions,
+  SPEC_GUIDANCE_SECTIONS,
+} from "../src/lib/conversation-commands/native-spec-guidance";
+
 const root = process.cwd();
 
 function read(relativePath: string): string {
   return readFileSync(resolve(root, relativePath), "utf8");
+}
+
+/** Guidance prose wraps at authoring width; a claim spans its line breaks. */
+function collapse(text: string): string {
+  return text.replace(/\s+/g, " ");
+}
+
+/**
+ * The body of one `## ` section, from its heading to the next one, collapsed.
+ *
+ * Claims are checked against this slice rather than the whole document because
+ * several of them are things OTHER sections already say: `cctl spec amend` is
+ * the amendments section's subject and `--seed-from last` is the execution-start
+ * section's, so a whole-document search stays green after those statements are
+ * deleted from the importing section itself — which is exactly the drift these
+ * tests exist to catch.
+ */
+function markdownSection(document: string, heading: string): string {
+  const marker = `## ${heading}`;
+  const start = document.indexOf(marker);
+  if (start === -1) return "";
+  const rest = document.slice(start + marker.length);
+  const next = rest.search(/^## /m);
+  return collapse(next === -1 ? rest : rest.slice(0, next));
+}
+
+/**
+ * What an agent must be told about `cctl spec import`, phrase by phrase, on
+ * EVERY surface that teaches it: the runtime `/spec` block, the generated
+ * command document, and the conversation-loaded plugin skill.
+ *
+ * The list is the importing section's whole content contract, not a sample of
+ * it — every mandatory statement in R12.1–R12.3 has a phrase here, so deleting
+ * any one of them from any surface fails. The claims are shared across surfaces
+ * rather than written per-surface because the failure this guards is one
+ * surface teaching a workflow the others no longer state: an agent that reads
+ * only the skill and skips the dry-run-until-clean loop imports a bundle whose
+ * cross-references name handles the importer never allocated, and an agent that
+ * misses the review-noise conventions lands a delivered import carrying open
+ * questions and undisposed assumptions — costing a human exactly the review
+ * pass an import is supposed to avoid.
+ */
+const SPEC_IMPORT_GUIDANCE_CLAIMS = [
+  // What an imported spec's approved state actually rests on. A surface that
+  // drops this reads as though a human approved the content.
+  "import provenance",
+  "no approval of any kind",
+  // R12.1 — the workflow, every step of it.
+  "cctl spec list", // verify no existing spec covers the work…
+  "cctl spec search --all", // …by list AND search
+  "you are the parser", // author the bundle from the source
+  "the server never reads", // …because nothing else will
+  "--dry-run", // iterate against the rehearsal…
+  "no blocking finding", // …until it comes back CLEAN
+  "import once",
+  "read the receipt", // the step that tells you what is still owed
+  "refusal as unfinished work",
+  // R12.2 — the boundaries.
+  "creates new specs only",
+  "cctl spec amend", // the path an existing spec changes through
+  "never an approval shortcut",
+  "--seed-from last", // the legacy delivery-plan seed import is NOT
+  // R12.3 — the review-noise conventions.
+  "`delivered` defaults to true",
+  '"delivered": false', // the explicit opt-out…
+  "no acceptance criterion", // …and the criteria-less source it is required for
+  "answered when the source holds the answer",
+  "confirmed included",
+  "not the human disposition act", // importing a disposition is provenance capture
+  "zero open review items",
+] as const;
+
+/**
+ * A token that neighbouring sections own and the importing section does not.
+ * Asserted present in the whole document and absent from the slice, so an
+ * extractor that silently widened to the full document — the exact bug that
+ * makes every claim above vacuous — fails loudly instead of passing quietly.
+ */
+const SPEC_GUIDANCE_NEIGHBOUR_TOKEN = "stage_blocked";
+const SKILL_NEIGHBOUR_TOKEN = "reintroduceHistorical";
+
+/**
+ * The skill states the same contract in its own register, so its heading is
+ * its own — pinned here because the section is addressed by heading, and the
+ * Codex packaging test pins this exact string in its shipped section list.
+ */
+const SKILL_IMPORT_SECTION_HEADING = "Importing a spec authored outside CC";
+
+function expectImportSectionStatesItsContract(
+  whole: string,
+  heading: string,
+  neighbourToken: string,
+  surface: string,
+): void {
+  const section = markdownSection(whole, heading);
+  expect(section, `${surface} has no "## ${heading}" section`).not.toBe("");
+
+  // The slice really is one section: it stops before the next heading, and a
+  // neighbour-owned token the document demonstrably contains is outside it.
+  expect(section).not.toContain("## ");
+  expect(
+    collapse(whole),
+    `${surface} no longer contains the neighbour token this check is calibrated against`,
+  ).toContain(neighbourToken);
+  expect(
+    section,
+    `${surface}'s import section leaked into a neighbouring section`,
+  ).not.toContain(neighbourToken);
+
+  for (const claim of SPEC_IMPORT_GUIDANCE_CLAIMS) {
+    expect(
+      section,
+      `${surface}'s import section is missing: ${claim}`,
+    ).toContain(claim);
+  }
 }
 
 /**
@@ -419,6 +539,50 @@ describe("agent instruction and canonical documentation contracts", () => {
     expect(cliSkill).toContain("## cctl validate");
     expect(cliSkill.indexOf("## cctl validate")).toBeGreaterThan(
       cliSkill.indexOf("<!-- END GENERATED COMMAND REFERENCE -->"),
+    );
+  });
+
+  it("teaches the spec-import workflow, boundaries, and conventions on both generated surfaces", () => {
+    const importing = SPEC_GUIDANCE_SECTIONS.find(
+      (section) => section.id === "importing",
+    );
+
+    // `shared` is what puts the section in the runtime block an agent working
+    // outside this repository receives — the only surface it ever sees.
+    expect(importing?.audience).toBe("shared");
+
+    const heading = importing?.heading ?? "";
+    expectImportSectionStatesItsContract(
+      renderRuntimeSpecInstructions(),
+      heading,
+      SPEC_GUIDANCE_NEIGHBOUR_TOKEN,
+      "the runtime /spec block",
+    );
+    // The committed document is generated from the same sections, so its
+    // carrying the contract is the evidence it was regenerated after the edit.
+    expectImportSectionStatesItsContract(
+      read(".claude/commands/spec.md"),
+      heading,
+      SPEC_GUIDANCE_NEIGHBOUR_TOKEN,
+      ".claude/commands/spec.md",
+    );
+  });
+
+  /**
+   * The plugin skill is loaded straight into a conversation, so it is the
+   * surface an agent may read INSTEAD of the runtime block rather than after
+   * it. Holding it to the same claim list is what makes the two unable to
+   * drift: a claim dropped from the guidance module fails on the generated
+   * surfaces, and the same claim dropped here fails on the skill.
+   */
+  it("keeps the native-sdd-authoring skill's import section aligned with the shared guidance", () => {
+    expectImportSectionStatesItsContract(
+      read(
+        "plugins/command-center/command-center/skills/native-sdd-authoring/SKILL.md",
+      ),
+      SKILL_IMPORT_SECTION_HEADING,
+      SKILL_NEIGHBOUR_TOKEN,
+      "native-sdd-authoring SKILL.md",
     );
   });
 

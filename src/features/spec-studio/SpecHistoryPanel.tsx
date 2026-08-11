@@ -8,7 +8,10 @@ import type { StatusChipTone } from "@/components/ui/StatusChip";
 import { createClientLogger } from "@/lib/logging/client-logger";
 import type { SpecDetailView } from "@/lib/specs/queries";
 import type { SpecRevisionSnapshot } from "@/lib/specs/schemas";
+import type { SpecImportRecordView } from "@/lib/specs/view-schemas";
 import { cn } from "@/lib/ui/cn";
+
+import { importProvenance, settledAtImport } from "./presentation";
 
 const logger = createClientLogger("spec-studio-history");
 
@@ -77,6 +80,10 @@ export default function SpecHistoryPanel({
     if (filter === "admissions") return event.kind === "admission";
     if (filter === "executions") return event.kind === "execution";
     if (filter === "gates") return event.kind === "gate";
+    // A policy admission is never a human approval, whatever it is admitting.
+    // Without this the imported answer and disposition rows list here on their
+    // kind alone, and the filter's own name misdescribes them.
+    if (event.emphasis === "policy") return false;
     return (
       event.kind === "approval" ||
       event.kind === "waiver" ||
@@ -368,6 +375,11 @@ export function buildSpecHistory(
   projectName = projectNameFor(detail),
 ): SpecHistoryEvent[] {
   const handles = elementHandles(detail.currentRevision);
+  // Read from the admissions rather than the import event: the event carries
+  // the import's detail and goes null when that detail is unreadable, but the
+  // provenance itself must never go with it.
+  const imported = importProvenance(detail.gateAdmissions);
+  const importedAt = imported?.at ?? null;
   const events: SpecHistoryEvent[] = [
     {
       id: `${detail.spec.id}:created`,
@@ -381,6 +393,25 @@ export function buildSpecHistory(
       priority: 5,
     },
   ];
+
+  if (detail.importRecord !== null) {
+    events.push({
+      id: `${detail.spec.id}:imported`,
+      kind: "spec",
+      emphasis: "system",
+      tone: "neutral",
+      label: "Spec imported",
+      detail: `Imported from ${detail.importRecord.sourceLabel} — ${importedContentSummary(
+        detail.importRecord.counts,
+      )}. Imported content is not human-approved here.`,
+      occurredAt: detail.importRecord.occurredAt,
+      href: null,
+      // Above the admissions and the revision rows it commits alongside: an
+      // import writes them all in one transaction, so at an identical
+      // timestamp the row that explains the rest reads first.
+      priority: 65,
+    });
+  }
 
   if (detail.spec.abandonedAt !== null) {
     events.push({
@@ -399,14 +430,22 @@ export function buildSpecHistory(
   for (const revision of detail.revisions) {
     const revisionLabel = `Revision ${revision.number}`;
     if (revision.state === "approved" && revision.approvedAt !== null) {
+      // The imported revision is born approved on its source document's word.
+      // A filled marker reads as a human act in this feed's own legend, and the
+      // "Human approvals" filter selects on exactly that emphasis, so a
+      // sign-off row here would hand the import a human decision it never got.
+      const admittedByImport = revision.id === imported?.revisionId;
       events.push({
-        id: `${revision.id}:signed-off`,
+        id: `${revision.id}:${admittedByImport ? "import-admitted" : "signed-off"}`,
         kind: "revision",
-        emphasis: "human",
-        tone: "green",
-        label: `${revisionLabel} signed off`,
-        detail:
-          "The approved revision is immutable and can anchor execution scope.",
+        emphasis: admittedByImport ? "policy" : "human",
+        tone: admittedByImport ? "neutral" : "green",
+        label: admittedByImport
+          ? `${revisionLabel} admitted by import`
+          : `${revisionLabel} signed off`,
+        detail: admittedByImport
+          ? "Admitted on the imported source's word — no human signed this revision off."
+          : "The approved revision is immutable and can anchor execution scope.",
         occurredAt: revision.approvedAt,
         href: null,
         priority: 30,
@@ -488,7 +527,12 @@ export function buildSpecHistory(
       id: admission.id,
       kind: "admission",
       emphasis: "policy",
-      tone: admission.basis === "notify_policy" ? "amber" : "green",
+      // Import shares Notify's attention tone: a gate crossed on an external
+      // document's word is something to review, not a settled approval.
+      tone:
+        admission.basis === "notify_policy" || admission.basis === "import"
+          ? "amber"
+          : "green",
       label: `${gate} admitted by ${admissionBasisLabel(admission.basis)}`,
       detail:
         "This policy admission is not a human approval and remains auditable.",
@@ -544,13 +588,16 @@ export function buildSpecHistory(
       priority: 15,
     });
     if (question.answeredAt !== null) {
+      const atImport = settledAtImport(question.answeredAt, importedAt);
       events.push({
         id: `${question.id}:answered`,
         kind: "question",
-        emphasis: "human",
-        tone: "green",
-        label: `${question.handle} answered`,
-        detail: "The question received an explicit answer.",
+        emphasis: atImport ? "policy" : "human",
+        tone: atImport ? "neutral" : "green",
+        label: `${question.handle} answered${atImport ? " at import" : ""}`,
+        detail: atImport
+          ? "The answer came in with the imported source; nobody answered it here."
+          : "The question received an explicit answer.",
         occurredAt: question.answeredAt,
         href: elementHref(projectName, detail.spec.slug, question.handle),
         priority: 55,
@@ -574,13 +621,20 @@ export function buildSpecHistory(
       assumption.disposedAt !== null &&
       assumption.disposition !== "proposed"
     ) {
+      const atImport = settledAtImport(assumption.disposedAt, importedAt);
       events.push({
         id: `${assumption.id}:disposed`,
         kind: "assumption",
-        emphasis: "human",
-        tone: assumption.disposition === "confirmed" ? "green" : "red",
-        label: `${assumption.handle} ${assumption.disposition}`,
-        detail: "A human disposition was recorded against the assumption.",
+        emphasis: atImport ? "policy" : "human",
+        tone: atImport
+          ? "neutral"
+          : assumption.disposition === "confirmed"
+            ? "green"
+            : "red",
+        label: `${assumption.handle} ${assumption.disposition}${atImport ? " at import" : ""}`,
+        detail: atImport
+          ? "The disposition came in with the imported source; no human took it here."
+          : "A human disposition was recorded against the assumption.",
         occurredAt: assumption.disposedAt,
         href: elementHref(projectName, detail.spec.slug, assumption.handle),
         priority: 55,
@@ -615,6 +669,34 @@ export function buildSpecHistory(
     if (right.priority !== left.priority) return right.priority - left.priority;
     return left.id.localeCompare(right.id);
   });
+}
+
+/**
+ * What the import brought in, naming only the kinds it actually carried: a
+ * summary that listed every kind at zero would read as a report about content
+ * the bundle never claimed.
+ */
+function importedContentSummary(
+  counts: SpecImportRecordView["counts"],
+): string {
+  const parts = [
+    pluralize(counts.sections, "section"),
+    pluralize(counts.requirements, "requirement"),
+    pluralize(counts.criteria, "criterion", "criteria"),
+    pluralize(counts.decisions, "decision"),
+    pluralize(counts.questions, "question"),
+    pluralize(counts.assumptions, "assumption"),
+  ].filter((part): part is string => part !== null);
+  return parts.length === 0 ? "no content" : parts.join(", ");
+}
+
+function pluralize(
+  count: number,
+  singular: string,
+  plural = `${singular}s`,
+): string | null {
+  if (count === 0) return null;
+  return `${count} ${count === 1 ? singular : plural}`;
 }
 
 function elementHandles(
@@ -716,6 +798,8 @@ function admissionBasisLabel(
       return "off policy";
     case "human_approval":
       return "human approval";
+    case "import":
+      return "import provenance";
   }
 }
 

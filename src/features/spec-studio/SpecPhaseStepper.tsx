@@ -5,6 +5,7 @@ import type { LiveProposalView } from "@/lib/specs/view-schemas";
 import { cn } from "@/lib/ui/cn";
 
 import { strandedProposals } from "./live-proposals";
+import { revisionAdmittedByImport } from "./presentation";
 
 const ACTIVE_AUTHORING_STAGES = ["requirements", "design"] as const;
 const DURABLE_AUTHORING_STAGES = ["requirements", "design", "plan"] as const;
@@ -149,16 +150,26 @@ function completedTaskCount(detail: SpecDetailView): number {
 }
 
 function proofSublabel(detail: SpecDetailView): string {
-  const { allWaived, provenCount, totalInScope } = detail.status.delivery;
+  const {
+    allWaived,
+    provenCount,
+    totalInScope,
+    deliveredExternallyCriterionIds,
+  } = detail.status.delivery;
   if (totalInScope === 0) return "awaiting execution scope";
-  if (allWaived) {
-    return `${totalInScope} ${
-      totalInScope === 1 ? "criterion" : "criteria"
-    } waived`;
+  const noun = totalInScope === 1 ? "criterion" : "criteria";
+  if (allWaived) return `${totalInScope} ${noun} waived`;
+
+  // External delivery is reported beside the proof tally, never inside it: an
+  // import that proved nothing here would otherwise be described only by what
+  // it lacks.
+  const externalCount = deliveredExternallyCriterionIds.length;
+  if (externalCount === 0)
+    return `${provenCount}/${totalInScope} ${noun} proven`;
+  if (provenCount === 0) {
+    return `${externalCount}/${totalInScope} ${noun} delivered externally`;
   }
-  return `${provenCount}/${totalInScope} ${
-    totalInScope === 1 ? "criterion" : "criteria"
-  } proven`;
+  return `${provenCount}/${totalInScope} ${noun} proven · ${externalCount} delivered externally`;
 }
 
 function activeExecution(detail: SpecDetailView) {
@@ -249,7 +260,17 @@ function authoringStep(
     return {
       label,
       state: "done",
-      sublabel: `approved rev ${approvedRevision.number}`,
+      // An imported revision reaches this state on the source's word with no
+      // approval row behind it, so the stage names the admission rather than
+      // borrowing the vocabulary of a human sign-off. The question is asked of
+      // the revision this stage names, never of the spec: a later amendment
+      // approved by a human keeps the credit for the act it took.
+      sublabel: revisionAdmittedByImport(
+        detail.gateAdmissions,
+        approvedRevision.id,
+      )
+        ? `rev ${approvedRevision.number} admitted by import`
+        : `approved rev ${approvedRevision.number}`,
     };
   }
 
@@ -407,16 +428,20 @@ function contextSentence(
     return `Abandoned: ${detail.spec.abandonedReason ?? "work stopped."}`;
   }
 
-  const { provenCount, totalInScope } = detail.status.delivery;
+  const { provenCount, totalInScope, deliveredExternallyCriterionIds } =
+    detail.status.delivery;
   if (detail.status.phase.primary === "delivered") {
+    const noun = totalInScope === 1 ? "criterion" : "criteria";
     if (detail.status.delivery.allWaived) {
-      return `Delivered: all ${totalInScope} in-scope ${
-        totalInScope === 1 ? "criterion" : "criteria"
-      } waived. The spec is read-only history.`;
+      return `Delivered: all ${totalInScope} in-scope ${noun} waived. The spec is read-only history.`;
     }
-    return `Delivered: ${provenCount}/${totalInScope} in-scope ${
-      totalInScope === 1 ? "criterion" : "criteria"
-    } proven. The spec is read-only history.`;
+    const externalCount = deliveredExternallyCriterionIds.length;
+    if (externalCount > 0) {
+      return provenCount === 0
+        ? `Delivered: ${externalCount}/${totalInScope} in-scope ${noun} delivered externally, none proven here. The spec is read-only history.`
+        : `Delivered: ${provenCount}/${totalInScope} in-scope ${noun} proven, ${externalCount} delivered externally. The spec is read-only history.`;
+    }
+    return `Delivered: ${provenCount}/${totalInScope} in-scope ${noun} proven. The spec is read-only history.`;
   }
 
   const execution = activeExecution(detail);
@@ -579,7 +604,10 @@ function projectStepper(
     executeStep = {
       label: "Execute",
       state: "done",
-      sublabel: "run complete",
+      // An imported spec is delivered on the source's testimony without ever
+      // running here, so the step reports the absence of a run rather than
+      // borrowing the label of one that never happened.
+      sublabel: detail.executions.length === 0 ? "no run here" : "run complete",
     };
     deliverStep = {
       label: "Deliver",

@@ -41,6 +41,7 @@ function revision(
     contentHash: null,
     proposedAt: null,
     approvedAt: null,
+    externalDelivery: null,
     createdAt: "2026-07-18T00:00:00.000Z",
     ...fields,
   };
@@ -151,6 +152,7 @@ function createServices() {
           contentHash: null,
           proposedAt: null,
           approvedAt: null,
+          externalDelivery: null,
           createdAt: "2026-07-18T00:00:00.000Z",
         },
       })),
@@ -401,6 +403,7 @@ describe("spec write route handlers", () => {
       contentHash: null,
       proposedAt: null,
       approvedAt: null,
+      externalDelivery: null,
       createdAt: "2026-07-18T00:00:00.000Z",
     };
     vi.mocked(services.authoring.advanceAuthoringStage).mockRejectedValueOnce(

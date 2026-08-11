@@ -13,6 +13,8 @@ function fixture(
   overrides: {
     authoringFacet?: "draft" | "in_review";
     exploratory?: boolean;
+    /** Criteria delivered outside this system, on an import's testimony. */
+    deliveredExternally?: number;
     pendingApprovals?: number;
     proven?: number;
     scope?: number;
@@ -21,6 +23,7 @@ function fixture(
 ): SpecSummaryView {
   const slug = `${phase.replace("_", "-")}-spec`;
   const pendingApprovals = overrides.pendingApprovals ?? 0;
+  const deliveredExternally = overrides.deliveredExternally ?? 0;
 
   return {
     spec: {
@@ -54,9 +57,15 @@ function fixture(
     approvalState: pendingApprovals > 0 ? "pending" : "complete",
     delivery: {
       allWaived: false,
+      deliveredCount: (overrides.proven ?? 0) + deliveredExternally,
       provenCount: overrides.proven ?? 0,
+      deliveredExternallyCriterionIds: Array.from(
+        { length: deliveredExternally },
+        (_unused, position) => `criterion-${position + 1}`,
+      ),
       totalInScope: overrides.scope ?? 5,
     },
+    imported: deliveredExternally > 0,
     linkedWork: {
       tickets: index % 3,
       conversations: index % 2,
@@ -112,6 +121,12 @@ export const PhaseFiltered: Story = {
 export const Exploratory: Story = {
   args: {
     specs: [fixture("draft", 7, { exploratory: true })],
+  },
+};
+
+export const ImportedDelivered: Story = {
+  args: {
+    specs: [fixture("delivered", 8, { deliveredExternally: 4, scope: 4 })],
   },
 };
 

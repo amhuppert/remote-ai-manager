@@ -3,6 +3,7 @@ import type {
   ApprovalRecord,
 } from "./approval-applicability";
 import { draftHealth } from "./draft-health";
+import { elementApprovalBasis } from "./import-baseline";
 import {
   lint,
   type LintFinding,
@@ -78,6 +79,11 @@ export interface SignOffReviewSnapshot {
    */
   governanceBaseRevisionRows: DiffRevisionElement[];
   revisionRows: DiffRevisionElement[];
+  /**
+   * The import baseline revision's rows, null for every spec no import
+   * created. See `elementApprovalBasis` for what they carry.
+   */
+  importBaselineRows: readonly DiffRevisionElement[] | null;
   blockingThreads: ReviewThreadSnapshot[];
   approvals: ApprovalSnapshot[];
 }
@@ -413,6 +419,8 @@ export interface ApprovalConditionsContext {
   /** Element id to the handle the condition text addresses it by. */
   handles: ReadonlyMap<string, string>;
   approvalApplies: ApprovalApplicability;
+  /** The import baseline revision's rows; null for a natively authored spec. */
+  importBaselineRows: readonly DiffRevisionElement[] | null;
 }
 
 export function approvalUnmetConditions(
@@ -457,12 +465,17 @@ export function approvalUnmetConditions(
 
     for (const element of elements) {
       if (
-        approvalHeld(
-          context.approvals,
-          approvalApplies,
-          kind,
-          element.elementId,
-        )
+        elementApprovalBasis({
+          approvalHeld: approvalHeld(
+            context.approvals,
+            approvalApplies,
+            kind,
+            element.elementId,
+          ),
+          subject: { subjectKind: kind, elementId: element.elementId },
+          revisionRows: context.revisionRows,
+          importBaselineRows: context.importBaselineRows,
+        }) !== null
       ) {
         continue;
       }
@@ -522,6 +535,7 @@ function signOffPreconditions(
     approvals: review.approvals,
     handles: handleByElementId(draft),
     approvalApplies,
+    importBaselineRows: review.importBaselineRows,
   });
   const unmetConditions = [
     ...threadConditions,

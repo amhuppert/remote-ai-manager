@@ -24,6 +24,7 @@ function revision(
     contentHash: null,
     proposedAt: null,
     approvedAt: null,
+    externalDelivery: null,
     createdAt: AT,
     ...overrides,
   };
@@ -189,6 +190,7 @@ describe("draftAuthoringSequence", () => {
       state: "approved",
       authoringStage: "requirements",
       approvedAt: AT,
+      externalDelivery: null,
     });
     const withdrawn = revision({
       id: "revision-2",

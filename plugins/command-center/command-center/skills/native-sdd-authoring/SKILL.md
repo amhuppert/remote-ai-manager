@@ -43,6 +43,18 @@ Treat `elementVersion` as a compare-and-swap token local to one revision. Versio
 
 Inspect the write contract with `cctl spec draft --help` and the relevant `cctl spec schema <document>` leaf. For the generated compile, lint, and evidence registries, run `cctl spec schema guidance`.
 
+## Importing a spec authored outside CC
+
+Bring a spec authored outside CC in whole with `cctl spec import --file <bundle.json>`. The imported spec is born approved at design on import provenance: it records that an agent imported the content and from which source, and no approval of any kind is written, so every human gate on it stays as strong as on a spec authored here.
+
+Run the act in one order. Check `cctl spec list` and `cctl spec search --all <query>` and stop if an existing spec already covers the work. Author the bundle from the source documents yourself: you are the parser, and the server never reads a source file. Iterate with `--dry-run` until it reports no blocking finding and prints the handles it would allocate, so bundle-local refs resolve against the real numbering. Then import once and read the receipt. Treat a refusal as unfinished work — nothing was written, so follow the named remedy and import again.
+
+Import creates new specs only; change an existing spec with `cctl spec amend` instead. Import is never an approval shortcut for work authored here — content drafted in conversation earns its approval through `cctl spec propose` and human sign-off. Import is also not the legacy delivery-plan seed: `cctl spec plan open <slug> --seed-from last` seeds delivery on a spec that already exists here, while import is for content that has never been in CC at all.
+
+Author the bundle so a delivered import owes a human no review pass. `delivered` defaults to true and records external-delivery provenance rather than machine proof, which the delivery gate never reads; opt out with `"delivered": false` when the source carries no acceptance criterion to record delivery against. Import a question already answered when the source holds the answer, and import an assumption with its real disposition — confirmed included — when the source shows it held. Carrying a source's disposition across is provenance capture, not the human disposition act: disposing an assumption here stays a Spec Studio act, so never invent a disposition the source does not show. An import authored this way arrives with zero open review items.
+
+Inspect the act with `cctl spec import --help` and its document with `cctl spec schema import-bundle`. For the generated compile, lint, and evidence registries, run `cctl spec schema guidance`.
+
 ## Consistency sweep and `propose --notes` protocol
 
 Before proposing, run `cctl spec lint`, repair its consistency findings, and sweep reference integrity, criterion coverage, stale handles, and vocabulary the revision claims to supersede. Re-run the mechanical sweep until it is clean.
