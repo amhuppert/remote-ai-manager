@@ -50,9 +50,9 @@ import {
   nonAdditiveOperationTypes,
   toLiveEditOperations,
   workflowExecutionAmendmentRequestSchema,
-  workingDefinitionHash,
   type WorkflowAmendmentActor,
 } from "./execution-amendment";
+import { workingDefinitionHash } from "./working-definition-hash";
 import {
   applyLiveEditsToActiveExecution,
   buildDefaultAssignmentSnapshotPreparation,

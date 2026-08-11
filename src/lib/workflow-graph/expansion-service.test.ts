@@ -18,10 +18,12 @@ import {
 import { EXPANSION_CAPS } from "./expansion-caps";
 import {
   countExpansionCreatedContexts,
-  expansionCanonicalPayload,
-  expansionPayloadHash,
   resolveExpansionProvenance,
 } from "./expansion-receipts";
+import {
+  expansionCanonicalPayload,
+  expansionPayloadHash,
+} from "./expansion-payload";
 import type { LiveEditDeps, ResolvedContextConfig } from "./runtime-edits";
 import type {
   GraphWorkflowExecution,
@@ -215,7 +217,10 @@ function makeHarness(initial: GraphWorkflowExecution): Harness {
       };
     },
     archiveActiveGraphWorkflowExecution: () =>
-      Promise.resolve({ archived: false as const, reason: "no_active" as const }),
+      Promise.resolve({
+        archived: false as const,
+        reason: "no_active" as const,
+      }),
     markGraphWorkflowContextEventsPreReset: () => Promise.resolve(0),
     eventPublisher,
   });

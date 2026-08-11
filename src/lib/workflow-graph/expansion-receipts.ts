@@ -27,8 +27,6 @@
  *   monotone.
  */
 
-import { createHash } from "node:crypto";
-import { stableStringify } from "@/lib/state-store/serialization";
 import { EXPANSION_CAPS } from "./expansion-caps";
 import type {
   GraphWorkflowExpansionAcceptanceReceipt,
@@ -41,25 +39,6 @@ export const EMPTY_EXPANSION_RECEIPTS: GraphWorkflowExpansionReceipts = {
   accepted: [],
   refusals: [],
 };
-
-/**
- * The canonical JSON form of a parsed expansion request. Key order is
- * normalized recursively, so the hash identifies the request's CONTENT rather
- * than the byte layout the lane's serializer happened to produce.
- */
-export function expansionCanonicalPayload(request: object): string {
-  return stableStringify(request);
-}
-
-/** The identity of a canonicalized request: lowercase SHA-256 hex. */
-export function expansionPayloadHash(canonicalPayload: string): string {
-  return createHash("sha256").update(canonicalPayload, "utf8").digest("hex");
-}
-
-/** Canonical payload size in UTF-8 bytes — what the 64 KB cap measures. */
-export function expansionCanonicalByteLength(canonicalPayload: string): number {
-  return Buffer.byteLength(canonicalPayload, "utf8");
-}
 
 export interface ExpansionCapRefusal {
   code: string;

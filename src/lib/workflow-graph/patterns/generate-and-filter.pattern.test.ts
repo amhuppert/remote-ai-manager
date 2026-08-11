@@ -28,11 +28,11 @@ import {
   graphExpansionRequestSchema,
   type GraphExpansionRequest,
 } from "../expansion-service";
+import { resolveExpansionProvenance } from "../expansion-receipts";
 import {
   expansionCanonicalPayload,
   expansionPayloadHash,
-  resolveExpansionProvenance,
-} from "../expansion-receipts";
+} from "../expansion-payload";
 import {
   createLaneRouteHandlers,
   type LaneRouteDeps,

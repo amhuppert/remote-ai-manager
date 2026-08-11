@@ -12,12 +12,12 @@ import type {
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 
 import {
-  deliveryPlanHash,
   type DeliveryPlanContext,
   type DeliveryPlanDocument,
   type DeliveryPlanGovernance,
   type DeliveryPlanWiringEntry,
 } from "./delivery-plan";
+import { deliveryPlanHash } from "./delivery-plan-hash";
 import { elementHandleInSnapshot } from "./review-state";
 import type {
   Refusal,

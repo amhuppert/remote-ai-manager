@@ -2,7 +2,6 @@ import type Database from "better-sqlite3";
 import {
   deliveryPlanApprovalSchema,
   deliveryPlanDocumentSchema,
-  deliveryPlanHash,
   deliveryPlanPrelaunchSchema,
   postLaunchPathsSentence,
   type DeliveryPlanApproval,
@@ -11,6 +10,7 @@ import {
   type DeliveryPlanPrelaunch,
   type DeliveryPlanReaffirmation,
 } from "@/lib/specs/delivery-plan";
+import { deliveryPlanHash } from "@/lib/specs/delivery-plan-hash";
 import {
   specDeliveryDiscoveryRowSchema,
   specDeliveryPlanAttemptRowSchema,

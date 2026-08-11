@@ -1,9 +1,6 @@
-import { fileURLToPath } from "node:url";
 import type { StorybookConfig } from "@storybook/nextjs-vite";
 
-const loggingStub = fileURLToPath(
-  new URL("./logging-stub.mjs", import.meta.url),
-);
+import { storybookBrowserAliases } from "./browser-aliases";
 
 const config: StorybookConfig = {
   stories: ["../src/**/*.mdx", "../src/**/*.stories.@(ts|tsx)"],
@@ -28,12 +25,11 @@ const config: StorybookConfig = {
     config.plugins ??= [];
     config.plugins.push(tailwindcss());
 
-    // Pre-existing-blocker fix (not Tailwind): the `@/lib/logging` barrel pulls
-    // server-only Node builtins (async_hooks/fs/crypto + the config loader) into
-    // any component that logs, which breaks the browser bundle for every story
-    // rendering such a component. Alias the barrel to a no-op browser stub so
-    // the Storybook build resolves cleanly. Exact-match regex so deep paths
-    // (`@/lib/logging/logger`) still hit the real `@`→src alias. Storybook-only.
+    // Server subtrees the browser build cannot carry, cut to browser-safe
+    // stubs. The table lives in `./browser-aliases.mjs` because the story
+    // import-graph guard replays the same cuts; see that file for why a cut is
+    // the fallback rather than the remedy. Storybook-only — production,
+    // `next build`, and `tsc` all use the real modules.
     config.resolve ??= {};
     const existingAlias = config.resolve.alias;
     const aliasEntries = Array.isArray(existingAlias)
@@ -42,10 +38,7 @@ const config: StorybookConfig = {
           find,
           replacement,
         }));
-    config.resolve.alias = [
-      { find: /^@\/lib\/logging$/, replacement: loggingStub },
-      ...aliasEntries,
-    ];
+    config.resolve.alias = [...storybookBrowserAliases, ...aliasEntries];
 
     return config;
   },

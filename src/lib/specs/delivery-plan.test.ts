@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   DELIVERY_PLAN_DISPOSITIONS,
   deliveryPlanDocumentSchema,
-  deliveryPlanHash,
   emptyDeliveryPlanDocument,
   postLaunchPathActs,
   postLaunchPathsSentence,
   type DeliveryPlanDocument,
 } from "./delivery-plan";
+// The hash lives in its own module so `./delivery-plan` stays browser-safe; it
+// is exercised here because plan identity is a property of the document these
+// fixtures build.
+import { deliveryPlanHash } from "./delivery-plan-hash";
 import {
   deliveryPlanAttemptStatusSchema,
   specDeliveryPlanAttemptRowSchema,

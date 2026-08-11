@@ -7,13 +7,15 @@ import {
   classifyExpansionAttempt,
   countExpansionCreatedContexts,
   countExpansionCreatedContextsFor,
-  expansionCanonicalByteLength,
-  expansionCanonicalPayload,
-  expansionPayloadHash,
   recordExpansionAcceptance,
   recordExpansionRefusal,
   resolveExpansionProvenance,
 } from "./expansion-receipts";
+import {
+  expansionCanonicalByteLength,
+  expansionCanonicalPayload,
+  expansionPayloadHash,
+} from "./expansion-payload";
 import { graphWorkflowExpansionReceiptsSchema } from "./schemas";
 import type {
   GraphWorkflowExpansionAcceptanceReceipt,

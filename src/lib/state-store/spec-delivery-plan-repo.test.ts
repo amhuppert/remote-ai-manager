@@ -10,7 +10,7 @@ vi.mock("@/lib/logging", () => ({
 }));
 
 import type Database from "better-sqlite3";
-import { deliveryPlanHash } from "@/lib/specs/delivery-plan";
+import { deliveryPlanHash } from "@/lib/specs/delivery-plan-hash";
 import type { SpecDeliveryPlanAttemptRow } from "@/lib/specs/schemas";
 import { _createTestDb } from "./state-db";
 import {

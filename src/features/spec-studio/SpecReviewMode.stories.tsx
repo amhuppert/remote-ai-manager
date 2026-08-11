@@ -280,6 +280,48 @@ function deletionReviewDetailFixture(): SpecDetailView {
   };
 }
 
+/**
+ * Ticket #58: revision 2 re-proposed over a withdrawn attempt, so R1 is
+ * unchanged against the immediate base yet never approved — the server still
+ * owes its approval and the review surface must offer it individually.
+ */
+function awaitingUnchangedDetailFixture(): SpecDetailView {
+  const detail = reviewDetailFixture();
+  const base = detail.baseRevision;
+  if (base === null) return detail;
+  base.revision.state = "withdrawn";
+  base.elements = base.elements.map((entry) =>
+    entry.element.id === "requirement-1"
+      ? {
+          ...entry,
+          version: {
+            ...entry.version,
+            payload: {
+              kind: "requirement" as const,
+              statement: "Every execution pins the exact selected scope.",
+              priority: "must" as const,
+              risk: "high" as const,
+            },
+            payloadHash: "requirement-hash-2",
+          },
+        }
+      : entry,
+  );
+  return {
+    ...detail,
+    approvals: detail.approvals.filter(
+      (approval) => approval.subject_kind !== "requirement",
+    ),
+    status: {
+      ...detail.status,
+      applicableGates: ["requirements", "design", "plan"],
+      pendingApprovals: [
+        { gate: "requirements", subject: "R1", elementId: "requirement-1" },
+      ],
+    },
+  };
+}
+
 const PROJECT_NAME = "command-center";
 
 /**
@@ -384,6 +426,15 @@ export const ExpandedComment: Story = {
 
 export const BlockedSignoff: Story = {
   args: { detail: reviewDetailFixture(true) },
+};
+
+/**
+ * An unchanged element the server still owes an approval for gets its own
+ * reviewable card in the awaiting-approval section instead of hiding in the
+ * quiet carried-forward list (#58).
+ */
+export const AwaitingUnchangedApproval: Story = {
+  args: { detail: awaitingUnchangedDetailFixture() },
 };
 
 export const RequestChangesDialog: Story = {

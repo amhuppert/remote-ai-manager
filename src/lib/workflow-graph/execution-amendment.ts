@@ -22,7 +22,6 @@
  * inlined at either caller.
  */
 
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import { stableStringify } from "@/lib/state-store/serialization";
 import type {
@@ -137,17 +136,6 @@ export const workflowExecutionAmendmentResponseSchema = z
 export type WorkflowExecutionAmendmentResponse = z.infer<
   typeof workflowExecutionAmendmentResponseSchema
 >;
-
-/**
- * The identity an amendment moves. Hashing the whole working definition (not a
- * per-field digest) is what lets the audit row answer "is this still the
- * approved bytes?" against the stored candidate hash with one comparison.
- */
-export function workingDefinitionHash(
-  definition: WorkflowSemanticDefinition | ResolvedWorkflowSemanticDefinition,
-): string {
-  return `sha256:${createHash("sha256").update(stableStringify(definition)).digest("hex")}`;
-}
 
 /**
  * Whether the definition came from a delivery-plan attempt. The origin URI is

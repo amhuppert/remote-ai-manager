@@ -61,13 +61,15 @@ import {
   checkExpansionBudgetCaps,
   checkExpansionRequestCaps,
   classifyExpansionAttempt,
-  expansionCanonicalByteLength,
-  expansionCanonicalPayload,
-  expansionPayloadHash,
   expansionReuseMessage,
   recordExpansionAcceptance,
   recordExpansionRefusal,
 } from "./expansion-receipts";
+import {
+  expansionCanonicalByteLength,
+  expansionCanonicalPayload,
+  expansionPayloadHash,
+} from "./expansion-payload";
 import { classifyContextLifecycle } from "./lifecycle-classifier";
 import { resolveBoundConversationId } from "./lane-binding";
 import {

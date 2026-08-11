@@ -109,16 +109,15 @@ const dismissSupersededResponseSchema = z
   })
   .strict();
 
-const changeTone: Record<SemanticChange["change"], StatusChipTone> = {
-  added: "green",
-  modified: "amber",
-  removed: "red",
+/**
+ * What a review card renders: a semantic change, or an element the revision
+ * carries unchanged while the server still owes its approval (#58).
+ */
+type ReviewCardChange = Omit<SemanticChange, "change"> & {
+  change: SemanticChange["change"] | "unchanged";
 };
 
-const criterionTone: Record<
-  RequirementCriterionReview["change"],
-  StatusChipTone
-> = {
+const changeTone: Record<ReviewCardChange["change"], StatusChipTone> = {
   added: "green",
   modified: "amber",
   removed: "red",
@@ -419,12 +418,20 @@ export default function SpecReviewMode({
     currentSnapshot,
     baseSnapshot,
   );
-  const unchangedViews = unchangedElementViews(diff, currentSnapshot);
   const readiness = reviewReadiness(detail);
   const outstandingElementIds = new Set(
     detail.status.pendingApprovals.flatMap((pending) =>
       pending.elementId === null ? [] : [pending.elementId],
     ),
+  );
+  const unchangedViews = unchangedElementViews(diff, currentSnapshot);
+  const awaitingCards = awaitingApprovalCards(
+    unchangedViews,
+    outstandingElementIds,
+  );
+  const awaitingCardIds = new Set(awaitingCards.map((card) => card.elementId));
+  const quietUnchangedViews = unchangedViews.filter(
+    (view) => !awaitingCardIds.has(view.entry.element.id),
   );
 
   return (
@@ -550,7 +557,7 @@ export default function SpecReviewMode({
             aria-label="Semantic changes"
             className="mt-[14px] rounded-lg border border-solid border-border-subtle bg-bg-base px-[20px] py-[18px] max-768:px-md max-768:py-md"
           >
-            {diff.changeList.length === 0 ? (
+            {diff.changeList.length === 0 && awaitingCards.length === 0 ? (
               <EmptyState>
                 <EmptyStateTitle>No semantic changes</EmptyStateTitle>
                 <EmptyStateDesc>
@@ -559,78 +566,131 @@ export default function SpecReviewMode({
               </EmptyState>
             ) : (
               <>
-                <div className="flex items-center justify-between gap-md max-768:flex-col max-768:items-stretch">
-                  <div className="min-w-0">
-                    <p className="m-0 font-mono text-[0.76rem] font-semibold text-text-primary">
-                      {diff.changeList.length}{" "}
-                      {pluralize(diff.changeList.length, "change")} across{" "}
-                      {changeGroups.length}{" "}
-                      {pluralize(changeGroups.length, "kind")}
-                    </p>
-                    <p className="mt-xs mb-0 truncate font-mono text-[0.7rem] text-text-tertiary">
-                      Approvals on unchanged elements carry forward quietly.
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 flex-wrap items-center gap-md font-mono text-[0.7rem] text-text-tertiary">
-                    <span className="inline-flex items-center gap-xs">
-                      <span className="h-[10px] w-[10px] rounded-sm border border-solid border-green-dim bg-green-glow" />
-                      Added
-                    </span>
-                    <span className="inline-flex items-center gap-xs">
-                      <span className="h-[10px] w-[10px] rounded-sm border border-solid border-red-dim bg-red-glow" />
-                      Removed
-                    </span>
-                  </div>
-                </div>
-
-                <div className="mt-[14px] grid gap-[14px]">
-                  {changeGroups.map((group) => (
-                    <section
-                      key={group.key}
-                      aria-labelledby={`review-group-${group.key}`}
-                    >
-                      <div className="mb-sm flex items-center gap-sm">
-                        <h2
-                          id={`review-group-${group.key}`}
-                          className="m-0 font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-primary uppercase"
-                        >
-                          {group.label}
-                        </h2>
-                        <span className="font-mono text-[0.7rem] text-text-tertiary">
-                          {group.changes.length}{" "}
-                          {pluralize(group.changes.length, "change")}
+                {diff.changeList.length === 0 ? (
+                  <p className="m-0 font-mono text-[0.76rem] font-semibold text-text-primary">
+                    No semantic changes — the proposed revision matches its
+                    base.
+                  </p>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between gap-md max-768:flex-col max-768:items-stretch">
+                      <div className="min-w-0">
+                        <p className="m-0 font-mono text-[0.76rem] font-semibold text-text-primary">
+                          {diff.changeList.length}{" "}
+                          {pluralize(diff.changeList.length, "change")} across{" "}
+                          {changeGroups.length}{" "}
+                          {pluralize(changeGroups.length, "kind")}
+                        </p>
+                        <p className="mt-xs mb-0 truncate font-mono text-[0.7rem] text-text-tertiary">
+                          Approved unchanged elements carry forward quietly.
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap items-center gap-md font-mono text-[0.7rem] text-text-tertiary">
+                        <span className="inline-flex items-center gap-xs">
+                          <span className="h-[10px] w-[10px] rounded-sm border border-solid border-green-dim bg-green-glow" />
+                          Added
                         </span>
-                        <span className="h-px min-w-0 grow bg-border-dim" />
+                        <span className="inline-flex items-center gap-xs">
+                          <span className="h-[10px] w-[10px] rounded-sm border border-solid border-red-dim bg-red-glow" />
+                          Removed
+                        </span>
                       </div>
-                      <div className="grid gap-sm">
-                        {group.changes.map((change) => (
-                          <ReviewChangeCard
-                            key={change.elementId}
-                            change={change}
-                            criteria={requirementCriteriaForReview(
-                              change,
-                              diff,
-                              currentSnapshot,
-                              baseSnapshot,
-                            )}
-                            detail={detail}
-                            projectName={projectName}
-                            baseSnapshot={baseSnapshot}
-                            currentSnapshot={currentSnapshot}
-                            combinedApproval={readiness.combined}
-                            onFeedback={setFeedback}
-                            onError={setError}
-                          />
-                        ))}
-                      </div>
-                    </section>
-                  ))}
-                </div>
+                    </div>
 
-                <UnchangedApprovals
-                  views={unchangedViews}
-                  outstandingElementIds={outstandingElementIds}
-                />
+                    <div className="mt-[14px] grid gap-[14px]">
+                      {changeGroups.map((group) => (
+                        <section
+                          key={group.key}
+                          aria-labelledby={`review-group-${group.key}`}
+                        >
+                          <div className="mb-sm flex items-center gap-sm">
+                            <h2
+                              id={`review-group-${group.key}`}
+                              className="m-0 font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-primary uppercase"
+                            >
+                              {group.label}
+                            </h2>
+                            <span className="font-mono text-[0.7rem] text-text-tertiary">
+                              {group.changes.length}{" "}
+                              {pluralize(group.changes.length, "change")}
+                            </span>
+                            <span className="h-px min-w-0 grow bg-border-dim" />
+                          </div>
+                          <div className="grid gap-sm">
+                            {group.changes.map((change) => (
+                              <ReviewChangeCard
+                                key={change.elementId}
+                                change={change}
+                                criteria={requirementCriteriaForReview(
+                                  change,
+                                  diff,
+                                  currentSnapshot,
+                                  baseSnapshot,
+                                )}
+                                detail={detail}
+                                projectName={projectName}
+                                baseSnapshot={baseSnapshot}
+                                currentSnapshot={currentSnapshot}
+                                combinedApproval={readiness.combined}
+                                onFeedback={setFeedback}
+                                onError={setError}
+                              />
+                            ))}
+                          </div>
+                        </section>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {awaitingCards.length > 0 && (
+                  <section
+                    aria-labelledby="review-group-awaiting-approval"
+                    className="mt-[14px]"
+                  >
+                    <div className="mb-sm flex items-center gap-sm">
+                      <h2
+                        id="review-group-awaiting-approval"
+                        className="m-0 font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-primary uppercase"
+                      >
+                        Awaiting approval
+                      </h2>
+                      <span className="font-mono text-[0.7rem] text-text-tertiary">
+                        {awaitingCards.length} unchanged{" "}
+                        {pluralize(awaitingCards.length, "element")}
+                      </span>
+                      <span className="h-px min-w-0 grow bg-border-dim" />
+                    </div>
+                    <p className="mt-0 mb-sm font-mono text-[0.7rem] text-text-tertiary">
+                      Carried unchanged from the base revision without ever
+                      being approved — review and approve each item; sign-off
+                      approves whatever remains.
+                    </p>
+                    <div className="grid gap-sm">
+                      {awaitingCards.map((change) => (
+                        <ReviewChangeCard
+                          key={change.elementId}
+                          change={change}
+                          criteria={requirementCriteriaForReview(
+                            change,
+                            diff,
+                            currentSnapshot,
+                            baseSnapshot,
+                          )}
+                          detail={detail}
+                          projectName={projectName}
+                          baseSnapshot={baseSnapshot}
+                          currentSnapshot={currentSnapshot}
+                          combinedApproval={readiness.combined}
+                          onFeedback={setFeedback}
+                          onError={setError}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                <UnchangedApprovals views={quietUnchangedViews} />
               </>
             )}
           </section>
@@ -1210,7 +1270,7 @@ function requirementCardChanges(
 }
 
 function requirementCriteriaForReview(
-  change: SemanticChange,
+  change: ReviewCardChange,
   diff: RevisionDiffResult,
   currentSnapshot: SpecRevisionSnapshot,
   baseSnapshot: SpecRevisionSnapshot | null,
@@ -1325,18 +1385,46 @@ function unchangedElementViews(
   });
 }
 
+/**
+ * Unchanged elements the server still owes an approval for, shaped as review
+ * cards. Unchanged against the immediate parent is not approved (#58): a
+ * revision re-proposed over a withdrawn attempt carries content no human ever
+ * approved, and each such subject must be reviewable and approvable on its
+ * own rather than only through the bulk sign-off act.
+ */
+function awaitingApprovalCards(
+  views: ReviewElementView[],
+  outstandingElementIds: ReadonlySet<string>,
+): ReviewCardChange[] {
+  return views.flatMap((view) => {
+    if (!outstandingElementIds.has(view.entry.element.id)) return [];
+    const payload = view.entry.version.payload;
+    if (payload.kind !== "requirement" && payload.kind !== "decision") {
+      return [];
+    }
+    return [
+      {
+        elementId: view.entry.element.id,
+        kind: payload.kind,
+        change: "unchanged" as const,
+        summary: `Unchanged ${payload.kind}: ${
+          payload.kind === "requirement" ? payload.statement : payload.title
+        }`,
+      },
+    ];
+  });
+}
+
+/**
+ * Unchanged elements whose approvals genuinely carry forward. Elements the
+ * server still owes an approval for are promoted to full review cards in the
+ * awaiting-approval section instead (#58), so a chip here always means
+ * approved and carried.
+ */
 function UnchangedApprovals({
   views,
-  outstandingElementIds,
 }: {
   views: ReviewElementView[];
-  /**
-   * Unchanged against the immediate parent is not approved: a change that
-   * entered through a withdrawn attempt still owes the approval the server
-   * measures against the nearest approved ancestor, so its chip must not read
-   * as carried forward.
-   */
-  outstandingElementIds: ReadonlySet<string>;
 }): React.JSX.Element | null {
   if (views.length === 0) return null;
 
@@ -1349,21 +1437,15 @@ function UnchangedApprovals({
         </CollapsibleTrigger>
         <CollapsibleContent>
           <div className="flex flex-wrap gap-xs pt-sm">
-            {views.map((view) =>
-              outstandingElementIds.has(view.entry.element.id) ? (
-                <StatusChip key={view.entry.element.id} tone="amber">
-                  {view.handle} — approval outstanding
-                </StatusChip>
-              ) : (
-                <StatusChip
-                  key={view.entry.element.id}
-                  tone="green"
-                  icon={<CheckIcon size={12} className="text-green" />}
-                >
-                  {view.handle}
-                </StatusChip>
-              ),
-            )}
+            {views.map((view) => (
+              <StatusChip
+                key={view.entry.element.id}
+                tone="green"
+                icon={<CheckIcon size={12} className="text-green" />}
+              >
+                {view.handle}
+              </StatusChip>
+            ))}
           </div>
         </CollapsibleContent>
       </Collapsible>
@@ -1748,7 +1830,7 @@ function ReviewChangeCard({
   onFeedback,
   onError,
 }: {
-  change: SemanticChange;
+  change: ReviewCardChange;
   criteria: RequirementCriterionReview[];
   detail: SpecDetailView;
   projectName: string;
@@ -2121,7 +2203,7 @@ function ReviewChangeCard({
                             />
                           </div>
                           <StatusChip
-                            tone={criterionTone[criterion.change]}
+                            tone={changeTone[criterion.change]}
                             layoutClassName="ml-auto"
                           >
                             {capitalize(criterion.change)}
@@ -2255,7 +2337,7 @@ function RevisionComparison({
   );
 }
 
-function reviewChangeControlLabel(change: SemanticChange): string {
+function reviewChangeControlLabel(change: ReviewCardChange): string {
   if (change.kind === "requirement") {
     return change.summary.startsWith("Modified requirement criteria:")
       ? "Modified requirement criteria"
@@ -2522,7 +2604,7 @@ function formatRawDiff(
 function changeDeepLink(
   projectName: string,
   slug: string,
-  change: SemanticChange,
+  change: ReviewCardChange,
   current: ReviewElementView | null,
   handle: string,
 ): string {

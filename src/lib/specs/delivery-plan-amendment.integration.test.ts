@@ -7,7 +7,7 @@ import {
 import { _resetForTesting as resetJobQueue } from "@/lib/jobs/queue";
 import { resetGraphExecutionLifecycleCallbacksForTesting } from "@/lib/workflow-graph/execution-lifecycle-port";
 import { _resetDeliveryGateEvaluatorForTesting } from "@/lib/workflows/merge/delivery-gate-port";
-import { workingDefinitionHash } from "@/lib/workflow-graph/execution-amendment";
+import { workingDefinitionHash } from "@/lib/workflow-graph/working-definition-hash";
 import type {
   GraphWorkflowExecutionAmendedEvent,
   GraphWorkflowLiveEditAppliedEvent,

@@ -774,6 +774,146 @@ describe("SpecReviewMode", () => {
     ).toBeEnabled();
   });
 
+  /**
+   * Ticket #58: after a withdrawn attempt the re-proposed revision carries
+   * most elements unchanged, yet no human ever approved them. The review
+   * screen must let the reviewer read and approve each one individually —
+   * hiding them behind the bulk sign-off act forces approval of everything
+   * at once.
+   */
+  it("offers individual review and approval on an unchanged subject the server still owes", async () => {
+    api.json(
+      "POST",
+      "/api/specs/command-center/native-sdd/actions/approve-item",
+      {
+        id: "approval-new",
+        spec_id: "spec-1",
+        subject_kind: "requirement",
+        element_id: "requirement-1",
+        revision_id: "revision-2",
+        approver: "alex",
+        granted_at: NOW,
+        validity: "valid",
+      },
+    );
+    const user = userEvent.setup();
+    const detail = reviewDetailFixture(false);
+    const base = detail.baseRevision;
+    const current = detail.currentRevision;
+    if (base === null || current === null) {
+      throw new Error("Fixture requires both revisions");
+    }
+    base.revision.state = "withdrawn";
+    base.elements = base.elements.map((entry) =>
+      entry.element.id === "requirement-1"
+        ? {
+            ...entry,
+            version: {
+              ...entry.version,
+              payload: {
+                kind: "requirement" as const,
+                statement: "Every execution pins the exact selected scope.",
+                priority: "must" as const,
+                risk: "high" as const,
+              },
+              payloadHash: "requirement-hash-2",
+            },
+          }
+        : entry,
+    );
+    detail.approvals = detail.approvals.filter(
+      (approval) => approval.subject_kind !== "requirement",
+    );
+    detail.status.pendingApprovals = [
+      { gate: "requirements", subject: "R1", elementId: "requirement-1" },
+    ];
+
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Awaiting approval" }),
+    ).toBeInTheDocument();
+    const requirement = screen.getByTestId("review-change-requirement-1");
+    expect(
+      within(requirement).getByRole("button", {
+        name: /unchanged requirement/i,
+      }),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(requirement.querySelector("p")).toHaveTextContent(
+        "Every execution pins the exact selected scope.",
+      );
+    });
+    expect(
+      within(requirement).getByTestId("review-criterion-criterion-1"),
+    ).toBeVisible();
+    // The quiet carried-forward list keeps only elements that are actually
+    // approved — the promoted subject no longer hides among them.
+    expect(
+      screen.getByRole("button", { name: /1 unchanged element/i }),
+    ).toBeInTheDocument();
+
+    await user.click(
+      within(requirement).getByRole("button", { name: "Approve item" }),
+    );
+
+    expect(await screen.findByText("R1 approved")).toBeInTheDocument();
+    expect(
+      api.requestsTo(
+        "POST",
+        "/api/specs/command-center/native-sdd/actions/approve-item",
+      )[0]?.jsonBody,
+    ).toEqual({
+      revisionId: "revision-2",
+      subjectKind: "requirement",
+      elementId: "requirement-1",
+    });
+  });
+
+  it("surfaces awaiting-approval cards even when the proposed revision matches its base", () => {
+    const detail = reviewDetailFixture(false);
+    const base = detail.baseRevision;
+    const current = detail.currentRevision;
+    if (base === null || current === null) {
+      throw new Error("Fixture requires both revisions");
+    }
+    base.revision.state = "withdrawn";
+    current.elements = base.elements.map((entry) => ({
+      ...entry,
+      version: { ...entry.version, revisionId: current.revision.id },
+    }));
+    detail.approvals = detail.approvals.filter(
+      (approval) => approval.subject_kind !== "requirement",
+    );
+    detail.status.pendingApprovals = [
+      { gate: "requirements", subject: "R1", elementId: "requirement-1" },
+    ];
+
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "No semantic changes — the proposed revision matches its base.",
+      ),
+    ).toBeInTheDocument();
+    const requirement = screen.getByTestId("review-change-requirement-1");
+    expect(
+      within(requirement).getByRole("button", { name: "Approve item" }),
+    ).toBeInTheDocument();
+  });
+
   it("enables sign-off immediately under the fast-path combined policy", async () => {
     const user = userEvent.setup();
     const detail = reviewDetailFixture(false);

@@ -1,9 +1,9 @@
 import type Database from "better-sqlite3";
 import {
   deliveryPlanDocumentSchema,
-  deliveryPlanHash,
   type DeliveryPlanDocument,
 } from "@/lib/specs/delivery-plan";
+import { deliveryPlanHash } from "@/lib/specs/delivery-plan-hash";
 import {
   createSpecEventsPublisher,
   type SpecEventsPublisher,

@@ -27,10 +27,11 @@
  * away from the bytes actually delivered.
  */
 
-import {
-  renderableFocus,
-  type ComposeProfileBlockOptions,
-} from "@/lib/agent-profiles/composer";
+// `renderableFocus` comes from `./block`, not the composer that re-exports it:
+// the composer owns the content hashing and so pulls `node:crypto`, which the
+// browser build cannot carry into the story graphs that reach this module.
+import { renderableFocus } from "@/lib/agent-profiles/block";
+import type { ComposeProfileBlockOptions } from "@/lib/agent-profiles/composer";
 import type { ValidatorAuthority } from "./config-schemas";
 
 export const WORKFLOW_ROLE_CONTRACT_HEADING =
