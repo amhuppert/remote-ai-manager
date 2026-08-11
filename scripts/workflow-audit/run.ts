@@ -145,7 +145,8 @@ interface RawExecutionHit {
   projectPath: string | null;
 }
 
-function parseJsonRecord(text: string): Record<string, unknown> | null {
+function parseJsonRecord(text: unknown): Record<string, unknown> | null {
+  if (typeof text !== "string") return null;
   try {
     const parsed: unknown = JSON.parse(text);
     if (
@@ -159,6 +160,26 @@ function parseJsonRecord(text: string): Record<string, unknown> | null {
     // fall through
   }
   return null;
+}
+
+/**
+ * Normalizes a `.get()` result into a row or a miss. The two drivers behind
+ * `AuditDb` disagree on how they report "no rows": better-sqlite3 returns
+ * `undefined`, bun:sqlite (the CLI driver) returns `null`. Anything that is not
+ * an object is a miss.
+ */
+function firstRow(result: unknown): Record<string, unknown> | null {
+  return typeof result === "object" && result !== null && !Array.isArray(result)
+    ? (result as Record<string, unknown>)
+    : null;
+}
+
+function textColumn(
+  row: Record<string, unknown>,
+  column: string,
+): string | null {
+  const value = row[column];
+  return typeof value === "string" ? value : null;
 }
 
 function findExecutionRaw(
@@ -187,17 +208,15 @@ function findExecutionRaw(
             )
             .get(projectPath, sessionName)
         : undefined;
-  const activeRow = activeQuery as
-    | { definition_json: string; runtime_json: string; project_path: string }
-    | undefined;
-  if (activeRow !== undefined) {
+  const activeRow = firstRow(activeQuery);
+  if (activeRow !== null) {
     const definition = parseJsonRecord(activeRow.definition_json);
     const runtime = parseJsonRecord(activeRow.runtime_json);
     if (definition !== null && runtime !== null) {
       return {
         source: "active",
         raw: { ...definition, ...runtime },
-        projectPath: activeRow.project_path,
+        projectPath: textColumn(activeRow, "project_path"),
       };
     }
   }
@@ -219,16 +238,14 @@ function findExecutionRaw(
             )
             .get(projectPath, sessionName)
         : undefined;
-  const archivedRow = archivedQuery as
-    | { execution_json: string; project_path: string }
-    | undefined;
-  if (archivedRow !== undefined) {
+  const archivedRow = firstRow(archivedQuery);
+  if (archivedRow !== null) {
     const raw = parseJsonRecord(archivedRow.execution_json);
     if (raw !== null) {
       return {
         source: "archived",
         raw,
-        projectPath: archivedRow.project_path,
+        projectPath: textColumn(archivedRow, "project_path"),
       };
     }
   }

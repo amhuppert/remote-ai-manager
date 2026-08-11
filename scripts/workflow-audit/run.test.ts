@@ -20,9 +20,28 @@ import {
   loadAuditInput,
   parseAuditCliArgs,
   resolveFinalPublish,
+  type AuditDb,
 } from "./run";
 
 type Db = InstanceType<typeof Database>;
+
+/**
+ * The CLI runs on bun:sqlite, which reports a `.get()` miss as `null` where
+ * better-sqlite3 reports `undefined`. Archived executions are only reachable
+ * through the active-lookup miss branch, so the loader has to treat both
+ * flavours as a miss.
+ */
+function bunShapedDb(source: Db): AuditDb {
+  return {
+    prepare: (sql: string) => {
+      const statement = source.prepare(sql);
+      return {
+        get: (...params: unknown[]) => statement.get(...params) ?? null,
+        all: (...params: unknown[]) => statement.all(...params),
+      };
+    },
+  };
+}
 
 const PROJECT_PATH = "/repo/example";
 const SESSION_NAME = "feature-x";
@@ -299,6 +318,25 @@ describe("loadAuditInput", () => {
     expect(input?.source).toBe("archived");
     expect(input?.execution.haltReason?.type).toBe("recovery_error");
     expect(input?.paths.workflowLogsDir).toBeNull();
+  });
+
+  it("falls back to the archived table when the driver reports a miss as null", () => {
+    const input = loadAuditInput(
+      { db: bunShapedDb(db), logsBaseDir, transcriptsDir: null },
+      { executionId: ARCHIVED_ID },
+    );
+    expect(input?.source).toBe("archived");
+    expect(input?.execution.id).toBe(ARCHIVED_ID);
+    expect(input?.execution.haltReason?.type).toBe("recovery_error");
+  });
+
+  it("returns null for an unknown execution when the driver reports a miss as null", () => {
+    expect(
+      loadAuditInput(
+        { db: bunShapedDb(db), logsBaseDir, transcriptsDir: null },
+        { executionId: "nope" },
+      ),
+    ).toBeNull();
   });
 
   it("resolves the active execution for a project/session selector", () => {
