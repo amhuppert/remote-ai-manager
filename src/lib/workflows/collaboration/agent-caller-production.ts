@@ -117,36 +117,16 @@ export interface CollaborationProductionAgentCallerInput {
    */
   laneScheduler?: LaneScheduler;
   /**
-   * Model the Codex lane runs with. The asymmetric slice builds Codex requests
-   * without a per-call model, so without this the Codex SDK falls back to its
-   * own built-in default — rejected for ChatGPT-account auth. Resolved from the
-   * global config cascade by the manager. A per-call `request.modelId` (if a
-   * future caller sets one) still takes precedence.
+   * Both flow agents' resolved lane runtimes, keyed by flow-agent id. The
+   * asymmetric slice builds requests without per-call settings, so each lane's
+   * complete profile must cross this boundary: a lane whose request reached an
+   * SDK without a model would fall back to the SDK's own default — rejected
+   * for some accounts and surfacing as a misleading structured-output
+   * validation failure. A per-call `request.modelId` (if a future caller sets
+   * one) still takes precedence. Timeouts follow the backend profile
+   * convention: zero disables the bound.
    */
-  codexModel?: string;
-  /** Reasoning effort the Codex lane runs with, resolved alongside `codexModel`. */
-  codexReasoningEffort?: string;
-  /** Per-conversation speed choice when Codex is the primary collaboration lane. */
-  codexFastMode?: boolean;
-  /** Whole-turn safety bound from the Codex backend profile; zero disables it. */
-  codexTimeoutMs?: number;
-  /** Inactivity bound from the Codex backend profile; zero disables it. */
-  codexStallTimeoutMs?: number;
-  /**
-   * Model the Claude lane runs with. The asymmetric slice builds Claude
-   * `conversation_turn` requests without a per-call model, so without this the
-   * Claude SDK falls back to its CLI default model — which is rejected for
-   * accounts without access to it, surfacing as a misleading structured-output
-   * validation failure. Resolved from the global config cascade by the manager.
-   * A per-call `request.modelId` (if a caller sets one) still takes precedence.
-   */
-  claudeModel?: string;
-  /** Reasoning effort the Claude lane runs with, resolved alongside `claudeModel`. */
-  claudeReasoningEffort?: string;
-  /** Whole-turn safety bound from the Claude backend profile; zero disables it. */
-  claudeTimeoutMs?: number;
-  /** Inactivity bound from the Claude backend profile; zero disables it. */
-  claudeStallTimeoutMs?: number;
+  agents: CollaborationLaneAgentsInput;
   /** Optional override for testing. Defaults to module-level `executeAgentCall`. */
   executeAgentCallImpl?: (
     request: AgentCallRequest,
@@ -176,44 +156,61 @@ type InnerCallAgent = (
   continuity: WorkflowAgentCallContinuity,
 ) => Promise<AgentCallResult>;
 
-interface CollaborationLaneDefaults {
-  model?: string;
+/**
+ * One flow agent's resolved lane runtime as the production caller consumes it.
+ * `model` is deliberately required: every collaboration caller resolves a
+ * concrete model before any lane runs.
+ */
+export interface CollaborationLaneAgentConfig {
+  backend: AgentBackendId;
+  model: string;
   reasoningEffort?: string;
+  /** Meaningful only when `backend` supports fast mode (Codex). */
+  fastMode?: boolean;
+  /**
+   * Whole-turn safety bound from the backend profile; zero disables it.
+   * Absent means the underlying runner's own default applies (the
+   * graph-workflow collaboration path deliberately omits it).
+   */
   timeoutMs?: number;
+  /** Inactivity bound from the backend profile; zero disables it. */
   stallTimeoutMs?: number;
 }
 
-function resolveLaneDefaults(
-  input: CollaborationProductionAgentCallerInput,
-  backend: AgentBackendId,
-): CollaborationLaneDefaults {
-  if (backend === "codex") {
-    return {
-      ...(input.codexModel !== undefined ? { model: input.codexModel } : {}),
-      ...(input.codexReasoningEffort !== undefined
-        ? { reasoningEffort: input.codexReasoningEffort }
-        : {}),
-      ...(input.codexTimeoutMs !== undefined
-        ? { timeoutMs: input.codexTimeoutMs }
-        : {}),
-      ...(input.codexStallTimeoutMs !== undefined
-        ? { stallTimeoutMs: input.codexStallTimeoutMs }
-        : {}),
-    };
-  }
+export interface CollaborationLaneAgentsInput {
+  agent_one: CollaborationLaneAgentConfig;
+  agent_two: CollaborationLaneAgentConfig;
+}
 
-  return {
-    ...(input.claudeModel !== undefined ? { model: input.claudeModel } : {}),
-    ...(input.claudeReasoningEffort !== undefined
-      ? { reasoningEffort: input.claudeReasoningEffort }
-      : {}),
-    ...(input.claudeTimeoutMs !== undefined
-      ? { timeoutMs: input.claudeTimeoutMs }
-      : {}),
-    ...(input.claudeStallTimeoutMs !== undefined
-      ? { stallTimeoutMs: input.claudeStallTimeoutMs }
-      : {}),
-  };
+/**
+ * The flow agent a request addresses, read from its lane ref. Collaboration
+ * lane identity IS the flow agent (`agent_one` | `agent_two`); a request
+ * without one has no lane settings to run under, so this fails loudly rather
+ * than guessing by backend — with a same-backend pair, backend cannot
+ * disambiguate the two lanes.
+ */
+function laneAgentFor(
+  request: AgentCallRequest,
+): keyof CollaborationLaneAgentsInput {
+  const laneId = request.laneRef?.laneId;
+  if (laneId === "agent_one" || laneId === "agent_two") return laneId;
+  throw new Error(
+    `collaboration production callAgent: request laneRef must name a flow agent (agent_one|agent_two), got "${String(laneId)}"`,
+  );
+}
+
+function laneAgentConfigFor(
+  input: CollaborationProductionAgentCallerInput,
+  request: AgentCallRequest,
+): CollaborationLaneAgentConfig {
+  const agent = laneAgentFor(request);
+  const config = input.agents[agent];
+  if (request.backend !== undefined && request.backend !== config.backend) {
+    throw new Error(
+      `collaboration production callAgent: request backend "${request.backend}" does not match ${agent}'s configured backend "${config.backend}"`,
+    );
+  }
+  return config;
 }
 
 function buildInnerCallAgent(
@@ -243,7 +240,7 @@ function buildInnerCallAgent(
     if (request.kind === "task_run") {
       const runner = resolveTaskRunner(request.backend);
       const isCodex = request.backend === "codex";
-      const laneDefaults = resolveLaneDefaults(input, request.backend);
+      const laneDefaults = laneAgentConfigFor(input, request);
       const codexResumeRef =
         continuity.laneAction === "reuse" &&
         continuity.resumeRef &&
@@ -276,8 +273,8 @@ function buildInnerCallAgent(
           ...(effectiveReasoningEffort !== undefined
             ? { reasoningEffort: effectiveReasoningEffort }
             : {}),
-          ...(isCodex && input.codexFastMode !== undefined
-            ? { codexFastMode: input.codexFastMode }
+          ...(isCodex && laneDefaults.fastMode !== undefined
+            ? { codexFastMode: laneDefaults.fastMode }
             : {}),
           ...(laneDefaults.timeoutMs !== undefined
             ? { defaultTimeoutMs: laneDefaults.timeoutMs }
@@ -305,8 +302,8 @@ function buildInnerCallAgent(
       );
     }
 
-    const backend = request.backend ?? "claude";
-    const laneDefaults = resolveLaneDefaults(input, backend);
+    const laneDefaults = laneAgentConfigFor(input, request);
+    const backend = request.backend ?? laneDefaults.backend;
     const claudeResumeRef =
       continuity.laneAction === "reuse" &&
       continuity.resumeRef &&

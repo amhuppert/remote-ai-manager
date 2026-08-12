@@ -145,6 +145,7 @@ export default function ConversationWorkspace({
     activeConversation,
     rawMessages,
     openDocById: store.openDocById,
+    backendDefaults,
   });
   const {
     hasActiveCollab,
@@ -464,6 +465,7 @@ export default function ConversationWorkspace({
       originatingCollabAgent,
       setCollabConfigDraft,
       clearCollabConfigDraft,
+      backendDefaults,
     },
     backendModelEffort: {
       backendLocked,

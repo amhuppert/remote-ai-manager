@@ -26,6 +26,48 @@ import type { ImageAttachment } from "@/hooks/use-image-attachments";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
+import {
+  collaborationAgentTwoRequestSchema,
+  type CollaborationAgentTwoRequest,
+} from "@/lib/workflows/collaboration/types";
+import type { CollabAgentTwoDraft } from "@/stores/collaboration.store";
+import {
+  STANDARD_AGENT_PROFILE_VALUE,
+  parseAgentProfilePickerValue,
+} from "@/components/agent-profiles/agent-profile-picker-state";
+
+/**
+ * Agent Two's start-request payload from the seeded draft. Validated through
+ * the request union so a stale draft (e.g. a model id retired from the
+ * catalog) degrades to the backend-only request — the server then resolves
+ * that backend's defaults — instead of failing the whole start at parse. The
+ * Standard Agent default profile is omitted: absent means default server-side.
+ */
+export function buildAgentTwoStartRequest(
+  draft: CollabAgentTwoDraft,
+): CollaborationAgentTwoRequest | null {
+  const profileRef =
+    draft.profile !== undefined &&
+    draft.profile !== STANDARD_AGENT_PROFILE_VALUE
+      ? parseAgentProfilePickerValue(draft.profile)
+      : null;
+  const candidate = {
+    backend: draft.backend,
+    ...(draft.model !== undefined ? { model: draft.model } : {}),
+    ...(draft.effort !== undefined ? { reasoningEffort: draft.effort } : {}),
+    ...(backendSupportsFastMode(draft.backend) && draft.fastMode !== undefined
+      ? { fastMode: draft.fastMode }
+      : {}),
+    ...(profileRef !== null ? { profile: profileRef } : {}),
+  };
+  const parsed = collaborationAgentTwoRequestSchema.safeParse(candidate);
+  if (parsed.success) return parsed.data;
+  const fallback = collaborationAgentTwoRequestSchema.safeParse({
+    backend: draft.backend,
+    ...(profileRef !== null ? { profile: profileRef } : {}),
+  });
+  return fallback.success ? fallback.data : null;
+}
 
 function samePromptDocument(
   left: SerializedPromptDoc,
@@ -48,6 +90,7 @@ function samePromptDocument(
 }
 
 interface CollabConfig {
+  agentTwo: CollabAgentTwoDraft;
   negotiationRounds: number;
   autonomousResolutionThreshold: "none" | "minor" | "major" | "blocking";
 }
@@ -220,6 +263,9 @@ export function usePromptSubmission({
       const brief = stripCollabPrefix(trimmedPrompt).trim();
       if (!brief) return;
       const collabConversationId = conversationId;
+      const agentTwoPayload = buildAgentTwoStartRequest(
+        effectiveCollabConfig.agentTwo,
+      );
       collaborationStartMutation.mutate(
         {
           brief,
@@ -234,6 +280,7 @@ export function usePromptSubmission({
           ...(backendSupportsFastMode(selectedBackend)
             ? { codexFastMode: selectedCodexFastMode }
             : {}),
+          ...(agentTwoPayload !== null ? { agentTwo: agentTwoPayload } : {}),
           ...(hasImages ? { images: serialized.images } : {}),
         },
         {
@@ -332,8 +379,7 @@ export function usePromptSubmission({
     selectedEffort,
     effortSupported,
     collaborationStartMutation,
-    effectiveCollabConfig.negotiationRounds,
-    effectiveCollabConfig.autonomousResolutionThreshold,
+    effectiveCollabConfig,
     clearCollabConfigDraft,
     projectName,
     sessionName,

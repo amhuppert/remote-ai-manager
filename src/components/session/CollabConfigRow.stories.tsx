@@ -5,6 +5,12 @@ import CollabConfigRow, {
   type CollabConfigRowConfig,
   type CollabConfigRowProps,
 } from "@/components/session/CollabConfigRow";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/catalog";
+
+const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
+  claude: { modelId: "opus", effort: "high" },
+  codex: { modelId: "gpt-5.4", effort: "high", codexFastMode: false },
+};
 
 function StatefulConfigRow(
   props: Omit<CollabConfigRowProps, "config" | "onChange"> & {
@@ -23,8 +29,10 @@ const meta = {
     onChange: fn(),
     onDismiss: fn(),
     originatingAgent: "claude",
+    backendDefaults: BACKEND_DEFAULTS,
+    agentOne: { backend: "claude", model: "fable", effort: "xhigh" },
     config: {
-      secondAgent: "codex",
+      agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
       negotiationRounds: 3,
       autonomousResolutionThreshold: "major",
     },
@@ -41,84 +49,96 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Default = {
-  render: (args) => (
+function statefulRender(args: {
+  onDismiss: CollabConfigRowProps["onDismiss"];
+  originatingAgent: CollabConfigRowProps["originatingAgent"];
+  agentOne?: CollabConfigRowProps["agentOne"];
+  backendDefaults: CollabConfigRowProps["backendDefaults"];
+  config: CollabConfigRowConfig;
+}): React.JSX.Element {
+  return (
     <StatefulConfigRow
       onDismiss={args.onDismiss}
       originatingAgent={args.originatingAgent}
+      {...(args.agentOne !== undefined ? { agentOne: args.agentOne } : {})}
+      backendDefaults={args.backendDefaults}
       initialConfig={args.config}
     />
-  ),
+  );
+}
+
+export const Default = {
+  render: statefulRender,
 } satisfies Story;
 
-export const CodexAsSecond = {
+export const SameBackendPair = {
+  args: {
+    originatingAgent: "claude",
+    agentOne: { backend: "claude", model: "fable", effort: "max" },
+    config: {
+      agentTwo: { backend: "claude", model: "opus", effort: "high" },
+      negotiationRounds: 3,
+      autonomousResolutionThreshold: "major",
+    },
+  },
+  render: statefulRender,
+} satisfies Story;
+
+export const CodexAgentTwoFastMode = {
   args: {
     originatingAgent: "claude",
     config: {
-      secondAgent: "codex",
+      agentTwo: {
+        backend: "codex",
+        model: "gpt-5.6-sol",
+        effort: "xhigh",
+        fastMode: true,
+      },
       negotiationRounds: 5,
       autonomousResolutionThreshold: "major",
     },
   },
-  render: (args) => (
-    <StatefulConfigRow
-      onDismiss={args.onDismiss}
-      originatingAgent={args.originatingAgent}
-      initialConfig={args.config}
-    />
-  ),
+  render: statefulRender,
 } satisfies Story;
 
 export const RoundsAtMin = {
   args: {
     originatingAgent: "claude",
     config: {
-      secondAgent: "codex",
+      agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
       negotiationRounds: 1,
       autonomousResolutionThreshold: "none",
     },
   },
-  render: (args) => (
-    <StatefulConfigRow
-      onDismiss={args.onDismiss}
-      originatingAgent={args.originatingAgent}
-      initialConfig={args.config}
-    />
-  ),
+  render: statefulRender,
 } satisfies Story;
 
 export const RoundsAtMax = {
   args: {
     originatingAgent: "codex",
+    agentOne: {
+      backend: "codex",
+      model: "gpt-5.6-sol",
+      effort: "ultra",
+      fastMode: true,
+    },
     config: {
-      secondAgent: "claude",
+      agentTwo: { backend: "claude", model: "opus", effort: "high" },
       negotiationRounds: 20,
       autonomousResolutionThreshold: "blocking",
     },
   },
-  render: (args) => (
-    <StatefulConfigRow
-      onDismiss={args.onDismiss}
-      originatingAgent={args.originatingAgent}
-      initialConfig={args.config}
-    />
-  ),
+  render: statefulRender,
 } satisfies Story;
 
 export const ThresholdMinor = {
   args: {
     originatingAgent: "claude",
     config: {
-      secondAgent: "codex",
+      agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
       negotiationRounds: 3,
       autonomousResolutionThreshold: "minor",
     },
   },
-  render: (args) => (
-    <StatefulConfigRow
-      onDismiss={args.onDismiss}
-      originatingAgent={args.originatingAgent}
-      initialConfig={args.config}
-    />
-  ),
+  render: statefulRender,
 } satisfies Story;

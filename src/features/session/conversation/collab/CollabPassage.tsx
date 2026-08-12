@@ -11,8 +11,6 @@ import {
 import { createPortal } from "react-dom";
 import type {
   CollaborationAgent,
-  CollaborationAgentModelSettings,
-  CollaborationAgentModelSettingsMap,
   CollaborationArtifact,
   CollaborationCounterProposalOutput,
   CollaborationCrossReviewOutput,
@@ -49,7 +47,11 @@ import CollabMobileBar from "@/features/session/conversation/collab/CollabMobile
 import CollabControlSheet from "@/features/session/conversation/collab/CollabControlSheet";
 import CollabReaderOverlay from "@/features/session/conversation/collab/CollabReaderOverlay";
 import { CollabCardOrchestrationProvider } from "@/features/session/conversation/collab/CollabCollapsibleCard";
-import type { CollabPassageStatus } from "@/features/session/conversation/collab/envelope-adapter";
+import type {
+  CollabAgentDisplay,
+  CollabAgentsDisplayMap,
+  CollabPassageStatus,
+} from "@/features/session/conversation/collab/envelope-adapter";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/ui/cn";
 
@@ -79,7 +81,7 @@ export interface CollabPassageProps {
   sessionName?: string;
   workflowId: string;
   primary: CollaborationAgent;
-  agentModelSettings?: CollaborationAgentModelSettingsMap;
+  agents?: CollabAgentsDisplayMap;
   status: CollabPassageStatus;
   artifacts: CollaborationArtifact[];
   pauseHandlers?: CollabPauseHandlers;
@@ -109,7 +111,12 @@ export interface GroupedArtifacts {
 export function flowAgentToBackend(
   flow: CollaborationFlowAgent,
   primary: CollaborationAgent,
+  agents?: CollabAgentsDisplayMap,
 ): CollaborationAgent {
+  // Configured per-agent backends win (a pair may share one backend); the
+  // opposite-backend derivation covers runs that predate per-agent configs.
+  const configured = agents?.[flow]?.backend;
+  if (configured !== undefined) return configured;
   if (flow === "agent_one") return primary;
   return primary === "claude" ? "codex" : "claude";
 }
@@ -369,7 +376,7 @@ function pushPendingCard(
   cards: CardEntry[],
   rows: Array<{ rowId: string; cardIds: string[]; rowKind: string }>,
   step: CollabPendingStep,
-  modelSettings: CollaborationAgentModelSettings | undefined,
+  modelSettings: CollabAgentDisplay | undefined,
 ): void {
   cards.push({
     id: step.id,
@@ -401,7 +408,7 @@ function buildTimeline(
   workflowId: string,
   grouped: GroupedArtifacts,
   primary: CollaborationAgent,
-  agentModelSettings: CollaborationAgentModelSettingsMap | undefined,
+  agents: CollabAgentsDisplayMap | undefined,
   artifacts: CollaborationArtifact[],
   latestNonFinal: CollaborationArtifact | undefined,
   pauseHandlers: CollabPauseHandlers | undefined,
@@ -414,8 +421,8 @@ function buildTimeline(
   const isLatest = (artifact: CollaborationArtifact): boolean =>
     latestNonFinal !== undefined && latestNonFinal === artifact;
   const settingsFor = (
-    agent: CollaborationAgent,
-  ): CollaborationAgentModelSettings | undefined => agentModelSettings?.[agent];
+    flow: CollaborationFlowAgent,
+  ): CollabAgentDisplay | undefined => agents?.[flow];
   const artifactFileUrl =
     projectName && sessionName
       ? (artifact: { path: string }): string =>
@@ -436,10 +443,8 @@ function buildTimeline(
         parallelGroup: "drafts",
         render: () => (
           <CollabInitialDraftCard
-            agent={flowAgentToBackend(primaryDraft.agent, primary)}
-            modelSettings={settingsFor(
-              flowAgentToBackend(primaryDraft.agent, primary),
-            )}
+            agent={flowAgentToBackend(primaryDraft.agent, primary, agents)}
+            modelSettings={settingsFor(primaryDraft.agent)}
             isPrimary
             summary={primaryDraft.summary}
             artifacts={primaryDraft.artifacts}
@@ -460,10 +465,8 @@ function buildTimeline(
         parallelGroup: "drafts",
         render: () => (
           <CollabInitialDraftCard
-            agent={flowAgentToBackend(secondaryDraft.agent, primary)}
-            modelSettings={settingsFor(
-              flowAgentToBackend(secondaryDraft.agent, primary),
-            )}
+            agent={flowAgentToBackend(secondaryDraft.agent, primary, agents)}
+            modelSettings={settingsFor(secondaryDraft.agent)}
             isPrimary={false}
             summary={secondaryDraft.summary}
             artifacts={secondaryDraft.artifacts}
@@ -480,8 +483,8 @@ function buildTimeline(
 
   if (grouped.crossReview) {
     const cr = grouped.crossReview;
-    const reviewerAgent = flowAgentToBackend(cr.agent, primary);
-    const targetAgent = flowAgentToBackend(cr.target_agent, primary);
+    const reviewerAgent = flowAgentToBackend(cr.agent, primary, agents);
+    const targetAgent = flowAgentToBackend(cr.target_agent, primary, agents);
     const lane: CollabConnectorAnchor =
       cr.agent === "agent_one" ? "left" : "right";
     const sourceLaneOverride: CollabConnectorAnchor =
@@ -494,7 +497,7 @@ function buildTimeline(
       render: () => (
         <CollabCrossReviewCard
           reviewerAgent={reviewerAgent}
-          reviewerModelSettings={settingsFor(reviewerAgent)}
+          reviewerModelSettings={settingsFor(cr.agent)}
           targetAgent={targetAgent}
           summary={cr.summary}
           artifacts={cr.artifacts}
@@ -522,10 +525,8 @@ function buildTimeline(
         lane: "left",
         render: () => (
           <CollabProposedChangesCard
-            fromAgent={flowAgentToBackend(proposed.agent, primary)}
-            fromModelSettings={settingsFor(
-              flowAgentToBackend(proposed.agent, primary),
-            )}
+            fromAgent={flowAgentToBackend(proposed.agent, primary, agents)}
+            fromModelSettings={settingsFor(proposed.agent)}
             round={proposed.round}
             summary={proposed.summary}
             artifacts={proposed.artifacts}
@@ -553,10 +554,8 @@ function buildTimeline(
         lane: "right",
         render: () => (
           <CollabCounterProposalCard
-            fromAgent={flowAgentToBackend(counter.agent, primary)}
-            fromModelSettings={settingsFor(
-              flowAgentToBackend(counter.agent, primary),
-            )}
+            fromAgent={flowAgentToBackend(counter.agent, primary, agents)}
+            fromModelSettings={settingsFor(counter.agent)}
             round={counter.round}
             summary={counter.summary}
             artifacts={counter.artifacts}
@@ -584,10 +583,8 @@ function buildTimeline(
         lane: "full",
         render: () => (
           <CollabResolutionDecisionCard
-            agent={flowAgentToBackend(decision.agent, primary)}
-            modelSettings={settingsFor(
-              flowAgentToBackend(decision.agent, primary),
-            )}
+            agent={flowAgentToBackend(decision.agent, primary, agents)}
+            modelSettings={settingsFor(decision.agent)}
             round={decision.round}
             agreement_reached={decision.agreement_reached}
             next_action={decision.next_action}
@@ -651,8 +648,8 @@ function buildTimeline(
       lane: "full",
       render: () => (
         <CollabFinalAnswerMessage
-          agent={flowAgentToBackend(fa.agent, primary)}
-          modelSettings={settingsFor(flowAgentToBackend(fa.agent, primary))}
+          agent={flowAgentToBackend(fa.agent, primary, agents)}
+          modelSettings={settingsFor(fa.agent)}
           summary={fa.summary}
           artifacts={fa.artifacts}
           answer_artifact_id={fa.answer_artifact_id}
@@ -671,8 +668,13 @@ function buildTimeline(
   // Each lands in the lane cell its real card will occupy, so the arriving
   // artifact is a fill-in rather than a layout jump. Appended before connectors
   // are computed so the frontier card wires up to the preceding beat.
-  for (const step of deriveCollabPendingSteps(grouped, status, primary)) {
-    pushPendingCard(cards, rows, step, settingsFor(step.agent));
+  for (const step of deriveCollabPendingSteps(
+    grouped,
+    status,
+    primary,
+    agents,
+  )) {
+    pushPendingCard(cards, rows, step, settingsFor(step.flowAgent));
   }
 
   const connectorsByBeforeId = new Map<string, ConnectorEntry>();
@@ -708,7 +710,7 @@ export default function CollabPassage({
   sessionName,
   workflowId,
   primary,
-  agentModelSettings,
+  agents,
   status,
   artifacts,
   pauseHandlers,
@@ -737,7 +739,7 @@ export default function CollabPassage({
         workflowId,
         grouped,
         primary,
-        agentModelSettings,
+        agents,
         artifacts,
         latestNonFinal,
         pauseHandlers,
@@ -749,7 +751,7 @@ export default function CollabPassage({
       grouped,
       projectName,
       primary,
-      agentModelSettings,
+      agents,
       artifacts,
       latestNonFinal,
       pauseHandlers,

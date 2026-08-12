@@ -62,13 +62,13 @@ describe("collaboration store — /collab config drafts", () => {
       .getState()
       .setCollabConfigDraft("proj", "sess-a", "conv-2", {
         ...DEFAULT_COLLAB_CONFIG_DRAFT,
-        secondAgent: "claude",
+        agentTwo: { backend: "claude", model: "opus", effort: "high" },
       });
 
     const drafts =
       useCollaborationStore.getState().collabConfigDraftsByConversation;
     expect(drafts["proj::sess-a::conv-1"]?.negotiationRounds).toBe(5);
-    expect(drafts["proj::sess-a::conv-2"]?.secondAgent).toBe("claude");
+    expect(drafts["proj::sess-a::conv-2"]?.agentTwo?.backend).toBe("claude");
   });
 
   it("clears a draft for one conversation without affecting others", () => {

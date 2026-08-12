@@ -128,13 +128,21 @@ function makeSlices(
       hasActiveCollab: false,
       hasCollabChip: false,
       effectiveCollabConfig: {
-        secondAgent: "codex",
+        agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
         negotiationRounds: 2,
         autonomousResolutionThreshold: "minor",
       },
       originatingCollabAgent: "claude",
       setCollabConfigDraft: vi.fn(),
       clearCollabConfigDraft: vi.fn(),
+      backendDefaults: {
+        claude: { modelId: "opus", effort: "high" as const },
+        codex: {
+          modelId: "gpt-5.4",
+          effort: "high" as const,
+          codexFastMode: false,
+        },
+      },
     },
     backendModelEffort: {
       backendLocked: false,

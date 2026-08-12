@@ -206,19 +206,49 @@ export type CallPrimitiveOutcome =
   | { kind: "ok"; result: AgentCallResult }
   | { kind: "failed"; errorSummary: string };
 
+/**
+ * The lane's governing instruction string: session context first, then the
+ * profile block. Each part is self-delimited (the profile block carries its
+ * own fences), so joining preserves every part byte-for-byte.
+ */
+function joinLaneInstructions(
+  base: string | null,
+  profileBlock: string | undefined,
+): string | null {
+  const parts: string[] = [];
+  if (base !== null) parts.push(base);
+  if (profileBlock !== undefined && profileBlock.trim().length > 0) {
+    parts.push(profileBlock);
+  }
+  if (parts.length === 0) return null;
+  return parts.join("\n\n");
+}
+
 export async function callPrimitive(
   ctx: CallPrimitiveContext,
 ): Promise<CallPrimitiveOutcome> {
   const { input, deps, backend, prompt, imageRefs } = ctx;
   const writeCapability = ctx.writeCapability ?? DEFAULT_LANE_WRITE_CAPABILITY;
-  const laneRef = { workflowId: input.workflowId, laneId: backend };
+  // Lane identity is the flow agent, not the backend: both agents may run the
+  // same backend, and their lanes must stay distinct continuity records.
+  const laneRef = { workflowId: input.workflowId, laneId: ctx.flowAgent };
 
   // The one seam that decorates a collaboration request with the run's captured
   // premises, so every phase and both lanes get identical context regardless of
   // which backend runs them. Each context keeps the channel matching its
   // authority: the charter governs the call, the ticket view is task context on
   // the work prompt. A snapshot with neither leaves the request untouched.
-  const systemInstructions = buildLaneSystemInstructions(input.sessionContext);
+  //
+  // The lane's agent-profile layer rides the same channel: the STORED rendered
+  // block is appended verbatim (never re-rendered), so a restart replays the
+  // exact bytes the run was staffed with. The Standard Agent default renders
+  // an empty block and appends nothing.
+  const profileBlock =
+    input.agents?.[ctx.flowAgent]?.profileSnapshot?.renderedInstructionBlock;
+  const systemInstructions = joinLaneInstructions(
+    buildLaneSystemInstructions(input.sessionContext),
+    profileBlock,
+  );
   const governance =
     systemInstructions !== null ? { systemInstructions } : ({} as const);
   const composedPrompt = prefixPromptWithTicketBlock(

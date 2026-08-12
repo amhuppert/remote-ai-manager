@@ -52,9 +52,9 @@ import type {
 import type { WorkflowEnvelopeStore } from "@/lib/workflows/primitives/workflow-envelope-store";
 import { buildAgentOneFinalAnswerPrompt } from "./prompt-builders";
 import {
+  agentOneLaneSeedRef,
   buildCollaborationLaneSeeds,
   oppositeCollaborationBackend,
-  primaryLaneSeedRef,
 } from "./backend-pair";
 import {
   decideCollaborationNextStep,
@@ -64,7 +64,7 @@ import {
   collaborationFinalAnswerContentSchema,
   collaborationFinalAnswerOutputSchema,
   type CollaborationAgent,
-  type CollaborationAgentModelSettingsMap,
+  type CollaborationAgentsMap,
   type CollaborationArtifact,
   type CollaborationAutonomousResolutionThreshold,
   type CollaborationCounterProposalOutput,
@@ -112,22 +112,21 @@ export interface AsymmetricCollaborationSliceInput {
    */
   sessionKey: string;
   /**
-   * The Primary's backend. Agent Two is automatically routed to the opposite
-   * backend (`claude` if primary is `codex`, otherwise `codex`).
+   * Agent One's backend — the originating conversation's agent. When `agents`
+   * is present its `agent_one.backend` must agree with this; when absent,
+   * Agent Two defaults to the opposite backend.
    */
   primaryAgentBackend: CollaborationAgent;
   /**
-   * The originating conversation's explicit speed selection when Codex is the
-   * primary backend. Omitted for Claude-primary runs so their secondary Codex
-   * lane keeps the task runner's Standard behavior.
+   * Both flow agents' fully resolved runtimes (backend, concrete model,
+   * effort, fast mode, optional profile snapshot), resolved by the caller.
+   * Authoritative for each lane's backend when present — including
+   * same-backend pairs — and written into the envelope's feature snapshot so
+   * the UI can label artifacts and resume can replay the exact settings.
+   * Optional so test fixtures and legacy callers keep the default
+   * opposite-backend derivation.
    */
-  codexFastMode?: boolean;
-  /**
-   * The model + effort each lane runs with, resolved by the manager.
-   * Written into the envelope's feature snapshot so the UI can label
-   * artifacts with the model that produced them.
-   */
-  agentModelSettings?: CollaborationAgentModelSettingsMap;
+  agents?: CollaborationAgentsMap;
   negotiationRounds: number;
   autonomousResolutionThreshold: CollaborationAutonomousResolutionThreshold;
   /**
@@ -299,13 +298,15 @@ export async function runAsymmetricCollaborationSlice(
   }
 
   const now = deps.now ?? (() => new Date().toISOString());
-  const agentTwoBackend: CollaborationAgent = oppositeCollaborationBackend(
-    input.primaryAgentBackend,
-  );
+  const agentTwoBackend: CollaborationAgent =
+    input.agents?.agent_two.backend ??
+    oppositeCollaborationBackend(input.primaryAgentBackend);
   const backendForAgent = (
     agent: CollaborationFlowAgent,
   ): CollaborationAgent =>
-    agent === "agent_one" ? input.primaryAgentBackend : agentTwoBackend;
+    agent === "agent_one"
+      ? (input.agents?.agent_one.backend ?? input.primaryAgentBackend)
+      : agentTwoBackend;
 
   const tracker: ArtifactTracker = {
     artifacts: [],
@@ -318,12 +319,9 @@ export async function runAsymmetricCollaborationSlice(
       : {}),
   };
 
-  await initializeLanes(input, deps, now);
+  await initializeLanes(input, deps, now, backendForAgent);
   const { resumeArtifacts, resumeNegotiationRoundsCompleted } =
-    await initializeEnvelope(input, deps, now, {
-      primaryBackend: input.primaryAgentBackend,
-      secondaryBackend: agentTwoBackend,
-    });
+    await initializeEnvelope(input, deps, now);
   publishStatus(deps, input.workflowId, "running", {
     kind: "asymmetric_started",
     primaryAgentBackend: input.primaryAgentBackend,
@@ -616,20 +614,23 @@ async function initializeLanes(
   input: AsymmetricCollaborationSliceInput,
   deps: AsymmetricCollaborationSliceDeps,
   now: () => string,
+  backendForAgent: (agent: CollaborationFlowAgent) => CollaborationAgent,
 ): Promise<void> {
-  // Only the primary lane inherits the originating conversation's ref; the
-  // opposite lane always starts fresh.
+  // Only agent_one inherits the originating conversation's ref; agent_two
+  // always starts fresh — even when both agents run the same backend.
   const seeds = buildCollaborationLaneSeeds({
     workflowId: input.workflowId,
     writeCapability: "write_capable",
     policy: { continuityEnabled: true },
     lastUsedAt: now(),
-    seedRefFor: (backend) =>
-      primaryLaneSeedRef(
-        backend,
-        input.primaryAgentBackend,
-        input.priorBackendRef,
-      ),
+    backendFor: backendForAgent,
+    seedRefFor: (agent) =>
+      agent === "agent_one"
+        ? agentOneLaneSeedRef(
+            backendForAgent("agent_one"),
+            input.priorBackendRef,
+          )
+        : null,
   });
   for (const seed of seeds) {
     await initializeLaneIfMissing(deps, seed);
@@ -661,7 +662,7 @@ async function readPrimaryLaneAdvancedRef(
 ): Promise<AgentSessionRef | null> {
   const lane = await deps.laneService.resolve({
     workflowId: input.workflowId,
-    laneId: input.primaryAgentBackend,
+    laneId: "agent_one",
   });
   if (!lane) return null;
   return laneSessionRef(lane);
@@ -682,10 +683,6 @@ async function initializeEnvelope(
   input: AsymmetricCollaborationSliceInput,
   deps: AsymmetricCollaborationSliceDeps,
   now: () => string,
-  backends: {
-    primaryBackend: CollaborationAgent;
-    secondaryBackend: CollaborationAgent;
-  },
 ): Promise<InitializeEnvelopeOutcome> {
   const timestamp = now();
 
@@ -739,14 +736,7 @@ async function initializeEnvelope(
         mode: "asymmetric",
         brief: input.brief,
         primaryAgentBackend: input.primaryAgentBackend,
-        primaryBackend: backends.primaryBackend,
-        secondaryBackend: backends.secondaryBackend,
-        ...(input.codexFastMode !== undefined
-          ? { codexFastMode: input.codexFastMode }
-          : {}),
-        ...(input.agentModelSettings !== undefined
-          ? { agentModelSettings: input.agentModelSettings }
-          : {}),
+        ...(input.agents !== undefined ? { agents: input.agents } : {}),
         negotiationRounds: input.negotiationRounds,
         negotiationRoundsCompleted: previousRoundsCompleted,
         autonomousResolutionThreshold: input.autonomousResolutionThreshold,

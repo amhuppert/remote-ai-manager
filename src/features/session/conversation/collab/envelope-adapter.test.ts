@@ -86,31 +86,96 @@ describe("parseCollabFeatureSnapshot", () => {
     expect(parsed!.artifacts).toHaveLength(1);
   });
 
-  it("extracts per-agent model settings when the snapshot carries them", () => {
+  it("extracts the typed per-flow-agent settings when the snapshot carries them", () => {
+    const parsed = parseCollabFeatureSnapshot({
+      ...(makeEnvelope().featureSnapshot as Record<string, unknown>),
+      agents: {
+        agent_one: { backend: "claude", model: "fable", effort: "max" },
+        agent_two: {
+          backend: "claude",
+          model: "opus",
+          effort: "high",
+          fastMode: false,
+        },
+      },
+    });
+    expect(parsed).not.toBeNull();
+    expect(parsed!.agents).toEqual({
+      agent_one: { backend: "claude", model: "fable", effort: "max" },
+      agent_two: {
+        backend: "claude",
+        model: "opus",
+        effort: "high",
+        fastMode: false,
+      },
+    });
+  });
+
+  it("decodes legacy backend-keyed agentModelSettings into the per-agent view via the opposite pairing", () => {
+    // Base snapshot has primaryAgentBackend claude, so agent_one=claude,
+    // agent_two=codex under the pairing rule the legacy envelope was written
+    // with. The legacy codexFastMode flag belonged to the codex lane.
     const parsed = parseCollabFeatureSnapshot({
       ...(makeEnvelope().featureSnapshot as Record<string, unknown>),
       agentModelSettings: {
         claude: { model: "fable", effort: "max" },
         codex: { model: "gpt-5.5" },
       },
+      codexFastMode: true,
     });
     expect(parsed).not.toBeNull();
-    expect(parsed!.agentModelSettings).toEqual({
-      claude: { model: "fable", effort: "max" },
-      codex: { model: "gpt-5.5" },
+    expect(parsed!.agents).toEqual({
+      agent_one: { backend: "claude", model: "fable", effort: "max" },
+      agent_two: { backend: "codex", model: "gpt-5.5", fastMode: true },
     });
   });
 
-  it("leaves agentModelSettings undefined for snapshots that predate the field or carry a malformed value", () => {
+  it("reduces a lane's profile snapshot to its display name and omits the Standard Agent default", () => {
+    const snapshot = (tier: string, id: string, name: string) => ({
+      tier,
+      id,
+      name,
+      revision: 2,
+      sourceContentHash: `sha256:${"a".repeat(64)}`,
+      instructions: "secret instruction text",
+      renderedInstructionBlock: "<<<BLOCK>>>secret instruction text<<<END>>>",
+      resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+    });
+    const parsed = parseCollabFeatureSnapshot({
+      ...(makeEnvelope().featureSnapshot as Record<string, unknown>),
+      agents: {
+        agent_one: {
+          backend: "claude",
+          model: "fable",
+          profileSnapshot: snapshot(
+            "builtin",
+            "standard-agent",
+            "Standard Agent",
+          ),
+        },
+        agent_two: {
+          backend: "claude",
+          model: "opus",
+          profileSnapshot: snapshot("global", "reviewer", "Reviewer"),
+        },
+      },
+    });
+    expect(parsed).not.toBeNull();
+    // Identity only crosses into UI props — never the instruction bytes.
+    expect(parsed!.agents).toEqual({
+      agent_one: { backend: "claude", model: "fable" },
+      agent_two: { backend: "claude", model: "opus", profileName: "Reviewer" },
+    });
+  });
+
+  it("leaves agents undefined for snapshots that predate either field or carry a malformed value", () => {
     const base = makeEnvelope().featureSnapshot as Record<string, unknown>;
-    expect(parseCollabFeatureSnapshot(base)!.agentModelSettings).toBe(
-      undefined,
-    );
+    expect(parseCollabFeatureSnapshot(base)!.agents).toBe(undefined);
     expect(
       parseCollabFeatureSnapshot({
         ...base,
         agentModelSettings: { claude: { model: 42 } },
-      })!.agentModelSettings,
+      })!.agents,
     ).toBe(undefined);
   });
 });
@@ -135,22 +200,22 @@ describe("envelopeToCollabPassageProps", () => {
     expect(props!.artifacts[0]!.kind).toBe("initial_draft");
   });
 
-  it("forwards agentModelSettings to the passage props when present", () => {
+  it("forwards the per-agent settings to the passage props when present", () => {
     const env = makeEnvelope({
       featureSnapshot: {
         ...(makeEnvelope().featureSnapshot as Record<string, unknown>),
-        agentModelSettings: {
-          claude: { model: "fable", effort: "max" },
-          codex: { model: "gpt-5.5", effort: "high" },
+        agents: {
+          agent_one: { backend: "claude", model: "fable", effort: "max" },
+          agent_two: { backend: "codex", model: "gpt-5.5", effort: "high" },
         },
       },
     });
 
     const props = envelopeToCollabPassageProps(env);
     expect(props).not.toBeNull();
-    expect(props!.agentModelSettings).toEqual({
-      claude: { model: "fable", effort: "max" },
-      codex: { model: "gpt-5.5", effort: "high" },
+    expect(props!.agents).toEqual({
+      agent_one: { backend: "claude", model: "fable", effort: "max" },
+      agent_two: { backend: "codex", model: "gpt-5.5", effort: "high" },
     });
   });
 

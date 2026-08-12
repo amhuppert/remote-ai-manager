@@ -186,7 +186,7 @@ async function buildTestHarness(
   for (const lane of [
     {
       workflowId: input.workflowId,
-      laneId: "claude" as const,
+      laneId: "agent_one" as const,
       backend: "claude" as const,
       writeCapability: "write_capable" as const,
       policy: { continuityEnabled: true },
@@ -196,7 +196,7 @@ async function buildTestHarness(
     },
     {
       workflowId: input.workflowId,
-      laneId: "codex" as const,
+      laneId: "agent_two" as const,
       backend: "codex" as const,
       writeCapability: "write_capable" as const,
       policy: { continuityEnabled: true },

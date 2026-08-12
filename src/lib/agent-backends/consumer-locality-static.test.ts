@@ -300,7 +300,7 @@ describe("consumer-locality static half: corpus E backend-id scan", () => {
  * Equal-to-observed ratchet: when a slice removes branch lines, this pin must
  * be ratcheted down in the same change — it may never drift upward.
  */
-export const SCOPED_BACKEND_IDENTITY_BRANCH_LINES = 7;
+export const SCOPED_BACKEND_IDENTITY_BRANCH_LINES = 5;
 
 const SCOPED_GREP =
   /backend === "claude"|backend === "codex"|agentBackend === /;

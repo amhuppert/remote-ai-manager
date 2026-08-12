@@ -200,6 +200,7 @@ function useComposerProps(
     originatingCollabAgent: collaboration.originatingCollabAgent,
     setCollabConfigDraft: collaboration.setCollabConfigDraft,
     clearCollabConfigDraft: collaboration.clearCollabConfigDraft,
+    collabBackendDefaults: collaboration.backendDefaults,
     debugToggleMutation: prompt.debugToggleMutation,
   });
 }

@@ -1,4 +1,5 @@
 import { backendLabel } from "@/lib/agent-backends/catalog";
+import type { CollabAgentsDisplayMap } from "@/features/session/conversation/collab/envelope-adapter";
 import type {
   CollaborationAgent,
   CollaborationFlowAgent,
@@ -56,17 +57,12 @@ export interface CollabPendingStep {
   lines: number;
 }
 
-function backendFor(
-  flowAgent: CollaborationFlowAgent,
-  primary: CollaborationAgent,
-): CollaborationAgent {
-  if (flowAgent === "agent_one") return primary;
-  return primary === "claude" ? "codex" : "claude";
-}
+/** Resolves a flow agent's backend for accent colour and labels. */
+type BackendOf = (flowAgent: CollaborationFlowAgent) => CollaborationAgent;
 
 function draftStep(
   flowAgent: CollaborationFlowAgent,
-  primary: CollaborationAgent,
+  backendOf: BackendOf,
   lane: CollabConnectorAnchor,
 ): CollabPendingStep {
   return {
@@ -76,7 +72,7 @@ function draftStep(
         : "pending-draft-secondary",
     kind: "initial_draft",
     flowAgent,
-    agent: backendFor(flowAgent, primary),
+    agent: backendOf(flowAgent),
     lane,
     rowId: "drafts",
     rowKind: "drafts",
@@ -87,15 +83,12 @@ function draftStep(
   };
 }
 
-function proposedStep(
-  round: number,
-  primary: CollaborationAgent,
-): CollabPendingStep {
+function proposedStep(round: number, backendOf: BackendOf): CollabPendingStep {
   return {
     id: `pending-round-${round}-proposed`,
     kind: "proposed_changes",
     flowAgent: "agent_one",
-    agent: backendFor("agent_one", primary),
+    agent: backendOf("agent_one"),
     lane: "left",
     rowId: `round-${round}-proposed`,
     rowKind: "proposed",
@@ -107,15 +100,12 @@ function proposedStep(
   };
 }
 
-function counterStep(
-  round: number,
-  primary: CollaborationAgent,
-): CollabPendingStep {
+function counterStep(round: number, backendOf: BackendOf): CollabPendingStep {
   return {
     id: `pending-round-${round}-counter`,
     kind: "counter_proposal",
     flowAgent: "agent_two",
-    agent: backendFor("agent_two", primary),
+    agent: backendOf("agent_two"),
     lane: "right",
     rowId: `round-${round}-counter`,
     rowKind: "counter",
@@ -127,15 +117,12 @@ function counterStep(
   };
 }
 
-function decisionStep(
-  round: number,
-  primary: CollaborationAgent,
-): CollabPendingStep {
+function decisionStep(round: number, backendOf: BackendOf): CollabPendingStep {
   return {
     id: `pending-round-${round}-decision`,
     kind: "resolution_decision",
     flowAgent: "agent_one",
-    agent: backendFor("agent_one", primary),
+    agent: backendOf("agent_one"),
     lane: "full",
     rowId: `round-${round}-decision`,
     rowKind: "decision",
@@ -147,12 +134,12 @@ function decisionStep(
   };
 }
 
-function finalStep(primary: CollaborationAgent): CollabPendingStep {
+function finalStep(backendOf: BackendOf): CollabPendingStep {
   return {
     id: "pending-final-answer",
     kind: "final_answer",
     flowAgent: "agent_one",
-    agent: backendFor("agent_one", primary),
+    agent: backendOf("agent_one"),
     lane: "full",
     rowId: "final-answer",
     rowKind: "final-answer",
@@ -176,8 +163,20 @@ export function deriveCollabPendingSteps(
   grouped: GroupedArtifacts,
   status: CollabPassageStatus,
   primary: CollaborationAgent,
+  agents?: CollabAgentsDisplayMap,
 ): CollabPendingStep[] {
   if (status !== "drafting" && status !== "negotiating") return [];
+
+  // Configured per-agent backends win (they may name the SAME backend for
+  // both agents); the opposite-backend derivation is only the fallback for
+  // runs that predate per-agent configs.
+  const backendOf: BackendOf = (flowAgent) =>
+    agents?.[flowAgent]?.backend ??
+    (flowAgent === "agent_one"
+      ? primary
+      : primary === "claude"
+        ? "codex"
+        : "claude");
 
   // Walk the frontier most-advanced-first so a partial snapshot (a later beat
   // present without an earlier one) resolves to the furthest step reached, never
@@ -188,17 +187,17 @@ export function deriveCollabPendingSteps(
   const last = lastRound(grouped.rounds);
   if (last) {
     if (last.proposed && !last.counter && !last.decision) {
-      return [counterStep(last.round, primary)];
+      return [counterStep(last.round, backendOf)];
     }
     if (last.proposed && last.counter && !last.decision) {
-      return [decisionStep(last.round, primary)];
+      return [decisionStep(last.round, backendOf)];
     }
     if (last.decision) {
       if (last.decision.next_action === "continue_negotiation") {
-        return [proposedStep(last.round + 1, primary)];
+        return [proposedStep(last.round + 1, backendOf)];
       }
       if (last.decision.next_action === "final") {
-        return [finalStep(primary)];
+        return [finalStep(backendOf)];
       }
       // ask_user pauses (the open-conflicts card takes over); fail is terminal —
       // neither shows a pending card.
@@ -209,7 +208,7 @@ export function deriveCollabPendingSteps(
   // Phase 2 — cross-review done means agent_one's first proposal is next; not yet
   // means agent_two is still reviewing agent_one's draft (folded review;
   // agent_one's own review lands inside its proposed_changes).
-  if (grouped.crossReview) return [proposedStep(1, primary)];
+  if (grouped.crossReview) return [proposedStep(1, backendOf)];
 
   const hasPrimaryDraft = grouped.initialDrafts.some(
     (d) => d.agent === "agent_one",
@@ -223,14 +222,14 @@ export function deriveCollabPendingSteps(
         id: "pending-cross-review",
         kind: "cross_review",
         flowAgent: "agent_two",
-        agent: backendFor("agent_two", primary),
+        agent: backendOf("agent_two"),
         lane: "right",
         sourceLaneOverride: "left",
         rowId: "cross-review",
         rowKind: "cross-review",
         mergeIntoDraftsRow: false,
         eyebrow: "Cross-review",
-        statusText: `reviewing ${backendLabel(primary)}'s draft`,
+        statusText: `reviewing ${backendLabel(backendOf("agent_one"))}'s draft`,
         lines: 2,
       },
     ];
@@ -239,7 +238,9 @@ export function deriveCollabPendingSteps(
   // Phase 1 — drafts run in parallel; a lane still missing its draft is an agent
   // still writing.
   const steps: CollabPendingStep[] = [];
-  if (!hasPrimaryDraft) steps.push(draftStep("agent_one", primary, "left"));
-  if (!hasSecondaryDraft) steps.push(draftStep("agent_two", primary, "right"));
+  if (!hasPrimaryDraft) steps.push(draftStep("agent_one", backendOf, "left"));
+  if (!hasSecondaryDraft) {
+    steps.push(draftStep("agent_two", backendOf, "right"));
+  }
   return steps;
 }

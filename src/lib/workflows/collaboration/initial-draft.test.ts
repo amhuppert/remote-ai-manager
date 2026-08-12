@@ -159,7 +159,7 @@ async function buildTestHarness(
 
   const claudeLane: LaneState = {
     workflowId: input.workflowId,
-    laneId: "claude",
+    laneId: "agent_one",
     backend: "claude",
     writeCapability: "write_capable",
     policy: { continuityEnabled: true },
@@ -169,7 +169,7 @@ async function buildTestHarness(
   };
   const codexLane: LaneState = {
     workflowId: input.workflowId,
-    laneId: "codex",
+    laneId: "agent_two",
     backend: "codex",
     writeCapability: "write_capable",
     policy: { continuityEnabled: true },

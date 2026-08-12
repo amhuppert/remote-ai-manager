@@ -78,6 +78,7 @@ describe("usePromptSubmission", () => {
         clearImages: () => {},
         suppressPendingPromptAutosaveAfterSubmit: clearPersisted,
         effectiveCollabConfig: {
+          agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
           negotiationRounds: 2,
           autonomousResolutionThreshold: "minor",
         },
@@ -114,6 +115,9 @@ describe("usePromptSubmission", () => {
       backend: "claude",
       modelId: "sonnet",
       effort: "medium",
+      // Agent Two's seeded draft rides along so the server runs exactly what
+      // the config row showed.
+      agentTwo: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
     });
     expect(clearCollabConfigDraft).toHaveBeenCalledWith("p", "s", "c");
     expect(sendPrompt).not.toHaveBeenCalled();
@@ -139,6 +143,7 @@ describe("usePromptSubmission", () => {
         clearImages: () => {},
         suppressPendingPromptAutosaveAfterSubmit: () => {},
         effectiveCollabConfig: {
+          agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
           negotiationRounds: 2,
           autonomousResolutionThreshold: "minor",
         },
@@ -185,6 +190,7 @@ describe("usePromptSubmission", () => {
         clearImages: () => {},
         suppressPendingPromptAutosaveAfterSubmit: () => {},
         effectiveCollabConfig: {
+          agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
           negotiationRounds: 2,
           autonomousResolutionThreshold: "minor",
         },
@@ -249,6 +255,7 @@ describe("usePromptSubmission", () => {
         clearImages,
         suppressPendingPromptAutosaveAfterSubmit: clearPersisted,
         effectiveCollabConfig: {
+          agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
           negotiationRounds: 2,
           autonomousResolutionThreshold: "minor",
         },
@@ -327,6 +334,7 @@ describe("usePromptSubmission", () => {
         clearImages,
         suppressPendingPromptAutosaveAfterSubmit: clearPersisted,
         effectiveCollabConfig: {
+          agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
           negotiationRounds: 2,
           autonomousResolutionThreshold: "minor",
         },
@@ -400,6 +408,7 @@ describe("usePromptSubmission", () => {
         clearImages,
         suppressPendingPromptAutosaveAfterSubmit: clearPersisted,
         effectiveCollabConfig: {
+          agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
           negotiationRounds: 2,
           autonomousResolutionThreshold: "minor",
         },
@@ -468,6 +477,7 @@ describe("usePromptSubmission", () => {
           clearImages,
           suppressPendingPromptAutosaveAfterSubmit: clearPersisted,
           effectiveCollabConfig: {
+            agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
             negotiationRounds: 2,
             autonomousResolutionThreshold: "minor",
           },

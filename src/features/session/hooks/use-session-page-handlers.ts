@@ -14,7 +14,7 @@ import type { useSessionPageLocalState } from "@/features/session/hooks/use-sess
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
-import type { CollabConfigDraft } from "@/stores/collaboration.store";
+import type { EffectiveCollabConfig } from "@/stores/collaboration.store";
 
 type SubmissionArgs = Parameters<typeof usePromptSubmission>[0];
 
@@ -37,7 +37,7 @@ export interface UseSessionPageHandlersArgs {
   sendPrompt: SubmissionArgs["sendPrompt"];
   queueMessage: SubmissionArgs["queueMessage"];
   collaborationStartMutation: SubmissionArgs["collaborationStartMutation"];
-  effectiveCollabConfig: CollabConfigDraft;
+  effectiveCollabConfig: EffectiveCollabConfig;
   clearCollabConfigDraft: SubmissionArgs["clearCollabConfigDraft"];
   suppressPendingPromptAutosaveAfterSubmit: SubmissionArgs["suppressPendingPromptAutosaveAfterSubmit"];
   enqueuePromptErrorToast: SubmissionArgs["enqueuePromptErrorToast"];

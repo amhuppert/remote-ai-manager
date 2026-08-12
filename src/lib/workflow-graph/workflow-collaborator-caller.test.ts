@@ -7,7 +7,7 @@
  * structured outputs through the authoritative Zod schemas. These tests
  * exercise the caller through a DI'd fake `WorkflowAgentCaller` (no `vi.mock`
  * on internal modules) and verify behavior: which backend each phase calls,
- * that lane refs are stamped with the correct (workflowId, laneId=backend)
+ * that lane refs are stamped with the correct (workflowId, laneId=flow agent)
  * pair, that structured outputs are parsed, and that failures surface as
  * thrown errors.
  */
@@ -274,7 +274,7 @@ describe("createWorkflowCollaboratorCaller", () => {
       expect(out.agentTwoDraft.agent).toBe("agent_two");
     });
 
-    it("seeds both backend lanes under the supplied workflowId before the first call", async () => {
+    it("seeds both flow-agent lanes under the supplied workflowId before the first call", async () => {
       const { laneService, agentCaller } = buildInMemoryDeps(async (req) => {
         if (req.agentCallRequest.kind !== "task_run") {
           throw new Error("expected task_run");
@@ -298,19 +298,19 @@ describe("createWorkflowCollaboratorCaller", () => {
       });
       await caller.runInitialDrafts({ brief: "b" });
 
-      const claudeLane = await laneService.resolve({
+      const agentOneLane = await laneService.resolve({
         workflowId: "wf-x",
-        laneId: "claude",
+        laneId: "agent_one",
       });
-      const codexLane = await laneService.resolve({
+      const agentTwoLane = await laneService.resolve({
         workflowId: "wf-x",
-        laneId: "codex",
+        laneId: "agent_two",
       });
-      expect(claudeLane?.backend).toBe("claude");
-      expect(codexLane?.backend).toBe("codex");
+      expect(agentOneLane?.backend).toBe("claude");
+      expect(agentTwoLane?.backend).toBe("codex");
     });
 
-    it("stamps each call's laneRef with workflowId + backend laneId and includes sessionKey", async () => {
+    it("stamps each call's laneRef with workflowId + flow-agent laneId and includes sessionKey", async () => {
       const { laneService, agentCaller, call } = buildInMemoryDeps(
         async (req) => {
           if (req.agentCallRequest.kind !== "task_run") {
@@ -343,10 +343,11 @@ describe("createWorkflowCollaboratorCaller", () => {
         if (req.agentCallRequest.kind !== "task_run") {
           throw new Error("expected task_run");
         }
-        expect(req.laneRef.laneId).toBe(req.agentCallRequest.backend);
-        expect(req.agentCallRequest.laneRef?.laneId).toBe(
-          req.agentCallRequest.backend,
-        );
+        // secondAgent is codex here, so codex requests belong to agent_two.
+        const expectedLane =
+          req.agentCallRequest.backend === "codex" ? "agent_two" : "agent_one";
+        expect(req.laneRef.laneId).toBe(expectedLane);
+        expect(req.agentCallRequest.laneRef?.laneId).toBe(expectedLane);
       }
     });
 
@@ -409,7 +410,7 @@ describe("createWorkflowCollaboratorCaller", () => {
         throw new Error("expected task_run");
       }
       expect(req.agentCallRequest.backend).toBe("codex");
-      expect(req.laneRef.laneId).toBe("codex");
+      expect(req.laneRef.laneId).toBe("agent_two");
       expect(out.agentTwoCrossReview.agent).toBe("agent_two");
       expect(out.agentTwoCrossReview.target_agent).toBe("agent_one");
     });
@@ -638,7 +639,7 @@ describe("createWorkflowCollaboratorCaller", () => {
         throw new Error("expected task_run");
       }
       expect(req.agentCallRequest.backend).toBe("claude");
-      expect(req.laneRef.laneId).toBe("claude");
+      expect(req.laneRef.laneId).toBe("agent_one");
 
       expect(out.finalAnswer).toEqual(
         rehomeGeneratedArtifactPaths(final, "wf-1"),

@@ -178,10 +178,13 @@ describe("collaboration structured-output repair contract", () => {
     const laneService = createLaneService({
       store: createInMemoryLaneStore(),
     });
-    for (const backend of ["claude", "codex"] as const) {
+    for (const [laneId, backend] of [
+      ["agent_one", "claude"],
+      ["agent_two", "codex"],
+    ] as const) {
       await laneService.initialize({
         workflowId,
-        laneId: backend,
+        laneId,
         backend,
         writeCapability: "artifact_only",
         policy: { continuityEnabled: true },
@@ -210,6 +213,10 @@ describe("collaboration structured-output repair contract", () => {
       sessionKey: `${worktreePath}::repair-contract`,
       originatingConversationId: "originating-conversation",
       laneService,
+      agents: {
+        agent_one: { backend: "claude", model: "claude-repair-model" },
+        agent_two: { backend: "codex", model: "codex-repair-model" },
+      },
       getConversationBackendFactory: () => claudeFactory,
       getTaskRunner: () => codexRunner,
       now: () => "2026-07-23T12:00:00.000Z",
@@ -269,7 +276,7 @@ describe("collaboration structured-output repair contract", () => {
 
     const claudeLane = await laneService.resolve({
       workflowId,
-      laneId: "claude",
+      laneId: "agent_one",
     });
     expect(claudeLane?.ref).toBe("claude-repair-session");
   });

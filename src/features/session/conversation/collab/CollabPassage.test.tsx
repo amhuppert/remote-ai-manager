@@ -123,14 +123,14 @@ describe("CollabPassage rendering", () => {
     expect(screen.getByText("Primary")).toBeInTheDocument();
   });
 
-  it("labels each card's authoring agent with its lane's model and effort when agentModelSettings is provided", () => {
+  it("labels each card's authoring agent with its lane's model and effort when agents is provided", () => {
     render(
       <CollabPassage
         workflowId="wf-1"
         primary="claude"
-        agentModelSettings={{
-          claude: { model: "fable", effort: "max" },
-          codex: { model: "gpt-5.5", effort: "high" },
+        agents={{
+          agent_one: { backend: "claude", model: "fable", effort: "max" },
+          agent_two: { backend: "codex", model: "gpt-5.5", effort: "high" },
         }}
         status="drafting"
         artifacts={[makeAgentOneInitialDraft(), makeAgentTwoInitialDraft()]}
@@ -152,7 +152,34 @@ describe("CollabPassage rendering", () => {
     expect(codexDraft?.textContent).toContain("high");
   });
 
-  it("renders no model metadata when agentModelSettings is absent (pre-existing runs)", () => {
+  it("keeps the two lanes distinct when both agents run the same backend", () => {
+    render(
+      <CollabPassage
+        workflowId="wf-1"
+        primary="claude"
+        agents={{
+          agent_one: { backend: "claude", model: "fable", effort: "max" },
+          agent_two: { backend: "claude", model: "opus", effort: "high" },
+        }}
+        status="drafting"
+        artifacts={[makeAgentOneInitialDraft(), makeAgentTwoInitialDraft()]}
+      />,
+    );
+    const drafts = Array.from(
+      document.querySelectorAll('section[data-kind="initial_draft"]'),
+    );
+    expect(drafts).toHaveLength(2);
+    // Both cards carry the claude backend identity, disambiguated by each
+    // lane's own model metadata.
+    expect(drafts.every((d) => d.getAttribute("data-agent") === "claude")).toBe(
+      true,
+    );
+    const text = drafts.map((d) => d.textContent ?? "").join("|");
+    expect(text).toContain("fable");
+    expect(text).toContain("opus");
+  });
+
+  it("renders no model metadata when agents is absent (pre-existing runs)", () => {
     render(
       <CollabPassage
         workflowId="wf-1"

@@ -23,6 +23,7 @@ import {
   type AgentBackendId,
 } from "@/lib/shared/schemas";
 import type { CollaborationAutonomousResolutionThreshold } from "@/lib/workflow-graph/collaboration-schemas";
+import type { CollaborationAgentTwoRequest } from "@/lib/workflows/collaboration/types";
 import type {
   EnsureActorInputData,
   ExecuteConversationTurnInput,
@@ -331,6 +332,7 @@ export interface PromptDeps {
     modelId?: string;
     effort?: string;
     codexFastMode?: boolean;
+    agentTwo?: CollaborationAgentTwoRequest;
     images?: ImagePayload[];
   }): Promise<{ workflowId: string }>;
 
@@ -385,6 +387,7 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
         ...(input.codexFastMode !== undefined
           ? { codexFastMode: input.codexFastMode }
           : {}),
+        ...(input.agentTwo !== undefined ? { agentTwo: input.agentTwo } : {}),
         ...(input.images?.length ? { images: input.images } : {}),
       };
       const result = await collabManager.start(startInput);
@@ -593,6 +596,7 @@ async function notifyPromptAccepted(
 interface CollabPromptConfig {
   negotiationRounds?: number;
   autonomousResolutionThreshold?: CollaborationAutonomousResolutionThreshold;
+  agentTwo?: CollaborationAgentTwoRequest;
 }
 
 export class CollabBriefRequiredError extends Error {
@@ -837,6 +841,9 @@ export async function executePromptStream(
         ...(options?.effort !== undefined ? { effort: options.effort } : {}),
         ...(options?.codexFastMode !== undefined
           ? { codexFastMode: options.codexFastMode }
+          : {}),
+        ...(options?.collab?.agentTwo !== undefined
+          ? { agentTwo: options.collab.agentTwo }
           : {}),
         ...(images?.length ? { images } : {}),
       });

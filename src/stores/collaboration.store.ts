@@ -14,6 +14,11 @@
  */
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
+import {
+  backendSupportsFastMode,
+  type BackendSelectionDefaultsById,
+} from "@/lib/agent-backends/catalog";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 
 type CollabAgent = "claude" | "codex";
 
@@ -23,8 +28,28 @@ type CollabAutonomousResolutionThreshold =
   | "major"
   | "blocking";
 
+/**
+ * Agent Two's draft configuration. Fully concrete once the config row seeds
+ * it (backend defaults to the opposite of Agent One's; model/effort/fastMode
+ * seed from the global per-backend selection defaults), so what the user sees
+ * is exactly what the start request sends.
+ */
+export interface CollabAgentTwoDraft {
+  backend: CollabAgent;
+  model?: string;
+  effort?: string;
+  fastMode?: boolean;
+  /** Compact `tier:id` agent-profile selection. */
+  profile?: string;
+}
+
 export interface CollabConfigDraft {
-  secondAgent: CollabAgent;
+  /**
+   * Absent until seeded for the active conversation — the effective config
+   * derives the default from the originating agent's backend, so the stored
+   * default cannot go stale against a backend switch.
+   */
+  agentTwo?: CollabAgentTwoDraft;
   negotiationRounds: number;
   autonomousResolutionThreshold: CollabAutonomousResolutionThreshold;
 }
@@ -73,10 +98,33 @@ interface CollaborationActions {
 type CollaborationStore = CollaborationState & CollaborationActions;
 
 export const DEFAULT_COLLAB_CONFIG_DRAFT: CollabConfigDraft = {
-  secondAgent: "codex",
   negotiationRounds: 3,
   autonomousResolutionThreshold: "major",
 };
+
+/**
+ * The `/collab` config with Agent Two's draft resolved — what the config row
+ * renders and the start request is built from.
+ */
+export type EffectiveCollabConfig = CollabConfigDraft & {
+  agentTwo: CollabAgentTwoDraft;
+};
+
+/** A fully concrete Agent Two draft from the given backend's defaults. */
+export function seedAgentTwoDraft(
+  backend: AgentBackendId,
+  backendDefaults: BackendSelectionDefaultsById,
+): CollabAgentTwoDraft {
+  const defaults = backendDefaults[backend];
+  return {
+    backend,
+    model: defaults.modelId,
+    effort: defaults.effort,
+    ...(backendSupportsFastMode(backend)
+      ? { fastMode: defaults.codexFastMode ?? false }
+      : {}),
+  };
+}
 
 function workflowKey(
   projectName: string,

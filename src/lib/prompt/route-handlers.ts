@@ -48,6 +48,8 @@ import {
   getDefaultCollaborationManager,
   type CollaborationManager,
   CollaborationConversationNotFoundError,
+  CollaborationModelEffortValidationError,
+  CollaborationProfileResolutionError,
   CollaborationSessionNotFoundError,
   CollaborationStartConflictError,
 } from "@/lib/workflows/collaboration/manager";
@@ -249,6 +251,9 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
                               body.collab.autonomousResolutionThreshold,
                           }
                         : {}),
+                      ...(body.collab.agentTwo !== undefined
+                        ? { agentTwo: body.collab.agentTwo }
+                        : {}),
                     },
                   }
                 : {}),
@@ -405,6 +410,9 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
           ...(body.codexFastMode !== undefined
             ? { codexFastMode: body.codexFastMode }
             : {}),
+          ...(body.collab?.agentTwo !== undefined
+            ? { agentTwo: body.collab.agentTwo }
+            : {}),
           ...(body.images?.length ? { images: body.images } : {}),
         });
         try {
@@ -442,6 +450,24 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
               code: "COLLABORATION_START_CONFLICT",
             } satisfies ApiError,
             { status: 409 },
+          );
+        }
+        if (err instanceof CollaborationModelEffortValidationError) {
+          return NextResponse.json(
+            {
+              error: err.message,
+              code: "COLLABORATION_INVALID_MODEL_EFFORT",
+            } satisfies ApiError,
+            { status: 400 },
+          );
+        }
+        if (err instanceof CollaborationProfileResolutionError) {
+          return NextResponse.json(
+            {
+              error: err.message,
+              code: "COLLABORATION_PROFILE_RESOLUTION_FAILED",
+            } satisfies ApiError,
+            { status: 400 },
           );
         }
         const message =

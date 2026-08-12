@@ -309,6 +309,10 @@ describe("collaboration lane scheduling — single acquisition owner", () => {
       originatingConversationId: "conv-origin",
       laneService,
       laneScheduler: instrumented.scheduler,
+      agents: {
+        agent_one: { backend: "claude", model: "claude-sched-model" },
+        agent_two: { backend: "codex", model: "codex-sched-model" },
+      },
       executeAgentCallImpl: (request) => scripted.exec(request),
       getTaskRunner: () => stubTaskRunner,
       getConversationBackendFactory: () => stubClaudeFactory,
@@ -387,7 +391,7 @@ describe("collaboration lane scheduling — single acquisition owner", () => {
     });
     await laneService.initialize({
       workflowId,
-      laneId: "codex",
+      laneId: "agent_two",
       backend: "codex",
       ref: null,
       writeCapability: "write_capable",
@@ -441,6 +445,10 @@ describe("collaboration lane scheduling — single acquisition owner", () => {
       originatingConversationId: "conv-origin",
       laneService,
       laneScheduler: instrumented.scheduler,
+      agents: {
+        agent_one: { backend: "claude", model: "claude-sched-model" },
+        agent_two: { backend: "codex", model: "codex-sched-model" },
+      },
       executeAgentCallImpl: (request) => exec(request),
       getTaskRunner: () => stubTaskRunner,
       getConversationBackendFactory: () => stubClaudeFactory,
@@ -450,7 +458,7 @@ describe("collaboration lane scheduling — single acquisition owner", () => {
       kind: "task_run",
       backend: "codex",
       prompt: "phase prompt",
-      laneRef: { workflowId, laneId: "codex" },
+      laneRef: { workflowId, laneId: "agent_two" },
       writeCapability: "write_capable",
       outputSchema: { type: "object" },
     });

@@ -286,9 +286,16 @@ locality); domain terms name the concepts the code is about.
   persisted before the provider runtime exists, a session-derived fork inherits
   the source snapshot verbatim rather than re-resolving it, and the choice locks
   after the first turn (a pre-lock swap goes through the profile-change route).
-  Workflow assignments — implementer staffing and specialist validator cohorts —
-  belong to the workflow-validator-cohorts spec; no workflow path resolves a
-  profile yet.
+  Collaboration Mode is the second assignment surface: the start request may
+  name Agent Two's profile (resolved fail-closed before anything durable, full
+  snapshot persisted in the envelope's `featureSnapshot.agents`), Agent One
+  inherits the originating conversation's stored snapshot verbatim, and each
+  lane's stored rendered block is appended to its governing instructions at the
+  `callPrimitive` seam. Collab config has no post-start edit surface, so the
+  snapshots are fixed at start by construction. Workflow assignments —
+  implementer staffing and specialist validator cohorts — belong to the
+  workflow-validator-cohorts spec; no graph-workflow path resolves a profile
+  yet.
 
 - **Adoption** — moving a turn's state from its provisional key onto the
   conversation the server named for it, and releasing the provisional key. The

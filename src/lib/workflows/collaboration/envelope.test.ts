@@ -36,6 +36,7 @@ import {
 } from "./envelope";
 import { EMPTY_COLLABORATION_SESSION_CONTEXT } from "./session-context";
 import type {
+  CollaborationAgentsMap,
   CollaborationArtifact,
   CollaborationCounterProposalOutput,
   CollaborationCrossReviewOutput,
@@ -933,7 +934,7 @@ describe("runAsymmetricCollaborationSlice — artifact sidecar persistence", () 
     ]);
   });
 
-  it("records primary/secondary backend mapping, negotiation rounds, threshold, and rounds completed on the snapshot", async () => {
+  it("records the primary agent backend, negotiation rounds, threshold, and rounds completed on the snapshot", async () => {
     const programmed = makeProgrammedCallAgent({
       claude: [
         makeBackendResult("claude", makeAgentOneInitialDraft()),
@@ -964,15 +965,15 @@ describe("runAsymmetricCollaborationSlice — artifact sidecar persistence", () 
     const stored = await built.envelopeStore.read("wf-asym");
     if (!stored) throw new Error("envelope missing");
     const snapshot = stored.featureSnapshot as Record<string, unknown>;
-    expect(snapshot["primaryBackend"]).toBe("claude");
-    expect(snapshot["secondaryBackend"]).toBe("codex");
+    expect(snapshot["primaryAgentBackend"]).toBe("claude");
     expect(snapshot["negotiationRounds"]).toBe(3);
     expect(snapshot["negotiationRoundsCompleted"]).toBe(1);
     expect(snapshot["autonomousResolutionThreshold"]).toBe("major");
-    expect(snapshot["agentModelSettings"]).toBeUndefined();
+    // An input without a resolved agents map writes none.
+    expect(snapshot["agents"]).toBeUndefined();
   });
 
-  it("records the per-lane agentModelSettings on the snapshot when the input carries them", async () => {
+  it("records the per-flow-agent agents map on the snapshot when the input carries it", async () => {
     const programmed = makeProgrammedCallAgent({
       claude: [
         makeBackendResult("claude", makeAgentOneInitialDraft()),
@@ -991,22 +992,18 @@ describe("runAsymmetricCollaborationSlice — artifact sidecar persistence", () 
     });
     const built = await buildDeps(programmed);
 
-    await runAsymmetricCollaborationSlice(
-      baseInput({
-        agentModelSettings: {
-          claude: { model: "fable", effort: "max" },
-          codex: { model: "gpt-5.5", effort: "high" },
-        },
-      }),
-      built.deps,
-    );
+    const agents: CollaborationAgentsMap = {
+      agent_one: { backend: "claude", model: "fable", effort: "max" },
+      agent_two: { backend: "codex", model: "gpt-5.5", effort: "high" },
+    };
+    await runAsymmetricCollaborationSlice(baseInput({ agents }), built.deps);
 
     const stored = await built.envelopeStore.read("wf-asym");
     if (!stored) throw new Error("envelope missing");
     const snapshot = stored.featureSnapshot as Record<string, unknown>;
-    expect(snapshot["agentModelSettings"]).toEqual({
-      claude: { model: "fable", effort: "max" },
-      codex: { model: "gpt-5.5", effort: "high" },
+    expect(snapshot["agents"]).toEqual({
+      agent_one: { backend: "claude", model: "fable", effort: "max" },
+      agent_two: { backend: "codex", model: "gpt-5.5", effort: "high" },
     });
   });
 
@@ -1279,7 +1276,7 @@ describe("runAsymmetricCollaborationSlice — captured session context durabilit
 
 describe("runAsymmetricCollaborationSlice — Codex speed durability", () => {
   it.each([false, true])(
-    "persists an explicit Codex-primary fast-mode value of %s through a user-input pause",
+    "persists agent_one's explicit Codex fast-mode value of %s through a user-input pause via the agents map",
     async (codexFastMode) => {
       const programmed = makeProgrammedCallAgent({
         claude: [
@@ -1300,10 +1297,18 @@ describe("runAsymmetricCollaborationSlice — Codex speed durability", () => {
       });
       const built = await buildDeps(programmed);
 
+      const agents: CollaborationAgentsMap = {
+        agent_one: {
+          backend: "codex",
+          model: "gpt-5.5-codex",
+          fastMode: codexFastMode,
+        },
+        agent_two: { backend: "claude", model: "opus" },
+      };
       const result = await runAsymmetricCollaborationSlice(
         baseInput({
           primaryAgentBackend: "codex",
-          codexFastMode,
+          agents,
           autonomousResolutionThreshold: "blocking",
           negotiationRounds: 5,
         }),
@@ -1313,7 +1318,7 @@ describe("runAsymmetricCollaborationSlice — Codex speed durability", () => {
       expect(result.kind).toBe("paused_for_user_input");
       const stored = await built.envelopeStore.read("wf-asym");
       const snapshot = stored?.featureSnapshot as Record<string, unknown>;
-      expect(snapshot["codexFastMode"]).toBe(codexFastMode);
+      expect(snapshot["agents"]).toEqual(agents);
     },
   );
 });
@@ -1430,8 +1435,6 @@ describe("runAsymmetricCollaborationSlice — resume short-circuit from paused o
         mode: "asymmetric",
         brief: "Design X.",
         primaryAgentBackend: "claude",
-        primaryBackend: "claude",
-        secondaryBackend: "codex",
         negotiationRounds: 3,
         negotiationRoundsCompleted: 1,
         autonomousResolutionThreshold: "major",
@@ -1783,7 +1786,7 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
     const inner = createLaneService({ store: laneStore });
     await inner.initialize({
       workflowId: "wf-asym",
-      laneId: "claude",
+      laneId: "agent_one",
       backend: "claude",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
@@ -1808,7 +1811,7 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
 
     const lane = await inner.resolve({
       workflowId: "wf-asym",
-      laneId: "claude",
+      laneId: "agent_one",
     });
     expect(lane).toBeDefined();
     if (!lane) return;

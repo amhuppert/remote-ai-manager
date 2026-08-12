@@ -43,8 +43,17 @@ import {
 import { createCollaborationDeps } from "./deps-factory";
 import {
   createCollaborationProductionCallAgent,
+  type CollaborationLaneAgentConfig,
+  type CollaborationLaneAgentsInput,
   type CollaborationProductionAgentCallerInput,
 } from "./agent-caller-production";
+import { oppositeCollaborationBackend } from "./backend-pair";
+import { getConversationBackendFactory as defaultGetConversationBackendFactory } from "@/lib/agent-backends/registry";
+import { resolveConversationProfileSnapshot } from "@/lib/conversations/profile-resolution";
+import type {
+  AgentProfileRef,
+  AgentProfileSnapshot,
+} from "@/lib/agent-profiles/schemas";
 import {
   failedSessionContextSource,
   parseSessionContextForExecution,
@@ -89,10 +98,13 @@ import {
 import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import {
+  collaborationAgentTwoRequestSchema,
+  collaborationAgentsMapSchema,
   collaborationArtifactSchema,
   collaborationAutonomousResolutionThresholdSchema,
-  type CollaborationAgentModelSettingsMap,
+  type CollaborationAgentsMap,
   type CollaborationArtifact,
+  type CollaborationResolvedAgent,
 } from "./types";
 import { readCollaborationArtifacts } from "./artifacts-store";
 import { dispatchPushForCollaborationEvent } from "@/lib/push-notification/dispatcher";
@@ -221,6 +233,9 @@ export const collaborationStartRequestSchema = z.object({
   modelId: z.string().trim().min(1).optional(),
   effort: z.string().trim().min(1).optional(),
   codexFastMode: z.boolean().optional(),
+  // Agent Two's explicit configuration. Absent means the legacy default:
+  // the opposite backend of Agent One, on global config defaults.
+  agentTwo: collaborationAgentTwoRequestSchema.optional(),
   images: z.array(imagePayloadSchema).max(5).optional(),
 });
 type CollaborationStartRequest = z.infer<
@@ -280,6 +295,14 @@ interface CollaborationManagerConversationResolution {
    * resume the originating conversation's backend session.
    */
   backendRef?: AgentSessionRef | null;
+  /**
+   * The conversation's stored agent-profile snapshot. Agent One's lane
+   * inherits it VERBATIM (fork-inherits-snapshot semantics) — the manager
+   * never re-resolves it, so library edits after the conversation was staffed
+   * cannot change who Agent One collaborates as. `null` for legacy
+   * conversations that predate profiles.
+   */
+  profileSnapshot?: AgentProfileSnapshot | null;
 }
 
 interface CollaborationStartPersistenceInput {
@@ -708,16 +731,33 @@ export interface CollaborationManagerDeps {
     workflowId: string;
     conversationId: string;
     laneService: LaneService;
-    codexModel: string;
-    codexReasoningEffort?: string;
-    codexFastMode?: boolean;
-    codexTimeoutMs: number;
-    codexStallTimeoutMs: number;
-    claudeModel: string;
-    claudeReasoningEffort?: string;
-    claudeTimeoutMs: number;
-    claudeStallTimeoutMs: number;
+    agents: CollaborationLaneAgentsInput;
   }): AsymmetricCollaborationSliceDeps["callAgent"];
+
+  /**
+   * Validates a lane's resolved model/effort with its backend factory before
+   * anything durable happens, mirroring the prompt path's pre-execution gate.
+   * Throws on an invalid combination. Defaults to the registry factory's
+   * `validateModelAndEffort`; tests inject a deterministic implementation.
+   */
+  validateModelAndEffort(input: {
+    backend: AgentBackendId;
+    modelId: string;
+    reasoningEffort?: string;
+  }): void;
+
+  /**
+   * Resolves Agent Two's profile selection (or the Standard Agent default)
+   * into the snapshot the envelope persists, BEFORE anything durable happens.
+   * Fails closed on an unknown, deleted, or quarantined reference — a run
+   * staffed under a profile nobody selected would carry a false record.
+   * Defaults to `resolveConversationProfileSnapshot`, the shared resolution
+   * entry point every creation surface uses.
+   */
+  resolveAgentTwoProfileSnapshot(input: {
+    projectPath: string;
+    ref: AgentProfileRef | null;
+  }): Promise<AgentProfileSnapshot>;
 
   /**
    * Resolves the Codex lane's independent runtime profile from global config.
@@ -875,21 +915,7 @@ export function buildStandaloneCollaborationCallerInput(
     // session and run the captured ticket block's `cctl` retrieval commands.
     grantsOriginatingSessionScope: true,
     laneService: input.laneService,
-    codexModel: input.codexModel,
-    ...(input.codexReasoningEffort !== undefined
-      ? { codexReasoningEffort: input.codexReasoningEffort }
-      : {}),
-    ...(input.codexFastMode !== undefined
-      ? { codexFastMode: input.codexFastMode }
-      : {}),
-    codexTimeoutMs: input.codexTimeoutMs,
-    codexStallTimeoutMs: input.codexStallTimeoutMs,
-    claudeModel: input.claudeModel,
-    ...(input.claudeReasoningEffort !== undefined
-      ? { claudeReasoningEffort: input.claudeReasoningEffort }
-      : {}),
-    claudeTimeoutMs: input.claudeTimeoutMs,
-    claudeStallTimeoutMs: input.claudeStallTimeoutMs,
+    agents: input.agents,
   };
 }
 
@@ -899,6 +925,20 @@ const defaultBuildCallAgent: CollaborationManagerDeps["buildCallAgent"] = (
   createCollaborationProductionCallAgent(
     buildStandaloneCollaborationCallerInput(input),
   );
+
+const defaultValidateModelAndEffort: CollaborationManagerDeps["validateModelAndEffort"] =
+  (input) => {
+    const factory = defaultGetConversationBackendFactory(input.backend);
+    factory.validateModelAndEffort?.({
+      modelId: input.modelId,
+      ...(input.reasoningEffort !== undefined
+        ? { reasoningEffort: input.reasoningEffort }
+        : {}),
+    });
+  };
+
+const defaultResolveAgentTwoProfileSnapshot: CollaborationManagerDeps["resolveAgentTwoProfileSnapshot"] =
+  (input) => resolveConversationProfileSnapshot(input.projectPath, input.ref);
 
 export function resolveCollaborationBackendModelConfig(
   config: ConversationTurnConfig,
@@ -915,6 +955,42 @@ export function resolveCollaborationBackendModelConfig(
       : {}),
     timeoutMs: resolved.timeoutMs,
     stallTimeoutMs: resolved.stallTimeoutMs,
+  };
+}
+
+function resolveRuntimeConfigFor(
+  deps: CollaborationManagerDeps,
+  backend: AgentBackendId,
+): Promise<CollaborationBackendRuntimeConfig> {
+  // A selection map keyed by backend id, not an identity branch: the two
+  // config resolvers are the manager's per-provider dependency surface.
+  const resolvers: Record<
+    AgentBackendId,
+    () => Promise<CollaborationBackendRuntimeConfig>
+  > = {
+    codex: () => deps.resolveCodexModelConfig(),
+    claude: () => deps.resolveClaudeModelConfig(),
+  };
+  return resolvers[backend]();
+}
+
+/**
+ * A lane agent's caller-input shape: the persisted resolved identity plus the
+ * config-derived runtime bounds (timeouts), which are never persisted.
+ */
+function laneAgentInput(
+  resolved: CollaborationResolvedAgent,
+  runtime: CollaborationBackendRuntimeConfig,
+): CollaborationLaneAgentConfig {
+  return {
+    backend: resolved.backend,
+    model: resolved.model,
+    ...(resolved.effort !== undefined
+      ? { reasoningEffort: resolved.effort }
+      : {}),
+    ...(resolved.fastMode !== undefined ? { fastMode: resolved.fastMode } : {}),
+    timeoutMs: runtime.timeoutMs,
+    stallTimeoutMs: runtime.stallTimeoutMs,
   };
 }
 
@@ -941,6 +1017,7 @@ const defaultDeps: CollaborationManagerDeps = {
       agentBackend: conv.agentBackend,
       backendRef: conv.backendRef,
       promptCount: conv.promptCount ?? 0,
+      profileSnapshot: conv.profileSnapshot ?? null,
     };
   },
   resolveSessionContext: createCollaborationSessionContextResolver({
@@ -982,6 +1059,8 @@ const defaultDeps: CollaborationManagerDeps = {
       }),
     }),
   buildCallAgent: defaultBuildCallAgent,
+  validateModelAndEffort: defaultValidateModelAndEffort,
+  resolveAgentTwoProfileSnapshot: defaultResolveAgentTwoProfileSnapshot,
   async resolveCodexModelConfig() {
     const config = await defaultReadConfig();
     return resolveCollaborationBackendModelConfig(config, "codex");
@@ -1094,6 +1173,33 @@ export class CollaborationNotPausedError extends Error {
   }
 }
 
+export class CollaborationProfileResolutionError extends Error {
+  constructor(
+    public readonly ref: AgentProfileRef | null,
+    reason: string,
+  ) {
+    super(
+      `Failed to resolve Agent Two's profile${ref ? ` ${ref.tier}:${ref.id}` : ""}: ${reason}`,
+    );
+    this.name = "CollaborationProfileResolutionError";
+  }
+}
+
+export class CollaborationModelEffortValidationError extends Error {
+  constructor(
+    public readonly agent: "agent_one" | "agent_two",
+    public readonly backend: AgentBackendId,
+    public readonly modelId: string,
+    public readonly reasoningEffort: string | undefined,
+    reason: string,
+  ) {
+    super(
+      `Invalid model/effort for ${agent} (${backend} ${modelId}${reasoningEffort ? ` @ ${reasoningEffort}` : ""}): ${reason}`,
+    );
+    this.name = "CollaborationModelEffortValidationError";
+  }
+}
+
 export class CollaborationNotStoppableError extends Error {
   constructor(
     public readonly workflowId: string,
@@ -1157,6 +1263,7 @@ export function createCollaborationManager(
         modelId: input.modelId,
         effort: input.effort,
         codexFastMode: input.codexFastMode,
+        agentTwo: input.agentTwo,
         images: input.images,
       });
 
@@ -1199,6 +1306,24 @@ export function createCollaborationManager(
         conversationId: parsed.conversationId,
       });
 
+      // Agent Two's profile resolves fail-closed BEFORE anything durable
+      // (images, transcript entry, envelope): an unknown reference must leave
+      // the conversation unclaimed. The Standard Agent default resolves like
+      // any other selection, so the persisted record always names who Agent
+      // Two ran as.
+      let agentTwoProfileSnapshot: AgentProfileSnapshot;
+      try {
+        agentTwoProfileSnapshot = await deps.resolveAgentTwoProfileSnapshot({
+          projectPath: input.projectPath,
+          ref: parsed.agentTwo?.profile ?? null,
+        });
+      } catch (err) {
+        throw new CollaborationProfileResolutionError(
+          parsed.agentTwo?.profile ?? null,
+          getErrorMessage(err),
+        );
+      }
+
       const preparedImages = parsed.images?.length
         ? await deps.prepareInitialImages({
             conversationId: parsed.conversationId,
@@ -1219,39 +1344,102 @@ export function createCollaborationManager(
       });
 
       // The request's model/effort reflect the composer selection for the
-      // conversation's backend, so they override the primary lane's config-
-      // resolved settings; the opposite lane keeps the global config values.
+      // conversation's backend — Agent One's lane — so they override its
+      // config-resolved settings.
       const primaryOverride = {
         ...(parsed.modelId !== undefined ? { model: parsed.modelId } : {}),
         ...(parsed.effort !== undefined
           ? { reasoningEffort: parsed.effort }
           : {}),
       };
-      const codexModelConfig = {
-        ...(await deps.resolveCodexModelConfig()),
-        ...(primaryAgentBackend === "codex" ? primaryOverride : {}),
+      const agentOneRuntime = {
+        ...(await resolveRuntimeConfigFor(deps, primaryAgentBackend)),
+        ...primaryOverride,
       };
-      const codexFastMode = backendSupportsFastMode(primaryAgentBackend)
-        ? (parsed.codexFastMode ?? codexModelConfig.codexFastMode ?? false)
+      const agentOneFastMode = backendSupportsFastMode(primaryAgentBackend)
+        ? (parsed.codexFastMode ?? agentOneRuntime.codexFastMode ?? false)
         : undefined;
-      const claudeModelConfig = {
-        ...(await deps.resolveClaudeModelConfig()),
-        ...(primaryAgentBackend === "claude" ? primaryOverride : {}),
+
+      // Agent Two resolves explicit request config → global config default
+      // for its backend → catalog default. Its backend defaults to the
+      // opposite of Agent One's, but an explicit choice — including the same
+      // backend — always wins.
+      const agentTwoBackend: AgentBackendId =
+        parsed.agentTwo?.backend ??
+        oppositeCollaborationBackend(primaryAgentBackend);
+      const agentTwoOverride = {
+        ...(parsed.agentTwo?.model !== undefined
+          ? { model: parsed.agentTwo.model }
+          : {}),
+        ...(parsed.agentTwo?.reasoningEffort !== undefined
+          ? { reasoningEffort: parsed.agentTwo.reasoningEffort }
+          : {}),
       };
-      const agentModelSettings: CollaborationAgentModelSettingsMap = {
-        claude: {
-          model: claudeModelConfig.model,
-          ...(claudeModelConfig.reasoningEffort !== undefined
-            ? { effort: claudeModelConfig.reasoningEffort }
+      const agentTwoRuntime = {
+        ...(await resolveRuntimeConfigFor(deps, agentTwoBackend)),
+        ...agentTwoOverride,
+      };
+      // `fastMode` exists only on the union branch whose backend supports it,
+      // so field presence — not backend identity — is the discriminator.
+      const requestedAgentTwoFastMode =
+        parsed.agentTwo !== undefined && "fastMode" in parsed.agentTwo
+          ? parsed.agentTwo.fastMode
+          : undefined;
+      const agentTwoFastMode = backendSupportsFastMode(agentTwoBackend)
+        ? (requestedAgentTwoFastMode ?? agentTwoRuntime.codexFastMode ?? false)
+        : undefined;
+
+      const agents: CollaborationAgentsMap = {
+        agent_one: {
+          backend: primaryAgentBackend,
+          model: agentOneRuntime.model,
+          ...(agentOneRuntime.reasoningEffort !== undefined
+            ? { effort: agentOneRuntime.reasoningEffort }
+            : {}),
+          ...(agentOneFastMode !== undefined
+            ? { fastMode: agentOneFastMode }
+            : {}),
+          // Verbatim inheritance of the conversation's staffing; a legacy
+          // conversation with no snapshot collaborates profile-less as before.
+          ...(conversation.profileSnapshot != null
+            ? { profileSnapshot: conversation.profileSnapshot }
             : {}),
         },
-        codex: {
-          model: codexModelConfig.model,
-          ...(codexModelConfig.reasoningEffort !== undefined
-            ? { effort: codexModelConfig.reasoningEffort }
+        agent_two: {
+          backend: agentTwoBackend,
+          model: agentTwoRuntime.model,
+          ...(agentTwoRuntime.reasoningEffort !== undefined
+            ? { effort: agentTwoRuntime.reasoningEffort }
             : {}),
+          ...(agentTwoFastMode !== undefined
+            ? { fastMode: agentTwoFastMode }
+            : {}),
+          profileSnapshot: agentTwoProfileSnapshot,
         },
       };
+
+      // Both lanes gate on the backend factory's model/effort validation
+      // before anything durable happens, mirroring the prompt path.
+      for (const agent of ["agent_one", "agent_two"] as const) {
+        const resolved = agents[agent];
+        try {
+          deps.validateModelAndEffort({
+            backend: resolved.backend,
+            modelId: resolved.model,
+            ...(resolved.effort !== undefined
+              ? { reasoningEffort: resolved.effort }
+              : {}),
+          });
+        } catch (err) {
+          throw new CollaborationModelEffortValidationError(
+            agent,
+            resolved.backend,
+            resolved.model,
+            resolved.effort,
+            getErrorMessage(err),
+          );
+        }
+      }
 
       const callAgent = deps.buildCallAgent({
         projectPath: input.projectPath,
@@ -1260,19 +1448,10 @@ export function createCollaborationManager(
         workflowId,
         conversationId: parsed.conversationId,
         laneService,
-        codexModel: codexModelConfig.model,
-        ...(codexModelConfig.reasoningEffort !== undefined
-          ? { codexReasoningEffort: codexModelConfig.reasoningEffort }
-          : {}),
-        ...(codexFastMode !== undefined ? { codexFastMode } : {}),
-        codexTimeoutMs: codexModelConfig.timeoutMs,
-        codexStallTimeoutMs: codexModelConfig.stallTimeoutMs,
-        claudeModel: claudeModelConfig.model,
-        ...(claudeModelConfig.reasoningEffort !== undefined
-          ? { claudeReasoningEffort: claudeModelConfig.reasoningEffort }
-          : {}),
-        claudeTimeoutMs: claudeModelConfig.timeoutMs,
-        claudeStallTimeoutMs: claudeModelConfig.stallTimeoutMs,
+        agents: {
+          agent_one: laneAgentInput(agents.agent_one, agentOneRuntime),
+          agent_two: laneAgentInput(agents.agent_two, agentTwoRuntime),
+        },
       });
 
       const sliceDeps = deps.createDeps({
@@ -1291,8 +1470,7 @@ export function createCollaborationManager(
         worktreePath: session.worktreePath,
         sessionKey,
         primaryAgentBackend,
-        ...(codexFastMode !== undefined ? { codexFastMode } : {}),
-        agentModelSettings,
+        agents,
         negotiationRounds: parsed.negotiationRounds,
         autonomousResolutionThreshold: parsed.autonomousResolutionThreshold,
         sessionContext,
@@ -1313,7 +1491,9 @@ export function createCollaborationManager(
           imageRefs,
           ...(parsed.modelId !== undefined ? { modelId: parsed.modelId } : {}),
           ...(parsed.effort !== undefined ? { effort: parsed.effort } : {}),
-          ...(codexFastMode !== undefined ? { codexFastMode } : {}),
+          ...(agentOneFastMode !== undefined
+            ? { codexFastMode: agentOneFastMode }
+            : {}),
         });
       } catch (error) {
         deps.stopRegistry.release(workflowId);
@@ -1329,11 +1509,23 @@ export function createCollaborationManager(
         primaryAgentBackend,
         requestModelId: parsed.modelId ?? null,
         requestEffort: parsed.effort ?? null,
-        requestCodexFastMode: codexFastMode ?? null,
-        claudeModel: agentModelSettings.claude.model,
-        claudeEffort: agentModelSettings.claude.effort ?? null,
-        codexModel: agentModelSettings.codex.model,
-        codexEffort: agentModelSettings.codex.effort ?? null,
+        requestCodexFastMode: agentOneFastMode ?? null,
+        requestAgentTwoBackend: parsed.agentTwo?.backend ?? null,
+        agentOneBackend: agents.agent_one.backend,
+        agentOneModel: agents.agent_one.model,
+        agentOneEffort: agents.agent_one.effort ?? null,
+        agentOneFastMode: agents.agent_one.fastMode ?? null,
+        agentTwoBackend: agents.agent_two.backend,
+        agentTwoModel: agents.agent_two.model,
+        agentTwoEffort: agents.agent_two.effort ?? null,
+        agentTwoFastMode: agents.agent_two.fastMode ?? null,
+        // Profile identity only — instruction contents never reach the log.
+        agentTwoProfile: `${agentTwoProfileSnapshot.tier}:${agentTwoProfileSnapshot.id}`,
+        agentTwoProfileRevision: agentTwoProfileSnapshot.revision,
+        agentTwoProfileHash: agentTwoProfileSnapshot.resolvedInstructionHash,
+        agentOneProfile: conversation.profileSnapshot
+          ? `${conversation.profileSnapshot.tier}:${conversation.profileSnapshot.id}`
+          : null,
         conversationId: parsed.conversationId,
         priorBackendRefBackend: conversation.backendRef?.backend ?? null,
         imageCount: imageRefs.length,
@@ -1501,8 +1693,45 @@ export function createCollaborationManager(
         projectPath: input.projectPath,
         sessionName: input.sessionName,
       });
-      const codexModelConfig = await deps.resolveCodexModelConfig();
-      const claudeModelConfig = await deps.resolveClaudeModelConfig();
+      // Replay the persisted per-agent settings; a pre-`agents` envelope
+      // falls back to re-resolving from global config, exactly as its start
+      // did. Timeouts are config-derived either way — they are never
+      // persisted.
+      const persistedAgentsParse = collaborationAgentsMapSchema.safeParse(
+        existingSnapshot["agents"],
+      );
+      const agentTwoBackend: AgentBackendId = persistedAgentsParse.success
+        ? persistedAgentsParse.data.agent_two.backend
+        : oppositeCollaborationBackend(primaryAgentBackend);
+      const agentOneRuntime = await resolveRuntimeConfigFor(
+        deps,
+        primaryAgentBackend,
+      );
+      const agentTwoRuntime = await resolveRuntimeConfigFor(
+        deps,
+        agentTwoBackend,
+      );
+      const agents: CollaborationAgentsMap = persistedAgentsParse.success
+        ? persistedAgentsParse.data
+        : {
+            agent_one: {
+              backend: primaryAgentBackend,
+              model: agentOneRuntime.model,
+              ...(agentOneRuntime.reasoningEffort !== undefined
+                ? { effort: agentOneRuntime.reasoningEffort }
+                : {}),
+              ...(codexFastMode !== undefined
+                ? { fastMode: codexFastMode }
+                : {}),
+            },
+            agent_two: {
+              backend: agentTwoBackend,
+              model: agentTwoRuntime.model,
+              ...(agentTwoRuntime.reasoningEffort !== undefined
+                ? { effort: agentTwoRuntime.reasoningEffort }
+                : {}),
+            },
+          };
       const callAgent = deps.buildCallAgent({
         projectPath: input.projectPath,
         sessionName: input.sessionName,
@@ -1510,19 +1739,10 @@ export function createCollaborationManager(
         workflowId: input.workflowId,
         conversationId,
         laneService,
-        codexModel: codexModelConfig.model,
-        ...(codexModelConfig.reasoningEffort !== undefined
-          ? { codexReasoningEffort: codexModelConfig.reasoningEffort }
-          : {}),
-        ...(codexFastMode !== undefined ? { codexFastMode } : {}),
-        codexTimeoutMs: codexModelConfig.timeoutMs,
-        codexStallTimeoutMs: codexModelConfig.stallTimeoutMs,
-        claudeModel: claudeModelConfig.model,
-        ...(claudeModelConfig.reasoningEffort !== undefined
-          ? { claudeReasoningEffort: claudeModelConfig.reasoningEffort }
-          : {}),
-        claudeTimeoutMs: claudeModelConfig.timeoutMs,
-        claudeStallTimeoutMs: claudeModelConfig.stallTimeoutMs,
+        agents: {
+          agent_one: laneAgentInput(agents.agent_one, agentOneRuntime),
+          agent_two: laneAgentInput(agents.agent_two, agentTwoRuntime),
+        },
       });
       const sliceDeps = deps.createDeps({
         projectPath: input.projectPath,
@@ -1540,7 +1760,7 @@ export function createCollaborationManager(
         worktreePath: session.worktreePath,
         sessionKey,
         primaryAgentBackend,
-        ...(codexFastMode !== undefined ? { codexFastMode } : {}),
+        agents,
         negotiationRounds,
         autonomousResolutionThreshold: autonomousResolutionThreshold.success
           ? autonomousResolutionThreshold.data

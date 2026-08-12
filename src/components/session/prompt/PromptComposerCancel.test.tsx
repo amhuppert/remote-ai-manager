@@ -94,9 +94,21 @@ function makeProps(activeConversation: ConversationState) {
     effortSupported: true,
     hasCollabChip: false,
     effectiveCollabConfig: {
-      secondAgent: "codex" as const,
+      agentTwo: {
+        backend: "codex" as const,
+        model: "gpt-5.4",
+        effort: "high",
+      },
       negotiationRounds: 3,
       autonomousResolutionThreshold: "none" as const,
+    },
+    collabBackendDefaults: {
+      claude: { modelId: "opus", effort: "high" as const },
+      codex: {
+        modelId: "gpt-5.4",
+        effort: "high" as const,
+        codexFastMode: false,
+      },
     },
     originatingCollabAgent: "claude" as const,
     onCollabConfigChange: vi.fn(),

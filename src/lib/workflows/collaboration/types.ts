@@ -13,6 +13,16 @@
  */
 
 import { z } from "zod";
+import {
+  agentProfileRefSchema,
+  agentProfileSnapshotSchema,
+} from "@/lib/agent-profiles/schemas";
+import {
+  claudeEffortLevelSchema,
+  claudeModelSchema,
+  codexModelSchema,
+  codexReasoningEffortSchema,
+} from "@/lib/agent-backends/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 
 export {
@@ -80,12 +90,78 @@ export type CollaborationAgentModelSettings = z.infer<
   typeof collaborationAgentModelSettingsSchema
 >;
 
+/**
+ * LEGACY persisted shape, read-only: envelopes written before per-flow-agent
+ * configs were introduced keyed lane settings by backend name. Kept solely so
+ * the envelope adapter can decode old feature snapshots for display; nothing
+ * writes this shape anymore.
+ */
 export const collaborationAgentModelSettingsMapSchema = z.object({
   claude: collaborationAgentModelSettingsSchema,
   codex: collaborationAgentModelSettingsSchema,
 });
 export type CollaborationAgentModelSettingsMap = z.infer<
   typeof collaborationAgentModelSettingsMapSchema
+>;
+
+/**
+ * One flow agent's fully resolved runtime, persisted into the envelope's
+ * feature snapshot at start and replayed verbatim on resume. `model` is always
+ * concrete — a lane must never reach an SDK without one (the SDK's own default
+ * model is rejected for some accounts and surfaces as a misleading
+ * structured-output failure). `fastMode` is meaningful only for backends whose
+ * capability supports it (Codex); `profileSnapshot` is the agent-profile
+ * snapshot the lane is staffed with, when one was assigned.
+ */
+export const collaborationResolvedAgentSchema = z.object({
+  backend: agentBackendSchema,
+  model: z.string().min(1),
+  effort: z.string().optional(),
+  fastMode: z.boolean().optional(),
+  profileSnapshot: agentProfileSnapshotSchema.optional(),
+});
+export type CollaborationResolvedAgent = z.infer<
+  typeof collaborationResolvedAgentSchema
+>;
+
+/** Both flow agents' resolved runtimes, keyed by flow-agent id. */
+export const collaborationAgentsMapSchema = z.object({
+  agent_one: collaborationResolvedAgentSchema,
+  agent_two: collaborationResolvedAgentSchema,
+});
+export type CollaborationAgentsMap = z.infer<
+  typeof collaborationAgentsMapSchema
+>;
+
+/**
+ * Agent Two's explicit start-request configuration. A discriminated union on
+ * `backend` so a model can only be named for the backend it belongs to and
+ * `fastMode` exists only where the capability does (Codex) — invalid
+ * combinations fail at parse rather than at dispatch. Every field except
+ * `backend` is optional: absent fields resolve from the global config default
+ * for that backend, then the catalog default. Client-safe (zod only) because
+ * the composer's start payload carries it.
+ */
+export const collaborationAgentTwoRequestSchema = z.discriminatedUnion(
+  "backend",
+  [
+    z.object({
+      backend: z.literal("claude"),
+      model: claudeModelSchema.optional(),
+      reasoningEffort: claudeEffortLevelSchema.optional(),
+      profile: agentProfileRefSchema.optional(),
+    }),
+    z.object({
+      backend: z.literal("codex"),
+      model: codexModelSchema.optional(),
+      reasoningEffort: codexReasoningEffortSchema.optional(),
+      fastMode: z.boolean().optional(),
+      profile: agentProfileRefSchema.optional(),
+    }),
+  ],
+);
+export type CollaborationAgentTwoRequest = z.infer<
+  typeof collaborationAgentTwoRequestSchema
 >;
 
 const SHORT_TEXT_DESCRIPTION =

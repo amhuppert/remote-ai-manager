@@ -398,6 +398,31 @@ export function backendLabel(backend: AgentBackendId): string {
   return getBackendCatalogEntry(backend).label;
 }
 
+/**
+ * Catalog-derived selection defaults for client surfaces that have no global
+ * config in hand (e.g. pane bodies that only display collaboration state).
+ * Surfaces that render selection CONTROLS should thread the config-resolved
+ * `resolveConfiguredBackendSelectionDefaults` instead.
+ */
+export function catalogBackendSelectionDefaults(): BackendSelectionDefaultsById {
+  return Object.fromEntries(
+    agentBackendSchema.options.map((backend) => {
+      const entry = getBackendCatalogEntry(backend);
+      const levels = getEffortLevelsForBackend(backend, entry.defaultModelId);
+      return [
+        backend,
+        {
+          modelId: entry.defaultModelId,
+          effort: levels.includes("high")
+            ? ("high" as const)
+            : (levels[levels.length - 1] ?? ("high" as const)),
+          ...(backend === "codex" ? { codexFastMode: false } : {}),
+        },
+      ];
+    }),
+  ) as Record<AgentBackendId, BackendSelectionDefaults>;
+}
+
 export function backendToneToken(backend: AgentBackendId): string {
   return getBackendCatalogEntry(backend).toneToken;
 }

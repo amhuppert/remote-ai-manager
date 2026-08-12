@@ -34,6 +34,7 @@ import {
   resolvedCollaborationConfigSchema,
 } from "@/lib/workflow-graph/collaboration-schemas";
 import { collaborationSessionContextSchema } from "./session-context";
+import { collaborationAgentsMapSchema } from "./types";
 
 const collaborationFeatureSnapshotUserSchema = z
   .object({
@@ -45,6 +46,14 @@ const collaborationFeatureSnapshotUserSchema = z
      * refuses to run a slice on premises it cannot prove.
      */
     sessionContext: collaborationSessionContextSchema.optional(),
+    /**
+     * Both flow agents' resolved runtimes (backend, concrete model, effort,
+     * fast mode, optional profile snapshot). Typed rather than left to
+     * passthrough so readers get the parsed shape; optional because envelopes
+     * written before per-agent configs existed carry the legacy
+     * backend-keyed `agentModelSettings` blob instead.
+     */
+    agents: collaborationAgentsMapSchema.optional(),
   })
   .passthrough();
 

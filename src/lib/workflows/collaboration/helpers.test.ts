@@ -11,6 +11,9 @@
 import { describe, expect, it } from "vitest";
 
 import { callPrimitive, parseAndInjectArtifact } from "./helpers";
+import { buildAgentProfileSnapshot } from "@/lib/agent-profiles/composer";
+import { computeContentHash } from "@/lib/agent-profiles/hashing";
+import type { AgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
 import {
   collaborationArtifactSchema,
   collaborationProposedChangesContentSchema,
@@ -204,6 +207,7 @@ describe("callPrimitive session-context injection", () => {
     sessionContext: CollaborationSessionContext;
     primaryAgentBackend?: CollaborationAgent;
     flowAgent?: CollaborationFlowAgent;
+    agents?: AsymmetricCollaborationSliceInput["agents"];
   }): Promise<AgentCallRequest> {
     const primaryAgentBackend = args.primaryAgentBackend ?? "claude";
     const flowAgent = args.flowAgent ?? "agent_one";
@@ -216,11 +220,12 @@ describe("callPrimitive session-context injection", () => {
 
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     const workflowId = "wf-callprimitive";
-    for (const laneBackend of ["claude", "codex"] as const) {
+    const laneBackends = { agent_one: backend, agent_two: backend } as const;
+    for (const lane of ["agent_one", "agent_two"] as const) {
       await laneService.initialize({
         workflowId,
-        laneId: laneBackend,
-        backend: laneBackend,
+        laneId: lane,
+        backend: laneBackends[lane],
         writeCapability: "write_capable",
         policy: { continuityEnabled: true },
         ref: null,
@@ -235,6 +240,7 @@ describe("callPrimitive session-context injection", () => {
       worktreePath: "/tmp/does-not-matter",
       sessionKey: "tests/call-primitive",
       primaryAgentBackend,
+      ...(args.agents !== undefined ? { agents: args.agents } : {}),
       negotiationRounds: 1,
       autonomousResolutionThreshold: "major",
       sessionContext: args.sessionContext,
@@ -274,7 +280,7 @@ describe("callPrimitive session-context injection", () => {
       kind: "conversation_turn",
       backend: "claude",
       prompt: WORK_PROMPT,
-      laneRef: { workflowId: "wf-callprimitive", laneId: "claude" },
+      laneRef: { workflowId: "wf-callprimitive", laneId: "agent_one" },
       writeCapability: "write_capable",
       outputSchema: OUTPUT_SCHEMA,
     });
@@ -349,4 +355,183 @@ describe("callPrimitive session-context injection", () => {
     expect(agentOne.systemInstructions).toContain(CHARTER_TEXT);
     expect(agentOne.prompt.startsWith(TICKET_BLOCK)).toBe(true);
   });
+});
+
+/**
+ * The lane's agent-profile layer rides the same governing channel as the
+ * charter. The block is the STORED `renderedInstructionBlock`, appended
+ * verbatim — never re-rendered — and the Standard Agent's empty block appends
+ * nothing, so a default-staffed run composes byte-identical requests to a
+ * profile-less one.
+ */
+describe("callPrimitive agent-profile delivery", () => {
+  const EMPTY_CONTEXT = {
+    alignment: null,
+    activeTicketBlock: null,
+  };
+
+  function reviewerSnapshot(): AgentProfileSnapshot {
+    return buildAgentProfileSnapshot({
+      tier: "global",
+      id: "reviewer",
+      name: "Reviewer",
+      revision: 3,
+      sourceContentHash: computeContentHash("Review everything twice."),
+      instructions: "Review everything twice.",
+    });
+  }
+
+  function standardAgentSnapshot(): AgentProfileSnapshot {
+    return buildAgentProfileSnapshot({
+      tier: "builtin",
+      id: "standard-agent",
+      name: "Standard Agent",
+      revision: 1,
+      sourceContentHash: computeContentHash(""),
+      instructions: "",
+    });
+  }
+
+  function agentsWith(args: {
+    agentOne?: AgentProfileSnapshot;
+    agentTwo?: AgentProfileSnapshot;
+  }): AsymmetricCollaborationSliceInput["agents"] {
+    return {
+      agent_one: {
+        backend: "claude",
+        model: "fable",
+        ...(args.agentOne !== undefined
+          ? { profileSnapshot: args.agentOne }
+          : {}),
+      },
+      agent_two: {
+        backend: "codex",
+        model: "gpt-5.4",
+        ...(args.agentTwo !== undefined
+          ? { profileSnapshot: args.agentTwo }
+          : {}),
+      },
+    };
+  }
+
+  it("delivers agent_two's stored rendered block verbatim as its only governing instructions", async () => {
+    const snapshot = reviewerSnapshot();
+    const request = await runProfileCall({
+      flowAgent: "agent_two",
+      agents: agentsWith({ agentTwo: snapshot }),
+    });
+    expect(request.systemInstructions).toBe(snapshot.renderedInstructionBlock);
+  });
+
+  it("appends the profile block after the charter on the same channel", async () => {
+    const snapshot = reviewerSnapshot();
+    const charter = {
+      alignment: {
+        version: 7,
+        contentHash: "hash-7",
+        text: "<session-alignment>\ncharter v7 body\n</session-alignment>",
+      },
+      activeTicketBlock: null,
+    };
+    const request = await runProfileCall({
+      flowAgent: "agent_two",
+      agents: agentsWith({ agentTwo: snapshot }),
+      sessionContext: charter,
+    });
+    expect(request.systemInstructions).toContain(charter.alignment.text);
+    expect(
+      request.systemInstructions?.endsWith(snapshot.renderedInstructionBlock),
+    ).toBe(true);
+    expect(
+      (request.systemInstructions ?? "").indexOf(charter.alignment.text),
+    ).toBeLessThan(
+      (request.systemInstructions ?? "").indexOf(
+        snapshot.renderedInstructionBlock,
+      ),
+    );
+  });
+
+  it("appends nothing for the Standard Agent's empty block", async () => {
+    const request = await runProfileCall({
+      flowAgent: "agent_two",
+      agents: agentsWith({ agentTwo: standardAgentSnapshot() }),
+    });
+    expect(Object.keys(request)).not.toContain("systemInstructions");
+  });
+
+  it("delivers agent_one's inherited snapshot to agent_one's lane only", async () => {
+    const snapshot = reviewerSnapshot();
+    const agents = agentsWith({
+      agentOne: snapshot,
+      agentTwo: standardAgentSnapshot(),
+    });
+    const agentOneRequest = await runProfileCall({
+      flowAgent: "agent_one",
+      agents,
+    });
+    const agentTwoRequest = await runProfileCall({
+      flowAgent: "agent_two",
+      agents,
+    });
+    expect(agentOneRequest.systemInstructions).toBe(
+      snapshot.renderedInstructionBlock,
+    );
+    expect(Object.keys(agentTwoRequest)).not.toContain("systemInstructions");
+  });
+
+  async function runProfileCall(args: {
+    flowAgent: CollaborationFlowAgent;
+    agents: AsymmetricCollaborationSliceInput["agents"];
+    sessionContext?: CollaborationSessionContext;
+  }): Promise<AgentCallRequest> {
+    const laneService = createLaneService({ store: createInMemoryLaneStore() });
+    const workflowId = "wf-profile-delivery";
+    const backends = { agent_one: "claude", agent_two: "codex" } as const;
+    for (const lane of ["agent_one", "agent_two"] as const) {
+      await laneService.initialize({
+        workflowId,
+        laneId: lane,
+        backend: backends[lane],
+        writeCapability: "write_capable",
+        policy: { continuityEnabled: true },
+        ref: null,
+        metrics: { rotateBeforeNextTurn: false },
+        lastUsedAt: "2026-05-01T00:00:00.000Z",
+      });
+    }
+
+    const input: AsymmetricCollaborationSliceInput = {
+      workflowId,
+      brief: "Design Y.",
+      worktreePath: "/tmp/does-not-matter",
+      sessionKey: "tests/profile-delivery",
+      primaryAgentBackend: "claude",
+      agents: args.agents,
+      negotiationRounds: 1,
+      autonomousResolutionThreshold: "major",
+      sessionContext: args.sessionContext ?? EMPTY_CONTEXT,
+    };
+
+    const received: AgentCallRequest[] = [];
+    const deps: AsymmetricCollaborationSliceDeps = {
+      callAgent: async (request) => {
+        received.push(request);
+        return completed(proposedChangesContent);
+      },
+      laneService,
+      envelopeStore: createInMemoryWorkflowEnvelopeStore(),
+      statusBus: createStatusBus({ broadcast: () => {} }),
+      now: () => "2026-05-01T00:00:00.000Z",
+    };
+
+    const outcome = await callPrimitive({
+      input,
+      deps,
+      flowAgent: args.flowAgent,
+      backend: backends[args.flowAgent],
+      prompt: { prompt: "Draft.", outputSchema: { type: "object" } },
+    });
+    expect(outcome.kind).toBe("ok");
+    return received[0]!;
+  }
 });

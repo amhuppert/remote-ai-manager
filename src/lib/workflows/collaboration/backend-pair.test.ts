@@ -2,21 +2,21 @@ import { describe, expect, it } from "vitest";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   COLLABORATION_BACKEND_PAIR,
+  COLLABORATION_FLOW_AGENTS,
+  agentOneLaneSeedRef,
   buildCollaborationLaneSeeds,
   oppositeCollaborationBackend,
-  primaryLaneSeedRef,
 } from "./backend-pair";
 
 describe("COLLABORATION_BACKEND_PAIR", () => {
   it("is the ordered Claude×Codex pair (claude first, codex second)", () => {
     expect(COLLABORATION_BACKEND_PAIR).toEqual(["claude", "codex"]);
   });
+});
 
-  it("uses each backend id as its own lane id", () => {
-    // laneId === backend is the rule the seed builder and lane routing rely on.
-    for (const backend of COLLABORATION_BACKEND_PAIR) {
-      expect<AgentBackendId>(backend).toBe(backend);
-    }
+describe("COLLABORATION_FLOW_AGENTS", () => {
+  it("is the ordered flow-agent pair (agent_one first, agent_two second)", () => {
+    expect(COLLABORATION_FLOW_AGENTS).toEqual(["agent_one", "agent_two"]);
   });
 });
 
@@ -46,18 +46,30 @@ describe("buildCollaborationLaneSeeds", () => {
     lastUsedAt: "2026-07-13T00:00:00.000Z",
   };
 
-  it("emits one lane per pair member in pair order (claude then codex)", () => {
+  it("keys each lane by its flow agent, in flow-agent order", () => {
     const seeds = buildCollaborationLaneSeeds({
       ...base,
+      backendFor: (agent) => (agent === "agent_one" ? "claude" : "codex"),
       seedRefFor: () => null,
     });
-    expect(seeds.map((s) => s.laneId)).toEqual(["claude", "codex"]);
+    expect(seeds.map((s) => s.laneId)).toEqual(["agent_one", "agent_two"]);
     expect(seeds.map((s) => s.backend)).toEqual(["claude", "codex"]);
+  });
+
+  it("keeps two distinct lanes when both flow agents run the same backend", () => {
+    const seeds = buildCollaborationLaneSeeds({
+      ...base,
+      backendFor: () => "claude",
+      seedRefFor: () => null,
+    });
+    expect(seeds.map((s) => s.laneId)).toEqual(["agent_one", "agent_two"]);
+    expect(seeds.map((s) => s.backend)).toEqual(["claude", "claude"]);
   });
 
   it("carries the supplied workflowId, write capability, policy, and timestamp onto every lane", () => {
     const seeds = buildCollaborationLaneSeeds({
       ...base,
+      backendFor: () => "codex",
       seedRefFor: () => null,
     });
     for (const seed of seeds) {
@@ -69,24 +81,26 @@ describe("buildCollaborationLaneSeeds", () => {
     }
   });
 
-  it("seeds each lane's ref from seedRefFor, called once per backend", () => {
-    const seen: AgentBackendId[] = [];
+  it("seeds each lane's ref from seedRefFor, called once per flow agent", () => {
+    const seen: string[] = [];
     const seeds = buildCollaborationLaneSeeds({
       ...base,
-      seedRefFor: (backend) => {
-        seen.push(backend);
-        return backend === "claude" ? "sess-1" : null;
+      backendFor: (agent) => (agent === "agent_one" ? "claude" : "codex"),
+      seedRefFor: (agent) => {
+        seen.push(agent);
+        return agent === "agent_one" ? "sess-1" : null;
       },
     });
-    expect(seen).toEqual(["claude", "codex"]);
-    expect(seeds.find((s) => s.backend === "claude")?.ref).toBe("sess-1");
-    expect(seeds.find((s) => s.backend === "codex")?.ref).toBeNull();
+    expect(seen).toEqual(["agent_one", "agent_two"]);
+    expect(seeds.find((s) => s.laneId === "agent_one")?.ref).toBe("sess-1");
+    expect(seeds.find((s) => s.laneId === "agent_two")?.ref).toBeNull();
   });
 
   it("supports the disabled-continuity variant (fresh lanes, no ref)", () => {
     const seeds = buildCollaborationLaneSeeds({
       ...base,
       policy: { continuityEnabled: false },
+      backendFor: () => "claude",
       seedRefFor: () => null,
     });
     for (const seed of seeds) {
@@ -96,38 +110,26 @@ describe("buildCollaborationLaneSeeds", () => {
   });
 });
 
-describe("primaryLaneSeedRef", () => {
-  it("seeds the primary lane's ref when the prior ref belongs to the primary backend", () => {
+describe("agentOneLaneSeedRef", () => {
+  it("seeds agent_one's ref when the prior ref belongs to its backend", () => {
+    const claudeRef: { backend: AgentBackendId; ref: string } = {
+      backend: "claude",
+      ref: "sess-1",
+    };
+    expect(agentOneLaneSeedRef("claude", claudeRef)).toBe("sess-1");
     expect(
-      primaryLaneSeedRef("claude", "claude", {
-        backend: "claude",
-        ref: "sess-1",
-      }),
-    ).toBe("sess-1");
-    expect(
-      primaryLaneSeedRef("codex", "codex", { backend: "codex", ref: "th-1" }),
+      agentOneLaneSeedRef("codex", { backend: "codex", ref: "th-1" }),
     ).toBe("th-1");
   });
 
-  it("does not seed the non-primary lane", () => {
-    // Prior ref is claude but the query is for the codex lane → no seed.
+  it("does not seed when the prior ref's backend differs from agent_one's", () => {
     expect(
-      primaryLaneSeedRef("codex", "claude", {
-        backend: "claude",
-        ref: "sess-1",
-      }),
-    ).toBeNull();
-  });
-
-  it("does not seed when the prior ref's backend differs from the primary", () => {
-    // Primary is claude, prior ref is codex → mismatch, ignored.
-    expect(
-      primaryLaneSeedRef("claude", "claude", { backend: "codex", ref: "th-1" }),
+      agentOneLaneSeedRef("claude", { backend: "codex", ref: "th-1" }),
     ).toBeNull();
   });
 
   it("returns null when no prior ref is supplied", () => {
-    expect(primaryLaneSeedRef("claude", "claude", null)).toBeNull();
-    expect(primaryLaneSeedRef("claude", "claude", undefined)).toBeNull();
+    expect(agentOneLaneSeedRef("claude", null)).toBeNull();
+    expect(agentOneLaneSeedRef("claude", undefined)).toBeNull();
   });
 });

@@ -14,7 +14,8 @@ import type {
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
-import type { CollabConfigDraft } from "@/stores/collaboration.store";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/catalog";
+import type { EffectiveCollabConfig } from "@/stores/collaboration.store";
 import type { OpenTabsApi } from "@/features/session/tabs/use-open-tabs";
 
 type PromptComposerArgs = Parameters<typeof usePromptComposerProps>[0];
@@ -72,10 +73,12 @@ export interface PromptExecutionSlice {
 export interface CollaborationSlice {
   hasActiveCollab: boolean;
   hasCollabChip: boolean;
-  effectiveCollabConfig: CollabConfigDraft;
+  effectiveCollabConfig: EffectiveCollabConfig;
   originatingCollabAgent: PromptComposerArgs["originatingCollabAgent"];
   setCollabConfigDraft: PromptComposerArgs["setCollabConfigDraft"];
   clearCollabConfigDraft: PromptComposerArgs["clearCollabConfigDraft"];
+  /** Per-backend selection defaults, seeding Agent Two's config controls. */
+  backendDefaults: BackendSelectionDefaultsById;
 }
 
 /** Backend / model / effort selection. */

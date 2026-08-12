@@ -43,6 +43,8 @@ import {
   CollaborationNotPausedError,
   CollaborationNotStoppableError,
   CollaborationResumeTokenMismatchError,
+  CollaborationModelEffortValidationError,
+  CollaborationProfileResolutionError,
   CollaborationSessionNotFoundError,
   CollaborationStartConflictError,
   CollaborationWorkflowNotFoundError,
@@ -380,6 +382,24 @@ export function createCollaborationRouteHandlers(
               code: "COLLABORATION_START_CONFLICT",
             } satisfies ApiError,
             { status: 409 },
+          );
+        }
+        if (err instanceof CollaborationModelEffortValidationError) {
+          return NextResponse.json(
+            {
+              error: err.message,
+              code: "COLLABORATION_INVALID_MODEL_EFFORT",
+            } satisfies ApiError,
+            { status: 400 },
+          );
+        }
+        if (err instanceof CollaborationProfileResolutionError) {
+          return NextResponse.json(
+            {
+              error: err.message,
+              code: "COLLABORATION_PROFILE_RESOLUTION_FAILED",
+            } satisfies ApiError,
+            { status: 400 },
           );
         }
         // The charter is governing context, so the run failed closed before

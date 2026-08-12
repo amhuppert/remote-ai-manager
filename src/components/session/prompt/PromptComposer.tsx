@@ -11,7 +11,9 @@ import {
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import {
   backendLabel,
+  backendSupportsFastMode,
   getModelsForBackend,
+  type BackendSelectionDefaultsById,
 } from "@/lib/agent-backends/catalog";
 import { EFFORT_OPTIONS } from "@/components/ReasoningLevelSelector";
 import ConversationAgentCapabilitiesConfig from "@/components/agent-capabilities/ConversationAgentCapabilitiesConfig";
@@ -229,6 +231,7 @@ interface PromptComposerProps {
   effectiveCollabConfig: CollabConfigRowConfig;
   originatingCollabAgent: "claude" | "codex";
   onCollabConfigChange: (next: CollabConfigRowConfig) => void;
+  collabBackendDefaults: BackendSelectionDefaultsById;
   onCollabDismiss: () => void;
   onDebugToggle: () => void;
   debugTogglePending: boolean;
@@ -283,6 +286,7 @@ export default function PromptComposer({
   effectiveCollabConfig,
   originatingCollabAgent,
   onCollabConfigChange,
+  collabBackendDefaults,
   onCollabDismiss,
   onDebugToggle,
   debugTogglePending,
@@ -508,6 +512,16 @@ export default function PromptComposer({
               originatingAgent={originatingCollabAgent}
               onChange={onCollabConfigChange}
               onDismiss={onCollabDismiss}
+              backendDefaults={collabBackendDefaults}
+              projectName={projectName}
+              agentOne={{
+                backend: selectedBackend,
+                model: selectedModel,
+                ...(effortSupported ? { effort: selectedEffort } : {}),
+                ...(backendSupportsFastMode(selectedBackend)
+                  ? { fastMode: codexFastMode }
+                  : {}),
+              }}
             />
           ) : null}
           {cancellableEntries.length > 0 ? (

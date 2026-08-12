@@ -29,6 +29,8 @@ import type {
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
 import type { CollaborationEnvelope } from "@/lib/collaboration/schemas";
+import { seedAgentTwoDraft } from "@/stores/collaboration.store";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/catalog";
 
 interface CollaborationListQueryResult {
   data: readonly CollaborationEnvelope[] | undefined;
@@ -42,6 +44,8 @@ export interface UseCollabContextArgs {
   activeConversation: PublicConversationState | undefined;
   rawMessages: readonly TranscriptMessage[];
   openDocById: (docId: string) => void;
+  /** Per-backend selection defaults that seed Agent Two's draft config. */
+  backendDefaults: BackendSelectionDefaultsById;
 }
 
 export function useCollabContext({
@@ -52,6 +56,7 @@ export function useCollabContext({
   activeConversation,
   rawMessages,
   openDocById,
+  backendDefaults,
 }: UseCollabContextArgs) {
   const activeCollabEnvelope = findActiveCollab(
     collaborationListQuery.data,
@@ -143,19 +148,20 @@ export function useCollabContext({
   const clearCollabConfigDraft = useClearCollabConfigDraft();
   const originatingCollabAgent: "claude" | "codex" =
     activeConversation?.agentBackend === "codex" ? "codex" : "claude";
-  const effectiveCollabConfig = useMemo(
-    () =>
-      collabConfigDraft.secondAgent === originatingCollabAgent
-        ? {
-            ...collabConfigDraft,
-            secondAgent:
-              originatingCollabAgent === "claude"
-                ? ("codex" as const)
-                : ("claude" as const),
-          }
-        : collabConfigDraft,
-    [collabConfigDraft, originatingCollabAgent],
-  );
+  // Agent Two's draft seeds lazily so the default tracks the conversation's
+  // backend: the suggested backend is the opposite of Agent One's (an explicit
+  // same-backend choice is fine), and model/effort/fastMode seed from the
+  // global per-backend selection defaults so what the row shows is what the
+  // start request sends.
+  const effectiveCollabConfig = useMemo(() => {
+    const agentTwo =
+      collabConfigDraft.agentTwo ??
+      seedAgentTwoDraft(
+        originatingCollabAgent === "claude" ? "codex" : "claude",
+        backendDefaults,
+      );
+    return { ...collabConfigDraft, agentTwo };
+  }, [collabConfigDraft, originatingCollabAgent, backendDefaults]);
 
   return {
     collabEnvelopeForConversation,

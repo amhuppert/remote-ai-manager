@@ -31,12 +31,17 @@ import {
   CollaborationConversationNotFoundError,
   CollaborationNotPausedError,
   CollaborationNotStoppableError,
+  CollaborationProfileResolutionError,
   CollaborationResumeTokenMismatchError,
   CollaborationSessionNotFoundError,
   CollaborationWorkflowNotFoundError,
   type CollaborationManagerDeps,
   type CollaborationStopRegistry,
 } from "./manager";
+import type { CollaborationLaneAgentsInput } from "./agent-caller-production";
+import { buildAgentProfileSnapshot } from "@/lib/agent-profiles/composer";
+import { computeContentHash } from "@/lib/agent-profiles/hashing";
+import type { AgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import {
@@ -232,11 +237,13 @@ interface ScriptedDepsOptions {
         agentBackend: AgentBackendId;
         backendRef?: AgentSessionRef | null;
         promptCount?: number;
+        profileSnapshot?: AgentProfileSnapshot | null;
       }
     | null
     | "throw";
   runSliceResult?: AsymmetricCollaborationSliceResult;
   runSliceError?: Error;
+  resolveAgentTwoProfileSnapshotError?: Error;
   envelopeStoreOverride?: ReturnType<
     typeof createInMemoryWorkflowEnvelopeStore
   >;
@@ -276,15 +283,7 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
   buildCallAgentCalls: Array<{
     workflowId: string;
     worktreePath: string;
-    codexModel?: string;
-    codexReasoningEffort?: string;
-    codexFastMode?: boolean;
-    codexTimeoutMs?: number;
-    codexStallTimeoutMs?: number;
-    claudeModel?: string;
-    claudeReasoningEffort?: string;
-    claudeTimeoutMs?: number;
-    claudeStallTimeoutMs?: number;
+    agents: CollaborationLaneAgentsInput;
   }>;
   publishedStatuses: Array<
     Omit<
@@ -305,6 +304,9 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
   resolveSessionContextCalls: Array<
     Parameters<CollaborationManagerDeps["resolveSessionContext"]>[0]
   >;
+  resolveProfileCalls: Array<
+    Parameters<CollaborationManagerDeps["resolveAgentTwoProfileSnapshot"]>[0]
+  >;
   envelopeStore: ReturnType<typeof createInMemoryWorkflowEnvelopeStore>;
   runSliceCompletion: Promise<void>;
   stopRegistry: CollaborationStopRegistry;
@@ -316,15 +318,7 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
   const buildCallAgentCalls: Array<{
     workflowId: string;
     worktreePath: string;
-    codexModel?: string;
-    codexReasoningEffort?: string;
-    codexFastMode?: boolean;
-    codexTimeoutMs?: number;
-    codexStallTimeoutMs?: number;
-    claudeModel?: string;
-    claudeReasoningEffort?: string;
-    claudeTimeoutMs?: number;
-    claudeStallTimeoutMs?: number;
+    agents: CollaborationLaneAgentsInput;
   }> = [];
   const publishedStatuses: Array<
     Omit<
@@ -344,6 +338,9 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
   > = [];
   const resolveSessionContextCalls: Array<
     Parameters<CollaborationManagerDeps["resolveSessionContext"]>[0]
+  > = [];
+  const resolveProfileCalls: Array<
+    Parameters<CollaborationManagerDeps["resolveAgentTwoProfileSnapshot"]>[0]
   > = [];
   let resolveCompletion: () => void = () => undefined;
   const runSliceCompletion = new Promise<void>((resolve) => {
@@ -431,21 +428,30 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
       buildCallAgentCalls.push({
         workflowId: input.workflowId,
         worktreePath: input.worktreePath,
-        codexModel: input.codexModel,
-        codexReasoningEffort: input.codexReasoningEffort,
-        ...(input.codexFastMode !== undefined
-          ? { codexFastMode: input.codexFastMode }
-          : {}),
-        codexTimeoutMs: input.codexTimeoutMs,
-        codexStallTimeoutMs: input.codexStallTimeoutMs,
-        claudeModel: input.claudeModel,
-        claudeReasoningEffort: input.claudeReasoningEffort,
-        claudeTimeoutMs: input.claudeTimeoutMs,
-        claudeStallTimeoutMs: input.claudeStallTimeoutMs,
+        agents: input.agents,
       });
       return async () => {
         throw new Error("stub callAgent should not be called in tests");
       };
+    },
+    // The registry-backed default resolves real backend factories; scripted
+    // deps run against synthetic models, so validation is a no-op here.
+    validateModelAndEffort: () => {},
+    resolveAgentTwoProfileSnapshot: async (input) => {
+      resolveProfileCalls.push(input);
+      if (options.resolveAgentTwoProfileSnapshotError) {
+        throw options.resolveAgentTwoProfileSnapshotError;
+      }
+      return buildAgentProfileSnapshot({
+        tier: input.ref?.tier ?? "builtin",
+        id: input.ref?.id ?? "standard-agent",
+        name: input.ref ? `Profile ${input.ref.id}` : "Standard Agent",
+        revision: 1,
+        sourceContentHash: computeContentHash(
+          input.ref ? `instructions for ${input.ref.id}` : "",
+        ),
+        instructions: input.ref ? `instructions for ${input.ref.id}` : "",
+      });
     },
     resolveCodexModelConfig: async () => ({
       model: "gpt-5.4",
@@ -500,6 +506,7 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
     dispatchedPushes,
     persistedStarts,
     resolveSessionContextCalls,
+    resolveProfileCalls,
     envelopeStore,
     runSliceCompletion,
     stopRegistry,
@@ -592,6 +599,111 @@ describe("createCollaborationManager.start", () => {
       conversationId: "conv-1",
     });
     expect(call.input.stopSignal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("fails closed on an unresolvable Agent Two profile, leaving nothing durable", async () => {
+    const { deps, persistedStarts, runSliceCalls, resolveProfileCalls } =
+      buildScriptedDeps({
+        resolveAgentTwoProfileSnapshotError: new Error("unknown profile"),
+      });
+    const manager = createCollaborationManager(deps);
+
+    await expect(
+      manager.start({
+        projectPath: "/p",
+        sessionName: "s",
+        brief: "design X",
+        negotiationRounds: 3,
+        autonomousResolutionThreshold: "major",
+        conversationId: "conv-1",
+        agentTwo: {
+          backend: "claude",
+          profile: { tier: "global", id: "gone" },
+        },
+      }),
+    ).rejects.toBeInstanceOf(CollaborationProfileResolutionError);
+
+    expect(resolveProfileCalls).toEqual([
+      { projectPath: "/p", ref: { tier: "global", id: "gone" } },
+    ]);
+    expect(persistedStarts).toHaveLength(0);
+    expect(runSliceCalls).toHaveLength(0);
+  });
+
+  it("staffs agent_two with the resolved profile snapshot and agent_one with the conversation's, verbatim", async () => {
+    const conversationSnapshot = buildAgentProfileSnapshot({
+      tier: "project",
+      id: "conversation-reviewer",
+      name: "Conversation Reviewer",
+      revision: 4,
+      sourceContentHash: computeContentHash("review as staffed"),
+      instructions: "review as staffed",
+    });
+    const { deps, runSliceCalls, runSliceCompletion } = buildScriptedDeps({
+      resolveConversationResult: {
+        agentBackend: "claude",
+        profileSnapshot: conversationSnapshot,
+      },
+    });
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 3,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+      agentTwo: { backend: "codex", profile: { tier: "global", id: "critic" } },
+    });
+    await runSliceCompletion;
+
+    const sliceInput = runSliceCalls[0]!.input;
+    // Agent One inherits the conversation's stored snapshot byte-for-byte —
+    // never re-resolved.
+    expect(sliceInput.agents?.agent_one.profileSnapshot).toEqual(
+      conversationSnapshot,
+    );
+    const agentTwoSnapshot = sliceInput.agents?.agent_two.profileSnapshot;
+    expect(agentTwoSnapshot).toMatchObject({ tier: "global", id: "critic" });
+    expect(agentTwoSnapshot?.renderedInstructionBlock).toContain(
+      "instructions for critic",
+    );
+  });
+
+  it("runs a same-backend pair as two distinct lanes with their own settings", async () => {
+    const { deps, runSliceCalls, runSliceCompletion, buildCallAgentCalls } =
+      buildScriptedDeps({
+        resolveConversationResult: { agentBackend: "claude" },
+      });
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 3,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+      modelId: "fable",
+      effort: "max",
+      agentTwo: { backend: "claude", model: "opus", reasoningEffort: "high" },
+    });
+    await runSliceCompletion;
+
+    const agents = runSliceCalls[0]!.input.agents;
+    expect(agents?.agent_one).toMatchObject({
+      backend: "claude",
+      model: "fable",
+      effort: "max",
+    });
+    expect(agents?.agent_two).toMatchObject({
+      backend: "claude",
+      model: "opus",
+      effort: "high",
+    });
+    expect(buildCallAgentCalls[0]!.agents.agent_one.model).toBe("fable");
+    expect(buildCallAgentCalls[0]!.agents.agent_two.model).toBe("opus");
   });
 
   it("persists ordered start images before forwarding their refs to the initial slice", async () => {
@@ -948,14 +1060,23 @@ describe("createCollaborationManager.start", () => {
       {
         workflowId: "wf-1",
         worktreePath: "/wt/xyz",
-        codexModel: "gpt-5.5",
-        codexReasoningEffort: "high",
-        codexTimeoutMs: 120_000,
-        codexStallTimeoutMs: 30_000,
-        claudeModel: "sonnet",
-        claudeReasoningEffort: "xhigh",
-        claudeTimeoutMs: 90_000,
-        claudeStallTimeoutMs: 0,
+        agents: {
+          agent_one: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "xhigh",
+            timeoutMs: 90_000,
+            stallTimeoutMs: 0,
+          },
+          agent_two: {
+            backend: "codex",
+            model: "gpt-5.5",
+            reasoningEffort: "high",
+            fastMode: false,
+            timeoutMs: 120_000,
+            stallTimeoutMs: 30_000,
+          },
+        },
       },
     ]);
   });
@@ -994,14 +1115,23 @@ describe("createCollaborationManager.start", () => {
       {
         workflowId: "wf-1",
         worktreePath: "/wt/xyz",
-        codexModel: "gpt-5.5",
-        codexReasoningEffort: "high",
-        codexTimeoutMs: 0,
-        codexStallTimeoutMs: 60_000,
-        claudeModel: "fable",
-        claudeReasoningEffort: "max",
-        claudeTimeoutMs: 0,
-        claudeStallTimeoutMs: 0,
+        agents: {
+          agent_one: {
+            backend: "claude",
+            model: "fable",
+            reasoningEffort: "max",
+            timeoutMs: 0,
+            stallTimeoutMs: 0,
+          },
+          agent_two: {
+            backend: "codex",
+            model: "gpt-5.5",
+            reasoningEffort: "high",
+            fastMode: false,
+            timeoutMs: 0,
+            stallTimeoutMs: 60_000,
+          },
+        },
       },
     ]);
   });
@@ -1041,15 +1171,23 @@ describe("createCollaborationManager.start", () => {
       {
         workflowId: "wf-1",
         worktreePath: "/wt/xyz",
-        codexModel: "gpt-5.5-codex",
-        codexReasoningEffort: "medium",
-        codexFastMode: true,
-        codexTimeoutMs: 0,
-        codexStallTimeoutMs: 60_000,
-        claudeModel: "opus",
-        claudeReasoningEffort: "xhigh",
-        claudeTimeoutMs: 0,
-        claudeStallTimeoutMs: 0,
+        agents: {
+          agent_one: {
+            backend: "codex",
+            model: "gpt-5.5-codex",
+            reasoningEffort: "medium",
+            fastMode: true,
+            timeoutMs: 0,
+            stallTimeoutMs: 60_000,
+          },
+          agent_two: {
+            backend: "claude",
+            model: "opus",
+            reasoningEffort: "xhigh",
+            timeoutMs: 0,
+            stallTimeoutMs: 0,
+          },
+        },
       },
     ]);
   });
@@ -1075,8 +1213,12 @@ describe("createCollaborationManager.start", () => {
 
       await runSliceCompletion;
 
-      expect(buildCallAgentCalls[0]?.codexFastMode).toBe(codexFastMode);
-      expect(runSliceCalls[0]?.input.codexFastMode).toBe(codexFastMode);
+      expect(buildCallAgentCalls[0]?.agents.agent_one.fastMode).toBe(
+        codexFastMode,
+      );
+      expect(runSliceCalls[0]?.input.agents?.agent_one.fastMode).toBe(
+        codexFastMode,
+      );
     },
   );
 
@@ -1109,8 +1251,12 @@ describe("createCollaborationManager.start", () => {
 
       await runSliceCompletion;
 
-      expect(buildCallAgentCalls[0]?.codexFastMode).toBe(codexFastMode);
-      expect(runSliceCalls[0]?.input.codexFastMode).toBe(codexFastMode);
+      expect(buildCallAgentCalls[0]?.agents.agent_one.fastMode).toBe(
+        codexFastMode,
+      );
+      expect(runSliceCalls[0]?.input.agents?.agent_one.fastMode).toBe(
+        codexFastMode,
+      );
       expect(persistedStarts[0]?.codexFastMode).toBe(codexFastMode);
     },
   );
@@ -1140,8 +1286,15 @@ describe("createCollaborationManager.start", () => {
 
       await runSliceCompletion;
 
-      expect(buildCallAgentCalls[0]?.codexFastMode).toBeUndefined();
-      expect(runSliceCalls[0]?.input.codexFastMode).toBeUndefined();
+      // The Claude-backed agent_one lane never gains a fast-mode setting, and
+      // the secondary Codex lane keeps its config-resolved value (true) — the
+      // request's fast-mode choice belongs to agent_one only.
+      expect(buildCallAgentCalls[0]?.agents.agent_one.fastMode).toBeUndefined();
+      expect(buildCallAgentCalls[0]?.agents.agent_two.fastMode).toBe(true);
+      expect(
+        runSliceCalls[0]?.input.agents?.agent_one.fastMode,
+      ).toBeUndefined();
+      expect(runSliceCalls[0]?.input.agents?.agent_two.fastMode).toBe(true);
     },
   );
 
@@ -1172,28 +1325,38 @@ describe("createCollaborationManager.start", () => {
       {
         workflowId: "wf-1",
         worktreePath: "/wt/xyz",
-        codexModel: "gpt-5.5",
-        codexReasoningEffort: undefined,
-        codexTimeoutMs: 0,
-        codexStallTimeoutMs: 60_000,
-        claudeModel: "opus",
-        claudeReasoningEffort: "low",
-        claudeTimeoutMs: 0,
-        claudeStallTimeoutMs: 0,
+        agents: {
+          agent_one: {
+            backend: "claude",
+            model: "opus",
+            reasoningEffort: "low",
+            timeoutMs: 0,
+            stallTimeoutMs: 0,
+          },
+          // No reasoningEffort: the request effort belongs to agent_one only.
+          agent_two: {
+            backend: "codex",
+            model: "gpt-5.5",
+            fastMode: false,
+            timeoutMs: 0,
+            stallTimeoutMs: 60_000,
+          },
+        },
       },
     ]);
   });
 
-  it("threads both lanes' effective model settings into sliceInput.agentModelSettings", async () => {
-    const { deps, runSliceCalls, runSliceCompletion } = buildScriptedDeps({
-      resolveSessionResult: { worktreePath: "/wt/abc" },
-      resolveConversationResult: { agentBackend: "claude" },
-      resolveCodexModelConfigResult: {
-        model: "gpt-5.5",
-        reasoningEffort: "high",
-      },
-      resolveClaudeModelConfigResult: { model: "opus" },
-    });
+  it("threads both flow agents' effective model settings into sliceInput.agents and buildCallAgent (request overrides apply to agent_one only)", async () => {
+    const { deps, runSliceCalls, buildCallAgentCalls, runSliceCompletion } =
+      buildScriptedDeps({
+        resolveSessionResult: { worktreePath: "/wt/abc" },
+        resolveConversationResult: { agentBackend: "claude" },
+        resolveCodexModelConfigResult: {
+          model: "gpt-5.5",
+          reasoningEffort: "high",
+        },
+        resolveClaudeModelConfigResult: { model: "opus" },
+      });
     const manager = createCollaborationManager(deps);
 
     await manager.start({
@@ -1211,9 +1374,28 @@ describe("createCollaborationManager.start", () => {
 
     const call = runSliceCalls[0];
     if (!call) throw new Error("expected one runSlice call");
-    expect(call.input.agentModelSettings).toEqual({
-      claude: { model: "fable", effort: "max" },
-      codex: { model: "gpt-5.5", effort: "high" },
+    // toMatchObject: agent_two additionally carries its (default) profile
+    // snapshot, covered by the staffing tests.
+    expect(call.input.agents).toMatchObject({
+      agent_one: { backend: "claude", model: "fable", effort: "max" },
+      agent_two: {
+        backend: "codex",
+        model: "gpt-5.5",
+        effort: "high",
+        fastMode: false,
+      },
+    });
+    expect(buildCallAgentCalls[0]?.agents).toEqual({
+      agent_one: expect.objectContaining({
+        backend: "claude",
+        model: "fable",
+        reasoningEffort: "max",
+      }),
+      agent_two: expect.objectContaining({
+        backend: "codex",
+        model: "gpt-5.5",
+        reasoningEffort: "high",
+      }),
     });
   });
 
@@ -2116,14 +2298,18 @@ describe("createCollaborationManager.resume", () => {
       q1: "yes",
       q2: "no",
     });
-    expect(buildCallAgentCalls[0]).toEqual(
-      expect.objectContaining({
-        codexTimeoutMs: 120_000,
-        codexStallTimeoutMs: 30_000,
-        claudeTimeoutMs: 90_000,
-        claudeStallTimeoutMs: 0,
+    expect(buildCallAgentCalls[0]?.agents).toEqual({
+      agent_one: expect.objectContaining({
+        backend: "claude",
+        timeoutMs: 90_000,
+        stallTimeoutMs: 0,
       }),
-    );
+      agent_two: expect.objectContaining({
+        backend: "codex",
+        timeoutMs: 120_000,
+        stallTimeoutMs: 30_000,
+      }),
+    });
   });
 
   it.each([false, true])(
@@ -2167,8 +2353,12 @@ describe("createCollaborationManager.resume", () => {
       });
       await runSliceCompletion;
 
-      expect(buildCallAgentCalls[0]?.codexFastMode).toBe(codexFastMode);
-      expect(runSliceCalls[0]?.input.codexFastMode).toBe(codexFastMode);
+      expect(buildCallAgentCalls[0]?.agents.agent_one).toEqual(
+        expect.objectContaining({ backend: "codex", fastMode: codexFastMode }),
+      );
+      expect(runSliceCalls[0]?.input.agents?.agent_one.fastMode).toBe(
+        codexFastMode,
+      );
     },
   );
 
@@ -2198,8 +2388,10 @@ describe("createCollaborationManager.resume", () => {
     });
     await runSliceCompletion;
 
-    expect(buildCallAgentCalls[0]?.codexFastMode).toBeUndefined();
-    expect(runSliceCalls[0]?.input.codexFastMode).toBeUndefined();
+    expect(buildCallAgentCalls[0]?.agents.agent_one.fastMode).toBeUndefined();
+    expect(buildCallAgentCalls[0]?.agents.agent_two.fastMode).toBeUndefined();
+    expect(runSliceCalls[0]?.input.agents?.agent_one.fastMode).toBeUndefined();
+    expect(runSliceCalls[0]?.input.agents?.agent_two.fastMode).toBeUndefined();
   });
 });
 
@@ -2421,12 +2613,20 @@ describe("buildStandaloneCollaborationCallerInput", () => {
     workflowId: "wf-scope",
     conversationId: "conv-originating",
     laneService: createLaneService({ store: createInMemoryLaneStore() }),
-    codexModel: "gpt-5.2",
-    codexTimeoutMs: 0,
-    codexStallTimeoutMs: 0,
-    claudeModel: "opus",
-    claudeTimeoutMs: 0,
-    claudeStallTimeoutMs: 0,
+    agents: {
+      agent_one: {
+        backend: "claude" as const,
+        model: "opus",
+        timeoutMs: 0,
+        stallTimeoutMs: 0,
+      },
+      agent_two: {
+        backend: "codex" as const,
+        model: "gpt-5.2",
+        timeoutMs: 0,
+        stallTimeoutMs: 0,
+      },
+    },
   };
 
   it("grants the originating session scope, so the standalone Codex lane can run the ticket block's cctl commands", () => {

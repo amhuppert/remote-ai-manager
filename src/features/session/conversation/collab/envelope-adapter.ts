@@ -1,11 +1,50 @@
 import {
   collaborationAgentModelSettingsMapSchema,
+  collaborationAgentsMapSchema,
   collaborationArtifactSchema,
   type CollaborationAgent,
-  type CollaborationAgentModelSettingsMap,
   type CollaborationArtifact,
   type CollaborationAutonomousResolutionThreshold,
+  type CollaborationResolvedAgent,
 } from "@/lib/workflows/collaboration/types";
+import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
+
+/**
+ * One lane's display identity. The persisted `agents` entry carries the full
+ * profile SNAPSHOT (instructions and rendered block included, for server-side
+ * replay); only the identity fields cross into UI props, with the profile
+ * reduced to its display name — and omitted entirely for the no-op Standard
+ * Agent default.
+ */
+export interface CollabAgentDisplay {
+  backend: CollaborationAgent;
+  model: string;
+  effort?: string;
+  fastMode?: boolean;
+  profileName?: string;
+}
+
+export interface CollabAgentsDisplayMap {
+  agent_one: CollabAgentDisplay;
+  agent_two: CollabAgentDisplay;
+}
+
+function toAgentDisplay(agent: CollaborationResolvedAgent): CollabAgentDisplay {
+  const profile = agent.profileSnapshot;
+  const isDefaultProfile =
+    profile !== undefined &&
+    profile.tier === "builtin" &&
+    profile.id === "standard-agent";
+  return {
+    backend: agent.backend,
+    model: agent.model,
+    ...(agent.effort !== undefined ? { effort: agent.effort } : {}),
+    ...(agent.fastMode !== undefined ? { fastMode: agent.fastMode } : {}),
+    ...(profile !== undefined && !isDefaultProfile
+      ? { profileName: profile.name }
+      : {}),
+  };
+}
 
 export interface CollabEnvelopeView {
   workflowId: string;
@@ -28,7 +67,7 @@ export interface CollabFeatureSnapshot {
   mode: "asymmetric";
   brief: string;
   primaryAgentBackend: CollaborationAgent;
-  agentModelSettings?: CollaborationAgentModelSettingsMap;
+  agents?: CollabAgentsDisplayMap;
   negotiationRounds: number;
   negotiationRoundsCompleted: number;
   autonomousResolutionThreshold: CollaborationAutonomousResolutionThreshold;
@@ -39,7 +78,7 @@ export interface CollabFeatureSnapshot {
 export interface CollabPassageProps {
   workflowId: string;
   primary: CollaborationAgent;
-  agentModelSettings?: CollaborationAgentModelSettingsMap;
+  agents?: CollabAgentsDisplayMap;
   status: CollabPassageStatus;
   artifacts: CollaborationArtifact[];
   submittedAnswers: Record<string, string>;
@@ -95,6 +134,42 @@ function parseUserAnswers(value: unknown): Record<string, string> {
   return out;
 }
 
+/**
+ * Display-only decode of the legacy backend-keyed `agentModelSettings` blob
+ * on envelopes written before per-flow-agent configs existed, mapped through
+ * the opposite-backend pairing that was invariant when those envelopes were
+ * written. Confined to this adapter — nothing writes the legacy shape — so
+ * old collab passages keep their model/effort meta line.
+ */
+function legacyAgentsView(
+  record: Record<string, unknown>,
+  primary: CollaborationAgent,
+): CollabAgentsDisplayMap | undefined {
+  const legacy = collaborationAgentModelSettingsMapSchema.safeParse(
+    record["agentModelSettings"],
+  );
+  if (!legacy.success) return undefined;
+  const secondary: CollaborationAgent =
+    primary === "claude" ? "codex" : "claude";
+  const codexFastMode = record["codexFastMode"];
+  const entryFor = (backend: CollaborationAgent) => {
+    const settings = legacy.data[backend];
+    return {
+      backend,
+      model: settings.model,
+      ...(settings.effort !== undefined ? { effort: settings.effort } : {}),
+      // The legacy flag always described the codex lane, whichever agent ran it.
+      ...(backendSupportsFastMode(backend) && typeof codexFastMode === "boolean"
+        ? { fastMode: codexFastMode }
+        : {}),
+    };
+  };
+  return {
+    agent_one: entryFor(primary),
+    agent_two: entryFor(secondary),
+  };
+}
+
 export function parseCollabFeatureSnapshot(
   snapshot: unknown,
 ): CollabFeatureSnapshot | null {
@@ -123,16 +198,18 @@ export function parseCollabFeatureSnapshot(
     record["autonomousResolutionThreshold"],
   );
   if (!autonomousResolutionThreshold) return null;
-  const agentModelSettings = collaborationAgentModelSettingsMapSchema.safeParse(
-    record["agentModelSettings"],
-  );
+  const agents = collaborationAgentsMapSchema.safeParse(record["agents"]);
+  const agentsView = agents.success
+    ? {
+        agent_one: toAgentDisplay(agents.data.agent_one),
+        agent_two: toAgentDisplay(agents.data.agent_two),
+      }
+    : legacyAgentsView(record, primaryAgentBackend);
   return {
     mode: "asymmetric",
     brief,
     primaryAgentBackend,
-    ...(agentModelSettings.success
-      ? { agentModelSettings: agentModelSettings.data }
-      : {}),
+    ...(agentsView !== undefined ? { agents: agentsView } : {}),
     negotiationRounds: Math.max(0, Math.floor(negotiationRounds)),
     negotiationRoundsCompleted: Math.max(
       0,
@@ -177,9 +254,7 @@ export function envelopeToCollabPassageProps(
   return {
     workflowId: envelope.workflowId,
     primary: snapshot.primaryAgentBackend,
-    ...(snapshot.agentModelSettings !== undefined
-      ? { agentModelSettings: snapshot.agentModelSettings }
-      : {}),
+    ...(snapshot.agents !== undefined ? { agents: snapshot.agents } : {}),
     status: passageStatusFor(envelope, snapshot.artifacts),
     artifacts: snapshot.artifacts,
     submittedAnswers: snapshot.userAnswersByQuestionId,

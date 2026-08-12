@@ -683,7 +683,11 @@ export const SEAMS: readonly SeamDefinition[] = [
   {
     id: "backend-identity-branches",
     title: "Backend-identity branches outside the adapter seam",
-    reviewedCeiling: 23,
+    // Ratcheted 23 → 21 with the collab per-agent config work: the manager's
+    // per-backend config resolution became a selection map keyed by backend id,
+    // and the fastMode gates moved onto the canonical backendSupportsFastMode
+    // capability predicate.
+    reviewedCeiling: 21,
     unit: 'backend ===/!== "claude"|"codex" comparisons + case labels',
     corpus:
       "src/**/*.{ts,tsx} minus tests/stories (fixture/prototype code is not the migration population); excludes src/lib/agent-backends/. Permanent-survivor floor (ceiling > 0, not expected to reach 0): per P3 the surviving branches are sanctioned adapter-boundary and explicitly-named product-policy sites — the places where the {claude, codex} pair IS the decision, not a defect to route through a normalized adapter result. These are (a) the curated collaboration pair (D19: the Claude×Codex pairing is the feature; identity is intrinsic), (b) presentation/label and default-selection maps keyed by the two ids where a normalized capability field would add no behavior, and (c) the narrow disposition/continuation reads the descriptor classifier has not yet subsumed. Deletion condition (drops per site as each is reached): a branch leaves the floor only when its distinction is expressed as a declared capability field or a normalized result field (e.g. continuationDisposition) per P3, or when the descriptor's failure/continuation classifier subsumes it (§3.1.5/1.5). The floor reaches 0 only if every remaining site becomes such a data-driven read; absent that, the reviewed nonzero count is the intentional adapter-boundary/product-policy minimum, ratcheted down whenever a migration removes an identity check. Stays in the corpus (not a file-excluding allowlist) so any NEW identity branch added above the seam still fails the ratchet.",

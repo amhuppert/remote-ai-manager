@@ -29,6 +29,8 @@ import {
 import type { WorkflowEnvelope } from "./workflow-envelope-vocabulary";
 import { collaborationFeatureSnapshotSchema } from "@/lib/workflows/collaboration/feature-snapshot";
 import { parseSessionContextForExecution } from "@/lib/workflows/collaboration/session-context";
+import { buildAgentProfileSnapshot } from "@/lib/agent-profiles/composer";
+import { computeContentHash } from "@/lib/agent-profiles/hashing";
 
 const PROJECT_PATH = "/projects/wiring-fixture";
 const SESSION_NAME = "wiring-1";
@@ -177,6 +179,39 @@ describe("durable workflow wiring through production factory", () => {
       activeTicketBlock:
         "<active-ticket>\nidentifier: wiring-fixture#8\ntitle: Charter parity\nstatus: In progress\nattachments: none\n</active-ticket>",
     };
+    // Both generations of per-agent settings: the legacy backend-keyed blob
+    // (still decoded for display on old envelopes) AND the typed per-flow-agent
+    // map, whose agent entries carry full profile snapshots for byte-for-byte
+    // replay on resume.
+    const agents = {
+      agent_one: {
+        backend: "claude",
+        model: "fable",
+        effort: "max",
+        profileSnapshot: buildAgentProfileSnapshot({
+          tier: "project",
+          id: "conversation-reviewer",
+          name: "Conversation Reviewer",
+          revision: 4,
+          sourceContentHash: computeContentHash("review as staffed"),
+          instructions: "review as staffed",
+        }),
+      },
+      agent_two: {
+        backend: "codex",
+        model: "gpt-5.6-sol",
+        effort: "xhigh",
+        fastMode: true,
+        profileSnapshot: buildAgentProfileSnapshot({
+          tier: "global",
+          id: "critic",
+          name: "Critic",
+          revision: 2,
+          sourceContentHash: computeContentHash("criticize constructively"),
+          instructions: "criticize constructively",
+        }),
+      },
+    };
     const featureSnapshot = {
       origin: "user",
       mode: "asymmetric",
@@ -188,6 +223,7 @@ describe("durable workflow wiring through production factory", () => {
         claude: { model: "opus", effort: "high" },
         codex: { model: "gpt-5.6", effort: "medium" },
       },
+      agents,
       negotiationRounds: 5,
       negotiationRoundsCompleted: 2,
       autonomousResolutionThreshold: "major",
@@ -232,6 +268,9 @@ describe("durable workflow wiring through production factory", () => {
     expect(parseSessionContextForExecution(decoded.sessionContext)).toEqual(
       sessionContext,
     );
+    // Resume replays the persisted per-agent settings — including each lane's
+    // rendered profile block — byte-for-byte.
+    expect(decoded.agents).toEqual(agents);
   });
 
   it("store factory writes are isolated to the supplied (projectPath, sessionName) and survive restart", async () => {

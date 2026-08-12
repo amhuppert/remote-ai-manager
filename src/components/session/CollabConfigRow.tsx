@@ -1,7 +1,26 @@
 "use client";
 
 import { useId, useState } from "react";
-import { backendLabel } from "@/lib/agent-backends/catalog";
+import BackendToggle from "@/components/BackendToggle";
+import ModelSelector from "@/components/ModelSelector";
+import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
+import CodexSpeedToggle from "@/components/session/prompt/CodexSpeedToggle";
+import AgentProfilePicker from "@/components/agent-profiles/AgentProfilePicker";
+import { STANDARD_AGENT_PROFILE_VALUE } from "@/components/agent-profiles/agent-profile-picker-state";
+import {
+  backendLabel,
+  backendSupportsFastMode,
+  getEffortLevelsForBackend,
+  type BackendSelectionDefaultsById,
+} from "@/lib/agent-backends/catalog";
+import {
+  effortLevelSchema,
+  type EffortLevel,
+} from "@/lib/agent-backends/schemas";
+import {
+  seedAgentTwoDraft,
+  type CollabAgentTwoDraft,
+} from "@/stores/collaboration.store";
 
 export const COLLAB_RUNNING_TOOLTIP =
   "collaboration in progress · stop the run to continue";
@@ -15,9 +34,17 @@ type CollabAutonomousResolutionThreshold =
   | "blocking";
 
 export interface CollabConfigRowConfig {
-  secondAgent: CollabAgent;
+  agentTwo: CollabAgentTwoDraft;
   negotiationRounds: number;
   autonomousResolutionThreshold: CollabAutonomousResolutionThreshold;
+}
+
+/** Agent One's live composer selection, shown read-only. */
+export interface CollabAgentOneSummary {
+  backend: CollabAgent;
+  model: string;
+  effort?: string;
+  fastMode?: boolean;
 }
 
 export interface CollabConfigRowProps {
@@ -25,6 +52,12 @@ export interface CollabConfigRowProps {
   onChange: (next: CollabConfigRowConfig) => void;
   onDismiss: () => void;
   originatingAgent: CollabAgent;
+  /** Composer selection mirrored as the read-only Agent One summary. */
+  agentOne?: CollabAgentOneSummary;
+  /** Seeds Agent Two's model/effort/fastMode when its backend changes. */
+  backendDefaults: BackendSelectionDefaultsById;
+  /** Scopes the profile picker's listing; absent outside a project. */
+  projectName?: string;
 }
 
 const AGENT_LABEL: Record<CollabAgent, string> = {
@@ -70,11 +103,19 @@ function clampNegotiationRounds(value: number): number {
   return Math.round(value);
 }
 
+function asEffortLevel(value: string | undefined): EffortLevel | undefined {
+  const parsed = effortLevelSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
 export default function CollabConfigRow({
   config,
   onChange,
   onDismiss,
   originatingAgent,
+  agentOne,
+  backendDefaults,
+  projectName,
 }: CollabConfigRowProps): React.JSX.Element {
   const negotiationRoundsId = useId();
   const thresholdGroupId = useId();
@@ -83,9 +124,21 @@ export default function CollabConfigRow({
     String(config.negotiationRounds),
   );
 
+  const agentTwo = config.agentTwo;
+  const agentTwoEffortLevels = getEffortLevelsForBackend(
+    agentTwo.backend,
+    agentTwo.model,
+  );
+  const agentTwoEffortSupported = agentTwoEffortLevels.length > 0;
+  const agentTwoEffort = asEffortLevel(agentTwo.effort);
+
+  const updateAgentTwo = (next: CollabAgentTwoDraft): void => {
+    onChange({ ...config, agentTwo: next });
+  };
+
   return (
     <div
-      className="relative flex w-full items-start gap-md rounded-t-md border border-b-0 border-solid border-border-subtle bg-bg-base py-sm pr-md pl-[calc(var(--space-md)+4px)]"
+      className="relative flex w-full flex-col gap-sm rounded-t-md border border-b-0 border-solid border-border-subtle bg-bg-base py-sm pr-md pl-[calc(var(--space-md)+4px)]"
       data-originating-agent={originatingAgent}
       role="region"
       aria-label="Collaboration configuration"
@@ -95,115 +148,179 @@ export default function CollabConfigRow({
         aria-hidden="true"
       />
 
-      <div className="flex flex-auto flex-wrap items-center gap-md">
-        <div className="inline-flex items-center gap-[6px] rounded-full bg-violet-glow px-[10px] py-[3px] font-mono text-[0.74rem] font-bold tracking-[0.06em] text-violet">
-          <span className="text-[0.85rem] leading-none" aria-hidden="true">
-            ◆
-          </span>
-          <span className="lowercase">/collab</span>
-        </div>
+      <div className="flex w-full items-start gap-md">
+        <div className="flex flex-auto flex-wrap items-center gap-md">
+          <div className="inline-flex items-center gap-[6px] rounded-full bg-violet-glow px-[10px] py-[3px] font-mono text-[0.74rem] font-bold tracking-[0.06em] text-violet">
+            <span className="text-[0.85rem] leading-none" aria-hidden="true">
+              ◆
+            </span>
+            <span className="lowercase">/collab</span>
+          </div>
 
-        <div
-          className="inline-flex items-center gap-[6px]"
-          data-field="originating-agent"
-        >
-          <span className={fieldLabelClass}>1st agent</span>
-          <span className={agentReadonlyClass} data-agent={originatingAgent}>
-            {AGENT_LABEL[originatingAgent]}
-          </span>
-        </div>
-
-        <div
-          className="inline-flex items-center gap-[6px]"
-          data-field="second-agent"
-        >
-          <span className={fieldLabelClass}>2nd agent</span>
-          <span
-            className={agentReadonlyClass}
-            data-agent={config.secondAgent}
-            aria-readonly="true"
-            title={`Second agent is fixed to ${AGENT_LABEL[config.secondAgent]} for now`}
-          >
-            {AGENT_LABEL[config.secondAgent]}
-          </span>
-        </div>
-
-        <div
-          className="inline-flex items-center gap-[6px]"
-          data-field="negotiation-rounds"
-        >
-          <label className={fieldLabelClass} htmlFor={negotiationRoundsId}>
-            Rounds
-          </label>
-          <input
-            id={negotiationRoundsId}
-            type="number"
-            inputMode="numeric"
-            min={NEGOTIATION_ROUNDS_MIN}
-            max={NEGOTIATION_ROUNDS_MAX}
-            step={1}
-            className="w-[64px] rounded-sm border border-solid border-border-default bg-bg-base px-[8px] py-[4px] text-center font-mono text-[0.78rem] text-text-primary outline-none [transition:border-color_0.15s_ease,box-shadow_0.15s_ease] focus:border-cyan-dim focus:shadow-[0_0_0_3px_var(--cyan-glow)]"
-            value={negotiationRoundsDraft}
-            onChange={(event) => setNegotiationRoundsDraft(event.target.value)}
-            onBlur={() => {
-              const parsed = Number.parseInt(negotiationRoundsDraft, 10);
-              const clamped = clampNegotiationRounds(parsed);
-              setNegotiationRoundsDraft(String(clamped));
-              if (clamped !== config.negotiationRounds) {
-                onChange({ ...config, negotiationRounds: clamped });
-              }
-            }}
-          />
-        </div>
-
-        <div
-          className="inline-flex items-center gap-[6px]"
-          data-field="autonomous-resolution-threshold"
-        >
-          <span className={fieldLabelClass} id={thresholdGroupId}>
-            Auto-resolve
-          </span>
           <div
-            role="radiogroup"
-            aria-labelledby={thresholdGroupId}
-            className="inline-flex gap-[2px] rounded-sm border border-solid border-border-default bg-bg-base p-[2px]"
+            className="inline-flex items-center gap-[6px]"
+            data-field="originating-agent"
+            title="Uses this conversation's settings"
           >
-            {THRESHOLD_OPTIONS.map((option) => {
-              const isActive =
-                config.autonomousResolutionThreshold === option.value;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  role="radio"
-                  aria-checked={isActive}
-                  className="cursor-pointer rounded-[calc(var(--radius-sm)-2px)] border-0 bg-transparent px-[10px] py-[4px] font-mono text-[0.74rem] font-semibold tracking-[0.04em] text-text-secondary uppercase [transition:background-color_0.15s_ease,color_0.15s_ease] focus-visible:[outline:2px_solid_var(--cyan)] focus-visible:outline-offset-2 data-[active=false]:hover:text-text-primary data-[active=true]:bg-cyan-glow data-[active=true]:text-cyan"
-                  data-active={isActive ? "true" : "false"}
-                  data-value={option.value}
-                  title={option.hint}
-                  onClick={() =>
-                    onChange({
-                      ...config,
-                      autonomousResolutionThreshold: option.value,
-                    })
-                  }
-                >
-                  {option.label}
-                </button>
-              );
-            })}
+            <span className={fieldLabelClass}>1st agent</span>
+            <span className={agentReadonlyClass} data-agent={originatingAgent}>
+              {AGENT_LABEL[originatingAgent]}
+            </span>
+            {agentOne && (
+              <span className="font-mono text-[0.72rem] text-text-secondary">
+                {agentOne.model}
+                {agentOne.effort ? ` · ${agentOne.effort}` : ""}
+                {agentOne.fastMode === true ? " · fast" : ""}
+              </span>
+            )}
+          </div>
+
+          <div
+            className="inline-flex items-center gap-[6px]"
+            data-field="negotiation-rounds"
+          >
+            <label className={fieldLabelClass} htmlFor={negotiationRoundsId}>
+              Rounds
+            </label>
+            <input
+              id={negotiationRoundsId}
+              type="number"
+              inputMode="numeric"
+              min={NEGOTIATION_ROUNDS_MIN}
+              max={NEGOTIATION_ROUNDS_MAX}
+              step={1}
+              className="w-[64px] rounded-sm border border-solid border-border-default bg-bg-base px-[8px] py-[4px] text-center font-mono text-[0.78rem] text-text-primary outline-none [transition:border-color_0.15s_ease,box-shadow_0.15s_ease] focus:border-cyan-dim focus:shadow-[0_0_0_3px_var(--cyan-glow)]"
+              value={negotiationRoundsDraft}
+              onChange={(event) =>
+                setNegotiationRoundsDraft(event.target.value)
+              }
+              onBlur={() => {
+                const parsed = Number.parseInt(negotiationRoundsDraft, 10);
+                const clamped = clampNegotiationRounds(parsed);
+                setNegotiationRoundsDraft(String(clamped));
+                if (clamped !== config.negotiationRounds) {
+                  onChange({ ...config, negotiationRounds: clamped });
+                }
+              }}
+            />
+          </div>
+
+          <div
+            className="inline-flex items-center gap-[6px]"
+            data-field="autonomous-resolution-threshold"
+          >
+            <span className={fieldLabelClass} id={thresholdGroupId}>
+              Auto-resolve
+            </span>
+            <div
+              role="radiogroup"
+              aria-labelledby={thresholdGroupId}
+              className="inline-flex gap-[2px] rounded-sm border border-solid border-border-default bg-bg-base p-[2px]"
+            >
+              {THRESHOLD_OPTIONS.map((option) => {
+                const isActive =
+                  config.autonomousResolutionThreshold === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={isActive}
+                    className="cursor-pointer rounded-[calc(var(--radius-sm)-2px)] border-0 bg-transparent px-[10px] py-[4px] font-mono text-[0.74rem] font-semibold tracking-[0.04em] text-text-secondary uppercase [transition:background-color_0.15s_ease,color_0.15s_ease] focus-visible:[outline:2px_solid_var(--cyan)] focus-visible:outline-offset-2 data-[active=false]:hover:text-text-primary data-[active=true]:bg-cyan-glow data-[active=true]:text-cyan"
+                    data-active={isActive ? "true" : "false"}
+                    data-value={option.value}
+                    title={option.hint}
+                    onClick={() =>
+                      onChange({
+                        ...config,
+                        autonomousResolutionThreshold: option.value,
+                      })
+                    }
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
+
+        <button
+          type="button"
+          className="inline-flex h-[28px] w-[28px] cursor-pointer items-center justify-center self-start rounded-sm border border-solid border-border-subtle bg-transparent text-[1rem] leading-none text-text-secondary [transition:border-color_0.15s_ease,color_0.15s_ease] hover:border-red-dim hover:text-red-text focus-visible:[outline:2px_solid_var(--cyan)] focus-visible:outline-offset-2 max-768:h-[44px] max-768:w-[44px]"
+          onClick={onDismiss}
+          aria-label="Dismiss /collab"
+        >
+          <span aria-hidden="true">×</span>
+        </button>
       </div>
 
-      <button
-        type="button"
-        className="inline-flex h-[28px] w-[28px] cursor-pointer items-center justify-center self-start rounded-sm border border-solid border-border-subtle bg-transparent text-[1rem] leading-none text-text-secondary [transition:border-color_0.15s_ease,color_0.15s_ease] hover:border-red-dim hover:text-red-text focus-visible:[outline:2px_solid_var(--cyan)] focus-visible:outline-offset-2 max-768:h-[44px] max-768:w-[44px]"
-        onClick={onDismiss}
-        aria-label="Dismiss /collab"
+      <div
+        className="flex flex-wrap items-center gap-md"
+        data-field="second-agent"
       >
-        <span aria-hidden="true">×</span>
-      </button>
+        <span className={fieldLabelClass}>2nd agent</span>
+        <BackendToggle
+          value={agentTwo.backend}
+          onChange={(backend) => {
+            if (backend === agentTwo.backend) return;
+            // A backend switch re-seeds model/effort/fastMode from that
+            // backend's defaults; the profile is prompt identity, orthogonal
+            // to the runtime, so it survives the switch.
+            updateAgentTwo({
+              ...seedAgentTwoDraft(backend, backendDefaults),
+              ...(agentTwo.profile !== undefined
+                ? { profile: agentTwo.profile }
+                : {}),
+            });
+          }}
+        />
+        <div data-field="second-agent-profile">
+          <AgentProfilePicker
+            projectName={projectName ?? null}
+            value={agentTwo.profile ?? STANDARD_AGENT_PROFILE_VALUE}
+            audience="conversation"
+            onChange={(selection) =>
+              updateAgentTwo({ ...agentTwo, profile: selection.value })
+            }
+          />
+        </div>
+        <ModelSelector
+          backend={agentTwo.backend}
+          value={agentTwo.model ?? backendDefaults[agentTwo.backend].modelId}
+          onChange={(model) => {
+            // A model switch can invalidate the current effort tier; snap to
+            // the new model's set the same way the composer does.
+            const levels = getEffortLevelsForBackend(agentTwo.backend, model);
+            const effort =
+              agentTwoEffort !== undefined && levels.includes(agentTwoEffort)
+                ? agentTwoEffort
+                : levels.includes("high")
+                  ? "high"
+                  : levels[levels.length - 1];
+            updateAgentTwo({
+              ...agentTwo,
+              model,
+              ...(effort !== undefined ? { effort } : {}),
+            });
+          }}
+        />
+        {agentTwoEffortSupported && agentTwoEffort !== undefined && (
+          <ReasoningLevelSelector
+            value={agentTwoEffort}
+            availableLevels={agentTwoEffortLevels}
+            onChange={(level) => updateAgentTwo({ ...agentTwo, effort: level })}
+          />
+        )}
+        {backendSupportsFastMode(agentTwo.backend) && (
+          <CodexSpeedToggle
+            fastMode={agentTwo.fastMode ?? false}
+            onFastModeChange={(enabled) =>
+              updateAgentTwo({ ...agentTwo, fastMode: enabled })
+            }
+          />
+        )}
+      </div>
     </div>
   );
 }

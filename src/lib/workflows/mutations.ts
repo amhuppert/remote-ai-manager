@@ -598,6 +598,7 @@ export function useCollaborationStartMutation(
       modelId?: string;
       effort?: string;
       codexFastMode?: boolean;
+      agentTwo?: import("@/lib/workflows/collaboration/types").CollaborationAgentTwoRequest;
       images?: ImagePayload[];
     }) =>
       mutationFetch(

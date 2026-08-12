@@ -31,6 +31,8 @@ import { createWorkflowCollaboratorCaller } from "@/lib/workflow-graph/workflow-
 import { createGraphWorkflowManager } from "@/lib/workflow-graph/workflow-manager";
 import type { GraphWorkflowToolServerContext } from "@/lib/workflow-graph/lane-tool-service";
 import { createCollaborationProductionAgentCaller } from "@/lib/workflows/collaboration/agent-caller-production";
+import { oppositeCollaborationBackend } from "@/lib/workflows/collaboration/backend-pair";
+import { resolveConfiguredAgentBackendDefaults } from "@/lib/agent-backends/conversation-policy";
 import { decideCollaborationNextStep } from "@/lib/workflows/collaboration/policy";
 import { createWorkflowCollaborationEnvelope } from "@/lib/workflows/collaboration/workflow-envelope";
 import { appendCollaborationArtifact } from "@/lib/workflows/collaboration/artifacts-store";
@@ -262,6 +264,20 @@ export async function loadGraphWorkflowLaneToolContext(
                 sessionName,
               }),
             });
+            // Agent Two runs the resolved workflow config; Agent One keeps
+            // the historical opposite-backend pairing on global config
+            // defaults. Every lane crosses the caller boundary with a
+            // concrete model — a lane without one would fall back to the
+            // SDK's own default, which some accounts cannot access.
+            const collabConfig = await readConfig();
+            const agentTwoAgentConfig = resolvedCollaboration.secondAgent.value;
+            const agentOneBackend = oppositeCollaborationBackend(
+              agentTwoAgentConfig.backend,
+            );
+            const agentOneDefaults = resolveConfiguredAgentBackendDefaults(
+              collabConfig,
+              agentOneBackend,
+            );
             const agentCaller = createCollaborationProductionAgentCaller({
               workflowId: run.workflowId,
               projectPath,
@@ -270,6 +286,20 @@ export async function loadGraphWorkflowLaneToolContext(
               sessionKey,
               originatingConversationId: run.conversationId,
               laneService,
+              agents: {
+                agent_one: {
+                  backend: agentOneBackend,
+                  model: agentOneDefaults.modelId,
+                  ...(agentOneDefaults.reasoningEffort !== undefined
+                    ? { reasoningEffort: agentOneDefaults.reasoningEffort }
+                    : {}),
+                },
+                agent_two: {
+                  backend: agentTwoAgentConfig.backend,
+                  model: agentTwoAgentConfig.model,
+                  reasoningEffort: agentTwoAgentConfig.reasoningEffort,
+                },
+              },
             });
             const statusBus = createStatusBus({
               broadcast: (envelopeEvent) => {

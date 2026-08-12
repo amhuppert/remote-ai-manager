@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { catalogBackendSelectionDefaults } from "@/lib/agent-backends/catalog";
 import ConversationTranscript from "@/components/conversation/ConversationTranscript";
 import MessageRow from "@/components/conversation/MessageRow";
 import type { ConversationVirtuosoListProps } from "@/components/conversation/ConversationVirtuosoList";
@@ -73,10 +74,18 @@ export default function PaneConversationBody({
   const thinkingExpansionCommand = useThinkingBlockExpansionHotkeys(isActive);
   const backgroundActivity = useConversationBackgroundActivity(conversationId);
 
+  // The pane body only reads collaboration DISPLAY state (passage props,
+  // stop, answers) — it renders no config row — so catalog-derived defaults
+  // satisfy the seeding contract without threading server config here.
+  const collabBackendDefaults = useMemo(
+    () => catalogBackendSelectionDefaults(),
+    [],
+  );
   const collab = useCollabContext({
     projectName,
     sessionName,
     conversationId,
+    backendDefaults: collabBackendDefaults,
     collaborationListQuery,
     activeConversation: conversationState,
     rawMessages: messagesQuery.data ?? [],

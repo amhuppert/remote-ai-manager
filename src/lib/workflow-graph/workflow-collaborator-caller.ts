@@ -190,6 +190,8 @@ export function createWorkflowCollaboratorCaller(
       writeCapability: "write_capable",
       policy: { continuityEnabled: false },
       lastUsedAt: seedTs,
+      backendFor: (agent) =>
+        agent === "agent_one" ? agentOneBackend : agentTwoBackend,
       seedRefFor: () => null,
     });
     for (const lane of laneSeeds) {
@@ -211,9 +213,11 @@ export function createWorkflowCollaboratorCaller(
     round?: number;
   }): Promise<AgentCallResult> {
     await ensureLanesInitialized();
+    // Lane identity is the flow agent, not the backend, so a future
+    // same-backend pairing keeps two distinct lanes.
     const laneRef = {
       workflowId: input.workflowId,
-      laneId: args.backend,
+      laneId: args.agent,
     } as const;
     const isAgentTwoCall = args.agent === "agent_two";
     const agentCallRequest: AgentCallRequest = {

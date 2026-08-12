@@ -12,7 +12,11 @@ import { stripCollabPrefix } from "@/lib/conversation-commands/parse";
 import type { PublicConversationState } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
-import type { CollabConfigDraft } from "@/stores/collaboration.store";
+import type {
+  CollabConfigDraft,
+  EffectiveCollabConfig,
+} from "@/stores/collaboration.store";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/catalog";
 import type {
   ImageAttachment,
   AddImageResult,
@@ -64,7 +68,7 @@ export interface UsePromptComposerPropsArgs {
   availableEffortLevels: EffortLevel[];
   effortSupported: boolean;
   hasCollabChip: boolean;
-  effectiveCollabConfig: CollabConfigDraft;
+  effectiveCollabConfig: EffectiveCollabConfig;
   originatingCollabAgent: "claude" | "codex";
   setCollabConfigDraft: (
     project: string,
@@ -72,6 +76,7 @@ export interface UsePromptComposerPropsArgs {
     conversation: string,
     next: CollabConfigDraft,
   ) => void;
+  collabBackendDefaults: BackendSelectionDefaultsById;
   clearCollabConfigDraft: (
     project: string,
     session: string,
@@ -134,6 +139,7 @@ export function usePromptComposerProps(
     originatingCollabAgent,
     setCollabConfigDraft,
     clearCollabConfigDraft,
+    collabBackendDefaults,
     debugToggleMutation,
   } = args;
   return useMemo<PromptComposerProps>(
@@ -182,6 +188,7 @@ export function usePromptComposerProps(
       hasCollabChip,
       effectiveCollabConfig,
       originatingCollabAgent,
+      collabBackendDefaults,
       onCollabConfigChange: (next: CollabConfigDraft) =>
         setCollabConfigDraft(projectName, sessionName, conversationId, next),
       onCollabDismiss: () => {
@@ -242,6 +249,7 @@ export function usePromptComposerProps(
       setCollabConfigDraft,
       setPromptText,
       clearCollabConfigDraft,
+      collabBackendDefaults,
       debugToggleMutation,
     ],
   );

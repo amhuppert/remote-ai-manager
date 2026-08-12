@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createCollaborationProductionCallAgent } from "./agent-caller-production";
+import {
+  createCollaborationProductionCallAgent,
+  type CollaborationLaneAgentConfig,
+  type CollaborationLaneAgentsInput,
+} from "./agent-caller-production";
 import {
   COLLABORATION_FORMAT_TURN_INSTRUCTION,
   COLLABORATION_PROSE_TURN_INSTRUCTION,
@@ -31,6 +35,32 @@ import type {
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
 import type { AgentCallRequest } from "@/lib/workflows/primitives/agent-call-vocabulary";
+
+/**
+ * Both flow agents' lane configs with the default backend pairing
+ * (agent_one=claude, agent_two=codex) and concrete models — the production
+ * caller requires a resolved model per lane. Per-test overrides layer the
+ * settings the test asserts on.
+ */
+function collabAgents(
+  overrides: {
+    agent_one?: Partial<CollaborationLaneAgentConfig>;
+    agent_two?: Partial<CollaborationLaneAgentConfig>;
+  } = {},
+): CollaborationLaneAgentsInput {
+  return {
+    agent_one: {
+      backend: "claude",
+      model: "claude-lane-model",
+      ...overrides.agent_one,
+    },
+    agent_two: {
+      backend: "codex",
+      model: "codex-lane-model",
+      ...overrides.agent_two,
+    },
+  };
+}
 
 // The format turn emits model-authored content only — the orchestrator owns
 // kind/agent/round and each artifact's round/agent/phase and injects them after
@@ -111,7 +141,7 @@ describe("createCollaborationProductionCallAgent", () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-mcp-scope",
-      laneId: "claude",
+      laneId: "agent_one",
       backend: "claude",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
@@ -171,6 +201,7 @@ describe("createCollaborationProductionCallAgent", () => {
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "real-conv-uuid-1",
       laneService,
+      agents: collabAgents(),
       getConversationBackendFactory: () => factory,
     });
 
@@ -178,7 +209,7 @@ describe("createCollaborationProductionCallAgent", () => {
       kind: "conversation_turn",
       backend: "claude",
       prompt: "round 1",
-      laneRef: { workflowId: "wf-mcp-scope", laneId: "claude" },
+      laneRef: { workflowId: "wf-mcp-scope", laneId: "agent_one" },
       writeCapability: "write_capable",
       outputSchema:
         COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
@@ -196,7 +227,7 @@ describe("createCollaborationProductionCallAgent", () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-claude-continuity",
-      laneId: "claude",
+      laneId: "agent_one",
       backend: "claude",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
@@ -262,6 +293,7 @@ describe("createCollaborationProductionCallAgent", () => {
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
+      agents: collabAgents(),
       getConversationBackendFactory: () => factory,
     });
 
@@ -269,7 +301,7 @@ describe("createCollaborationProductionCallAgent", () => {
       kind: "conversation_turn",
       backend: "claude",
       prompt: `round ${round}`,
-      laneRef: { workflowId: "wf-claude-continuity", laneId: "claude" },
+      laneRef: { workflowId: "wf-claude-continuity", laneId: "agent_one" },
       writeCapability: "write_capable",
       outputSchema:
         COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
@@ -292,7 +324,7 @@ describe("createCollaborationProductionCallAgent", () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-claude-output-format",
-      laneId: "claude",
+      laneId: "agent_one",
       backend: "claude",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
@@ -354,6 +386,7 @@ describe("createCollaborationProductionCallAgent", () => {
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
+      agents: collabAgents(),
       getConversationBackendFactory: () => factory,
     });
 
@@ -367,7 +400,7 @@ describe("createCollaborationProductionCallAgent", () => {
       kind: "conversation_turn",
       backend: "claude",
       prompt: "round 1",
-      laneRef: { workflowId: "wf-claude-output-format", laneId: "claude" },
+      laneRef: { workflowId: "wf-claude-output-format", laneId: "agent_one" },
       writeCapability: "write_capable",
       outputSchema: schema,
     });
@@ -385,7 +418,7 @@ describe("createCollaborationProductionCallAgent", () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-codex-continuity",
-      laneId: "codex",
+      laneId: "agent_two",
       backend: "codex",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
@@ -426,6 +459,7 @@ describe("createCollaborationProductionCallAgent", () => {
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
+      agents: collabAgents(),
       getTaskRunner: () => runner,
     });
 
@@ -433,7 +467,7 @@ describe("createCollaborationProductionCallAgent", () => {
       kind: "task_run",
       backend: "codex",
       prompt: `round ${round}`,
-      laneRef: { workflowId: "wf-codex-continuity", laneId: "codex" },
+      laneRef: { workflowId: "wf-codex-continuity", laneId: "agent_two" },
       writeCapability: "write_capable",
       outputSchema:
         COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
@@ -470,7 +504,7 @@ describe("createCollaborationProductionCallAgent", () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-codex-no-continuity",
-      laneId: "codex",
+      laneId: "agent_two",
       backend: "codex",
       writeCapability: "write_capable",
       policy: { continuityEnabled: false },
@@ -511,6 +545,7 @@ describe("createCollaborationProductionCallAgent", () => {
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
+      agents: collabAgents(),
       getTaskRunner: () => runner,
     });
 
@@ -518,7 +553,7 @@ describe("createCollaborationProductionCallAgent", () => {
       kind: "task_run",
       backend: "codex",
       prompt: `round ${round}`,
-      laneRef: { workflowId: "wf-codex-no-continuity", laneId: "codex" },
+      laneRef: { workflowId: "wf-codex-no-continuity", laneId: "agent_two" },
       writeCapability: "write_capable",
       outputSchema:
         COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
@@ -538,7 +573,7 @@ describe("createCollaborationProductionCallAgent", () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-claude-stale",
-      laneId: "claude",
+      laneId: "agent_one",
       backend: "claude",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
@@ -621,6 +656,7 @@ describe("createCollaborationProductionCallAgent", () => {
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
+      agents: collabAgents(),
       getConversationBackendFactory: () => factory,
     });
 
@@ -628,7 +664,7 @@ describe("createCollaborationProductionCallAgent", () => {
       kind: "conversation_turn",
       backend: "claude",
       prompt: `round ${round}`,
-      laneRef: { workflowId: "wf-claude-stale", laneId: "claude" },
+      laneRef: { workflowId: "wf-claude-stale", laneId: "agent_one" },
       writeCapability: "write_capable",
       outputSchema:
         COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
@@ -661,7 +697,7 @@ describe("createCollaborationProductionCallAgent", () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-codex-model",
-      laneId: "codex",
+      laneId: "agent_two",
       backend: "codex",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
@@ -697,18 +733,22 @@ describe("createCollaborationProductionCallAgent", () => {
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
+      agents: collabAgents({
+        agent_two: {
+          model: "gpt-5.5",
+          reasoningEffort: "high",
+          timeoutMs: 75_000,
+          stallTimeoutMs: 25_000,
+        },
+      }),
       getTaskRunner: () => runner,
-      codexModel: "gpt-5.5",
-      codexReasoningEffort: "high",
-      codexTimeoutMs: 75_000,
-      codexStallTimeoutMs: 25_000,
     });
 
     await callAgent({
       kind: "task_run",
       backend: "codex",
       prompt: "round 1",
-      laneRef: { workflowId: "wf-codex-model", laneId: "codex" },
+      laneRef: { workflowId: "wf-codex-model", laneId: "agent_two" },
       writeCapability: "write_capable",
       outputSchema:
         COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
@@ -724,14 +764,14 @@ describe("createCollaborationProductionCallAgent", () => {
   });
 
   it.each([false, true])(
-    "applies the primary Codex fast-mode choice of %s to every Codex collaboration task turn",
+    "applies the codex lane's configured fast-mode choice of %s to every Codex collaboration task turn",
     async (codexFastMode) => {
       const laneService = createLaneService({
         store: createInMemoryLaneStore(),
       });
       await laneService.initialize({
         workflowId: "wf-codex-fast-mode",
-        laneId: "codex",
+        laneId: "agent_two",
         backend: "codex",
         writeCapability: "write_capable",
         policy: { continuityEnabled: true },
@@ -770,15 +810,15 @@ describe("createCollaborationProductionCallAgent", () => {
         sessionKey: "/projects/example::sess-1",
         originatingConversationId: "test-originating-conv",
         laneService,
+        agents: collabAgents({ agent_two: { fastMode: codexFastMode } }),
         getTaskRunner: () => runner,
-        codexFastMode,
       });
 
       await callAgent({
         kind: "task_run",
         backend: "codex",
         prompt: "round 1",
-        laneRef: { workflowId: "wf-codex-fast-mode", laneId: "codex" },
+        laneRef: { workflowId: "wf-codex-fast-mode", laneId: "agent_two" },
         writeCapability: "write_capable",
         outputSchema:
           COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
@@ -796,11 +836,11 @@ describe("createCollaborationProductionCallAgent", () => {
     },
   );
 
-  it("leaves the Codex task fast-mode choice unset when the collaboration has no primary override", async () => {
+  it("leaves the Codex task fast-mode choice unset when the codex lane's config carries no fast-mode setting", async () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-codex-fast-mode-default",
-      laneId: "codex",
+      laneId: "agent_two",
       backend: "codex",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
@@ -834,6 +874,7 @@ describe("createCollaborationProductionCallAgent", () => {
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
+      agents: collabAgents(),
       getTaskRunner: () => runner,
     });
 
@@ -841,7 +882,10 @@ describe("createCollaborationProductionCallAgent", () => {
       kind: "task_run",
       backend: "codex",
       prompt: "round 1",
-      laneRef: { workflowId: "wf-codex-fast-mode-default", laneId: "codex" },
+      laneRef: {
+        workflowId: "wf-codex-fast-mode-default",
+        laneId: "agent_two",
+      },
       writeCapability: "write_capable",
     });
 
@@ -853,7 +897,7 @@ describe("createCollaborationProductionCallAgent", () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-codex-model-override",
-      laneId: "codex",
+      laneId: "agent_two",
       backend: "codex",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
@@ -889,10 +933,14 @@ describe("createCollaborationProductionCallAgent", () => {
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
+      agents: collabAgents({
+        agent_two: {
+          model: "gpt-5.5",
+          timeoutMs: 75_000,
+          stallTimeoutMs: 25_000,
+        },
+      }),
       getTaskRunner: () => runner,
-      codexModel: "gpt-5.5",
-      codexTimeoutMs: 75_000,
-      codexStallTimeoutMs: 25_000,
     });
 
     await callAgent({
@@ -901,7 +949,7 @@ describe("createCollaborationProductionCallAgent", () => {
       prompt: "round 1",
       modelId: "gpt-5.4",
       timeoutMs: 5_000,
-      laneRef: { workflowId: "wf-codex-model-override", laneId: "codex" },
+      laneRef: { workflowId: "wf-codex-model-override", laneId: "agent_two" },
       writeCapability: "write_capable",
       outputSchema:
         COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
@@ -923,7 +971,7 @@ describe("createCollaborationProductionCallAgent", () => {
       });
       await laneService.initialize({
         workflowId: "wf-claude-timeout",
-        laneId: "claude",
+        laneId: "agent_one",
         backend: "claude",
         writeCapability: "write_capable",
         policy: { continuityEnabled: true },
@@ -984,15 +1032,15 @@ describe("createCollaborationProductionCallAgent", () => {
         sessionKey: "/projects/example::sess-1",
         originatingConversationId: "test-originating-conv",
         laneService,
+        agents: collabAgents({ agent_one: { timeoutMs: 5_000 } }),
         getConversationBackendFactory: () => factory,
-        claudeTimeoutMs: 5_000,
       });
 
       const resultPromise = callAgent({
         kind: "conversation_turn",
         backend: "claude",
         prompt: "round 1",
-        laneRef: { workflowId: "wf-claude-timeout", laneId: "claude" },
+        laneRef: { workflowId: "wf-claude-timeout", laneId: "agent_one" },
         writeCapability: "write_capable",
       });
 
@@ -1017,7 +1065,7 @@ describe("createCollaborationProductionCallAgent", () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-claude-model",
-      laneId: "claude",
+      laneId: "agent_one",
       backend: "claude",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
@@ -1039,16 +1087,17 @@ describe("createCollaborationProductionCallAgent", () => {
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
+      agents: collabAgents({
+        agent_one: { model: "opus", reasoningEffort: "xhigh" },
+      }),
       getConversationBackendFactory: () => factory,
-      claudeModel: "opus",
-      claudeReasoningEffort: "xhigh",
     });
 
     await callAgent({
       kind: "conversation_turn",
       backend: "claude",
       prompt: "round 1",
-      laneRef: { workflowId: "wf-claude-model", laneId: "claude" },
+      laneRef: { workflowId: "wf-claude-model", laneId: "agent_one" },
       writeCapability: "write_capable",
       outputSchema:
         COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
@@ -1065,7 +1114,7 @@ describe("createCollaborationProductionCallAgent", () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-claude-model-override",
-      laneId: "claude",
+      laneId: "agent_one",
       backend: "claude",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
@@ -1087,8 +1136,8 @@ describe("createCollaborationProductionCallAgent", () => {
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
+      agents: collabAgents({ agent_one: { model: "opus" } }),
       getConversationBackendFactory: () => factory,
-      claudeModel: "opus",
     });
 
     await callAgent({
@@ -1096,7 +1145,7 @@ describe("createCollaborationProductionCallAgent", () => {
       backend: "claude",
       prompt: "round 1",
       modelId: "sonnet",
-      laneRef: { workflowId: "wf-claude-model-override", laneId: "claude" },
+      laneRef: { workflowId: "wf-claude-model-override", laneId: "agent_one" },
       writeCapability: "write_capable",
       outputSchema:
         COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
@@ -1112,7 +1161,7 @@ describe("createCollaborationProductionCallAgent", () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-two-step",
-      laneId: "codex",
+      laneId: "agent_two",
       backend: "codex",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
@@ -1159,6 +1208,7 @@ describe("createCollaborationProductionCallAgent", () => {
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
+      agents: collabAgents(),
       getTaskRunner: () => runner,
     });
 
@@ -1172,7 +1222,7 @@ describe("createCollaborationProductionCallAgent", () => {
       kind: "task_run",
       backend: "codex",
       prompt: `${workBody}\n\n${COLLABORATION_STRUCTURED_OUTPUT_REMINDER}`,
-      laneRef: { workflowId: "wf-two-step", laneId: "codex" },
+      laneRef: { workflowId: "wf-two-step", laneId: "agent_two" },
       writeCapability: "write_capable",
       outputSchema: schema,
     });
@@ -1207,7 +1257,7 @@ describe("createCollaborationProductionCallAgent", () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-single-turn",
-      laneId: "codex",
+      laneId: "agent_two",
       backend: "codex",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
@@ -1241,6 +1291,7 @@ describe("createCollaborationProductionCallAgent", () => {
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
+      agents: collabAgents(),
       getTaskRunner: () => runner,
     });
 
@@ -1248,7 +1299,7 @@ describe("createCollaborationProductionCallAgent", () => {
       kind: "task_run",
       backend: "codex",
       prompt: "no schema here",
-      laneRef: { workflowId: "wf-single-turn", laneId: "codex" },
+      laneRef: { workflowId: "wf-single-turn", laneId: "agent_two" },
       writeCapability: "write_capable",
     });
 
@@ -1283,6 +1334,7 @@ describe("createCollaborationProductionCallAgent", () => {
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
+      agents: collabAgents(),
       getTaskRunner: () => runner,
     });
 
@@ -1413,7 +1465,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId,
-      laneId: "claude",
+      laneId: "agent_one",
       backend: "claude",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
@@ -1438,7 +1490,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
         `${WORK_BODY}\n\n${COLLABORATION_STRUCTURED_OUTPUT_REMINDER}`,
       ),
       systemInstructions: CHARTER_INSTRUCTION,
-      laneRef: { workflowId, laneId: "claude" },
+      laneRef: { workflowId, laneId: "agent_one" },
       writeCapability: "write_capable",
       outputSchema: SCHEMA,
     };
@@ -1457,6 +1509,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
+      agents: collabAgents(),
       getConversationBackendFactory: () => recorder.factory,
     });
 
@@ -1485,6 +1538,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
+      agents: collabAgents(),
       getConversationBackendFactory: () => recorder.factory,
     });
 
@@ -1492,7 +1546,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
       kind: "conversation_turn",
       backend: "claude",
       prompt: "round 1",
-      laneRef: { workflowId, laneId: "claude" },
+      laneRef: { workflowId, laneId: "agent_one" },
       writeCapability: "write_capable",
       outputSchema: SCHEMA,
     });
@@ -1518,6 +1572,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
+      agents: collabAgents(),
       getConversationBackendFactory: () => recorder.factory,
     });
 
@@ -1541,6 +1596,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
+      agents: collabAgents(),
       getConversationBackendFactory: () => recorder.factory,
     });
 
@@ -1587,6 +1643,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
+      agents: collabAgents(),
       getConversationBackendFactory: () => recorder.factory,
     });
 
@@ -1598,7 +1655,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
         `${WORK_BODY}\n\n${COLLABORATION_STRUCTURED_OUTPUT_REMINDER}`,
       ),
       systemInstructions: CHARTER_INSTRUCTION,
-      laneRef: { workflowId, laneId: "claude" },
+      laneRef: { workflowId, laneId: "agent_one" },
       writeCapability: "write_capable",
       outputSchema: SCHEMA,
     });
@@ -1634,6 +1691,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
+      agents: collabAgents(),
       getConversationBackendFactory: () => recorder.factory,
     });
 
@@ -1668,6 +1726,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
+      agents: collabAgents(),
       getConversationBackendFactory: () => recorder.factory,
     });
 
@@ -1704,7 +1763,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
       });
       await laneService.initialize({
         workflowId: SESSION_SCOPE_INPUT.workflowId,
-        laneId: "codex",
+        laneId: "agent_two",
         backend: "codex",
         writeCapability: "write_capable",
         policy: { continuityEnabled: true },
@@ -1722,7 +1781,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
         prompt: "do the collaborative work",
         laneRef: {
           workflowId: SESSION_SCOPE_INPUT.workflowId,
-          laneId: "codex",
+          laneId: "agent_two",
         },
         writeCapability: "write_capable",
       };
@@ -1772,6 +1831,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
       const callAgent = createCollaborationProductionCallAgent({
         ...SESSION_SCOPE_INPUT,
         laneService,
+        agents: collabAgents(),
         grantsOriginatingSessionScope: true,
         getTaskRunner: () => codex.runner,
       });
@@ -1797,6 +1857,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
       const callAgent = createCollaborationProductionCallAgent({
         ...SESSION_SCOPE_INPUT,
         laneService,
+        agents: collabAgents(),
         getTaskRunner: () => codex.runner,
       });
 
@@ -1818,6 +1879,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
       const callAgent = createCollaborationProductionCallAgent({
         ...SESSION_SCOPE_INPUT,
         laneService,
+        agents: collabAgents(),
         grantsOriginatingSessionScope: true,
         getTaskRunner: () => makeRecordingRunner(taskRequests),
       });
@@ -1839,6 +1901,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
       const callAgent = createCollaborationProductionCallAgent({
         ...SESSION_SCOPE_INPUT,
         laneService,
+        agents: collabAgents(),
         getTaskRunner: () => makeRecordingRunner(taskRequests),
       });
 
@@ -1855,6 +1918,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
       const callAgent = createCollaborationProductionCallAgent({
         ...SESSION_SCOPE_INPUT,
         laneService,
+        agents: collabAgents(),
         grantsOriginatingSessionScope: true,
         getTaskRunner: () => makeRecordingRunner(taskRequests),
       });

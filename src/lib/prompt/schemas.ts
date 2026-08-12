@@ -4,6 +4,7 @@ import { documentFeedbackPayloadSchema } from "@/lib/conversations/message-conte
 import { queuedMessageViewSchema } from "@/lib/conversations/message-queue-schemas";
 import { imagePayloadSchema } from "@/lib/images/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
+import { collaborationAgentTwoRequestSchema } from "@/lib/workflows/collaboration/types";
 export const runPromptRequestSchema = z
   .object({
     prompt: z.string().trim(),
@@ -20,6 +21,7 @@ export const runPromptRequestSchema = z
         autonomousResolutionThreshold: z
           .enum(["none", "minor", "major", "blocking"])
           .optional(),
+        agentTwo: collaborationAgentTwoRequestSchema.optional(),
       })
       .optional(),
   })

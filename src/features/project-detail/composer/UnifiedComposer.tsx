@@ -15,6 +15,7 @@ import {
   isSelectableModelForBackend,
 } from "@/lib/agent-backends/catalog";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+import { seedAgentTwoDraft } from "@/stores/collaboration.store";
 import { Button } from "@/components/ui/Button";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { usePendingPromptPersistence } from "@/hooks/use-pending-prompt-persistence";
@@ -542,12 +543,16 @@ export default function UnifiedComposer({
         effortSupported={effortSupported}
         hasCollabChip={false}
         effectiveCollabConfig={{
-          secondAgent: agentBackend === "claude" ? "codex" : "claude",
+          agentTwo: seedAgentTwoDraft(
+            agentBackend === "claude" ? "codex" : "claude",
+            backendDefaults,
+          ),
           negotiationRounds: 3,
           autonomousResolutionThreshold: "major",
         }}
         originatingCollabAgent={agentBackend}
         onCollabConfigChange={() => {}}
+        collabBackendDefaults={backendDefaults}
         onCollabDismiss={() => {}}
         onDebugToggle={() => {}}
         debugTogglePending={false}
