@@ -1050,7 +1050,9 @@ describe("readWorktreeStatusV2 (real git)", () => {
     await utimes(target, pinned, pinned);
     const original = await lstat(target, { bigint: true });
     const before = await readIgnoredEntries(statusRepo);
-    const originalDigest = createHash("sha256").update("aaaaaa\n").digest("hex");
+    const originalDigest = createHash("sha256")
+      .update("aaaaaa\n")
+      .digest("hex");
     expect(before[0]?.fingerprint).toContain(originalDigest);
 
     await writeFile(target, "bbbbbb\n", "utf-8");

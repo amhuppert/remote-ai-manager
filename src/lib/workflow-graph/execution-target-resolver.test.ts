@@ -109,8 +109,8 @@ describe("ExecutionTargetResolver", () => {
       ...baseExecution,
       workingDefinition: {
         ...baseExecution.workingDefinition,
-        executionContexts: baseExecution.workingDefinition.executionContexts.map(
-          (context) =>
+        executionContexts:
+          baseExecution.workingDefinition.executionContexts.map((context) =>
             context.id === "context-plan"
               ? {
                   ...context,
@@ -124,7 +124,7 @@ describe("ExecutionTargetResolver", () => {
                   },
                 }
               : context,
-        ),
+          ),
       },
       contextStates: {
         ...baseExecution.contextStates,
@@ -232,8 +232,8 @@ describe("ExecutionTargetResolver", () => {
       ...baseExecution,
       workingDefinition: {
         ...baseExecution.workingDefinition,
-        executionContexts: baseExecution.workingDefinition.executionContexts.map(
-          (context) =>
+        executionContexts:
+          baseExecution.workingDefinition.executionContexts.map((context) =>
             context.id === "context-plan"
               ? {
                   ...context,
@@ -247,7 +247,7 @@ describe("ExecutionTargetResolver", () => {
                   },
                 }
               : context,
-        ),
+          ),
       },
       contextStates: {
         ...baseExecution.contextStates,

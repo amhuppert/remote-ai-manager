@@ -129,7 +129,10 @@ export function useApprovalScopedChanges(
     return toScopedChanges(snapshotQuery.data);
   }
   if (snapshotQuery.error) {
-    return { status: "unavailable", reason: getErrorMessage(snapshotQuery.error) };
+    return {
+      status: "unavailable",
+      reason: getErrorMessage(snapshotQuery.error),
+    };
   }
   return { status: "loading" };
 }

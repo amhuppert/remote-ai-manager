@@ -53,6 +53,14 @@ const reviewId = (pass: number): string => loopInstanceId(LOOP, pass, REVIEW);
 
 type JudgeVerdict = "approved" | "revise";
 
+/**
+ * The bar the brief sets and every draft carries forward verbatim. One constant
+ * so the assertion that it reached the judge compares against the same string
+ * the brief published, rather than a restatement that could drift from it.
+ */
+const EXIT_BAR =
+  "The projection warms in under 200ms with no behavioural change";
+
 function readPlan(): unknown {
   return JSON.parse(readFileSync(PLAN_PATH, "utf8"));
 }
@@ -132,13 +140,17 @@ async function runLoopPattern<T>(
         if (contextId === BRIEF) {
           return {
             objective: "Cut the cold-start cost of the projection cache",
-            exitBar:
-              "The projection warms in under 200ms with no behavioural change",
+            exitBar: EXIT_BAR,
           };
         }
         const draftPass = passOf(contextId, DRAFT);
         if (draftPass !== null) {
           return {
+            // Carried verbatim, as the plan requires: the judge is downstream of
+            // the draft, not of the brief, so a scenario that dropped it here
+            // would bank a payload the production capture gate refuses — and
+            // would model a judge with no bar to apply.
+            exitBar: EXIT_BAR,
             passSummary: `Draft revision ${draftPass}`,
             handoff: `Revision ${draftPass} reworked the warm path; the cold path is untouched.`,
           };
@@ -236,6 +248,136 @@ describe("Loop-Until-Done template — authoring (R15.3)", () => {
     if (!result.ok) return;
     expect(result.warnings).toEqual([]);
   });
+});
+
+// ============================================================
+// 1b. D5 placement: one reusable lane, and a judge that cannot edit (D6 R2.6)
+// ============================================================
+
+describe("Loop-Until-Done — lane reuse and judge independence (D6 R2.6)", () => {
+  it("puts the writable worker and the read-only judge on ONE reusable group lane", () => {
+    const result = validateWorkflowPlan(readPlan());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const byId = new Map(
+      result.draft.definition.executionContexts.map((context) => [
+        context.id,
+        context,
+      ]),
+    );
+    const draft = byId.get(DRAFT);
+    const review = byId.get(REVIEW);
+
+    // The worker writes, so it needs a real lane — and the judge has to see
+    // what the worker wrote, which is exactly why it shares that lane rather
+    // than getting one of its own. A judge on a separate lane would have to
+    // wait for a join to see the work, turning every pass into a merge.
+    expect(draft?.placement?.mode).not.toBe("readOnly");
+    expect(review?.placement?.lane).toBe(draft?.placement?.lane);
+    expect(draft?.placement?.lane).not.toBe("session");
+
+    // `judge-is-independent` as a MECHANICAL property, not a convention the
+    // charter asks an agent to honour: a read-only context skips the commit
+    // phase entirely, so this judge cannot edit the work even if it tried.
+    expect(review?.placement?.mode).toBe("readOnly");
+  });
+
+  it("requires a bounded handoff from both halves of the pass", () => {
+    const result = validateWorkflowPlan(readPlan());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    for (const contextId of [DRAFT, REVIEW]) {
+      const schema = result.draft.definition.executionContexts.find(
+        (context) => context.id === contextId,
+      )?.outputSchema as
+        | {
+            required?: unknown;
+            properties?: Record<string, { maxLength?: number }>;
+          }
+        | undefined;
+
+      // Required, because carrying what the last pass learned is what stops
+      // pass 3 from re-trying what pass 1 already had rejected — an optional
+      // handoff is one an agent drops exactly when the loop is going badly.
+      expect(
+        schema?.required,
+        `${contextId} does not require a handoff`,
+      ).toEqual(expect.arrayContaining(["handoff"]));
+
+      // Bounded, because loop history accumulates into every later pass's
+      // prompt: an unbounded handoff grows the context window pass over pass.
+      expect(
+        schema?.properties?.handoff?.maxLength,
+        `${contextId}'s handoff declares no maxLength`,
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  it("carries the exit bar to the judge through its direct predecessor", () => {
+    const result = validateWorkflowPlan(readPlan());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const definition = result.draft.definition;
+
+    // The judge's ONLY direct predecessor is the draft. The brief that sets the
+    // exit bar is two hops away, and loop boundary inputs enter at the entry
+    // context, so nothing injects the brief's output into the judge — the same
+    // constraint the Tournament semifinals carry winner artifacts to work
+    // around. A judge told to read a bar that is not in front of it would apply
+    // whatever bar it invented instead, and every verdict would be unfalsifiable.
+    expect(
+      definition.edges
+        .filter((edge) => edge.targetContextId === REVIEW)
+        .map((edge) => edge.sourceContextId),
+    ).toEqual([DRAFT]);
+
+    const draftSchema = definition.executionContexts.find(
+      (context) => context.id === DRAFT,
+    )?.outputSchema as
+      | { required?: unknown; properties?: Record<string, unknown> }
+      | undefined;
+    expect(
+      draftSchema?.required,
+      "the draft does not carry the exit bar forward to the judge",
+    ).toEqual(expect.arrayContaining(["exitBar"]));
+
+    // And the judge is told where it actually is, rather than pointed at an
+    // "Inputs from upstream" section the brief's output never reaches.
+    const reviewInstructions = definition.tasks
+      .filter((task) => task.contextId === REVIEW)
+      .map((task) => task.instructions)
+      .join("\n");
+    expect(reviewInstructions).not.toMatch(
+      /from the brief's structured output/i,
+    );
+    expect(reviewInstructions).toMatch(/exit bar/i);
+  });
+
+  it("puts that exit bar in the judge's actual prompt, and never the brief's own output", async () => {
+    await runLoopPattern({ current: approveOnPass(1) }, async (run) => {
+      // The plan assertion above says the contract carries the bar; this says
+      // the engine actually delivered it. Read off the rendered prompt, which
+      // is the only place the judge's real inputs can be observed.
+      const judgePrompt = run.prompts.get(reviewId(1)) ?? "";
+      expect(judgePrompt, "the judge was never dispatched").not.toBe("");
+      expect(
+        judgePrompt.includes(EXIT_BAR),
+        "the exit bar never reached the judge's prompt",
+      ).toBe(true);
+
+      // ...and it arrived via the draft, not the brief: the brief's own output
+      // is not injected here, so its objective — which only the brief banks —
+      // must be absent. Otherwise this would pass for the wrong reason, on a
+      // boundary input the loop does not actually provide.
+      expect(judgePrompt).not.toContain(
+        "Cut the cold-start cost of the projection cache",
+      );
+      return null;
+    });
+  }, 120_000);
 });
 
 // ============================================================

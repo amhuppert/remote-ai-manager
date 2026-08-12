@@ -113,12 +113,20 @@ model: Fanout-And-Synthesize with eight readers or a tournament bracket should n
 require eight worktrees and eight fan-in merges. Also tests the vision's hypothesis
 that agent-planned lanes execute more efficiently.
 
-### D6 — Pattern proving ground
+### D6 — Pattern proving ground (complete)
 
 Author all six blog patterns (and one composite) as real templates/executions and fix
 what breaks. An explicit milestone closing Phase 3 rather than an assumption — it is
 the vision's stated goal, and it produces the evidence for "when is first-class pattern
 support justified."
+
+Completed 2026-08-11. Seven reusable plans are checked in under
+`src/lib/workflow-graph/patterns/`: the six named patterns plus one composite. All seven
+passed real-provider executions. The proving ground found one blocking product defect
+(PD-1, loss of an implementer continuation envelope across resumed turns), fixed it
+red-green, and re-proved the affected Tournament and composite workflows. D5 lightweight
+placement removed the runtime cost objection, so **add no first-class pattern primitive
+now**; reconsider the remaining authoring ergonomics at D9.
 
 ### D7 — Ephemeral, conversation-spawned workflows
 

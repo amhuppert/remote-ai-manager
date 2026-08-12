@@ -81,9 +81,9 @@ describe("collectLaneWorktreePaths", () => {
     b.laneId = "shared";
     const execution = buildExecution({ a, b });
 
-    expect(
-      collectLaneWorktreePaths(execution, { contextIds: ["a"] }),
-    ).toEqual([]);
+    expect(collectLaneWorktreePaths(execution, { contextIds: ["a"] })).toEqual(
+      [],
+    );
   });
 
   it("collects a named lane once at terminal cleanup even when context rows no longer carry its path", () => {

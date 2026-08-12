@@ -166,7 +166,8 @@ describe("POST conversation answer (async consume + enqueue)", () => {
           input.conversationId,
           "answer.clear_pending_question",
           (conversation) => {
-            if (conversation.pendingQuestionId !== input.questionBatchId) return;
+            if (conversation.pendingQuestionId !== input.questionBatchId)
+              return;
             conversation.pendingQuestionId = null;
             conversation.pendingQuestions = null;
           },

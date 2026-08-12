@@ -11,7 +11,7 @@
         "A candidate reports its own score honestly, including a low one. The filter is the judge; a candidate that inflates its score only makes the filter's job harder."
       ],
       "nonGoals": [
-        "Merging two candidates into a hybrid \u2014 the filter picks one and says why.",
+        "Merging two candidates into a hybrid — the filter picks one and says why.",
         "Expanding a second time from a candidate: expansion authority stops at the generator, so the fan-out is one level deep by construction."
       ],
       "invariants": [
@@ -21,7 +21,7 @@
         },
         {
           "id": "every-candidate-rejoins-the-filter",
-          "statement": "Every context the generator creates carries an edge into context-filter. A candidate with no path to the filter is work nobody will read."
+          "statement": "Every context the generator creates carries an edge into context-filter. The engine does not enforce this — reachability is measured from the invoker, so a candidate with only the inbound edge is accepted — which is exactly why it is an invariant: a candidate with no path to the filter runs, costs a lane, and is silently excluded from the judgment."
         }
       ],
       "sourcesOfTruth": [
@@ -41,7 +41,7 @@
           "label": "Repository engineering contract",
           "type": "document",
           "locator": "AGENTS.md",
-          "description": "The engineering contract every candidate's implementation has to satisfy \u2014 typing, testing, and architecture boundaries.",
+          "description": "The engineering contract every candidate's implementation has to satisfy — typing, testing, and architecture boundaries.",
           "appliesTo": "all execution contexts",
           "accessPolicy": "worktree-relative"
         }
@@ -89,7 +89,7 @@
         "id": "context-filter",
         "title": "Filter to the winning candidate",
         "description": "Compare every candidate's reported result against the brief and pick exactly one winner.",
-        "acceptanceCriteria": "Every candidate that ran has been considered \u2014 none silently dropped \u2014 and exactly one is chosen, with a rationale that cites the brief's tradeoff axes rather than restating the scores. The captured output names the winning context id.",
+        "acceptanceCriteria": "Every candidate that ran has been considered — none silently dropped — and exactly one is chosen, with a rationale that cites the brief's tradeoff axes rather than restating the scores. The captured output names the winning context id.",
         "placement": {
           "lane": "context-filter",
           "mode": "full"
@@ -120,14 +120,14 @@
         "contextId": "context-generate",
         "order": 1,
         "title": "Choose the approaches and expand the graph",
-        "instructions": "Read the candidate brief named as rank 1 in the charter. Decide which distinct approaches are worth building \u2014 usually two to four; the per-request ceiling is five. Two approaches that differ only in naming are one approach.\n\nThen create one execution context per approach in a SINGLE expansion. Write the payload to `.cc/temp/expand.json`:\n\n```json\n{\n  \"requestId\": \"expand-candidates-1\",\n  \"rationale\": \"<why this fan-out, in one sentence>\",\n  \"contexts\": [\n    {\n      \"handle\": \"candidate-<short-approach-name>\",\n      \"title\": \"Candidate: <approach>\",\n      \"acceptanceCriteria\": \"<what has to be true for this candidate to count as built>\",\n      \"outputSchema\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"approach\": { \"type\": \"string\" },\n          \"score\": { \"type\": \"number\", \"minimum\": 0, \"maximum\": 10 }\n        },\n        \"required\": [\"approach\", \"score\"],\n        \"additionalProperties\": false\n      }\n    }\n  ],\n  \"tasks\": [\n    {\n      \"contextHandle\": \"candidate-<short-approach-name>\",\n      \"title\": \"Build the <approach> candidate\",\n      \"instructions\": \"<self-contained instructions: what to build, and to score it out of 10 against the brief's axes>\"\n    }\n  ],\n  \"edges\": [\n    { \"from\": \"context-generate\", \"to\": \"candidate-<short-approach-name>\" },\n    { \"from\": \"candidate-<short-approach-name>\", \"to\": \"context-filter\" }\n  ]\n}\n```\n\nEvery candidate needs BOTH edges: one from `context-generate` so it becomes eligible when you finish, and one into `context-filter` so the fan-out converges. A candidate with no edge into the filter is refused as unreachable work.\n\nSubmit it with `cctl workflow graph expand --file .cc/temp/expand.json`. The request id is single-use: if the command fails with a conflict, re-run it VERBATIM \u2014 an accepted expansion replays from its receipt and never fans out twice. If it is refused, fix what the refusal names and submit under a NEW request id.\n\nThe candidates inherit this context's gates but not its expansion authority, so the fan-out is one level deep. Do not add candidates in a second batch: one expansion is one proposition about the shape of the graph.\n\nFinally, complete this task with a summary naming the approaches you chose and the request id you used."
+        "instructions": "Read the candidate brief named as rank 1 in the charter. Decide which distinct approaches are worth building — usually two to four; the per-request ceiling is five. Two approaches that differ only in naming are one approach.\n\nThen create one execution context per approach in a SINGLE expansion. Write the payload to `.cc/temp/expand.json`:\n\n```json\n{\n  \"requestId\": \"expand-candidates-1\",\n  \"rationale\": \"<why this fan-out, in one sentence>\",\n  \"contexts\": [\n    {\n      \"handle\": \"candidate-<short-approach-name>\",\n      \"title\": \"Candidate: <approach>\",\n      \"acceptanceCriteria\": \"<what has to be true for this candidate to count as built>\",\n      \"placement\": {\n        \"lane\": \"candidate-<short-approach-name>\",\n        \"mode\": \"owned\",\n        \"ownedPaths\": [\"<the one directory this candidate builds in>\"]\n      },\n      \"outputSchema\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"approach\": { \"type\": \"string\" },\n          \"score\": { \"type\": \"number\", \"minimum\": 0, \"maximum\": 10 }\n        },\n        \"required\": [\"approach\", \"score\"],\n        \"additionalProperties\": false\n      }\n    }\n  ],\n  \"tasks\": [\n    {\n      \"contextHandle\": \"candidate-<short-approach-name>\",\n      \"title\": \"Build the <approach> candidate\",\n      \"instructions\": \"<self-contained instructions: what to build, and to score it out of 10 against the brief's axes>\"\n    }\n  ],\n  \"edges\": [\n    { \"from\": \"context-generate\", \"to\": \"candidate-<short-approach-name>\" },\n    { \"from\": \"candidate-<short-approach-name>\", \"to\": \"context-filter\" }\n  ]\n}\n```\n\nEvery generated context MUST declare a `placement`: the engine refuses a placement-less expansion outright, because a context with no declared lane and no declared write surface has nowhere to run. Give each candidate a lane of its OWN. Candidates attempt the same brief, so they write the same paths by construction — two of them sharing a lane would be two agents in one worktree with overlapping claims, which is refused as an ownership overlap.\n\nEvery candidate also needs BOTH edges: one from `context-generate`, so it becomes eligible when you finish, and one into `context-filter`, so the fan-out converges. Be careful with the second one: reachability is measured FROM THE INVOKING CONTEXT, so a candidate carrying only the inbound edge is reachable and the expansion is ACCEPTED. Nothing refuses it. What happens instead is worse than a refusal — the candidate runs, does its work, and starves the filter, which then judges a subset of the field and reports a winner as though it had seen everything. The edge into the filter is mandatory because nothing downstream will notice it missing.\n\nSubmit it with `cctl workflow graph expand --file .cc/temp/expand.json`. The request id is single-use: if the command fails with a conflict, re-run it VERBATIM — an accepted expansion replays from its receipt and never fans out twice. If it is refused, fix what the refusal names and submit under a NEW request id.\n\nThe candidates inherit this context's gates but not its expansion authority, so the fan-out is one level deep. Do not add candidates in a second batch: one expansion is one proposition about the shape of the graph.\n\nFinally, complete this task with a summary naming the approaches you chose and the request id you used."
       },
       {
         "id": "task-filter-1",
         "contextId": "context-filter",
         "order": 1,
         "title": "Pick the winning candidate",
-        "instructions": "Every candidate's result is in the \"Inputs from upstream\" section of this prompt as validated structured output \u2014 read `approach` and `score` by field rather than re-deriving them, and read the generator's own output for the approach list it intended.\n\nCompare each candidate against the brief's tradeoff axes, not against each other's scores: a candidate that scored itself generously is still only as good as what it built. Consider every candidate that ran; if one looks unfinished, say so rather than dropping it silently.\n\nChoose exactly one winner and complete this task with a summary naming the winning context id and why it wins in the brief's terms."
+        "instructions": "Every candidate's result is in the \"Inputs from upstream\" section of this prompt as validated structured output — read `approach` and `score` by field rather than re-deriving them, and read the generator's own output for the approach list it intended.\n\nCompare each candidate against the brief's tradeoff axes, not against each other's scores: a candidate that scored itself generously is still only as good as what it built. Consider every candidate that ran; if one looks unfinished, say so rather than dropping it silently.\n\nChoose exactly one winner and complete this task with a summary naming the winning context id and why it wins in the brief's terms."
       }
     ],
     "edges": [

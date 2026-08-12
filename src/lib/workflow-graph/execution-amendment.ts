@@ -8,10 +8,11 @@
  *   `add-edge` entries with caller-chosen stable ids, and nothing else. Any
  *   other entry refuses the whole batch, so a "mutation smuggled as an
  *   amendment" is a parse failure rather than a judgment call downstream;
- * - it applies only to a RUNNING execution compiled from a delivery plan.
- *   Legacy compiled runs keep the generic live-edit path (their unlocked
- *   regions are their only escape); a settled run has no working definition to
- *   amend;
+ * - it applies only to a RUNNING or PAUSED execution compiled from a delivery
+ *   plan. Legacy compiled runs keep the generic live-edit path (their unlocked
+ *   regions are their only escape). Other lifecycle states are refused; a
+ *   resumable halt retains its working definition and names resume as its
+ *   in-place remedy;
  * - it never touches the stored approved candidate — the additions land on the
  *   execution's working definition, and the amendment event records the old and
  *   new working-definition hashes so the drift from the approved bytes is
@@ -32,6 +33,7 @@ import type {
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import type { GraphWorkflowExecution } from "./schemas";
 import type { ResolvedContextConfig } from "./runtime-edits";
+import { isResumableHalt } from "./lifecycle-classifier";
 
 /** Delivery-plan compiled definitions carry this origin scheme (§5). */
 const DELIVERY_PLAN_ORIGIN_SCHEME = "spec-plan://";
@@ -109,7 +111,7 @@ export const WORKFLOW_AMENDMENT_OPERATION_TYPES = [
 export const workflowExecutionAmendmentRequestSchema = z
   .object({
     /**
-     * Why the running plan is being changed. Required: the rationale is what
+     * Why the launched plan is being changed. Required: the rationale is what
      * the durable amendment event is FOR — a hash pair with no reason records
      * that the definition moved without recording why anyone moved it.
      */
@@ -149,6 +151,28 @@ export function isDeliveryPlanDefinition(
     definition.origin?.sourceUri.startsWith(DELIVERY_PLAN_ORIGIN_SCHEME) ===
     true
   );
+}
+
+export function isWorkflowExecutionAmendableStatus(
+  status: GraphWorkflowExecution["status"],
+): boolean {
+  return status === "running" || status === "paused";
+}
+
+export function workflowExecutionAmendmentRefusalInstruction(
+  execution: Pick<GraphWorkflowExecution, "status" | "haltReason">,
+): string {
+  if (
+    execution.status === "halted" &&
+    execution.haltReason !== null &&
+    isResumableHalt(execution.haltReason)
+  ) {
+    return "Resume the run with `cctl workflow live resume`; if the target work has started, pause it again before re-running `cctl workflow live amend`.";
+  }
+  if (execution.status === "pending") {
+    return "Wait for the execution to reach running, then re-run `cctl workflow live amend`; if it cannot start, plan the work into the next attempt with `cctl spec plan open --seed-from last`.";
+  }
+  return "Plan the work into the next attempt with `cctl spec plan open --seed-from last`.";
 }
 
 /**

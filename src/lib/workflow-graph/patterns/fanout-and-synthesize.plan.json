@@ -1,0 +1,273 @@
+{
+  "name": "Fanout-And-Synthesize",
+  "description": "Several independent readers survey one subject from different angles at the same time, each banking a typed report, and a single synthesizer assembles them into one picture that cites every contributor.",
+  "definition": {
+    "schemaVersion": 1,
+    "workflowConfig": {},
+    "charter": {
+      "mission": "Understand one subject well enough to act on it, by looking at it from several angles at once and then reconciling what the angles saw. Breadth comes from the readers running independently; the single picture comes from one synthesizer that has all of their reports in front of it.",
+      "conventions": [
+        "A reader reports what it observed and where, not what it recommends. Recommendations belong to the synthesizer, which is the only context that can see the whole subject.",
+        "A reader that found nothing says so. An empty finding list is information; silence is indistinguishable from a reader that failed."
+      ],
+      "nonGoals": [
+        "Changing the code, docs, or tests under survey — every reader is read-only, and the synthesizer records a picture rather than acting on it.",
+        "Reconciling two readers' disagreement inside a reader. Disagreement is a finding, and the synthesizer is where it is resolved."
+      ],
+      "invariants": [
+        {
+          "id": "readers-are-independent",
+          "statement": "No reader reads another reader's output or waits on it. They run in one wave against the same subject, so the synthesizer compares genuinely independent observations rather than a chain of anchored ones."
+        },
+        {
+          "id": "synthesis-cites-every-reader",
+          "statement": "The synthesis names every reader that contributed, including any that reported nothing. A reader whose report is silently dropped is a hole in the picture nobody can see."
+        }
+      ],
+      "sourcesOfTruth": [
+        {
+          "rank": 1,
+          "id": "survey-brief",
+          "label": "Survey brief",
+          "type": "document",
+          "locator": ".cc/temp/survey-brief.md",
+          "description": "The subject under survey and the question the synthesis has to answer: what is being assessed, and what decision the answer feeds.",
+          "appliesTo": "all execution contexts",
+          "accessPolicy": "worktree-relative"
+        },
+        {
+          "rank": 2,
+          "id": "repo-contract",
+          "label": "Repository engineering contract",
+          "type": "document",
+          "locator": "AGENTS.md",
+          "description": "The engineering contract that defines what 'correct' means for the runtime, tests, and documentation the readers assess.",
+          "appliesTo": "all execution contexts",
+          "accessPolicy": "worktree-relative"
+        }
+      ]
+    },
+    "parameters": [],
+    "prerequisites": [],
+    "executionContexts": [
+      {
+        "id": "context-read-runtime",
+        "title": "Survey the runtime behaviour",
+        "description": "Read the subject's runtime path — what actually executes, in what order, and where it can fail.",
+        "acceptanceCriteria": "The runtime path has been traced through the real code rather than inferred from names, and each finding cites the file and symbol it came from. The captured output declares the area, the findings (empty if there were none), and an honest confidence.",
+        "placement": {
+          "lane": "session",
+          "mode": "readOnly"
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "One reader's independent report.",
+          "properties": {
+            "area": {
+              "type": "string",
+              "description": "The angle this reader covered.",
+              "minLength": 1
+            },
+            "findings": {
+              "type": "array",
+              "description": "What this reader observed, one item per observation. Empty when it found nothing.",
+              "items": {
+                "type": "string",
+                "maxLength": 600
+              },
+              "maxItems": 12
+            },
+            "confidence": {
+              "type": "string",
+              "description": "How much of the area this reader actually managed to cover.",
+              "enum": ["low", "medium", "high"]
+            }
+          },
+          "required": ["area", "findings", "confidence"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "context-read-tests",
+        "title": "Survey the test coverage",
+        "description": "Read what the tests actually prove about the subject, and what they leave unproven.",
+        "acceptanceCriteria": "For each behaviour the subject claims, the reader has looked for the test that would fail if it broke, and says so when none exists. Findings distinguish untested behaviour from tests that only exercise fakes. The captured output declares the area, the findings, and an honest confidence.",
+        "placement": {
+          "lane": "session",
+          "mode": "readOnly"
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "One reader's independent report.",
+          "properties": {
+            "area": {
+              "type": "string",
+              "description": "The angle this reader covered.",
+              "minLength": 1
+            },
+            "findings": {
+              "type": "array",
+              "description": "What this reader observed, one item per observation. Empty when it found nothing.",
+              "items": {
+                "type": "string",
+                "maxLength": 600
+              },
+              "maxItems": 12
+            },
+            "confidence": {
+              "type": "string",
+              "description": "How much of the area this reader actually managed to cover.",
+              "enum": ["low", "medium", "high"]
+            }
+          },
+          "required": ["area", "findings", "confidence"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "context-read-docs",
+        "title": "Survey the documented contract",
+        "description": "Read what the documentation and steering promise about the subject, and where the promise and the code have drifted apart.",
+        "acceptanceCriteria": "The documented contract has been compared against the observable behaviour, and each drift finding names both sides — what the document says and what the code does. The captured output declares the area, the findings, and an honest confidence.",
+        "placement": {
+          "lane": "session",
+          "mode": "readOnly"
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "One reader's independent report.",
+          "properties": {
+            "area": {
+              "type": "string",
+              "description": "The angle this reader covered.",
+              "minLength": 1
+            },
+            "findings": {
+              "type": "array",
+              "description": "What this reader observed, one item per observation. Empty when it found nothing.",
+              "items": {
+                "type": "string",
+                "maxLength": 600
+              },
+              "maxItems": 12
+            },
+            "confidence": {
+              "type": "string",
+              "description": "How much of the area this reader actually managed to cover.",
+              "enum": ["low", "medium", "high"]
+            }
+          },
+          "required": ["area", "findings", "confidence"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "context-synthesize",
+        "title": "Assemble one picture from every report",
+        "description": "Reconcile the readers' independent reports into a single account of the subject, and record it.",
+        "acceptanceCriteria": "The written synthesis accounts for every reader — including any that reported nothing — and resolves or explicitly names their disagreements rather than averaging them. It answers the brief's question rather than restating the reports. The captured output cites every contributing context id.",
+        "placement": {
+          "lane": "synthesis",
+          "mode": "owned",
+          "ownedPaths": ["docs/reports"]
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "The reconciled picture, and who contributed to it.",
+          "properties": {
+            "synthesis": {
+              "type": "string",
+              "description": "The single account of the subject, in the brief's terms.",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "citedContextIds": {
+              "type": "array",
+              "description": "Every reader whose report was accounted for.",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1
+            }
+          },
+          "required": ["synthesis", "citedContextIds"],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "tasks": [
+      {
+        "id": "task-read-runtime-1",
+        "contextId": "context-read-runtime",
+        "order": 1,
+        "title": "Trace the runtime path",
+        "instructions": "Read the survey brief named as rank 1 in the charter to learn what subject you are assessing.\n\nTrace what actually executes: entry points, the order calls happen in, the state each step reads and writes, and the places a failure would surface. Read the code rather than inferring behaviour from names — a function called `validate` may validate nothing.\n\nYou are read-only. You have no worktree and you will make no commit; your captured output is your entire delivery, so anything you do not put in `findings` is lost. Cite the file and symbol behind each finding so the synthesizer can check it.\n\nReport what you OBSERVED, not what you would change. If you found nothing worth reporting, return an empty `findings` array and say why in your summary — that is a real result, and it is not the same as having failed. Set `confidence` to how much of the area you actually covered, not to how sure you are that you are right."
+      },
+      {
+        "id": "task-read-tests-1",
+        "contextId": "context-read-tests",
+        "order": 1,
+        "title": "Assess what the tests prove",
+        "instructions": "Read the survey brief named as rank 1 in the charter to learn what subject you are assessing.\n\nFor each behaviour the subject claims, find the test that would fail if that behaviour broke. If reverting the behaviour would leave the suite green, that is a finding. Distinguish three cases explicitly: behaviour with a real test, behaviour with a test that only proves one fake called another, and behaviour with no test at all.\n\nYou are read-only. You have no worktree and you will make no commit; your captured output is your entire delivery. Do not write or fix tests — record what is missing.\n\nIf you found nothing worth reporting, return an empty `findings` array and say why in your summary. Set `confidence` to how much of the area you actually covered."
+      },
+      {
+        "id": "task-read-docs-1",
+        "contextId": "context-read-docs",
+        "order": 1,
+        "title": "Compare the documented contract against the code",
+        "instructions": "Read the survey brief named as rank 1 in the charter to learn what subject you are assessing.\n\nFind what the repository's documentation and steering promise about this subject, then check those promises against the observable behaviour. Every drift finding names both sides: what the document claims, and what the code actually does. A document that is merely incomplete is a weaker finding than one that is wrong — say which you found.\n\nYou are read-only. You have no worktree and you will make no commit; your captured output is your entire delivery. Do not edit the documentation — record the drift.\n\nIf you found nothing worth reporting, return an empty `findings` array and say why in your summary. Set `confidence` to how much of the area you actually covered."
+      },
+      {
+        "id": "task-synthesize-1",
+        "contextId": "context-synthesize",
+        "order": 1,
+        "title": "Reconcile the reports into one picture",
+        "instructions": "Every reader's report is in the \"Inputs from upstream\" section of this prompt as validated structured output. Read them by field — `area`, `findings`, `confidence` — rather than re-deriving what the readers already established, and do not re-run their surveys.\n\nThe readers were deliberately independent, so two of them may disagree. Resolve the disagreement on the evidence they cite, and where you cannot, say which reading you took and what would settle it. Do not average two findings into a vaguer third one.\n\nWeigh each report by its `confidence`: a low-confidence report covering little of its area is a smaller claim than a high-confidence one, not a wrong one.\n\nWrite the synthesis under `docs/reports/`, which is the only path this context owns. Answer the brief's question; do not restate the reports in order.\n\nComplete this task with a summary of the picture you assembled, and make `citedContextIds` name every reader you accounted for — including any that reported nothing."
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-runtime-synthesize",
+        "sourceContextId": "context-read-runtime",
+        "targetContextId": "context-synthesize"
+      },
+      {
+        "id": "edge-tests-synthesize",
+        "sourceContextId": "context-read-tests",
+        "targetContextId": "context-synthesize"
+      },
+      {
+        "id": "edge-docs-synthesize",
+        "sourceContextId": "context-read-docs",
+        "targetContextId": "context-synthesize"
+      }
+    ]
+  },
+  "layout": {
+    "workflowId": "fanout-and-synthesize",
+    "contextPositions": {
+      "context-read-runtime": {
+        "x": 0,
+        "y": -160
+      },
+      "context-read-tests": {
+        "x": 0,
+        "y": 0
+      },
+      "context-read-docs": {
+        "x": 0,
+        "y": 160
+      },
+      "context-synthesize": {
+        "x": 520,
+        "y": 0
+      }
+    },
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "zoom": 1
+    }
+  }
+}

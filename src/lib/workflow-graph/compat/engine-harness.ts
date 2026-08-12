@@ -1,8 +1,11 @@
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import { createSessionGitLock } from "@/lib/shared/lock-retry";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { materializeGlobalConfig } from "@/lib/config/loader";
 import { rawGlobalConfigSchema } from "@/lib/config/schemas";
 import type { GlobalConfig } from "@/lib/config/schemas";
+import type { ValidatorAuthority } from "@/lib/workflow-graph/config-schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { StateStore } from "@/lib/state-store/store";
 import type { MergeOutput } from "@/lib/workflows/merge/types";
@@ -97,10 +100,50 @@ const POST_D4_OBSERVABILITY_EVENT_TYPES = new Set<
 /** What the fixture implementer does on one agent turn. */
 export type CompatibilityAgentTurn = "complete-next-task" | "no-task-progress";
 
-/** What the fixture context validator returns for one validation attempt. */
+/**
+ * What the fixture context validator returns for one validation attempt.
+ *
+ * `advisories` is available on either verdict because an advisory seat has no
+ * `issues` field at all — its only channel is the advisory list, so a cohort
+ * scenario that could not express one could not distinguish a specialist that
+ * observed something from a specialist that had nothing to say.
+ */
 export type CompatibilityValidatorTurn =
-  | { verdict: "pass" }
-  | { verdict: "fail"; reopenTaskIds: readonly string[] };
+  | { verdict: "pass"; advisories?: readonly CompatibilityAdvisory[] }
+  | {
+      verdict: "fail";
+      reopenTaskIds: readonly string[];
+      advisories?: readonly CompatibilityAdvisory[];
+    };
+
+/** An advisory as a scenario declares it, before the engine stamps identity. */
+export interface CompatibilityAdvisory {
+  kind: "implementation" | "plan" | "out_of_scope";
+  title: string;
+  description: string;
+}
+
+/** Which cohort seat a scripted validator turn is answering for. */
+export interface CompatibilityValidatorSeat {
+  contextId: string;
+  /** This context's validation turns for THIS seat, 1-based. */
+  attempt: number;
+  /** The cohort assignment id — the seat's stable use-site identity. */
+  assignmentId: string;
+  /** Whether this seat's findings can reopen tasks. */
+  authority: ValidatorAuthority;
+  /** The production execution target the validator is reviewing. */
+  worktreePath?: string;
+  /**
+   * The live execution as this seat sees it, mid-round.
+   *
+   * A seat's whole question is "what is in front of me right now", and only a
+   * snapshot taken DURING the round can answer it. Reading state after the run
+   * settles cannot distinguish a candidate that existed when the panel reviewed
+   * it from one that appeared afterwards.
+   */
+  execution: GraphWorkflowExecution;
+}
 
 export interface CompatibilityScenario {
   name: string;
@@ -112,6 +155,12 @@ export interface CompatibilityScenario {
    */
   sessionLaneEnabled: boolean;
   /**
+   * Optional real filesystem root for provisioned lane targets. Most
+   * compatibility scenarios need only lane identity; artifact-boundary proofs
+   * opt in so their implementer, validators, and capture gate share real bytes.
+   */
+  worktreeRoot?: string;
+  /**
    * One implementer turn. `turn` counts this context's agent turns across the
    * whole run — the orchestrator sends up to three per iteration (a seed plus
    * two follow-ups), so a script keyed on the iteration could not distinguish
@@ -119,13 +168,16 @@ export interface CompatibilityScenario {
    */
   agent(input: { contextId: string; turn: number }): CompatibilityAgentTurn;
   /**
-   * One context-validator verdict; `attempt` counts this context's validation
-   * turns. Absent, every context validates on its first attempt.
+   * One context-validator verdict, for one seat of the context's cohort;
+   * `attempt` counts that seat's validation turns. Absent, every seat passes on
+   * its first attempt.
+   *
+   * Keyed by seat rather than by context because a cohort dispatches every
+   * assignment against the same candidate: a script that could only answer
+   * "the validator" would have to give four specialists one verdict, and the
+   * blocking/advisory partition it is asked to prove would be unobservable.
    */
-  validator?(input: {
-    contextId: string;
-    attempt: number;
-  }): CompatibilityValidatorTurn;
+  validator?(input: CompatibilityValidatorSeat): CompatibilityValidatorTurn;
   /**
    * The structured output a context banks once its last task completes, or null
    * for a context that declares no contract.
@@ -137,6 +189,27 @@ export interface CompatibilityScenario {
    * needs and a pre-D4 one never asks for.
    */
   capture?(input: { contextId: string }): Record<string, unknown> | null;
+  /**
+   * Drives the PRODUCTION D2 capture gate rather than the in-turn stand-in
+   * above, by wiring a real `outputCaptureService` into the orchestrator's deps.
+   *
+   * Present, the engine decides WHEN a context's output is captured, so the
+   * ordering between a cohort round and its context's structured output becomes
+   * observable — `capture` is not banked during the agent turn, and this hook
+   * runs from `processContextOutputCapture`, exactly where production runs it.
+   * That ordering is the whole subject of the composite pattern, and the in-turn
+   * stand-in cannot express it: it banks before validation, which is the reverse
+   * of what the engine does.
+   *
+   * Returning null refuses the payload, which is how a rejection is scripted.
+   */
+  outputCapture?(input: {
+    contextId: string;
+    /** The execution as the capture gate sees it, after the round settled. */
+    execution: GraphWorkflowExecution;
+    /** The same production execution target the implementer and validators saw. */
+    worktreePath?: string;
+  }): Record<string, unknown> | null;
   /**
    * What the scripted implementer DOES on one turn, beyond completing its next
    * task — run before the task completion so an edit lands while the context is
@@ -165,6 +238,8 @@ export interface CompatibilityAgentTurnContext {
   conversationId: string;
   projectPath: string;
   sessionName: string;
+  /** The production execution target for this context, when it has one. */
+  worktreePath?: string;
   /** The prompt the engine rendered for this turn. */
   prompt: string;
   /** The production repository this run commits through. */
@@ -210,6 +285,23 @@ function createOccurrenceCounter(): (key: string) => number {
   };
 }
 
+function createPairOccurrenceCounter(): (
+  first: string,
+  second: string,
+) => number {
+  const counts = new Map<string, Map<string, number>>();
+  return (first, second) => {
+    let bySecond = counts.get(first);
+    if (bySecond === undefined) {
+      bySecond = new Map<string, number>();
+      counts.set(first, bySecond);
+    }
+    const next = (bySecond.get(second) ?? 0) + 1;
+    bySecond.set(second, next);
+    return next;
+  };
+}
+
 function createSuccessMergeOutput(): MergeOutput {
   return {
     status: "completed",
@@ -228,14 +320,21 @@ function createSuccessMergeOutput(): MergeOutput {
   };
 }
 
-function createWorktreeStub(): ParallelWorktrees {
-  const provision = async (
-    input: ProvisionInput,
-  ): Promise<ProvisionResult> => ({
-    worktreePath: `${input.projectPath}/.worktrees/${input.sessionDir}.${input.contextId}`,
-    branchName: `csm/${input.sessionDir}-${input.contextId}`,
-    ignoredBaseline: [],
-  });
+function createWorktreeStub(worktreeRoot?: string): ParallelWorktrees {
+  const provision = async (input: ProvisionInput): Promise<ProvisionResult> => {
+    const worktreePath =
+      worktreeRoot === undefined
+        ? `${input.projectPath}/.worktrees/${input.sessionDir}.${input.contextId}`
+        : path.join(worktreeRoot, `${input.sessionDir}.${input.contextId}`);
+    if (worktreeRoot !== undefined) {
+      await mkdir(worktreePath, { recursive: true });
+    }
+    return {
+      worktreePath,
+      branchName: `csm/${input.sessionDir}-${input.contextId}`,
+      ignoredBaseline: [],
+    };
+  };
   const provisionLane = (input: ProvisionLaneInput): Promise<ProvisionResult> =>
     provision({
       projectPath: input.projectPath,
@@ -283,11 +382,28 @@ function findNextIncompleteTaskId(
   return next?.taskId ?? null;
 }
 
+/** One production capture-gate dispatch, as the gate saw it. */
+export interface CompatibilityCaptureCall {
+  contextId: string;
+  /**
+   * Whether this context already had a banked output when the gate ran. Always
+   * false in a correct engine — the gate is the only writer, and it declines a
+   * context it already captured — so a true here is the signature of an output
+   * banked behind the gate's back.
+   */
+  outputAlreadyBanked: boolean;
+}
+
 export interface EngineScenarioRun {
   /** The execution the loop returned. */
   settled: GraphWorkflowExecution;
   /** The three normalized R14 projections. */
   recording: CompatibilityRecording;
+  /**
+   * Every production capture-gate dispatch, in order. Empty unless the scenario
+   * wired {@link CompatibilityScenario.outputCapture}.
+   */
+  captureCalls: readonly CompatibilityCaptureCall[];
   /** Every typed event the run published, in order. */
   events: TypedEventRecord[];
   /** The production manager, still bound to the open persistence fixture. */
@@ -330,6 +446,18 @@ export interface EngineScenarioRun {
   restartedStore(): StateStore;
 }
 
+interface EngineScenarioHarnessHooks {
+  /**
+   * Validator assignment ids reject NUL at the authored and persisted schemas,
+   * so the collision regression maps valid seats at this boundary instead of
+   * weakening those schemas solely to exercise the counter.
+   */
+  validationAttemptIdentity?(input: {
+    contextId: string;
+    assignmentId: string;
+  }): readonly [contextId: string, assignmentId: string];
+}
+
 /**
  * Run a scenario through the real engine and hand the result to `inspect` BEFORE
  * the persistence fixture closes, so a caller can reload from the same SQLite
@@ -338,6 +466,7 @@ export interface EngineScenarioRun {
 export async function runEngineScenario<T>(
   scenario: CompatibilityScenario,
   inspect: (run: EngineScenarioRun) => Promise<T>,
+  harnessHooks: EngineScenarioHarnessHooks = {},
 ): Promise<T> {
   _resetActiveLoopsForTesting();
 
@@ -349,6 +478,7 @@ export async function runEngineScenario<T>(
     const scheduling: SchedulingDecision[] = [];
     const statusTransitions: ContextStatusTransition[] = [];
     const events: TypedEventRecord[] = [];
+    const captureCalls: CompatibilityCaptureCall[] = [];
 
     const now = createDeterministicClock();
     const config = createHarnessConfig();
@@ -422,7 +552,7 @@ export async function runEngineScenario<T>(
       readConfig: async () => config,
     });
 
-    const worktrees = createWorktreeStub();
+    const worktrees = createWorktreeStub(scenario.worktreeRoot);
     const getSession = async (
       projectPath: string,
       sessionName: string,
@@ -473,7 +603,7 @@ export async function runEngineScenario<T>(
       Pick<GraphWorkflowIterationToolServerInput, "contextId" | "completeTask">
     >();
     const nextAgentTurn = createOccurrenceCounter();
-    const nextValidationAttempt = createOccurrenceCounter();
+    const nextValidationAttempt = createPairOccurrenceCounter();
 
     const laneService = createLaneService({
       store: createGraphLaneStore({
@@ -505,10 +635,34 @@ export async function runEngineScenario<T>(
 
     const validationService = createGraphWorkflowValidationService({
       async runContextValidator(input): Promise<ValidatorRunResult> {
-        const attempt = nextValidationAttempt(input.context.id);
+        // Per SEAT, not per context: two specialists reviewing one candidate
+        // each get their own attempt sequence, exactly as two real lanes would.
+        const attemptIdentity = harnessHooks.validationAttemptIdentity?.({
+          contextId: input.context.id,
+          assignmentId: input.validator.id,
+        }) ?? [input.context.id, input.validator.id];
+        const attempt = nextValidationAttempt(
+          attemptIdentity[0],
+          attemptIdentity[1],
+        );
+        // Loaded per seat, mid-round: a seat's question is what is in front of
+        // it RIGHT NOW, and a snapshot taken after the run settles cannot tell a
+        // candidate that existed during review from one that appeared later.
+        const midRound = await manager.getActive(PROJECT_PATH, SESSION_NAME);
+        if (!midRound) {
+          throw new Error(
+            `Fixture validator ran with no active execution for context "${input.context.id}"`,
+          );
+        }
         const scripted = scenario.validator?.({
           contextId: input.context.id,
           attempt,
+          assignmentId: input.validator.id,
+          authority: input.validator.authority,
+          ...(input.executionTarget === undefined
+            ? {}
+            : { worktreePath: input.executionTarget.worktreePath }),
+          execution: midRound,
         }) ?? { verdict: "pass" };
         const metadata = {
           sessionRef: null,
@@ -516,14 +670,17 @@ export async function runEngineScenario<T>(
           limitEvaluation: "disabled",
           rotateBeforeNextTurn: false,
         } as const;
+        const advisories = (scripted.advisories ?? []).map((advisory) => ({
+          ...advisory,
+        }));
 
         if (scripted.verdict === "pass") {
           return {
             result: {
               kind: "pass",
-              summary: `Context "${input.context.id}" satisfied its acceptance criteria`,
+              summary: `${input.validator.id} found "${input.context.id}" satisfied its acceptance criteria`,
               issues: [],
-              advisories: [],
+              advisories,
               reopenTaskIds: [],
             },
             metadata,
@@ -534,13 +691,13 @@ export async function runEngineScenario<T>(
         return {
           result: {
             kind: "fail",
-            summary: `Context "${input.context.id}" did not satisfy its acceptance criteria`,
+            summary: `${input.validator.id} found "${input.context.id}" did not satisfy its acceptance criteria`,
             issues: scripted.reopenTaskIds.map((taskId) => ({
               taskId,
               title: "Acceptance criteria not evidenced",
               description: "Record the verification evidence for this task.",
             })),
-            advisories: [],
+            advisories,
             reopenTaskIds: [...scripted.reopenTaskIds],
           },
           metadata,
@@ -561,9 +718,46 @@ export async function runEngineScenario<T>(
       continuityService,
       validationService,
       validationRoundService: stubValidationRoundService(),
+      // Wired only when a scenario opts in, so the engine — not the agent turn —
+      // decides when a context's output is captured, and the order between a
+      // cohort round and its context's structured output becomes observable.
+      ...(scenario.outputCapture === undefined
+        ? {}
+        : {
+            outputCaptureService: {
+              async captureContextOutput(input) {
+                captureCalls.push({
+                  contextId: input.contextId,
+                  outputAlreadyBanked:
+                    input.execution.contextOutputs[input.contextId] !==
+                    undefined,
+                });
+                const value = scenario.outputCapture?.({
+                  contextId: input.contextId,
+                  execution: input.execution,
+                  ...(input.executionTarget === undefined
+                    ? {}
+                    : { worktreePath: input.executionTarget.worktreePath }),
+                });
+                if (!value) {
+                  return {
+                    kind: "rejected",
+                    summary: `The scenario refused a payload for "${input.contextId}"`,
+                    issues: [],
+                    rejectedText: null,
+                  };
+                }
+                return {
+                  kind: "captured",
+                  value,
+                  parse: { source: "native" as const },
+                };
+              },
+            },
+          }),
       eventPublisher: publisher,
       signalHalt: createGraphWorkflowSignalHaltHandler(manager),
-      // Lane worktrees are stubs here, so there is nothing to copy into them.
+      // The harness does not materialize workflow documents into its lane targets.
       materializeWorkflowDocuments: async () => {},
       createToolServer(input) {
         laneToolServers.set(input.conversationId, {
@@ -601,6 +795,9 @@ export async function runEngineScenario<T>(
           conversationId: input.conversationId,
           projectPath: input.projectPath,
           sessionName: input.sessionName,
+          ...(input.executionTarget === undefined
+            ? {}
+            : { worktreePath: input.executionTarget.worktreePath }),
           prompt: input.prompt,
           manager,
           eventPublisher: publisher,
@@ -642,8 +839,13 @@ export async function runEngineScenario<T>(
      * complete — the guard the routing evaluates has to read a real capture off
      * the real execution. Written once: a re-run of the same context must not
      * silently re-decide its routes under a new capture iteration.
+     *
+     * Stands down entirely when the scenario wired the production capture gate:
+     * banking here would bank BEFORE validation, which is the reverse of the
+     * engine's order and would make that order untestable.
      */
     async function bankScenarioCapture(contextId: string): Promise<void> {
+      if (scenario.outputCapture !== undefined) return;
       const value = scenario.capture?.({ contextId });
       if (!value) return;
       await manager.mutateActive(PROJECT_PATH, SESSION_NAME, (current) => {
@@ -747,8 +949,9 @@ export async function runEngineScenario<T>(
         commit: async () => ({ status: "skipped" }),
         resolveHead: async () => null,
       },
-      // Compatibility scenarios use synthetic worktree paths; production's
-      // full-access index preparation is covered by execution-loop tests.
+      // Compatibility lane targets are not git worktrees, even when an artifact
+      // proof opts into real temporary directories; production's full-access
+      // index preparation is covered by execution-loop tests.
       resyncSharedIndex: async () => {},
       executionTargetResolver: createExecutionTargetResolver(),
       getSession,
@@ -787,6 +990,7 @@ export async function runEngineScenario<T>(
         statusTransitions,
         events,
       }),
+      captureCalls,
       events,
       manager,
       eventPublisher: publisher,

@@ -49,6 +49,8 @@ import { CHARTER_DOCUMENT_PATH, renderCharterMarkdown } from "./charter/render";
 import { createRegisteredGraphExecutionContract } from "./execution-contract-port";
 import {
   admitWorkflowExecutionAmendment,
+  isWorkflowExecutionAmendableStatus,
+  workflowExecutionAmendmentRefusalInstruction,
   type WorkflowAmendmentActor,
   type WorkflowAmendmentOperation,
   type WorkflowAmendmentPolicyBasis,
@@ -393,15 +395,17 @@ function evaluateLiveEditRequest(
     };
   }
 
-  if (request.amendment !== undefined && execution.status !== "running") {
+  if (
+    request.amendment !== undefined &&
+    !isWorkflowExecutionAmendableStatus(execution.status)
+  ) {
     return {
       ok: false,
       failure: {
         status: 409,
         code: "not_running",
-        error: `execution "${execution.id}" is ${execution.status}; only a running execution can be amended`,
-        instruction:
-          "Resume the run with `cctl workflow live resume` and re-run `cctl workflow live amend`.",
+        error: `execution "${execution.id}" is ${execution.status}; only a running or paused execution can be amended`,
+        instruction: workflowExecutionAmendmentRefusalInstruction(execution),
       },
     };
   }

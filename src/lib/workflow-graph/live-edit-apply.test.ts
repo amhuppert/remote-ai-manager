@@ -435,15 +435,24 @@ describe("applyLiveEditsToActiveExecution", () => {
     ).toBe(SECURITY_V2);
   });
 
-  it("rechecks a running-only amendment inside the mutation", async () => {
-    const harness = makeHarness(
-      createWorkflowExecution({
-        status: "running",
-        workingDefinition: createResolvedWorkflowDefinition({
-          origin: { sourceUri: "spec-plan://spec-spine/attempt-1" },
-        }),
+  it("applies an amendment when the execution pauses before the serialized mutation", async () => {
+    const initial = createWorkflowExecution({
+      status: "running",
+      workingDefinition: createResolvedWorkflowDefinition({
+        origin: { sourceUri: "spec-plan://spec-spine/attempt-1" },
       }),
-    );
+    });
+    initial.contextStates["context-implement"] = {
+      ...initial.contextStates["context-implement"]!,
+      status: "ready",
+      iterationCount: 1,
+    };
+    initial.taskStates["task-implement-1"] = {
+      ...initial.taskStates["task-implement-1"]!,
+      status: "interrupted",
+      startedAt: "2026-07-29T00:00:00.000Z",
+    };
+    const harness = makeHarness(initial);
     harness.beforeMutation = () => {
       harness.setStatus("paused");
     };
@@ -456,30 +465,28 @@ describe("applyLiveEditsToActiveExecution", () => {
           source: "cli",
           operations: [
             {
-              type: "add-context",
-              id: "context-amended",
-              title: "Amended context",
-              acceptanceCriteria: "The amendment is verified.",
+              type: "add-task",
+              id: "task-amended",
+              contextId: "context-implement",
+              title: "Amended task",
+              instructions: "Verify the paused amendment path.",
             },
           ],
           amendment: {
-            reason: "The running plan needs a verification context.",
-            actor: "agent:conversation-7 (codex)",
-            policyActor: {
-              kind: "agent",
-              conversationId: "conversation-7",
-              backend: "codex",
-            },
+            reason: "The running plan needs a verification task.",
+            actor: "human",
+            policyActor: { kind: "human" },
             operations: [
               {
-                type: "add-context",
-                id: "context-amended",
-                title: "Amended context",
-                acceptanceCriteria: "The amendment is verified.",
+                type: "add-task",
+                id: "task-amended",
+                contextId: "context-implement",
+                title: "Amended task",
+                instructions: "Verify the paused amendment path.",
               },
             ],
-            addedContextIds: ["context-amended"],
-            addedTaskIds: [],
+            addedContextIds: [],
+            addedTaskIds: ["task-amended"],
             addedEdgeIds: [],
             hashDefinition: () => hash("c"),
           },
@@ -488,12 +495,15 @@ describe("applyLiveEditsToActiveExecution", () => {
       harness.deps,
     );
 
-    expect(outcome.ok).toBe(false);
-    if (outcome.ok || outcome.kind !== "rejected") return;
-    expect(outcome.failure).toMatchObject({ status: 409, code: "not_running" });
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.applied).toBe(1);
     expect(harness.current().status).toBe("paused");
-    expect(harness.current().liveRevision).toBe(1);
-    expect(harness.liveEditApplied).toHaveLength(0);
+    expect(harness.current().liveRevision).toBe(2);
+    expect(
+      harness.current().workingDefinition.tasks.map(({ id }) => id),
+    ).toContain("task-amended");
+    expect(harness.liveEditApplied).toHaveLength(1);
   });
 
   it("keeps a running context's task list behind its mutability gate", async () => {

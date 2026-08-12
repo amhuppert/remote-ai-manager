@@ -47,6 +47,12 @@ const REPAIR = "ctx-repair";
 const BACKLOG = "ctx-backlog";
 const REPORT = "ctx-report";
 
+/** Which branch each severity selects, mirroring the template's guarded edges. */
+const BRANCH_FOR_SEVERITY: Record<string, string> = {
+  blocker: HOTFIX,
+  defect: REPAIR,
+};
+
 /** The classifier's outgoing edges, in the order the template declares them. */
 const TO_HOTFIX = "ctx-triage__ctx-hotfix";
 const TO_REPAIR = "ctx-triage__ctx-repair";
@@ -97,13 +103,36 @@ async function runTriage<T>(
       definition: acceptTemplate().definition,
       sessionLaneEnabled: false,
       agent: () => "complete-next-task",
-      capture: ({ contextId }) =>
-        contextId === TRIAGE
-          ? {
-              severity,
-              rationale: `Scripted triage verdict for the ${severity} scenario`,
-            }
-          : null,
+      capture: ({ contextId }) => {
+        if (contextId === TRIAGE) {
+          return {
+            severity,
+            rationale: `Scripted triage verdict for the ${severity} scenario`,
+          };
+        }
+        // The reporter is read-only, so captured output is the only channel it
+        // has — a scenario that banked nothing here would leave the context
+        // unable to deliver at all.
+        if (contextId === REPORT) {
+          return {
+            severity,
+            branchContextId: BRANCH_FOR_SEVERITY[severity] ?? BACKLOG,
+            outcome: `Scripted outcome for the ${severity} scenario`,
+          };
+        }
+        // Whichever branch ran carries the severity forward: it is the
+        // reporter's only direct predecessor, and the classifier is two hops
+        // away, so this is the hop the severity has to survive.
+        if (
+          ([HOTFIX, REPAIR, BACKLOG] as readonly string[]).includes(contextId)
+        ) {
+          return {
+            severity,
+            outcome: `${contextId} acted on the ${severity} verdict`,
+          };
+        }
+        return null;
+      },
     },
     inspect,
   );
@@ -259,6 +288,72 @@ describe("Classify-And-Act, as an ordinary template (D4 R15.1)", () => {
     expect(
       definition.edges.filter((edge) => edge.targetContextId === REPORT),
     ).toHaveLength(3);
+  });
+
+  it("places its output-only classifier and reporter read-only, and only the branches write (D6 R2.1)", () => {
+    const { definition } = acceptTemplate();
+    const byId = new Map(
+      definition.executionContexts.map((context) => [context.id, context]),
+    );
+
+    // The classifier's own acceptance criteria forbid it from starting
+    // remediation, and the reporter only describes what happened. Under D5 that
+    // makes both of them mechanically read-only rather than merely well-behaved
+    // — neither needs a worktree, a commit, or a join to deliver.
+    for (const contextId of [TRIAGE, REPORT]) {
+      expect(byId.get(contextId)?.placement, contextId).toEqual({
+        lane: "session",
+        mode: "readOnly",
+      });
+      expect(byId.get(contextId)?.outputSchema, contextId).toMatchObject({
+        type: "object",
+      });
+    }
+
+    // The remediation branches DO write code, so each keeps a write-capable
+    // lane of its own: they are mutually exclusive by routing, but nothing
+    // orders them against each other.
+    for (const contextId of [HOTFIX, REPAIR, BACKLOG]) {
+      const placement = byId.get(contextId)?.placement;
+      expect(placement?.mode, contextId).not.toBe("readOnly");
+      expect(placement?.lane, contextId).not.toBe("session");
+    }
+  });
+
+  it("gives the reporter a direct predecessor that carries the severity it must bank", () => {
+    const { definition } = acceptTemplate();
+    const byId = new Map(
+      definition.executionContexts.map((context) => [context.id, context]),
+    );
+
+    // The reporter's output contract requires the severity, but the classifier
+    // that decided it is TWO hops upstream — the branches sit between them, and
+    // only direct predecessors are injected. So the severity has to ride the
+    // branch's own output, or the reporter is being asked to bank a value it can
+    // only guess at.
+    const reportSchema = byId.get(REPORT)?.outputSchema as
+      | { required?: unknown }
+      | undefined;
+    expect(reportSchema?.required).toEqual(
+      expect.arrayContaining(["severity"]),
+    );
+
+    expect(
+      definition.edges
+        .filter((edge) => edge.targetContextId === REPORT)
+        .map((edge) => edge.sourceContextId)
+        .sort(),
+    ).toEqual([HOTFIX, REPAIR, BACKLOG].sort());
+
+    for (const contextId of [HOTFIX, REPAIR, BACKLOG]) {
+      const branchSchema = byId.get(contextId)?.outputSchema as
+        | { required?: unknown }
+        | undefined;
+      expect(
+        branchSchema?.required,
+        `branch "${contextId}" carries no severity to the reporter`,
+      ).toEqual(expect.arrayContaining(["severity"]));
+    }
   });
 
   it("routes its two unnamed severities through the else edge, which is why authoring is warning-free", () => {

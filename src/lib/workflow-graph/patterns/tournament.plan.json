@@ -1,0 +1,430 @@
+{
+  "name": "Tournament",
+  "description": "Four contenders propose independent approaches to the same brief, two pairwise judges each pick a winner and carry its artifact forward, and one final judge compares the two survivors to crown a single champion.",
+  "definition": {
+    "schemaVersion": 1,
+    "workflowConfig": {},
+    "charter": {
+      "mission": "Choose the best of several approaches by comparing them in pairs, so every judgment is between two things a judge can hold side by side, rather than a ranking of four things nobody compared directly.",
+      "conventions": [
+        "A judge decides between the two artifacts in front of it on the brief's terms. It does not invent a third approach, and it does not send work back — there is nobody to send it to.",
+        "A pairwise judge carries the winning artifact forward verbatim. The final judge cannot reach past its own inputs to fetch it."
+      ],
+      "nonGoals": [
+        "Merging two approaches into a hybrid. The bracket picks one; a hybrid is a new contender for a new run.",
+        "Producing the implementation. Every context here is read-only: the tournament chooses an approach, and building it is separate work."
+      ],
+      "invariants": [
+        {
+          "id": "contenders-are-independent",
+          "statement": "No contender reads another contender's proposal. Four independent attempts at one brief is what makes the comparison meaningful."
+        },
+        {
+          "id": "semifinals-carry-the-artifact",
+          "statement": "Each pairwise judge banks the winning artifact's CONTENT, not only the winner's id. Upstream inputs reach a context's direct predecessors only, so by the final round the contenders are two hops away and unreadable — an unforwarded artifact is one the final judge can never see."
+        },
+        {
+          "id": "exactly-one-champion",
+          "statement": "The final round names exactly one champion and the artifact behind it, so the decision is legible without replaying the bracket."
+        }
+      ],
+      "sourcesOfTruth": [
+        {
+          "rank": 1,
+          "id": "tournament-brief",
+          "label": "Tournament brief",
+          "type": "document",
+          "locator": ".cc/temp/tournament-brief.md",
+          "description": "The problem every contender proposes against and the tradeoff axes every judge decides on: what has to be true of a good approach, and what is being traded against what.",
+          "appliesTo": "all execution contexts",
+          "accessPolicy": "worktree-relative"
+        },
+        {
+          "rank": 2,
+          "id": "repo-contract",
+          "label": "Repository engineering contract",
+          "type": "document",
+          "locator": "AGENTS.md",
+          "description": "The engineering contract any winning approach would have to be implementable under — typing, testing, and architecture boundaries.",
+          "appliesTo": "all execution contexts",
+          "accessPolicy": "worktree-relative"
+        }
+      ]
+    },
+    "parameters": [],
+    "prerequisites": [],
+    "executionContexts": [
+      {
+        "id": "context-contender-a",
+        "title": "Contender A",
+        "description": "Propose one approach to the brief, independently of the other contenders.",
+        "acceptanceCriteria": "The proposal is a concrete approach a reader could implement from, not a direction of travel. It states what it trades away as well as what it buys. The captured output carries the approach name, the artifact itself, and the rationale.",
+        "placement": {
+          "lane": "session",
+          "mode": "readOnly"
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "One contender's independent proposal.",
+          "properties": {
+            "approach": {
+              "type": "string",
+              "description": "A short name for this approach.",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "artifact": {
+              "type": "string",
+              "description": "The proposal itself — the content a judge compares.",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "rationale": {
+              "type": "string",
+              "description": "Why this approach is worth choosing, and what it trades away.",
+              "minLength": 1,
+              "maxLength": 2000
+            }
+          },
+          "required": ["approach", "artifact", "rationale"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "context-contender-b",
+        "title": "Contender B",
+        "description": "Propose one approach to the brief, independently of the other contenders.",
+        "acceptanceCriteria": "The proposal is a concrete approach a reader could implement from, not a direction of travel. It states what it trades away as well as what it buys. The captured output carries the approach name, the artifact itself, and the rationale.",
+        "placement": {
+          "lane": "session",
+          "mode": "readOnly"
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "One contender's independent proposal.",
+          "properties": {
+            "approach": {
+              "type": "string",
+              "description": "A short name for this approach.",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "artifact": {
+              "type": "string",
+              "description": "The proposal itself — the content a judge compares.",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "rationale": {
+              "type": "string",
+              "description": "Why this approach is worth choosing, and what it trades away.",
+              "minLength": 1,
+              "maxLength": 2000
+            }
+          },
+          "required": ["approach", "artifact", "rationale"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "context-contender-c",
+        "title": "Contender C",
+        "description": "Propose one approach to the brief, independently of the other contenders.",
+        "acceptanceCriteria": "The proposal is a concrete approach a reader could implement from, not a direction of travel. It states what it trades away as well as what it buys. The captured output carries the approach name, the artifact itself, and the rationale.",
+        "placement": {
+          "lane": "session",
+          "mode": "readOnly"
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "One contender's independent proposal.",
+          "properties": {
+            "approach": {
+              "type": "string",
+              "description": "A short name for this approach.",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "artifact": {
+              "type": "string",
+              "description": "The proposal itself — the content a judge compares.",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "rationale": {
+              "type": "string",
+              "description": "Why this approach is worth choosing, and what it trades away.",
+              "minLength": 1,
+              "maxLength": 2000
+            }
+          },
+          "required": ["approach", "artifact", "rationale"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "context-contender-d",
+        "title": "Contender D",
+        "description": "Propose one approach to the brief, independently of the other contenders.",
+        "acceptanceCriteria": "The proposal is a concrete approach a reader could implement from, not a direction of travel. It states what it trades away as well as what it buys. The captured output carries the approach name, the artifact itself, and the rationale.",
+        "placement": {
+          "lane": "session",
+          "mode": "readOnly"
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "One contender's independent proposal.",
+          "properties": {
+            "approach": {
+              "type": "string",
+              "description": "A short name for this approach.",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "artifact": {
+              "type": "string",
+              "description": "The proposal itself — the content a judge compares.",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "rationale": {
+              "type": "string",
+              "description": "Why this approach is worth choosing, and what it trades away.",
+              "minLength": 1,
+              "maxLength": 2000
+            }
+          },
+          "required": ["approach", "artifact", "rationale"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "context-semifinal-ab",
+        "title": "Semifinal: A against B",
+        "description": "Compare the two proposals in front of you and carry the winner forward, artifact and all.",
+        "acceptanceCriteria": "The verdict compares the two proposals against the brief's tradeoff axes rather than restating them, and names exactly one winner. The captured output carries the winner's context id, its approach name, and the winning artifact's full content — the final judge cannot reach back to the contenders for it.",
+        "placement": {
+          "lane": "session",
+          "mode": "readOnly"
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "A pairwise verdict, carrying the winning artifact to the round that cannot reach it.",
+          "properties": {
+            "winnerContextId": {
+              "type": "string",
+              "description": "The execution context id of the winning contender.",
+              "minLength": 1
+            },
+            "winningApproach": {
+              "type": "string",
+              "description": "The winning approach's short name.",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "winningArtifact": {
+              "type": "string",
+              "description": "The winning proposal's full content, copied forward verbatim so the final judge can read it.",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "rationale": {
+              "type": "string",
+              "description": "Why this proposal beat the other, in the brief's terms.",
+              "minLength": 1,
+              "maxLength": 2000
+            }
+          },
+          "required": [
+            "winnerContextId",
+            "winningApproach",
+            "winningArtifact",
+            "rationale"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "context-semifinal-cd",
+        "title": "Semifinal: C against D",
+        "description": "Compare the two proposals in front of you and carry the winner forward, artifact and all.",
+        "acceptanceCriteria": "The verdict compares the two proposals against the brief's tradeoff axes rather than restating them, and names exactly one winner. The captured output carries the winner's context id, its approach name, and the winning artifact's full content — the final judge cannot reach back to the contenders for it.",
+        "placement": {
+          "lane": "session",
+          "mode": "readOnly"
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "A pairwise verdict, carrying the winning artifact to the round that cannot reach it.",
+          "properties": {
+            "winnerContextId": {
+              "type": "string",
+              "description": "The execution context id of the winning contender.",
+              "minLength": 1
+            },
+            "winningApproach": {
+              "type": "string",
+              "description": "The winning approach's short name.",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "winningArtifact": {
+              "type": "string",
+              "description": "The winning proposal's full content, copied forward verbatim so the final judge can read it.",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "rationale": {
+              "type": "string",
+              "description": "Why this proposal beat the other, in the brief's terms.",
+              "minLength": 1,
+              "maxLength": 2000
+            }
+          },
+          "required": [
+            "winnerContextId",
+            "winningApproach",
+            "winningArtifact",
+            "rationale"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "context-final",
+        "title": "Final: the two survivors",
+        "description": "Compare the two semifinal winners and crown one champion.",
+        "acceptanceCriteria": "The verdict compares the two winning artifacts that reached this context — not the contenders' original proposals, which are not visible here — and names exactly one champion. The captured output carries the champion's context id and the champion artifact's full content.",
+        "placement": {
+          "lane": "session",
+          "mode": "readOnly"
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "The tournament's single decision.",
+          "properties": {
+            "championContextId": {
+              "type": "string",
+              "description": "The execution context id of the winning contender.",
+              "minLength": 1
+            },
+            "championArtifact": {
+              "type": "string",
+              "description": "The champion proposal's full content.",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "rationale": {
+              "type": "string",
+              "description": "Why this proposal beat the other finalist, in the brief's terms.",
+              "minLength": 1,
+              "maxLength": 2000
+            }
+          },
+          "required": ["championContextId", "championArtifact", "rationale"],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "tasks": [
+      {
+        "id": "task-contender-a-1",
+        "contextId": "context-contender-a",
+        "order": 1,
+        "title": "Propose an approach",
+        "instructions": "Read the tournament brief named as rank 1 in the charter.\n\nPropose ONE approach to it. Make it concrete enough that a reader could implement from your proposal without asking you a follow-up question: name the mechanism, where it lives, and what changes. A direction of travel is not a proposal.\n\nState what your approach trades away as well as what it buys. A judge that has to discover your tradeoff for itself will assume the worst one.\n\nYou are read-only. You have no worktree and you will make no commit, so your captured output is your entire delivery — in particular, `artifact` is the thing judges will compare, so it must stand on its own. You cannot see the other contenders, and that is deliberate: four independent attempts are what make the comparison worth running."
+      },
+      {
+        "id": "task-contender-b-1",
+        "contextId": "context-contender-b",
+        "order": 1,
+        "title": "Propose an approach",
+        "instructions": "Read the tournament brief named as rank 1 in the charter.\n\nPropose ONE approach to it. Make it concrete enough that a reader could implement from your proposal without asking you a follow-up question: name the mechanism, where it lives, and what changes. A direction of travel is not a proposal.\n\nState what your approach trades away as well as what it buys. A judge that has to discover your tradeoff for itself will assume the worst one.\n\nYou are read-only. You have no worktree and you will make no commit, so your captured output is your entire delivery — in particular, `artifact` is the thing judges will compare, so it must stand on its own. You cannot see the other contenders, and that is deliberate: four independent attempts are what make the comparison worth running."
+      },
+      {
+        "id": "task-contender-c-1",
+        "contextId": "context-contender-c",
+        "order": 1,
+        "title": "Propose an approach",
+        "instructions": "Read the tournament brief named as rank 1 in the charter.\n\nPropose ONE approach to it. Make it concrete enough that a reader could implement from your proposal without asking you a follow-up question: name the mechanism, where it lives, and what changes. A direction of travel is not a proposal.\n\nState what your approach trades away as well as what it buys. A judge that has to discover your tradeoff for itself will assume the worst one.\n\nYou are read-only. You have no worktree and you will make no commit, so your captured output is your entire delivery — in particular, `artifact` is the thing judges will compare, so it must stand on its own. You cannot see the other contenders, and that is deliberate: four independent attempts are what make the comparison worth running."
+      },
+      {
+        "id": "task-contender-d-1",
+        "contextId": "context-contender-d",
+        "order": 1,
+        "title": "Propose an approach",
+        "instructions": "Read the tournament brief named as rank 1 in the charter.\n\nPropose ONE approach to it. Make it concrete enough that a reader could implement from your proposal without asking you a follow-up question: name the mechanism, where it lives, and what changes. A direction of travel is not a proposal.\n\nState what your approach trades away as well as what it buys. A judge that has to discover your tradeoff for itself will assume the worst one.\n\nYou are read-only. You have no worktree and you will make no commit, so your captured output is your entire delivery — in particular, `artifact` is the thing judges will compare, so it must stand on its own. You cannot see the other contenders, and that is deliberate: four independent attempts are what make the comparison worth running."
+      },
+      {
+        "id": "task-semifinal-ab-1",
+        "contextId": "context-semifinal-ab",
+        "order": 1,
+        "title": "Judge A against B and carry the winner forward",
+        "instructions": "The two proposals you are judging are in the \"Inputs from upstream\" section of this prompt, as validated structured output. Read `artifact` for each — that is the proposal itself, not a summary of it.\n\nDecide between them on the brief's tradeoff axes. Compare; do not re-describe. If both are viable, say what the deciding axis was, and if one is disqualified rather than merely beaten, say that too.\n\nThen carry the winner forward. Your captured `winningArtifact` must contain the winning proposal's FULL content, copied verbatim from its `artifact` field — not a summary, not a citation, and not the winner's id again. The final judge sees only its direct predecessors, which are the two semifinals; the contenders are two hops away and completely invisible to it. An artifact you do not copy into `winningArtifact` is one the final judge can never read, and it will be judging a name.\n\nYou are read-only. You have no worktree and you will make no commit. Do not propose an approach of your own."
+      },
+      {
+        "id": "task-semifinal-cd-1",
+        "contextId": "context-semifinal-cd",
+        "order": 1,
+        "title": "Judge C against D and carry the winner forward",
+        "instructions": "The two proposals you are judging are in the \"Inputs from upstream\" section of this prompt, as validated structured output. Read `artifact` for each — that is the proposal itself, not a summary of it.\n\nDecide between them on the brief's tradeoff axes. Compare; do not re-describe. If both are viable, say what the deciding axis was, and if one is disqualified rather than merely beaten, say that too.\n\nThen carry the winner forward. Your captured `winningArtifact` must contain the winning proposal's FULL content, copied verbatim from its `artifact` field — not a summary, not a citation, and not the winner's id again. The final judge sees only its direct predecessors, which are the two semifinals; the contenders are two hops away and completely invisible to it. An artifact you do not copy into `winningArtifact` is one the final judge can never read, and it will be judging a name.\n\nYou are read-only. You have no worktree and you will make no commit. Do not propose an approach of your own."
+      },
+      {
+        "id": "task-final-1",
+        "contextId": "context-final",
+        "order": 1,
+        "title": "Crown the champion",
+        "instructions": "The two semifinal verdicts are in the \"Inputs from upstream\" section of this prompt. Each carries a `winningArtifact` — the full proposal that won its half of the bracket. Those two artifacts are everything you can see: the four original contenders are two hops upstream and are not available to you.\n\nCompare the two artifacts on the brief's tradeoff axes and choose exactly one champion. Do not defer to the semifinal judges' rationales — they each compared a different pair, and neither of them has seen what you are seeing.\n\nCopy the champion's full content into `championArtifact` so the decision is readable without replaying the bracket, and name its originating contender in `championContextId`.\n\nYou are read-only. You have no worktree and you will make no commit. Complete this task with a summary naming the champion and the axis that decided it."
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-a-semifinal-ab",
+        "sourceContextId": "context-contender-a",
+        "targetContextId": "context-semifinal-ab"
+      },
+      {
+        "id": "edge-b-semifinal-ab",
+        "sourceContextId": "context-contender-b",
+        "targetContextId": "context-semifinal-ab"
+      },
+      {
+        "id": "edge-c-semifinal-cd",
+        "sourceContextId": "context-contender-c",
+        "targetContextId": "context-semifinal-cd"
+      },
+      {
+        "id": "edge-d-semifinal-cd",
+        "sourceContextId": "context-contender-d",
+        "targetContextId": "context-semifinal-cd"
+      },
+      {
+        "id": "edge-semifinal-ab-final",
+        "sourceContextId": "context-semifinal-ab",
+        "targetContextId": "context-final"
+      },
+      {
+        "id": "edge-semifinal-cd-final",
+        "sourceContextId": "context-semifinal-cd",
+        "targetContextId": "context-final"
+      }
+    ]
+  },
+  "layout": {
+    "workflowId": "tournament",
+    "contextPositions": {
+      "context-contender-a": { "x": 0, "y": -240 },
+      "context-contender-b": { "x": 0, "y": -80 },
+      "context-contender-c": { "x": 0, "y": 80 },
+      "context-contender-d": { "x": 0, "y": 240 },
+      "context-semifinal-ab": { "x": 420, "y": -160 },
+      "context-semifinal-cd": { "x": 420, "y": 160 },
+      "context-final": { "x": 840, "y": 0 }
+    },
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "zoom": 1
+    }
+  }
+}

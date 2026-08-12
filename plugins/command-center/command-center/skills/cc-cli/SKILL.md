@@ -314,7 +314,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl workflow live ledger [--cursor <seq>] [--max-pages <n>] [--json]`
 - `cctl workflow live edit` — apply live edits to the running execution's working copy
   - `cctl workflow live edit --file .cc/temp/live-ops.json [--dry-run] [--json]`
-- `cctl workflow live amend` — add contexts, tasks, or edges to a running delivery-plan run
+- `cctl workflow live amend` — add contexts, tasks, or edges to a running or paused delivery-plan run
   - `cctl workflow live amend --reason <rationale> --file <live-ops.json> [--json]`
 - `cctl workflow live pause` — pause the active execution to unlock started contexts
   - `cctl workflow live pause [--json]`

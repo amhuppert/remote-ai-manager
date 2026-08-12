@@ -269,6 +269,17 @@ const ADDITIVE_OPERATIONS = [
   },
 ];
 
+const STARTED_CONTEXT_TASK_OPERATION = [
+  {
+    type: "add-task",
+    id: "task-verify-paused-delivery",
+    contextId: "ctx-deliver",
+    title: "Verify the paused delivery",
+    instructions:
+      "Prove the scheduler-started context can be amended after pause.",
+  },
+];
+
 describe("cctl workflow live amend — the authorized amendment", () => {
   let world: SpecSpineWorld;
 
@@ -515,12 +526,64 @@ describe("cctl workflow live amend — the authorized amendment", () => {
     );
   });
 
-  it("refuses on a non-running execution and names the way back", async () => {
-    await launch(world);
+  it("amends a paused execution with a durable event and leaves the approved candidate byte-identical", async () => {
+    const planned = await launch(world);
+    await world.markWorkflowContextRunning("ctx-deliver", "task-deliver");
     await world.pauseWorkflowExecution();
+    const before = world.readActiveWorkflowExecution();
+    if (before === null) throw new Error("the launch created no execution");
+    expect(before.contextStates["ctx-deliver"]?.status).toBe("ready");
+    expect(before.taskStates["task-deliver"]?.status).toBe("interrupted");
+    const approvedBytes = storedCandidateJson(
+      world,
+      planned.candidate.candidateId,
+    );
 
     const response = await world.postWorkflowAmend(
-      { reason: "add it anyway", operations: ADDITIVE_OPERATIONS },
+      {
+        reason: "the paused plan needs its verification context",
+        operations: STARTED_CONTEXT_TASK_OPERATION,
+      },
+      "agent",
+    );
+    expect(response.status, JSON.stringify(await response.clone().json())).toBe(
+      200,
+    );
+
+    const after = world.readActiveWorkflowExecution();
+    if (after === null) throw new Error("the amendment lost the execution");
+    expect(after.status).toBe("paused");
+    expect(after.liveRevision).toBe(before.liveRevision + 1);
+    expect(after.workingDefinition.tasks.map((task) => task.id)).toContain(
+      "task-verify-paused-delivery",
+    );
+    expect(amendmentEvents(world)).toHaveLength(1);
+    expect(amendmentEvents(world)[0]).toMatchObject({
+      reason: "the paused plan needs its verification context",
+      addedContextIds: [],
+      addedTaskIds: ["task-verify-paused-delivery"],
+      addedEdgeIds: [],
+      previousWorkingDefinitionHash: workingDefinitionHash(
+        before.workingDefinition,
+      ),
+      workingDefinitionHash: workingDefinitionHash(after.workingDefinition),
+    });
+    expect(storedCandidateJson(world, planned.candidate.candidateId)).toBe(
+      approvedBytes,
+    );
+  });
+
+  it("refuses a resumably halted execution and names resume as the in-place remedy", async () => {
+    await launch(world);
+    await world.haltWorkflowExecution({
+      type: "max_iterations",
+      contextId: "ctx-deliver",
+      iterationCount: 1,
+      summary: null,
+    });
+
+    const response = await world.postWorkflowAmend(
+      { reason: "add it after the halt", operations: ADDITIVE_OPERATIONS },
       "agent",
     );
     const payload = (await response.json()) as {
@@ -530,6 +593,27 @@ describe("cctl workflow live amend — the authorized amendment", () => {
     expect(response.status).toBe(409);
     expect(payload.code).toBe("not_running");
     expect(payload.instruction).toContain("cctl workflow live resume");
+    expect(amendmentEvents(world)).toHaveLength(0);
+  });
+
+  it("refuses an amendment after the execution completes", async () => {
+    await launch(world);
+    await world.setWorkflowExecutionStatus("completed");
+
+    const response = await world.postWorkflowAmend(
+      { reason: "add it after completion", operations: ADDITIVE_OPERATIONS },
+      "agent",
+    );
+    const payload = (await response.json()) as {
+      code?: string;
+      instruction?: string;
+    };
+    expect(response.status).toBe(409);
+    expect(payload.code).toBe("not_running");
+    expect(payload.instruction).toContain(
+      "cctl spec plan open --seed-from last",
+    );
+    expect(payload.instruction).not.toContain("cctl workflow live resume");
     expect(amendmentEvents(world)).toHaveLength(0);
   });
 });

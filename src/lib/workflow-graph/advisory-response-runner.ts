@@ -37,6 +37,10 @@ import {
 } from "@/lib/workflow-graph/advisory-delivery";
 import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
+import {
+  composeImplementerLaneWriteEnvelope,
+  resolveImplementerContinuationWriteEnvelope,
+} from "@/lib/workflow-graph/implementer-lane-write-envelope";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowValidationAdvisory,
@@ -86,6 +90,11 @@ interface ExecuteWorkflowTaskRunFn {
 
 export interface GraphWorkflowAdvisoryResponseRunnerDeps {
   executeWorkflowTaskRun?: ExecuteWorkflowTaskRunFn;
+  composeWriteEnvelope?: typeof composeImplementerLaneWriteEnvelope;
+  resolveWorktreePath?(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<string>;
   /** Per-turn wall-clock bound, resolved from the same backend defaults the
    *  validator and capture turns use. Omitted leaves the actor's default. */
   resolveTimeoutMs?(backend: AgentBackendId): Promise<number | undefined>;
@@ -96,6 +105,8 @@ export function createGraphWorkflowAdvisoryResponseRunner(
 ) {
   const executeWorkflowTaskRun =
     deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
+  const composeWriteEnvelope =
+    deps.composeWriteEnvelope ?? composeImplementerLaneWriteEnvelope;
 
   async function runAdvisoryResponse(
     input: GraphWorkflowAdvisoryResponseInput,
@@ -115,6 +126,43 @@ export function createGraphWorkflowAdvisoryResponseRunner(
     const timeoutMs = await deps.resolveTimeoutMs?.(
       context.implementer.agent.backend,
     );
+    const writeEnvelopeResolution =
+      await resolveImplementerContinuationWriteEnvelope(
+        {
+          executionId: input.execution.id,
+          contextId: input.contextId,
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          placement: context.placement,
+          ...(input.executionTarget !== undefined
+            ? { executionTarget: input.executionTarget }
+            : {}),
+        },
+        {
+          composeWriteEnvelope,
+          ...(deps.resolveWorktreePath !== undefined
+            ? { resolveWorktreePath: deps.resolveWorktreePath }
+            : {}),
+        },
+      );
+    if (!writeEnvelopeResolution.ok) {
+      const message = `Cannot establish the advisory-response write envelope for context "${input.contextId}": ${writeEnvelopeResolution.error}`;
+      logger.error("graph-workflow.advisory_response.write_envelope_failed", {
+        executionId: input.execution.id,
+        contextId: input.contextId,
+        conversationId: input.conversationId,
+        backend: context.implementer.agent.backend,
+        worktreePath: writeEnvelopeResolution.worktreePath,
+        error: writeEnvelopeResolution.error,
+      });
+      throw new AgentTurnFailedError(message, {
+        contextId: input.contextId,
+        engine: context.implementer.agent.backend,
+        cause: "unknown",
+        originalMessage: message,
+      });
+    }
+    const writeEnvelope = writeEnvelopeResolution.envelope;
     let prompt = buildAdvisoryResponsePrompt({
       contextTitle: context.title,
       advisories: input.advisories,
@@ -129,6 +177,7 @@ export function createGraphWorkflowAdvisoryResponseRunner(
         backend: context.implementer.agent.backend,
         advisoryCount: input.advisories.length,
         attempt,
+        fsWriteRestricted: writeEnvelope !== null,
       });
 
       const result = await executeWorkflowTaskRun({
@@ -140,6 +189,9 @@ export function createGraphWorkflowAdvisoryResponseRunner(
         outputFormat: { type: "json_schema", schema: outputSchema },
         modelId: context.implementer.agent.model,
         effort: context.implementer.agent.reasoningEffort,
+        ...(writeEnvelope !== null
+          ? { fsWritePolicy: writeEnvelope.policy }
+          : {}),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
         ...(input.executionTarget !== undefined
           ? { worktreePath: input.executionTarget.worktreePath }

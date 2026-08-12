@@ -1,0 +1,354 @@
+{
+  "name": "Fanout-And-Synthesize + Adversarial Verification",
+  "description": "Three independent read-only readers survey one subject in a single wave, a write-capable synthesizer writes their reports up as a reviewable artifact, and a four-seat adversarial panel judges that artifact before its provenance is banked.",
+  "definition": {
+    "schemaVersion": 1,
+    "workflowConfig": {},
+    "charter": {
+      "mission": "Produce a synthesis that has actually been reviewed. The fan-out half buys breadth cheaply, and the panel half makes the resulting document answerable to a blocking generalist plus three specialist lenses — on the document itself, not on a summary of it.",
+      "conventions": [
+        "A reader reports what it observed and where. The synthesizer is the only context that sees every report, so it is the only one that reconciles them.",
+        "The synthesis is a file in the worktree before it is a captured output. That is what the panel reviews."
+      ],
+      "nonGoals": [
+        "Reviewing the readers. A read-only reader leaves no diff, so a panel pointed at one would be inspecting an empty candidate.",
+        "Acting on the synthesis. This workflow produces a reviewed document; deciding what to do about it is separate work."
+      ],
+      "invariants": [
+        {
+          "id": "readers-are-independent",
+          "statement": "No reader reads another reader's output or waits on it. They run in one wave against the same subject, so the synthesizer reconciles genuinely independent observations."
+        },
+        {
+          "id": "candidate-exists-before-review",
+          "statement": "The synthesis is written to its artifact path before the synthesis task completes. A context's validation cohort runs BEFORE its structured output is captured, so a synthesizer that delivered only through captured output would hand four reviewers a candidate that does not exist yet — and they would pass an empty diff."
+        },
+        {
+          "id": "provenance-survives-review",
+          "statement": "The captured output names the artifact path and every reader that contributed to it. The panel judges the document; the provenance is what lets a later reader trace the document back to the fan-out that produced it."
+        }
+      ],
+      "sourcesOfTruth": [
+        {
+          "rank": 1,
+          "id": "survey-brief",
+          "label": "Survey brief",
+          "type": "document",
+          "locator": ".cc/temp/survey-brief.md",
+          "description": "The subject under survey and the question the synthesis has to answer: what is being assessed, and what decision the answer feeds.",
+          "appliesTo": "all execution contexts",
+          "accessPolicy": "worktree-relative"
+        },
+        {
+          "rank": 2,
+          "id": "repo-contract",
+          "label": "Repository engineering contract",
+          "type": "document",
+          "locator": "AGENTS.md",
+          "description": "The engineering contract that defines what 'correct' means for the runtime, tests, and documentation the readers assess and the panel reviews against.",
+          "appliesTo": "all execution contexts",
+          "accessPolicy": "worktree-relative"
+        }
+      ]
+    },
+    "parameters": [],
+    "prerequisites": [],
+    "executionContexts": [
+      {
+        "id": "context-read-runtime",
+        "title": "Survey the runtime behaviour",
+        "description": "Read the subject's runtime path — what actually executes, in what order, and where it can fail.",
+        "acceptanceCriteria": "The runtime path has been traced through the real code rather than inferred from names, and each finding cites the file and symbol it came from. The captured output declares the area, the findings (empty if there were none), and an honest confidence.",
+        "placement": {
+          "lane": "session",
+          "mode": "readOnly"
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "One reader's independent report.",
+          "properties": {
+            "area": {
+              "type": "string",
+              "description": "The angle this reader covered.",
+              "minLength": 1
+            },
+            "findings": {
+              "type": "array",
+              "description": "What this reader observed, one item per observation. Empty when it found nothing.",
+              "items": {
+                "type": "string",
+                "maxLength": 600
+              },
+              "maxItems": 12
+            },
+            "confidence": {
+              "type": "string",
+              "description": "How much of the area this reader actually managed to cover.",
+              "enum": ["low", "medium", "high"]
+            }
+          },
+          "required": ["area", "findings", "confidence"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "context-read-tests",
+        "title": "Survey the test coverage",
+        "description": "Read what the tests actually prove about the subject, and what they leave unproven.",
+        "acceptanceCriteria": "For each behaviour the subject claims, the reader has looked for the test that would fail if it broke, and says so when none exists. Findings distinguish untested behaviour from tests that only exercise fakes. The captured output declares the area, the findings, and an honest confidence.",
+        "placement": {
+          "lane": "session",
+          "mode": "readOnly"
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "One reader's independent report.",
+          "properties": {
+            "area": {
+              "type": "string",
+              "description": "The angle this reader covered.",
+              "minLength": 1
+            },
+            "findings": {
+              "type": "array",
+              "description": "What this reader observed, one item per observation. Empty when it found nothing.",
+              "items": {
+                "type": "string",
+                "maxLength": 600
+              },
+              "maxItems": 12
+            },
+            "confidence": {
+              "type": "string",
+              "description": "How much of the area this reader actually managed to cover.",
+              "enum": ["low", "medium", "high"]
+            }
+          },
+          "required": ["area", "findings", "confidence"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "context-read-docs",
+        "title": "Survey the documented contract",
+        "description": "Read what the documentation and steering promise about the subject, and where the promise and the code have drifted apart.",
+        "acceptanceCriteria": "The documented contract has been compared against the observable behaviour, and each drift finding names both sides — what the document says and what the code does. The captured output declares the area, the findings, and an honest confidence.",
+        "placement": {
+          "lane": "session",
+          "mode": "readOnly"
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "One reader's independent report.",
+          "properties": {
+            "area": {
+              "type": "string",
+              "description": "The angle this reader covered.",
+              "minLength": 1
+            },
+            "findings": {
+              "type": "array",
+              "description": "What this reader observed, one item per observation. Empty when it found nothing.",
+              "items": {
+                "type": "string",
+                "maxLength": 600
+              },
+              "maxItems": 12
+            },
+            "confidence": {
+              "type": "string",
+              "description": "How much of the area this reader actually managed to cover.",
+              "enum": ["low", "medium", "high"]
+            }
+          },
+          "required": ["area", "findings", "confidence"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "context-synthesize",
+        "title": "Write the synthesis, then face the panel",
+        "description": "Reconcile every reader's report into one document, write it to the repository, and revise it until the blocking reviewer accepts it.",
+        "acceptanceCriteria": "The file docs/reports/synthesis.md exists in the worktree and accounts for every reader — context-read-runtime, context-read-tests, and context-read-docs — including any that reported nothing, resolving or explicitly naming their disagreements rather than averaging them. It answers the brief's question rather than restating the reports. Every blocking finding from a previous round is addressed or explicitly answered. The captured output names that artifact path and carries one provenance entry per contributing reader.",
+        "placement": {
+          "lane": "synthesis",
+          "mode": "owned",
+          "ownedPaths": ["docs/reports"]
+        },
+        "iterationPolicy": {
+          "maxIterations": 6
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "Where the reviewed synthesis lives, and which readers it came from.",
+          "properties": {
+            "artifactPath": {
+              "type": "string",
+              "description": "The repo-relative path of the synthesis the panel reviewed.",
+              "minLength": 1,
+              "maxLength": 400
+            },
+            "synthesis": {
+              "type": "string",
+              "description": "The reconciled account, in the brief's terms.",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "readerProvenance": {
+              "type": "array",
+              "description": "One entry per contributing reader, so the document can be traced back to the fan-out that produced it.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "contextId": {
+                    "type": "string",
+                    "description": "The reader's execution context id.",
+                    "minLength": 1
+                  },
+                  "area": {
+                    "type": "string",
+                    "description": "The angle that reader covered.",
+                    "minLength": 1
+                  },
+                  "findingsUsed": {
+                    "type": "integer",
+                    "description": "How many of that reader's findings the synthesis accounts for.",
+                    "minimum": 0
+                  }
+                },
+                "required": ["contextId", "area", "findingsUsed"],
+                "additionalProperties": false
+              },
+              "minItems": 3,
+              "maxItems": 12
+            }
+          },
+          "required": ["artifactPath", "synthesis", "readerProvenance"],
+          "additionalProperties": false
+        },
+        "contextValidator": {
+          "enabled": true,
+          "assignments": [
+            {
+              "id": "acceptance",
+              "profile": {
+                "tier": "builtin",
+                "id": "general-reviewer"
+              },
+              "strategy": "conversation",
+              "authority": "blocking",
+              "agent": {
+                "backend": "claude",
+                "model": "opus",
+                "reasoningEffort": "high"
+              }
+            },
+            {
+              "id": "security",
+              "profile": {
+                "tier": "builtin",
+                "id": "security-reviewer"
+              },
+              "strategy": "conversation",
+              "authority": "advisory",
+              "agent": {
+                "backend": "claude",
+                "model": "opus",
+                "reasoningEffort": "high"
+              }
+            },
+            {
+              "id": "type-api-contract",
+              "profile": {
+                "tier": "builtin",
+                "id": "type-api-contract-reviewer"
+              },
+              "strategy": "conversation",
+              "authority": "advisory",
+              "agent": {
+                "backend": "claude",
+                "model": "opus",
+                "reasoningEffort": "high"
+              }
+            },
+            {
+              "id": "test-reliability",
+              "profile": {
+                "tier": "builtin",
+                "id": "test-reliability-reviewer"
+              },
+              "strategy": "conversation",
+              "authority": "advisory",
+              "agent": {
+                "backend": "claude",
+                "model": "opus",
+                "reasoningEffort": "high"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "tasks": [
+      {
+        "id": "task-read-runtime-1",
+        "contextId": "context-read-runtime",
+        "order": 1,
+        "title": "Trace the runtime path",
+        "instructions": "Read the survey brief named as rank 1 in the charter to learn what subject you are assessing.\n\nTrace what actually executes: entry points, the order calls happen in, the state each step reads and writes, and the places a failure would surface. Read the code rather than inferring behaviour from names — a function called `validate` may validate nothing.\n\nYou are read-only. You have no worktree and you will make no commit; your captured output is your entire delivery, so anything you do not put in `findings` is lost. Cite the file and symbol behind each finding so the synthesizer can check it.\n\nReport what you OBSERVED, not what you would change. If you found nothing worth reporting, return an empty `findings` array and say why in your summary — that is a real result. Set `confidence` to how much of the area you actually covered."
+      },
+      {
+        "id": "task-read-tests-1",
+        "contextId": "context-read-tests",
+        "order": 1,
+        "title": "Assess what the tests prove",
+        "instructions": "Read the survey brief named as rank 1 in the charter to learn what subject you are assessing.\n\nFor each behaviour the subject claims, find the test that would fail if that behaviour broke. If reverting the behaviour would leave the suite green, that is a finding. Distinguish three cases explicitly: behaviour with a real test, behaviour with a test that only proves one fake called another, and behaviour with no test at all.\n\nYou are read-only. You have no worktree and you will make no commit; your captured output is your entire delivery. Do not write or fix tests — record what is missing.\n\nIf you found nothing worth reporting, return an empty `findings` array and say why in your summary. Set `confidence` to how much of the area you actually covered."
+      },
+      {
+        "id": "task-read-docs-1",
+        "contextId": "context-read-docs",
+        "order": 1,
+        "title": "Compare the documented contract against the code",
+        "instructions": "Read the survey brief named as rank 1 in the charter to learn what subject you are assessing.\n\nFind what the repository's documentation and steering promise about this subject, then check those promises against the observable behaviour. Every drift finding names both sides: what the document claims, and what the code actually does.\n\nYou are read-only. You have no worktree and you will make no commit; your captured output is your entire delivery. Do not edit the documentation — record the drift.\n\nIf you found nothing worth reporting, return an empty `findings` array and say why in your summary. Set `confidence` to how much of the area you actually covered."
+      },
+      {
+        "id": "task-synthesize-1",
+        "contextId": "context-synthesize",
+        "order": 1,
+        "title": "Write the synthesis to its artifact path, then complete",
+        "instructions": "Every reader's report is in the \"Inputs from upstream\" section of this prompt as validated structured output. Read them by field — `area`, `findings`, `confidence` — rather than re-running their surveys.\n\nWRITE THE SYNTHESIS TO `docs/reports/synthesis.md` BEFORE YOU COMPLETE THIS TASK. That file is what four reviewers are about to read, and it is the only thing they can read: your captured structured output does not exist yet when they run, so a synthesis that lives only in your output is a review of an empty diff. `docs/reports` is the only path this context owns; write nothing outside it.\n\nThe document must account for all three readers by name — `context-read-runtime`, `context-read-tests`, and `context-read-docs` — including any that reported nothing. Where two readers disagree, resolve it on the evidence they cite, and where you cannot, say which reading you took and what would settle it. Do not average two findings into a vaguer third one. Weigh each report by its `confidence`: a low-confidence report covering little of its area is a smaller claim, not a wrong one. Answer the brief's question; do not restate the reports in order.\n\nA panel of four then reviews that file: a blocking general reviewer that can send it back, plus security, type/API-contract, and test-reliability specialists whose findings are advisory. If you are here because the review sent the work back, the blocking findings are in this prompt — address each one in the file, or answer explicitly why it is not actionable.\n\nOnly once the file says what you mean, complete this task. Your captured output records `artifactPath` (`docs/reports/synthesis.md`), the synthesis in the brief's terms, and one `readerProvenance` entry per reader — its context id, its area, and how many of its findings the document accounts for."
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-runtime-synthesize",
+        "sourceContextId": "context-read-runtime",
+        "targetContextId": "context-synthesize"
+      },
+      {
+        "id": "edge-tests-synthesize",
+        "sourceContextId": "context-read-tests",
+        "targetContextId": "context-synthesize"
+      },
+      {
+        "id": "edge-docs-synthesize",
+        "sourceContextId": "context-read-docs",
+        "targetContextId": "context-synthesize"
+      }
+    ]
+  },
+  "layout": {
+    "workflowId": "fanout-adversarial-composite",
+    "contextPositions": {
+      "context-read-runtime": { "x": 0, "y": -160 },
+      "context-read-tests": { "x": 0, "y": 0 },
+      "context-read-docs": { "x": 0, "y": 160 },
+      "context-synthesize": { "x": 520, "y": 0 }
+    },
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "zoom": 1
+    }
+  }
+}

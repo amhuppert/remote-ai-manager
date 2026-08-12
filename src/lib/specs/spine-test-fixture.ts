@@ -310,6 +310,7 @@ export interface SpecSpineWorld {
       | "APPROVE_DEFINITION"
       | "STATUS"
       | "EXECUTION"
+      | "PAUSE"
       | "ABORT"
       | "RELEASE",
     body?: unknown,
@@ -338,6 +339,10 @@ export interface SpecSpineWorld {
   haltWorkflowExecution(reason: GraphWorkflowHaltReason): Promise<void>;
   /** Park the active run at `paused` — non-terminal, yet archive-eligible. */
   pauseWorkflowExecution(): Promise<void>;
+  markWorkflowContextRunning(contextId: string, taskId: string): Promise<void>;
+  setWorkflowExecutionStatus(
+    status: GraphWorkflowExecution["status"],
+  ): Promise<void>;
   readActiveWorkflowExecution(): GraphWorkflowExecution | null;
   /**
    * Fault injection for the spec→workflow cleanup port, so a test can stop the
@@ -1560,7 +1565,8 @@ export function createSpecSpineWorld(
       workflowManager.recordDefinitionApproval(input),
     async kickOffExecutionLoop() {},
     getActiveExecution: async () => activeWorkflowExecution,
-    pauseExecution: unsupported("pauseExecution"),
+    pauseExecution: (projectPath, sessionName) =>
+      workflowManager.send(projectPath, sessionName, { type: "pause" }),
     resumeExecution: unsupported("resumeExecution"),
     // The seam behind `cctl workflow live abort`, wired exactly as production
     // wires it, so the recovery verb an orphan finding names is executable
@@ -1692,12 +1698,70 @@ export function createSpecSpineWorld(
    * separates "no slot to recover" from "not ended yet".
    */
   async function pauseWorkflowExecution(): Promise<void> {
+    const response = await postWorkflowRoute("PAUSE");
+    if (!response.ok) {
+      throw new Error(
+        `Workflow pause failed: ${JSON.stringify(await response.json())}`,
+      );
+    }
+  }
+
+  async function markWorkflowContextRunning(
+    contextId: string,
+    taskId: string,
+  ): Promise<void> {
+    await mutateActiveImpl(
+      SPINE_PROJECT_PATH,
+      SPINE_SESSION_NAME,
+      (current) => {
+        const context = current.contextStates[contextId];
+        const task = current.taskStates[taskId];
+        if (context === undefined || task === undefined) {
+          throw new Error(
+            `Unknown workflow context/task ${contextId}/${taskId}`,
+          );
+        }
+        return {
+          ...current,
+          activeContextIds: [contextId],
+          contextStates: {
+            ...current.contextStates,
+            [contextId]: {
+              ...context,
+              status: "running",
+              iterationCount: Math.max(1, context.iterationCount),
+            },
+          },
+          taskStates: {
+            ...current.taskStates,
+            [taskId]: {
+              ...task,
+              status: "running",
+              startedAt: now(),
+              lastConversationId: SPINE_CONVERSATION_ID,
+            },
+          },
+          machineSnapshot: {
+            schemaVersion: 1,
+            lifecycleStatus: "running",
+            activeContextId: contextId,
+            recoveryMode: "none",
+            hasLiveIteration: true,
+          },
+        };
+      },
+    );
+  }
+
+  async function setWorkflowExecutionStatus(
+    status: GraphWorkflowExecution["status"],
+  ): Promise<void> {
     await mutateActiveImpl(
       SPINE_PROJECT_PATH,
       SPINE_SESSION_NAME,
       (current) => ({
         ...current,
-        status: "paused",
+        status,
       }),
     );
   }
@@ -1708,6 +1772,7 @@ export function createSpecSpineWorld(
       | "APPROVE_DEFINITION"
       | "STATUS"
       | "EXECUTION"
+      | "PAUSE"
       | "ABORT"
       | "RELEASE",
     body?: unknown,
@@ -1718,11 +1783,13 @@ export function createSpecSpineWorld(
         ? "/approve-definition"
         : handler === "EXECUTION"
           ? "/execution"
-          : handler === "ABORT"
-            ? "/abort"
-            : handler === "RELEASE"
-              ? "/release"
-              : "";
+          : handler === "PAUSE"
+            ? "/pause"
+            : handler === "ABORT"
+              ? "/abort"
+              : handler === "RELEASE"
+                ? "/release"
+                : "";
     const isGet = handler === "STATUS" || handler === "EXECUTION";
     const request = new Request(
       `http://cc.test/api/projects/${SPINE_PROJECT_NAME}/sessions/${SPINE_SESSION_NAME}/graph-workflow${suffix}`,
@@ -1877,6 +1944,8 @@ export function createSpecSpineWorld(
     postWorkflowLiveEdit,
     haltWorkflowExecution,
     pauseWorkflowExecution,
+    markWorkflowContextRunning,
+    setWorkflowExecutionStatus,
     readActiveWorkflowExecution: () => activeWorkflowExecution,
     cleanupFaults,
   };

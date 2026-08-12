@@ -483,10 +483,7 @@ export function classifyContextSchedulability(
   // session-worktree safety rules that could redirect it into a fork. This
   // branch deliberately precedes execution-lane lookup: a final-publish row for
   // the physical session lane must never capture a reader onto __session__.
-  if (
-    placement.lane === SESSION_LANE_NAME &&
-    placement.mode === "readOnly"
-  ) {
+  if (placement.lane === SESSION_LANE_NAME && placement.mode === "readOnly") {
     return {
       kind: "schedulable",
       targetLaneId: null,

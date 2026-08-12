@@ -97,6 +97,10 @@ describe("cctl workflow live amend", () => {
     ]);
     expect(node?.usage.join(" ")).toContain("--reason");
     expect(node?.usage.join(" ")).toContain("--file");
+    expect(node?.summary).toContain("running or paused");
+    expect(node?.description).toContain("running or paused");
+    expect(node?.description).toContain("resumable halt");
+    expect(node?.description).toContain("cctl workflow live resume");
   });
 
   it("exits 2 without a request when --reason is missing", async () => {
@@ -228,14 +232,16 @@ describe("cctl workflow live amend", () => {
     expect(envelope.code).toBe("non_additive_operation");
   });
 
-  it("maps a refusal on a settled run to exit 1 with its code", async () => {
+  it("maps a refusal on a completed run to exit 1 with its code", async () => {
     const host = makeHost(
       () =>
         jsonResponse(
           {
-            error: 'Execution "exec-7" is paused; only a running execution…',
+            error:
+              'Execution "exec-7" is completed; only a running or paused execution…',
             code: "not_running",
-            instruction: "Resume the run with `cctl workflow live resume`…",
+            instruction:
+              "Plan the work into the next attempt with `cctl spec plan open --seed-from last`…",
           },
           409,
         ),

@@ -14,6 +14,7 @@ import {
   createGraphWorkflowAdvisoryResponseRunner,
 } from "@/lib/workflow-graph/advisory-response-runner";
 import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
+import { composeImplementerLaneWriteEnvelope } from "@/lib/workflow-graph/implementer-lane-write-envelope";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import type { TaskRunResult } from "@/lib/workflows/conversation/execute-workflow-task-run";
 
@@ -52,9 +53,12 @@ function structured(dispositions: unknown[]): TaskRunResult {
   };
 }
 
-function run(results: TaskRunResult[]): ReturnType<
-  typeof createGraphWorkflowAdvisoryResponseRunner
-> & {
+function run(
+  results: TaskRunResult[],
+  deps: NonNullable<
+    Parameters<typeof createGraphWorkflowAdvisoryResponseRunner>[0]
+  > = {},
+): ReturnType<typeof createGraphWorkflowAdvisoryResponseRunner> & {
   executeWorkflowTaskRun: ReturnType<typeof vi.fn>;
 } {
   let call = 0;
@@ -65,6 +69,7 @@ function run(results: TaskRunResult[]): ReturnType<
     return result;
   });
   const runner = createGraphWorkflowAdvisoryResponseRunner({
+    ...deps,
     executeWorkflowTaskRun,
   });
   return { ...runner, executeWorkflowTaskRun };
@@ -99,6 +104,145 @@ describe("advisory-response turn", () => {
       schema: buildAdvisoryDispositionsOutputSchema(ADVISORIES),
     });
     expect(dispatched.conversationId).toBe("conversation-impl");
+  });
+
+  it("retains a confined implementer's write envelope on the response turn", async () => {
+    const execution = createWorkflowExecution({ status: "running" });
+    const context = execution.workingDefinition.executionContexts[0];
+    if (!context) throw new Error("fixture missing execution context");
+    context.placement = { lane: "reports", mode: "readOnly" };
+    const executionTarget = {
+      worktreePath: process.cwd(),
+      branchName: "test-advisory-response",
+      isolation: "worktree" as const,
+      laneId: "reports",
+    };
+    const runner = run([
+      structured([
+        { identity: IDENTITY_ONE, disposition: "addressed", reason: null },
+        { identity: IDENTITY_TWO, disposition: "deferred", reason: null },
+      ]),
+    ]);
+
+    await runner.runAdvisoryResponse({
+      ...input(),
+      execution,
+      contextId: context.id,
+      executionTarget,
+    });
+
+    const expectedPolicy = composeImplementerLaneWriteEnvelope({
+      executionId: execution.id,
+      contextId: context.id,
+      worktreePath: executionTarget.worktreePath,
+      ownedPaths: [],
+      payloadLocation: "scratch",
+    }).policy;
+    expect(
+      runner.executeWorkflowTaskRun.mock.calls[0]?.[0].fsWritePolicy,
+    ).toEqual(expectedPolicy);
+  });
+
+  it("resolves the session worktree for a lightweight read-only response turn", async () => {
+    const execution = createWorkflowExecution({ status: "running" });
+    const context = execution.workingDefinition.executionContexts[0];
+    if (!context) throw new Error("fixture missing execution context");
+    context.placement = { lane: "session", mode: "readOnly" };
+    const resolveWorktreePath = vi.fn(async () => process.cwd());
+    const runner = run(
+      [
+        structured([
+          { identity: IDENTITY_ONE, disposition: "addressed", reason: null },
+          { identity: IDENTITY_TWO, disposition: "deferred", reason: null },
+        ]),
+      ],
+      { resolveWorktreePath },
+    );
+
+    await runner.runAdvisoryResponse({
+      ...input(),
+      execution,
+      contextId: context.id,
+    });
+
+    expect(resolveWorktreePath).toHaveBeenCalledWith("/repo", "session-1");
+    const expectedPolicy = composeImplementerLaneWriteEnvelope({
+      executionId: execution.id,
+      contextId: context.id,
+      worktreePath: process.cwd(),
+      ownedPaths: [],
+      payloadLocation: "scratch",
+    }).policy;
+    expect(
+      runner.executeWorkflowTaskRun.mock.calls[0]?.[0].fsWritePolicy,
+    ).toEqual(expectedPolicy);
+  });
+
+  it("retains an owned implementer's write envelope on the response turn", async () => {
+    const execution = createWorkflowExecution({ status: "running" });
+    const context = execution.workingDefinition.executionContexts[0];
+    if (!context) throw new Error("fixture missing execution context");
+    context.placement = {
+      lane: "synthesis",
+      mode: "owned",
+      ownedPaths: ["docs/reports"],
+    };
+    const executionTarget = {
+      worktreePath: process.cwd(),
+      branchName: "test-advisory-response",
+      isolation: "worktree" as const,
+      laneId: "synthesis",
+    };
+    const runner = run([
+      structured([
+        { identity: IDENTITY_ONE, disposition: "addressed", reason: null },
+        { identity: IDENTITY_TWO, disposition: "deferred", reason: null },
+      ]),
+    ]);
+
+    await runner.runAdvisoryResponse({
+      ...input(),
+      execution,
+      contextId: context.id,
+      executionTarget,
+    });
+
+    const expectedPolicy = composeImplementerLaneWriteEnvelope({
+      executionId: execution.id,
+      contextId: context.id,
+      worktreePath: executionTarget.worktreePath,
+      ownedPaths: ["docs/reports"],
+      payloadLocation: "worktree",
+    }).policy;
+    expect(
+      runner.executeWorkflowTaskRun.mock.calls[0]?.[0].fsWritePolicy,
+    ).toEqual(expectedPolicy);
+  });
+
+  it("fails closed when an owned response turn has no execution target", async () => {
+    const execution = createWorkflowExecution({ status: "running" });
+    const context = execution.workingDefinition.executionContexts[0];
+    if (!context) throw new Error("fixture missing execution context");
+    context.placement = {
+      lane: "synthesis",
+      mode: "owned",
+      ownedPaths: ["docs/reports"],
+    };
+    const runner = run([
+      structured([
+        { identity: IDENTITY_ONE, disposition: "addressed", reason: null },
+        { identity: IDENTITY_TWO, disposition: "deferred", reason: null },
+      ]),
+    ]);
+
+    await expect(
+      runner.runAdvisoryResponse({
+        ...input(),
+        execution,
+        contextId: context.id,
+      }),
+    ).rejects.toBeInstanceOf(AgentTurnFailedError);
+    expect(runner.executeWorkflowTaskRun).not.toHaveBeenCalled();
   });
 
   it("returns one disposition per delivered advisory", async () => {

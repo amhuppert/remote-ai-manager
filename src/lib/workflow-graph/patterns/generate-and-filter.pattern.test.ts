@@ -94,9 +94,15 @@ const THREE_CANDIDATES: readonly Candidate[] = [
  * The payload the generator's lane posts. Every candidate gets an edge FROM the
  * invoker and an edge INTO the pre-declared filter — the second half is what
  * makes this Generate-And-Filter rather than an unbounded fan-out.
+ *
+ * `omitFilterEdges` drops that second half, which is the case the template's
+ * guidance has to describe correctly: the engine refuses a context unreachable
+ * FROM THE INVOKER, and a candidate with only the inbound edge is reachable, so
+ * the omission is accepted and silently starves the filter instead.
  */
 function expansionPayload(
   candidates: readonly Candidate[],
+  options: { omitFilterEdges?: boolean } = {},
 ): GraphExpansionRequest {
   return graphExpansionRequestSchema.parse({
     requestId: REQUEST_ID,
@@ -134,10 +140,12 @@ function expansionPayload(
         from: GENERATOR,
         to: candidate.handle,
       })),
-      ...candidates.map((candidate) => ({
-        from: candidate.handle,
-        to: FILTER,
-      })),
+      ...(options.omitFilterEdges
+        ? []
+        : candidates.map((candidate) => ({
+            from: candidate.handle,
+            to: FILTER,
+          }))),
     ],
   });
 }
@@ -224,10 +232,15 @@ interface PatternRun {
 async function runPattern(options: {
   candidates: readonly Candidate[];
   attempts?: number;
+  omitFilterEdges?: boolean;
 }): Promise<PatternRun> {
   const candidates = options.candidates;
   const attemptCount = options.attempts ?? 1;
-  const request = expansionPayload(candidates);
+  const request = expansionPayload(candidates, {
+    ...(options.omitFilterEdges === undefined
+      ? {}
+      : { omitFilterEdges: options.omitFilterEdges }),
+  });
 
   const configDir = await mkdtemp(path.join(tmpdir(), "cc-pattern-token-"));
   const token = await ensureInstanceToken(configDir);
@@ -438,6 +451,113 @@ describe("Generate-And-Filter template — authoring (R15.2)", () => {
     // copy is not a pattern proof.
     expect(result.warnings).toEqual([]);
   });
+});
+
+// ============================================================
+// 1b. The agent-facing expansion example (D6 R2.4)
+// ============================================================
+
+/**
+ * The expansion example the generator's task hands a real agent, with its
+ * angle-bracket placeholders filled in so the PRODUCTION request schema can
+ * judge it.
+ *
+ * Substituting placeholders is not repairing the artifact: the example is a
+ * template, and every field it actually declares survives the substitution
+ * untouched. What the schema then answers is the question that matters — would
+ * the payload this template tells an agent to write be accepted?
+ */
+function exampleExpansionRequest(): unknown {
+  const instructions =
+    planDefinition().tasks.find((task) => task.contextId === GENERATOR)
+      ?.instructions ?? "";
+  const fenced = /```json\n([\s\S]*?)\n```/.exec(instructions);
+  if (fenced?.[1] === undefined) {
+    throw new Error(
+      "the generator's instructions carry no fenced json expansion example",
+    );
+  }
+  return JSON.parse(fenced[1].replace(/<[^>]+>/g, "example"));
+}
+
+describe("Generate-And-Filter — the expansion example it hands an agent (D6 R2.4)", () => {
+  it("is a payload the production expansion schema accepts, with placement on every generated context", () => {
+    const parsed = graphExpansionRequestSchema.safeParse(
+      exampleExpansionRequest(),
+    );
+
+    // The engine refuses a placement-less generated context outright
+    // (`expansion-placement-missing`), so an example that omits placement is an
+    // instruction to write a payload the engine will reject.
+    expect(
+      parsed.success ? [] : parsed.error.issues.map((issue) => issue.message),
+    ).toEqual([]);
+    if (!parsed.success) return;
+
+    for (const context of parsed.data.contexts) {
+      expect(
+        context.placement,
+        `generated context "${context.handle}" declares no placement`,
+      ).toBeDefined();
+    }
+  });
+
+  it("gives every generated context both edges — from the generator and into the filter", () => {
+    const parsed = graphExpansionRequestSchema.parse(exampleExpansionRequest());
+
+    for (const context of parsed.contexts) {
+      expect(
+        parsed.edges.some(
+          (edge) => edge.from === GENERATOR && edge.to === context.handle,
+        ),
+        `"${context.handle}" has no edge from the generator`,
+      ).toBe(true);
+      expect(
+        parsed.edges.some(
+          (edge) => edge.from === context.handle && edge.to === FILTER,
+        ),
+        `"${context.handle}" has no edge into the filter`,
+      ).toBe(true);
+    }
+  });
+
+  it("describes the missing-filter-edge consequence the way the engine actually behaves", () => {
+    const instructions =
+      planDefinition().tasks.find((task) => task.contextId === GENERATOR)
+        ?.instructions ?? "";
+
+    // Reachability is measured FROM THE INVOKER, so a candidate carrying only
+    // the inbound edge is reachable and admitted. Telling an agent it would be
+    // "refused as unreachable" teaches it to rely on a guard that does not
+    // exist — the far more dangerous error, because the fan-out then runs and
+    // the filter judges a subset without anyone noticing.
+    expect(instructions).not.toMatch(/refused as unreachable/i);
+    expect(instructions).toMatch(/starve/i);
+  });
+
+  it("proves that consequence: the engine accepts the omission and the filter never sees the candidate", async () => {
+    const run = await runPattern({
+      candidates: THREE_CANDIDATES,
+      omitFilterEdges: true,
+    });
+
+    // Accepted, not refused — the claim the guidance has to make honestly.
+    expect(run.attempts.at(0)?.status).toBe(200);
+    expect(run.attempts.at(0)?.body.ok).toBe(true);
+    expect(run.refusalCodes).toEqual([]);
+    expect(run.attempts.at(0)?.body.createdContextIds).toEqual(
+      candidateIdsFor(THREE_CANDIDATES),
+    );
+
+    // ...and the starvation it causes: the filter ran on the generator alone.
+    const filterInputs = resolveUpstreamInputs(run.settled, FILTER);
+    expect(filterInputs.map((input) => input.contextId)).toEqual([GENERATOR]);
+    for (const candidateId of candidateIdsFor(THREE_CANDIDATES)) {
+      expect(filterInputs.map((input) => input.contextId)).not.toContain(
+        candidateId,
+      );
+    }
+  }, 120_000);
 });
 
 // ============================================================

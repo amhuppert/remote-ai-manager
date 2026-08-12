@@ -50,8 +50,8 @@
         "description": "Read the report, reproduce it if the steps allow, and classify its severity.",
         "acceptanceCriteria": "The report has been read and, where the steps allow, reproduced. The captured output declares one severity from the declared set plus a rationale that cites the evidence behind it. No remediation work has been started.",
         "placement": {
-          "lane": "ctx-triage",
-          "mode": "full"
+          "lane": "session",
+          "mode": "readOnly"
         },
         "outputSchema": {
           "type": "object",
@@ -82,6 +82,26 @@
         },
         "iterationPolicy": {
           "maxIterations": 8
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "What this branch did, and the severity that selected it — the reporter's only source for both.",
+          "properties": {
+            "severity": {
+              "type": "string",
+              "description": "The triage verdict that routed here, copied verbatim. The reporter is two hops from the classifier, so this is how the severity reaches it.",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "outcome": {
+              "type": "string",
+              "description": "What this branch changed, and what it deliberately left alone.",
+              "minLength": 1,
+              "maxLength": 2000
+            }
+          },
+          "required": ["severity", "outcome"],
+          "additionalProperties": false
         }
       },
       {
@@ -95,6 +115,26 @@
         },
         "iterationPolicy": {
           "maxIterations": 8
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "What this branch did, and the severity that selected it — the reporter's only source for both.",
+          "properties": {
+            "severity": {
+              "type": "string",
+              "description": "The triage verdict that routed here, copied verbatim. The reporter is two hops from the classifier, so this is how the severity reaches it.",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "outcome": {
+              "type": "string",
+              "description": "What this branch changed, and what it deliberately left alone.",
+              "minLength": 1,
+              "maxLength": 2000
+            }
+          },
+          "required": ["severity", "outcome"],
+          "additionalProperties": false
         }
       },
       {
@@ -108,6 +148,26 @@
         },
         "iterationPolicy": {
           "maxIterations": 4
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "What this branch did, and the severity that selected it — the reporter's only source for both.",
+          "properties": {
+            "severity": {
+              "type": "string",
+              "description": "The triage verdict that routed here, copied verbatim. The reporter is two hops from the classifier, so this is how the severity reaches it.",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "outcome": {
+              "type": "string",
+              "description": "What this branch changed, and what it deliberately left alone.",
+              "minLength": 1,
+              "maxLength": 2000
+            }
+          },
+          "required": ["severity", "outcome"],
+          "additionalProperties": false
         }
       },
       {
@@ -116,8 +176,32 @@
         "description": "Summarize the triage verdict and whatever the selected branch did.",
         "acceptanceCriteria": "The summary names the severity, the branch that ran, and what it changed or deliberately did not change. It describes only the path that actually ran.",
         "placement": {
-          "lane": "ctx-report",
-          "mode": "full"
+          "lane": "session",
+          "mode": "readOnly"
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "The decision and its outcome, so the path taken is legible without reading the execution's routing state.",
+          "properties": {
+            "severity": {
+              "type": "string",
+              "description": "The severity the triage context returned.",
+              "enum": ["blocker", "defect", "enhancement", "not-a-bug"]
+            },
+            "branchContextId": {
+              "type": "string",
+              "description": "The execution context id of the branch that actually ran.",
+              "minLength": 1
+            },
+            "outcome": {
+              "type": "string",
+              "description": "What that branch changed, or deliberately did not change.",
+              "minLength": 1,
+              "maxLength": 2000
+            }
+          },
+          "required": ["severity", "branchContextId", "outcome"],
+          "additionalProperties": false
         }
       }
     ],
@@ -127,35 +211,35 @@
         "contextId": "ctx-triage",
         "order": 1,
         "title": "Classify the report's severity",
-        "instructions": "Read the bug report named by the rank-1 source of truth. Reproduce it if the steps allow, and note what you observed. Then classify it as exactly one of: 'blocker' (users are broken now, or data is at risk), 'defect' (wrong behavior on the normal path, with a workaround or limited blast radius), 'enhancement' (the software behaves as designed and the report asks for more), or 'not-a-bug' (the report is a misunderstanding, a duplicate, or not reproducible). Your final output must be the structured verdict: the severity plus a rationale citing the evidence you gathered. Do not start any remediation work \u2014 the verdict alone selects which branch runs next."
+        "instructions": "Read the bug report named by the rank-1 source of truth. Reproduce it if the steps allow, and note what you observed. Then classify it as exactly one of: 'blocker' (users are broken now, or data is at risk), 'defect' (wrong behavior on the normal path, with a workaround or limited blast radius), 'enhancement' (the software behaves as designed and the report asks for more), or 'not-a-bug' (the report is a misunderstanding, a duplicate, or not reproducible). Your final output must be the structured verdict: the severity plus a rationale citing the evidence you gathered. Do not start any remediation work — the verdict alone selects which branch runs next.\n\nYou are read-only, which is what makes that boundary mechanical rather than a rule you are asked to keep: you have no worktree and you will make no commit, so the verdict is your entire delivery."
       },
       {
         "id": "task-hotfix",
         "contextId": "ctx-hotfix",
         "order": 1,
         "title": "Ship the smallest correct fix",
-        "instructions": "The report was triaged as a blocker. Write a regression test that reproduces the reported failure and confirm it fails, then make the smallest change that makes it pass. Do not refactor beyond the fix. Run the touched module's tests and typecheck before completing."
+        "instructions": "The report was triaged as a blocker. Write a regression test that reproduces the reported failure and confirm it fails, then make the smallest change that makes it pass. Do not refactor beyond the fix. Run the touched module's tests and typecheck before completing.\n\nYour captured output carries the triage `severity` VERBATIM alongside your outcome. The reporter downstream is two hops from the classifier, so the severity it reports is the one you pass along — copy it exactly rather than restating it."
       },
       {
         "id": "task-repair",
         "contextId": "ctx-repair",
         "order": 1,
         "title": "Fix the defect at its root cause",
-        "instructions": "The report was triaged as a defect. Identify the root cause before changing anything and state it in your summary. Add a failing behavior-level test, implement the minimum fix, then run the touched module's tests and typecheck."
+        "instructions": "The report was triaged as a defect. Identify the root cause before changing anything and state it in your summary. Add a failing behavior-level test, implement the minimum fix, then run the touched module's tests and typecheck.\n\nYour captured output carries the triage `severity` VERBATIM alongside your outcome. The reporter downstream is two hops from the classifier, so the severity it reports is the one you pass along — copy it exactly rather than restating it."
       },
       {
         "id": "task-backlog",
         "contextId": "ctx-backlog",
         "order": 1,
         "title": "Record the report for the backlog",
-        "instructions": "The report was triaged as an enhancement, as not-a-bug, or as a severity no remediation branch claims. Record it for the backlog: the report itself, the triage rationale, and the reason no code change was made. Change no production code."
+        "instructions": "The report was triaged as an enhancement, as not-a-bug, or as a severity no remediation branch claims. Record it for the backlog: the report itself, the triage rationale, and the reason no code change was made. Change no production code.\n\nYour captured output carries the triage `severity` VERBATIM alongside your outcome. The reporter downstream is two hops from the classifier, so the severity it reports is the one you pass along — copy it exactly rather than restating it."
       },
       {
         "id": "task-report",
         "contextId": "ctx-report",
         "order": 1,
         "title": "Summarize the decision and the work",
-        "instructions": "Summarize what happened: the severity the triage context returned, the branch that ran because of it, and what that branch changed or deliberately left alone. The upstream inputs section shows you the branch that ran; branches that were not taken appear there as skipped, and you should not describe work on them."
+        "instructions": "Summarize what happened: the severity, the branch that ran because of it, and what that branch changed or deliberately left alone. All three are in the branch's output in the \"Inputs from upstream\" section — it carries the triage severity verbatim, because the classifier is two hops upstream of you and only direct predecessors are injected. The upstream inputs section shows you the branch that ran; branches that were not taken appear there as skipped, and you should not describe work on them.\n\nYou are read-only. You have no worktree and you will make no commit, so your captured output is your entire delivery: name the severity, the branch context id that actually ran, and the outcome."
       }
     ],
     "edges": [

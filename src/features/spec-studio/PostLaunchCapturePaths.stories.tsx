@@ -102,13 +102,24 @@ export const UnlaunchedRedirect: Story = {
   },
 };
 
-export const NonRunningAmendmentRefusal: Story = {
+export const CompletedAmendmentRefusal: Story = {
   args: {
     amendmentFailure: {
       message:
-        'Execution "workflow-execution-1" is paused; only a running execution can be amended. Nothing was applied.',
+        'Execution "workflow-execution-1" is completed; only a running or paused execution can be amended. Nothing was applied.',
       instruction:
-        "Resume the run with `cctl workflow live resume` and re-run the amendment, or plan the work into the next attempt with `cctl spec plan open --seed-from last`.",
+        "Plan the work into the next attempt with `cctl spec plan open --seed-from last`.",
+    },
+  },
+};
+
+export const ResumableHaltAmendmentRefusal: Story = {
+  args: {
+    amendmentFailure: {
+      message:
+        'Execution "workflow-execution-1" is halted; only a running or paused execution can be amended. Nothing was applied.',
+      instruction:
+        "Resume the run with `cctl workflow live resume`; if the target work has started, pause it again before re-running `cctl workflow live amend`.",
     },
   },
 };

@@ -322,6 +322,11 @@ const outputCaptureRunner = createGraphWorkflowOutputCaptureRunner({
   },
 });
 const advisoryResponseRunner = createGraphWorkflowAdvisoryResponseRunner({
+  async resolveWorktreePath(projectPath, sessionName) {
+    const session = await defaultGetSession(projectPath, sessionName);
+    if (!session) throw new Error("Session not found");
+    return session.worktreePath;
+  },
   async resolveTimeoutMs(backend) {
     const config = await readConfig();
     return resolveConfiguredAgentBackendDefaults(config, backend).timeoutMs;

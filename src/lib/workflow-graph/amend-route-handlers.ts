@@ -9,7 +9,7 @@
  * the frontier invariant and frozen-context rules are the same ones a direct
  * edit rides. Its bounded additive operand is admitted through plan-owned
  * locks; everything else keeps the lock check. The route adds the policy
- * envelope — running-only, delivery-plan-only, additive-only, required
+ * envelope — active-run-only, delivery-plan-only, additive-only, required
  * rationale, server-derived actor — and the durable amendment event carrying
  * the old and new working-definition hashes.
  */
@@ -47,9 +47,11 @@ import { formatDefinitionEditIssue } from "./definition-edits";
 import {
   amendmentAdditions,
   isDeliveryPlanDefinition,
+  isWorkflowExecutionAmendableStatus,
   nonAdditiveOperationTypes,
   toLiveEditOperations,
   workflowExecutionAmendmentRequestSchema,
+  workflowExecutionAmendmentRefusalInstruction,
   type WorkflowAmendmentActor,
 } from "./execution-amendment";
 import { workingDefinitionHash } from "./working-definition-hash";
@@ -296,16 +298,19 @@ export function createGraphWorkflowAmendRouteHandlers(
       );
     }
 
-    if (execution.status !== "running") {
+    if (!isWorkflowExecutionAmendableStatus(execution.status)) {
       logger.warn("graph-workflow.amend.refused", {
         code: "not_running",
         executionId: execution.id,
         executionStatus: execution.status,
+        ...(execution.haltReason === null
+          ? {}
+          : { haltReasonType: execution.haltReason.type }),
       });
       return refusal(
         "not_running",
-        `Execution "${execution.id}" is ${execution.status}; only a running execution can be amended. Nothing was applied.`,
-        `Resume the run with \`cctl workflow live resume\` and re-run the amendment, or plan the work into the next attempt with \`cctl spec plan open --seed-from last\`.`,
+        `Execution "${execution.id}" is ${execution.status}; only a running or paused execution can be amended. Nothing was applied.`,
+        workflowExecutionAmendmentRefusalInstruction(execution),
       );
     }
 

@@ -12,7 +12,6 @@
  */
 
 import { createLogger } from "@/lib/logging";
-import { getErrorMessage } from "@/lib/shared/errors";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { GraphWorkflowContextOutputCaptureInput } from "@/lib/workflow-graph/iteration-orchestrator";
 import {
@@ -23,7 +22,7 @@ import {
 import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
 import {
   composeImplementerLaneWriteEnvelope,
-  type ImplementerLaneWriteEnvelope,
+  resolveImplementerContinuationWriteEnvelope,
 } from "@/lib/workflow-graph/implementer-lane-write-envelope";
 import {
   executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun,
@@ -88,52 +87,43 @@ export function createGraphWorkflowOutputCaptureRunner(
     const timeoutMs = await deps.resolveTimeoutMs?.(
       context.implementer.agent.backend,
     );
-    let writeEnvelope: ImplementerLaneWriteEnvelope | null = null;
-    if (context.placement.mode !== "full") {
-      const worktreePath =
-        input.executionTarget?.worktreePath ??
-        (context.placement.lane === "session" &&
-        context.placement.mode === "readOnly"
-          ? await deps.resolveWorktreePath?.(
-              input.projectPath,
-              input.sessionName,
-            )
-          : undefined);
-      if (worktreePath === undefined) {
-        throw new Error(
-          `Cannot establish the output-capture write envelope for context "${input.contextId}": no execution target or session worktree was available`,
-        );
-      }
-      try {
-        writeEnvelope = composeWriteEnvelope({
+    const writeEnvelopeResolution =
+      await resolveImplementerContinuationWriteEnvelope(
+        {
           executionId: input.execution.id,
           contextId: input.contextId,
-          worktreePath,
-          ownedPaths:
-            context.placement.mode === "owned"
-              ? context.placement.ownedPaths
-              : [],
-          payloadLocation:
-            context.placement.mode === "readOnly" ? "scratch" : "worktree",
-        });
-      } catch (error) {
-        const message = `Cannot establish the output-capture write envelope for context "${input.contextId}": ${getErrorMessage(error)}`;
-        logger.error("graph-workflow.output_capture.write_envelope_failed", {
-          executionId: input.execution.id,
-          contextId: input.contextId,
-          conversationId: input.conversationId,
-          backend: context.implementer.agent.backend,
-          worktreePath,
-          error: getErrorMessage(error),
-        });
-        throw new AgentTurnFailedError(message, {
-          contextId: input.contextId,
-          engine: context.implementer.agent.backend,
-          cause: "unknown",
-          originalMessage: message,
-        });
-      }
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          placement: context.placement,
+          ...(input.executionTarget !== undefined
+            ? { executionTarget: input.executionTarget }
+            : {}),
+        },
+        {
+          composeWriteEnvelope,
+          ...(deps.resolveWorktreePath !== undefined
+            ? { resolveWorktreePath: deps.resolveWorktreePath }
+            : {}),
+        },
+      );
+    if (!writeEnvelopeResolution.ok) {
+      const message = `Cannot establish the output-capture write envelope for context "${input.contextId}": ${writeEnvelopeResolution.error}`;
+      logger.error("graph-workflow.output_capture.write_envelope_failed", {
+        executionId: input.execution.id,
+        contextId: input.contextId,
+        conversationId: input.conversationId,
+        backend: context.implementer.agent.backend,
+        worktreePath: writeEnvelopeResolution.worktreePath,
+        error: writeEnvelopeResolution.error,
+      });
+      throw new AgentTurnFailedError(message, {
+        contextId: input.contextId,
+        engine: context.implementer.agent.backend,
+        cause: "unknown",
+        originalMessage: message,
+      });
     }
+    const writeEnvelope = writeEnvelopeResolution.envelope;
 
     logger.info("graph-workflow.output_capture.turn_started", {
       executionId: input.execution.id,

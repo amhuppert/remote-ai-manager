@@ -1,0 +1,260 @@
+{
+  "name": "Adversarial Verification",
+  "description": "One worker builds the change, and a panel of four reviewers judges it against the same candidate: a blocking generalist that can send the work back, plus security, type/API-contract, and test-reliability specialists whose findings are advisory.",
+  "definition": {
+    "schemaVersion": 1,
+    "workflowConfig": {},
+    "charter": {
+      "mission": "Get a change past reviewers who are trying to find what is wrong with it, not past a reviewer who is trying to agree. Breadth comes from specialists whose lens reaches past the acceptance criteria; convergence comes from exactly one seat being able to send the work back.",
+      "conventions": [
+        "The panel reviews the candidate, not the worker's account of it. A summary claiming the tests pass is a claim; the diff and the suite are the evidence.",
+        "A specialist reports through the channel its seat gives it. An advisory finding is a real finding that does not block — it is recorded and answered, not discarded."
+      ],
+      "nonGoals": [
+        "Reaching consensus among the four reviewers. They review different things on purpose, and a specialist is not overruled by a generalist that did not look at its lens.",
+        "Having a reviewer fix what it found. The reviewers judge; the worker revises."
+      ],
+      "invariants": [
+        {
+          "id": "one-blocking-seat",
+          "statement": "Exactly one seat can reopen the worker's tasks. Adding a specialist widens what the panel sees without changing what it takes to converge."
+        },
+        {
+          "id": "one-candidate-per-round",
+          "statement": "Every seat in a round judges the same frozen candidate. A reviewer reading a tree that moved under it is reporting on work nobody submitted."
+        },
+        {
+          "id": "blocking-findings-are-acted-on",
+          "statement": "A blocking rejection reopens the worker's task and produces a further revision. A rejection that is merely recorded is a review nobody acted on."
+        }
+      ],
+      "sourcesOfTruth": [
+        {
+          "rank": 1,
+          "id": "change-brief",
+          "label": "Change brief",
+          "type": "document",
+          "locator": ".cc/temp/change-brief.md",
+          "description": "What the change has to accomplish and the bar it is held to. Governs both what the worker builds and what the blocking seat measures it against.",
+          "appliesTo": "all execution contexts",
+          "accessPolicy": "worktree-relative"
+        },
+        {
+          "rank": 2,
+          "id": "repo-contract",
+          "label": "Repository engineering contract",
+          "type": "document",
+          "locator": "AGENTS.md",
+          "description": "The engineering contract the implementation must satisfy — typing, testing, and architecture boundaries — and the standard the specialists apply within their lenses.",
+          "appliesTo": "all execution contexts",
+          "accessPolicy": "worktree-relative"
+        }
+      ]
+    },
+    "parameters": [],
+    "prerequisites": [],
+    "executionContexts": [
+      {
+        "id": "context-implement",
+        "title": "Build the change",
+        "description": "Implement what the brief asks for, and revise it whenever the blocking reviewer sends it back.",
+        "acceptanceCriteria": "The change does what the brief asks, test-first: a behaviour-level test failed before the fix and passes after it. The diff is limited to the brief's scope. Every blocking finding from a previous round is addressed, or explicitly answered with why it is not actionable.",
+        "placement": {
+          "lane": "implement",
+          "mode": "full"
+        },
+        "iterationPolicy": {
+          "maxIterations": 8
+        },
+        "contextValidator": {
+          "enabled": true,
+          "assignments": [
+            {
+              "id": "acceptance",
+              "profile": {
+                "tier": "builtin",
+                "id": "general-reviewer"
+              },
+              "strategy": "conversation",
+              "authority": "blocking",
+              "agent": {
+                "backend": "claude",
+                "model": "opus",
+                "reasoningEffort": "high"
+              }
+            },
+            {
+              "id": "security",
+              "profile": {
+                "tier": "builtin",
+                "id": "security-reviewer"
+              },
+              "strategy": "conversation",
+              "authority": "advisory",
+              "agent": {
+                "backend": "claude",
+                "model": "opus",
+                "reasoningEffort": "high"
+              }
+            },
+            {
+              "id": "type-api-contract",
+              "profile": {
+                "tier": "builtin",
+                "id": "type-api-contract-reviewer"
+              },
+              "strategy": "conversation",
+              "authority": "advisory",
+              "agent": {
+                "backend": "claude",
+                "model": "opus",
+                "reasoningEffort": "high"
+              }
+            },
+            {
+              "id": "test-reliability",
+              "profile": {
+                "tier": "builtin",
+                "id": "test-reliability-reviewer"
+              },
+              "strategy": "conversation",
+              "authority": "advisory",
+              "agent": {
+                "backend": "claude",
+                "model": "opus",
+                "reasoningEffort": "high"
+              }
+            }
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "What the panel put to this context, and what it did about it — the reporter's only source.",
+          "properties": {
+            "changeSummary": {
+              "type": "string",
+              "description": "What the change does, in the brief's terms.",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "blockingFindingsAddressed": {
+              "type": "array",
+              "description": "Every blocking finding the panel raised, and what this context did about it. Empty only if the panel never sent the work back.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "finding": {
+                    "type": "string",
+                    "description": "The blocking finding, as the reviewer put it.",
+                    "minLength": 1
+                  },
+                  "resolution": {
+                    "type": "string",
+                    "description": "What changed in response, or why it was not actionable.",
+                    "minLength": 1
+                  }
+                },
+                "required": ["finding", "resolution"],
+                "additionalProperties": false
+              },
+              "maxItems": 20
+            },
+            "advisories": {
+              "type": "array",
+              "description": "Advisory findings the specialists raised, carried forward because nothing in the run forces an answer to them — they would otherwise be lost at this context's boundary.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "assignmentId": {
+                    "type": "string",
+                    "description": "The seat that raised it.",
+                    "minLength": 1
+                  },
+                  "finding": {
+                    "type": "string",
+                    "description": "What that lens noticed.",
+                    "minLength": 1
+                  }
+                },
+                "required": ["assignmentId", "finding"],
+                "additionalProperties": false
+              },
+              "maxItems": 20
+            }
+          },
+          "required": [
+            "changeSummary",
+            "blockingFindingsAddressed",
+            "advisories"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "context-report",
+        "title": "Report what the panel decided",
+        "description": "Record how the change cleared the panel: what blocked it, what the specialists raised, and what the final revision looks like.",
+        "acceptanceCriteria": "The report names the blocking findings that caused a revision and what each revision did about them, and it carries the specialists' advisory findings forward rather than dropping the ones that did not block. It describes the change that actually landed.",
+        "placement": {
+          "lane": "session",
+          "mode": "readOnly"
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "The panel's outcome, for whoever reads this run later.",
+          "properties": {
+            "verdictSummary": {
+              "type": "string",
+              "description": "How the change cleared the panel, in the brief's terms.",
+              "minLength": 1,
+              "maxLength": 2000
+            }
+          },
+          "required": ["verdictSummary"],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "tasks": [
+      {
+        "id": "task-implement-1",
+        "contextId": "context-implement",
+        "order": 1,
+        "title": "Implement the change against the brief",
+        "instructions": "Read the change brief named as rank 1 in the charter, then read the surrounding code before writing any and match its idiom.\n\nWork test-first: add the behaviour-level test that fails for the reason the brief describes, confirm it fails, then write the minimum code that makes it pass. Keep the diff to what the brief asked for — unrelated cleanups belong in their own change.\n\nFour reviewers will judge what you leave in the worktree, so the diff and the tests are your argument. A summary claiming the suite is green does not substitute for a green suite.\n\nIf you are here because the review sent the work back, the blocking findings are in this prompt. Address each one, or answer explicitly why it is not actionable — silently skipping a finding produces the same rejection again. The specialists' advisory findings do not block you, but they are real: act on the ones you agree with and say why for the ones you do not.\n\nComplete this task with a summary of what you changed and the evidence you ran.\n\nYour captured output is where the panel's outcome leaves this context. Record every blocking finding the reviewers raised and what you did about it, and carry the specialists' advisory findings forward with the seat that raised each one — blocking findings arrive in your prompt when the work is sent back, and advisories are delivered to you after a passing round. Nothing downstream can see the validation round itself, so an advisory you drop here is one nobody reads again."
+      },
+      {
+        "id": "task-report-1",
+        "contextId": "context-report",
+        "order": 1,
+        "title": "Record the panel's outcome",
+        "instructions": "The change that cleared the panel is upstream of you, and its outcome is in the \"Inputs from upstream\" section of this prompt: the worker's output carries the blocking findings it addressed and the advisories the specialists raised. That output is the whole of what you receive — the validation round itself is not injected into any context, so what is not there did not reach you.\n\nYou are read-only: you have no worktree and you will make no commit, so your captured `verdictSummary` is your entire delivery.\n\nRecord what the panel actually decided — which findings blocked the change and what the revisions did about them, and which advisory findings the specialists raised. Carry the advisory findings forward even where they did not block: they are the part of the review that would otherwise be lost, because nothing in the run forced an answer to them.\n\nDo not re-review the change. The panel has settled it."
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-implement-report",
+        "sourceContextId": "context-implement",
+        "targetContextId": "context-report"
+      }
+    ]
+  },
+  "layout": {
+    "workflowId": "adversarial-verification",
+    "contextPositions": {
+      "context-implement": {
+        "x": 0,
+        "y": 0
+      },
+      "context-report": {
+        "x": 520,
+        "y": 0
+      }
+    },
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "zoom": 1
+    }
+  }
+}

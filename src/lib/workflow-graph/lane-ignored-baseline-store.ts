@@ -21,10 +21,7 @@ const laneIgnoredBaselineManifestSchema = z.object({
 });
 
 export interface LaneIgnoredBaselineStore {
-  write(
-    worktreePath: string,
-    contents: IgnoredWorktreeContents,
-  ): Promise<void>;
+  write(worktreePath: string, contents: IgnoredWorktreeContents): Promise<void>;
   read(worktreePath: string): Promise<IgnoredWorktreeContents | null>;
 }
 

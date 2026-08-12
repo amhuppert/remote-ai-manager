@@ -683,7 +683,9 @@ describe("createApprovalGateService.recordDecision", () => {
     // Reloaded from SQLite: the reference the approval surface reads its bytes
     // through has to survive the process that froze it.
     const reloaded = await reloadGatedContext();
-    expect(reloaded.pendingApproval?.approvalScope).toEqual(FROZEN_SCOPED_SCOPE);
+    expect(reloaded.pendingApproval?.approvalScope).toEqual(
+      FROZEN_SCOPED_SCOPE,
+    );
   });
 
   it("records a rejected decision with its message", async () => {
