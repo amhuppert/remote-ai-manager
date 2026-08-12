@@ -466,6 +466,7 @@ export async function createProductionSpecRouteServices(
             definitionId: input.definitionId,
             expectedDefinitionRevision: input.definitionRevision,
             ownerConversationId: input.ownerConversationId,
+            seededDocuments: input.seededDocuments,
           });
           return { ok: true, workflowExecutionId: launched.id };
         } catch (error) {
@@ -490,6 +491,7 @@ export async function createProductionSpecRouteServices(
             definitionId: input.definitionId,
             expectedDefinitionRevision: input.definitionRevision,
             ownerConversationId: input.ownerConversationId,
+            seededDocuments: input.seededDocuments,
           });
         } catch (error) {
           launchError = error;

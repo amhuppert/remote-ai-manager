@@ -1001,6 +1001,9 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
         parse: { source: "fenced", repaired: true, repairAttempts: 2 },
       },
     },
+    // One entry per document kind: the discriminator decides materialization
+    // and whether an agent may rewrite the entry, so a round trip that dropped
+    // it would silently make engine-owned content agent-writable.
     sharedDocuments: [
       {
         id: "doc-1",
@@ -1011,6 +1014,26 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-02T00:00:00Z",
         lastUpdatedByConversationId: "conv-doc-1",
+      },
+      {
+        id: "doc-2",
+        relativePath: ".cc/graph-workflow-docs/notes.md",
+        description: "lane-authored notes",
+        readWhen: "before the join",
+        kind: "shared",
+        createdAt: "2026-01-01T00:10:00Z",
+        updatedAt: "2026-01-02T00:10:00Z",
+        lastUpdatedByConversationId: "conv-doc-2",
+      },
+      {
+        id: "doc-3",
+        relativePath: ".cc/graph-workflow-docs/spec/maximal-spec.md",
+        description: "the pinned contract seeded at launch",
+        readWhen: "before judging the work",
+        kind: "seeded",
+        createdAt: "2026-01-01T00:20:00Z",
+        updatedAt: "2026-01-01T00:20:00Z",
+        lastUpdatedByConversationId: null,
       },
     ],
     // Both indexed kinds, projected from the two advisories the round record

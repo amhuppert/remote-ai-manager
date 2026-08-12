@@ -42,6 +42,7 @@ import "@/lib/shared/sdk-env";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createClaudeFailureClassifier } from "./failure-classifier";
 import { createStallWatchdog } from "../stall-watchdog";
+import { CLAUDE_DEFAULT_STALL_TIMEOUT_MS } from "./shared";
 import { resolveClaudeManagedSkillsForLaunch } from "./managed-skills";
 import { mapErrorSubtype } from "./process-message";
 import {
@@ -401,10 +402,11 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       else externalSignal.addEventListener("abort", onExternalAbort);
     }
 
-    // Inactivity watchdog: disabled unless the caller passes a bound (the
-    // claude descriptor declares no default — background-task waits produce
-    // legitimate long silences and the safety-net timeout caps a hung turn).
-    const stallTimeoutMs = input.stallTimeoutMs ?? 0;
+    // Inactivity watchdog: unlike the whole-run timeout above, this only
+    // trips on dead air — every streamed message resets it. A caller that
+    // passes no bound gets the backend default rather than an unbounded run.
+    const stallTimeoutMs =
+      input.stallTimeoutMs ?? CLAUDE_DEFAULT_STALL_TIMEOUT_MS;
     const stallWatchdog = createStallWatchdog({
       stallTimeoutMs,
       onStall: () => {

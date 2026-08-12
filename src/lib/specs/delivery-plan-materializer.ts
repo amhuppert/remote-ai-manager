@@ -9,6 +9,8 @@ import type {
   WorkflowConfigOverride,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
+import { allocateLaneNames } from "@/lib/workflow-graph/lane-identity";
+import { validateAuthoredDefinition } from "@/lib/workflow-graph/validation";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 
 import {
@@ -199,6 +201,14 @@ const MATERIALIZER_FIELDS = {
     sourceKey: "acceptanceContract",
     targetKey: "acceptanceCriteria",
   },
+  placement: {
+    source: "contexts[].placement",
+    target: "executionContexts[].placement",
+    transformation:
+      "copy when authored; solo lane (context id, full access) when absent",
+    sourceKey: "placement",
+    targetKey: "placement",
+  },
   taskId: {
     source: "tasks[].taskId",
     target: "tasks[].id",
@@ -371,6 +381,7 @@ export function materializeDeliveryPlan(
     );
   }
 
+  const soloLanes = soloLaneNames(document);
   const packManifests: DeliveryPlanPackManifest[] = [];
   const executionContexts: GraphWorkflowExecutionContextDefinition[] =
     document.contexts.map((context) => {
@@ -391,13 +402,9 @@ export function materializeDeliveryPlan(
           ACCEPTANCE_CONTRACT_SERIALIZATION(
             context[MATERIALIZER_FIELDS.acceptanceContract.sourceKey],
           ),
-        // A DeliveryPlanAttempt context declares no lane and no write surface
-        // (`deliveryPlanContextSchema` is strict and carries neither), so every
-        // materialized context takes the solo placement: its own lane, full
-        // write access. That is exactly the one-worktree-per-context behaviour
-        // this path had before placement became required, so materializing a
-        // plan authored against either model produces the same graph.
-        placement: { lane: context.contextId, mode: "full" },
+        [MATERIALIZER_FIELDS.placement.targetKey]:
+          context[MATERIALIZER_FIELDS.placement.sourceKey] ??
+          soloPlacement(soloLanes, context.contextId),
         origin: {
           sourceUri: `${originSourceUri}#${context.contextId}`,
           label: context.title,
@@ -485,6 +492,9 @@ export function materializeDeliveryPlan(
     edges,
   };
 
+  const unlaunchable = refuseUnlaunchableDefinition(definition, input);
+  if (unlaunchable !== null) return { ok: false, refusal: unlaunchable };
+
   return {
     ok: true,
     value: {
@@ -517,6 +527,50 @@ function pinnedWorkflowConfig(
       contextValidator: { mode: "only", commands: selected },
     },
   };
+}
+
+/**
+ * One lane name per placement-less context, resolved across the single
+ * namespace authored and generated lanes share.
+ *
+ * Omitting `placement` is the author's explicit choice to take a lane of their
+ * own, so the default is supplied here rather than written back into the
+ * document — the plan keeps the serialization (and the hash) it was authored
+ * with. Which NAME that lane gets is not spec knowledge: the context id is kept
+ * verbatim whenever the lane grammar admits it — so a plan that already
+ * launched keeps the lanes, and the compiled hash, its definition was approved
+ * with — authored names are reserved, the session spellings are reserved
+ * because no context may own the session worktree, and a generated name
+ * contested by any of those is suffixed. `allocateLaneNames` owns all of it,
+ * and the legacy compiler delegates to the same helper, so the two paths cannot
+ * drift.
+ */
+function soloLaneNames(
+  document: DeliveryPlanDocument,
+): ReadonlyMap<string, string> {
+  return allocateLaneNames(
+    document.contexts.flatMap((context) =>
+      context.placement === undefined
+        ? []
+        : [{ contextId: context.contextId, lane: context.placement.lane }],
+    ),
+    document.contexts.flatMap((context) =>
+      context.placement === undefined ? [{ contextId: context.contextId }] : [],
+    ),
+  );
+}
+
+function soloPlacement(
+  soloLanes: ReadonlyMap<string, string>,
+  contextId: string,
+): { lane: string; mode: "full" } {
+  const lane = soloLanes.get(contextId);
+  if (lane === undefined) {
+    throw new Error(
+      `Delivery-plan context ${contextId} declares no placement but was allocated no solo lane.`,
+    );
+  }
+  return { lane, mode: "full" };
 }
 
 function orderedTasks(
@@ -862,12 +916,81 @@ function requiredMetadata(
   return value;
 }
 
+/**
+ * The one remedy every materialization refusal closes on. Stated once because
+ * the reader's next move is the same whichever check refused: nothing was
+ * stored, so the attempt is exactly as editable as it was.
+ */
+function reopenInstruction(slug: string): string {
+  return `Nothing was compiled and no candidate was stored. Edit the attempt with \`cctl spec plan edit ${slug} --file <plan.json>\` and re-run \`cctl spec plan propose ${slug}\`.`;
+}
+
+/**
+ * The compiled candidate, asked the same accept-time question the graph tier
+ * asks of any authored definition (`validateAuthoredDefinition`: placement
+ * grades and lane concurrency, lane-dependency acyclicity, parameter
+ * references, structural shape).
+ *
+ * It runs HERE rather than only in propose-time lint because this is the last
+ * point every stored candidate passes through, and a candidate is stored to be
+ * launched: a definition the graph tier would refuse at launch must never
+ * become an approvable one. The plan lint mirrors the placement rules hours
+ * earlier with an authored-document remedy, but the two are deliberately
+ * independent — a rule the lint stops mirroring still cannot get past this.
+ *
+ * Errors are reported as located findings rather than as one summary: each
+ * names the context that owns the defect and the graph rule that refused it,
+ * which is what lets an author fix the plan without reading a compiled graph.
+ */
+function refuseUnlaunchableDefinition(
+  definition: WorkflowSemanticDefinition,
+  input: DeliveryPlanMaterializationInput,
+): Refusal | null {
+  const { errors } = validateAuthoredDefinition(definition);
+  if (errors.length === 0) return null;
+
+  const contextIds = [
+    ...new Set(
+      errors.flatMap((error) =>
+        error.contextId === undefined ? [] : [error.contextId],
+      ),
+    ),
+  ];
+  return {
+    code: "invalid_scope",
+    unmetConditions: errors.map(
+      (error) =>
+        `${locatedIn(error)}: ${error.code} — ${error.message}${
+          error.field === undefined ? "" : ` (${error.field})`
+        }`,
+    ),
+    instruction: `${reopenInstruction(input.spec.slug)} The compiled graph is refused by the same validation a workflow definition passes to be created, so every finding above must be fixed on the plan before it can be proposed.`,
+    details: {
+      attemptId: input.attemptId,
+      contextIds,
+      graphRules: [...new Set(errors.map((error) => error.code))],
+    },
+  };
+}
+
+/** The plan-side subject a compiled-graph finding belongs to. */
+function locatedIn(error: {
+  contextId?: string;
+  taskId?: string;
+  edgeId?: string;
+}): string {
+  if (error.contextId !== undefined) return `Context '${error.contextId}'`;
+  if (error.taskId !== undefined) return `Task '${error.taskId}'`;
+  if (error.edgeId !== undefined) return `Edge '${error.edgeId}'`;
+  return "The delivery plan";
+}
+
 function refuseUnmaterializable(
   input: DeliveryPlanMaterializationInput,
   planHash: string,
 ): Refusal | null {
   const document = input.document;
-  const reopen = `Nothing was compiled and no candidate was stored. Edit the attempt with \`cctl spec plan edit ${input.spec.slug} --file <plan.json>\` and re-run \`cctl spec plan propose ${input.spec.slug}\`.`;
+  const reopen = reopenInstruction(input.spec.slug);
 
   const duplicates = [
     ...duplicateIds(

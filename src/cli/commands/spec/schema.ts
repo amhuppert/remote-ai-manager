@@ -452,6 +452,17 @@ const PLAN_EDIT_EXAMPLE: DeliveryPlanDocument = {
     sourcesOfTruth: [
       {
         rank: 1,
+        id: "pinned-spec",
+        label: "Pinned spec self-describing-surface",
+        type: "spec",
+        locator: ".cc/graph-workflow-docs/spec/self-describing-surface.md",
+        description:
+          "The pinned revision this run implements, materialized into every lane worktree at launch.",
+        appliesTo: null,
+        accessPolicy: "worktree-relative",
+      },
+      {
+        rank: 2,
         id: "final-design",
         label: "Final agreed design",
         type: "document",
@@ -770,6 +781,7 @@ function planEditDocument(): SchemaDocument {
       "Every criterion of the pinned revision carries exactly one disposition; exactly one context owns each `selected` criterion, and every other disposition has zero owners.",
       "A context owning no criterion must be typed `integration` or `closeout` and carry its own acceptance contract — that contract is the only thing its validator is held to.",
       "Task `order` is per context and contiguous from 0; `contributesToCriterionElementIds` is provenance only and never manufactures a validator contract.",
+      "`spec plan open` already ranked the plan's own spec first at `.cc/graph-workflow-docs/spec/<slug>.md` with `worktree-relative` access, because the engine materializes the pinned revision into every lane worktree; keep that entry. `external-readonly` is for genuinely out-of-worktree sources — the charter gates those behind explicit human permission, so spelling your own spec that way refuses at propose (`plan/spec-source-unreadable`).",
     ],
   };
 }

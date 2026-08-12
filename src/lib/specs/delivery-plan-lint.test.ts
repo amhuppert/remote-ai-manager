@@ -3,9 +3,13 @@ import type { EarlierMergedDeliveryVerdict } from "./delivery-gate";
 import {
   deliveryPlanDocumentSchema,
   emptyDeliveryPlanDocument,
+  pinnedSpecDocumentPath,
+  pinnedSpecSourceOfTruth,
+  PINNED_SPEC_SOURCE_ID,
   type DeliveryPlanContext,
   type DeliveryPlanDocument,
   type DeliveryPlanReaffirmation,
+  type DeliveryPlanSourceOfTruth,
 } from "./delivery-plan";
 import {
   deliveryPlanDraftHealth,
@@ -17,6 +21,7 @@ import {
 
 const PINNED_REVISION_ID = "revision-pinned";
 const BASE_EXECUTION_ID = "execution-earlier";
+const SPEC_SLUG = "native-sdd";
 
 function criterion(
   id: string,
@@ -91,6 +96,7 @@ function lintInput(
 ): DeliveryPlanLintInput {
   return {
     pinnedRevisionId: PINNED_REVISION_ID,
+    specSlug: SPEC_SLUG,
     document: cleanDocument(),
     pinnedCriteria: [criterion("criterion-a", "R1.1")],
     deliveredElsewhereVerdicts: [],
@@ -729,5 +735,164 @@ describe("production wiring ownership", () => {
     expect(wiringOwnershipForContext(document, "ctx-a")).toEqual([
       "cap-1 — wired downstream by this context; covers criterion-a",
     ]);
+  });
+});
+
+/**
+ * The audited failure this rule exists to prevent: a plan ranked its OWN
+ * DB-resident spec #1 and spelled it `external-readonly`, so the charter's
+ * permission gate forbade every validator in nine contexts from reading the
+ * one source of truth they were judging against. The engine materializes the
+ * pinned revision into every lane worktree, so the readable spelling exists —
+ * the rule's job is to refuse the unreadable one WITH that entry in hand.
+ */
+describe("plan/spec-source-unreadable", () => {
+  function withSources(
+    sources: readonly DeliveryPlanSourceOfTruth[],
+  ): DeliveryPlanLintInput {
+    return withDocument((document) => ({
+      ...document,
+      governance: { ...document.governance, sourcesOfTruth: [...sources] },
+    }));
+  }
+
+  const EXTERNAL_SPEC_SOURCE: DeliveryPlanSourceOfTruth = {
+    rank: 1,
+    id: "the-spec",
+    label: "The native-sdd spec",
+    type: "spec",
+    locator: "cc spec native-sdd (approved revision)",
+    description: "The approved contract this delivery implements.",
+    appliesTo: null,
+    accessPolicy: "external-readonly",
+  };
+
+  it("refuses the plan's own spec ranked external-readonly", () => {
+    const finding = findingFor(
+      withSources([EXTERNAL_SPEC_SOURCE]),
+      "plan/spec-source-unreadable",
+    );
+
+    expect(finding.severity).toBe("blocks_propose");
+    expect(finding.elementHandle).toBe("the-spec");
+    expect(finding.message).toContain("external-readonly");
+  });
+
+  it("names the exact replacement entry so the author does not guess", () => {
+    const message = findingFor(
+      withSources([EXTERNAL_SPEC_SOURCE]),
+      "plan/spec-source-unreadable",
+    ).message;
+
+    expect(message).toContain(pinnedSpecDocumentPath(SPEC_SLUG));
+    expect(message).toContain("worktree-relative");
+    expect(message).toContain(PINNED_SPEC_SOURCE_ID);
+    expect(message).toContain("rank 1");
+  });
+
+  it("refuses a cctl spec invocation as the locator, whatever the access grade", () => {
+    const finding = findingFor(
+      withSources([
+        {
+          ...EXTERNAL_SPEC_SOURCE,
+          locator: "cctl spec show native-sdd --json",
+          accessPolicy: "worktree-relative",
+        },
+      ]),
+      "plan/spec-source-unreadable",
+    );
+
+    expect(finding.message).toContain("cctl spec");
+    expect(finding.message).toContain(pinnedSpecDocumentPath(SPEC_SLUG));
+  });
+
+  it("refuses a cctl spec locator even when the entry is typed as a document", () => {
+    const finding = findingFor(
+      withSources([
+        {
+          ...EXTERNAL_SPEC_SOURCE,
+          type: "document",
+          locator: `cctl spec show ${SPEC_SLUG}`,
+        },
+      ]),
+      "plan/spec-source-unreadable",
+    );
+
+    expect(finding.message).toContain("cctl spec");
+  });
+
+  it("accepts the materialized entry the engine writes into every lane", () => {
+    const input = withSources([
+      pinnedSpecSourceOfTruth({
+        specSlug: SPEC_SLUG,
+        pinnedRevisionId: PINNED_REVISION_ID,
+      }),
+    ]);
+
+    expect(ruleIds(input)).not.toContain("plan/spec-source-unreadable");
+    expect(deliveryPlanDraftHealth(input).blocking).toBe(0);
+  });
+
+  it("leaves a genuinely external source of another repository alone", () => {
+    const input = withSources([
+      pinnedSpecSourceOfTruth({
+        specSlug: SPEC_SLUG,
+        pinnedRevisionId: PINNED_REVISION_ID,
+      }),
+      {
+        rank: 2,
+        id: "upstream-protocol",
+        label: "Upstream protocol document",
+        type: "document",
+        locator: "https://example.invalid/protocol/v3",
+        description: "The wire format this delivery must not break.",
+        appliesTo: null,
+        accessPolicy: "external-readonly",
+      },
+    ]);
+
+    expect(ruleIds(input)).not.toContain("plan/spec-source-unreadable");
+  });
+
+  it("leaves an external document whose name merely extends the spec slug alone", () => {
+    const input = withSources([
+      pinnedSpecSourceOfTruth({
+        specSlug: SPEC_SLUG,
+        pinnedRevisionId: PINNED_REVISION_ID,
+      }),
+      {
+        rank: 2,
+        id: `${SPEC_SLUG}-audit`,
+        label: `Prior ${SPEC_SLUG} audit report`,
+        type: "document",
+        locator: `https://example.invalid/repo/blob/main/docs/${SPEC_SLUG}-audit.md`,
+        description: "The audit whose findings this delivery answers.",
+        appliesTo: null,
+        accessPolicy: "external-readonly",
+      },
+    ]);
+
+    expect(ruleIds(input)).not.toContain("plan/spec-source-unreadable");
+  });
+
+  it("leaves the spec of another repository, reachable only by URL, alone", () => {
+    const input = withSources([
+      pinnedSpecSourceOfTruth({
+        specSlug: SPEC_SLUG,
+        pinnedRevisionId: PINNED_REVISION_ID,
+      }),
+      {
+        rank: 2,
+        id: "upstream-spec",
+        label: `Upstream ${SPEC_SLUG} spec`,
+        type: "spec",
+        locator: `https://example.invalid/repo/blob/main/specs/${SPEC_SLUG}.md`,
+        description: "Another repository's contract this delivery consumes.",
+        appliesTo: null,
+        accessPolicy: "external-readonly",
+      },
+    ]);
+
+    expect(ruleIds(input)).not.toContain("plan/spec-source-unreadable");
   });
 });

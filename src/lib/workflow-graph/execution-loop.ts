@@ -687,6 +687,25 @@ function isStallCausedTurnFailure(error: unknown): boolean {
   );
 }
 
+/**
+ * A turn the backend SDK itself terminated. Keyed on the cause because the
+ * diagnostics carrying these failures are emitted by the SDK, not by this
+ * repo, so their text changes without notice and no message pattern can be a
+ * reliable net (execution 2560164c halted on
+ * `[ede_diagnostic] result_type=user … stop_reason=tool_use`, a string that
+ * exists nowhere here). A deterministic failure — auth, config — simply fails
+ * its second strike and halts.
+ */
+function isSdkErrorCausedTurnFailure(error: unknown): boolean {
+  const unwrapped =
+    error instanceof IterationFailureWithProgressError
+      ? error.originalError
+      : error;
+  return (
+    unwrapped instanceof AgentTurnFailedError && unwrapped.cause === "sdk_error"
+  );
+}
+
 function hasPendingCollaborations(execution: GraphWorkflowExecution): boolean {
   return Object.keys(execution.pendingCollaborations ?? {}).length > 0;
 }
@@ -901,6 +920,14 @@ export function createGraphWorkflowExecutionLoop(
     });
     let execution = input.execution;
     const retryableRecoveryAttempts = new Map<string, number>();
+    // SDK-caused turn failures get their own strike count because the
+    // post-implementer sites that raise them (advisory response, output
+    // capture) run after a turn has already completed, so every strike carries
+    // partial iteration progress. Sharing the transport counter — which
+    // partial progress clears — would let each strike refund its own budget
+    // and retry without bound, past both the max-iteration and circuit-breaker
+    // guards. Only a successful iteration clears this one.
+    const sdkErrorRecoveryAttempts = new Map<string, number>();
     // Answers consumed on the awaiting-user-input resume path, keyed by context.
     // Stashed before `continue` re-schedules the context, then drained into the
     // next `runIteration` call so each resumed lane pins its asking conversation
@@ -2478,6 +2505,7 @@ export function createGraphWorkflowExecutionLoop(
               signal: loopAbortController.signal,
             });
             retryableRecoveryAttempts.delete(contextId);
+            sdkErrorRecoveryAttempts.delete(contextId);
           } catch (error) {
             if (error instanceof StaleLoopFenceError) {
               // This loop generation was superseded mid-iteration (execution
@@ -2512,13 +2540,25 @@ export function createGraphWorkflowExecutionLoop(
             if (hasPartialIterationProgress(error)) {
               retryableRecoveryAttempts.delete(contextId);
             }
-            const recoveryAttempts =
-              retryableRecoveryAttempts.get(contextId) ?? 0;
             const recoverRetryableIterationError =
               deps.workflowManager.recoverRetryableIterationError;
+            const transportRecovery = isRetryableIterationError(error);
             const stallRecovery = isStallCausedTurnFailure(error);
+            const sdkErrorRecovery =
+              !transportRecovery &&
+              !stallRecovery &&
+              isSdkErrorCausedTurnFailure(error);
+            const recoveryKind = sdkErrorRecovery
+              ? "sdk_error"
+              : stallRecovery
+                ? "stall"
+                : "transport";
+            const attemptCounter = sdkErrorRecovery
+              ? sdkErrorRecoveryAttempts
+              : retryableRecoveryAttempts;
+            const recoveryAttempts = attemptCounter.get(contextId) ?? 0;
             const canRecover =
-              (isRetryableIterationError(error) || stallRecovery) &&
+              (transportRecovery || stallRecovery || sdkErrorRecovery) &&
               recoveryAttempts < 1 &&
               recoverRetryableIterationError;
 
@@ -2530,11 +2570,11 @@ export function createGraphWorkflowExecutionLoop(
             }
 
             const errorMessage = getErrorMessage(error);
-            retryableRecoveryAttempts.set(contextId, recoveryAttempts + 1);
+            attemptCounter.set(contextId, recoveryAttempts + 1);
             execLogger?.decision("iteration.retryable_error_detected", {
               contextId,
               error: errorMessage,
-              recoveryKind: stallRecovery ? "stall" : "transport",
+              recoveryKind,
               recoveryAttempt: recoveryAttempts + 1,
               maxRecoveryAttempts: 1,
             });
@@ -2542,7 +2582,7 @@ export function createGraphWorkflowExecutionLoop(
               executionId: execution.id,
               contextId,
               error: errorMessage,
-              recoveryKind: stallRecovery ? "stall" : "transport",
+              recoveryKind,
               recoveryAttempt: recoveryAttempts + 1,
             });
             execution = await recoverRetryableIterationError(

@@ -537,7 +537,12 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
       ? ["- None registered."]
       : genericDocs.map(
           (doc) =>
-            `- \`${doc.relativePath}\`: ${doc.description} — Read when: ${doc.readWhen}`,
+            // An engine-seeded document is re-written from the central store on
+            // every worktree iteration, so an edit to it is lost without a
+            // trace. Say so, because nothing else in the prompt would.
+            `- \`${doc.relativePath}\`: ${doc.description} — Read when: ${doc.readWhen}${
+              doc.kind === "seeded" ? " (read-only: engine-owned)" : ""
+            }`,
         );
 
   sections.push(["## Shared Documents", ...docLines].join("\n"));

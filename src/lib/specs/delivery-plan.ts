@@ -35,6 +35,9 @@ const MAX_INVARIANTS = 60;
 const MAX_SOURCES_OF_TRUTH = 30;
 const MAX_VALIDATION_COMMANDS = 30;
 const MAX_REAFFIRMATION_BASIS = 40;
+const MAX_OWNED_PATHS = 64;
+const MAX_OWNED_PATH_LENGTH = 500;
+const MAX_LANE_LENGTH = 120;
 
 const elementIdSchema = z.string().min(1);
 const nodeIdSchema = z.string().min(1).max(120);
@@ -136,6 +139,109 @@ export const deliveryPlanProofStepSchema = z
   .strict();
 export type DeliveryPlanProofStep = z.infer<typeof deliveryPlanProofStepSchema>;
 
+/**
+ * One authored ownership entry: a normalized repo-relative POSIX path covering
+ * itself and everything beneath it.
+ *
+ * The grammar — including the unconditional, case-folded `.git` and `.cc`
+ * denials — is the graph tier's `ownedPathSchema`, mirrored rather than
+ * imported: this module is a client-importable leaf, and importing
+ * `@/lib/workflow-graph` would drag the whole definition schema graph into
+ * every reader of a plan payload. `delivery-plan.test.ts` pins the mirror
+ * against the owning schema so the two cannot drift; a path this schema admits
+ * and the graph tier refuses would compile into a definition that is rejected
+ * only at launch.
+ *
+ * The length cap is this tier's alone: the plan document is stored whole in one
+ * TEXT column, so every collection and its entries owe the persisted-blob gate
+ * a static bound the graph tier has no reason to carry.
+ */
+const deliveryPlanOwnedPathSchema = z
+  .string()
+  .min(1)
+  .max(MAX_OWNED_PATH_LENGTH)
+  .superRefine((value, ctx) => {
+    const reject = (message: string): void => {
+      ctx.addIssue({ code: "custom", message });
+    };
+    if (value === "." || value === "./") {
+      reject(
+        `owned path "${value}" names the repository root; declare the directories the context owns instead`,
+      );
+      return;
+    }
+    const segments = value.split("/");
+    if (
+      value !== value.trim() ||
+      value.startsWith("/") ||
+      /^[A-Za-z]:/.test(value) ||
+      value.includes("\\") ||
+      value.endsWith("/") ||
+      segments.some(
+        (segment) =>
+          segment.length === 0 || segment === "." || segment === "..",
+      )
+    ) {
+      reject(
+        `owned path "${value}" must be a normalized repo-relative POSIX path without parent segments or trailing separators`,
+      );
+      return;
+    }
+    if (segments[0]?.toLowerCase() === ".git") {
+      reject(
+        `owned path "${value}" names repository metadata; .git is denied regardless of authored ownership`,
+      );
+      return;
+    }
+    if (segments[0]?.toLowerCase() === ".cc") {
+      reject(
+        `owned path "${value}" names the engine's .cc namespace; the write envelope injects a per-context payload directory there, so it is reserved from authored ownership`,
+      );
+    }
+  });
+
+const placementLaneShape = {
+  /**
+   * The authored lane name. Lane-name grammar (charset, reserved session
+   * identifiers) is checked by propose-time lint rather than here, so the
+   * refusal can name the context that declared it — and so this schema keeps
+   * admitting exactly what the graph tier admits.
+   */
+  lane: z.string().trim().min(1).max(MAX_LANE_LENGTH),
+};
+
+/**
+ * Where a context runs and what it may write, authored in the graph tier's own
+ * vocabulary (design D1) so materialization is a copy rather than a
+ * translation — the precedent `deliveryPlanGovernanceSchema` already sets.
+ *
+ * Discriminated on `mode` so each grade carries exactly its own obligations,
+ * and `.strict()` so a stray `ownedPaths` on a full-access or read-only
+ * placement is a refusal rather than a silently ignored declaration of intent.
+ * An empty `ownedPaths` is invalid by construction: `readOnly` is the explicit
+ * grade for a context with no write surface.
+ */
+export const deliveryPlanContextPlacementSchema = z.discriminatedUnion("mode", [
+  z.object({ ...placementLaneShape, mode: z.literal("full") }).strict(),
+  z
+    .object({
+      ...placementLaneShape,
+      mode: z.literal("owned"),
+      ownedPaths: z
+        .array(deliveryPlanOwnedPathSchema)
+        .min(1, {
+          message:
+            'an owning placement must declare at least one owned path; use mode "readOnly" for a context with no write surface',
+        })
+        .max(MAX_OWNED_PATHS),
+    })
+    .strict(),
+  z.object({ ...placementLaneShape, mode: z.literal("readOnly") }).strict(),
+]);
+export type DeliveryPlanContextPlacement = z.infer<
+  typeof deliveryPlanContextPlacementSchema
+>;
+
 export const deliveryPlanContextSchema = z
   .object({
     contextId: nodeIdSchema,
@@ -147,6 +253,15 @@ export const deliveryPlanContextSchema = z
       .array(z.string().min(1).max(4000))
       .max(MAX_CONTRACT_LINES),
     proofPlan: z.array(deliveryPlanProofStepSchema).max(MAX_CRITERIA),
+    /**
+     * Optional, unlike the graph tier's required field: there the absence of a
+     * placement would silently resurrect seed-time lane assignment, whereas
+     * here the materializer is the single deliberate owner of the solo-lane
+     * default (design D2). Omitting it is the author's explicit choice to take
+     * that default, so every plan written before placement existed keeps its
+     * canonical serialization — and its hash — byte for byte.
+     */
+    placement: deliveryPlanContextPlacementSchema.optional(),
   })
   .strict();
 export type DeliveryPlanContext = z.infer<typeof deliveryPlanContextSchema>;
@@ -329,6 +444,78 @@ export function emptyDeliveryPlanDocument(): DeliveryPlanDocument {
       charterInvariants: [],
       sourcesOfTruth: [],
       validationCommandNames: [],
+    },
+  };
+}
+
+/**
+ * The reserved worktree-relative locator for the pinned spec revision a
+ * delivery run implements. The engine writes that file into every lane
+ * worktree at launch, so it is the one spelling of the plan's own spec that a
+ * lane agent can actually open.
+ *
+ * Owned here, beside the source-of-truth shape that cites it, because this
+ * module is a leaf: the launch-side renderer and the propose-time lint both
+ * read it from here rather than each hard-coding a path that can drift.
+ */
+export function pinnedSpecDocumentPath(slug: string): string {
+  return `.cc/graph-workflow-docs/spec/${slug}.md`;
+}
+
+/** The reserved id of that entry, so re-installing it replaces rather than duplicates. */
+export const PINNED_SPEC_SOURCE_ID = "pinned-spec";
+
+/**
+ * The plan's own spec as a source of truth a lane can read: rank 1, because
+ * nothing outranks the contract the run is judged against, and
+ * `worktree-relative`, because the file is materialized into the worktree.
+ * `external-readonly` is reserved for genuinely out-of-worktree sources, whose
+ * charter rule forbids an agent from reading them without a human's say-so.
+ */
+export function pinnedSpecSourceOfTruth(input: {
+  readonly specSlug: string;
+  readonly pinnedRevisionId: string;
+}): DeliveryPlanSourceOfTruth {
+  return {
+    rank: 1,
+    id: PINNED_SPEC_SOURCE_ID,
+    label: `Pinned spec ${input.specSlug}`,
+    type: "spec",
+    locator: pinnedSpecDocumentPath(input.specSlug),
+    description: `The pinned revision ${input.pinnedRevisionId} of ${input.specSlug}, materialized into every lane worktree at launch. It is the contract this run is judged against; read it rather than live spec state, which a mid-run amendment legitimately moves.`,
+    appliesTo: null,
+    accessPolicy: "worktree-relative",
+  };
+}
+
+/**
+ * Install the reserved entry at rank 1 without rewriting anything an author
+ * wrote. Carried entries keep their relative order and their identity; only
+ * their rank shifts by one, which the charter allows because ranks owe it
+ * nothing but uniqueness and positivity. An entry that already claims the
+ * reserved id or locator IS this entry, so it is replaced rather than
+ * duplicated.
+ *
+ * A carried entry that names the same spec through an unreadable spelling
+ * survives deliberately: deleting an authored source would be exactly the
+ * synthesis the plan document exists to remove, so `plan/spec-source-unreadable`
+ * names it and the author retires it.
+ */
+export function withPinnedSpecSource(
+  document: DeliveryPlanDocument,
+  input: { readonly specSlug: string; readonly pinnedRevisionId: string },
+): DeliveryPlanDocument {
+  const reserved = pinnedSpecSourceOfTruth(input);
+  const carried = document.governance.sourcesOfTruth
+    .filter(
+      (entry) => entry.id !== reserved.id && entry.locator !== reserved.locator,
+    )
+    .map((entry) => ({ ...entry, rank: entry.rank + 1 }));
+  return {
+    ...document,
+    governance: {
+      ...document.governance,
+      sourcesOfTruth: [reserved, ...carried],
     },
   };
 }

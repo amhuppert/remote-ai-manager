@@ -63,6 +63,7 @@ import type {
   GraphWorkflowHaltReason,
 } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
+import type { SeededWorkflowDocument } from "@/lib/workflow-graph/shared-documents";
 import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
 import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-notification/dispatcher";
 import {
@@ -737,6 +738,8 @@ export interface GraphWorkflowExecutionRouteDeps {
     expectedDefinitionRevision?: number;
     tier?: "project" | "global";
     parameters?: Record<string, unknown>;
+    ownerConversationId?: string | null;
+    seededDocuments?: readonly SeededWorkflowDocument[];
   }): Promise<GraphWorkflowExecution>;
   markRunning?(
     context: GraphExecutionLifecycleContext,
@@ -1687,6 +1690,13 @@ export function createGraphWorkflowExecutionRouteHandlers(
      * instance — and leaves the run unowned.
      */
     ownerConversationId?: string | null;
+    /**
+     * Documents the launching tier rendered for this run. Threaded only
+     * through this in-process seam, never through `startExecutionSchema`: an
+     * HTTP body that could supply it would be an arbitrary write into the
+     * session worktree's `.cc` namespace.
+     */
+    seededDocuments?: readonly SeededWorkflowDocument[];
   }): Promise<GraphWorkflowExecution> {
     let execution: GraphWorkflowExecution;
     try {
@@ -1704,6 +1714,9 @@ export function createGraphWorkflowExecutionRouteHandlers(
         ...(input.ownerConversationId !== undefined &&
         input.ownerConversationId !== null
           ? { ownerConversationId: input.ownerConversationId }
+          : {}),
+        ...(input.seededDocuments !== undefined
+          ? { seededDocuments: input.seededDocuments }
           : {}),
       });
     } catch (error) {
@@ -2746,6 +2759,8 @@ export async function launchGraphWorkflowExecution(
     parameters?: Record<string, unknown>;
     /** Owner conversation resolved by the calling seam; `null` when it has none. */
     ownerConversationId?: string | null;
+    /** Pre-rendered documents the launching tier seeds into every lane. */
+    seededDocuments?: readonly SeededWorkflowDocument[];
   },
   deps: GraphWorkflowExecutionRouteDeps = defaultDeps,
 ): Promise<GraphWorkflowExecution> {

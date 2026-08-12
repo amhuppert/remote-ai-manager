@@ -8,6 +8,7 @@ import {
   resolveTurnModelEffort,
   type ActorConfig,
 } from "./resolve-model-effort";
+import { getDefaultStallTimeoutForBackend } from "@/lib/agent-backends/catalog";
 
 function makeConfig(): ActorConfig {
   return {
@@ -269,5 +270,18 @@ describe("backend timeout resolution", () => {
 
     config.agentBackends.codex.stallTimeoutMs = null;
     expect(resolveBackendStallTimeoutMs("codex", config)).toBe(0);
+  });
+
+  it("arms the claude stall default and honors explicit disable", () => {
+    const config = makeConfig();
+    // The turn the conversation actor arms must carry the backend's declared
+    // bound, not the unbounded sentinel.
+    expect(resolveBackendStallTimeoutMs("claude", config)).toBe(
+      getDefaultStallTimeoutForBackend("claude"),
+    );
+    expect(resolveBackendStallTimeoutMs("claude", config)).toBeGreaterThan(0);
+
+    config.agentBackends.claude.stallTimeoutMs = null;
+    expect(resolveBackendStallTimeoutMs("claude", config)).toBe(0);
   });
 });

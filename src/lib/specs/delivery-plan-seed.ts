@@ -1,6 +1,7 @@
 import type { CriterionDeliveryClass } from "./delivery-delta";
 import {
   emptyDeliveryPlanDocument,
+  withPinnedSpecSource,
   type DeliveryPlanContext,
   type DeliveryPlanCriterionDisposition,
   type DeliveryPlanDisposition,
@@ -49,6 +50,8 @@ export function discoveryTaskId(discoveryId: string): string {
 export interface DeliveryPlanSeedInput {
   /** Every criterion judgment is made against this revision, never the head. */
   readonly pinnedRevisionId: string;
+  /** Names the spec whose materialized revision the seed ranks first. */
+  readonly specSlug: string;
   readonly criteria: readonly PlanSeedCriterion[];
   /** The earlier merged execution a `delivered_elsewhere` seed rests on. */
   readonly deliveredByExecutionId: string | null;
@@ -93,29 +96,40 @@ export function seedDeliveryPlanDocument(
     pinnedIds,
   );
 
-  return {
-    ...emptyDeliveryPlanDocument(),
-    dispositions,
-    contexts: staged.contexts,
-    tasks: renumbered(staged.tasks),
-    edges: (input.priorPlan?.edges ?? []).filter(
-      (edge) =>
-        keptContextIds.has(edge.fromContextId) &&
-        keptContextIds.has(edge.toContextId),
-    ),
-    wiring: (input.priorPlan?.wiring ?? [])
-      .filter((entry) => keptContextIds.has(entry.owner.contextId))
-      .map((entry) => ({
-        ...entry,
-        criterionElementIds: entry.criterionElementIds.filter((id) =>
-          pinnedIds.has(id),
-        ),
-      })),
-    policyOverrides: input.priorPlan?.policyOverrides ?? [],
-    touchedSurfaces: input.priorPlan?.touchedSurfaces ?? [],
-    governance:
-      input.priorPlan?.governance ?? emptyDeliveryPlanDocument().governance,
-  };
+  // Governance carries forward authored, then the reserved pinned-spec source
+  // is installed over it. A prior attempt authored before the lane
+  // materialization existed ranks this spec through a spelling no lane can
+  // read, and a seed that passed governance through untouched would hand the
+  // next plan that same unreadable #1 source with nothing to replace it with.
+  return withPinnedSpecSource(
+    {
+      ...emptyDeliveryPlanDocument(),
+      dispositions,
+      contexts: staged.contexts,
+      tasks: renumbered(staged.tasks),
+      edges: (input.priorPlan?.edges ?? []).filter(
+        (edge) =>
+          keptContextIds.has(edge.fromContextId) &&
+          keptContextIds.has(edge.toContextId),
+      ),
+      wiring: (input.priorPlan?.wiring ?? [])
+        .filter((entry) => keptContextIds.has(entry.owner.contextId))
+        .map((entry) => ({
+          ...entry,
+          criterionElementIds: entry.criterionElementIds.filter((id) =>
+            pinnedIds.has(id),
+          ),
+        })),
+      policyOverrides: input.priorPlan?.policyOverrides ?? [],
+      touchedSurfaces: input.priorPlan?.touchedSurfaces ?? [],
+      governance:
+        input.priorPlan?.governance ?? emptyDeliveryPlanDocument().governance,
+    },
+    {
+      specSlug: input.specSlug,
+      pinnedRevisionId: input.pinnedRevisionId,
+    },
+  );
 }
 
 /**

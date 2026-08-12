@@ -457,6 +457,30 @@ describe("persisted blob bounds gate", () => {
     });
   });
 
+  /**
+   * The generic gate above only proves nothing UNBOUNDED escaped. A statically
+   * capped collection self-discharges, which makes it indistinguishable from a
+   * collection that was never registered — or that quietly stopped being one.
+   * Authored placement is the newest collection in this blob and the one whose
+   * size an author controls directly, so its cap is pinned by path here.
+   */
+  describe("spec_delivery_plan_attempts placement collections", () => {
+    const census = describeCollections(deliveryPlanDocumentSchema);
+
+    it("caps the owned-path set an authored placement may declare", () => {
+      const ownedPaths = census.filter(
+        (node) => node.path === "contexts[].placement.ownedPaths",
+      );
+      expect(
+        ownedPaths.map((node) => node.kind),
+        `placement ownedPaths is absent from the census: ${census
+          .map((node) => node.path)
+          .join(", ")}`,
+      ).toEqual(["array"]);
+      expect(ownedPaths.every((node) => node.bounded)).toBe(true);
+    });
+  });
+
   it("fails when a new unbounded collection is added to a registered blob", () => {
     const conversationsBlob = PERSISTED_BLOBS[0];
     if (!conversationsBlob) throw new Error("registry is empty");

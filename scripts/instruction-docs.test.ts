@@ -11,6 +11,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveConfig as resolveVitestConfig } from "vitest/node";
 
+import { specHelpEntries } from "../src/cli/commands/spec/spec.help";
 import {
   renderRuntimeSpecInstructions,
   SPEC_GUIDANCE_SECTIONS,
@@ -107,6 +108,80 @@ const SKILL_NEIGHBOUR_TOKEN = "reintroduceHistorical";
  * Codex packaging test pins this exact string in its shipped section list.
  */
 const SKILL_IMPORT_SECTION_HEADING = "Importing a spec authored outside CC";
+
+/**
+ * The sources-of-truth section's whole content contract. Every phrase is a
+ * mandatory statement, not a sample: the reserved locator a planner must not
+ * invent, the grade that makes it readable, the grade it is NOT, and the lint
+ * that refuses the difference.
+ */
+const SKILL_SOURCES_SECTION_HEADING = "Ranked sources of truth a lane can read";
+const SPEC_SOURCE_GUIDANCE_CLAIMS = [
+  ".cc/graph-workflow-docs/spec/", // the reserved locator, owned by the engine
+  "rank 1", // where the plan's own spec belongs
+  "worktree-relative", // the grade that makes it readable in a lane
+  "external-readonly", // …and what that other grade is left for
+  "plan/spec-source-unreadable", // the refusal an author will otherwise meet
+  "cctl spec plan open", // the verb that already seeded the entry
+  "cctl spec schema guidance", // the generated registry every section points at
+] as const;
+
+/**
+ * The plan-tier placement section's whole content contract. Every phrase is a
+ * mandatory statement, not a sample: the instruction to put a chain on one
+ * lane, the ordering that makes that safe, the saving it buys, what unordered
+ * lane-mates owe each other and at what grain, the grade this tier refuses,
+ * the default an unsure author falls back to, and the cross-link to the full
+ * model.
+ *
+ * The instruction is pinned separately from its rationale because they drift
+ * apart in exactly one direction: prose that keeps "edge-ordered" and the
+ * worktree/join arithmetic but loses "put the whole chain on one lane" reads
+ * as though edge ordering ALONE consolidates lanes, which is false — placement
+ * is authored, never inferred.
+ *
+ * A planner reads this section INSTEAD of the graph-tier one — the plan
+ * document is the only surface it authors — so a dropped statement is not a
+ * thinner explanation, it is a plan that lands wrong: same-lane members with
+ * overlapping prefixes refuse at propose, a readOnly placement refuses after
+ * the author believed all three grades were usable, and a chain that could
+ * have cost one worktree pays for N.
+ */
+const SKILL_PLACEMENT_SECTION_HEADING =
+  "Placement: shared lanes and disjoint ownership";
+const SPEC_PLACEMENT_GUIDANCE_CLAIMS = [
+  "put the whole chain on one lane", // the authoring decision itself…
+  "edge-ordered", // …the shape that makes it safe…
+  "one worktree and one join instead of N and N", // …and what it saves
+  "that no edge orders", // the condition that makes disjointness owed…
+  "disjoint `ownedPaths`", // …what is owed under it…
+  "segment-boundary", // …and the grain the cover test actually uses
+  "`readOnly` is not yet authorable", // the mirrored grade this tier refuses…
+  "admits read-only contexts only", // …and the `session` lane it puts out of reach
+  "omit `placement`", // the fallback when the shape is unclear…
+  "solo lane", // …and the placement it compiles to
+  "Lane Placement and File Ownership", // the graph-tier section holding the rest
+  "cctl spec schema guidance", // the generated registry every section points at
+] as const;
+
+/**
+ * The plan-edit help's placement statements: the field an author would
+ * otherwise never learn is authorable, and the default that makes omitting it
+ * safe. `--help` is the surface an agent reaches for after the skill, and the
+ * one an agent outside this repository reaches for INSTEAD of it.
+ */
+const PLAN_EDIT_HELP_CLAIMS = [
+  "`placement`", // the authorable field…
+  "its own solo lane", // …and what omitting it costs
+  "omit it",
+] as const;
+
+/**
+ * A token a neighbouring help entry owns and `spec plan edit` does not, so a
+ * slice that silently widened to the whole registry — which would make every
+ * claim above vacuous — fails loudly instead of passing quietly.
+ */
+const PLAN_EDIT_HELP_NEIGHBOUR_TOKEN = "plan hash";
 
 function expectImportSectionStatesItsContract(
   whole: string,
@@ -584,6 +659,93 @@ describe("agent instruction and canonical documentation contracts", () => {
       SKILL_NEIGHBOUR_TOKEN,
       "native-sdd-authoring SKILL.md",
     );
+  });
+
+  /**
+   * The audited spec-import run ranked its own DB-resident spec #1 as
+   * `external-readonly`, and the charter's permission gate then forbade every
+   * validator from reading the contract it was judging against. A planner that
+   * reads this skill and not the lint's refusal must still reach the readable
+   * spelling, so the section states the reserved locator, the grade, and what
+   * `external-readonly` is left for.
+   */
+  it("teaches the readable spelling of the plan's own spec source of truth", () => {
+    const skill = read(
+      "plugins/command-center/command-center/skills/native-sdd-authoring/SKILL.md",
+    );
+    const section = markdownSection(skill, SKILL_SOURCES_SECTION_HEADING);
+
+    expect(
+      section,
+      `native-sdd-authoring SKILL.md has no "## ${SKILL_SOURCES_SECTION_HEADING}" section`,
+    ).not.toBe("");
+    // The slice really is one section: a neighbour-owned token the document
+    // demonstrably carries is outside it.
+    expect(section).not.toContain("## ");
+    expect(collapse(skill)).toContain(SKILL_NEIGHBOUR_TOKEN);
+    expect(section).not.toContain(SKILL_NEIGHBOUR_TOKEN);
+
+    for (const claim of SPEC_SOURCE_GUIDANCE_CLAIMS) {
+      expect(
+        section,
+        `native-sdd-authoring SKILL.md's sources-of-truth section is missing: ${claim}`,
+      ).toContain(claim);
+    }
+  });
+
+  /**
+   * The audited spec-import run spent 55 minutes publishing seven
+   * single-member lanes whose contexts were already edge-ordered into chains.
+   * Nothing refused that plan — a placement-free plan is always legal — so the
+   * only thing that reaches a planner is prose. This pins the decision rules a
+   * planner needs BEFORE authoring, not the schema it can read afterwards.
+   */
+  it("teaches the plan tier's placement decision rules", () => {
+    const skill = read(
+      "plugins/command-center/command-center/skills/native-sdd-authoring/SKILL.md",
+    );
+    const section = markdownSection(skill, SKILL_PLACEMENT_SECTION_HEADING);
+
+    expect(
+      section,
+      `native-sdd-authoring SKILL.md has no "## ${SKILL_PLACEMENT_SECTION_HEADING}" section`,
+    ).not.toBe("");
+    // The slice really is one section: a neighbour-owned token the document
+    // demonstrably carries is outside it.
+    expect(section).not.toContain("## ");
+    expect(collapse(skill)).toContain(SKILL_NEIGHBOUR_TOKEN);
+    expect(section).not.toContain(SKILL_NEIGHBOUR_TOKEN);
+
+    for (const claim of SPEC_PLACEMENT_GUIDANCE_CLAIMS) {
+      expect(
+        section,
+        `native-sdd-authoring SKILL.md's placement section is missing: ${claim}`,
+      ).toContain(claim);
+    }
+  });
+
+  it("names the placement field and its solo-lane default in the plan-edit help", () => {
+    const entry = specHelpEntries.find(
+      (candidate) => candidate.path.join(" ") === "spec plan edit",
+    );
+    expect(entry, "cctl has no `spec plan edit` help entry").toBeDefined();
+
+    const slice = collapse(JSON.stringify(entry));
+    expect(
+      collapse(JSON.stringify(specHelpEntries)),
+      "the spec help registry no longer contains the neighbour token this check is calibrated against",
+    ).toContain(PLAN_EDIT_HELP_NEIGHBOUR_TOKEN);
+    expect(
+      slice,
+      "the plan-edit help slice leaked into a neighbouring command's entry",
+    ).not.toContain(PLAN_EDIT_HELP_NEIGHBOUR_TOKEN);
+
+    for (const claim of PLAN_EDIT_HELP_CLAIMS) {
+      expect(
+        slice,
+        `cctl spec plan edit --help is missing: ${claim}`,
+      ).toContain(claim);
+    }
   });
 
   it("keeps graph prompt validation guidance selection-aware", () => {

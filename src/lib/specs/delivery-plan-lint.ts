@@ -5,10 +5,15 @@ import type {
 import type { EarlierMergedDeliveryVerdict } from "./delivery-gate";
 import {
   DELIVERY_PLAN_DISPOSITIONS,
+  pinnedSpecSourceOfTruth,
   type DeliveryPlanContext,
+  type DeliveryPlanContextPlacement,
+  type DeliveryPlanContextType,
   type DeliveryPlanDisposition,
   type DeliveryPlanDocument,
+  type DeliveryPlanEdge,
   type DeliveryPlanReaffirmation,
+  type DeliveryPlanSourceOfTruth,
   type DeliveryPlanWiringEntry,
 } from "./delivery-plan";
 import { draftHealth, type DraftHealth } from "./draft-health";
@@ -83,6 +88,13 @@ export interface PlanLintDeliveredElsewhereVerdict {
 export interface DeliveryPlanLintInput {
   /** The revision every criterion judgment is made against. */
   readonly pinnedRevisionId: string;
+  /**
+   * The plan's OWN spec. Governance may legitimately rank another spec, a
+   * document in a different repository, or a URL as an external source, so the
+   * slug is what makes the unreadable-source rule falsifiable rather than a
+   * blanket ban on the `external-readonly` grade.
+   */
+  readonly specSlug: string;
   /** The document the attempt would carry once the staged write commits. */
   readonly document: DeliveryPlanDocument;
   readonly pinnedCriteria: readonly PlanLintCriterion[];
@@ -126,6 +138,17 @@ export const DELIVERY_PLAN_LINT_RULES = [
   { ruleId: "plan/dangling-criterion-reference", severity: "blocks_propose" },
   { ruleId: "plan/wiring-duplicate-capability", severity: "blocks_propose" },
   { ruleId: "plan/wiring-owner-unresolved", severity: "blocks_propose" },
+  { ruleId: "plan/spec-source-unreadable", severity: "blocks_propose" },
+  // Placement, mirroring the graph tier's accept-time refusals hours earlier as
+  // located findings. Only the closeout advisory is guidance rather than law:
+  // a self-verifying context sharing a busy lane still executes, it just judges
+  // a worktree someone else is still writing.
+  { ruleId: "plan/placement-lane-grammar", severity: "blocks_propose" },
+  { ruleId: "plan/placement-readonly-unsupported", severity: "blocks_propose" },
+  { ruleId: "plan/placement-owned-overlap", severity: "blocks_propose" },
+  { ruleId: "plan/placement-full-shared", severity: "blocks_propose" },
+  { ruleId: "plan/placement-lane-cycle", severity: "blocks_propose" },
+  { ruleId: "plan/placement-closeout-shared", severity: "advisory" },
 ] as const satisfies readonly {
   readonly ruleId: string;
   readonly severity: LintFinding["severity"];
@@ -143,7 +166,9 @@ export function lintDeliveryPlan(input: DeliveryPlanLintInput): LintFinding[] {
   const findings: LintFinding[] = [
     ...dispositionFindings(input),
     ...graphFindings(input),
+    ...placementFindings(input),
     ...wiringFindings(input),
+    ...governanceFindings(input),
   ];
   // `draftHealth` re-ranks by severity and preserves order within a group, so
   // a stable total order here is what makes a top-N stable across runs.
@@ -216,7 +241,13 @@ function coverageClause(entry: DeliveryPlanWiringEntry): string {
     : `; covers ${entry.criterionElementIds.join(", ")}`;
 }
 
-function blocking(
+/**
+ * One finding, at whatever severity the registry declares for its rule. The
+ * severity is never passed in: the registry above is the single place a rule's
+ * strength is stated, so a surface reading the published taxonomy and a caller
+ * reading the finding can never disagree.
+ */
+function planFinding(
   ruleId: DeliveryPlanLintRuleId,
   elementHandle: string,
   message: string,
@@ -256,7 +287,7 @@ function dispositionFindings(input: DeliveryPlanLintInput): LintFinding[] {
     const pinned = pinnedById.get(criterionElementId);
     if (pinned === undefined) {
       findings.push(
-        blocking(
+        planFinding(
           "plan/disposition-unknown-criterion",
           criterionElementId,
           `This plan dispositions ${criterionElementId}, which revision ${input.pinnedRevisionId} does not carry. Drop the entry, or open a new attempt pinned to a revision that carries it.`,
@@ -266,7 +297,7 @@ function dispositionFindings(input: DeliveryPlanLintInput): LintFinding[] {
     }
     if (count > 1) {
       findings.push(
-        blocking(
+        planFinding(
           "plan/disposition-duplicate",
           pinned.handle,
           `${pinned.handle} (${criterionElementId}) carries ${count} dispositions; every criterion of the pinned revision carries exactly one. Delete the extra entries.`,
@@ -278,7 +309,7 @@ function dispositionFindings(input: DeliveryPlanLintInput): LintFinding[] {
   for (const criterion of input.pinnedCriteria) {
     if (!seen.has(criterion.criterionElementId)) {
       findings.push(
-        blocking(
+        planFinding(
           "plan/disposition-missing",
           criterion.handle,
           `${criterion.handle} (${criterion.criterionElementId}) has no disposition. Give it exactly one of: ${DISPOSITION_CHOICES}.`,
@@ -308,7 +339,7 @@ function ownershipFindings(
   if (disposition === "selected") {
     if (owners.length === 0) {
       return [
-        blocking(
+        planFinding(
           "plan/selected-unowned",
           pinned.handle,
           `${pinned.handle} (${pinned.criterionElementId}) is selected but no context owns it. Add it to exactly one context's criterionElementIds, or change its disposition.`,
@@ -317,7 +348,7 @@ function ownershipFindings(
     }
     if (owners.length > 1) {
       return [
-        blocking(
+        planFinding(
           "plan/selected-multi-owned",
           pinned.handle,
           `${pinned.handle} (${pinned.criterionElementId}) is owned by ${owners.join(", ")}; exactly one context must own it. Split the criterion, or make one context its sole owner and give the others an integration contract.`,
@@ -328,7 +359,7 @@ function ownershipFindings(
   }
   if (owners.length === 0) return [];
   return [
-    blocking(
+    planFinding(
       "plan/nonselected-owned",
       pinned.handle,
       `${pinned.handle} (${pinned.criterionElementId}) is ${disposition}, so no context may own it, but ${owners.join(", ")} still list${owners.length === 1 ? "s" : ""} it. Remove it from those contexts, or select it.`,
@@ -348,7 +379,7 @@ function freshnessFindings(
     };
     if (verdict.code !== "accepted") {
       return [
-        blocking(
+        planFinding(
           "plan/delivered-elsewhere-basis",
           pinned.handle,
           `${pinned.handle} (${pinned.criterionElementId}) claims delivered_elsewhere, but ${basisReason(verdict)}. Name an earlier merged execution of this spec that delivered it, or select it.`,
@@ -357,7 +388,7 @@ function freshnessFindings(
     }
     if (pinned.deliveryClass === "soft_stale") {
       return [
-        blocking(
+        planFinding(
           "plan/delivered-elsewhere-stale",
           pinned.handle,
           `${pinned.handle} (${pinned.criterionElementId}) is soft_stale against ${verdict.baseExecutionId}, so its earlier delivery no longer stands unexamined. ${REAFFIRM_ACT}.`,
@@ -366,7 +397,7 @@ function freshnessFindings(
     }
     if (pinned.deliveryClass === "hard_stale") {
       return [
-        blocking(
+        planFinding(
           "plan/delivered-elsewhere-stale",
           pinned.handle,
           `${pinned.handle} (${pinned.criterionElementId}) is hard_stale against ${verdict.baseExecutionId}: the earlier proof proved different words. Select it and re-prove it.`,
@@ -379,7 +410,7 @@ function freshnessFindings(
   if (entry.disposition === "reaffirmed") {
     if (pinned.deliveryClass !== "soft_stale") {
       return [
-        blocking(
+        planFinding(
           "plan/reaffirmed-not-soft-stale",
           pinned.handle,
           `${pinned.handle} (${pinned.criterionElementId}) is ${pinned.deliveryClass}, and only a soft_stale criterion can be reaffirmed. ${pinned.deliveryClass === "hard_stale" ? "Its text or validation strategy changed, so select it and re-prove it." : "Give it the disposition its class allows."}`,
@@ -389,7 +420,7 @@ function freshnessFindings(
     const reaffirmation = entry.reaffirmation;
     if (reaffirmation === null || reaffirmation.actor.kind !== "human") {
       return [
-        blocking(
+        planFinding(
           "plan/reaffirmed-unattested",
           pinned.handle,
           `${pinned.handle} (${pinned.criterionElementId}) is marked reaffirmed with ${reaffirmation === null ? "no audited act" : "an agent's attestation; only a human act counts"}. ${REAFFIRM_ACT}.`,
@@ -398,7 +429,7 @@ function freshnessFindings(
     }
     if (!reaffirmationCoversBasis(reaffirmation, pinned.freshness)) {
       return [
-        blocking(
+        planFinding(
           "plan/reaffirmed-stale-basis",
           pinned.handle,
           `${pinned.handle} (${pinned.criterionElementId}) was reaffirmed against a basis that has since moved, so the act covered content nobody is now looking at. ${REAFFIRM_ACT}.`,
@@ -410,7 +441,7 @@ function freshnessFindings(
 
   if (entry.disposition === "pending_reaffirmation") {
     return [
-      blocking(
+      planFinding(
         "plan/pending-reaffirmation",
         pinned.handle,
         `${pinned.handle} (${pinned.criterionElementId}) is still pending_reaffirmation, which a draft may carry but a proposal may not. ${REAFFIRM_ACT}.`,
@@ -469,7 +500,7 @@ function graphFindings(input: DeliveryPlanLintInput): LintFinding[] {
 
   for (const id of duplicates(document.contexts.map((c) => c.contextId))) {
     findings.push(
-      blocking(
+      planFinding(
         "plan/duplicate-context-id",
         id,
         `Two contexts share the id ${id}. Context ids address the compiled graph's nodes, so give each one its own.`,
@@ -480,7 +511,7 @@ function graphFindings(input: DeliveryPlanLintInput): LintFinding[] {
 
   for (const id of duplicates(document.tasks.map((task) => task.taskId))) {
     findings.push(
-      blocking(
+      planFinding(
         "plan/duplicate-task-id",
         id,
         `Two tasks share the id ${id}. Task ids address the task an agent completes, so give each one its own.`,
@@ -489,7 +520,7 @@ function graphFindings(input: DeliveryPlanLintInput): LintFinding[] {
   }
   for (const id of duplicates(document.edges.map((edge) => edge.edgeId))) {
     findings.push(
-      blocking(
+      planFinding(
         "plan/duplicate-edge-id",
         id,
         `Two edges share the id ${id}. Give each dependency its own edge id.`,
@@ -500,7 +531,7 @@ function graphFindings(input: DeliveryPlanLintInput): LintFinding[] {
   for (const task of document.tasks) {
     if (!contextIds.has(task.contextId)) {
       findings.push(
-        blocking(
+        planFinding(
           "plan/dangling-task-context",
           task.taskId,
           `Task ${task.taskId} names context ${task.contextId}, which this plan does not carry. Point it at a context in the plan, or add that context.`,
@@ -515,7 +546,7 @@ function graphFindings(input: DeliveryPlanLintInput): LintFinding[] {
   for (const edge of document.edges) {
     if (edge.fromContextId === edge.toContextId) {
       findings.push(
-        blocking(
+        planFinding(
           "plan/self-edge",
           edge.edgeId,
           `Edge ${edge.edgeId} runs from ${edge.fromContextId} to itself. A context cannot depend on itself; delete the edge.`,
@@ -526,7 +557,7 @@ function graphFindings(input: DeliveryPlanLintInput): LintFinding[] {
     for (const endpoint of [edge.fromContextId, edge.toContextId]) {
       if (!contextIds.has(endpoint)) {
         findings.push(
-          blocking(
+          planFinding(
             "plan/dangling-edge-endpoint",
             edge.edgeId,
             `Edge ${edge.edgeId} names context ${endpoint}, which this plan does not carry. Repoint the edge, or add that context.`,
@@ -539,7 +570,7 @@ function graphFindings(input: DeliveryPlanLintInput): LintFinding[] {
   const cycle = findCycle(document, contextIds);
   if (cycle !== null) {
     findings.push(
-      blocking(
+      planFinding(
         "plan/edge-cycle",
         cycle[0] ?? "",
         `The context dependencies form a cycle: ${cycle.join(" -> ")}. A compiled graph must be acyclic; drop one of these edges.`,
@@ -551,7 +582,7 @@ function graphFindings(input: DeliveryPlanLintInput): LintFinding[] {
     if (context.criterionElementIds.length > 0) continue;
     if (context.contextType === "delivery") {
       findings.push(
-        blocking(
+        planFinding(
           "plan/empty-context",
           context.contextId,
           `Context ${context.contextId} owns no criterion. Give it one, or type it as an integration or closeout context with its own acceptance contract.`,
@@ -561,7 +592,7 @@ function graphFindings(input: DeliveryPlanLintInput): LintFinding[] {
     }
     if (context.acceptanceContract.length === 0) {
       findings.push(
-        blocking(
+        planFinding(
           "plan/typed-context-contract-missing",
           context.contextId,
           `Context ${context.contextId} is a ${context.contextType} context owning no criterion, so its acceptance contract is the only thing a validator can hold it to — and it is empty. Author what this context must make observable.`,
@@ -587,7 +618,7 @@ function taskOrderFindings(
     const duplicated = duplicates(orders.map(String));
     if (duplicated.length > 0) {
       findings.push(
-        blocking(
+        planFinding(
           "plan/duplicate-task-order",
           contextId,
           `Context ${contextId} has more than one task at order ${duplicated.join(", ")}. Tasks run in order, so renumber them 0..${orders.length - 1}.`,
@@ -600,7 +631,7 @@ function taskOrderFindings(
     const contiguous = orders.every((order, index) => order === index);
     if (!contiguous) {
       findings.push(
-        blocking(
+        planFinding(
           "plan/non-contiguous-task-order",
           contextId,
           `Context ${contextId} has task orders ${orders.join(", ")}. Renumber them 0..${orders.length - 1} so the sequence has no gap.`,
@@ -624,7 +655,7 @@ function danglingCriterionFindings(
     for (const criterionElementId of criterionElementIds) {
       if (pinnedIds.has(criterionElementId)) continue;
       findings.push(
-        blocking(
+        planFinding(
           "plan/dangling-criterion-reference",
           holder,
           `${relation} ${criterionElementId}, which revision ${input.pinnedRevisionId} does not carry. Repoint it at a criterion the pinned revision carries, or drop the reference.`,
@@ -708,6 +739,420 @@ function findCycle(
   return null;
 }
 
+/**
+ * The graph tier's lane grammar and reserved session spellings, MIRRORED rather
+ * than imported (`inv-mirror-pinned`).
+ *
+ * `@/lib/workflow-graph/lane-identity` exports all three, but this module
+ * reaches the browser: `delivery-plan-review.ts` value-imports
+ * `reaffirmationCoversBasis` from here, and `"use client"` Spec Studio
+ * components value-import that module in turn. Importing lane-identity would
+ * therefore pull the graph tier's schema graph into the client bundle. So the
+ * grammar is copied the way `delivery-plan.ts` copies `contextPlacementSchema`,
+ * and `delivery-plan-lint.placement.test.ts` pins the copy by driving its
+ * assertions from lane-identity's own exports — a test file may import the
+ * graph tier, production spec-tier code may not.
+ */
+const LANE_ID_PATTERN = /^[A-Za-z0-9_.-]+$/;
+const SESSION_LANE_NAME = "session";
+const SESSION_LANE_ID = "__session__";
+
+function laneIdViolation(lane: string): string | null {
+  if (!LANE_ID_PATTERN.test(lane)) {
+    return "must match /^[A-Za-z0-9_.-]+$/";
+  }
+  if (lane.startsWith(".") || lane.startsWith("-")) {
+    return "must not start with '.' or '-'";
+  }
+  if (lane.includes("..")) {
+    return "must not contain '..'";
+  }
+  if (lane.endsWith(".") || lane.endsWith("-")) {
+    return "must not end with '.' or '-'";
+  }
+  if (lane.endsWith(".lock")) {
+    return "must not end with '.lock'";
+  }
+  return null;
+}
+
+/** A context that declares a placement — the only kind these rules judge. */
+interface PlacedPlanContext extends DeliveryPlanContext {
+  readonly placement: DeliveryPlanContextPlacement;
+}
+
+function isPlaced(context: DeliveryPlanContext): context is PlacedPlanContext {
+  return context.placement !== undefined;
+}
+
+/** A placement that may write: everything except the read-only grade. */
+function isWriteCapable(placement: DeliveryPlanContextPlacement): boolean {
+  return placement.mode !== "readOnly";
+}
+
+function ownedPathsOf(
+  placement: DeliveryPlanContextPlacement,
+): readonly string[] {
+  return placement.mode === "owned" ? placement.ownedPaths : [];
+}
+
+/**
+ * Whether `outer` covers `inner`: an ownership entry covers itself and
+ * everything beneath it, compared at segment boundaries so `src/lib` does not
+ * swallow the sibling `src/libraries`. The same definition `covers()` in
+ * `@/lib/workflow-graph/placement-validation` carries.
+ */
+function covers(outer: string, inner: string): boolean {
+  return outer === inner || inner.startsWith(`${outer}/`);
+}
+
+function prefixesOverlap(left: string, right: string): boolean {
+  return covers(left, right) || covers(right, left);
+}
+
+/** Contexts whose whole job is judging work someone else produced. */
+const SELF_VERIFYING_CONTEXT_TYPES: ReadonlySet<DeliveryPlanContextType> =
+  new Set(["closeout", "integration"]);
+
+/**
+ * Propose-time placement lint (R4): the graph tier's accept-time refusals,
+ * asked hours earlier and reported against the context that authored the
+ * placement rather than against a compiled definition's JSON path.
+ *
+ * The graph tier stays the deep validator — the candidate compile at propose
+ * runs the materialized definition through `validatePlacements`, so anything
+ * missed here still refuses before launch. What these rules buy is a located
+ * finding with a remedy at the moment the plan is being written.
+ */
+function placementFindings(input: DeliveryPlanLintInput): LintFinding[] {
+  const placed = input.document.contexts.filter(isPlaced);
+  // With nothing placed, no authored placement contracted anything: every
+  // context takes its own solo lane, so the contraction is the identity on the
+  // context graph and a lane cycle could only be an edge cycle — which
+  // `plan/edge-cycle` already owns.
+  if (placed.length === 0) return [];
+  return [
+    ...placed.flatMap(contextPlacementFindings),
+    ...laneConcurrencyFindings(input.document, placed),
+    ...laneCycleFindings(input.document),
+  ];
+}
+
+/** Everything decidable from one context's placement alone. */
+function contextPlacementFindings(context: PlacedPlanContext): LintFinding[] {
+  const findings: LintFinding[] = [];
+  const { placement } = context;
+
+  if (placement.lane === SESSION_LANE_ID) {
+    findings.push(
+      planFinding(
+        "plan/placement-lane-grammar",
+        context.contextId,
+        `Context ${context.contextId} places itself on "${SESSION_LANE_ID}", which is the engine's internal id for the session lane rather than a name an author writes. Give it a group lane of its own.`,
+      ),
+    );
+  } else if (placement.lane === SESSION_LANE_NAME) {
+    // The session lane is the session worktree itself: it is never provisioned
+    // as a group lane and never lands through a join, so a write-capable member
+    // there would have no gate to publish through.
+    if (isWriteCapable(placement)) {
+      findings.push(
+        planFinding(
+          "plan/placement-lane-grammar",
+          context.contextId,
+          `Context ${context.contextId} is write-capable (mode "${placement.mode}") on the reserved lane "${SESSION_LANE_NAME}", which is the session worktree itself and admits only read-only contexts — a writer there would have no join to publish through. Place write-capable work on a group lane.`,
+        ),
+      );
+    }
+  } else {
+    const violation = laneIdViolation(placement.lane);
+    if (violation !== null) {
+      findings.push(
+        planFinding(
+          "plan/placement-lane-grammar",
+          context.contextId,
+          `Context ${context.contextId} declares lane "${placement.lane}", which is not a legal lane name: it ${violation}. Lane names become git branch names and worktree path segments. Rename the lane to one the grammar admits.`,
+        ),
+      );
+    }
+  }
+
+  // The graph tier admits a read-only context only when it declares the output
+  // schema that is its ONLY delivery channel. The plan document has no field
+  // that authors one, so every read-only placement a plan can express compiles
+  // into a context unable to deliver anything at all.
+  if (placement.mode === "readOnly") {
+    findings.push(
+      planFinding(
+        "plan/placement-readonly-unsupported",
+        context.contextId,
+        `Context ${context.contextId} declares mode "readOnly", which the plan tier cannot yet author: a read-only context delivers its results exclusively through a structured output contract, and a delivery plan carries no field that declares one, so the compiled context would have no channel to deliver through. Give it mode "owned" naming the paths it writes, or omit the placement to take the solo-lane default.`,
+      ),
+    );
+  }
+
+  return findings;
+}
+
+/**
+ * The contexts reachable from each context by following dependency edges.
+ *
+ * Two lane mates are concurrency-comparable exactly when neither reaches the
+ * other: nothing then sequences their turns, so both could hold the one
+ * worktree at once. Dependency-ordered mates may share paths freely — that
+ * hand-off is the ordinary reason to put two contexts on one lane.
+ */
+function buildReachability(
+  document: DeliveryPlanDocument,
+): Map<string, Set<string>> {
+  const adjacency = new Map<string, string[]>();
+  for (const context of document.contexts) {
+    adjacency.set(context.contextId, []);
+  }
+  for (const edge of document.edges) {
+    adjacency.get(edge.fromContextId)?.push(edge.toContextId);
+  }
+
+  const reachable = new Map<string, Set<string>>();
+  for (const context of document.contexts) {
+    const seen = new Set<string>();
+    const stack = [...(adjacency.get(context.contextId) ?? [])];
+    for (let next = stack.pop(); next !== undefined; next = stack.pop()) {
+      if (seen.has(next)) continue;
+      seen.add(next);
+      stack.push(...(adjacency.get(next) ?? []));
+    }
+    reachable.set(context.contextId, seen);
+  }
+  return reachable;
+}
+
+/** Pairwise checks over same-lane members that no edge path orders. */
+function laneConcurrencyFindings(
+  document: DeliveryPlanDocument,
+  placed: readonly PlacedPlanContext[],
+): LintFinding[] {
+  const reachable = buildReachability(document);
+  const membersByLane = new Map<string, PlacedPlanContext[]>();
+  for (const context of placed) {
+    const members = membersByLane.get(context.placement.lane) ?? [];
+    members.push(context);
+    membersByLane.set(context.placement.lane, members);
+  }
+
+  const findings: LintFinding[] = [];
+  for (const members of membersByLane.values()) {
+    members.forEach((left, position) => {
+      for (const right of members.slice(position + 1)) {
+        const ordered =
+          reachable.get(left.contextId)?.has(right.contextId) === true ||
+          reachable.get(right.contextId)?.has(left.contextId) === true;
+        if (ordered) continue;
+        findings.push(...unorderedLaneMateFindings(left, right));
+      }
+    });
+  }
+  return findings;
+}
+
+function unorderedLaneMateFindings(
+  left: PlacedPlanContext,
+  right: PlacedPlanContext,
+): LintFinding[] {
+  const findings: LintFinding[] = [];
+  const lane = left.placement.lane;
+
+  // A full-access member declares no surface to be disjoint FROM, so it needs
+  // the lane to itself for as long as any other member there may write. When
+  // both are full-access, the earlier-authored one carries the finding: one
+  // remedy resolves the pair either way.
+  const fullPair =
+    left.placement.mode === "full" && isWriteCapable(right.placement)
+      ? ([left, right] as const)
+      : right.placement.mode === "full" && isWriteCapable(left.placement)
+        ? ([right, left] as const)
+        : null;
+  if (fullPair === null) {
+    const overlaps = ownedPathsOf(left.placement).flatMap((leftPath) =>
+      ownedPathsOf(right.placement)
+        .filter((rightPath) => prefixesOverlap(leftPath, rightPath))
+        .map((rightPath) => `"${leftPath}" and "${rightPath}"`),
+    );
+    if (overlaps.length > 0) {
+      findings.push(
+        planFinding(
+          "plan/placement-owned-overlap",
+          left.contextId,
+          `Contexts ${left.contextId} and ${right.contextId} own overlapping paths on lane "${lane}" (${overlaps.join(", ")}) with no dependency edge ordering them, so both could write the same files in the one worktree at once. Make the owned prefixes pairwise disjoint, or add an edge that orders the two contexts.`,
+        ),
+      );
+    }
+  } else {
+    const [owner, mate] = fullPair;
+    findings.push(
+      planFinding(
+        "plan/placement-full-shared",
+        owner.contextId,
+        `Context ${owner.contextId} takes full access to lane "${lane}", which it shares with the write-capable context ${mate.contextId} that no dependency edge orders. Declare the ownedPaths ${owner.contextId} actually writes, move it to a lane of its own, or add an edge that orders it against ${mate.contextId}.`,
+      ),
+    );
+  }
+
+  // Advisory, not law: a self-verifying context on a busy lane still executes,
+  // it just reads a worktree another member is still writing.
+  for (const [member, mate] of [
+    [left, right],
+    [right, left],
+  ] as const) {
+    if (!SELF_VERIFYING_CONTEXT_TYPES.has(member.contextType)) continue;
+    if (!isWriteCapable(mate.placement)) continue;
+    findings.push(
+      planFinding(
+        "plan/placement-closeout-shared",
+        member.contextId,
+        `Context ${member.contextId} is a ${member.contextType} context on lane "${lane}", which it shares with the write-capable context ${mate.contextId} that no dependency edge orders, so it would judge a worktree still being written. Give it its own lane, or add an edge that orders it after ${mate.contextId}.`,
+      ),
+    );
+  }
+
+  return findings;
+}
+
+/**
+ * The lane a context ACTUALLY runs on once the plan is materialized.
+ *
+ * `key` is the identity the contraction compares; `label` is what a finding
+ * prints. They differ because the two kinds of lane are drawn from different
+ * namespaces: an authored lane name and the solo lane the materializer derives
+ * from a context id are allocated collision-free against each other, so a
+ * context authoring `lane: "<another context's id>"` names a DIFFERENT lane
+ * from that context's solo lane. Folding the two together on their bare
+ * spelling would silently drop a real lane edge.
+ */
+interface EffectiveLane {
+  readonly key: string;
+  readonly label: string;
+}
+
+/**
+ * Omitting a placement is the author's explicit choice to take the
+ * materializer's solo-lane default — `{ lane: contextId, mode: "full" }` — so a
+ * placement-less context is still a lane of its own once materialized, and an
+ * edge through it is still a lane-level dependency.
+ */
+function effectiveLaneOf(context: DeliveryPlanContext): EffectiveLane {
+  return context.placement === undefined
+    ? { key: `solo ${context.contextId}`, label: context.contextId }
+    : {
+        key: `authored ${context.placement.lane}`,
+        label: context.placement.lane,
+      };
+}
+
+interface LaneEdgeWitness {
+  readonly edge: DeliveryPlanEdge;
+  readonly sourceLane: EffectiveLane;
+  readonly targetLane: EffectiveLane;
+}
+
+/**
+ * Lanes CONTRACT the context graph: an edge between contexts on two different
+ * lanes is a lane-level dependency. A cycle among those cannot execute —
+ * consuming a lane through a join freezes its membership, while the cycle
+ * promises a later context will return to it.
+ *
+ * The contraction spans EVERY context, not only the placed ones. A cycle can
+ * run through a context that authored no placement (A on lane X → B solo → C on
+ * lane X contracts to X → B → X), and the graph tier refuses exactly that once
+ * the plan is materialized, so a lint that skipped B would pass a plan that
+ * cannot launch.
+ *
+ * The graph tier's counterpart excludes the session lane from the contraction
+ * because it is never a group lane. No such exclusion is needed here: every
+ * session-lane placement is already refused above, whatever its mode, so no
+ * plan carrying one is proposable in the first place.
+ */
+function laneCycleFindings(document: DeliveryPlanDocument): LintFinding[] {
+  const laneByContextId = new Map(
+    document.contexts.map((context) => [
+      context.contextId,
+      effectiveLaneOf(context),
+    ]),
+  );
+  const witnessesBySourceLane = new Map<string, Map<string, LaneEdgeWitness>>();
+  for (const edge of document.edges) {
+    const sourceLane = laneByContextId.get(edge.fromContextId);
+    const targetLane = laneByContextId.get(edge.toContextId);
+    if (sourceLane === undefined || targetLane === undefined) continue;
+    if (sourceLane.key === targetLane.key) continue;
+    const witnesses =
+      witnessesBySourceLane.get(sourceLane.key) ??
+      new Map<string, LaneEdgeWitness>();
+    witnesses.set(targetLane.key, { edge, sourceLane, targetLane });
+    witnessesBySourceLane.set(sourceLane.key, witnesses);
+  }
+
+  const state = new Map<string, "visiting" | "visited">();
+  const stack: EffectiveLane[] = [];
+
+  const visit = (
+    lane: EffectiveLane,
+  ): { lanes: EffectiveLane[]; witness: LaneEdgeWitness } | null => {
+    state.set(lane.key, "visiting");
+    stack.push(lane);
+    const witnesses = [
+      ...(witnessesBySourceLane.get(lane.key) ??
+        new Map<string, LaneEdgeWitness>()),
+    ].sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
+    for (const [targetKey, witness] of witnesses) {
+      if (state.get(targetKey) === "visited") continue;
+      if (state.get(targetKey) === "visiting") {
+        const start = stack.findIndex((entry) => entry.key === targetKey);
+        return {
+          lanes: [...stack.slice(start), witness.targetLane],
+          witness,
+        };
+      }
+      const nested = visit(witness.targetLane);
+      if (nested !== null) return nested;
+    }
+    stack.pop();
+    state.set(lane.key, "visited");
+    return null;
+  };
+
+  const lanesByKey = new Map<string, EffectiveLane>();
+  for (const witnesses of witnessesBySourceLane.values()) {
+    for (const witness of witnesses.values()) {
+      lanesByKey.set(witness.sourceLane.key, witness.sourceLane);
+      lanesByKey.set(witness.targetLane.key, witness.targetLane);
+    }
+  }
+  const roots = [...lanesByKey.values()].sort((left, right) =>
+    left.key.localeCompare(right.key),
+  );
+  for (const lane of roots) {
+    if (state.has(lane.key)) continue;
+    const cycle = visit(lane);
+    if (cycle === null) continue;
+    const { edge, sourceLane, targetLane } = cycle.witness;
+    return [
+      planFinding(
+        "plan/placement-lane-cycle",
+        // The remedy asks the author to move the RETURNING work, so the finding
+        // is located on the context that re-enters the already-handed-off lane.
+        edge.toContextId,
+        `Authored placements contract the context edges into a lane cycle (${cycle.lanes
+          .map((entry) => entry.label)
+          .join(
+            " -> ",
+          )}): ${edge.toContextId} returns lane "${targetLane.label}" after ${edge.fromContextId} handed it to lane "${sourceLane.label}". A lane consumed by a join cannot accept a later member, so place the returning work on a new lane.`,
+      ),
+    ];
+  }
+  return [];
+}
+
 function wiringFindings(input: DeliveryPlanLintInput): LintFinding[] {
   const findings: LintFinding[] = [];
   const contextIds = new Set(
@@ -718,7 +1163,7 @@ function wiringFindings(input: DeliveryPlanLintInput): LintFinding[] {
     input.document.wiring.map((entry) => entry.capabilityId),
   )) {
     findings.push(
-      blocking(
+      planFinding(
         "plan/wiring-duplicate-capability",
         capabilityId,
         `Capability ${capabilityId} is declared more than once, so it resolves to no single owner. Keep the one entry that names the context responsible for wiring it.`,
@@ -729,7 +1174,7 @@ function wiringFindings(input: DeliveryPlanLintInput): LintFinding[] {
   for (const entry of input.document.wiring) {
     if (contextIds.has(entry.owner.contextId)) continue;
     findings.push(
-      blocking(
+      planFinding(
         "plan/wiring-owner-unresolved",
         entry.capabilityId,
         `Capability ${entry.capabilityId} names owner context ${entry.owner.contextId}, which this plan does not carry — so nothing in this delivery wires it into production. Point it at a context in the plan, or add the context that will call it.`,
@@ -738,6 +1183,88 @@ function wiringFindings(input: DeliveryPlanLintInput): LintFinding[] {
   }
 
   return findings;
+}
+
+/**
+ * The plan's own spec, ranked in a spelling no lane agent can act on. Two
+ * shapes fail: `external-readonly`, whose charter rule forbids reading the
+ * source without explicit human permission, and a `cctl spec` invocation,
+ * which is not a locator at all — nothing can open it as a path.
+ *
+ * Both were shipped by the audited spec-import run, whose validators reported
+ * the #1-ranked source of truth as "was not queried" in all nine contexts. The
+ * engine materializes the pinned revision into every lane worktree, so the
+ * readable entry exists; the finding carries it verbatim.
+ */
+function governanceFindings(input: DeliveryPlanLintInput): LintFinding[] {
+  const findings: LintFinding[] = [];
+  const replacement = pinnedSpecSourceOfTruth({
+    specSlug: input.specSlug,
+    pinnedRevisionId: input.pinnedRevisionId,
+  });
+
+  for (const entry of input.document.governance.sourcesOfTruth) {
+    if (!isOwnSpecEntry(entry, input.specSlug)) continue;
+    const defect = unreadableSpecSourceDefect(entry);
+    if (defect === null) continue;
+    findings.push(
+      planFinding(
+        "plan/spec-source-unreadable",
+        entry.id,
+        `Source of truth ${entry.id} ranks this plan's own spec ${input.specSlug} ${defect}, so no lane agent can read the contract it is judged against. The pinned revision is materialized into every lane worktree — rank 1, id ${replacement.id}, type ${replacement.type}, locator ${replacement.locator}, accessPolicy ${replacement.accessPolicy} — so point this entry at that file, or drop it in favour of the entry \`cctl spec plan open\` already seeded.`,
+      ),
+    );
+  }
+
+  return findings;
+}
+
+const SPEC_COMMAND_LOCATOR = /\bcctl\s+spec\b/;
+const URL_LOCATOR = /^[a-z][a-z0-9+.-]*:\/\//i;
+
+/**
+ * Whether an entry IS the plan's own spec — the one source the engine
+ * materializes into every lane, so the one source whose unreadable spelling is
+ * a defect rather than a fact about the world.
+ *
+ * A slug token alone is not identity. Slugs are kebab-case and the token
+ * boundary is any non-alphanumeric, so the hyphen in `<slug>-audit` satisfies
+ * it: name matching alone would refuse a genuinely external document whose
+ * title merely extends the slug, and the finding's remedy — re-point it at the
+ * materialized spec file — would be wrong for that document. So the name has to
+ * be corroborated: either the author typed the entry as a spec, or the locator
+ * is a `cctl spec` invocation, which names this server's spec store and nothing
+ * else. A locator carrying a URL scheme is excluded either way — it is by
+ * construction not the worktree file, so it is another repository's copy and
+ * `external-readonly` is its correct grade.
+ */
+function isOwnSpecEntry(
+  entry: DeliveryPlanSourceOfTruth,
+  specSlug: string,
+): boolean {
+  if (URL_LOCATOR.test(entry.locator)) return false;
+  if (entry.type !== "spec" && !SPEC_COMMAND_LOCATOR.test(entry.locator)) {
+    return false;
+  }
+  const token = new RegExp(
+    `(^|[^a-z0-9])${specSlug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`,
+    "i",
+  );
+  return [entry.locator, entry.id, entry.label].some((value) =>
+    token.test(value),
+  );
+}
+
+function unreadableSpecSourceDefect(
+  entry: DeliveryPlanSourceOfTruth,
+): string | null {
+  if (SPEC_COMMAND_LOCATOR.test(entry.locator)) {
+    return "through a `cctl spec` invocation rather than a path";
+  }
+  if (entry.accessPolicy === "external-readonly") {
+    return "as external-readonly, which the charter gates behind explicit human permission";
+  }
+  return null;
 }
 
 function duplicates(values: readonly string[]): string[] {

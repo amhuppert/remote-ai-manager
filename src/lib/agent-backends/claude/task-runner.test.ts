@@ -35,6 +35,7 @@ vi.mock("@/lib/shared/child-env", () => ({
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeTaskRunner } from "./task-runner";
+import { CLAUDE_DEFAULT_STALL_TIMEOUT_MS } from "./shared";
 import type { AgentTaskRequest } from "../task";
 import { renderStructuredOutputInstruction } from "../structured-output-prompt";
 
@@ -403,6 +404,43 @@ describe("ClaudeTaskRunner", () => {
     expect(capturedController?.signal.aborted).toBe(true);
     expect(result.timedOut).toBe(true);
     expect(result.error).toBe("Task timed out");
+
+    vi.useRealTimers();
+  });
+
+  it("bounds a task run with dead air even when the caller sets no stall bound", async () => {
+    vi.useFakeTimers();
+
+    let capturedController: AbortController | undefined;
+
+    mockQuery.mockImplementation((opts: unknown) => {
+      const options = (
+        opts as { options: { abortController: AbortController } }
+      ).options;
+      capturedController = options.abortController;
+
+      return (async function* () {
+        await new Promise<void>((resolve) => {
+          options.abortController.signal.addEventListener("abort", () =>
+            resolve(),
+          );
+        });
+      })() as ReturnType<typeof query>;
+    });
+
+    // No safety net and no explicit bound: without the backend default this
+    // run has nothing to end it.
+    const runPromise = runner.run(makeRequest({ timeoutMs: 0 }));
+
+    await vi.advanceTimersByTimeAsync(CLAUDE_DEFAULT_STALL_TIMEOUT_MS);
+
+    expect(capturedController?.signal.aborted).toBe(true);
+
+    const result = await runPromise;
+    expect(result.timedOut).toBe(true);
+    expect(result.error).toBe(
+      `Task stalled: no backend activity for ${CLAUDE_DEFAULT_STALL_TIMEOUT_MS}ms`,
+    );
 
     vi.useRealTimers();
   });

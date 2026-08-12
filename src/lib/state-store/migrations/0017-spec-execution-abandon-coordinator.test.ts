@@ -23,6 +23,7 @@ import {
   publishSchemaCompatibilityBarrier,
   schemaCompatibilityBarrierPath,
 } from "../schema-compatibility";
+import { KNOWN_SCHEMA_VERSION } from "../state-db";
 import { specExecutionAbandonCoordinator } from "./0017-spec-execution-abandon-coordinator";
 
 type Db = InstanceType<typeof Database>;
@@ -433,9 +434,12 @@ describe("0017-spec-execution-abandon-coordinator", () => {
 
   it("refuses under the write lock when the ledger records a newer version, leaving the barrier published and the table untouched", async () => {
     const { db, dir } = legacyFileBackedDb();
+    // Relative to this build, not a literal: every later cutover raises
+    // KNOWN_SCHEMA_VERSION, and a pinned number would quietly stop describing
+    // a newer build the first time one lands.
     db.prepare(
-      "INSERT INTO schema_migrations (version, description) VALUES (7, 'future build')",
-    ).run();
+      "INSERT INTO schema_migrations (version, description) VALUES (?, 'future build')",
+    ).run(KNOWN_SCHEMA_VERSION + 1);
 
     await expect(runMigration(db, dir)).rejects.toThrow(
       SchemaVersionConflictError,
@@ -450,7 +454,7 @@ describe("0017-spec-execution-abandon-coordinator", () => {
 
   it("refuses when the config directory already carries a newer external barrier", async () => {
     const { db, dir } = legacyFileBackedDb();
-    await publishSchemaCompatibilityBarrier(dir, 7);
+    await publishSchemaCompatibilityBarrier(dir, KNOWN_SCHEMA_VERSION + 1);
 
     await expect(runMigration(db, dir)).rejects.toThrow(
       SchemaVersionConflictError,

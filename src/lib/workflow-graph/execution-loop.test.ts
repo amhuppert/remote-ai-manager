@@ -1747,6 +1747,265 @@ describe("execution loop", () => {
     });
   });
 
+  // The audited diagnostic string (execution 2560164c) is an SDK-side
+  // emission that matches no message pattern this repo owns, so these cases
+  // pin recovery to the CAUSE.
+  const SDK_ERROR_MESSAGE =
+    "SDK error: [ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use";
+
+  const sdkTurnError = () =>
+    new AgentTurnFailedError(SDK_ERROR_MESSAGE, {
+      contextId: "ctx-1",
+      engine: "claude",
+      cause: "sdk_error",
+      originalMessage: SDK_ERROR_MESSAGE,
+    });
+
+  it("recovers once when the implementer turn fails with an sdk_error cause", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition, {
+      activeContextIds: ["ctx-1"],
+      contextStates: {
+        "ctx-1": {
+          skipReason: null,
+          landingIntent: null,
+          pendingApproval: null,
+          pendingUserInputs: {},
+          contextId: "ctx-1",
+          status: "running",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 1,
+          consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          laneId: null,
+          joinId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
+        },
+      },
+      laneStates: {
+        "ctx-1": {
+          implementer: {
+            backend: "claude",
+            refKind: "conversation",
+            lane: "implementer",
+            contextId: "ctx-1",
+            workflowConversationId: "conv-1",
+            sessionRef: { backend: "claude", ref: "session-a" },
+            metrics: { rotateBeforeNextTurn: false },
+            limitEvaluation: "disabled",
+            lastUsedAt: "2026-03-27T12:00:00.000Z",
+          },
+        },
+      },
+    });
+
+    let iterationCallCount = 0;
+
+    const recoverRetryableIterationError = vi.fn(
+      async (_projectPath: string, _sessionName: string, errInput) => {
+        expect(errInput).toEqual({
+          contextId: "ctx-1",
+          errorMessage: SDK_ERROR_MESSAGE,
+        });
+        const next = structuredClone(harness.getCurrent());
+        next.contextStates["ctx-1"]!.status = "ready";
+        const lane = next.laneStates["ctx-1"]?.["implementer"];
+        if (lane?.backend === "claude") {
+          lane.metrics.rotateBeforeNextTurn = true;
+        }
+        harness.setCurrent(next);
+        return next;
+      },
+    );
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      recoverRetryableIterationError,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          iterationCallCount += 1;
+          if (iterationCallCount === 1) throw sdkTurnError();
+
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["ctx-1"]!.iterationCount = 2;
+          next.contextStates["ctx-1"]!.status = "completed";
+          next.taskStates["task-1"]!.status = "completed";
+          next.taskStates["task-1"]!.completedAt = "2026-03-27T12:03:00.000Z";
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+
+          return {
+            conversationId: "conv-2",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(iterationCallCount).toBe(2);
+    expect(recoverRetryableIterationError).toHaveBeenCalledOnce();
+    expect(harness.recordPendingHaltReasonSpy).not.toHaveBeenCalled();
+    expect(
+      harness.getCurrent().laneStates["ctx-1"]?.["implementer"],
+    ).toMatchObject({ metrics: { rotateBeforeNextTurn: true } });
+    expect(result.status).toBe("completed");
+  });
+
+  it("halts with the sdk_error cause when a second sdk_error follows the recovery attempt", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition, {
+      activeContextIds: ["ctx-1"],
+      contextStates: {
+        "ctx-1": {
+          skipReason: null,
+          landingIntent: null,
+          pendingApproval: null,
+          pendingUserInputs: {},
+          contextId: "ctx-1",
+          status: "running",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 1,
+          consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          laneId: null,
+          joinId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
+        },
+      },
+    });
+
+    const recoverRetryableIterationError = vi.fn(async () => {
+      const next = structuredClone(harness.getCurrent());
+      next.contextStates["ctx-1"]!.status = "ready";
+      harness.setCurrent(next);
+      return next;
+    });
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      recoverRetryableIterationError,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          throw sdkTurnError();
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(recoverRetryableIterationError).toHaveBeenCalledOnce();
+    expect(result.status).toBe("halted");
+    expect(result.haltReason).toMatchObject({
+      type: "agent_turn_failed",
+      cause: "sdk_error",
+    });
+  });
+
+  it("bounds sdk_error recovery when every failure follows partial turn progress", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition, {
+      activeContextIds: ["ctx-1"],
+      contextStates: {
+        "ctx-1": {
+          skipReason: null,
+          landingIntent: null,
+          pendingApproval: null,
+          pendingUserInputs: {},
+          contextId: "ctx-1",
+          status: "running",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 1,
+          consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          laneId: null,
+          joinId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
+        },
+      },
+    });
+
+    let iterationCallCount = 0;
+
+    const recoverRetryableIterationError = vi.fn(async () => {
+      const next = structuredClone(harness.getCurrent());
+      next.contextStates["ctx-1"]!.status = "ready";
+      harness.setCurrent(next);
+      return next;
+    });
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      recoverRetryableIterationError,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          iterationCallCount += 1;
+          // Escape hatch so an unbounded retry loop fails as an assertion
+          // instead of a suite timeout: this message matches no recovery
+          // predicate, so the loop must halt on it.
+          if (iterationCallCount > 4) {
+            throw new Error("guard: sdk_error recovery was not bounded");
+          }
+          // The post-implementer sdk_error sites (advisory response, output
+          // capture) always run after a turn completed, so every strike
+          // carries partial progress.
+          throw new IterationFailureWithProgressError(sdkTurnError(), 1);
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(iterationCallCount).toBe(2);
+    expect(recoverRetryableIterationError).toHaveBeenCalledOnce();
+    expect(result.status).toBe("halted");
+    // A progress-wrapped failure keeps its existing halt shape: the wrapper is
+    // not an AgentTurnFailedError, so the halt falls back to the loop reason.
+    expect(result.haltReason).toMatchObject({
+      type: "execution_loop_failed",
+      cause: "sdk_error",
+    });
+  });
+
   it("retries once when the iteration fails before prompt delivery", async () => {
     const definition = createSingleContextDefinition(5);
     const initial = createRunningExecution(definition, {

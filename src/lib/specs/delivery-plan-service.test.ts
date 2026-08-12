@@ -23,6 +23,7 @@ import {
 import {
   deliveryPlanDocumentSchema,
   emptyDeliveryPlanDocument,
+  withPinnedSpecSource,
   type DeliveryPlanDocument,
 } from "./delivery-plan";
 import {
@@ -535,7 +536,13 @@ describe("delivery plan service — seed-from-last", () => {
     expect(read.refusal.instruction).toContain("never re-pinned");
   });
 
-  it("opens an empty document when the caller does not seed", async () => {
+  /**
+   * "Empty" means the author has said nothing yet — not that the plan has no
+   * sources. The pinned spec is ranked first because the engine materializes
+   * it into every lane; leaving an author to invent that locator is what
+   * produced a #1-ranked source no validator could read.
+   */
+  it("opens an unauthored document ranking the pinned spec first when the caller does not seed", async () => {
     const opened = await harness.service.open({
       spec: SPEC,
       seedFromLast: false,
@@ -544,7 +551,12 @@ describe("delivery plan service — seed-from-last", () => {
 
     expect(opened.ok).toBe(true);
     if (!opened.ok) return;
-    expect(opened.value.document).toEqual(emptyDeliveryPlanDocument());
+    expect(opened.value.document).toEqual(
+      withPinnedSpecSource(emptyDeliveryPlanDocument(), {
+        specSlug: SPEC.slug,
+        pinnedRevisionId: opened.value.attempt.pinnedRevisionId,
+      }),
+    );
   });
 
   it("blocks propose on the seeded pending_reaffirmation and names both resolutions", async () => {
@@ -963,6 +975,64 @@ describe("delivery plan service — propose materializes and pins", () => {
     if (!read.ok) throw new Error("read refused");
     expect(read.value.attempt.status).toBe("draft");
     expect(read.value.snapshots).toEqual([]);
+  });
+
+  /**
+   * The graph tier's accept-time validation is a BACKSTOP, not a second copy of
+   * the lint: the case below is one the plan lint has no rule for — an
+   * unresolvable `{{...}}` reference the graph tier refuses on every author
+   * path — so a plan that lint calls clean still cannot become a candidate that
+   * would be refused at launch.
+   */
+  it("forwards a graph-validation refusal from propose, writing no snapshot and no candidate", async () => {
+    const seeded = await openSeeded(harness);
+    const clean = selectedOnlyDocument(seeded.document);
+    const edited = await harness.service.edit({
+      spec: SPEC,
+      expectedDraftRevision: seeded.attempt.draftRevision,
+      document: deliveryPlanDocumentSchema.parse({
+        ...clean,
+        tasks: clean.tasks.map((task) => ({
+          ...task,
+          instructions: `${task.instructions} Follow {{feature}} to the end.`,
+        })),
+      }),
+      actor: AGENT,
+    });
+    if (!edited.ok) throw new Error(`edit refused: ${edited.refusal.code}`);
+    // Nothing the plan lint owns objects, so the refusal below can only have
+    // come from the compiled candidate.
+    expect(edited.value.health.blocking).toBe(0);
+
+    const proposed = await harness.service.propose({
+      spec: SPEC,
+      actor: AGENT,
+    });
+
+    expect(proposed.ok).toBe(false);
+    if (proposed.ok) return;
+    const stated = proposed.refusal.unmetConditions.join("\n");
+    expect(stated).toContain("invalid-placeholder-token");
+    expect(stated).toContain("tasks[0].instructions");
+    expect(proposed.refusal.details?.graphRules).toEqual([
+      "invalid-placeholder-token",
+    ]);
+    expect(candidateRows()).toEqual([]);
+    const read = await harness.service.read({ spec: SPEC });
+    if (!read.ok) throw new Error("read refused");
+    expect(read.value.attempt.status).toBe("draft");
+    expect(read.value.snapshots).toEqual([]);
+
+    // The draft preview compiles through the same call site, so a planner is
+    // shown the refusal when they ask what the plan would compile to, not only
+    // when they try to freeze it.
+    const previewed = await harness.service.preview({
+      spec: SPEC,
+      stage: "draft",
+    });
+    expect(previewed.ok).toBe(false);
+    if (previewed.ok) return;
+    expect(previewed.refusal).toEqual(proposed.refusal);
   });
 
   it("refuses a validation command the project has not registered", async () => {

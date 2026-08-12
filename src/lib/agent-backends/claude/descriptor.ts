@@ -12,6 +12,7 @@ import type { AgentTaskRunner } from "../task";
 import type { AgentFailureClassifier } from "../errors";
 import type { McpBackendCapabilities } from "@/lib/mcp/backend-capabilities";
 import { getDefaultClaudeModel, getEffortLevelsForModel } from "../schemas";
+import { CLAUDE_DEFAULT_STALL_TIMEOUT_MS } from "./shared";
 
 /**
  * Backend catalog metadata for Claude — the single source for model labels,
@@ -51,9 +52,7 @@ export const claudeBackendMetadata: AgentBackendMetadata = {
   ],
   defaultModelId: getDefaultClaudeModel(),
   defaultTimeoutMs: null,
-  // Disabled: Claude turns legitimately go quiet during background-task
-  // waits, and the configured safety-net timeout already bounds a hung turn.
-  defaultStallTimeoutMs: null,
+  defaultStallTimeoutMs: CLAUDE_DEFAULT_STALL_TIMEOUT_MS,
 };
 
 export const claudeConversationCapabilities: BackendConversationCapabilities = {

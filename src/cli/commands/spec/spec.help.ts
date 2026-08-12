@@ -1126,7 +1126,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "plan", "open"],
     summary: "open a delivery plan attempt against the approved revision",
     description:
-      "Open the attempt this delivery is planned in. It pins the spec's current approved revision, so a later amendment never forks or blocks it. With --seed-from last the attempt starts from the last delivery instead of an empty document: EVERY criterion of the pinned revision gets exactly one disposition, and the prior plan's contexts, tasks, edges, and wiring come forward wherever the work is still selected.",
+      "Open the attempt this delivery is planned in. It pins the spec's current approved revision, so a later amendment never forks or blocks it. Either way the plan opens with its own spec already ranked first in governance.sourcesOfTruth, at `.cc/graph-workflow-docs/spec/<slug>.md` with worktree-relative access, because launch materializes the pinned revision into every lane worktree. With --seed-from last the attempt starts from the last delivery instead of an empty document: EVERY criterion of the pinned revision gets exactly one disposition, and the prior plan's contexts, tasks, edges, and wiring come forward wherever the work is still selected.",
     usage: ["cctl spec plan open <slug> [--seed-from last]"],
     flags: [
       {
@@ -1150,7 +1150,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
     ],
     domainContext:
-      "Seeding is total-disposition-preserving and derived from the delivery delta: a criterion delivered and still fresh auto-proposes delivered_elsewhere against the execution that delivered it; a soft-stale one seeds as pending_reaffirmation, which a draft may carry and a proposal may not; undelivered, hard-stale, and previously deferred criteria become selected; a waived one stays waived. Discovered work the last execution captured lands as tasks in the new plan. When the spec has no earlier plan attempt but HAS delivered through the legacy compiled path, the seed imports that plan: each laneGroup becomes one context, each ungrouped task becomes a singleton context, task dependencies become context edges, and covered criteria become context ownership. A criterion the legacy plan reached from more than one of those contexts is never duplicated — it is listed on the receipt for a human to split, and stays unowned (and therefore blocking) until one is chosen. A second attempt is refused while one is still live.",
+      "Seeding is total-disposition-preserving and derived from the delivery delta: a criterion delivered and still fresh auto-proposes delivered_elsewhere against the execution that delivered it; a soft-stale one seeds as pending_reaffirmation, which a draft may carry and a proposal may not; undelivered, hard-stale, and previously deferred criteria become selected; a waived one stays waived. Discovered work the last execution captured lands as tasks in the new plan. When the spec has no earlier plan attempt but HAS delivered through the legacy compiled path, the seed imports that plan: each laneGroup becomes one context, each ungrouped task becomes a singleton context, task dependencies become context edges, and covered criteria become context ownership. A criterion the legacy plan reached from more than one of those contexts is never duplicated — it is listed on the receipt for a human to split, and stays unowned (and therefore blocking) until one is chosen. A second attempt is refused while one is still live. Governance stays authored: the seeded pinned-spec source is the only entry open writes, every source a prior attempt carried comes forward beneath it, and a carried entry that still ranks this spec external-readonly or through a `cctl spec` invocation blocks propose as plan/spec-source-unreadable until you retire it.",
     related: [
       {
         command: "spec plan edit",
@@ -1189,7 +1189,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
     ],
     domainContext:
-      "Read the current document with `cctl spec plan get <slug> --json`, edit the `plan.document` it returns, and send `{ expectedDraftRevision, document }`. Run `cctl spec schema plan-edit` for the exact shape. Every edit bumps the draft revision, so a second write must re-read first.",
+      "Read the current document with `cctl spec plan get <slug> --json`, edit the `plan.document` it returns, and send `{ expectedDraftRevision, document }`. Run `cctl spec schema plan-edit` for the exact shape. Every edit bumps the draft revision, so a second write must re-read first. A context may carry an optional `placement` — the lane it runs on and, under `owned`, the paths it may write there — which materializes into the compiled execution context exactly as authored; omit it and that context takes its own solo lane with full access.",
     related: [
       {
         command: "spec plan get",

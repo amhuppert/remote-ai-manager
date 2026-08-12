@@ -12,11 +12,13 @@ import {
   backendLabel,
   backendSupportsFastMode,
   backendToneToken,
+  getDefaultStallTimeoutForBackend,
   isModelCompatibleWithBackend,
   isSelectableModelForBackend,
   modelOptionsForCatalogEntry,
 } from "./catalog";
 import { getBackendDescriptor } from "./registry";
+import { CLAUDE_DEFAULT_STALL_TIMEOUT_MS } from "./claude/shared";
 
 describe("client-safe catalog ⇄ registered descriptors", () => {
   it.each(agentBackendSchema.options)(
@@ -61,6 +63,23 @@ describe("backendSupportsFastMode", () => {
   it("is enabled only for Codex", () => {
     expect(backendSupportsFastMode("codex")).toBe(true);
     expect(backendSupportsFastMode("claude")).toBe(false);
+  });
+});
+
+describe("getDefaultStallTimeoutForBackend", () => {
+  it.each(agentBackendSchema.options)(
+    "arms an inactivity bound for %s turns",
+    (backend) => {
+      const bound = getDefaultStallTimeoutForBackend(backend);
+      expect(typeof bound).toBe("number");
+      expect(bound).toBeGreaterThan(0);
+    },
+  );
+
+  it("serves the Claude bound from the single Claude literal", () => {
+    expect(getDefaultStallTimeoutForBackend("claude")).toBe(
+      CLAUDE_DEFAULT_STALL_TIMEOUT_MS,
+    );
   });
 });
 

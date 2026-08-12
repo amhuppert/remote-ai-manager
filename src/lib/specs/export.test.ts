@@ -24,7 +24,9 @@ import { createWriteQueue } from "@/lib/state-store/write-queue";
 import type { Db } from "@/lib/state-store/schemas";
 
 import {
+  buildPinnedSpecDocument,
   loadSpecExportState,
+  pinnedSpecDocumentPath,
   renderCanonicalBundle,
   verifyExportState,
 } from "./export";
@@ -311,9 +313,7 @@ describe("canonical spec export and verification", () => {
     expect(archived.markdownFiles[0]?.content).not.toContain("Execution lane");
     expect(
       isDeepStrictEqual(
-        renderCanonicalBundle(
-          await loadSpecExportState(exportDeps, specId),
-        ),
+        renderCanonicalBundle(await loadSpecExportState(exportDeps, specId)),
         archived,
       ),
     ).toBe(true);
@@ -389,5 +389,85 @@ describe("canonical spec export and verification", () => {
         mismatchedElementIds: ["section-1"],
       },
     ]);
+  });
+});
+
+/**
+ * The pinned-revision document the launch path seeds into every lane worktree.
+ * Its contract is that it renders the PINNED snapshot through the one canonical
+ * revision renderer — a mid-run amendment moves live spec state, never this.
+ */
+describe("pinned spec document", () => {
+  it("renders the pinned revision at the reserved worktree-relative path", async () => {
+    const spec = (await specs.findById(specId))!;
+    const pinned = (await specs.getRevisionSnapshot(revisionId))!;
+
+    const document = buildPinnedSpecDocument(spec, pinned);
+
+    expect(document.relativePath).toBe(
+      ".cc/graph-workflow-docs/spec/portable-spec.md",
+    );
+    expect(document.relativePath).toBe(pinnedSpecDocumentPath("portable-spec"));
+    expect(document.contents).toContain("The export is deterministic.");
+    expect(document.contents).toContain("<!-- element:requirement-1 -->");
+    expect(document.contents).toContain("- Revision: 1");
+    expect(document.description).toContain("portable-spec");
+    expect(document.description).toContain("revision 1");
+    expect(document.readWhen.length).toBeGreaterThan(0);
+
+    // Deterministic: the seed writes it once, every lane materializes the same
+    // bytes, and `spec verify` compares them.
+    expect(buildPinnedSpecDocument(spec, pinned)).toEqual(document);
+  });
+
+  it("uses the same renderer as the canonical bundle's revision markdown", async () => {
+    const spec = (await specs.findById(specId))!;
+    const pinned = (await specs.getRevisionSnapshot(revisionId))!;
+    const bundle = renderCanonicalBundle(
+      await loadSpecExportState(exportDeps, specId),
+    );
+
+    expect(buildPinnedSpecDocument(spec, pinned).contents).toBe(
+      bundle.markdownFiles[0]!.content,
+    );
+  });
+
+  it("stays on the pinned revision when the spec is amended mid-run", async () => {
+    const spec = (await specs.findById(specId))!;
+    const pinned = (await specs.getRevisionSnapshot(revisionId))!;
+    const before = buildPinnedSpecDocument(spec, pinned);
+
+    // Mid-run amendment: a new draft revision changes the requirement text.
+    await specs.createDraftFromBase({
+      id: "revision-export-2",
+      specId,
+      baseRevisionId: revisionId,
+      authoringStage: "plan",
+      createdAt: "2026-07-19T10:00:00.000Z",
+    });
+    const draftVersion = (await specs.findElementVersion(
+      "revision-export-2",
+      "requirement-1",
+    ))!;
+    await specs.updateDraftElement({
+      revisionId: "revision-export-2",
+      elementId: "requirement-1",
+      expectedElementVersion: draftVersion.elementVersion,
+      payload: {
+        kind: "requirement",
+        statement: "The export is amended.",
+        priority: "must",
+        risk: "high",
+      },
+      updatedAt: "2026-07-19T10:01:00.000Z",
+    });
+
+    const after = buildPinnedSpecDocument(
+      (await specs.findById(specId))!,
+      (await specs.getRevisionSnapshot(revisionId))!,
+    );
+
+    expect(after).toEqual(before);
+    expect(after.contents).not.toContain("The export is amended.");
   });
 });

@@ -43,7 +43,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t1"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t1"
         },
         {
           "dimension": "criterion-coverage",
@@ -65,7 +65,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t10"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t10"
         },
         {
           "dimension": "criterion-coverage",
@@ -87,7 +87,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t11"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t11"
         },
         {
           "dimension": "criterion-coverage",
@@ -109,7 +109,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t12"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t12"
         },
         {
           "dimension": "criterion-coverage",
@@ -131,7 +131,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t13"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t13"
         },
         {
           "dimension": "criterion-coverage",
@@ -153,7 +153,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t14"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t14"
         },
         {
           "dimension": "criterion-coverage",
@@ -175,7 +175,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t15"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t15"
         },
         {
           "dimension": "criterion-coverage",
@@ -197,7 +197,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t16"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t16"
         },
         {
           "dimension": "criterion-coverage",
@@ -219,7 +219,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t17"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t17"
         },
         {
           "dimension": "criterion-coverage",
@@ -241,7 +241,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t18"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t18"
         },
         {
           "dimension": "criterion-coverage",
@@ -263,7 +263,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t19"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t19"
         },
         {
           "dimension": "criterion-coverage",
@@ -285,7 +285,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t2"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t2"
         },
         {
           "dimension": "criterion-coverage",
@@ -307,7 +307,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t20"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t20"
         },
         {
           "dimension": "criterion-coverage",
@@ -329,7 +329,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t21"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t21"
         },
         {
           "dimension": "criterion-coverage",
@@ -351,7 +351,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t22"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t22"
         },
         {
           "dimension": "criterion-coverage",
@@ -373,7 +373,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t23"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t23"
         },
         {
           "dimension": "criterion-coverage",
@@ -395,7 +395,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t3"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t3"
         },
         {
           "dimension": "criterion-coverage",
@@ -417,7 +417,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t4"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t4"
         },
         {
           "dimension": "criterion-coverage",
@@ -439,7 +439,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t5"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t5"
         },
         {
           "dimension": "criterion-coverage",
@@ -461,7 +461,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t6"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t6"
         },
         {
           "dimension": "criterion-coverage",
@@ -483,7 +483,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t7"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t7"
         },
         {
           "dimension": "criterion-coverage",
@@ -505,7 +505,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t8"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t8"
         },
         {
           "dimension": "criterion-coverage",
@@ -527,7 +527,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
-          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t9"
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f#t9"
         },
         {
           "dimension": "criterion-coverage",
@@ -750,117 +750,117 @@
         {
           "node": "context task-output-lookup",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t1\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t1\\\",\\\"criterionElementIds\\\":[\\\"crit-live-closeout\\\",\\\"crit-decision-replay\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t17-to-t1\\\",\\\"fromContextId\\\":\\\"t17\\\"},{\\\"edgeId\\\":\\\"t19-to-t1\\\",\\\"fromContextId\\\":\\\"t19\\\"},{\\\"edgeId\\\":\\\"t20-to-t1\\\",\\\"fromContextId\\\":\\\"t20\\\"},{\\\"edgeId\\\":\\\"t21-to-t1\\\",\\\"fromContextId\\\":\\\"t21\\\"},{\\\"edgeId\\\":\\\"t22-to-t1\\\",\\\"fromContextId\\\":\\\"t22\\\"},{\\\"edgeId\\\":\\\"t23-to-t1\\\",\\\"fromContextId\\\":\\\"t23\\\"}],\\\"taskIds\\\":[\\\"t1\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t1\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t1\\\",\\\"criterionElementIds\\\":[\\\"crit-live-closeout\\\",\\\"crit-decision-replay\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t17-to-t1\\\",\\\"fromContextId\\\":\\\"t17\\\"},{\\\"edgeId\\\":\\\"t19-to-t1\\\",\\\"fromContextId\\\":\\\"t19\\\"},{\\\"edgeId\\\":\\\"t20-to-t1\\\",\\\"fromContextId\\\":\\\"t20\\\"},{\\\"edgeId\\\":\\\"t21-to-t1\\\",\\\"fromContextId\\\":\\\"t21\\\"},{\\\"edgeId\\\":\\\"t22-to-t1\\\",\\\"fromContextId\\\":\\\"t22\\\"},{\\\"edgeId\\\":\\\"t23-to-t1\\\",\\\"fromContextId\\\":\\\"t23\\\"}],\\\"taskIds\\\":[\\\"t1\\\"]}\"}"
         },
         {
           "node": "context task-expansion-idempotency",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t10\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t10\\\",\\\"criterionElementIds\\\":[\\\"crit-expand-idempotency\\\",\\\"crit-expand-multi-rejoin\\\",\\\"crit-caps-enforced\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t8-to-t10\\\",\\\"fromContextId\\\":\\\"t8\\\"},{\\\"edgeId\\\":\\\"t9-to-t10\\\",\\\"fromContextId\\\":\\\"t9\\\"}],\\\"taskIds\\\":[\\\"t10\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t10\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t10\\\",\\\"criterionElementIds\\\":[\\\"crit-expand-idempotency\\\",\\\"crit-expand-multi-rejoin\\\",\\\"crit-caps-enforced\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t8-to-t10\\\",\\\"fromContextId\\\":\\\"t8\\\"},{\\\"edgeId\\\":\\\"t9-to-t10\\\",\\\"fromContextId\\\":\\\"t9\\\"}],\\\"taskIds\\\":[\\\"t10\\\"]}\"}"
         },
         {
           "node": "context task-loop-schemas",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t11\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t11\\\",\\\"criterionElementIds\\\":[\\\"crit-loop-terminal-contract\\\",\\\"crit-loop-validation-refusals\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t2-to-t11\\\",\\\"fromContextId\\\":\\\"t2\\\"}],\\\"taskIds\\\":[\\\"t11\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t11\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t11\\\",\\\"criterionElementIds\\\":[\\\"crit-loop-terminal-contract\\\",\\\"crit-loop-validation-refusals\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t2-to-t11\\\",\\\"fromContextId\\\":\\\"t2\\\"}],\\\"taskIds\\\":[\\\"t11\\\"]}\"}"
         },
         {
           "node": "context task-settlement-core",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t12\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":4,\\\"omitted\\\":0,\\\"total\\\":4}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t12\\\",\\\"criterionElementIds\\\":[\\\"crit-loop-worker-judge\\\",\\\"crit-loop-pass-immutability\\\",\\\"crit-loop-final-pass-true\\\",\\\"crit-loop-runtime-terminals\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t11-to-t12\\\",\\\"fromContextId\\\":\\\"t11\\\"},{\\\"edgeId\\\":\\\"t5-to-t12\\\",\\\"fromContextId\\\":\\\"t5\\\"},{\\\"edgeId\\\":\\\"t6-to-t12\\\",\\\"fromContextId\\\":\\\"t6\\\"}],\\\"taskIds\\\":[\\\"t12\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t12\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":4,\\\"omitted\\\":0,\\\"total\\\":4}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t12\\\",\\\"criterionElementIds\\\":[\\\"crit-loop-worker-judge\\\",\\\"crit-loop-pass-immutability\\\",\\\"crit-loop-final-pass-true\\\",\\\"crit-loop-runtime-terminals\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t11-to-t12\\\",\\\"fromContextId\\\":\\\"t11\\\"},{\\\"edgeId\\\":\\\"t5-to-t12\\\",\\\"fromContextId\\\":\\\"t5\\\"},{\\\"edgeId\\\":\\\"t6-to-t12\\\",\\\"fromContextId\\\":\\\"t6\\\"}],\\\"taskIds\\\":[\\\"t12\\\"]}\"}"
         },
         {
           "node": "context task-loop-crash-safety",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t13\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t13\\\",\\\"criterionElementIds\\\":[\\\"crit-loop-decision-atomic\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t12-to-t13\\\",\\\"fromContextId\\\":\\\"t12\\\"}],\\\"taskIds\\\":[\\\"t13\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t13\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t13\\\",\\\"criterionElementIds\\\":[\\\"crit-loop-decision-atomic\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t12-to-t13\\\",\\\"fromContextId\\\":\\\"t12\\\"}],\\\"taskIds\\\":[\\\"t13\\\"]}\"}"
         },
         {
           "node": "context task-loop-budgets",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t14\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t14\\\",\\\"criterionElementIds\\\":[\\\"crit-loop-exhaustion-halt\\\",\\\"crit-loop-budgets\\\",\\\"crit-loop-backstop-gates\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t13-to-t14\\\",\\\"fromContextId\\\":\\\"t13\\\"}],\\\"taskIds\\\":[\\\"t14\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t14\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t14\\\",\\\"criterionElementIds\\\":[\\\"crit-loop-exhaustion-halt\\\",\\\"crit-loop-budgets\\\",\\\"crit-loop-backstop-gates\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t13-to-t14\\\",\\\"fromContextId\\\":\\\"t13\\\"}],\\\"taskIds\\\":[\\\"t14\\\"]}\"}"
         },
         {
           "node": "context task-loop-repair",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t15\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t15\\\",\\\"criterionElementIds\\\":[\\\"crit-loop-freeze\\\",\\\"crit-repair-cap-ops\\\",\\\"crit-repair-predicate-audit\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t14-to-t15\\\",\\\"fromContextId\\\":\\\"t14\\\"}],\\\"taskIds\\\":[\\\"t15\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t15\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t15\\\",\\\"criterionElementIds\\\":[\\\"crit-loop-freeze\\\",\\\"crit-repair-cap-ops\\\",\\\"crit-repair-predicate-audit\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t14-to-t15\\\",\\\"fromContextId\\\":\\\"t14\\\"}],\\\"taskIds\\\":[\\\"t15\\\"]}\"}"
         },
         {
           "node": "context task-pass-ledger",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t16\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t16\\\",\\\"criterionElementIds\\\":[\\\"crit-ledger-injection\\\",\\\"crit-ledger-surfaces\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t15-to-t16\\\",\\\"fromContextId\\\":\\\"t15\\\"}],\\\"taskIds\\\":[\\\"t16\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t16\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t16\\\",\\\"criterionElementIds\\\":[\\\"crit-ledger-injection\\\",\\\"crit-ledger-surfaces\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t15-to-t16\\\",\\\"fromContextId\\\":\\\"t15\\\"}],\\\"taskIds\\\":[\\\"t16\\\"]}\"}"
         },
         {
           "node": "context task-persistence-sweep",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t17\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t17\\\",\\\"criterionElementIds\\\":[\\\"crit-roundtrip-contracts\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t10-to-t17\\\",\\\"fromContextId\\\":\\\"t10\\\"},{\\\"edgeId\\\":\\\"t12-to-t17\\\",\\\"fromContextId\\\":\\\"t12\\\"},{\\\"edgeId\\\":\\\"t5-to-t17\\\",\\\"fromContextId\\\":\\\"t5\\\"}],\\\"taskIds\\\":[\\\"t17\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t17\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t17\\\",\\\"criterionElementIds\\\":[\\\"crit-roundtrip-contracts\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t10-to-t17\\\",\\\"fromContextId\\\":\\\"t10\\\"},{\\\"edgeId\\\":\\\"t12-to-t17\\\",\\\"fromContextId\\\":\\\"t12\\\"},{\\\"edgeId\\\":\\\"t5-to-t17\\\",\\\"fromContextId\\\":\\\"t5\\\"}],\\\"taskIds\\\":[\\\"t17\\\"]}\"}"
         },
         {
           "node": "context task-compat-harness",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t18\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t18\\\",\\\"criterionElementIds\\\":[\\\"crit-compat-floor\\\"],\\\"incomingEdges\\\":[],\\\"taskIds\\\":[\\\"t18\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t18\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t18\\\",\\\"criterionElementIds\\\":[\\\"crit-compat-floor\\\"],\\\"incomingEdges\\\":[],\\\"taskIds\\\":[\\\"t18\\\"]}\"}"
         },
         {
           "node": "context task-proof-classify",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t19\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t19\\\",\\\"criterionElementIds\\\":[\\\"crit-proof-classify\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t6-to-t19\\\",\\\"fromContextId\\\":\\\"t6\\\"}],\\\"taskIds\\\":[\\\"t19\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t19\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t19\\\",\\\"criterionElementIds\\\":[\\\"crit-proof-classify\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t6-to-t19\\\",\\\"fromContextId\\\":\\\"t6\\\"}],\\\"taskIds\\\":[\\\"t19\\\"]}\"}"
         },
         {
           "node": "context task-guard-schema",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t2\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t2\\\",\\\"criterionElementIds\\\":[\\\"crit-guard-authoring-refusal\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t18-to-t2\\\",\\\"fromContextId\\\":\\\"t18\\\"}],\\\"taskIds\\\":[\\\"t2\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t2\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t2\\\",\\\"criterionElementIds\\\":[\\\"crit-guard-authoring-refusal\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t18-to-t2\\\",\\\"fromContextId\\\":\\\"t18\\\"}],\\\"taskIds\\\":[\\\"t2\\\"]}\"}"
         },
         {
           "node": "context task-proof-generate-filter",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t20\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t20\\\",\\\"criterionElementIds\\\":[\\\"crit-proof-generate-filter\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t10-to-t20\\\",\\\"fromContextId\\\":\\\"t10\\\"}],\\\"taskIds\\\":[\\\"t20\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t20\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t20\\\",\\\"criterionElementIds\\\":[\\\"crit-proof-generate-filter\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t10-to-t20\\\",\\\"fromContextId\\\":\\\"t10\\\"}],\\\"taskIds\\\":[\\\"t20\\\"]}\"}"
         },
         {
           "node": "context task-proof-loop",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t21\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t21\\\",\\\"criterionElementIds\\\":[\\\"crit-proof-loop-until-done\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t16-to-t21\\\",\\\"fromContextId\\\":\\\"t16\\\"}],\\\"taskIds\\\":[\\\"t21\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t21\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t21\\\",\\\"criterionElementIds\\\":[\\\"crit-proof-loop-until-done\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t16-to-t21\\\",\\\"fromContextId\\\":\\\"t16\\\"}],\\\"taskIds\\\":[\\\"t21\\\"]}\"}"
         },
         {
           "node": "context task-read-surfaces",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t22\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t22\\\",\\\"criterionElementIds\\\":[\\\"crit-ui-render-states\\\",\\\"crit-cli-outline\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t10-to-t22\\\",\\\"fromContextId\\\":\\\"t10\\\"},{\\\"edgeId\\\":\\\"t16-to-t22\\\",\\\"fromContextId\\\":\\\"t16\\\"}],\\\"taskIds\\\":[\\\"t22\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t22\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t22\\\",\\\"criterionElementIds\\\":[\\\"crit-ui-render-states\\\",\\\"crit-cli-outline\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t10-to-t22\\\",\\\"fromContextId\\\":\\\"t10\\\"},{\\\"edgeId\\\":\\\"t16-to-t22\\\",\\\"fromContextId\\\":\\\"t16\\\"}],\\\"taskIds\\\":[\\\"t22\\\"]}\"}"
         },
         {
           "node": "context task-docs",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t23\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t23\\\",\\\"criterionElementIds\\\":[\\\"crit-planner-docs\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t10-to-t23\\\",\\\"fromContextId\\\":\\\"t10\\\"},{\\\"edgeId\\\":\\\"t15-to-t23\\\",\\\"fromContextId\\\":\\\"t15\\\"},{\\\"edgeId\\\":\\\"t16-to-t23\\\",\\\"fromContextId\\\":\\\"t16\\\"}],\\\"taskIds\\\":[\\\"t23\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t23\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t23\\\",\\\"criterionElementIds\\\":[\\\"crit-planner-docs\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t10-to-t23\\\",\\\"fromContextId\\\":\\\"t10\\\"},{\\\"edgeId\\\":\\\"t15-to-t23\\\",\\\"fromContextId\\\":\\\"t15\\\"},{\\\"edgeId\\\":\\\"t16-to-t23\\\",\\\"fromContextId\\\":\\\"t16\\\"}],\\\"taskIds\\\":[\\\"t23\\\"]}\"}"
         },
         {
           "node": "context task-route-projection",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t3\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":4,\\\"omitted\\\":0,\\\"total\\\":4}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t3\\\",\\\"criterionElementIds\\\":[\\\"crit-guard-subset-evaluator\\\",\\\"crit-guard-else-runtime\\\",\\\"crit-route-mixed-inputs\\\",\\\"crit-route-recursive-skip\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t18-to-t3\\\",\\\"fromContextId\\\":\\\"t18\\\"},{\\\"edgeId\\\":\\\"t2-to-t3\\\",\\\"fromContextId\\\":\\\"t2\\\"}],\\\"taskIds\\\":[\\\"t3\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t3\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":4,\\\"omitted\\\":0,\\\"total\\\":4}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t3\\\",\\\"criterionElementIds\\\":[\\\"crit-guard-subset-evaluator\\\",\\\"crit-guard-else-runtime\\\",\\\"crit-route-mixed-inputs\\\",\\\"crit-route-recursive-skip\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t18-to-t3\\\",\\\"fromContextId\\\":\\\"t18\\\"},{\\\"edgeId\\\":\\\"t2-to-t3\\\",\\\"fromContextId\\\":\\\"t2\\\"}],\\\"taskIds\\\":[\\\"t3\\\"]}\"}"
         },
         {
           "node": "context task-skipped-status",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t4\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t4\\\",\\\"criterionElementIds\\\":[\\\"crit-skip-irreversible\\\",\\\"crit-skip-observability\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t3-to-t4\\\",\\\"fromContextId\\\":\\\"t3\\\"}],\\\"taskIds\\\":[\\\"t4\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t4\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t4\\\",\\\"criterionElementIds\\\":[\\\"crit-skip-irreversible\\\",\\\"crit-skip-observability\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t3-to-t4\\\",\\\"fromContextId\\\":\\\"t3\\\"}],\\\"taskIds\\\":[\\\"t4\\\"]}\"}"
         },
         {
           "node": "context task-scheduler-integration",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t5\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":5,\\\"omitted\\\":0,\\\"total\\\":5}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t5\\\",\\\"criterionElementIds\\\":[\\\"crit-route-completion-gated\\\",\\\"crit-route-impossible-output-halt\\\",\\\"crit-route-land-gate\\\",\\\"crit-cardinality-halt\\\",\\\"crit-skip-completion\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t2-to-t5\\\",\\\"fromContextId\\\":\\\"t2\\\"},{\\\"edgeId\\\":\\\"t3-to-t5\\\",\\\"fromContextId\\\":\\\"t3\\\"},{\\\"edgeId\\\":\\\"t4-to-t5\\\",\\\"fromContextId\\\":\\\"t4\\\"}],\\\"taskIds\\\":[\\\"t5\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t5\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":5,\\\"omitted\\\":0,\\\"total\\\":5}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t5\\\",\\\"criterionElementIds\\\":[\\\"crit-route-completion-gated\\\",\\\"crit-route-impossible-output-halt\\\",\\\"crit-route-land-gate\\\",\\\"crit-cardinality-halt\\\",\\\"crit-skip-completion\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t2-to-t5\\\",\\\"fromContextId\\\":\\\"t2\\\"},{\\\"edgeId\\\":\\\"t3-to-t5\\\",\\\"fromContextId\\\":\\\"t3\\\"},{\\\"edgeId\\\":\\\"t4-to-t5\\\",\\\"fromContextId\\\":\\\"t4\\\"}],\\\"taskIds\\\":[\\\"t5\\\"]}\"}"
         },
         {
           "node": "context task-lints-mustrun",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t6\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t6\\\",\\\"criterionElementIds\\\":[\\\"crit-enum-coverage-warning\\\",\\\"crit-compile-skip-refusal\\\",\\\"crit-mutation-skip-lock\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t5-to-t6\\\",\\\"fromContextId\\\":\\\"t5\\\"},{\\\"edgeId\\\":\\\"t7-to-t6\\\",\\\"fromContextId\\\":\\\"t7\\\"}],\\\"taskIds\\\":[\\\"t6\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t6\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t6\\\",\\\"criterionElementIds\\\":[\\\"crit-enum-coverage-warning\\\",\\\"crit-compile-skip-refusal\\\",\\\"crit-mutation-skip-lock\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t5-to-t6\\\",\\\"fromContextId\\\":\\\"t5\\\"},{\\\"edgeId\\\":\\\"t7-to-t6\\\",\\\"fromContextId\\\":\\\"t7\\\"}],\\\"taskIds\\\":[\\\"t6\\\"]}\"}"
         },
         {
           "node": "context task-staging-seam",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t7\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t7\\\",\\\"criterionElementIds\\\":[\\\"crit-staging-fence\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t18-to-t7\\\",\\\"fromContextId\\\":\\\"t18\\\"},{\\\"edgeId\\\":\\\"t2-to-t7\\\",\\\"fromContextId\\\":\\\"t2\\\"}],\\\"taskIds\\\":[\\\"t7\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t7\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t7\\\",\\\"criterionElementIds\\\":[\\\"crit-staging-fence\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t18-to-t7\\\",\\\"fromContextId\\\":\\\"t18\\\"},{\\\"edgeId\\\":\\\"t2-to-t7\\\",\\\"fromContextId\\\":\\\"t2\\\"}],\\\"taskIds\\\":[\\\"t7\\\"]}\"}"
         },
         {
           "node": "context task-expansion-service",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t8\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t8\\\",\\\"criterionElementIds\\\":[\\\"crit-expand-happy-path\\\",\\\"crit-expand-envelope-refusals\\\",\\\"crit-quiescence-preserved\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t6-to-t8\\\",\\\"fromContextId\\\":\\\"t6\\\"},{\\\"edgeId\\\":\\\"t7-to-t8\\\",\\\"fromContextId\\\":\\\"t7\\\"}],\\\"taskIds\\\":[\\\"t8\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t8\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t8\\\",\\\"criterionElementIds\\\":[\\\"crit-expand-happy-path\\\",\\\"crit-expand-envelope-refusals\\\",\\\"crit-quiescence-preserved\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t6-to-t8\\\",\\\"fromContextId\\\":\\\"t6\\\"},{\\\"edgeId\\\":\\\"t7-to-t8\\\",\\\"fromContextId\\\":\\\"t7\\\"}],\\\"taskIds\\\":[\\\"t8\\\"]}\"}"
         },
         {
           "node": "context task-child-config",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t9\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t9\\\",\\\"criterionElementIds\\\":[\\\"crit-child-authority-disabled\\\",\\\"crit-child-config-overrides\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t8-to-t9\\\",\\\"fromContextId\\\":\\\"t8\\\"}],\\\"taskIds\\\":[\\\"t9\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t9\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:1ada35937b0c914fd068d8e2255d2e34dae203d95c68ae2fc7330c4d435b157f\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t9\\\",\\\"criterionElementIds\\\":[\\\"crit-child-authority-disabled\\\",\\\"crit-child-config-overrides\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t8-to-t9\\\",\\\"fromContextId\\\":\\\"t8\\\"}],\\\"taskIds\\\":[\\\"t9\\\"]}\"}"
         }
       ],
       "postLaunchAmendments": [
@@ -1012,7 +1012,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t1"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t1"
         },
         {
           "dimension": "criterion-coverage",
@@ -1034,7 +1034,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t10"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t10"
         },
         {
           "dimension": "criterion-coverage",
@@ -1056,7 +1056,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t11"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t11"
         },
         {
           "dimension": "criterion-coverage",
@@ -1078,7 +1078,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t12"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t12"
         },
         {
           "dimension": "criterion-coverage",
@@ -1100,7 +1100,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t13"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t13"
         },
         {
           "dimension": "criterion-coverage",
@@ -1122,7 +1122,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t14"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t14"
         },
         {
           "dimension": "criterion-coverage",
@@ -1144,7 +1144,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t15"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t15"
         },
         {
           "dimension": "criterion-coverage",
@@ -1166,7 +1166,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t16"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t16"
         },
         {
           "dimension": "criterion-coverage",
@@ -1188,7 +1188,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t17"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t17"
         },
         {
           "dimension": "criterion-coverage",
@@ -1210,7 +1210,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t18"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t18"
         },
         {
           "dimension": "criterion-coverage",
@@ -1232,7 +1232,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t19"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t19"
         },
         {
           "dimension": "criterion-coverage",
@@ -1254,7 +1254,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t2"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t2"
         },
         {
           "dimension": "criterion-coverage",
@@ -1276,7 +1276,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t20"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t20"
         },
         {
           "dimension": "criterion-coverage",
@@ -1298,7 +1298,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t21"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t21"
         },
         {
           "dimension": "criterion-coverage",
@@ -1320,7 +1320,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t3"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t3"
         },
         {
           "dimension": "criterion-coverage",
@@ -1342,7 +1342,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t4"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t4"
         },
         {
           "dimension": "criterion-coverage",
@@ -1364,7 +1364,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t5"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t5"
         },
         {
           "dimension": "criterion-coverage",
@@ -1386,7 +1386,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t6"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t6"
         },
         {
           "dimension": "criterion-coverage",
@@ -1408,7 +1408,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t7"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t7"
         },
         {
           "dimension": "criterion-coverage",
@@ -1430,7 +1430,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t8"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t8"
         },
         {
           "dimension": "criterion-coverage",
@@ -1452,7 +1452,7 @@
           "finding": "The context origin URI names a different source identity.",
           "approvedDelta": "context-identity-scheme",
           "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
-          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t9"
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77#t9"
         },
         {
           "dimension": "criterion-coverage",
@@ -1665,107 +1665,107 @@
         {
           "node": "context workflow-validator-cohorts-task-assignment-schemas",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t1\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t1\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-whole-unit-cascade\\\",\\\"workflow-validator-cohorts-crit-whole-set-semantics\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t15-to-t1\\\",\\\"fromContextId\\\":\\\"t15\\\"}],\\\"taskIds\\\":[\\\"t1\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t1\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t1\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-whole-unit-cascade\\\",\\\"workflow-validator-cohorts-crit-whole-set-semantics\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t15-to-t1\\\",\\\"fromContextId\\\":\\\"t15\\\"}],\\\"taskIds\\\":[\\\"t1\\\"]}\"}"
         },
         {
           "node": "context workflow-validator-cohorts-task-live-edit-reset",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t10\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t10\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-live-edit-staging\\\",\\\"workflow-validator-cohorts-crit-per-assignment-reset\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t8-to-t10\\\",\\\"fromContextId\\\":\\\"t8\\\"}],\\\"taskIds\\\":[\\\"t10\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t10\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t10\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-live-edit-staging\\\",\\\"workflow-validator-cohorts-crit-per-assignment-reset\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t8-to-t10\\\",\\\"fromContextId\\\":\\\"t8\\\"}],\\\"taskIds\\\":[\\\"t10\\\"]}\"}"
         },
         {
           "node": "context workflow-validator-cohorts-task-ui-surfaces",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t11\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t11\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-builder-inspector\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t10-to-t11\\\",\\\"fromContextId\\\":\\\"t10\\\"}],\\\"taskIds\\\":[\\\"t11\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t11\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t11\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-builder-inspector\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t10-to-t11\\\",\\\"fromContextId\\\":\\\"t10\\\"}],\\\"taskIds\\\":[\\\"t11\\\"]}\"}"
         },
         {
           "node": "context workflow-validator-cohorts-task-delete-preview",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t12\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t12\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-delete-enumeration\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t2-to-t12\\\",\\\"fromContextId\\\":\\\"t2\\\"},{\\\"edgeId\\\":\\\"t9-to-t12\\\",\\\"fromContextId\\\":\\\"t9\\\"}],\\\"taskIds\\\":[\\\"t12\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t12\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t12\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-delete-enumeration\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t2-to-t12\\\",\\\"fromContextId\\\":\\\"t2\\\"},{\\\"edgeId\\\":\\\"t9-to-t12\\\",\\\"fromContextId\\\":\\\"t9\\\"}],\\\"taskIds\\\":[\\\"t12\\\"]}\"}"
         },
         {
           "node": "context workflow-validator-cohorts-task-cli-provenance-skill",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t13\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t13\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-validate-errors\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t2-to-t13\\\",\\\"fromContextId\\\":\\\"t2\\\"}],\\\"taskIds\\\":[\\\"t13\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t13\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t13\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-validate-errors\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t2-to-t13\\\",\\\"fromContextId\\\":\\\"t2\\\"}],\\\"taskIds\\\":[\\\"t13\\\"]}\"}"
         },
         {
           "node": "context workflow-validator-cohorts-task-adversarial-live-proofs",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t14\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t14\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-adversarial-profiles\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t17-to-t14\\\",\\\"fromContextId\\\":\\\"t17\\\"}],\\\"taskIds\\\":[\\\"t14\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t14\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t14\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-adversarial-profiles\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t17-to-t14\\\",\\\"fromContextId\\\":\\\"t17\\\"}],\\\"taskIds\\\":[\\\"t14\\\"]}\"}"
         },
         {
           "node": "context workflow-validator-cohorts-task-preflight-spec-a",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t15\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t15\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-spec-a-preflight\\\"],\\\"incomingEdges\\\":[],\\\"taskIds\\\":[\\\"t15\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t15\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t15\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-spec-a-preflight\\\"],\\\"incomingEdges\\\":[],\\\"taskIds\\\":[\\\"t15\\\"]}\"}"
         },
         {
           "node": "context workflow-validator-cohorts-task-cohort-conclusion",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t16\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t16\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-round-conclusion\\\",\\\"workflow-validator-cohorts-crit-single-iteration-charge\\\",\\\"workflow-validator-cohorts-crit-cohort-parallel-launch\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t5-to-t16\\\",\\\"fromContextId\\\":\\\"t5\\\"}],\\\"taskIds\\\":[\\\"t16\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t16\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t16\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-round-conclusion\\\",\\\"workflow-validator-cohorts-crit-single-iteration-charge\\\",\\\"workflow-validator-cohorts-crit-cohort-parallel-launch\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t5-to-t16\\\",\\\"fromContextId\\\":\\\"t5\\\"}],\\\"taskIds\\\":[\\\"t16\\\"]}\"}"
         },
         {
           "node": "context workflow-validator-cohorts-task-envelope-enforcement",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t17\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t17\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-mutation-detected\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t7-to-t17\\\",\\\"fromContextId\\\":\\\"t7\\\"}],\\\"taskIds\\\":[\\\"t17\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t17\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t17\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-mutation-detected\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t7-to-t17\\\",\\\"fromContextId\\\":\\\"t7\\\"}],\\\"taskIds\\\":[\\\"t17\\\"]}\"}"
         },
         {
           "node": "context workflow-validator-cohorts-task-ui-inspector",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t18\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t18\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-inspector-display\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t11-to-t18\\\",\\\"fromContextId\\\":\\\"t11\\\"}],\\\"taskIds\\\":[\\\"t18\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t18\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t18\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-inspector-display\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t11-to-t18\\\",\\\"fromContextId\\\":\\\"t11\\\"}],\\\"taskIds\\\":[\\\"t18\\\"]}\"}"
         },
         {
           "node": "context workflow-validator-cohorts-task-live-proofs",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t19\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t19\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-live-two-specialists\\\",\\\"workflow-validator-cohorts-crit-live-implementer-persona\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t17-to-t19\\\",\\\"fromContextId\\\":\\\"t17\\\"},{\\\"edgeId\\\":\\\"t18-to-t19\\\",\\\"fromContextId\\\":\\\"t18\\\"}],\\\"taskIds\\\":[\\\"t19\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t19\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t19\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-live-two-specialists\\\",\\\"workflow-validator-cohorts-crit-live-implementer-persona\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t17-to-t19\\\",\\\"fromContextId\\\":\\\"t17\\\"},{\\\"edgeId\\\":\\\"t18-to-t19\\\",\\\"fromContextId\\\":\\\"t18\\\"}],\\\"taskIds\\\":[\\\"t19\\\"]}\"}"
         },
         {
           "node": "context workflow-validator-cohorts-task-composer-seeding",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t2\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t2\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-global-project-scope-rule\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t1-to-t2\\\",\\\"fromContextId\\\":\\\"t1\\\"}],\\\"taskIds\\\":[\\\"t2\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t2\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t2\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-global-project-scope-rule\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t1-to-t2\\\",\\\"fromContextId\\\":\\\"t1\\\"}],\\\"taskIds\\\":[\\\"t2\\\"]}\"}"
         },
         {
           "node": "context workflow-validator-cohorts-task-migrated-accounting-proof",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t20\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t20\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-live-migrated-accounting\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t6-to-t20\\\",\\\"fromContextId\\\":\\\"t6\\\"},{\\\"edgeId\\\":\\\"t9-to-t20\\\",\\\"fromContextId\\\":\\\"t9\\\"}],\\\"taskIds\\\":[\\\"t20\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t20\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t20\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-live-migrated-accounting\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t6-to-t20\\\",\\\"fromContextId\\\":\\\"t6\\\"},{\\\"edgeId\\\":\\\"t9-to-t20\\\",\\\"fromContextId\\\":\\\"t9\\\"}],\\\"taskIds\\\":[\\\"t20\\\"]}\"}"
         },
         {
           "node": "context workflow-validator-cohorts-task-final-audit",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t21\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t21\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-persistence-contract\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t12-to-t21\\\",\\\"fromContextId\\\":\\\"t12\\\"},{\\\"edgeId\\\":\\\"t13-to-t21\\\",\\\"fromContextId\\\":\\\"t13\\\"},{\\\"edgeId\\\":\\\"t14-to-t21\\\",\\\"fromContextId\\\":\\\"t14\\\"},{\\\"edgeId\\\":\\\"t19-to-t21\\\",\\\"fromContextId\\\":\\\"t19\\\"},{\\\"edgeId\\\":\\\"t20-to-t21\\\",\\\"fromContextId\\\":\\\"t20\\\"}],\\\"taskIds\\\":[\\\"t21\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t21\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t21\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-persistence-contract\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t12-to-t21\\\",\\\"fromContextId\\\":\\\"t12\\\"},{\\\"edgeId\\\":\\\"t13-to-t21\\\",\\\"fromContextId\\\":\\\"t13\\\"},{\\\"edgeId\\\":\\\"t14-to-t21\\\",\\\"fromContextId\\\":\\\"t14\\\"},{\\\"edgeId\\\":\\\"t19-to-t21\\\",\\\"fromContextId\\\":\\\"t19\\\"},{\\\"edgeId\\\":\\\"t20-to-t21\\\",\\\"fromContextId\\\":\\\"t20\\\"}],\\\"taskIds\\\":[\\\"t21\\\"]}\"}"
         },
         {
           "node": "context workflow-validator-cohorts-task-lane-identity",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t3\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t3\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-per-assignment-lanes\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t2-to-t3\\\",\\\"fromContextId\\\":\\\"t2\\\"},{\\\"edgeId\\\":\\\"t9-to-t3\\\",\\\"fromContextId\\\":\\\"t9\\\"}],\\\"taskIds\\\":[\\\"t3\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t3\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t3\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-per-assignment-lanes\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t2-to-t3\\\",\\\"fromContextId\\\":\\\"t2\\\"},{\\\"edgeId\\\":\\\"t9-to-t3\\\",\\\"fromContextId\\\":\\\"t9\\\"}],\\\"taskIds\\\":[\\\"t3\\\"]}\"}"
         },
         {
           "node": "context workflow-validator-cohorts-task-transport-handoff",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t4\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t4\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-seed-snapshot-immunity\\\",\\\"workflow-validator-cohorts-crit-transport-composition\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t3-to-t4\\\",\\\"fromContextId\\\":\\\"t3\\\"}],\\\"taskIds\\\":[\\\"t4\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t4\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t4\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-seed-snapshot-immunity\\\",\\\"workflow-validator-cohorts-crit-transport-composition\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t3-to-t4\\\",\\\"fromContextId\\\":\\\"t3\\\"}],\\\"taskIds\\\":[\\\"t4\\\"]}\"}"
         },
         {
           "node": "context workflow-validator-cohorts-task-round-engine",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t5\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t5\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-round-determinism\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t4-to-t5\\\",\\\"fromContextId\\\":\\\"t4\\\"}],\\\"taskIds\\\":[\\\"t5\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t5\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t5\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-round-determinism\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t4-to-t5\\\",\\\"fromContextId\\\":\\\"t4\\\"}],\\\"taskIds\\\":[\\\"t5\\\"]}\"}"
         },
         {
           "node": "context workflow-validator-cohorts-task-events-evidence",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t6\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t6\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-event-dimension\\\",\\\"workflow-validator-cohorts-crit-infra-retry-isolation\\\",\\\"workflow-validator-cohorts-crit-repair-evidence\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t16-to-t6\\\",\\\"fromContextId\\\":\\\"t16\\\"}],\\\"taskIds\\\":[\\\"t6\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t6\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t6\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-event-dimension\\\",\\\"workflow-validator-cohorts-crit-infra-retry-isolation\\\",\\\"workflow-validator-cohorts-crit-repair-evidence\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t16-to-t6\\\",\\\"fromContextId\\\":\\\"t16\\\"}],\\\"taskIds\\\":[\\\"t6\\\"]}\"}"
         },
         {
           "node": "context workflow-validator-cohorts-task-readonly-envelope",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t7\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t7\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-readonly-capability\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t16-to-t7\\\",\\\"fromContextId\\\":\\\"t16\\\"}],\\\"taskIds\\\":[\\\"t7\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t7\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t7\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-readonly-capability\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t16-to-t7\\\",\\\"fromContextId\\\":\\\"t16\\\"}],\\\"taskIds\\\":[\\\"t7\\\"]}\"}"
         },
         {
           "node": "context workflow-validator-cohorts-task-questions-per-lane",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t8\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t8\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-question-mutex\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t6-to-t8\\\",\\\"fromContextId\\\":\\\"t6\\\"}],\\\"taskIds\\\":[\\\"t8\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t8\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t8\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-question-mutex\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t6-to-t8\\\",\\\"fromContextId\\\":\\\"t6\\\"}],\\\"taskIds\\\":[\\\"t8\\\"]}\"}"
         },
         {
           "node": "context workflow-validator-cohorts-task-migration-cutover",
           "field": "metadata",
-          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t9\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t9\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-migration-roundtrip\\\",\\\"workflow-validator-cohorts-crit-legacy-refused\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t1-to-t9\\\",\\\"fromContextId\\\":\\\"t1\\\"}],\\\"taskIds\\\":[\\\"t9\\\"]}\"}"
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t9\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:ae7a55200e41ec149e82c36c8ac3eac312dcf14f6dc0d6063dd6ea29b6933e77\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t9\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-migration-roundtrip\\\",\\\"workflow-validator-cohorts-crit-legacy-refused\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t1-to-t9\\\",\\\"fromContextId\\\":\\\"t1\\\"}],\\\"taskIds\\\":[\\\"t9\\\"]}\"}"
         }
       ],
       "postLaunchAmendments": [

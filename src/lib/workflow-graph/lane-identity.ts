@@ -169,6 +169,102 @@ export function laneNameFromId(id: string): string {
   return lane;
 }
 
+/**
+ * The lane name a context that names its own lane starts from: its id
+ * VERBATIM when the grammar already admits it, and {@link laneNameFromId}'s
+ * escape otherwise.
+ *
+ * Preferring the id is not cosmetic. A context whose lane is "itself" compiled
+ * to its id verbatim before lane names had one owner, so every plan already
+ * launched under that rule carries a definition — and a hash an approval binds
+ * to — naming these lanes exactly this way. Encoding an id the grammar accepts
+ * would re-identify those definitions for nothing: the escape exists to make an
+ * ILLEGAL id nameable, not to renormalize a legal one.
+ *
+ * Unlike `laneNameFromId` this is NOT injective on its own — a legal id can be
+ * spelled exactly like some illegal id's escape — so it is only safe inside
+ * {@link allocateLaneNames}, whose contested-name pass resolves that overlap the
+ * same way it resolves an authored name a generated base wanted. The output
+ * satisfies `laneIdViolation` either way: the identity branch is taken only when
+ * the grammar already accepted the id.
+ */
+export function soloLaneBaseFromId(id: string): string {
+  return laneIdViolation(id) === null ? id : laneNameFromId(id);
+}
+
+/** A context whose lane name its author chose. The name is reserved verbatim. */
+export interface AuthoredLaneEntry {
+  contextId: string;
+  lane: string;
+}
+
+/** A context with no authored lane, which is named after its own id. */
+export interface GeneratedLaneEntry {
+  contextId: string;
+}
+
+/**
+ * Resolve one lane name per context across the ONE namespace authored and
+ * generated names share.
+ *
+ * A generated base ({@link soloLaneBaseFromId}) can be contested two ways: an
+ * authored name may be spelled exactly like it, and — because the base prefers a
+ * legal id verbatim over its escape — one context's id may be spelled exactly
+ * like another's escape. Either way two contexts would share a lane each
+ * believes it owns alone. Allocation is therefore a whole-plan pass in three
+ * ordered steps:
+ *
+ *  1. authored names are reserved verbatim — an author chose theirs, and
+ *     nothing outside this allocator ever spells a generated one;
+ *  2. every uncontested generated base is claimed, so a rename can never
+ *     displace a context that would have been spelled like its own id;
+ *  3. the remainder are suffixed from `-2`, skipping names already taken.
+ *
+ * Both spellings of the session lane are reserved before step 2. The session
+ * lane is the session worktree rather than a provisioned group lane, so
+ * definition validation refuses either spelling on a context; without the
+ * reservation a context named after it would generate a lane that validation
+ * then rejects.
+ *
+ * Every generated name the allocator returns satisfies `laneIdViolation` by
+ * construction: the base is legal either way `soloLaneBaseFromId` produced it,
+ * and a `-<digits>` suffix closes on a digit. Authored names pass through
+ * untouched — the grammar is enforced where the name was authored, not repaired
+ * here.
+ */
+export function allocateLaneNames(
+  authored: readonly AuthoredLaneEntry[],
+  generated: readonly GeneratedLaneEntry[],
+): ReadonlyMap<string, string> {
+  const lanes = new Map<string, string>();
+  const taken = new Set<string>([SESSION_LANE_NAME, SESSION_LANE_ID]);
+
+  for (const entry of authored) {
+    lanes.set(entry.contextId, entry.lane);
+    taken.add(entry.lane);
+  }
+
+  const contested: { contextId: string; base: string }[] = [];
+  for (const { contextId } of generated) {
+    const base = soloLaneBaseFromId(contextId);
+    if (taken.has(base)) {
+      contested.push({ contextId, base });
+      continue;
+    }
+    taken.add(base);
+    lanes.set(contextId, base);
+  }
+
+  for (const { contextId, base } of contested) {
+    let suffix = 2;
+    while (taken.has(`${base}-${suffix}`)) suffix += 1;
+    taken.add(`${base}-${suffix}`);
+    lanes.set(contextId, `${base}-${suffix}`);
+  }
+
+  return lanes;
+}
+
 /** Backward-compatible alias retained while callers migrate to validateLaneId. */
 export function validateContextId(contextId: string): void {
   try {

@@ -160,6 +160,7 @@ const rawClaudeBackendConfigSchema = z
     model: claudeModelSchema.optional(),
     reasoningEffort: claudeEffortLevelSchema.optional(),
     timeoutMs: backendTimeoutMsSchema.optional(),
+    stallTimeoutMs: backendTimeoutMsSchema.optional(),
   })
   .superRefine(validateClaudeBackendModelEffort);
 

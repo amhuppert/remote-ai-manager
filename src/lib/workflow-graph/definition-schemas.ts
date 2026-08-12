@@ -946,9 +946,13 @@ export const graphWorkflowSharedDocumentEntrySchema = z.object({
   relativePath: z.string().trim().min(1),
   description: z.string().trim().min(1),
   readWhen: z.string().trim().min(1),
-  // Distinguishes the reserved charter document from ordinary shared docs.
-  // Entries persisted before this discriminator existed parse as "shared".
-  kind: z.enum(["shared", "charter"]).default("shared"),
+  // Who authored the document, which decides whether an agent may rewrite it.
+  // "shared" is agent-authored; "charter" and "seeded" are written by the
+  // engine at launch from the launching tier and are read-only to agents — a
+  // re-registration of either is refused so one lane cannot replace the copy
+  // every other lane materializes. Entries persisted before this discriminator
+  // existed parse as "shared".
+  kind: z.enum(["shared", "charter", "seeded"]).default("shared"),
   createdAt: z.string(),
   updatedAt: z.string(),
   lastUpdatedByConversationId: z.string().nullable().default(null),

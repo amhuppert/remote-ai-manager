@@ -24,6 +24,8 @@ const GENERATED_REFERENCE_COMMAND = "cctl spec schema guidance";
 const EXPECTED_SECTIONS = [
   "One-context-provable criteria",
   "Typed integration/closeout ownership",
+  "Placement: shared lanes and disjoint ownership",
+  "Ranked sources of truth a lane can read",
   "Removal and reintroduction symmetry",
   "Withdraw-proposal vs dismiss-superseded",
   "Element-id/handle/version semantics",

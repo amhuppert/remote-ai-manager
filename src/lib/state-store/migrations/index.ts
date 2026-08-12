@@ -26,6 +26,7 @@ import { addDeliveryDiscoveries } from "./0020-add-delivery-discoveries";
 import { deliveryPlanComments } from "./0020-delivery-plan-comments";
 import { specRevisionExternalDelivery } from "./0021-spec-revision-external-delivery";
 import { importGateAdmissionBasis } from "./0022-import-gate-admission-basis";
+import { graphWorkflowSeededDocuments } from "./0023-graph-workflow-seeded-documents";
 
 /**
  * Ordered registry of state-store migrations. Append new migrations here in
@@ -61,6 +62,7 @@ export const migrations: readonly StateMigration[] = [
   deliveryPlanComments,
   specRevisionExternalDelivery,
   importGateAdmissionBasis,
+  graphWorkflowSeededDocuments,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

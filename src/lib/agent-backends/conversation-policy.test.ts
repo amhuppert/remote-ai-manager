@@ -3,6 +3,7 @@ import {
   resolveConfiguredAgentBackendDefaults,
   type ConversationTurnConfig,
 } from "./conversation-policy";
+import { CLAUDE_DEFAULT_STALL_TIMEOUT_MS } from "./claude/shared";
 
 function makeConfig(
   overrides: Partial<ConversationTurnConfig["agentBackends"]> = {},
@@ -47,7 +48,7 @@ describe("resolveConfiguredAgentBackendDefaults", () => {
       reasoningEffort: "medium",
       codexFastMode: false,
       timeoutMs: 45_000,
-      stallTimeoutMs: 0,
+      stallTimeoutMs: CLAUDE_DEFAULT_STALL_TIMEOUT_MS,
     });
     expect(resolveConfiguredAgentBackendDefaults(config, "codex")).toEqual({
       modelId: "gpt-5.6-sol",
@@ -137,6 +138,30 @@ describe("resolveConfiguredAgentBackendDefaults", () => {
     });
     expect(
       resolveConfiguredAgentBackendDefaults(disabled, "codex").stallTimeoutMs,
+    ).toBe(0);
+  });
+
+  it("honors a Claude stall override and lets null disable the bound", () => {
+    const raised = makeConfig({
+      claude: {
+        model: "opus",
+        timeoutMs: null,
+        stallTimeoutMs: 45 * 60 * 1000,
+      },
+    });
+    expect(
+      resolveConfiguredAgentBackendDefaults(raised, "claude").stallTimeoutMs,
+    ).toBe(45 * 60 * 1000);
+
+    const disabled = makeConfig({
+      claude: {
+        model: "opus",
+        timeoutMs: null,
+        stallTimeoutMs: null,
+      },
+    });
+    expect(
+      resolveConfiguredAgentBackendDefaults(disabled, "claude").stallTimeoutMs,
     ).toBe(0);
   });
 });

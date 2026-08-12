@@ -18,6 +18,7 @@ import {
   DEFAULT_BACKGROUND_TASK_WAIT_TIMEOUT_MS,
   resolveIdleTtlMs,
 } from "./conversation-runtime";
+import { CLAUDE_DEFAULT_STALL_TIMEOUT_MS } from "./shared";
 import { CLAUDE_AGENT_SUPPRESSION_STRATEGY } from "./runtime-config/agent-suppression";
 import type {
   ConversationBackendCreateInput,
@@ -1724,6 +1725,17 @@ describe("ClaudeConversationRuntime — background-task wait barrier (sendTurn)"
     // with an explicit workflow-side override.
     expect(DEFAULT_BACKGROUND_TASK_WAIT_TIMEOUT_MS).toBeGreaterThanOrEqual(
       30 * 60 * 1000,
+    );
+  });
+
+  it("keeps the Claude inactivity bound above the wait ceiling", () => {
+    // Ordering pin: the barrier holds a legitimate turn open with no event
+    // reaching the stall watchdog, so a bound at or below the ceiling aborts
+    // healthy work mid-wait — and does it silently, because the turn already
+    // carries its result. The descriptor cannot import this server-only
+    // module, so the relationship lives here.
+    expect(CLAUDE_DEFAULT_STALL_TIMEOUT_MS).toBeGreaterThan(
+      DEFAULT_BACKGROUND_TASK_WAIT_TIMEOUT_MS,
     );
   });
 

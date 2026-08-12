@@ -31,6 +31,7 @@ import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-s
 import { graphWorkflowExecutionEventSchema } from "@/lib/workflow-graph/event-schemas";
 import {
   deliveryPlanDocumentSchema,
+  pinnedSpecDocumentPath,
   type DeliveryPlanDocument,
 } from "./delivery-plan";
 import {
@@ -86,6 +87,7 @@ describe("ExecutionService start", () => {
   let service: ExecutionService;
   let definitions: InMemoryWorkflowDefinitions;
   let approvedLaunch: DeliveryPlanLaunchCandidate;
+  let startGate: ReturnType<typeof deliveryPlanExecutionGate>;
   let nextId: number;
 
   beforeEach(() => {
@@ -95,6 +97,7 @@ describe("ExecutionService start", () => {
     const writeQueue = createWriteQueue();
     definitions = new InMemoryWorkflowDefinitions();
     approvedLaunch = approvedDeliveryPlanLaunch();
+    startGate = deliveryPlanExecutionGate();
     nextId = 0;
     const eventsRepo = createSpecEventsRepo(db);
     deps = {
@@ -137,7 +140,7 @@ describe("ExecutionService start", () => {
         return db.transaction(fn).immediate();
       },
       deliveryPlanLaunch: approvedDeliveryPlanPort(() => approvedLaunch),
-      executionStartGate: deliveryPlanExecutionGate(),
+      executionStartGate: startGate,
     };
     service = createExecutionService(deps);
   });
@@ -360,6 +363,36 @@ describe("ExecutionService start", () => {
       .prepare("SELECT revision_id FROM spec_executions WHERE spec_id = ?")
       .get(specId) as { revision_id: string };
     expect(row.revision_id).toBe(revisionId);
+  });
+
+  it("seeds the pinned spec into the launched run so every lane can read the contract it is judged against", async () => {
+    // The plan's rank-1 source of truth is the materialized pinned spec, so a
+    // launch that carried no seeded document would point all nine validators
+    // at a path no lane worktree has.
+    insertRevision(db, "revision-newer", 3, "approved");
+
+    const result = await service.start({
+      specId,
+      revisionId: "revision-newer",
+      actor: { kind: "agent" as const, conversationId: "conversation-start" },
+      sessionName: "session-execution",
+      projectName: "execution-service",
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(startGate.launchApprovedDefinition).toHaveBeenCalledOnce();
+    expect(startGate.launchApprovedDefinition).toHaveBeenCalledWith(
+      expect.objectContaining({
+        seededDocuments: [
+          expect.objectContaining({
+            relativePath: pinnedSpecDocumentPath("native-sdd"),
+            // The plan pins revision 1 while the request named revision 3, so
+            // the rendered bytes prove the seed follows the pin, not head.
+            contents: expect.stringContaining("- Revision: 1"),
+          }),
+        ],
+      }),
+    );
   });
 
   it("retires the execution it created when the plan rejects the candidate at launch", async () => {
@@ -1614,6 +1647,15 @@ describe("ExecutionService execution-start gate", () => {
       // A human Studio grant carries no conversation, so the launched run is
       // explicitly unowned rather than silently missing an owner.
       ownerConversationId: null,
+      // The grant path resolves the execution's own pin, so a run parked for
+      // definition approval reaches its lanes with the same pinned spec a
+      // directly launched run does.
+      seededDocuments: [
+        expect.objectContaining({
+          relativePath: ".cc/graph-workflow-docs/spec/native-sdd.md",
+          contents: expect.stringContaining("- Revision: 1"),
+        }),
+      ],
     });
     expect(gate.grantApproval).toHaveBeenCalledOnce();
     expect(gate.grantApproval).toHaveBeenCalledWith({
@@ -2294,7 +2336,7 @@ function parkedPlanNextAct() {
 
 function deliveryPlanExecutionGate(): NonNullable<
   ExecutionServiceDeps["executionStartGate"]
-> {
+> & { launchApprovedDefinition: ReturnType<typeof vi.fn> } {
   return {
     launchApprovedDefinition: vi.fn(async () => ({
       ok: true as const,

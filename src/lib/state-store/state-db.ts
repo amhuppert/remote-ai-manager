@@ -88,8 +88,18 @@ const DB_FILE_NAME = "command-center.db";
  * authored concurrently on two branches and both originally claimed 5; they are
  * sequenced here because one number cannot fence two independent cutovers, and
  * 5 is already stamped in live databases by the placement cutover.
+ *
+ * Version 7 is the engine-seeded shared-document kind: migration
+ * `0023-graph-workflow-seeded-documents` stamps the gate for the widened
+ * `sharedDocuments[].kind` vocabulary, which admits `seeded` alongside `shared`
+ * and `charter`. The value is persisted in `graph_workflow_executions`
+ * `runtime_json`, and the repository throws on a kind its enum does not admit —
+ * for the whole `listActive()` result rather than the one row — so an older
+ * build sharing the database would lose every execution's workflow state, not
+ * just the seeded run's. Nothing is rewritten: the migration exists only to
+ * publish the barrier and stamp the version.
  */
-export const KNOWN_SCHEMA_VERSION = 6;
+export const KNOWN_SCHEMA_VERSION = 7;
 
 /**
  * Marker id for the one-time legacy graph-workflow purge. Tracked in the

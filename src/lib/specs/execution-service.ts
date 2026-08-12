@@ -20,6 +20,8 @@ import type {
   WorkflowScope,
 } from "@/lib/workflow-graph/storage";
 import type { GraphExecutionLifecycleContext } from "@/lib/workflow-graph/execution-lifecycle-port";
+import type { SeededWorkflowDocument } from "@/lib/workflow-graph/shared-documents";
+import { buildPinnedSpecDocument } from "./export";
 import {
   INITIAL_ABANDON_CLEANUP_PHASE,
   abandonFinalizationAllowed,
@@ -332,6 +334,13 @@ export interface ExecutionStartGatePort {
     definitionId: string;
     definitionRevision: number;
     ownerConversationId: string | null;
+    /**
+     * The pinned spec revision, rendered by the spec layer and handed to the
+     * workflow engine as opaque bytes to seed into every lane worktree. The
+     * plan's #1-ranked source of truth is only readable because this rides
+     * along with the launch.
+     */
+    seededDocuments: readonly SeededWorkflowDocument[];
   }): Promise<
     { ok: true; workflowExecutionId: string } | { ok: false; reason: string }
   >;
@@ -354,6 +363,12 @@ export interface ExecutionStartGatePort {
      * fail-closed until it has lanes.
      */
     ownerConversationId: string | null;
+    /**
+     * The pinned spec revision, same shape and same purpose as on
+     * {@link ExecutionStartGatePort.launchApprovedDefinition}. Carried here too
+     * so a run's seeded documents never depend on which launch path fired.
+     */
+    seededDocuments: readonly SeededWorkflowDocument[];
   }): Promise<
     { ok: true; workflowExecutionId: string } | { ok: false; reason: string }
   >;
@@ -925,6 +940,25 @@ function definitionGateRefusal(
 }
 
 /**
+ * Rebuild the pinned-spec document from an execution row's own pin, for the
+ * launch paths that resolve the snapshot after the launch was prepared. `null`
+ * means the pin cannot be read — the caller must refuse rather than launch a
+ * run whose plan cites a source of truth no lane will have.
+ */
+async function resolvePinnedSpecDocuments(
+  deps: ExecutionServiceDeps,
+  execution: SpecExecutionRow,
+): Promise<readonly SeededWorkflowDocument[] | null> {
+  const spec = await deps.specsRepo.findById(execution.spec_id);
+  if (spec === null) return null;
+  const pinned = await deps.specsRepo.getRevisionSnapshot(
+    execution.revision_id,
+  );
+  if (pinned === null) return null;
+  return [buildPinnedSpecDocument(spec, pinned)];
+}
+
+/**
  * The human execution-start grant launches the prepared definition when the
  * Studio action is the first workflow-side act, records the human-only gate
  * approval, then approves the parked definition through the graph-workflow
@@ -995,6 +1029,20 @@ async function approveExecutionStart(
     definitionRevision: execution.workflow_definition_revision,
   });
   if (workflowExecutionId === null) {
+    const seededDocuments = await resolvePinnedSpecDocuments(deps, execution);
+    if (seededDocuments === null) {
+      return lifecycleRefused(
+        "gate_blocked",
+        [
+          `The execution pins revision ${execution.revision_id}, which cannot be read, so the pinned spec cannot be seeded into its lanes.`,
+        ],
+        await seededDeliveryPlanInstruction(
+          deps,
+          execution.spec_id,
+          execution.id,
+        ),
+      );
+    }
     const ensured = await gate.ensurePendingDefinitionApproval({
       projectName: input.projectName,
       sessionName: execution.session_name,
@@ -1005,6 +1053,7 @@ async function approveExecutionStart(
       // unowned. Stated explicitly rather than omitted so the null is a
       // decision the seam records, not a field someone forgot.
       ownerConversationId: null,
+      seededDocuments,
     });
     if (!ensured.ok) {
       logger.warn("specs.execution.start-launch-refused", {
@@ -2268,6 +2317,12 @@ interface PreparedDeliveryPlanLaunch {
   sessionName: string;
   projectName: string;
   ownerConversationId: string | null;
+  /**
+   * Built from the PINNED snapshot inside the queue, where the pin is already
+   * resolved, so what a lane reads cannot drift with live spec state between
+   * staging and launch.
+   */
+  seededDocuments: readonly SeededWorkflowDocument[];
 }
 
 type StagedStart =
@@ -2665,6 +2720,7 @@ async function startFromDeliveryPlan(
       // planner before any lane exists (lifecycle contract, design §10).
       ownerConversationId:
         input.actor.kind === "agent" ? input.actor.conversationId : null,
+      seededDocuments: [buildPinnedSpecDocument(spec, pinned)],
     },
   };
 }
@@ -2752,6 +2808,7 @@ async function completeDeliveryPlanLaunch(
     definitionId: pending.definition.id,
     definitionRevision: pending.definition.revision,
     ownerConversationId: pending.ownerConversationId,
+    seededDocuments: pending.seededDocuments,
   });
   if (!launched.ok) {
     return {

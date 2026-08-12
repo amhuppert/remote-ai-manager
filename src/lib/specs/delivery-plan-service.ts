@@ -24,6 +24,7 @@ import {
   deliveryPlanDocumentSchema,
   deliveryPlanPrelaunchSchema,
   emptyDeliveryPlanDocument,
+  withPinnedSpecSource,
   liveDeliveryPlanAttempt,
   type DeliveryPlanApproval,
   type DeliveryPlanCandidateIdentity,
@@ -562,6 +563,7 @@ export function createDeliveryPlanService(
         deltaCriteria: delta.projection.criteria,
         lintInput: {
           pinnedRevisionId: attempt.pinned_revision_id,
+          specSlug: spec.slug,
           document,
           pinnedCriteria,
           deliveredElsewhereVerdicts: document.dispositions
@@ -784,7 +786,13 @@ export function createDeliveryPlanService(
         return { ok: false, refusal: noPinnedRevisionRefusal(input.spec.slug) };
       }
 
-      let document = emptyDeliveryPlanDocument();
+      // Both branches start from the same rank-1 source of truth: the pinned
+      // revision the engine materializes into every lane. Seeding it is what
+      // leaves the author editing governance rather than inventing a locator.
+      let document = withPinnedSpecSource(emptyDeliveryPlanDocument(), {
+        specSlug: input.spec.slug,
+        pinnedRevisionId: pinned.revision.id,
+      });
       let deltaBasisExecutionId: string | null = null;
       let legacyImport: DeliveryPlanLegacyImportView | null = null;
       if (input.seedFromLast) {
@@ -825,6 +833,7 @@ export function createDeliveryPlanService(
 
         document = seedDeliveryPlanDocument({
           pinnedRevisionId: pinned.revision.id,
+          specSlug: input.spec.slug,
           criteria: delta.projection.criteria.map((criterion) => ({
             criterionElementId: criterion.criterionElementId,
             handle: criterion.handle,

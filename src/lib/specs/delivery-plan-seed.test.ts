@@ -4,8 +4,13 @@ import {
   DELIVERY_PLAN_DISPOSITIONS,
   deliveryPlanDocumentSchema,
   emptyDeliveryPlanDocument,
+  pinnedSpecDocumentPath,
+  withPinnedSpecSource,
+  PINNED_SPEC_SOURCE_ID,
   type DeliveryPlanDocument,
+  type DeliveryPlanSourceOfTruth,
 } from "./delivery-plan";
+import { deliveryPlanDraftHealth } from "./delivery-plan-lint";
 import {
   discoveryTaskId,
   seedDeliveryPlanDocument,
@@ -15,6 +20,7 @@ import {
 
 const PINNED_REVISION_ID = "revision-2";
 const BASIS_EXECUTION_ID = "execution-1";
+const SPEC_SLUG = "native-sdd";
 
 /**
  * One criterion per delivery class, so every assertion below reads against a
@@ -179,6 +185,7 @@ function seed(
 ): DeliveryPlanDocument {
   return seedDeliveryPlanDocument({
     pinnedRevisionId: PINNED_REVISION_ID,
+    specSlug: SPEC_SLUG,
     criteria: CRITERIA,
     deliveredByExecutionId: BASIS_EXECUTION_ID,
     priorPlan: priorPlan(),
@@ -297,7 +304,21 @@ describe("seedDeliveryPlanDocument", () => {
     const document = seed();
     const prior = priorPlan();
 
-    expect(document.governance).toEqual(prior.governance);
+    // Governance comes forward authored. The one entry the seed installs is
+    // the reserved pinned-spec source, which carried entries rank below.
+    expect(document.governance.mission).toEqual(prior.governance.mission);
+    expect(document.governance.charterInvariants).toEqual(
+      prior.governance.charterInvariants,
+    );
+    expect(document.governance.validationCommandNames).toEqual(
+      prior.governance.validationCommandNames,
+    );
+    expect(document.governance.sourcesOfTruth.slice(1)).toEqual(
+      prior.governance.sourcesOfTruth.map((entry) => ({
+        ...entry,
+        rank: entry.rank + 1,
+      })),
+    );
     expect(document.policyOverrides).toEqual(prior.policyOverrides);
     expect(document.touchedSurfaces).toEqual(prior.touchedSurfaces);
   });
@@ -376,5 +397,111 @@ describe("seedDeliveryPlanDocument", () => {
     expect(() => deliveryPlanDocumentSchema.parse(document)).not.toThrow();
     expect(document.contexts).toEqual([]);
     expect(document.tasks).toEqual([]);
+  });
+});
+
+/**
+ * D7: the pinned spec is readable from inside every lane because the engine
+ * materializes it there, so the plan's rank-1 source of truth must be that
+ * file. The seed installs it rather than the author inventing a locator — and
+ * a `--seed-from last` plan must not inherit the prior attempt's unreadable
+ * spelling, which is the state the audited run shipped in.
+ */
+describe("pinned-spec source of truth", () => {
+  const PRIOR_EXTERNAL_SOURCE: DeliveryPlanSourceOfTruth = {
+    rank: 1,
+    id: "the-spec",
+    label: "The spec",
+    type: "spec",
+    locator: "cctl spec show native-sdd",
+    description: "The approved contract.",
+    appliesTo: null,
+    accessPolicy: "external-readonly",
+  };
+
+  function lintOf(document: DeliveryPlanDocument) {
+    return deliveryPlanDraftHealth({
+      pinnedRevisionId: PINNED_REVISION_ID,
+      specSlug: SPEC_SLUG,
+      document,
+      pinnedCriteria: [],
+      deliveredElsewhereVerdicts: [],
+    });
+  }
+
+  it("ranks the materialized spec document first on an unseeded plan", () => {
+    const document = withPinnedSpecSource(emptyDeliveryPlanDocument(), {
+      specSlug: SPEC_SLUG,
+      pinnedRevisionId: PINNED_REVISION_ID,
+    });
+    const first = document.governance.sourcesOfTruth[0];
+
+    expect(first?.rank).toBe(1);
+    expect(first?.id).toBe(PINNED_SPEC_SOURCE_ID);
+    expect(first?.locator).toBe(pinnedSpecDocumentPath(SPEC_SLUG));
+    expect(first?.accessPolicy).toBe("worktree-relative");
+    expect(first?.description).toContain(PINNED_REVISION_ID);
+    expect(deliveryPlanDocumentSchema.parse(document)).toEqual(document);
+  });
+
+  it("installs the same entry on a seeded plan", () => {
+    const first = seed().governance.sourcesOfTruth[0];
+
+    expect(first?.id).toBe(PINNED_SPEC_SOURCE_ID);
+    expect(first?.locator).toBe(pinnedSpecDocumentPath(SPEC_SLUG));
+    expect(first?.accessPolicy).toBe("worktree-relative");
+  });
+
+  it("keeps every authored source a prior attempt carried, shifted below it", () => {
+    const carried = seed({
+      priorPlan: {
+        ...priorPlan(),
+        governance: {
+          ...priorPlan().governance,
+          sourcesOfTruth: [
+            PRIOR_EXTERNAL_SOURCE,
+            {
+              rank: 4,
+              id: "upstream-protocol",
+              label: "Upstream protocol",
+              type: "document",
+              locator: "https://example.invalid/protocol",
+              description: "The wire format.",
+              appliesTo: null,
+              accessPolicy: "external-readonly",
+            },
+          ],
+        },
+      },
+    }).governance.sourcesOfTruth;
+
+    expect(carried.map((entry) => entry.id)).toEqual([
+      PINNED_SPEC_SOURCE_ID,
+      "the-spec",
+      "upstream-protocol",
+    ]);
+    expect(carried.map((entry) => entry.rank)).toEqual([1, 2, 5]);
+  });
+
+  it("leaves a seeded plan free of the unreadable-source refusal", () => {
+    expect(
+      lintOf(seed()).ordered.map((finding) => finding.ruleId),
+    ).not.toContain("plan/spec-source-unreadable");
+  });
+
+  it("still refuses a carried-forward external spelling of the same spec", () => {
+    const document = seed({
+      priorPlan: {
+        ...priorPlan(),
+        governance: {
+          ...priorPlan().governance,
+          sourcesOfTruth: [PRIOR_EXTERNAL_SOURCE],
+        },
+      },
+    });
+
+    expect(lintOf(document).ordered.map((finding) => finding.ruleId)).toContain(
+      "plan/spec-source-unreadable",
+    );
   });
 });

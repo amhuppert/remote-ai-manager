@@ -32,6 +32,43 @@ database therefore records every migration as a no-op and is stamped.
    forward-only gate stops older builds from opening the upgraded DB.
 5. Add a focused test alongside `../migrator.test.ts`.
 
+## Blob-column shape changes and the version gate
+
+Step 4 above asks whether an older build "can no longer read the data". For a
+field added inside a JSON blob column the honest answer is usually *some* of it,
+and the exposure is worth stating rather than inferring.
+
+**Delivery-plan context placement.** The optional `placement` field on a context
+in the strict `deliveryPlanDocumentSchema` is stored inside
+`spec_delivery_plan_attempts.content_json` (and the snapshot table's copy of the
+same bytes). Deliberately **no `KNOWN_SCHEMA_VERSION` bump**, because the
+blast radius is one attempt, not the database:
+
+- **Unaffected: listing and status reads.** `content_json` is an opaque JSON
+  string at the row layer (`specDeliveryPlanAttemptRowSchema`), so
+  `findAttemptsBySpecId` parses a placement-bearing attempt like any other. A
+  spec's plan list, attempt statuses, and hashes all still read. Two regression
+  tests pin this so it survives future edits to the row schema: the schema-level
+  pin in [`../../specs/delivery-plan.test.ts`](../../specs/delivery-plan.test.ts),
+  and a real-SQLite listing pin in
+  [`../spec-delivery-plan-repo.contract.test.ts`](../spec-delivery-plan-repo.contract.test.ts)
+  that reloads a placement-bearing row through the repository. Teach the row
+  schema anything about the document and the second one fails with exactly the
+  set-wide `PersistenceError(validation)` from `readMany` that this section
+  says does not happen.
+- **Affected: per-attempt document-parsing acts.** An older build sharing the
+  database fails only when it parses *that* attempt's document — project/lint,
+  propose, preview/materialize, reaffirm — with a typed persistence/parse error
+  (`PersistenceError` `kind: "validation"` from the repo helpers, or the
+  equivalent `ZodError` at a direct document parse). Other attempts and other
+  specs are untouched.
+
+The whole-result-set failure mode that justifies the forward-only gate does not
+exist here, and the gate's cost is real: bumping the version locks an older
+build out of the entire database over a field it would only meet on one
+attempt. Reach for a bump when a shape change breaks a *set* read — a column
+every row must satisfy, or a blob a list query parses eagerly.
+
 ## Ledger tables (three, distinct purposes)
 
 - `applied_migrations` — this runner's ledger (by name). New migrations record here.

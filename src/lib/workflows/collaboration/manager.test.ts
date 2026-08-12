@@ -16,6 +16,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { _resetLoggerForTesting } from "@/lib/logging/logger";
+import { getDefaultStallTimeoutForBackend } from "@/lib/agent-backends/catalog";
 
 import {
   buildStandaloneCollaborationCallerInput,
@@ -93,7 +94,7 @@ describe("resolveCollaborationBackendModelConfig", () => {
         model: "sonnet",
         reasoningEffort: "medium",
         timeoutMs: 45_000,
-        stallTimeoutMs: 0,
+        stallTimeoutMs: getDefaultStallTimeoutForBackend("claude"),
       },
     ],
     [

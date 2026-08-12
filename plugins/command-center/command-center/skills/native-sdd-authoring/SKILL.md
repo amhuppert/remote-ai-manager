@@ -19,6 +19,24 @@ Type a criterion-owning implementation context as `delivery`. Admit a context wi
 
 Keep criterion ownership, production-wiring ownership, proof intent, and deterministic validation selection explicit in the authored plan. Inspect the document with `cctl spec schema delivery-plan`; for the generated compile, lint, and evidence registries, run `cctl spec schema guidance`.
 
+## Placement: shared lanes and disjoint ownership
+
+Every context you leave placement-free takes its own solo lane — one worktree, one join, one merge. When a group of contexts is already edge-ordered into a chain, put the whole chain on one lane: it then costs one worktree and one join instead of N and N, and its members may write the same paths freely, because ordering is what makes sharing safe.
+
+Members of one lane that no edge orders must be `mode: "owned"` with disjoint `ownedPaths`; a `full` member unordered against a write-capable lane-mate is refused outright. Ownership is compared as segment-boundary prefix cover at directory grain — `src/lib` covers everything beneath it but not the sibling `src/libraries`, and there are no globs — so two contexts that can run at the same time must not claim prefixes that cover each other. When several members need one shared surface, home it upstream in a context they all depend on rather than splitting that file's ownership by intent.
+
+`readOnly` is not yet authorable at the plan tier. A read-only context delivers only through a structured output contract, and the delivery-plan document cannot author one, so lint refuses the grade at propose and names the gap instead of letting a launch discover it. That puts the reserved `session` lane out of reach here too — it admits read-only contexts only — so every lane a plan names is a lane it pays a worktree for. When the shape is unclear, omit `placement` entirely: the materializer gives that context a solo lane with full access, which is the pre-placement behavior byte for byte and never refuses.
+
+The rest of the model — the three grades, the ownership envelope an implementer runs under, and the accept-time refusal codes — is the graph-workflow-planning skill's "Lane Placement and File Ownership" section; read it before authoring a lane several contexts share. Inspect the authored field with `cctl spec plan edit --help` and `cctl spec schema delivery-plan`. For the generated compile, lint, and evidence registries, run `cctl spec schema guidance`.
+
+## Ranked sources of truth a lane can read
+
+Keep the plan's own spec ranked first exactly as `cctl spec plan open` seeded it: locator `.cc/graph-workflow-docs/spec/<slug>.md`, `accessPolicy: "worktree-relative"`. Launch materializes the pinned revision into that path in every lane worktree, so implementers and validators can open the contract they are judged against. Never re-point that entry at a `cctl spec` invocation; a command is not a locator, and nothing in a lane can read it as a path.
+
+Reserve `external-readonly` for sources that genuinely live outside the worktree — another repository, a URL, an issue attachment. The charter gates those behind explicit human permission, so spelling your own spec that way leaves rank 1 unreadable and every validator judging from memory. Author the rest of `governance.sourcesOfTruth` freely; a source a prior attempt carried forward comes back beneath the seeded entry with its rank shifted, and `plan/spec-source-unreadable` blocks propose until an unreadable duplicate of this spec is retired.
+
+Inspect the seeded entry with `cctl spec plan open --help` and the document with `cctl spec schema plan-edit`. For the generated compile, lint, and evidence registries, run `cctl spec schema guidance`.
+
 ## Removal and reintroduction symmetry
 
 Remove draft elements by handle with `cctl spec remove`. When a surviving element refers to the target, update or remove both sides in one `cctl spec draft` batch so the transaction never leaves a dangling reference.

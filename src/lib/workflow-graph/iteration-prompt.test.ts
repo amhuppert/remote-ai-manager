@@ -830,6 +830,42 @@ describe("buildIterationPrompt", () => {
     expect(sharedSection).not.toContain("The workflow charter document");
   });
 
+  it("marks an engine-seeded document read-only so an agent does not edit a file the next materialization overwrites", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [
+        makeSharedDoc({
+          id: "doc-spec",
+          relativePath: ".cc/graph-workflow-docs/spec/native-sdd.md",
+          description: "The pinned spec this run implements",
+          readWhen: "Read before judging the work.",
+          kind: "seeded",
+        }),
+        makeSharedDoc({
+          id: "doc-plan",
+          relativePath: "memory-bank/shared/plan.md",
+          description: "Current implementation plan",
+          readWhen: "Read before starting implementation tasks.",
+          kind: "shared",
+        }),
+      ],
+      allowAgentTaskAdd: false,
+      charter: makeCharter(),
+    });
+
+    const sharedSection = prompt.slice(prompt.indexOf("## Shared Documents"));
+    expect(sharedSection).toContain(
+      ".cc/graph-workflow-docs/spec/native-sdd.md",
+    );
+    expect(sharedSection).toMatch(
+      /native-sdd\.md.*\(read-only: engine-owned\)/,
+    );
+    // Agent-authored documents stay writable and carry no such marker.
+    expect(sharedSection).toMatch(/plan\.md.*implementation tasks\.$/m);
+  });
+
   it("renders 'None registered' in the generic list when only the charter entry exists", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),

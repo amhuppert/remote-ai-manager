@@ -18,9 +18,18 @@ import {
   touchedPathSchema,
   validationStrategySchema,
 } from "@/lib/specs/schemas";
+import {
+  deliveryPlanDocumentSchema,
+  pinnedSpecDocumentPath,
+} from "@/lib/specs/delivery-plan";
+import { lintDeliveryPlan } from "@/lib/specs/delivery-plan-lint";
 import { NATIVE_SDD_GUIDANCE } from "@/lib/specs/native-sdd-guidance";
 import { runCli } from "../../core";
 import type { CliEnv, CliHost } from "../../shared";
+
+/** The spec the published plan-edit example plans delivery for. */
+const PLAN_EXAMPLE_SPEC_SLUG = "self-describing-surface";
+const PLAN_EXAMPLE_SPEC_PATH = pinnedSpecDocumentPath(PLAN_EXAMPLE_SPEC_SLUG);
 
 const env: CliEnv = {
   CC_SERVER_URL: "http://127.0.0.1:4999",
@@ -246,6 +255,15 @@ describe("cctl spec schema", () => {
       target: "executionContexts[].id",
       transformation: "copy",
     });
+    // The audit found the solo-lane default undocumented: a planner reading
+    // this registry is how the "omit placement and take a lane of your own"
+    // rule becomes learnable outside the materializer's source.
+    expect(reference.materializerFieldMappings).toContainEqual({
+      source: "contexts[].placement",
+      target: "executionContexts[].placement",
+      transformation:
+        "copy when authored; solo lane (context id, full access) when absent",
+    });
     expect(reference.lintTaxonomy.evergreen).toContainEqual({
       ruleId: "9.7.claim-without-evidence",
       severity: "blocks_claim",
@@ -254,6 +272,38 @@ describe("cctl spec schema", () => {
       ruleId: "plan/selected-multi-owned",
       severity: "blocks_propose",
     });
+    // The generated registry is how a planner authoring from another
+    // repository learns a rule exists at all; a rule missing here refuses at
+    // propose with no surface that ever announced it.
+    expect(reference.lintTaxonomy.deliveryPlan).toContainEqual({
+      ruleId: "plan/spec-source-unreadable",
+      severity: "blocks_propose",
+    });
+    // Placement is the newest thing a planner authors, so the whole placement
+    // family is pinned here rather than sampled: an author who never saw a rule
+    // announced writes the plan that the rule refuses.
+    expect(
+      reference.lintTaxonomy.deliveryPlan.filter(({ ruleId }) =>
+        ruleId.startsWith("plan/placement-"),
+      ),
+    ).toEqual([
+      { ruleId: "plan/placement-lane-grammar", severity: "blocks_propose" },
+      {
+        ruleId: "plan/placement-readonly-unsupported",
+        severity: "blocks_propose",
+      },
+      { ruleId: "plan/placement-owned-overlap", severity: "blocks_propose" },
+      { ruleId: "plan/placement-full-shared", severity: "blocks_propose" },
+      { ruleId: "plan/placement-lane-cycle", severity: "blocks_propose" },
+      { ruleId: "plan/placement-closeout-shared", severity: "advisory" },
+    ]);
+    // Placement guidance is the only advisory the plan taxonomy publishes;
+    // everything else refuses at propose.
+    expect(
+      reference.lintTaxonomy.deliveryPlan
+        .filter(({ severity }) => severity === "advisory")
+        .map(({ ruleId }) => ruleId),
+    ).toEqual(["plan/placement-closeout-shared"]);
     const validatorVerdict = reference.evidenceProducers.find(
       ({ kind }) => kind === "validator_verdict",
     );
@@ -648,6 +698,35 @@ describe("cctl spec schema", () => {
           documents.find(({ id }) => id === "discovered-task")?.example,
         ).success,
     ).toBe(true);
+  });
+
+  /**
+   * The worked example is what a planner copies. An example ranking the plan's
+   * own spec `external-readonly` is exactly the artifact the audited run
+   * learned the unreadable spelling from, so it must satisfy the rule that now
+   * refuses it — an example that fails its own lint reintroduces the defect.
+   */
+  it("shows the plan's own spec as the readable materialized source", async () => {
+    const documents = await readDocuments();
+    const example = z
+      .object({ document: deliveryPlanDocumentSchema })
+      .parse(documents.find(({ id }) => id === "plan-edit")?.example);
+    const sources = example.document.governance.sourcesOfTruth;
+    const specSource = sources.find(
+      (source) => source.locator === PLAN_EXAMPLE_SPEC_PATH,
+    );
+
+    expect(specSource?.rank).toBe(1);
+    expect(specSource?.accessPolicy).toBe("worktree-relative");
+    expect(
+      lintDeliveryPlan({
+        pinnedRevisionId: "revision-example",
+        specSlug: PLAN_EXAMPLE_SPEC_SLUG,
+        document: example.document,
+        pinnedCriteria: [],
+        deliveredElsewhereVerdicts: [],
+      }).map((finding) => finding.ruleId),
+    ).not.toContain("plan/spec-source-unreadable");
   });
 
   it("states the earliest authoring stage that admits each element kind", async () => {

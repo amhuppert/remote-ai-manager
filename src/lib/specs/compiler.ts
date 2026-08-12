@@ -4,7 +4,7 @@ import type {
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 import { findCriteriaWithoutMustRunCoverage } from "@/lib/workflow-graph/criterion-coverage";
-import { laneNameFromId } from "@/lib/workflow-graph/lane-identity";
+import { allocateLaneNames } from "@/lib/workflow-graph/lane-identity";
 import {
   evidenceKindSchema,
   isMachineValidationEvidenceKind,
@@ -1054,15 +1054,15 @@ interface ContextSourceTasks {
  *    envelope load-bearing, so a shared lane without a declared surface is
  *    refused rather than widened to full access.
  *  - no `executionLane` — a lane of its own, named after the context. The id is
- *    encoded through `laneNameFromId` rather than copied: a context id is
- *    composed from caller-assigned element ids and authored `laneGroup` names,
- *    both of which accept any non-empty string, so `laneGroup: "a-lane:b"`
- *    compiles to `context-lane-a-lane%3Ab` and no lane name may carry a `%`.
- *    The encoding is the identity on ids that already read as lane names, so
- *    the ordinary lane is still spelled exactly like its context, and it is
- *    injective, so two contexts never generate one name. The context id itself
- *    is untouched — it addresses tasks, edges, and locked regions, none of
- *    which answer to the lane grammar.
+ *    taken verbatim when the lane grammar admits it and escaped when it does
+ *    not (`soloLaneBaseFromId`): a context id is composed from caller-assigned
+ *    element ids and authored `laneGroup` names, both of which accept any
+ *    non-empty string, so `laneGroup: "a-lane:b"` compiles to
+ *    `context-lane-a-lane%3Ab` and no lane name may carry a `%`. The ordinary
+ *    lane is therefore still spelled exactly like its context, and the two
+ *    contexts an escape could bring together are separated by the allocator.
+ *    The context id itself is untouched — it addresses tasks, edges, and locked
+ *    regions, none of which answer to the lane grammar.
  *
  * The pass is whole-plan rather than per-context because those two halves draw
  * from ONE namespace: `executionLane` accepts any legal lane name, including
@@ -1070,47 +1070,33 @@ interface ContextSourceTasks {
  * would then share a lane that each believes it owns alone — refused at the
  * placement choke point as `placement-full-access-concurrency`, or, once a
  * dependency edge orders the pair, silently accepted as a "single-member" lane
- * with two members. Authored names are therefore reserved first and generated
- * ones are fitted around them: an author chose theirs, and nothing outside the
- * compiler ever spells a generated one.
+ * with two members. Resolving that namespace is not spec knowledge, so it lives
+ * in `allocateLaneNames`; what stays here is the spec-tier half — which lane a
+ * context's tasks agreed on, and what it may write.
  */
 function contextPlacements(
   sources: readonly ContextSourceTasks[],
 ): ReadonlyMap<string, ContextPlacement> {
   const placements = new Map<string, ContextPlacement>();
-  const generated: { contextId: string; base: string }[] = [];
-  const taken = new Set<string>();
+  const authored: { contextId: string; lane: string }[] = [];
+  const generated: { contextId: string }[] = [];
 
   for (const { contextId, members } of sources) {
     const lane = agreedExecutionLane(members);
     if (lane === undefined) {
-      generated.push({ contextId, base: laneNameFromId(contextId) });
+      generated.push({ contextId });
       continue;
     }
     placements.set(contextId, ownedPlacement(lane, members));
-    taken.add(lane);
+    authored.push({ contextId, lane });
   }
 
-  // Every uncontested base is claimed before any contested one is renamed, so a
-  // rename can never displace a context that would have been spelled like its
-  // own id. `laneNameFromId` is injective over distinct context ids, so a base
-  // is only ever contested by an authored lane.
-  const contested: typeof generated = [];
-  for (const entry of generated) {
-    if (taken.has(entry.base)) {
-      contested.push(entry);
-      continue;
-    }
-    taken.add(entry.base);
-    placements.set(entry.contextId, { lane: entry.base, mode: "full" });
-  }
-  for (const { contextId, base } of contested) {
-    let suffix = 2;
-    // A suffixed name stays inside the lane grammar: `base` already satisfies
-    // it and the suffix ends on a digit.
-    while (taken.has(`${base}-${suffix}`)) suffix += 1;
-    taken.add(`${base}-${suffix}`);
-    placements.set(contextId, { lane: `${base}-${suffix}`, mode: "full" });
+  const lanes = allocateLaneNames(authored, generated);
+  for (const { contextId } of generated) {
+    placements.set(contextId, {
+      lane: requiredMapValue(lanes, contextId, "generated lane name"),
+      mode: "full",
+    });
   }
   return placements;
 }

@@ -213,6 +213,22 @@ describe("createConfigReader", () => {
     expect(config.agentBackends.codex.stallTimeoutMs).toBe(60_000);
   });
 
+  it("round-trips a sparse Claude stall override without materializing profile defaults", async () => {
+    const configDir = await createTempConfigDir();
+    const rawConfig = {
+      agentBackends: {
+        claude: { stallTimeoutMs: 900_000 },
+      },
+    };
+    const reader = createConfigReader(configDir);
+
+    await reader.writeRawConfig(rawConfig);
+
+    await expect(reader.readRawConfig()).resolves.toEqual(rawConfig);
+    const config = await reader.readConfig();
+    expect(config.agentBackends.claude.stallTimeoutMs).toBe(900_000);
+  });
+
   it("does not inherit an effort when the selected Claude model has none", async () => {
     const configDir = await createTempConfigDir();
     await writeFile(

@@ -94,6 +94,11 @@ export const claudeBackendConfigSchema = z
     model: claudeModelSchema,
     reasoningEffort: claudeEffortLevelSchema.optional(),
     timeoutMs: backendTimeoutMsSchema,
+    /**
+     * Per-turn inactivity bound override; unset falls back to the Claude
+     * descriptor's default, explicit null disables the bound.
+     */
+    stallTimeoutMs: backendTimeoutMsSchema.optional(),
   })
   .superRefine(validateClaudeBackendModelEffort);
 export type ClaudeBackendConfig = z.infer<typeof claudeBackendConfigSchema>;

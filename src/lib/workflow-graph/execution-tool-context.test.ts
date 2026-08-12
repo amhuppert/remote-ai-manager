@@ -600,6 +600,76 @@ describe("GraphWorkflowExecutionToolContext", () => {
     ).rejects.toThrow();
   });
 
+  it("refuses to re-register an engine-seeded document — and captures nothing over the engine's bytes", async () => {
+    // The seeded document is the pinned contract every OTHER lane materializes
+    // from the central store. If this lane's registration were accepted, the
+    // post-commit capture would overwrite the store with this lane's file, so
+    // the refusal has to land in the finalize, before capture runs.
+    const seededPath = ".cc/graph-workflow-docs/spec/native-sdd.md";
+    const initial = withRunningContext(createWorkflowExecution(), [
+      "context-plan",
+    ]);
+    initial.sharedDocuments = [
+      {
+        id: "doc-seeded",
+        relativePath: seededPath,
+        description: "The pinned spec this run implements",
+        readWhen: "Read before judging the work.",
+        kind: "seeded",
+        createdAt: "2026-03-27T11:00:00.000Z",
+        updatedAt: "2026-03-27T11:00:00.000Z",
+        lastUpdatedByConversationId: null,
+      },
+    ];
+    const store = createFakeStore(initial);
+    const captured: string[] = [];
+    const sharedDocumentRegistry =
+      createGraphWorkflowSharedDocumentRegistryService({
+        now: () => "2026-03-27T12:00:00.000Z",
+        createDocumentId: () => "doc-1",
+        async captureDocumentContent(input) {
+          captured.push(input.relativePath);
+        },
+      });
+    const { publishLiveEditApplied, deliver } = createTestLiveEditPublisher();
+    const factory = createGraphWorkflowExecutionToolContext({
+      workflowManager: { mutateActive: createFakeMutateActive(store, deliver) },
+      runtimeEditService: createGraphWorkflowRuntimeEditService(),
+      sharedDocumentRegistry,
+      publishLiveEditApplied,
+      readLiveOccupancy: () => null,
+    });
+    const toolContext = factory.create({
+      projectPath: "/projects/test",
+      sessionName: "session-1",
+      executionId: "execution-1",
+      contextId: "context-plan",
+      conversationId: "conv-bound",
+      executionTarget: sessionTarget,
+      executionContextTitle: "Plan",
+      allowAgentTaskAdd: true,
+      allowAgentCollaboration: false,
+    });
+
+    await expect(
+      toolContext.upsertSharedDocument({
+        relativePath: seededPath,
+        description: "mine now",
+        readWhen: "whenever",
+      }),
+    ).rejects.toThrow(/engine-owned/i);
+
+    expect(captured).toEqual([]);
+    expect(store.current.sharedDocuments).toEqual([
+      expect.objectContaining({
+        id: "doc-seeded",
+        kind: "seeded",
+        description: "The pinned spec this run implements",
+        lastUpdatedByConversationId: null,
+      }),
+    ]);
+  });
+
   it("rejects a shared-document upsert at RESERVE — before any path resolution or capture — when the bound context is not active", async () => {
     // The reserve mutation runs `ensureBoundContextActive` FIRST, so a stale or
     // invalid request never resolves a path or touches the central store: the

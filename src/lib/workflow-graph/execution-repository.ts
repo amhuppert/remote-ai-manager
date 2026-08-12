@@ -13,6 +13,11 @@ import {
   type WorkflowCharterService,
 } from "./charter/service";
 import {
+  createWorkflowSeededDocumentService,
+  type SeededWorkflowDocument,
+  type WorkflowSeededDocumentService,
+} from "./shared-documents";
+import {
   combineEventDeliveries,
   createGraphWorkflowExecutionEventPublisher,
   type GraphWorkflowEventDelivery,
@@ -93,6 +98,14 @@ export interface GraphWorkflowExecutionSeed {
    * start seam cannot forget to decide: an owner is produced, never assumed.
    */
   ownerConversationId: string | null;
+  /**
+   * Documents the launching tier already rendered, seeded into the session
+   * worktree and the central store before the first iteration so every lane
+   * forked afterwards materializes them. Opaque content: the engine registers
+   * and distributes the bytes without interpreting them. Omitted is a launch
+   * that seeds nothing.
+   */
+  seededDocuments?: readonly SeededWorkflowDocument[];
 }
 
 /**
@@ -185,6 +198,7 @@ export interface GraphWorkflowExecutionRepositoryDeps {
     typeof createGraphWorkflowExecutionEventPublisher
   >;
   charterService?: WorkflowCharterService;
+  seededDocumentService?: WorkflowSeededDocumentService;
   readConfig?: () => Promise<GlobalConfig>;
   /**
    * Reads `CommandCenter.json` so execution start can preflight the seed
@@ -355,6 +369,8 @@ export function createGraphWorkflowExecutionRepository(
     createWorkflowCharterService({
       publishCharterRegistered: eventPublisher.publishCharterRegistered,
     });
+  const seededDocumentService =
+    deps.seededDocumentService ?? createWorkflowSeededDocumentService();
   const readConfigDep = deps.readConfig ?? readConfig;
   const readRepoConfigDep = deps.readRepoConfig ?? readRepoConfig;
   const agentProfileLibrary =
@@ -449,7 +465,7 @@ export function createGraphWorkflowExecutionRepository(
     // charter onto the execution, and compute the charter-registered event. A
     // render/write/register failure throws here, halting the seed with no
     // partial charter state.
-    const { nextExecution: seededExecution, delivery: charterDelivery } =
+    const { nextExecution: charteredExecution, delivery: charterDelivery } =
       await charterService.seedCharter({
         charter: baseExecution.charter,
         worktreePath: session.worktreePath,
@@ -457,6 +473,20 @@ export function createGraphWorkflowExecutionRepository(
         projectPath,
         sessionName,
       });
+
+    // Documents the launching tier rendered ride the same channel, in the same
+    // pre-CAS window: written into the session worktree, captured into the
+    // central store, registered as kind:"seeded" entries. Seeding HERE — not
+    // after launch — is what makes them reach a lane, because the loop kickoff
+    // is fire-and-forget and a definition-approval park throws before it. A
+    // failure throws for the same reason the charter's does: a run whose
+    // agents are pointed at a document that does not exist is worse than a run
+    // that refused to start, and nothing is persisted yet to unwind.
+    const seededExecution = await seededDocumentService.seedDocuments({
+      documents: seed.seededDocuments ?? [],
+      worktreePath: session.worktreePath,
+      execution: charteredExecution,
+    });
 
     // Replacement runs through the AUDITED archive before the CAS, never as a
     // silent overwrite (lifecycle contract, design §10). The contract decides

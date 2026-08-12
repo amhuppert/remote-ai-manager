@@ -26,6 +26,7 @@ import {
   type SpecDeliveryPlanAttemptRow,
 } from "@/lib/specs/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
+import { stableStringify } from "./serialization";
 import { _createTestDb } from "./state-db";
 import type { SpecDeliveryPlanRepo } from "./spec-delivery-plan-repo";
 import {
@@ -393,6 +394,36 @@ describe("spec delivery-plan persistence contract", () => {
     ).toBe(false);
   });
 
+  /**
+   * The harness above proves no persisted key path is dropped; this proves the
+   * stored COLUMN is byte-identical to the canonical serialization of what was
+   * saved. Placement is the reason it is worth stating separately: a grade
+   * flattened, an `ownedPaths` entry reordered, or a strict-union branch
+   * silently re-parsed into a different one would still deep-equal on some
+   * paths, but it would not produce the same bytes — and the bytes are what the
+   * plan hash, and therefore the approval, is taken over.
+   */
+  it("stores a placement-bearing document as the exact canonical bytes it was given", () => {
+    const document = maximalPlanDocument();
+    expect(document.contexts.map((context) => context.placement?.mode)).toEqual(
+      ["owned", "full", "readOnly"],
+    );
+
+    const attempt = openDraft(
+      "attempt-delivery-plan-placement",
+      emptyDeliveryPlanDocument(),
+    );
+    plans.saveDraft({
+      attemptId: attempt.id,
+      expectedDraftRevision: attempt.draft_revision,
+      document,
+      updatedAt: "2026-08-07T09:45:00.000Z",
+    });
+
+    const reloaded = plans.findAttemptById(attempt.id);
+    expect(reloaded?.content_json).toBe(stableStringify(document));
+  });
+
   it("keeps a frozen snapshot byte-identical to the draft it froze", () => {
     const document = maximalPlanDocument();
     const attempt = openDraft("attempt-delivery-plan-freeze", document);
@@ -412,5 +443,43 @@ describe("spec delivery-plan persistence contract", () => {
       deliveryPlanDocumentSchema.parse(JSON.parse(snapshot.content_json)),
     ).toEqual(document);
     expect(snapshot.pinned_revision_id).toBe(attempt.pinned_revision_id);
+  });
+
+  /**
+   * A newer build sharing this database may store a document field this build
+   * has not learned. The raw UPDATE is the only way to stage that: every repo
+   * write parses the document first, which is exactly the per-attempt refusal
+   * being characterised here. Listing must survive it, because
+   * `findAttemptsBySpecId` is what a spec's plan list reads and a set-wide
+   * failure is the blast radius that would have justified a schema-version
+   * bump.
+   */
+  it("lists an attempt written with an unknown document field, and refuses only its document", () => {
+    const attempt = openDraft(
+      "attempt-delivery-plan-future",
+      maximalPlanDocument(),
+    );
+    const [firstContext, ...restContexts] = maximalPlanDocument().contexts;
+    if (firstContext === undefined) throw new Error("fixture lost its context");
+    const futureContentJson = JSON.stringify({
+      ...maximalPlanDocument(),
+      contexts: [
+        { ...firstContext, placement: { grade: "solo", lane: "lane-store" } },
+        ...restContexts,
+      ],
+    });
+    db.prepare(
+      `UPDATE spec_delivery_plan_attempts SET content_json = ? WHERE id = ?`,
+    ).run(futureContentJson, attempt.id);
+
+    const listed = plans.findAttemptsBySpecId(SPEC_ID);
+    const reloaded = listed.find((row) => row.id === attempt.id);
+    expect(reloaded?.content_json).toBe(futureContentJson);
+    expect(reloaded?.status).toBe("draft");
+
+    expect(
+      deliveryPlanDocumentSchema.safeParse(JSON.parse(futureContentJson))
+        .success,
+    ).toBe(false);
   });
 });

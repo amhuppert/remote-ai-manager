@@ -1,4 +1,5 @@
 import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
+import type { SeededWorkflowDocument } from "@/lib/workflow-graph/shared-documents";
 import {
   explicitArchiveEligibility,
   isTerminalStatus,
@@ -24,6 +25,7 @@ import {
 import { stableStringify } from "@/lib/state-store/serialization";
 
 import type { LinkedWorkflowObservation } from "./abandon-coordinator";
+import { pinnedSpecDocumentPath } from "./delivery-plan";
 import type {
   SpecWorkflowCleanupObservation,
   SpecWorkflowCleanupTarget,
@@ -322,6 +324,36 @@ function manifestFor(state: SpecExportState): unknown {
     assumptions: [...state.assumptions].sort(
       (left, right) => left.number - right.number,
     ),
+  };
+}
+
+/**
+ * Re-exported at the renderer's own surface: the locator is declared beside the
+ * governance entry that cites it, in a module the plan-authoring surfaces can
+ * import without pulling the export renderer's dependencies with it.
+ */
+export { pinnedSpecDocumentPath };
+
+/**
+ * The pinned spec revision as the document seeded into every lane worktree at
+ * launch. Rendered through the same {@link renderRevisionMarkdown} the canonical
+ * bundle uses, so a lane reads byte-for-byte what `cctl spec export` writes for
+ * that revision — one renderer, no second copy to drift.
+ *
+ * It renders the SNAPSHOT the caller pins, never live spec state: an amendment
+ * proposed mid-run moves the spec's draft, and a validator judging the run must
+ * still judge the contract the run was launched against.
+ */
+export function buildPinnedSpecDocument(
+  spec: Spec,
+  pinned: SpecRevisionSnapshot,
+): SeededWorkflowDocument {
+  return {
+    relativePath: pinnedSpecDocumentPath(spec.slug),
+    contents: renderRevisionMarkdown(spec, pinned),
+    description: `The pinned spec ${spec.slug} at revision ${pinned.revision.number} — the contract this run implements.`,
+    readWhen:
+      "Read before judging whether work satisfies the spec; it is the pinned contract, not live spec state.",
   };
 }
 

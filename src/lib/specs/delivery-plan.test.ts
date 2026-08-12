@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
+// Test-only: the drift pin below compares the local mirror against the graph
+// tier's own placement schema. Production code in `./delivery-plan` must not
+// import this module — the mirror exists precisely so it does not have to.
+import { contextPlacementSchema } from "@/lib/workflow-graph/definition-schemas";
 import {
   DELIVERY_PLAN_DISPOSITIONS,
+  deliveryPlanContextPlacementSchema,
+  deliveryPlanContextSchema,
   deliveryPlanDocumentSchema,
   emptyDeliveryPlanDocument,
   postLaunchPathActs,
@@ -201,6 +207,228 @@ describe("delivery plan document", () => {
   });
 });
 
+/**
+ * The plan tier authors placement in the graph tier's own vocabulary so
+ * materialization is a copy rather than a translation. The shape is mirrored
+ * locally because `delivery-plan.ts` is a client-importable leaf that must not
+ * import `@/lib/workflow-graph`, so this pins the mirror: a placement one
+ * schema admits and the other refuses is drift, and drift here means a plan
+ * that proposes clean compiles into a definition the graph tier rejects.
+ *
+ * Test code may import the graph schema; production spec-tier code may not.
+ */
+describe("delivery plan context placement mirror", () => {
+  const sharedMatrix: readonly (readonly [string, unknown])[] = [
+    ["a full-access placement", { lane: "core", mode: "full" }],
+    [
+      "an owning placement",
+      {
+        lane: "store",
+        mode: "owned",
+        ownedPaths: ["src/lib/specs", "src/lib/state-store/index.ts"],
+      },
+    ],
+    ["a read-only placement", { lane: "session", mode: "readOnly" }],
+    [
+      "stray ownedPaths on a full-access placement",
+      { lane: "core", mode: "full", ownedPaths: ["src/lib/specs"] },
+    ],
+    [
+      "stray ownedPaths on a read-only placement",
+      { lane: "core", mode: "readOnly", ownedPaths: ["src/lib/specs"] },
+    ],
+    [
+      "empty ownedPaths on an owning placement",
+      { lane: "core", mode: "owned", ownedPaths: [] },
+    ],
+    [
+      "a missing ownedPaths on an owning placement",
+      { lane: "core", mode: "owned" },
+    ],
+    ["an unknown grade", { lane: "core", mode: "solo" }],
+    ["a missing mode", { lane: "core" }],
+    ["a missing lane", { mode: "full" }],
+    ["an empty lane", { lane: "", mode: "full" }],
+    ["a whitespace-only lane", { lane: "   ", mode: "full" }],
+    ["an unknown key", { lane: "core", mode: "full", worktree: true }],
+    ["a non-object placement", "core"],
+    [
+      "an absolute owned path",
+      { lane: "core", mode: "owned", ownedPaths: ["/src/lib/specs"] },
+    ],
+    [
+      "a windows-drive owned path",
+      { lane: "core", mode: "owned", ownedPaths: ["C:/src/lib"] },
+    ],
+    [
+      "a backslash owned path",
+      { lane: "core", mode: "owned", ownedPaths: ["src\\lib\\specs"] },
+    ],
+    [
+      "a trailing-separator owned path",
+      { lane: "core", mode: "owned", ownedPaths: ["src/lib/specs/"] },
+    ],
+    [
+      "a parent-segment owned path",
+      { lane: "core", mode: "owned", ownedPaths: ["src/../lib"] },
+    ],
+    [
+      "a current-segment owned path",
+      { lane: "core", mode: "owned", ownedPaths: ["src/./lib"] },
+    ],
+    [
+      "an empty-segment owned path",
+      { lane: "core", mode: "owned", ownedPaths: ["src//lib"] },
+    ],
+    [
+      "an untrimmed owned path",
+      { lane: "core", mode: "owned", ownedPaths: [" src/lib"] },
+    ],
+    [
+      "a repository-root owned path",
+      { lane: "core", mode: "owned", ownedPaths: ["."] },
+    ],
+    [
+      "a repository-root owned path with a separator",
+      { lane: "core", mode: "owned", ownedPaths: ["./"] },
+    ],
+    ["an empty owned path", { lane: "core", mode: "owned", ownedPaths: [""] }],
+    [
+      "a .git owned path",
+      { lane: "core", mode: "owned", ownedPaths: [".git/hooks"] },
+    ],
+    [
+      "a case-folded .git owned path",
+      { lane: "core", mode: "owned", ownedPaths: [".GIT"] },
+    ],
+    [
+      "a .cc owned path",
+      { lane: "core", mode: "owned", ownedPaths: [".cc/temp"] },
+    ],
+    [
+      "a case-folded .cc owned path",
+      { lane: "core", mode: "owned", ownedPaths: [".CC/temp"] },
+    ],
+    [
+      "a dotfile owned path that only looks like git metadata",
+      { lane: "core", mode: "owned", ownedPaths: [".gitignore"] },
+    ],
+    [
+      "a non-string owned path",
+      { lane: "core", mode: "owned", ownedPaths: [{ path: "src/lib" }] },
+    ],
+    [
+      "an owned path at the mirrored length bound",
+      { lane: "core", mode: "owned", ownedPaths: [`src/${"a".repeat(496)}`] },
+    ],
+    [
+      "a lane at the mirrored length bound",
+      { lane: "a".repeat(120), mode: "full" },
+    ],
+  ];
+
+  it.each(sharedMatrix)(
+    "reaches the same verdict as contextPlacementSchema for %s",
+    (_label, candidate) => {
+      expect(
+        deliveryPlanContextPlacementSchema.safeParse(candidate).success,
+      ).toBe(contextPlacementSchema.safeParse(candidate).success);
+    },
+  );
+
+  it("admits exactly the three authorable grades unchanged", () => {
+    for (const placement of [
+      { lane: "core", mode: "full" },
+      {
+        lane: "store",
+        mode: "owned",
+        ownedPaths: ["src/lib/specs", "docs/design"],
+      },
+      { lane: "session", mode: "readOnly" },
+    ]) {
+      expect(deliveryPlanContextPlacementSchema.parse(placement)).toEqual(
+        placement,
+      );
+    }
+  });
+
+  /**
+   * The plan document is stored whole in one TEXT column, so the mirror carries
+   * blob bounds the graph tier has no reason to: these are the cases where the
+   * two schemas legitimately disagree, and each one asserts the graph tier is
+   * the more permissive side so the divergence stays deliberate.
+   */
+  it.each([
+    ["a lane past the blob bound", { lane: "a".repeat(121), mode: "full" }],
+    [
+      "more owned paths than the blob bound",
+      {
+        lane: "core",
+        mode: "owned",
+        ownedPaths: Array.from({ length: 65 }, (_v, i) => `src/lib/p${i}`),
+      },
+    ],
+    [
+      "an owned path past the blob bound",
+      { lane: "core", mode: "owned", ownedPaths: [`src/${"a".repeat(497)}`] },
+    ],
+  ])("refuses %s that the graph tier admits", (_label, candidate) => {
+    expect(
+      deliveryPlanContextPlacementSchema.safeParse(candidate).success,
+    ).toBe(false);
+    expect(contextPlacementSchema.safeParse(candidate).success).toBe(true);
+  });
+
+  it("admits owned paths up to the blob bound", () => {
+    const placement = {
+      lane: "core",
+      mode: "owned",
+      ownedPaths: Array.from({ length: 64 }, (_v, i) => `src/lib/p${i}`),
+    };
+    expect(deliveryPlanContextPlacementSchema.parse(placement)).toEqual(
+      placement,
+    );
+  });
+});
+
+describe("delivery plan context placement field", () => {
+  function contextWithout(): Record<string, unknown> {
+    return {
+      contextId: "ctx-schema",
+      title: "Schema and store",
+      contextType: "delivery",
+      criterionElementIds: [],
+      acceptanceContract: ["The attempt round-trips through SQLite."],
+      proofPlan: [],
+    };
+  }
+
+  it("stays optional so a plan that does not care omits it", () => {
+    const parsed = deliveryPlanContextSchema.parse(contextWithout());
+    expect(parsed).not.toHaveProperty("placement");
+  });
+
+  it("carries an authored placement through unchanged", () => {
+    const placement = {
+      lane: "store",
+      mode: "owned",
+      ownedPaths: ["src/lib/state-store"],
+    };
+    expect(
+      deliveryPlanContextSchema.parse({ ...contextWithout(), placement }),
+    ).toMatchObject({ placement });
+  });
+
+  it("refuses a malformed placement rather than dropping it", () => {
+    expect(
+      deliveryPlanContextSchema.safeParse({
+        ...contextWithout(),
+        placement: { lane: "store", mode: "owned", ownedPaths: [] },
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe("deliveryPlanHash", () => {
   it("is stable across the key order a caller's JSON happened to carry", () => {
     const document = maximalDocument();
@@ -319,6 +547,47 @@ describe("delivery plan row schemas", () => {
         draft_revision: 0,
       }).success,
     ).toBe(false);
+  });
+
+  /**
+   * `findAttemptsBySpecId` parses rows, never documents, so a document field
+   * this build has not learned yet must not cost the whole result set. That
+   * only holds while `content_json` stays an opaque JSON string here: giving
+   * the row schema any knowledge of the document shape would turn a newer
+   * build's attempt into a listing-wide failure instead of a per-attempt one.
+   */
+  it("keeps content_json opaque, so a newer document shape still parses as a row", () => {
+    const [firstContext, ...restContexts] = maximalDocument().contexts;
+    if (firstContext === undefined) throw new Error("fixture lost its context");
+    const futureDocument = {
+      ...maximalDocument(),
+      contexts: [
+        { ...firstContext, placement: { grade: "solo", lane: "lane-schema" } },
+        ...restContexts,
+      ],
+    };
+    expect(deliveryPlanDocumentSchema.safeParse(futureDocument).success).toBe(
+      false,
+    );
+
+    const row = specDeliveryPlanAttemptRowSchema.parse({
+      id: "attempt-future",
+      spec_id: "spec-1",
+      pinned_revision_id: "revision-1",
+      delta_basis_execution_id: null,
+      status: "draft",
+      draft_revision: 1,
+      content_json: JSON.stringify(futureDocument),
+      proposed_snapshot_id: null,
+      approval_json: null,
+      prelaunch_json: null,
+      launched_execution_id: null,
+      created_at: "2026-08-11T09:00:00.000Z",
+      updated_at: "2026-08-11T09:00:00.000Z",
+    });
+
+    const stored: unknown = JSON.parse(row.content_json);
+    expect(stored).toEqual(futureDocument);
   });
 
   it("parses a maximal snapshot row", () => {

@@ -131,6 +131,11 @@ export function maximalPlanDocument(): DeliveryPlanDocument {
         note: null,
       },
     ],
+    // One context per authorable placement grade, so a grade dropped or
+    // flattened at the serialization boundary fails the round trip. `readOnly`
+    // is here because the SCHEMA admits it: propose-time lint is what refuses a
+    // plan-tier context with no write surface, and the column has to survive
+    // whatever the schema admits.
     contexts: [
       {
         contextId: "ctx-store",
@@ -147,6 +152,33 @@ export function maximalPlanDocument(): DeliveryPlanDocument {
             note: "The maximal round-trip contract test is the proof.",
           },
         ],
+        placement: {
+          lane: "store",
+          mode: "owned",
+          ownedPaths: [
+            "src/lib/state-store",
+            "src/lib/specs/delivery-plan.ts",
+            "docs/design",
+          ],
+        },
+      },
+      {
+        contextId: "ctx-integrate",
+        title: "Integration on the shared lane",
+        contextType: "integration",
+        criterionElementIds: [],
+        acceptanceContract: ["The delivered lanes join without conflict."],
+        proofPlan: [],
+        placement: { lane: "integration", mode: "full" },
+      },
+      {
+        contextId: "ctx-audit",
+        title: "Read-only audit",
+        contextType: "closeout",
+        criterionElementIds: [],
+        acceptanceContract: ["The audit reports without mutating the tree."],
+        proofPlan: [],
+        placement: { lane: "audit", mode: "readOnly" },
       },
     ],
     tasks: [

@@ -41,6 +41,7 @@ import {
   type ParallelWorktrees,
   type ProvisionResult,
 } from "@/lib/workflow-graph/parallel-worktrees";
+import type { SeededWorkflowDocument } from "@/lib/workflow-graph/shared-documents";
 import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
 import {
   SESSION_LANE_ID,
@@ -120,6 +121,9 @@ interface GraphWorkflowExecutionSeed {
   // with no conversation identity. Required rather than optional so a new start
   // path has to decide rather than silently drop the owner.
   ownerConversationId: string | null;
+  // Pre-rendered documents the launching tier seeds into the run before its
+  // first iteration. Empty for a launch that seeds nothing.
+  seededDocuments: readonly SeededWorkflowDocument[];
 }
 
 interface GraphWorkflowExecutionRepository {
@@ -177,6 +181,13 @@ export interface GraphWorkflowStartInput {
    * reach the seed. Omitted/null is an unowned launch.
    */
   ownerConversationId?: string | null;
+  /**
+   * Documents the launching tier already rendered, seeded into the run before
+   * its first iteration so every lane materializes them. In-process only: no
+   * HTTP body reaches this field, because it authorizes a worktree write.
+   * Omitted is a launch that seeds nothing.
+   */
+  seededDocuments?: readonly SeededWorkflowDocument[];
 }
 
 /**
@@ -1054,6 +1065,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         inputs: boundInputs,
         launchedTier: tier,
         ownerConversationId: input.ownerConversationId ?? null,
+        seededDocuments: input.seededDocuments ?? [],
       },
     );
 
