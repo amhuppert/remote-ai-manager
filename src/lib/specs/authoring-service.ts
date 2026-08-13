@@ -270,14 +270,18 @@ export type DraftElementBatchResult =
 /**
  * The first saved element, carried inside the create call: the durable spec
  * object is born from its first successful draft save (R4.1), so creation is
- * never a separate content-less step. It is the draft document without a
- * compare-and-swap version, because the revision this element opens holds no
- * version to compare against — stating one is a draft document sent at the
- * wrong verb, and the strict parse says so rather than ignoring it.
+ * never a separate content-less step. The revision this element opens holds
+ * no version to compare against, so an explicit `baseElementVersion: null`
+ * is tolerated — it states exactly what create means, and refusing it was a
+ * guaranteed first-contact stumble for callers trained on the draft document
+ * (#60) — while a NUMBER still refuses: a real base version is a draft
+ * document sent at the wrong verb, and the strict parse says so.
  */
-export const createSpecInitialElementSchema = draftElementDocumentSchema.omit({
-  baseElementVersion: true,
-});
+export const createSpecInitialElementSchema = draftElementDocumentSchema
+  .omit({
+    baseElementVersion: true,
+  })
+  .extend({ baseElementVersion: z.null().optional() });
 export type CreateSpecInitialElement = z.infer<
   typeof createSpecInitialElementSchema
 >;
@@ -750,7 +754,7 @@ function batchRefusalFor(
       code: "element_id_taken",
       unmetConditions: [error.message],
       instruction:
-        "Choose a globally unique element ID, preferably prefixed with the spec slug, then resubmit the batch.",
+        'Choose a globally unique element ID, preferably prefixed with the spec slug (for example, "<spec-slug>-<id>"), then resubmit the batch.',
       currentElementVersion: null,
     };
   }

@@ -1689,8 +1689,8 @@ function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
   const blockingThreadCount = groupThreads(detail).filter((thread) =>
     thread.comments.some(
       (comment) =>
-        comment.revision_id === snapshot.revision.id &&
-        comment.blocking === 1 &&
+        comment.revisionId === snapshot.revision.id &&
+        comment.blocking &&
         comment.resolution === "open",
     ),
   ).length;
@@ -1963,7 +1963,7 @@ function ReviewChangeCard({
     (approvalTarget === null ||
       !outstandingSubjects(detail).has(subjectKey(approvalTarget)));
   const threads = groupThreads(detail).filter(
-    (thread) => thread.comments[0]?.element_id === change.elementId,
+    (thread) => thread.comments[0]?.elementId === change.elementId,
   );
 
   const comment = useSpecActionMutation<
@@ -2260,7 +2260,7 @@ function ReviewChangeCard({
                     if (criterionDisplay === null) return null;
                     const criterionThreads = groupThreads(detail).filter(
                       (thread) =>
-                        thread.comments[0]?.element_id === criterion.elementId,
+                        thread.comments[0]?.elementId === criterion.elementId,
                     );
                     return (
                       <div
@@ -2309,7 +2309,6 @@ function ReviewChangeCard({
                         {criterionThreads.length > 0 && (
                           <ReviewThreads
                             threads={criterionThreads}
-                            detail={detail}
                             currentSnapshot={currentSnapshot}
                           />
                         )}
@@ -2323,11 +2322,7 @@ function ReviewChangeCard({
         </CollapsibleContent>
 
         {threads.length > 0 && (
-          <ReviewThreads
-            threads={threads}
-            detail={detail}
-            currentSnapshot={currentSnapshot}
-          />
+          <ReviewThreads threads={threads} currentSnapshot={currentSnapshot} />
         )}
 
         {commenting && (
@@ -2448,11 +2443,9 @@ function reviewChangeControlLabel(change: ReviewCardChange): string {
 
 function ReviewThreads({
   threads,
-  detail,
   currentSnapshot,
 }: {
   threads: ReturnType<typeof groupThreads>;
-  detail: SpecDetailView;
   currentSnapshot: SpecRevisionSnapshot;
 }): React.JSX.Element {
   return (
@@ -2464,18 +2457,12 @@ function ReviewThreads({
       {threads.map((thread) => {
         const original = thread.comments[0];
         if (original === undefined) return null;
-        const anchor = parseAnchor(original.anchor_json);
-        const currentBody = bodyForElement(
-          currentSnapshot,
-          original.element_id,
-        );
+        const anchor = parseAnchor(original.anchor);
+        const currentBody = bodyForElement(currentSnapshot, original.elementId);
         const state =
           anchor === null
             ? { status: "stale" as const }
             : reanchorSpecThread(anchor, currentBody);
-        const originalRevision = detail.revisions.find(
-          (revision) => revision.id === original.revision_id,
-        );
 
         return (
           <article
@@ -2484,7 +2471,7 @@ function ReviewThreads({
             className="rounded-md border border-solid border-border-dim bg-bg-surface px-md py-sm"
           >
             <div className="flex flex-wrap items-center justify-between gap-xs">
-              {original.blocking === 1 && (
+              {original.blocking && (
                 <StatusChip
                   tone={original.resolution === "open" ? "red" : "green"}
                 >
@@ -2495,7 +2482,7 @@ function ReviewThreads({
                 {anchorLabel[state.status]}
               </StatusChip>
               <span className="font-mono text-[0.7rem] text-text-tertiary">
-                Original revision {originalRevision?.number ?? "unknown"}
+                Original revision {original.revisionNumber ?? "unknown"}
               </span>
             </div>
             {anchor !== null && (
@@ -2741,25 +2728,21 @@ function groupThreads(detail: SpecDetailView): Array<{
 }> {
   const grouped = new Map<string, SpecDetailView["comments"]>();
   for (const comment of detail.comments) {
-    const comments = grouped.get(comment.thread_id) ?? [];
+    const comments = grouped.get(comment.threadId) ?? [];
     comments.push(comment);
-    grouped.set(comment.thread_id, comments);
+    grouped.set(comment.threadId, comments);
   }
   return [...grouped.entries()].map(([threadId, comments]) => ({
     threadId,
     comments: comments.toSorted((left, right) =>
-      left.created_at.localeCompare(right.created_at),
+      left.createdAt.localeCompare(right.createdAt),
     ),
   }));
 }
 
-function parseAnchor(anchorJson: string): CommentAnchor | null {
-  try {
-    const parsed = commentAnchorSchema.safeParse(JSON.parse(anchorJson));
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
+function parseAnchor(anchor: unknown): CommentAnchor | null {
+  const parsed = commentAnchorSchema.safeParse(anchor);
+  return parsed.success ? parsed.data : null;
 }
 
 function createClientId(): string {

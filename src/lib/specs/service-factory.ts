@@ -8,6 +8,7 @@ import { createLogger } from "@/lib/logging";
 import { createNotificationsRepo } from "@/lib/notifications/repo";
 import { getNotificationsService } from "@/lib/notifications/service";
 import { createSpecApprovalNotifier } from "@/lib/notifications/spec-approvals";
+import { createProductionSpecReviewFeedbackNotifier } from "@/lib/notifications/spec-review-feedback";
 import { getProjectDisplayName } from "@/lib/projects/resolver";
 import { readConversationMessagesWithSeq } from "@/lib/prompt/transcript";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -113,6 +114,7 @@ export async function createProductionSpecRouteServices(
     waivers: deliveryRepo,
     policyNotifier: notifier,
   });
+  const reviewFeedbackNotifier = createProductionSpecReviewFeedbackNotifier();
   const review = createReviewService({
     specs,
     review: reviewRepo,
@@ -120,7 +122,13 @@ export async function createProductionSpecRouteServices(
     links: linksRepo,
     events,
     attention: eventsRepo,
-    notifier,
+    // The approval notifier plus the proposer-facing feedback half (#60):
+    // review feedback lands as passive durable notices in the proposing
+    // conversation, never as a wake.
+    notifier: {
+      ...notifier,
+      reviewFeedback: reviewFeedbackNotifier.reviewFeedback,
+    },
     policyNotifier: notifier,
   });
 

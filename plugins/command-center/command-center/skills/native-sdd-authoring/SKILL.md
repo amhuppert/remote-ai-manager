@@ -55,7 +55,7 @@ Inspect the distinct guards and outcomes with `cctl spec withdraw-proposal --hel
 
 ## Element-id/handle/version semantics
 
-Treat an element id as its globally unique, immutable identity. Treat its handle, such as `R3.2` or `D4`, as the human address assigned within the spec and preserved when the same id is reintroduced. Use ids in typed references and handles in CLI addresses unless a schema says otherwise.
+Treat an element id as its globally unique, immutable identity — unique across every spec in the project, including abandoned ones, which keep their ids forever. Always prefix element ids with the spec slug (for example `my-spec-req-audit`) so no other spec can own yours first; a collision refuses with `element_id_taken` and the only recovery is a different id. Treat its handle, such as `R3.2` or `D4`, as the human address assigned within the spec and preserved when the same id is reintroduced. Use ids in typed references and handles in CLI addresses unless a schema says otherwise.
 
 Treat `elementVersion` as a compare-and-swap token local to one revision. Versions restart when approved content is copied into a new amendment revision, so re-read every element before writing and never compare revisions by element version.
 

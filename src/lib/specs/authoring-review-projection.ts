@@ -171,6 +171,21 @@ export interface AuthoringNextAction {
   instruction: string;
 }
 
+/** One open review comment, as the projection needs it: where and how hard. */
+export interface OpenCommentSnapshot {
+  elementId: string;
+  /** The element's handle where the current revision still carries it. */
+  handle: string | null;
+  blocking: boolean;
+}
+
+export interface ProjectedOpenComments {
+  count: number;
+  blockingCount: number;
+  /** Deduped subject labels — handle when carried, element id otherwise — in first-seen order. */
+  subjects: string[];
+}
+
 export interface AuthoringReviewProjection {
   /** The gates this revision's transition consults, in gate order. */
   applicableGates: SpecGate[];
@@ -184,6 +199,8 @@ export interface AuthoringReviewProjection {
   revisionSignOff: RevisionSignOffProjection | null;
   pendingBlock: AuthoringPendingBlock | null;
   nextAction: AuthoringNextAction;
+  /** Null when the caller supplied no open comments — feedback is then simply unknown here. */
+  openComments: ProjectedOpenComments | null;
 }
 
 export interface AuthoringReviewProjectionInput {
@@ -213,6 +230,15 @@ export interface AuthoringReviewProjectionInput {
   blockingThreads: readonly ReviewThreadSnapshot[];
   /** The revision's lint findings whose severity blocks sign-off. */
   signOffFindings: readonly LintFinding[];
+  /**
+   * Open review comments on the projected revision. Optional display
+   * enrichment: only the status read supplies them, and a caller that omits
+   * them loses the comment-aware instructions, never correctness — pending
+   * subjects, sign-off and gate states are computed without them.
+   */
+  openComments?: readonly OpenCommentSnapshot[];
+  /** Names the exact `cctl spec comments` invocation in instructions. */
+  specSlug?: string;
 }
 
 const AUTHORING_GATES: readonly AuthoringGate[] = [
@@ -589,15 +615,54 @@ function projectPendingBlock(
         ? `Resolve the unmet sign-off conditions, then sign ${revisionLabel} off in Spec Studio.`
         : `Ask a human to sign ${revisionLabel} off in Spec Studio; approving the last subject does not sign it off.`
       : `Ask a human to approve ${first.subject} at the ${first.gate} gate in Spec Studio, or request it with gate ${first.gate} and subject ${first.subject}.`;
+  // A draft cannot carry review comments — commenting refuses outside a
+  // proposed revision — so the lead only decorates the in-review block, where
+  // a human weighing "approve or Request Changes" is exactly who reads it.
+  const open = draft ? null : projectOpenComments(input);
   return {
     actsNext: draft ? "agent" : "human",
     gates: blockGates,
     outstandingSubjects: [...pending],
     signOff,
     unmetConditions: signOff?.unmetConditions ?? [],
-    display,
-    instruction,
+    display:
+      open === null
+        ? display
+        : `${display}; ${open.count} open comment${open.count === 1 ? "" : "s"} await${open.count === 1 ? "s" : ""} a response`,
+    instruction:
+      open === null
+        ? instruction
+        : `${openCommentLead(open, input.specSlug)} A human must approve what remains in Spec Studio or use Request Changes to reopen the draft before repairs can land.`,
   };
+}
+
+function projectOpenComments(
+  input: AuthoringReviewProjectionInput,
+): ProjectedOpenComments | null {
+  const comments = input.openComments ?? [];
+  if (comments.length === 0) return null;
+  const subjects: string[] = [];
+  for (const comment of comments) {
+    const label = comment.handle ?? comment.elementId;
+    if (!subjects.includes(label)) subjects.push(label);
+  }
+  return {
+    count: comments.length,
+    blockingCount: comments.filter((comment) => comment.blocking).length,
+    subjects,
+  };
+}
+
+/**
+ * The sentence that reroutes an instruction when reviewers left open comments:
+ * the human named by actsNext is withholding the approval the plain
+ * instruction would ask for, so pointing at the approval alone parks the loop.
+ */
+function openCommentLead(
+  open: ProjectedOpenComments,
+  specSlug: string | undefined,
+): string {
+  return `Open comments on ${open.subjects.join(", ")} await a response — read them with cctl spec comments ${specSlug ?? "<slug>"} --open.`;
 }
 
 function projectNextAction(
@@ -617,9 +682,12 @@ function projectNextAction(
       instruction: `Open an amendment draft: revision ${input.snapshot.revision.number} was withdrawn and carries nothing forward.`,
     };
   }
+  const open = projectOpenComments(input);
   // Element approval is refused on a draft, so naming a subject here would
   // send the caller at an act the transition cannot accept. The subjects stay
   // listed — they are what the review will ask for — but the act is propose.
+  // A draft carrying open comments is the Request Changes repair loop: the
+  // reviewer's feedback is what the next propose must answer.
   if (input.snapshot?.revision.state === "draft") {
     return {
       kind: "propose",
@@ -627,7 +695,10 @@ function projectNextAction(
       gate: null,
       subject: null,
       elementId: null,
-      instruction: "Propose the draft revision when it is ready for review.",
+      instruction:
+        open === null
+          ? "Propose the draft revision when it is ready for review."
+          : `${openCommentLead(open, input.specSlug)} Repair or answer them in the draft, then propose it again.`,
     };
   }
   const first = inGateOrder(pending)[0];
@@ -638,7 +709,10 @@ function projectNextAction(
       gate: first.gate,
       subject: first.subject,
       elementId: first.elementId,
-      instruction: `Ask a human to approve ${first.subject} at the ${first.gate} gate in Spec Studio.`,
+      instruction:
+        open === null
+          ? `Ask a human to approve ${first.subject} at the ${first.gate} gate in Spec Studio.`
+          : `${openCommentLead(open, input.specSlug)} A human must approve the remaining subjects in Spec Studio or use Request Changes to reopen the draft before repairs can land.`,
     };
   }
   if (signOff?.state === "blocked") {
@@ -659,7 +733,10 @@ function projectNextAction(
       gate: null,
       subject: null,
       elementId: null,
-      instruction: `Ask a human to sign revision ${signOff.revisionNumber} off in Spec Studio.`,
+      instruction:
+        open === null
+          ? `Ask a human to sign revision ${signOff.revisionNumber} off in Spec Studio.`
+          : `${openCommentLead(open, input.specSlug)} A human can still sign revision ${signOff.revisionNumber} off in Spec Studio, or use Request Changes to reopen the draft for repairs.`,
     };
   }
   return {
@@ -722,5 +799,6 @@ export function authoringReviewProjection(
       signOff,
     ),
     nextAction: projectNextAction(input, pending, signOff),
+    openComments: projectOpenComments(input),
   };
 }

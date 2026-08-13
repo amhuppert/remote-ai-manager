@@ -62,7 +62,10 @@ import {
   strandedProposalSignOffRefusal,
   supersedingRevision,
 } from "./proposal-integrity";
-import { evaluateProposalWithdrawal } from "./proposal-withdrawal";
+import {
+  evaluateProposalWithdrawal,
+  proposalAuthor,
+} from "./proposal-withdrawal";
 import { loadProposalState, type LoadedProposalState } from "./review-state";
 import { governanceBaseRevisionId } from "./revision-lineage";
 import {
@@ -110,6 +113,25 @@ export const resolveReviewThreadInputSchema = reviewIdentitySchema
   .strict();
 export type ResolveReviewThreadInput = z.infer<
   typeof resolveReviewThreadInputSchema
+>;
+
+/**
+ * A reply names only the thread it answers: the revision, element, and anchor
+ * all come from the thread's root row, so the caller cannot mis-anchor an
+ * answer, and no revision id means no stale-token refusal on an act that is
+ * conversation rather than review.
+ */
+export const replyToReviewThreadInputSchema = z
+  .object({
+    specId: z.string().min(1),
+    actor: actorProvenanceSchema,
+    activeStartedAt: z.string().datetime().optional(),
+    threadId: z.string().min(1),
+    body: z.string().min(1),
+  })
+  .strict();
+export type ReplyToReviewThreadInput = z.infer<
+  typeof replyToReviewThreadInputSchema
 >;
 
 export const requestChangesInputSchema = reviewIdentitySchema;
@@ -325,6 +347,12 @@ interface SignOffTransactionOutcome {
   prepared: PreparedSpecEventPublication[];
   grantedNotice: SpecApprovalGrantNotice | null;
   policyNotices: SpecPolicyAdmissionNotice[];
+  /**
+   * Set only when this pass actually signed the revision off. The idempotent
+   * repeat on an approved revision reports nothing, so the proposer feedback
+   * notice cannot re-fire on a replay.
+   */
+  signedOff: { spec: Spec; occurredAt: string } | null;
 }
 
 interface CombinedSignOffTransactionOutcome {
@@ -332,6 +360,7 @@ interface CombinedSignOffTransactionOutcome {
   prepared: PreparedSpecEventPublication[];
   grantedNotices: SpecApprovalGrantNotice[];
   policyNotices: SpecPolicyAdmissionNotice[];
+  signedOff: { spec: Spec; occurredAt: string } | null;
 }
 
 /**
@@ -348,6 +377,9 @@ class CombinedSignOffRefusedError extends Error {
 
 export interface ReviewService {
   comment(input: ReviewCommentInput): Promise<ReviewResult<SpecCommentRow>>;
+  replyToThread(
+    input: ReplyToReviewThreadInput,
+  ): Promise<ReviewResult<SpecCommentRow>>;
   resolveThread(
     input: ResolveReviewThreadInput,
   ): Promise<ReviewResult<SpecCommentRow[]>>;
@@ -466,6 +498,27 @@ export interface SpecApprovalRequestsClosedNotice {
 }
 
 /**
+ * Review feedback landing on a proposal, addressed to the conversation that
+ * proposed it (#60). The service resolves `proposer` from the durable propose
+ * event — the same read the withdrawal guard uses — so the notifier never
+ * needs the event log; null means no agent conversation owns the proposal
+ * (a human propose or unreadable provenance) and there is nobody to notify.
+ */
+export interface SpecReviewFeedbackNotice {
+  specId: string;
+  specSlug: string;
+  specName: string;
+  projectPath: string;
+  revisionId: string;
+  kind: "commented" | "changes_requested" | "signed_off";
+  /** The commented element id; null for revision-level acts. */
+  subject: string | null;
+  threadId: string | null;
+  proposer: AgentActorProvenance | null;
+  occurredAt: string;
+}
+
+/**
  * Outbound port for durable human-facing approval notifications. Called only
  * after the review transaction commits; the composed implementation renders
  * the notices and owns notification dedupe, never the decision of which
@@ -475,6 +528,11 @@ export interface SpecReviewNotifier {
   approvalRequested(notice: SpecApprovalRequestNotice): void;
   approvalGranted(notice: SpecApprovalGrantNotice): void;
   approvalRequestsClosed(notice: SpecApprovalRequestsClosedNotice): void;
+  /**
+   * Passive, durable feedback to the PROPOSING conversation — never an
+   * auto-wake (#60). Optional so approval-only compositions stay valid.
+   */
+  reviewFeedback?(notice: SpecReviewFeedbackNotice): void;
 }
 
 export interface ReviewServiceDeps {
@@ -583,6 +641,40 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       projectPath: spec.projectPath,
       ...notice,
     };
+  }
+
+  /**
+   * Post-commit only, like every notifier call: tell the PROPOSING
+   * conversation that review feedback landed (#60). The proposer is resolved
+   * here, from the durable propose event, so the notifier needs no event-log
+   * access; when no agent conversation owns the proposal there is nobody to
+   * notify and the act stays silent.
+   */
+  function emitReviewFeedback(
+    spec: Spec,
+    revisionId: string,
+    kind: SpecReviewFeedbackNotice["kind"],
+    subject: string | null,
+    threadId: string | null,
+    occurredAt: string,
+  ): void {
+    const proposer = proposalAuthor(
+      deps.attention.findBySpecId(spec.id),
+      revisionId,
+    );
+    if (proposer === null) return;
+    deps.notifier?.reviewFeedback?.({
+      specId: spec.id,
+      specSlug: spec.slug,
+      specName: spec.name,
+      projectPath: spec.projectPath,
+      revisionId,
+      kind,
+      subject,
+      threadId,
+      proposer,
+      occurredAt,
+    });
   }
 
   /** The requests a revision-scoped authoring act can answer or end. */
@@ -1209,6 +1301,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
         prepared: [],
         grantedNotice,
         policyNotices,
+        signedOff: null,
       };
     if (target.revision.state === "approved") {
       const approval =
@@ -1230,6 +1323,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
         prepared: [],
         grantedNotice,
         policyNotices,
+        signedOff: null,
       };
     }
     // Ticket #50: the propose guard should make this impossible, but a
@@ -1253,6 +1347,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
         prepared: [],
         grantedNotice,
         policyNotices,
+        signedOff: null,
       };
     const occurredAt = occurredAtOverride ?? now();
     const snapshot = repo.getRevisionSnapshot(target.revision.id);
@@ -1266,6 +1361,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
         prepared: [],
         grantedNotice,
         policyNotices,
+        signedOff: null,
       };
     const loaded = loadProposalState(
       repo,
@@ -1293,6 +1389,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
         prepared: [],
         grantedNotice,
         policyNotices,
+        signedOff: null,
       };
     const resolvedGates = consultedAuthoringGates(
       target.revision.authoringStage,
@@ -1462,6 +1559,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       ],
       grantedNotice,
       policyNotices,
+      signedOff: { spec: target.spec, occurredAt },
     };
   }
 
@@ -1525,6 +1623,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
         prepared: [],
         grantedNotices: [],
         policyNotices: [],
+        signedOff: null,
       };
     const approvals: PreparedSpecEventPublication[] = [];
     const grantedNotices: SpecApprovalGrantNotice[] = [];
@@ -1550,6 +1649,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           prepared: [],
           grantedNotices: [],
           policyNotices: [],
+          signedOff: null,
         };
       const snapshot = repo.getRevisionSnapshot(target.revision.id);
       if (snapshot === null)
@@ -1562,6 +1662,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           prepared: [],
           grantedNotices: [],
           policyNotices: [],
+          signedOff: null,
         };
       const subjects = outstandingAuthoringSubjects(
         repo,
@@ -1586,6 +1687,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             prepared: [],
             grantedNotices: [],
             policyNotices: [],
+            signedOff: null,
           };
         approvals.push(...approved.prepared);
         if (approved.grantedNotice !== null)
@@ -1621,6 +1723,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       prepared: [...approvals, ...signOff.prepared],
       grantedNotices,
       policyNotices: signOff.policyNotices,
+      signedOff: signOff.signedOff,
     };
   }
 
@@ -1630,6 +1733,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       const humanRefusal = humanRequired(parsed.actor);
       if (humanRefusal !== null) return humanRefusal;
       const occurredAt = now();
+      let commentedSpec: Spec | null = null;
       const transaction = await deps.specs.transaction(
         "specs.review.comment",
         (repo) => {
@@ -1674,6 +1778,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             updated_at: occurredAt,
           };
           deps.review.saveComment(row);
+          commentedSpec = target.spec;
           return {
             result: { ok: true, value: row } as ReviewResult<SpecCommentRow>,
             prepared: [
@@ -1692,6 +1797,133 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
         },
       );
       publishAll(transaction.prepared);
+      if (transaction.result.ok && commentedSpec !== null) {
+        emitReviewFeedback(
+          commentedSpec,
+          parsed.revisionId,
+          "commented",
+          parsed.elementId,
+          parsed.threadId,
+          occurredAt,
+        );
+      }
+      return transaction.result;
+    },
+
+    /**
+     * The one agent-capable comment write. Top-level comments are human review
+     * acts on a proposed revision; a reply answers a thread that already
+     * exists, so it carries no anchor of its own, never blocks, and is not
+     * gated on the revision's state — after Request Changes reopens the draft,
+     * answering the reviewer is exactly what the repair loop needs (#60).
+     */
+    async replyToThread(input) {
+      const parsed = replyToReviewThreadInputSchema.parse(input);
+      const occurredAt = now();
+      let repliedSpec: Spec | null = null;
+      const transaction = await deps.specs.transaction(
+        "specs.review.reply",
+        (repo) => {
+          const thread = deps.review
+            .findCommentsByThread(parsed.threadId)
+            .filter((comment) => comment.spec_id === parsed.specId);
+          const root =
+            thread.find((comment) => comment.parent_comment_id === null) ??
+            thread[0];
+          if (root === undefined) {
+            return {
+              result: refused(
+                "not_found",
+                [`Review thread ${parsed.threadId} was not found.`],
+                "List this spec's threads with cctl spec comments, then reply with a threadId it names.",
+              ),
+              prepared: [],
+            };
+          }
+          if (thread.every((comment) => comment.resolution !== "open")) {
+            return {
+              result: refused(
+                "already_satisfied",
+                [`Review thread ${parsed.threadId} has ended.`],
+                "An ended thread stays ended; answer in the next proposal's notes or ask the reviewer to comment again.",
+              ),
+              prepared: [],
+            };
+          }
+          const target = requireReviewTarget(
+            repo,
+            parsed.specId,
+            root.revision_id,
+          );
+          if (target === null) {
+            return {
+              result: refused(
+                "not_found",
+                ["Review target not found."],
+                "Refresh Spec Studio.",
+              ),
+              prepared: [],
+            };
+          }
+          const row: SpecCommentRow = {
+            id: newId("comment"),
+            spec_id: parsed.specId,
+            thread_id: root.thread_id,
+            parent_comment_id: root.id,
+            element_id: root.element_id,
+            // The reply answers the root's anchored text; copying the anchor
+            // keeps every row in the thread self-describing.
+            anchor_json: root.anchor_json,
+            revision_id: root.revision_id,
+            body: parsed.body,
+            author_json: stableStringify(parsed.actor),
+            blocking: 0,
+            resolution: "open",
+            created_at: occurredAt,
+            updated_at: occurredAt,
+          };
+          deps.review.saveComment(row);
+          repliedSpec = target.spec;
+          return {
+            result: { ok: true, value: row } as ReviewResult<SpecCommentRow>,
+            prepared: [
+              appendEvent(
+                target.spec,
+                target.revision.id,
+                parsed.actor,
+                occurredAt,
+                "spec-review-commented",
+                "commented",
+                row.thread_id,
+                parsed.activeStartedAt,
+              ),
+            ],
+          };
+        },
+      );
+      publishAll(transaction.prepared);
+      // Only a HUMAN reply is feedback to the proposer; an agent answering a
+      // thread must not be woken up to read its own words.
+      if (
+        transaction.result.ok &&
+        parsed.actor.kind === "human" &&
+        repliedSpec !== null
+      ) {
+        emitReviewFeedback(
+          repliedSpec,
+          transaction.result.value.revision_id,
+          "commented",
+          transaction.result.value.element_id,
+          transaction.result.value.thread_id,
+          occurredAt,
+        );
+      }
+      logger.info("specs.review.reply.complete", {
+        specId: parsed.specId,
+        threadId: parsed.threadId,
+        actorKind: parsed.actor.kind,
+        ok: transaction.result.ok,
+      });
       return transaction.result;
     },
 
@@ -2448,6 +2680,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       if (humanRefusal !== null) return humanRefusal;
       const occurredAt = now();
       let endedRequests: OpenApprovalRequest[] = [];
+      let reopenedSpec: Spec | null = null;
       const transaction = await deps.specs.transaction(
         "specs.review.request-changes",
         (repo) => {
@@ -2489,6 +2722,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
               prepared: [],
             };
           const { withdrawn, draft } = reopened;
+          reopenedSpec = target.spec;
           endedRequests = authoringRequestsForRevision(
             target.spec.id,
             target.revision.id,
@@ -2533,6 +2767,18 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           reason: "the revision it asked about was sent back for changes",
           occurredAt,
         });
+      }
+      // The moment the draft reopens is the moment the proposer can act — the
+      // feedback notice is what tells it to read the comments and repair.
+      if (transaction.result.ok && reopenedSpec !== null) {
+        emitReviewFeedback(
+          reopenedSpec,
+          parsed.revisionId,
+          "changes_requested",
+          null,
+          null,
+          occurredAt,
+        );
       }
       return transaction.result;
     },
@@ -2756,6 +3002,16 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
         for (const notice of transaction.policyNotices) {
           deps.policyNotifier?.policyAdmitted(notice);
         }
+        if (transaction.signedOff !== null) {
+          emitReviewFeedback(
+            transaction.signedOff.spec,
+            parsed.revisionId,
+            "signed_off",
+            null,
+            null,
+            transaction.signedOff.occurredAt,
+          );
+        }
       }
       return transaction.result;
     },
@@ -2790,6 +3046,16 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
         }
         for (const notice of transaction.policyNotices) {
           deps.policyNotifier?.policyAdmitted(notice);
+        }
+        if (transaction.signedOff !== null) {
+          emitReviewFeedback(
+            transaction.signedOff.spec,
+            parsed.revisionId,
+            "signed_off",
+            null,
+            null,
+            transaction.signedOff.occurredAt,
+          );
         }
       }
       return transaction.result;

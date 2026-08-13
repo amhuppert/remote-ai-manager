@@ -643,21 +643,19 @@ export function buildSpecHistory(
   }
 
   for (const comment of detail.comments) {
-    const subject = handles.get(comment.element_id) ?? "Element";
+    const subject = handles.get(comment.elementId) ?? "Element";
     events.push({
       id: comment.id,
       kind: "comment",
       emphasis: "human",
       tone:
-        comment.blocking === 1 && comment.resolution === "open"
-          ? "amber"
-          : "neutral",
+        comment.blocking && comment.resolution === "open" ? "amber" : "neutral",
       label: `${subject} comment recorded`,
       detail:
         comment.resolution === "open"
           ? "Review thread remains open."
           : "Review thread resolved.",
-      occurredAt: comment.created_at,
+      occurredAt: comment.createdAt,
       href: elementHref(projectName, detail.spec.slug, subject),
       priority: 45,
     });

@@ -28,6 +28,7 @@ import { specMeasuresReportSchema } from "@/lib/specs/measures";
 import {
   canonicalSpecBundleSchema,
   integrityReportSchema,
+  specCommentsViewSchema,
   specDetailViewSchema,
   specDiffViewSchema,
   specElementGetResponseSchema,
@@ -39,6 +40,8 @@ import {
   specSummaryViewSchema,
   type CanonicalSpecBundle,
   type RemainingAuthoringSequence,
+  type SpecCommentView,
+  type SpecCommentsView,
   type SpecDiffView,
   type SpecProjectSearchView,
   type SpecSearchHit,
@@ -456,6 +459,14 @@ function statusText(
     ),
     "revision sign-off:",
     ...signOffLines(status.revisionSignOff),
+    // The feedback half of the review loop: without this line, an agent
+    // reading status waits on approvals a commenting reviewer is withholding.
+    ...(status.openComments === null
+      ? []
+      : [
+          `open comments: ${status.openComments.count}${status.openComments.blockingCount > 0 ? ` (${status.openComments.blockingCount} blocking)` : ""} on ${status.openComments.subjects.join(", ")}`,
+          `  read: cctl spec comments ${status.slug} --open`,
+        ]),
     ...boundedSection("open questions", status.openQuestions, (question) => [
       `  ${question.handle}: ${question.text}`,
     ]),
@@ -759,6 +770,88 @@ export async function runSpecStatus(
   };
 }
 
+function commentAuthorLabel(comment: SpecCommentView): string {
+  if (comment.author === null) return "unattributed";
+  return comment.author.kind === "human"
+    ? "human"
+    : `agent ${comment.author.conversationId}`;
+}
+
+function commentLines(comment: SpecCommentView): string[] {
+  const marker = comment.blocking ? " [blocking]" : "";
+  const revision =
+    comment.revisionNumber === null ? "" : ` rev ${comment.revisionNumber}`;
+  const lines = [
+    `${comment.handle ?? comment.elementId}  ${comment.resolution}${marker}  by ${commentAuthorLabel(comment)}${revision}  thread ${comment.threadId}`,
+  ];
+  if (comment.quote !== null) {
+    lines.push(`  > ${comment.quote}`);
+  }
+  lines.push(
+    ...comment.body.split("\n").map((bodyLine) => `  ${bodyLine}`),
+    "",
+  );
+  return lines;
+}
+
+function commentsText(slug: string, view: SpecCommentsView): string {
+  const header = `${slug}  comments: ${countOf(view.comments.length, "comment")} shown, ${view.openCount} open${view.openBlockingCount > 0 ? ` (${view.openBlockingCount} blocking)` : ""}`;
+  if (view.comments.length === 0) {
+    return `${header}\n`;
+  }
+  return [header, "", ...view.comments.flatMap(commentLines)].join("\n");
+}
+
+export async function runSpecComments(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("spec comments"), json);
+  if (denied) return denied;
+  const extra = noExtraPositionals(rest, 1, "comments", json);
+  if (extra) return extra;
+  const slug = validateSlug(rest[0], "comments", json);
+  if (!slug.ok) return slug.result;
+  const resolved = await resolveProjectContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const query = new URLSearchParams();
+  const element = values["element"];
+  if (element !== undefined) query.set("element", element);
+  if (values["open"] === "true") query.set("open", "true");
+  const queryString = query.size === 0 ? "" : `?${query.toString()}`;
+  const response = await requestTyped(
+    host,
+    resolved.context,
+    `${specBasePath(resolved.context, slug.value)}/comments${queryString}`,
+    specCommentsViewSchema,
+    "comments",
+    json,
+  );
+  if (!response.ok) return response.result;
+  logger.debug("cli.spec.read_complete", {
+    command: "comments",
+    slug: slug.value,
+    returnedCount: response.value.comments.length,
+    openCount: response.value.openCount,
+  });
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(json, commentsText(slug.value, response.value), {
+      ok: true,
+      specId: response.value.specId,
+      slug: response.value.slug,
+      comments: response.value.comments,
+      openCount: response.value.openCount,
+      openBlockingCount: response.value.openBlockingCount,
+    }),
+    stderr: "",
+  };
+}
+
 /**
  * The full panel, severity by severity. The blocking group carries what it
  * blocks in words: an author reading `blocks_propose` has to know the enum to
@@ -930,11 +1023,24 @@ export async function runSpecGet(
         ? response.value.evidenceState.length
         : 0,
   });
+  // The content-element view nests the durable snapshot row, so the id sits
+  // three `element` levels deep (envelope.element.element.element.id). The
+  // identity every script wants is hoisted beside the view rather than
+  // reshaping the row the snapshot surfaces share (#60).
+  const identity =
+    "element" in response.value && "version" in response.value.element
+      ? {
+          elementId: response.value.element.element.id,
+          kind: response.value.element.element.kind,
+          elementVersion: response.value.element.version.elementVersion,
+        }
+      : {};
   return {
     exitCode: EXIT_OK,
     stdout: render(json, `${JSON.stringify(response.value, null, 2)}\n`, {
       ok: true,
       element: response.value,
+      ...identity,
     }),
     stderr: "",
   };

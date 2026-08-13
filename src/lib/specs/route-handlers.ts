@@ -103,6 +103,7 @@ import {
   type AuthoringPendingBlock,
   type ImportCarriedApproval,
   type ProjectedGateStatus,
+  type ProjectedOpenComments,
   type RevisionSignOffProjection,
 } from "./authoring-review-projection";
 import { diffRevisions } from "./revision-diff";
@@ -169,6 +170,7 @@ import {
   requestApprovalInputSchema,
   grantGateApprovalInputSchema,
   requestChangesInputSchema,
+  replyToReviewThreadInputSchema,
   resolveReviewThreadInputSchema,
   reviewCommentInputSchema,
   approveRemainingAndSignOffInputSchema,
@@ -178,11 +180,13 @@ import {
 } from "./review-service";
 import { executionScopeSchema, type ExecutionScope } from "./scope-validation";
 import { isWaiverValidForExecution } from "./waiver-staleness";
+import { projectSpecComment } from "./comment-projection";
 import type {
   CriterionDeliveryProjection,
   LiveProposalView,
   RemainingAuthoringSequence,
   SpecAssumptionView,
+  SpecCommentsView,
   SpecDiffBaseline,
   SpecDiffView,
   SpecQuestionView,
@@ -342,6 +346,7 @@ interface SpecStatusView {
   revisionSignOff: RevisionSignOffProjection | null;
   pendingBlock: AuthoringPendingBlock | null;
   nextAction: AuthoringNextAction;
+  openComments: ProjectedOpenComments | null;
   openQuestions: Array<{
     id: string;
     handle: string;
@@ -1423,6 +1428,12 @@ async function buildStatus(
   const signOffFindings =
     health.groups.find((group) => group.severity === "blocks_signoff")
       ?.findings ?? [];
+  const revisionComments =
+    revisionId === null ? [] : deps.findCommentsByRevision(revisionId);
+  const statusHandles =
+    state.currentSnapshot === null
+      ? new Map<string, string>()
+      : handlesByElementId(spec, state.currentSnapshot);
   const projection = authoringReviewProjection({
     policy: spec.gatePolicy,
     snapshot: state.currentSnapshot,
@@ -1433,17 +1444,21 @@ async function buildStatus(
     currentExecution: selectedExecution,
     revisionNumberById,
     applies,
-    blockingThreads:
-      revisionId === null
-        ? []
-        : deps
-            .findCommentsByRevision(revisionId)
-            .filter((comment) => comment.blocking === 1)
-            .map((comment) => ({
-              handle: comment.thread_id,
-              resolved: comment.resolution !== "open",
-            })),
+    blockingThreads: revisionComments
+      .filter((comment) => comment.blocking === 1)
+      .map((comment) => ({
+        handle: comment.thread_id,
+        resolved: comment.resolution !== "open",
+      })),
     signOffFindings,
+    openComments: revisionComments
+      .filter((comment) => comment.resolution === "open")
+      .map((comment) => ({
+        elementId: comment.element_id,
+        handle: statusHandles.get(comment.element_id) ?? null,
+        blocking: comment.blocking === 1,
+      })),
+    specSlug: spec.slug,
   });
   const criteria = deliveryCriteria(
     deps,
@@ -1486,6 +1501,7 @@ async function buildStatus(
     revisionSignOff: projection.revisionSignOff,
     pendingBlock: projection.pendingBlock,
     nextAction: projection.nextAction,
+    openComments: projection.openComments,
     openQuestions: deps
       .findQuestionsBySpecId(spec.id)
       .filter((question) => question.status === "open")
@@ -1952,9 +1968,18 @@ export function createSpecRouteHandlers(
         );
       },
     };
-    const comments = state.revisions.flatMap((revision) =>
-      deps.findCommentsByRevision(revision.id),
-    );
+    const commentHandles =
+      state.currentSnapshot === null
+        ? new Map<string, string>()
+        : handlesByElementId(resolved.value.spec, state.currentSnapshot);
+    const comments = state.revisions
+      .flatMap((revision) => deps.findCommentsByRevision(revision.id))
+      .map((row) =>
+        projectSpecComment(row, {
+          handleByElementId: commentHandles,
+          revisionNumberById,
+        }),
+      );
     const elementStatuses = buildElementStatuses(
       deps,
       proofSnapshot,
@@ -2029,6 +2054,80 @@ export function createSpecRouteHandlers(
     return NextResponse.json(
       await buildStatus(deps, resolved.value.spec, state),
     );
+  }
+
+  /**
+   * The review loop's feedback read (#60). One request answers "what did the
+   * reviewers say" without the full detail dump: every comment on the spec,
+   * projected out of its raw row shape. The open counts are spec-wide,
+   * deliberately independent of the filters, so a filtered read still reports
+   * how much feedback is outstanding overall.
+   */
+  async function getSpecCommentsGET(
+    request: Request,
+    context: SpecRouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSpecRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const spec = resolved.value.spec;
+    const state = await loadCurrentState(deps, spec.id);
+    const handleByElementId =
+      state.currentSnapshot === null
+        ? new Map<string, string>()
+        : handlesByElementId(spec, state.currentSnapshot);
+    const revisionNumberById = new Map(
+      state.revisions.map((candidate) => [candidate.id, candidate.number]),
+    );
+    const views = state.revisions
+      .flatMap((candidate) => deps.findCommentsByRevision(candidate.id))
+      .map((row) =>
+        projectSpecComment(row, { handleByElementId, revisionNumberById }),
+      )
+      .sort(
+        (left, right) =>
+          left.createdAt.localeCompare(right.createdAt) ||
+          left.id.localeCompare(right.id),
+      );
+    const searchParams = new URL(request.url).searchParams;
+    const elementFilter = searchParams.get("element");
+    const openOnly = searchParams.get("open") === "true";
+    if (elementFilter !== null) {
+      const known =
+        handleByElementId.has(elementFilter) ||
+        [...handleByElementId.values()].includes(elementFilter) ||
+        views.some((comment) => comment.elementId === elementFilter);
+      // An element that exists but carries no comments answers with an empty
+      // list; a name that resolves to nothing refuses, so a typo'd handle is
+      // never mistaken for "no feedback".
+      if (!known) {
+        return notFound(
+          `Element "${elementFilter}" is not carried by the current revision and no comment references it. Drop --element to list every comment.`,
+        );
+      }
+    }
+    const comments = views.filter(
+      (comment) =>
+        (elementFilter === null ||
+          comment.handle === elementFilter ||
+          comment.elementId === elementFilter) &&
+        (!openOnly || comment.resolution === "open"),
+    );
+    const openViews = views.filter((comment) => comment.resolution === "open");
+    logger.debug("specs.routes.comments.complete", {
+      projectName: resolved.value.projectName,
+      specId: spec.id,
+      commentCount: views.length,
+      returnedCount: comments.length,
+      openCount: openViews.length,
+    });
+    const view: SpecCommentsView = {
+      specId: spec.id,
+      slug: spec.slug,
+      comments,
+      openCount: openViews.length,
+      openBlockingCount: openViews.filter((comment) => comment.blocking).length,
+    };
+    return NextResponse.json(view);
   }
 
   /**
@@ -2726,6 +2825,7 @@ export function createSpecRouteHandlers(
     getSpecSummaryGET,
     getSpecGET,
     getSpecStatusGET,
+    getSpecCommentsGET,
     getSpecEditContextGET,
     getSpecLintGET,
     getSpecDeltaGET,
@@ -2745,6 +2845,7 @@ export const specMeasuresGET = withTracing(handlers.getSpecMeasuresGET);
 export const specSummaryGET = withTracing(handlers.getSpecSummaryGET);
 export const specDetailGET = withTracing(handlers.getSpecGET);
 export const specStatusGET = withTracing(handlers.getSpecStatusGET);
+export const specCommentsGET = withTracing(handlers.getSpecCommentsGET);
 export const specEditContextGET = withTracing(handlers.getSpecEditContextGET);
 export const specLintGET = withTracing(handlers.getSpecLintGET);
 export const specDeltaGET = withTracing(handlers.getSpecDeltaGET);
@@ -2858,6 +2959,10 @@ const advanceAuthoringStageBodySchema = z
   })
   .strict();
 const reviewCommentBodySchema = reviewCommentInputSchema.omit({
+  specId: true,
+  actor: true,
+});
+const replyBodySchema = replyToReviewThreadInputSchema.omit({
   specId: true,
   actor: true,
 });
@@ -3537,6 +3642,10 @@ export function createSpecWriteRouteHandlers(
         case "comment":
           return invokeAction(request, reviewCommentBodySchema, (input) =>
             services.review.comment(withReviewIdentity(input)),
+          );
+        case "reply":
+          return invokeAction(request, replyBodySchema, (input) =>
+            services.review.replyToThread(withReviewIdentity(input)),
           );
         case "resolve-thread":
           return invokeAction(request, resolveThreadBodySchema, (input) =>

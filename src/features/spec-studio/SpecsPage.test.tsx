@@ -298,11 +298,13 @@ function detailPayload(
     comments: [
       {
         id: "comment-1",
-        spec_id: executingSpec.id,
-        thread_id: "thread-1",
-        parent_comment_id: null,
-        element_id: "section-intent",
-        anchor_json: JSON.stringify({
+        threadId: "thread-1",
+        parentCommentId: null,
+        elementId: "section-intent",
+        handle: null,
+        revisionId: detailRevision.id,
+        revisionNumber: detailRevision.number,
+        anchor: {
           sectionId: "intent",
           headingLabel: "Intent",
           line: 1,
@@ -312,14 +314,14 @@ function detailPayload(
           prefix: "",
           suffix: " spine",
           docRevision: "revision-4-hash",
-        }),
-        revision_id: detailRevision.id,
+        },
+        quote: "Lifecycle",
         body: "Clarify the delivery outcome.",
-        author_json: JSON.stringify({ kind: "human" }),
-        blocking: 0,
+        author: { kind: "human" },
+        blocking: false,
         resolution: "open",
-        created_at: NOW,
-        updated_at: NOW,
+        createdAt: NOW,
+        updatedAt: NOW,
       },
     ],
     executions: [],
@@ -510,11 +512,13 @@ function reviewDetailPayload() {
       ...payload.comments,
       {
         id: "comment-orphaned",
-        spec_id: executingSpec.id,
-        thread_id: "thread-orphaned",
-        parent_comment_id: null,
-        element_id: "section-retired",
-        anchor_json: JSON.stringify({
+        threadId: "thread-orphaned",
+        parentCommentId: null,
+        elementId: "section-retired",
+        handle: null,
+        revisionId: baseRevision.id,
+        revisionNumber: baseRevision.number,
+        anchor: {
           sectionId: "retired-context",
           headingLabel: "Retired context",
           line: 1,
@@ -524,14 +528,14 @@ function reviewDetailPayload() {
           prefix: "",
           suffix: " that no longer",
           docRevision: "revision-3-hash",
-        }),
-        revision_id: baseRevision.id,
+        },
+        quote: "Retired wording",
         body: "Preserve why this context was removed.",
-        author_json: JSON.stringify({ kind: "human" }),
-        blocking: 0,
+        author: { kind: "human" },
+        blocking: false,
         resolution: "open" as const,
-        created_at: NOW,
-        updated_at: NOW,
+        createdAt: NOW,
+        updatedAt: NOW,
       },
     ],
   };
@@ -750,10 +754,33 @@ describe("Spec Studio detail routes", () => {
     pathname = "/specs/command-center/native-sdd";
     const payload = detailPayload();
     api.json("GET", "/api/specs/command-center/native-sdd", payload);
+    // The comment write path still answers with the raw persisted row, so the
+    // POST fixture keeps the snake_case row shape even though the GET detail
+    // view now serves camelCase comment views.
     api.json("POST", "/api/specs/command-center/native-sdd/actions/comment", {
-      ...payload.comments[0],
       id: "comment-selection",
+      spec_id: executingSpec.id,
+      thread_id: "thread-selection",
+      parent_comment_id: null,
+      element_id: "section-intent",
+      anchor_json: JSON.stringify({
+        sectionId: "intent",
+        headingLabel: "Intent",
+        line: 1,
+        charStart: 0,
+        charEnd: 9,
+        quote: "Lifecycle",
+        prefix: "",
+        suffix: " spine",
+        docRevision: "revision-4-hash",
+      }),
+      revision_id: detailRevision.id,
       body: "Keep the lifecycle sequence explicit.",
+      author_json: JSON.stringify({ kind: "human" }),
+      blocking: 0,
+      resolution: "open",
+      created_at: NOW,
+      updated_at: NOW,
     });
     const user = userEvent.setup();
     const { container } = renderWithQuery(<SpecDetailPage />);
@@ -1062,11 +1089,33 @@ describe("Spec Studio detail routes", () => {
       validity: "valid",
     };
     api.json("GET", "/api/specs/command-center/native-sdd", reviewPayload);
-    api.json(
-      "POST",
-      "/api/specs/command-center/native-sdd/actions/comment",
-      reviewPayload.comments[0],
-    );
+    // Raw persisted row, matching what the comment write path returns; the
+    // view-shaped entries in reviewPayload.comments are GET-only.
+    api.json("POST", "/api/specs/command-center/native-sdd/actions/comment", {
+      id: "comment-review-1",
+      spec_id: executingSpec.id,
+      thread_id: "thread-review-1",
+      parent_comment_id: null,
+      element_id: "requirement-1",
+      anchor_json: JSON.stringify({
+        sectionId: "R1",
+        headingLabel: "R1",
+        line: 1,
+        charStart: 0,
+        charEnd: 10,
+        quote: "Spec Studio",
+        prefix: "",
+        suffix: " keeps identity.",
+        docRevision: "revision-4-hash",
+      }),
+      revision_id: detailRevision.id,
+      body: "Keep the identity promise explicit.",
+      author_json: JSON.stringify({ kind: "human" }),
+      blocking: 0,
+      resolution: "open",
+      created_at: NOW,
+      updated_at: NOW,
+    });
     api.json(
       "POST",
       "/api/specs/command-center/native-sdd/actions/approve-item",

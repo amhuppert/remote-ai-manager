@@ -5,6 +5,7 @@ import { createJobsRepo } from "@/lib/jobs/repo";
 import { createNotificationsRepo } from "@/lib/notifications/repo";
 import { getNotificationsService } from "@/lib/notifications/service";
 import { createSpecApprovalNotifier } from "@/lib/notifications/spec-approvals";
+import { createProductionSpecReviewFeedbackNotifier } from "@/lib/notifications/spec-review-feedback";
 import { getProjectDisplayName } from "@/lib/projects/resolver";
 import { createGraphWorkflowArchivedExecutionsRepo } from "@/lib/state-store/graph-workflow-archived-executions-repo";
 import { createGraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
@@ -261,6 +262,7 @@ export function createProductionSpecWorkflowComposition(
     },
     getProjectDisplayName,
   });
+  const reviewFeedbackNotifier = createProductionSpecReviewFeedbackNotifier();
   // The lifecycle gate and the delivery gate both reuse the review service so
   // parked definitions and missing delivery approvals open the same durable
   // Needs You request — and workflow-surface approvals record the same
@@ -272,7 +274,13 @@ export function createProductionSpecWorkflowComposition(
     links: linksRepo,
     events,
     attention: eventsRepo,
-    notifier,
+    // The approval notifier plus the proposer-facing feedback half (#60):
+    // review feedback lands as passive durable notices in the proposing
+    // conversation, never as a wake.
+    notifier: {
+      ...notifier,
+      reviewFeedback: reviewFeedbackNotifier.reviewFeedback,
+    },
     policyNotifier: notifier,
   });
   const deliveryGate = createDeliveryGate({

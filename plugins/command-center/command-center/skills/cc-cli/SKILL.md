@@ -424,6 +424,8 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec measures`
   - `cctl spec show <slug>`
   - `cctl spec status <slug>`
+  - `cctl spec comments <slug> [--element <handle>] [--open]`
+  - `cctl spec reply <slug> --thread <threadId> --body <text>`
   - `cctl spec lint <slug>`
   - `cctl spec get <slug>/<handle>`
   - `cctl spec search <slug> <query>`
@@ -462,6 +464,10 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec show <slug> [--summary]`
 - `cctl spec status` — inspect a spec's phase and gate readiness
   - `cctl spec status <slug>`
+- `cctl spec comments` — read reviewer comments as typed rows
+  - `cctl spec comments <slug> [--element <handle>] [--open]`
+- `cctl spec reply` — answer a review thread in place
+  - `cctl spec reply <slug> --thread <threadId> --body <text>`
 - `cctl spec lint` — read every deterministic lint finding on the open draft
   - `cctl spec lint <slug>`
 - `cctl spec get` — read one spec element with approval and evidence state

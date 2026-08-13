@@ -12,6 +12,8 @@ export const specHelpEntries: CommandHelpEntry[] = [
       "cctl spec measures",
       "cctl spec show <slug>",
       "cctl spec status <slug>",
+      "cctl spec comments <slug> [--element <handle>] [--open]",
+      "cctl spec reply <slug> --thread <threadId> --body <text>",
       "cctl spec lint <slug>",
       "cctl spec get <slug>/<handle>",
       "cctl spec search <slug> <query>",
@@ -187,6 +189,99 @@ export const specHelpEntries: CommandHelpEntry[] = [
       {
         command: "spec amend",
         oneLiner: "open the next draft once a stage's gate is approved",
+      },
+      {
+        command: "spec comments",
+        oneLiner: "read the review comments behind the open-comment counts",
+      },
+    ],
+  },
+  {
+    path: ["spec", "comments"],
+    summary: "read reviewer comments as typed rows",
+    description:
+      "List the review comments humans left in Spec Studio, projected for agent consumption: each row names the commented element by handle, the quoted text the comment anchors to, the body, whether it blocks sign-off, and its thread and resolution state. This is the feedback half of the review loop — approvals answer 'may this land', comments answer 'what does the reviewer want changed or explained'.",
+    usage: ["cctl spec comments <slug> [--element <handle>] [--open]"],
+    flags: [
+      {
+        name: "element",
+        kind: "value",
+        description: "only comments on this element (handle or element id)",
+      },
+      {
+        name: "open",
+        kind: "boolean",
+        description: "only comments still awaiting resolution",
+      },
+    ],
+    examples: [
+      {
+        invocation: "cctl spec comments ephemeral-workflows --open --json",
+        explanation:
+          "read the outstanding review feedback as data after status reports open comments",
+      },
+      {
+        invocation: "cctl spec comments ephemeral-workflows --element R6",
+        explanation: "read every comment thread anchored to R6",
+      },
+    ],
+    domainContext:
+      "Comments are written by humans reviewing a proposed revision; openCount and openBlockingCount are spec-wide even when --element or --open narrows the listed rows, so a filtered read still reports how much feedback is outstanding. Comments do not reopen the draft: repairing a commented element needs the human to Request Changes in Spec Studio first, and status names that dependency when it applies.",
+    related: [
+      {
+        command: "spec status",
+        oneLiner: "the readiness view that counts these comments",
+      },
+      {
+        command: "spec get",
+        oneLiner: "inspect the commented element itself",
+      },
+      {
+        command: "spec reply",
+        oneLiner: "answer a thread in place",
+      },
+      {
+        command: "spec propose",
+        oneLiner: "carry your answers back in the next revision's notes",
+      },
+    ],
+  },
+  {
+    path: ["spec", "reply"],
+    summary: "answer a review thread in place",
+    description:
+      "Join an existing review thread with a reply. The thread comes from `cctl spec comments`; the reply lands beside the reviewer's comment with your conversation as its author, carries the thread's own anchor, and never blocks anything. Replying does not resolve the thread and does not reopen the draft — repairs still need a human to Request Changes in Spec Studio.",
+    usage: ["cctl spec reply <slug> --thread <threadId> --body <text>"],
+    flags: [
+      {
+        name: "thread",
+        kind: "value",
+        description: "the threadId a spec comments row names",
+      },
+      {
+        name: "body",
+        kind: "value",
+        description: "the reply text",
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          'cctl spec reply ephemeral-workflows --thread thread-7f3a --body "R6 excludes retries because the workflow engine already owns them; happy to fold them in if you disagree."',
+        explanation:
+          "answer the reviewer's question inside the thread that asked it",
+      },
+    ],
+    domainContext:
+      "A reply is conversation, not review: it is admitted from an agent or a human whenever the thread is still open, on proposed and reopened-draft revisions alike. An ended (resolved or dismissed) thread refuses replies — answer in the next proposal's notes instead.",
+    related: [
+      {
+        command: "spec comments",
+        oneLiner: "list the threads and their ids",
+      },
+      {
+        command: "spec status",
+        oneLiner: "see whether feedback is still outstanding",
       },
     ],
   },
@@ -578,7 +673,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
         kind: "value",
         valuePlaceholder: "<element.json>",
         description:
-          "schema-backed first element saved in the same transaction — run `cctl spec schema create-element` for its shape; it states no baseElementVersion, because the revision it opens holds no version to compare against",
+          "schema-backed first element saved in the same transaction — run `cctl spec schema create-element` for its shape; it needs no baseElementVersion because the revision it opens holds no version to compare against (an explicit null is tolerated, a number is refused)",
       },
     ],
     examples: [
@@ -724,7 +819,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "draft"],
     summary: "save a draft element at the version it replaces",
     description:
-      "Upsert one element admitted by the current authoring stage into the editable revision. The element states the version it replaces in the file itself, as baseElementVersion: the version you last read, or null to create the element; a stale write returns the winning version, and the lone-element form returns the winning content with it. Element versions are per revision and restart at 1 — `cctl spec amend` copies the approved content into the new revision as version 1 — so re-read an element after an amendment instead of reusing a version from the revision before it. Element order is one global order per revision, sorted by position then elementId: omit position on create to append after the current last element, and omit it on update to keep the element's current slot. Nesting comes from parentElementId alone and never from position; duplicate positions are accepted and resolved by the elementId tiebreak. A --file holding a JSON array is a batch: every element in it is written in one transaction, each against its own baseElementVersion, and the response names each element by its index in the array. A write lands only in a draft, and the target revision's state picks the refusal: approved or withdrawn content returns amendment_required, so run `cctl spec amend <slug>` first; a revision already proposed returns revision_in_review, which amend refuses too until a human signs it off in Spec Studio, requests changes on it, or the conversation that proposed it takes it back with `cctl spec withdraw-proposal <slug> --revision <revision-id>`. Every element id a payload names must resolve, in this revision, to an element of the kind the field expects, or the write returns dangling_reference and nothing lands — a batch resolves ids against its own final result, so an element may reference another element the same batch introduces, in either order. An empty id array is always legal; only a populated one that does not resolve refuses. An element id this spec already owns but this revision does not carry — one introduced by a revision a human ended, or removed from the draft — is refused with historical_element_id rather than written under a fork; retry that write with \"reintroduceHistorical\": true and a null base version to bring the element back with its number and handle intact (R3 returns as R3), keeping its original kind and parent. An id owned by a DIFFERENT spec is element_id_taken and has no such recovery: choose another id.",
+      "Upsert one element admitted by the current authoring stage into the editable revision. The element states the version it replaces in the file itself, as baseElementVersion: the version you last read, or null to create the element; a stale write returns the winning version, and the lone-element form returns the winning content with it. Element versions are per revision and restart at 1 — `cctl spec amend` copies the approved content into the new revision as version 1 — so re-read an element after an amendment instead of reusing a version from the revision before it. Element order is one global order per revision, sorted by position then elementId: omit position on create to append after the current last element, and omit it on update to keep the element's current slot. Nesting comes from parentElementId alone and never from position; duplicate positions are accepted and resolved by the elementId tiebreak. A --file holding a JSON array is a batch: every element in it is written in one transaction, each against its own baseElementVersion, and the response names each element by its index in the array. A write lands only in a draft, and the target revision's state picks the refusal: approved or withdrawn content returns amendment_required, so run `cctl spec amend <slug>` first; a revision already proposed returns revision_in_review, which amend refuses too until a human signs it off in Spec Studio, requests changes on it, or the conversation that proposed it takes it back with `cctl spec withdraw-proposal <slug> --revision <revision-id>`. Every element id a payload names must resolve, in this revision, to an element of the kind the field expects, or the write returns dangling_reference and nothing lands — a batch resolves ids against its own final result, so an element may reference another element the same batch introduces, in either order. An empty id array is always legal; only a populated one that does not resolve refuses. An element id this spec already owns but this revision does not carry — one introduced by a revision a human ended, or removed from the draft — is refused with historical_element_id rather than written under a fork; retry that write with \"reintroduceHistorical\": true and a null base version to bring the element back with its number and handle intact (R3 returns as R3), keeping its original kind and parent. An id owned by a DIFFERENT spec — including an ABANDONED one, which keeps its ids forever — is element_id_taken and has no such recovery: choose another id. Prefix element ids with the spec slug from the start so the collision never happens.",
     usage: [
       "cctl spec draft <slug> --file <element.json>",
       "cctl spec draft <slug> --file <elements.json>",
@@ -737,6 +832,12 @@ export const specHelpEntries: CommandHelpEntry[] = [
         valuePlaceholder: "<element.json|elements.json|batch.json>",
         description:
           'one schema-backed draft element write document, a JSON array of them for a batch, or the keyed batch {"elements": [...], "removals": [{"elementId","baseElementVersion"}]} — every element states its own baseElementVersion in each form; run `cctl spec schema <kind>` or `cctl spec schema element-batch` for the shapes, enums, and worked examples',
+      },
+      {
+        name: "quiet",
+        kind: "boolean",
+        description:
+          "bound the --json receipt to element identities (index, elementId, handle, elementVersion) instead of echoing every committed payload back — large batches otherwise overflow the pipe",
       },
     ],
     examples: [

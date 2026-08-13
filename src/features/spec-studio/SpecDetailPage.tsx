@@ -49,6 +49,7 @@ import type {
   SpecRevisionElement,
 } from "@/lib/specs/schemas";
 import { specCommentRowSchema } from "@/lib/specs/schemas";
+import type { SpecCommentView } from "@/lib/specs/view-schemas";
 import {
   specAssumptionViewSchema,
   type SpecAssumptionView,
@@ -471,7 +472,7 @@ export function SpecDetailContent({
                       key={section.element.id}
                       section={section}
                       comments={detail.comments.filter(
-                        (comment) => comment.element_id === section.element.id,
+                        (comment) => comment.elementId === section.element.id,
                       )}
                       projectName={projectName}
                       slug={detail.spec.slug}
@@ -1215,7 +1216,7 @@ function SpecProseSection({
   readOnly,
 }: {
   section: SpecRevisionElement;
-  comments: SpecCommentRow[];
+  comments: SpecCommentView[];
   projectName: string;
   slug: string;
   specId: string;
@@ -2051,31 +2052,25 @@ function taskStatusPresentation(
 }
 
 function resolveComment(
-  row: SpecCommentRow,
+  row: SpecCommentView,
   content: string,
   projectName: string,
   slug: string,
 ): ResolvedComment | null {
-  let rawAnchor: unknown;
-  try {
-    rawAnchor = JSON.parse(row.anchor_json);
-  } catch {
-    return null;
-  }
-  const parsedAnchor = commentAnchorSchema.safeParse(rawAnchor);
+  const parsedAnchor = commentAnchorSchema.safeParse(row.anchor);
   if (!parsedAnchor.success) return null;
   const reanchor = tryReanchorExact(content, parsedAnchor.data);
   return {
     id: row.id,
     projectPath: projectName,
     sessionName: `spec-${slug}`,
-    docPath: `specs/${slug}/elements/${row.element_id}`,
+    docPath: `specs/${slug}/elements/${row.elementId}`,
     anchor: parsedAnchor.data,
     note: row.body,
     status: "sent",
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    sentAt: row.created_at,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    sentAt: row.createdAt,
     reanchor,
     stale: reanchor.status === "stale",
   };

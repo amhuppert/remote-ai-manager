@@ -551,6 +551,33 @@ function makeHost(
       }
 
       switch (action) {
+        case "reply": {
+          const body: unknown = JSON.parse(init.body ?? "{}");
+          const posted =
+            typeof body === "object" && body !== null
+              ? (body as { threadId?: string; body?: string })
+              : {};
+          // The reply action answers with the raw persisted row — the CLI owns
+          // projecting it into the typed receipt.
+          return response({
+            id: "comment-reply-1",
+            spec_id: spec.id,
+            thread_id: posted.threadId ?? "",
+            parent_comment_id: "comment-root-1",
+            element_id: "requirement-id-1",
+            anchor_json: JSON.stringify({ quote: "the anchored text" }),
+            revision_id: "revision-draft",
+            body: posted.body ?? "",
+            author_json: JSON.stringify({
+              kind: "agent",
+              conversationId: "conversation-1",
+            }),
+            blocking: 0,
+            resolution: "open",
+            created_at: CREATED_AT,
+            updated_at: CREATED_AT,
+          });
+        }
         case "rename":
           return response({
             spec: { ...spec, slug: "native-sdd-v2" },
@@ -997,6 +1024,88 @@ const DISCOVERED_TASK_FILE_CONTENT = JSON.stringify({
 });
 
 describe("cctl spec write verbs", () => {
+  it("replies to a review thread and reports a typed receipt", async () => {
+    const host = makeHost();
+    const result = await runCli(
+      [
+        "spec",
+        "reply",
+        "native-sdd",
+        "--thread",
+        "thread-1",
+        "--body",
+        "Answered in place.",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("replied to thread thread-1");
+    expect(result.stdout).toContain(
+      "next: cctl spec comments native-sdd --open",
+    );
+    const post = host.requests.find(
+      (request) => request.init.method === "POST",
+    );
+    expect(new URL(post?.url ?? "http://unset/").pathname).toBe(
+      "/api/specs/demo/native-sdd/actions/reply",
+    );
+    expect(JSON.parse(post?.init.body ?? "{}")).toEqual({
+      threadId: "thread-1",
+      body: "Answered in place.",
+    });
+
+    const data = await runCli(
+      [
+        "spec",
+        "reply",
+        "native-sdd",
+        "--thread",
+        "thread-1",
+        "--body",
+        "Answered in place.",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+    expect(data.exitCode).toBe(0);
+    const envelope = JSON.parse(data.stdout) as {
+      reply: Record<string, unknown>;
+    };
+    // The receipt is the projected comment view, never the raw row.
+    expect(envelope.reply).toMatchObject({
+      threadId: "thread-1",
+      parentCommentId: "comment-root-1",
+      body: "Answered in place.",
+      blocking: false,
+      resolution: "open",
+      author: { kind: "agent", conversationId: "conversation-1" },
+    });
+    expect(Object.keys(envelope.reply)).not.toContain("anchor_json");
+  });
+
+  it("refuses a reply without its thread or body locally", async () => {
+    const host = makeHost();
+    const missingThread = await runCli(
+      ["spec", "reply", "native-sdd", "--body", "text"],
+      baseEnv,
+      host,
+    );
+    const missingBody = await runCli(
+      ["spec", "reply", "native-sdd", "--thread", "thread-1"],
+      baseEnv,
+      host,
+    );
+
+    expect(missingThread.exitCode).toBe(2);
+    expect(missingThread.stderr).toContain("--thread");
+    expect(missingBody.exitCode).toBe(2);
+    expect(missingBody.stderr).toContain("--body");
+    expect(host.requests).toHaveLength(0);
+  });
+
   it("opens an amendment draft on an approved spec through its own verb", async () => {
     const host = makeHost({ approved: true });
     const result = await runCli(
@@ -1361,32 +1470,45 @@ describe("cctl spec write verbs", () => {
 
   /**
    * The create document and the draft document are different shapes: a spec's
-   * first revision has no element version to compare against. A create file
-   * carrying one is a draft document sent at the wrong verb.
+   * first revision has no element version to compare against. An explicit
+   * `baseElementVersion: null` states exactly that and is tolerated (#60 —
+   * refusing it was a guaranteed first-contact stumble); a NUMBER is still a
+   * draft document sent at the wrong verb.
    */
-  it("refuses a create file that states a base element version", async () => {
-    const host = makeHost({ files: { [SPEC_FILE]: DRAFT_FILE_CONTENT } });
+  it("tolerates an explicit-null base version on create and refuses a numeric one", async () => {
+    const createArgs = [
+      "spec",
+      "create",
+      "--slug",
+      "native-sdd",
+      "--name",
+      "Native SDD",
+      "--preset",
+      "contract-bearing",
+      "--file",
+      SPEC_FILE,
+    ];
+    const nullHost = makeHost({ files: { [SPEC_FILE]: DRAFT_FILE_CONTENT } });
+    const tolerated = await runCli(createArgs, baseEnv, nullHost);
+    expect(tolerated.exitCode).toBe(0);
+    expect(
+      nullHost.requests.some((request) =>
+        new URL(request.url).pathname.endsWith("/actions/create"),
+      ),
+    ).toBe(true);
 
-    const result = await runCli(
-      [
-        "spec",
-        "create",
-        "--slug",
-        "native-sdd",
-        "--name",
-        "Native SDD",
-        "--preset",
-        "contract-bearing",
-        "--file",
-        SPEC_FILE,
-      ],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("baseElementVersion");
-    expect(host.requests).toHaveLength(0);
+    const numericHost = makeHost({
+      files: {
+        [SPEC_FILE]: JSON.stringify({
+          ...DRAFT_ELEMENT,
+          baseElementVersion: 3,
+        }),
+      },
+    });
+    const refused = await runCli(createArgs, baseEnv, numericHost);
+    expect(refused.exitCode).toBe(2);
+    expect(refused.stderr).toContain("baseElementVersion");
+    expect(numericHost.requests).toHaveLength(0);
   });
 
   it("reports what the write did to the blocking finding count", async () => {
@@ -1471,6 +1593,72 @@ describe("cctl spec write verbs", () => {
       },
       tokens: { revision: "revision-draft" },
     });
+  });
+
+  it("bounds the receipt to identities under --quiet", async () => {
+    const host = makeHost({ files: { [BATCH_FILE]: BATCH_FILE_CONTENT } });
+    const batch = await runCli(
+      [
+        "spec",
+        "draft",
+        "native-sdd",
+        "--file",
+        BATCH_FILE,
+        "--quiet",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(batch.exitCode).toBe(0);
+    const envelope = JSON.parse(batch.stdout) as {
+      batch: { written: Record<string, unknown>[] };
+    };
+    // Identities only: a 52-element batch receipt must not echo every payload
+    // back through the pipe cap.
+    expect(envelope.batch).toMatchObject({
+      revisionId: "revision-draft",
+      written: [
+        {
+          index: 0,
+          elementId: "requirement-id-1",
+          handle: "R1",
+          elementVersion: 4,
+        },
+        {
+          index: 1,
+          elementId: "criterion-id-1",
+          handle: "R1.1",
+          elementVersion: 1,
+        },
+      ],
+    });
+    for (const entry of envelope.batch.written) {
+      expect(Object.keys(entry)).not.toContain("element");
+      expect(Object.keys(entry)).not.toContain("version");
+    }
+
+    const single = await runCli(
+      [
+        "spec",
+        "draft",
+        "native-sdd",
+        "--file",
+        DRAFT_FILE,
+        "--quiet",
+        "--json",
+      ],
+      baseEnv,
+      makeHost({ files: { [DRAFT_FILE]: DRAFT_FILE_CONTENT } }),
+    );
+    expect(single.exitCode).toBe(0);
+    const singleEnvelope = JSON.parse(single.stdout) as {
+      draft: Record<string, unknown>;
+    };
+    expect(singleEnvelope.draft).toMatchObject({ handle: "T1" });
+    expect(Object.keys(singleEnvelope.draft)).not.toContain("element");
+    expect(Object.keys(singleEnvelope.draft)).not.toContain("version");
   });
 
   it("names every element that refused a batch, by index, in text and json", async () => {

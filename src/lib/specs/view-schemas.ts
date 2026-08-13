@@ -18,7 +18,7 @@ import {
   specApprovalRowSchema,
   specAssumptionDispositionSchema,
   specAuthoringStageSchema,
-  specCommentRowSchema,
+  specCommentResolutionSchema,
   specCriterionDispositionRowSchema,
   specElementKindSchema,
   specEvidenceRowSchema,
@@ -635,6 +635,22 @@ export const specStatusViewSchema = z
     revisionSignOff: revisionSignOffSchema.nullable().default(null),
     pendingBlock: authoringPendingBlockSchema.nullable().default(null),
     nextAction: authoringNextActionSchema.nullable().default(null),
+    /**
+     * Open review comments on the current revision, rolled up by subject.
+     * Null exactly when none are open; defaulted so payloads written before
+     * this field still satisfy the strict parse. The rows themselves live
+     * behind `spec comments` — status carries only enough to say the review
+     * loop is waiting on a response.
+     */
+    openComments: z
+      .object({
+        count: z.number().int().positive(),
+        blockingCount: z.number().int().nonnegative(),
+        subjects: z.array(z.string().min(1)),
+      })
+      .strict()
+      .nullable()
+      .default(null),
     openQuestions: z.array(openQuestionSchema),
     assumptions: z.array(statusAssumptionSchema).default([]),
     taskPlan: z.array(specTaskPlanStatusSchema).default([]),
@@ -783,6 +799,50 @@ export const specImportRecordViewSchema = z
   .strict();
 export type SpecImportRecordView = z.infer<typeof specImportRecordViewSchema>;
 
+/**
+ * A review comment as agent and UI surfaces read it: camelCase, JSON columns
+ * parsed, `blocking` a real boolean. `anchor` stays opaque at this seam — the
+ * writer accepts it as `unknown` and only the Studio's re-anchoring code
+ * understands its interior — but the quote is lifted out because it is the one
+ * anchor field that tells a reader *what text* the comment is about.
+ *
+ * `handle`, `revisionNumber`, `anchor`, and `author` are null rather than
+ * failing the read when their source cannot be resolved: a comment on an
+ * element the current revision no longer carries is still feedback the agent
+ * must be able to see.
+ */
+export const specCommentViewSchema = z
+  .object({
+    id: z.string().min(1),
+    threadId: z.string().min(1),
+    parentCommentId: z.string().min(1).nullable(),
+    elementId: z.string().min(1),
+    handle: z.string().min(1).nullable(),
+    revisionId: z.string().min(1),
+    revisionNumber: z.number().int().positive().nullable(),
+    anchor: z.unknown(),
+    quote: z.string().nullable(),
+    body: z.string(),
+    author: actorProvenanceSchema.nullable(),
+    blocking: z.boolean(),
+    resolution: specCommentResolutionSchema,
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+  })
+  .strict();
+export type SpecCommentView = z.infer<typeof specCommentViewSchema>;
+
+export const specCommentsViewSchema = z
+  .object({
+    specId: z.string().min(1),
+    slug: z.string().min(1),
+    comments: z.array(specCommentViewSchema),
+    openCount: z.number().int().nonnegative(),
+    openBlockingCount: z.number().int().nonnegative(),
+  })
+  .strict();
+export type SpecCommentsView = z.infer<typeof specCommentsViewSchema>;
+
 export const specDetailViewSchema = z
   .object({
     spec: specSchema,
@@ -800,7 +860,7 @@ export const specDetailViewSchema = z
     currentApprovedRevision: specRevisionSnapshotViewSchema.nullable(),
     executionRevisionSnapshots: z.array(specRevisionSnapshotViewSchema),
     approvals: z.array(specApprovalRowSchema),
-    comments: z.array(specCommentRowSchema),
+    comments: z.array(specCommentViewSchema),
     executions: z.array(specExecutionViewSchema),
     criterionDispositions: z.array(specCriterionDispositionRowSchema),
     waivers: z.array(specWaiverRowSchema),

@@ -324,6 +324,12 @@ function project(
     admissions?: SpecGateAdmissionRow[];
     blockingThreads?: Array<{ handle: string; resolved: boolean }>;
     signOffFindings?: LintFinding[];
+    openComments?: Array<{
+      elementId: string;
+      handle: string | null;
+      blocking: boolean;
+    }>;
+    specSlug?: string;
   } = {},
 ) {
   const snapshot = chain.snapshots[chain.snapshots.length - 1]!;
@@ -368,6 +374,8 @@ function project(
     }),
     blockingThreads: options.blockingThreads ?? [],
     signOffFindings: options.signOffFindings ?? [],
+    openComments: options.openComments,
+    specSlug: options.specSlug,
   });
 }
 
@@ -768,6 +776,124 @@ describe("authoringReviewProjection", () => {
     expect(projection.pendingBlock?.unmetConditions).toEqual(
       projection.revisionSignOff?.unmetConditions,
     );
+  });
+
+  /**
+   * The review loop's feedback half (#60): with open comments on an in-review
+   * revision, "ask a human to approve" points the wrong way — the reviewer is
+   * waiting on answers, and repairs cannot land until a human Requests
+   * Changes. The projection must say so instead of steering at approvals the
+   * commenter is withholding.
+   */
+  describe("open review comments", () => {
+    it("rolls up open comments and reroutes the approve instruction at the comments and Request Changes", () => {
+      const projection = project(
+        withdrawnAttemptChain("Gates survive a withdrawn attempt."),
+        {
+          specSlug: "native-sdd",
+          openComments: [
+            { elementId: "requirement-1", handle: "R1", blocking: true },
+            { elementId: "requirement-1", handle: "R1", blocking: false },
+            { elementId: "element-gone", handle: null, blocking: false },
+          ],
+        },
+      );
+
+      expect(projection.openComments).toEqual({
+        count: 3,
+        blockingCount: 1,
+        subjects: ["R1", "element-gone"],
+      });
+      expect(projection.nextAction.kind).toBe("approve_subject");
+      expect(projection.nextAction.actsNext).toBe("human");
+      expect(projection.nextAction.instruction).toContain(
+        "Open comments on R1, element-gone await a response",
+      );
+      expect(projection.nextAction.instruction).toContain(
+        "cctl spec comments native-sdd --open",
+      );
+      expect(projection.nextAction.instruction).toContain("Request Changes");
+      expect(projection.pendingBlock?.instruction).toContain("Request Changes");
+      expect(projection.pendingBlock?.display).toContain(
+        "3 open comments await a response",
+      );
+    });
+
+    it("projects no rollup and keeps the plain instructions when no comments are open", () => {
+      const projection = project(
+        withdrawnAttemptChain("Gates survive a withdrawn attempt."),
+      );
+
+      expect(projection.openComments).toBeNull();
+      expect(projection.nextAction.instruction).toBe(
+        "Ask a human to approve R1 at the requirements gate in Spec Studio.",
+      );
+    });
+
+    it("steers a reopened draft at addressing its comments before re-proposing", () => {
+      const projection = project(
+        withCurrentState(
+          withdrawnAttemptChain("Gates survive a withdrawn attempt."),
+          "draft",
+        ),
+        {
+          specSlug: "native-sdd",
+          openComments: [
+            { elementId: "requirement-1", handle: "R1", blocking: false },
+          ],
+        },
+      );
+
+      expect(projection.openComments).toEqual({
+        count: 1,
+        blockingCount: 0,
+        subjects: ["R1"],
+      });
+      expect(projection.nextAction.kind).toBe("propose");
+      expect(projection.nextAction.actsNext).toBe("agent");
+      expect(projection.nextAction.instruction).toContain(
+        "Open comments on R1 await a response",
+      );
+      expect(projection.nextAction.instruction).toContain(
+        "then propose it again",
+      );
+    });
+
+    it("leads the sign-off ask with the open comments when nothing else is pending", () => {
+      const projection = project(
+        withdrawnAttemptChain("Gates survive a withdrawn attempt."),
+        {
+          approvals: [
+            approval({
+              id: "approval-1",
+              revision_id: "revision-3",
+              subject_kind: "requirement",
+              element_id: "requirement-1",
+            }),
+            approval({
+              id: "approval-2",
+              revision_id: "revision-3",
+              subject_kind: "decision",
+              element_id: "decision-1",
+            }),
+          ],
+          specSlug: "native-sdd",
+          openComments: [
+            { elementId: "decision-1", handle: "D1", blocking: false },
+          ],
+        },
+      );
+
+      expect(projection.revisionSignOff?.state).toBe("ready");
+      expect(projection.nextAction.kind).toBe("sign_off_revision");
+      expect(projection.nextAction.instruction).toContain(
+        "Open comments on D1 await a response",
+      );
+      expect(projection.nextAction.instruction).toContain(
+        "cctl spec comments native-sdd --open",
+      );
+      expect(projection.nextAction.instruction).toContain("sign revision 3");
+    });
   });
 
   it("names the next action by gate order rather than by the revision's authoring stage", () => {

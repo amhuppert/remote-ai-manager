@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { GET as projectSearchGET } from "@/app/api/specs/[name]/-/search/route";
 import { GET as inventoryGET } from "@/app/api/specs/[name]/route";
+import { GET as commentsGET } from "@/app/api/specs/[name]/[slug]/comments/route";
 import { GET as deltaGET } from "@/app/api/specs/[name]/[slug]/delta/route";
 import { GET as diffGET } from "@/app/api/specs/[name]/[slug]/diff/route";
 import { GET as editContextGET } from "@/app/api/specs/[name]/[slug]/edit-context/route";
@@ -13,6 +14,7 @@ import {
   POST as planPreviewPOST,
 } from "@/app/api/specs/[name]/[slug]/plan-preview/route";
 import {
+  specCommentsGET,
   specDeltaGET,
   specDiffGET,
   specEditContextGET,
@@ -45,6 +47,10 @@ describe("spec API route mounting", () => {
 
   it("mounts the edit-context read the CLI write path uses instead of a full detail fetch", () => {
     expect(editContextGET).toBe(specEditContextGET);
+  });
+
+  it("mounts the review-comment read behind `cctl spec comments`", () => {
+    expect(commentsGET).toBe(specCommentsGET);
   });
 
   it("mounts the semantic diff the reviewer changelog reads", () => {

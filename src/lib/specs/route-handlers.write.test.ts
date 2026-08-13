@@ -159,6 +159,13 @@ function createServices() {
     },
     review: {
       comment: vi.fn(),
+      replyToThread: vi.fn(async (input: unknown) => ({
+        ok: true as const,
+        value: {
+          id: "comment-reply-1",
+          thread_id: (input as { threadId: string }).threadId,
+        },
+      })),
       resolveThread: vi.fn(),
       requestChanges: vi.fn(),
       approveItem: vi.fn(async () => ({

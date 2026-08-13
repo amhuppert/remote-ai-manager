@@ -32,6 +32,7 @@ import type {
   Spec,
   SpecApprovalRow,
   SpecAssumptionRow,
+  SpecCommentRow,
   SpecEvidenceRow,
   SpecExecutionRow,
   SpecGateAdmissionRow,
@@ -305,6 +306,43 @@ const assumption: SpecAssumptionRow = {
   disposed_at: null,
   created_at: CREATED_AT,
   updated_at: CREATED_AT,
+};
+
+const reviewComment: SpecCommentRow = {
+  id: "comment-1",
+  spec_id: spec.id,
+  thread_id: "thread-1",
+  parent_comment_id: null,
+  element_id: "requirement-1",
+  anchor_json: JSON.stringify({
+    sectionId: "sec-1",
+    headingLabel: "Requirements",
+    line: 1,
+    charStart: 0,
+    charEnd: 22,
+    quote: "resolves renamed specs",
+    prefix: "",
+    suffix: "",
+    docRevision: "revision-1",
+  }),
+  revision_id: "revision-1",
+  body: "Should renames preserve aliases?",
+  author_json: JSON.stringify({ kind: "human" }),
+  blocking: 1,
+  resolution: "open",
+  created_at: CREATED_AT,
+  updated_at: CREATED_AT,
+};
+
+const resolvedReviewComment: SpecCommentRow = {
+  ...reviewComment,
+  id: "comment-2",
+  thread_id: "thread-2",
+  body: "Typo in the statement.",
+  blocking: 0,
+  resolution: "resolved",
+  created_at: "2026-07-18T01:00:00.000Z",
+  updated_at: "2026-07-18T02:00:00.000Z",
 };
 
 const bundle = {
@@ -773,6 +811,8 @@ function makeHost(
     unplannedCoverage?: boolean;
     /** Seed this many open questions, to overflow the bounded status section. */
     questionCount?: number;
+    /** Seed review comments on the current revision. */
+    comments?: readonly SpecCommentRow[];
   } = {},
 ): CliHost & {
   requests: RecordedRequest[];
@@ -895,6 +935,9 @@ function makeHost(
     findExecutionsBySpecId() {
       return [...(options.executions ?? [])];
     },
+    findCommentsByRevision(revisionId) {
+      return revisionId === revision.id ? [...(options.comments ?? [])] : [];
+    },
     findQuestionsBySpecId() {
       const count = options.questionCount;
       if (count === undefined) return [question];
@@ -982,6 +1025,8 @@ function makeHost(
       if (tail === "summary")
         return handlers.getSpecSummaryGET(request, context);
       if (tail === "status") return handlers.getSpecStatusGET(request, context);
+      if (tail === "comments")
+        return handlers.getSpecCommentsGET(request, context);
       if (tail === "lint") return handlers.getSpecLintGET(request, context);
       if (tail === "elements") {
         return handlers.getSpecElementGET(request, {
@@ -1368,6 +1413,138 @@ describe("cctl spec read verbs against seeded read routes", () => {
     expect(text.stdout).toContain(
       "pending subject approvals: 2 total, 2 shown, 0 omitted",
     );
+  });
+
+  it("reports open comments in status text and points at the comments verb", async () => {
+    const host = makeHost({
+      comments: [reviewComment, resolvedReviewComment],
+    });
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("open comments: 1 (1 blocking) on R1");
+    expect(text.stdout).toContain(
+      "  read: cctl spec comments native-sdd --open",
+    );
+  });
+
+  it("stays silent about comments in status when none are open", async () => {
+    const host = makeHost();
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).not.toContain("open comments:");
+  });
+
+  it("reads review comments as typed rows and renders them for humans", async () => {
+    const host = makeHost({
+      comments: [reviewComment, resolvedReviewComment],
+    });
+    const text = await runCli(
+      ["spec", "comments", "native-sdd"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain(
+      "native-sdd  comments: 2 comments shown, 1 open (1 blocking)",
+    );
+    expect(text.stdout).toContain("R1  open [blocking]  by human rev 1");
+    expect(text.stdout).toContain("  > resolves renamed specs");
+    expect(text.stdout).toContain("  Should renames preserve aliases?");
+
+    const data = await runCli(
+      ["spec", "comments", "native-sdd", "--json"],
+      baseEnv,
+      host,
+    );
+    expect(data.exitCode).toBe(0);
+    const body = JSON.parse(data.stdout) as {
+      ok: boolean;
+      openCount: number;
+      openBlockingCount: number;
+      comments: Record<string, unknown>[];
+    };
+    expect(body.ok).toBe(true);
+    expect(body.openCount).toBe(1);
+    expect(body.openBlockingCount).toBe(1);
+    expect(body.comments[0]).toMatchObject({
+      handle: "R1",
+      threadId: "thread-1",
+      revisionNumber: 1,
+      quote: "resolves renamed specs",
+      author: { kind: "human" },
+      blocking: true,
+      resolution: "open",
+    });
+    // The raw persistence shape must not leak: no snake_case keys, no
+    // JSON-encoded string columns, no 0/1 booleans.
+    expect(Object.keys(body.comments[0] ?? {})).not.toContain("anchor_json");
+    expect(Object.keys(body.comments[0] ?? {})).not.toContain("author_json");
+  });
+
+  it("narrows comments by open state and element at the route, not in the client", async () => {
+    const host = makeHost({
+      comments: [reviewComment, resolvedReviewComment],
+    });
+    const open = await runCli(
+      ["spec", "comments", "native-sdd", "--open", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(open.exitCode).toBe(0);
+    const openBody = JSON.parse(open.stdout) as {
+      comments: { id: string }[];
+      openCount: number;
+    };
+    expect(openBody.comments.map((comment) => comment.id)).toEqual([
+      "comment-1",
+    ]);
+    // Spec-wide counts survive filtering, so a narrowed read still reports
+    // total outstanding feedback.
+    expect(openBody.openCount).toBe(1);
+    expect(new URL(host.requests[0]?.url ?? "").search).toBe("?open=true");
+
+    const byElement = await runCli(
+      ["spec", "comments", "native-sdd", "--element", "R1", "--json"],
+      baseEnv,
+      host,
+    );
+    expect(byElement.exitCode).toBe(0);
+    expect(
+      (JSON.parse(byElement.stdout) as { comments: { id: string }[] }).comments,
+    ).toHaveLength(2);
+  });
+
+  it("refuses a typo'd element filter rather than answering with an empty list", async () => {
+    const host = makeHost({ comments: [reviewComment] });
+    const result = await runCli(
+      ["spec", "comments", "native-sdd", "--element", "R9"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("no comment references it");
+  });
+
+  it("hoists the element identity beside spec get's nested view", async () => {
+    const host = makeHost();
+    const result = await runCli(
+      ["spec", "get", "native-sdd/R1", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const envelope = JSON.parse(result.stdout) as Record<string, unknown>;
+    // The view nests the durable row (element.element.element.id); the
+    // identity a script wants rides at the top of the envelope instead.
+    expect(envelope.elementId).toBe("requirement-1");
+    expect(envelope.kind).toBe("requirement");
+    expect(envelope.elementVersion).toBe(1);
   });
 
   it("gets question and assumption handles as typed views", async () => {

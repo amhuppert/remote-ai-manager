@@ -19,6 +19,7 @@ import type {
 } from "./schemas";
 import { createSpecRouteHandlers, type SpecRouteDeps } from "./route-handlers";
 import {
+  specCommentsViewSchema,
   specDetailViewSchema,
   specEditContextViewSchema,
   specProjectSearchViewSchema,
@@ -458,7 +459,17 @@ describe("spec read route handlers", () => {
         elements: expect.any(Array),
       },
       approvals: [approval],
-      comments: [comment],
+      comments: [
+        {
+          id: comment.id,
+          threadId: comment.thread_id,
+          elementId: comment.element_id,
+          handle: "R1",
+          body: comment.body,
+          blocking: false,
+          resolution: "open",
+        },
+      ],
       questions: [
         {
           handle: "Q1",
@@ -1443,7 +1454,10 @@ describe("spec read route handlers", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      comments: [oldComment, currentComment],
+      comments: [
+        { id: oldComment.id, revisionId: withdrawnRevision.id },
+        { id: currentComment.id, revisionId: draftRevision.id },
+      ],
     });
     expect(findCommentsByRevision).toHaveBeenCalledWith(withdrawnRevision.id);
     expect(findCommentsByRevision).toHaveBeenCalledWith(draftRevision.id);
@@ -3148,5 +3162,201 @@ describe("spec read route handlers", () => {
         expect.objectContaining({ handle: "D1", kind: "decision" }),
       ],
     });
+  });
+});
+
+describe("spec comments route handler", () => {
+  const openComment: SpecCommentRow = {
+    id: "comment-1",
+    spec_id: spec.id,
+    thread_id: "thread-1",
+    parent_comment_id: null,
+    element_id: "requirement-1",
+    anchor_json: JSON.stringify({
+      sectionId: "sec-1",
+      headingLabel: "Requirements",
+      line: 1,
+      charStart: 0,
+      charEnd: 12,
+      quote: "resolves renamed specs",
+      prefix: "",
+      suffix: "",
+      docRevision: revision.id,
+    }),
+    revision_id: revision.id,
+    body: "Should renames preserve aliases?",
+    author_json: JSON.stringify({ kind: "human" }),
+    blocking: 1,
+    resolution: "open",
+    created_at: "2026-08-12T00:00:00.000Z",
+    updated_at: "2026-08-12T00:00:00.000Z",
+  };
+  const resolvedComment: SpecCommentRow = {
+    ...openComment,
+    id: "comment-2",
+    thread_id: "thread-2",
+    body: "Typo in the statement.",
+    blocking: 0,
+    resolution: "resolved",
+    created_at: "2026-08-12T00:30:00.000Z",
+    updated_at: "2026-08-12T01:00:00.000Z",
+  };
+  const orphanComment: SpecCommentRow = {
+    ...openComment,
+    id: "comment-3",
+    thread_id: "thread-3",
+    element_id: "removed-element",
+    body: "This element vanished after the comment landed.",
+    blocking: 0,
+    resolution: "open",
+    created_at: "2026-08-12T02:00:00.000Z",
+    updated_at: "2026-08-12T02:00:00.000Z",
+  };
+
+  function commentDeps() {
+    return createDeps({
+      findCommentsByRevision: (revisionId) =>
+        revisionId === revision.id
+          ? [openComment, resolvedComment, orphanComment]
+          : [],
+    });
+  }
+
+  it("returns every comment as a typed view with handles and counts", async () => {
+    const handlers = createSpecRouteHandlers(commentDeps());
+
+    const response = await handlers.getSpecCommentsGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/comments"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = specCommentsViewSchema.parse(await response.json());
+    expect(body.specId).toBe(spec.id);
+    expect(body.slug).toBe(spec.slug);
+    expect(body.openCount).toBe(2);
+    expect(body.openBlockingCount).toBe(1);
+    expect(body.comments.map((comment) => comment.id)).toEqual([
+      "comment-1",
+      "comment-2",
+      "comment-3",
+    ]);
+    expect(body.comments[0]).toMatchObject({
+      handle: "R1",
+      revisionNumber: revision.number,
+      quote: "resolves renamed specs",
+      author: { kind: "human" },
+      blocking: true,
+      resolution: "open",
+      threadId: "thread-1",
+    });
+    // A comment on an element the current revision no longer carries is still
+    // returned — with a null handle, not silently dropped.
+    expect(body.comments[2]).toMatchObject({
+      handle: null,
+      elementId: "removed-element",
+    });
+  });
+
+  it("filters to open comments without changing the spec-wide counts", async () => {
+    const handlers = createSpecRouteHandlers(commentDeps());
+
+    const response = await handlers.getSpecCommentsGET(
+      new Request(
+        "http://cc.test/api/specs/demo/current-slug/comments?open=true",
+      ),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    const body = specCommentsViewSchema.parse(await response.json());
+    expect(body.comments.map((comment) => comment.id)).toEqual([
+      "comment-1",
+      "comment-3",
+    ]);
+    expect(body.openCount).toBe(2);
+    expect(body.openBlockingCount).toBe(1);
+  });
+
+  it("filters by element handle and by raw element id", async () => {
+    const handlers = createSpecRouteHandlers(commentDeps());
+
+    const byHandle = await handlers.getSpecCommentsGET(
+      new Request(
+        "http://cc.test/api/specs/demo/current-slug/comments?element=R1",
+      ),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+    const byId = await handlers.getSpecCommentsGET(
+      new Request(
+        "http://cc.test/api/specs/demo/current-slug/comments?element=removed-element",
+      ),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    expect(
+      specCommentsViewSchema
+        .parse(await byHandle.json())
+        .comments.map((comment) => comment.id),
+    ).toEqual(["comment-1", "comment-2"]);
+    expect(
+      specCommentsViewSchema
+        .parse(await byId.json())
+        .comments.map((comment) => comment.id),
+    ).toEqual(["comment-3"]);
+  });
+
+  it("counts open comments in status and reroutes nextAction at the review feedback", async () => {
+    const handlers = createSpecRouteHandlers(commentDeps());
+
+    const response = await handlers.getSpecStatusGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/status"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    expect(response.status).toBe(200);
+    const status = specStatusViewSchema.parse(await response.json());
+    expect(status.openComments).toEqual({
+      count: 2,
+      blockingCount: 1,
+      subjects: ["R1", "removed-element"],
+    });
+    // The seeded revision is a draft, so the agent acts next — and the action
+    // it is pointed at leads with the feedback instead of a dead approval ask.
+    expect(status.nextAction?.instruction).toContain(
+      "cctl spec comments current-slug --open",
+    );
+  });
+
+  it("projects detail-view comments out of their raw row shape", async () => {
+    const handlers = createSpecRouteHandlers(commentDeps());
+
+    const response = await handlers.getSpecGET(
+      new Request("http://cc.test/api/specs/demo/current-slug"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    expect(response.status).toBe(200);
+    const detail = specDetailViewSchema.parse(await response.json());
+    expect(detail.comments[0]).toMatchObject({
+      handle: "R1",
+      threadId: "thread-1",
+      blocking: true,
+      author: { kind: "human" },
+      quote: "resolves renamed specs",
+    });
+    expect(Object.keys(detail.comments[0] ?? {})).not.toContain("anchor_json");
+  });
+
+  it("refuses an element filter that names nothing rather than answering empty", async () => {
+    const handlers = createSpecRouteHandlers(commentDeps());
+
+    const response = await handlers.getSpecCommentsGET(
+      new Request(
+        "http://cc.test/api/specs/demo/current-slug/comments?element=R9",
+      ),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    expect(response.status).toBe(404);
   });
 });

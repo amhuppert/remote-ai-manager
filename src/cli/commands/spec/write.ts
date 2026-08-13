@@ -29,9 +29,11 @@ import {
   type DeliveryPlanMutationView,
 } from "@/lib/specs/delivery-plan-views";
 import { approvalRequestReceiptSchema } from "@/lib/specs/review-service";
+import { projectSpecComment } from "@/lib/specs/comment-projection";
 import {
   importBundleSchema,
   specAliasSchema,
+  specCommentRowSchema,
   specElementSchema,
   specElementVersionSchema,
   specExecutionRowSchema,
@@ -971,8 +973,9 @@ export async function runSpecCreate(
   const file = await readJsonObjectFile(host, filePath, "first element", json);
   if (!file.ok) return file.result;
   // The create document, not the draft one: the revision this element opens
-  // holds no version to compare against, so a `baseElementVersion` here is
-  // refused rather than ignored.
+  // holds no version to compare against, so an explicit-null
+  // `baseElementVersion` is tolerated and a numeric one is refused rather
+  // than ignored.
   const parsedFile = createSpecInitialElementSchema.safeParse(file.value);
   if (!parsedFile.success) {
     return invalidFileResult(
@@ -1301,6 +1304,13 @@ interface DraftWriteRequest {
   readonly env: CliEnv;
   readonly slug: string;
   readonly json: boolean;
+  /**
+   * Bound the --json receipt to element identities. The full echo of every
+   * committed payload is the default, but a large batch echoing itself back
+   * through the ~64KB pipe cap forces a redirect-to-file dance (#60), and the
+   * identities are all a caller needs to keep writing.
+   */
+  readonly quiet: boolean;
 }
 
 /** How a draft document states the version each of its elements replaces. */
@@ -1439,7 +1449,14 @@ async function draftSingleElement(
       next: draftStatusNext(slug),
     },
     "draft",
-    saved,
+    request.quiet
+      ? {
+          elementId: saved.element.id,
+          handle: saved.handle,
+          elementVersion: saved.version.elementVersion,
+          revived: saved.revived,
+        }
+      : saved,
   );
 }
 
@@ -1574,7 +1591,18 @@ async function submitDraftBatch(
       next: draftStatusNext(slug),
     },
     "batch",
-    saved,
+    request.quiet
+      ? {
+          revisionId: saved.revisionId,
+          written: saved.written.map((entry) => ({
+            index: entry.index,
+            elementId: entry.elementId,
+            handle: entry.handle,
+            elementVersion: entry.version.elementVersion,
+            revived: entry.revived,
+          })),
+        }
+      : saved,
     removed === 0
       ? {}
       : {
@@ -1623,6 +1651,7 @@ export async function runSpecDraft(
     env,
     slug: slug.value,
     json,
+    quiet: values["quiet"] === "true",
   };
   // The document's own shape selects how the write is reported: a batch is
   // one transaction reported per index, a lone object is the element form
@@ -1719,7 +1748,7 @@ export async function runSpecRemove(
   }
   if (revisionId === null) return usageFailure(REMOVE_USAGE, json);
   return submitDraftBatch(
-    { host, flags, env, slug: slug.value, json },
+    { host, flags, env, slug: slug.value, json, quiet: false },
     resolved.context,
     revisionId,
     {
@@ -2097,6 +2126,68 @@ export async function runSpecAdvance(
     },
     "revision",
     advanced,
+  );
+}
+
+export async function runSpecReply(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("spec reply"), json);
+  if (denied) return denied;
+  const extra = noExtraPositionals(rest, 1, "reply", json);
+  if (extra) return extra;
+  const slug = validateSlug(rest[0], "reply", json);
+  if (!slug.ok) return slug.result;
+  const threadId = values["thread"];
+  if (threadId === undefined) {
+    return usageFailure("spec reply requires --thread <threadId>", json);
+  }
+  const body = values["body"];
+  if (body === undefined || body.trim() === "") {
+    return usageFailure("spec reply requires --body <text>", json);
+  }
+  const resolved = await resolveProjectConversationContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const response = await requestTyped(
+    host,
+    resolved.context,
+    env,
+    {
+      method: "POST",
+      path: actionPath(resolved.context, slug.value, "reply"),
+      body: { threadId, body },
+      schema: specCommentRowSchema,
+      command: "reply",
+    },
+    json,
+  );
+  if (!response.ok) return response.result;
+  // The receipt carries the projected view: the write returns the persisted
+  // row, and raw row shape must not leak into an agent-facing envelope. The
+  // reply's element handle and revision number are not resolvable without a
+  // second read, so the receipt leaves them null — the thread already told
+  // the caller where it is anchored.
+  const reply = projectSpecComment(response.value, {
+    handleByElementId: new Map(),
+    revisionNumberById: new Map(),
+  });
+  return mutationResult(
+    json,
+    {
+      changed: `replied to thread ${threadId}`,
+      state: `comment ${reply.id} joined thread ${threadId}`,
+      tokens: { thread: threadId, comment: reply.id },
+      actsNext: "human",
+      blocked: null,
+      next: `cctl spec comments ${slug.value} --open`,
+    },
+    "reply",
+    reply,
   );
 }
 

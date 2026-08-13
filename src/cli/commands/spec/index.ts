@@ -1,6 +1,7 @@
 import { dispatchGroup } from "../../dispatch";
 import type { CliEnv, CliHost, CliResult, GlobalFlags } from "../../shared";
 import {
+  runSpecComments,
   runSpecDelta,
   runSpecDiff,
   runSpecExport,
@@ -37,6 +38,7 @@ import {
   runSpecQuestion,
   runSpecRemove,
   runSpecRename,
+  runSpecReply,
   runSpecRequestApproval,
   runSpecStart,
   runSpecTaskComplete,
@@ -60,6 +62,7 @@ export async function runSpec(
       measures: (next) => runSpecMeasures(next, flags, values, env, host),
       show: (next) => runSpecShow(next, flags, values, env, host),
       status: (next) => runSpecStatus(next, flags, values, env, host),
+      comments: (next) => runSpecComments(next, flags, values, env, host),
       lint: (next) => runSpecLint(next, flags, values, env, host),
       get: (next) => runSpecGet(next, flags, values, env, host),
       search: (next) => runSpecSearch(next, flags, values, env, host),
@@ -81,6 +84,7 @@ export async function runSpec(
       advance: (next) => runSpecAdvance(next, flags, values, env, host),
       question: (next) => runSpecQuestion(next, flags, values, env, host),
       answer: (next) => runSpecAnswer(next, flags, values, env, host),
+      reply: (next) => runSpecReply(next, flags, values, env, host),
       assume: (next) => runSpecAssume(next, flags, values, env, host),
       task: (next) =>
         dispatchGroup({

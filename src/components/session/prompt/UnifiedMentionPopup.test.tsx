@@ -132,6 +132,7 @@ function specDetail(revisionNumber: number, statement: string): SpecDetailView {
       specId: summary.spec.id,
       slug: summary.spec.slug,
       imported: false,
+      openComments: null,
       phase: summary.phase,
       executions: [],
       gates: [],

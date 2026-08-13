@@ -487,6 +487,7 @@ export function specControlsDetailFixture(
       specId: "spec-1",
       slug: "native-sdd",
       imported: false,
+      openComments: null,
       phase: { primary: executionState === "none" ? "approved" : "executing" },
       executions: executions.map((execution) => ({
         id: execution.id,

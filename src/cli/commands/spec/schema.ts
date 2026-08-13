@@ -228,6 +228,10 @@ function positionNotes(baseVersionPhrase: string): string[] {
     "position: one global order per revision, sorted by position then elementId. Omit position on create to append after the current last element; omit it on update to keep the element's current slot.",
     "Nesting comes from parentElementId alone and never from position; duplicate positions are accepted and resolved by the elementId tiebreak.",
     `elementId is caller-assigned and stable — reuse it to update the element, paired with ${baseVersionPhrase}.`,
+    // Learned by refusal in the field (#60): an ABANDONED spec still owns its
+    // ids, so the convention has to be stated before the first write, not
+    // only inside the element_id_taken refusal.
+    'elementId is globally unique across every spec in the project, including abandoned ones — prefix ids with the spec slug (for example, "<spec-slug>-req-audit") so no other spec can own yours first.',
     "The top-level kind selects stage admissibility and must equal payload.kind.",
   ];
 }
@@ -622,7 +626,7 @@ function createDocument(): SchemaDocument {
     enums: collectEnums(jsonSchema, ""),
     example: ELEMENT_EXAMPLES.section,
     notes: [
-      "This document states no baseElementVersion: the spec's first revision has no version to compare against, and stating one is refused rather than ignored.",
+      "This document needs no baseElementVersion: the spec's first revision has no version to compare against. An explicit null is tolerated — it states the same thing — but a number is refused rather than ignored: a real base version belongs to the draft document.",
       "Every later write is the draft document for that kind — run `cctl spec schema <kind>`.",
       ...positionNotes(
         "the baseElementVersion the draft document carries once the spec exists",

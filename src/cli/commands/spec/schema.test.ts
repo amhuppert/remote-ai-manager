@@ -351,6 +351,21 @@ describe("cctl spec schema", () => {
   });
 
   /**
+   * The global-uniqueness convention must be readable BEFORE the first write:
+   * an abandoned spec still owns its element ids, and learning that only from
+   * the element_id_taken refusal cost a live authoring round (#60).
+   */
+  it("states the slug-prefix element-id convention in every element document", async () => {
+    const documents = await readDocuments();
+    for (const id of ["requirement", "create-element", "element-batch"]) {
+      const document = documents.find((candidate) => candidate.id === id);
+      expect(document?.notes.join(" ")).toContain(
+        "including abandoned ones — prefix ids with the spec slug",
+      );
+    }
+  });
+
+  /**
    * The draft document and the create document are different shapes, and one
    * document claiming both verbs is what made a draft file carrying the
    * compare-and-swap version fail as an unrecognized key while every batch
@@ -389,7 +404,11 @@ describe("cctl spec schema", () => {
     expect(create?.usedBy).toEqual([
       "cctl spec create --slug <slug> --name <name> --preset <preset> --file <element.json>",
     ]);
-    // The create document has no version to compare against, and states none.
+    // The create document has no version to compare against. An explicit
+    // null is tolerated — it states exactly what create means, and refusing
+    // it was a guaranteed first-contact stumble for draft-trained callers
+    // (#60) — while a NUMBER still refuses: a real base version is a draft
+    // document sent at the wrong verb.
     expect(
       createSpecInitialElementSchema.safeParse(create?.example).success,
     ).toBe(true);
@@ -398,8 +417,14 @@ describe("cctl spec schema", () => {
         ...z.record(z.string(), z.unknown()).parse(create?.example),
         baseElementVersion: null,
       }).success,
+    ).toBe(true);
+    expect(
+      createSpecInitialElementSchema.safeParse({
+        ...z.record(z.string(), z.unknown()).parse(create?.example),
+        baseElementVersion: 3,
+      }).success,
     ).toBe(false);
-    expect(create?.notes.join(" ")).toContain("no baseElementVersion");
+    expect(create?.notes.join(" ")).toContain("baseElementVersion");
   });
 
   /**

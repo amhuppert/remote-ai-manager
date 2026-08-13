@@ -47,6 +47,32 @@ export interface ConversationIdentity {
   conversationId: string;
 }
 
+/**
+ * Record a durable agent-facing notice for the conversation's NEXT runtime,
+ * bounded by the persisted-blob cap. This is the one append path for
+ * `pendingAgentNotices`: every producer (background-task loss, spec review
+ * feedback) shares the cap and the conversation-store mutation.
+ */
+export async function appendPendingAgentNotice(
+  deps: Pick<NoticesDrainDeps, "mutateConversation">,
+  identity: ConversationIdentity,
+  notice: string,
+  label: string,
+): Promise<void> {
+  await deps.mutateConversation(
+    identity.projectPath,
+    identity.sessionName,
+    identity.conversationId,
+    label,
+    (conversation) => {
+      conversation.pendingAgentNotices = [
+        ...conversation.pendingAgentNotices,
+        notice,
+      ].slice(-MAX_PENDING_AGENT_NOTICES);
+    },
+  );
+}
+
 /** Read the notices pending for injection into a new runtime's instructions. */
 export async function readPendingAgentNotices(
   deps: Pick<NoticesDrainDeps, "getConversation">,
@@ -145,25 +171,21 @@ export function createBackgroundTasksLostHandler(
     });
     if (input.isProjectConversation) return;
     const reminder = `Your previous agent session ended (${info.reason}) while ${info.tasks.length} background task(s) were still running: ${summary}. Those processes were terminated with the session — their completion notifications will never arrive. Do not wait for them; check any output files on disk and re-run whatever is still needed.`;
-    void deps
-      .mutateConversation(
-        input.projectPath,
-        input.sessionName,
-        input.conversationId,
-        "background_tasks_lost",
-        (conversation) => {
-          conversation.pendingAgentNotices = [
-            ...conversation.pendingAgentNotices,
-            reminder,
-          ].slice(-MAX_PENDING_AGENT_NOTICES);
-        },
-      )
-      .catch((err) => {
-        logger.warn("prompt.background_tasks_lost_persist_failed", {
-          ...scopeRefFromStoreSessionName(input.sessionName),
-          conversationId: input.conversationId,
-          error: getErrorMessage(err),
-        });
+    void appendPendingAgentNotice(
+      deps,
+      {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        conversationId: input.conversationId,
+      },
+      reminder,
+      "background_tasks_lost",
+    ).catch((err) => {
+      logger.warn("prompt.background_tasks_lost_persist_failed", {
+        ...scopeRefFromStoreSessionName(input.sessionName),
+        conversationId: input.conversationId,
+        error: getErrorMessage(err),
       });
+    });
   };
 }

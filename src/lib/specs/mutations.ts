@@ -39,6 +39,7 @@ export const SPEC_ACTIONS = [
   "open-amendment",
   "propose",
   "comment",
+  "reply",
   "resolve-thread",
   "request-changes",
   "dismiss-superseded",

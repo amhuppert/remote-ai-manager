@@ -49,6 +49,7 @@ export interface SpecReviewRepo {
   saveComment(comment: SpecCommentRow): void;
   findCommentById(id: string): SpecCommentRow | null;
   findCommentsByRevision(revisionId: string): SpecCommentRow[];
+  findCommentsByThread(threadId: string): SpecCommentRow[];
 }
 
 export function createSpecReviewRepo(db: Db): SpecReviewRepo {
@@ -217,6 +218,11 @@ export function createSpecReviewRepo(db: Db): SpecReviewRepo {
   const findCommentsByRevisionStmt = db.prepare(
     `SELECT * FROM spec_comments
      WHERE revision_id = ?
+     ORDER BY created_at ASC, id ASC`,
+  );
+  const findCommentsByThreadStmt = db.prepare(
+    `SELECT * FROM spec_comments
+     WHERE thread_id = ?
      ORDER BY created_at ASC, id ASC`,
   );
 
@@ -395,6 +401,16 @@ export function createSpecReviewRepo(db: Db): SpecReviewRepo {
           "spec_comment",
           `revision:${revisionId}`,
           () => findCommentsByRevisionStmt.all(revisionId),
+        ),
+      );
+    },
+    findCommentsByThread(threadId) {
+      return timed("find_by_thread", "spec_comment", threadId, () =>
+        readMany(
+          specCommentRowSchema,
+          "spec_comment",
+          `thread:${threadId}`,
+          () => findCommentsByThreadStmt.all(threadId),
         ),
       );
     },
