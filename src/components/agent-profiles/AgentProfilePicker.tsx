@@ -11,6 +11,7 @@ import {
   SelectLabel,
   SelectTrigger,
   SelectValue,
+  type SelectContentLayer,
 } from "@/components/ui/Select";
 import { useAgentProfileLibrary } from "@/lib/agent-profiles/queries";
 import type {
@@ -53,6 +54,8 @@ export interface AgentProfilePickerProps {
   open?: boolean;
   /** External-geometry utilities only. */
   layoutClassName?: string;
+  /** Elevates the portaled listbox when the picker sits inside a popover. */
+  contentLayer?: SelectContentLayer;
 }
 
 function TierBadge({ tier }: { tier: AgentProfileTier }): React.JSX.Element {
@@ -84,6 +87,7 @@ export default function AgentProfilePicker({
   disabled,
   open,
   layoutClassName,
+  contentLayer,
 }: AgentProfilePickerProps): React.JSX.Element {
   const library = useAgentProfileLibrary(projectName);
   const descriptionId = useId();
@@ -121,7 +125,10 @@ export default function AgentProfilePicker({
           </SelectValue>
           <TierBadge tier={selected?.tier ?? "builtin"} />
         </SelectTrigger>
-        <SelectContent layoutClassName="max-w-[420px]">
+        <SelectContent
+          contentLayer={contentLayer}
+          layoutClassName="max-w-[420px]"
+        >
           {groups.map((group) => (
             <SelectGroup key={group.tier}>
               <SelectLabel>{group.label}</SelectLabel>

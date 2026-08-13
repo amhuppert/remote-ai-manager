@@ -1,10 +1,18 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/catalog";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
+import { useCollaborationStore } from "@/stores/collaboration.store";
 import PeekPopover from "@/components/session/sidebar/PeekPopover";
 
 vi.mock("@/lib/logging", () => ({
@@ -60,6 +68,11 @@ const TRANSCRIPT_MESSAGES: TranscriptMessage[] = [
   },
 ];
 
+const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
+  claude: { modelId: "opus", effort: "high" },
+  codex: { modelId: "gpt-5.4", effort: "high", codexFastMode: false },
+};
+
 function renderPeek(
   overrides: Partial<React.ComponentProps<typeof PeekPopover>> = {},
   /** Wraps the popover — the profile picker inside it reads React Query. */
@@ -73,6 +86,7 @@ function renderPeek(
     anchorEl,
     conversation: BASE_CONVERSATION,
     transcriptMessages: TRANSCRIPT_MESSAGES,
+    backendDefaults: BACKEND_DEFAULTS,
     onClose: vi.fn(),
     onOpenFull: vi.fn(),
     onReplyText: vi.fn(),
@@ -93,6 +107,7 @@ describe("PeekPopover", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-15T12:42:00.000Z"));
+    useCollaborationStore.setState({ collabConfigDraftsByConversation: {} });
     if (typeof Range !== "undefined") {
       if (!Range.prototype.getClientRects) {
         Range.prototype.getClientRects = () =>
@@ -126,6 +141,7 @@ describe("PeekPopover", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    useCollaborationStore.setState({ collabConfigDraftsByConversation: {} });
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
       value: undefined,
@@ -215,6 +231,122 @@ describe("PeekPopover", () => {
     const editor = screen.getByLabelText("Reply text");
     expect(editor).toHaveAttribute("contenteditable", "true");
     expect(document.querySelector("textarea")).toBeNull();
+  });
+
+  it("shows and submits Agent Two controls for /collab replies", async () => {
+    vi.useRealTimers();
+    const user = userEvent.setup();
+    const onReplyText = vi.fn();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    renderPeek({ onReplyText }, (ui) => (
+      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+    ));
+
+    const editor = screen.getByLabelText("Reply text");
+    await user.click(editor);
+    await user.keyboard("/collab compare the approaches");
+
+    const controls = screen.getByRole("region", {
+      name: "Collaboration configuration",
+    });
+    expect(within(controls).getByText("2nd agent")).toBeInTheDocument();
+    expect(
+      within(controls).getByTestId("model-selector-trigger"),
+    ).toHaveTextContent("Opus");
+    expect(within(controls).getByTitle(/^Effort:/)).toHaveTextContent("High");
+
+    await user.click(within(controls).getByTestId("model-selector-trigger"));
+    expect(screen.getByRole("listbox")).toHaveClass("z-popover");
+    expect(screen.getByRole("listbox")).not.toHaveClass("z-menu");
+    await user.keyboard("{Escape}");
+
+    await user.click(within(controls).getByTitle(/^Effort:/));
+    expect(screen.getByRole("listbox")).toHaveClass("z-popover");
+    await user.keyboard("{Escape}");
+
+    await user.click(
+      within(controls).getByRole("combobox", {
+        name: "Agent profile",
+      }),
+    );
+    expect(screen.getByRole("listbox")).toHaveClass("z-popover");
+    await user.keyboard("{Escape}");
+
+    await user.click(within(controls).getByRole("button", { name: "Codex" }));
+    expect(within(controls).getByLabelText("Codex speed")).toBeInTheDocument();
+    await user.click(within(controls).getByRole("radio", { name: "Fast" }));
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(onReplyText).toHaveBeenCalledWith(
+      "/collab compare the approaches",
+      [],
+      {
+        negotiationRounds: 3,
+        autonomousResolutionThreshold: "major",
+        agentTwo: {
+          backend: "codex",
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+          fastMode: true,
+        },
+      },
+      {
+        negotiationRounds: 3,
+        autonomousResolutionThreshold: "major",
+        agentTwo: {
+          backend: "codex",
+          model: "gpt-5.4",
+          effort: "high",
+          fastMode: true,
+        },
+      },
+    );
+  });
+
+  it("dismisses /collab without discarding the reply brief", async () => {
+    vi.useRealTimers();
+    const user = userEvent.setup();
+    const onReplyText = vi.fn();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    renderPeek({ onReplyText }, (ui) => (
+      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+    ));
+
+    const editor = screen.getByLabelText("Reply text");
+    await user.click(editor);
+    await user.keyboard("/collab compare the approaches");
+    await user.click(screen.getByRole("button", { name: "Dismiss /collab" }));
+
+    expect(
+      screen.queryByRole("region", { name: "Collaboration configuration" }),
+    ).toBeNull();
+    expect(editor).toHaveTextContent("compare the approaches");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(onReplyText).toHaveBeenCalledWith("compare the approaches", []);
+  });
+
+  it("does not dispatch /collab without a brief", async () => {
+    vi.useRealTimers();
+    const user = userEvent.setup();
+    const onReplyText = vi.fn();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    renderPeek({ onReplyText }, (ui) => (
+      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+    ));
+
+    const editor = screen.getByLabelText("Reply text");
+    await user.click(editor);
+    await user.keyboard("/collab");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(onReplyText).not.toHaveBeenCalled();
+    expect(editor).toHaveTextContent("/collab");
   });
 
   it("shows the voice tool when voice recording is available", async () => {

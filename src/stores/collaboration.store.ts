@@ -18,6 +18,7 @@ import {
   backendSupportsFastMode,
   type BackendSelectionDefaultsById,
 } from "@/lib/agent-backends/catalog";
+import { deepEqualJson } from "@/lib/shared/deep-equal";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 
 type CollabAgent = "claude" | "codex";
@@ -92,6 +93,12 @@ interface CollaborationActions {
     projectName: string,
     sessionName: string,
     conversationId: string,
+  ): void;
+  clearCollabConfigDraftIfMatches(
+    projectName: string,
+    sessionName: string,
+    conversationId: string,
+    expectedDraft: CollabConfigDraft,
   ): void;
 }
 
@@ -180,6 +187,19 @@ export const useCollaborationStore = create<CollaborationStore>()(
         const key = conversationKey(projectName, sessionName, conversationId);
         delete state.collabConfigDraftsByConversation[key];
       }),
+
+    clearCollabConfigDraftIfMatches: (
+      projectName,
+      sessionName,
+      conversationId,
+      expectedDraft,
+    ) =>
+      set((state) => {
+        const key = conversationKey(projectName, sessionName, conversationId);
+        const currentDraft = state.collabConfigDraftsByConversation[key];
+        if (!deepEqualJson(currentDraft, expectedDraft)) return;
+        delete state.collabConfigDraftsByConversation[key];
+      }),
   })),
 );
 
@@ -218,3 +238,5 @@ export const useSetCollabConfigDraft = () =>
   useCollaborationStore((s) => s.setCollabConfigDraft);
 export const useClearCollabConfigDraft = () =>
   useCollaborationStore((s) => s.clearCollabConfigDraft);
+export const useClearCollabConfigDraftIfMatches = () =>
+  useCollaborationStore((s) => s.clearCollabConfigDraftIfMatches);

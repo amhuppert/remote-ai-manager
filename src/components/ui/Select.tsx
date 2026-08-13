@@ -31,9 +31,14 @@ const triggerClass = cn(
 // shared visual language with DropdownMenu. `min-w` tracks the trigger width;
 // height is capped to Radix's collision-computed space so long lists scroll.
 const contentClass = cn(
-  "z-menu max-h-[var(--radix-select-content-available-height)] min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-md border border-solid border-border-default bg-bg-elevated shadow-menu",
+  "max-h-[var(--radix-select-content-available-height)] min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-md border border-solid border-border-default bg-bg-elevated shadow-menu",
   "origin-[var(--radix-select-content-transform-origin)] data-[state=open]:motion-safe:animate-[fadeIn_0.12s_ease]",
 );
+export type SelectContentLayer = "menu" | "popover";
+const contentLayerClass: Record<SelectContentLayer, string> = {
+  menu: "z-menu",
+  popover: "z-popover",
+};
 
 const scrollButtonClass =
   "flex h-[20px] cursor-default items-center justify-center bg-bg-elevated text-text-tertiary";
@@ -155,10 +160,13 @@ type SelectContentProps = Omit<
   React.ComponentProps<typeof RadixSelect.Content>,
   "className" | "style"
 > & {
+  /** Stacking tier for the portaled listbox; use popover inside a popover. */
+  contentLayer?: SelectContentLayer;
   layoutClassName?: string;
 };
 
 export function SelectContent({
+  contentLayer = "menu",
   layoutClassName,
   children,
   position = "popper",
@@ -173,7 +181,11 @@ export function SelectContent({
         sideOffset={sideOffset}
         collisionPadding={collisionPadding}
         {...rest}
-        className={cn(contentClass, layoutClassName)}
+        className={cn(
+          contentClass,
+          contentLayerClass[contentLayer],
+          layoutClassName,
+        )}
       >
         <RadixSelect.ScrollUpButton className={scrollButtonClass}>
           <ChevronDownIcon size={14} className="rotate-180" />

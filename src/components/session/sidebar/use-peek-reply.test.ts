@@ -5,6 +5,8 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiCallError } from "@/lib/api/errors";
 import { conversationKeys } from "@/lib/conversations/query-keys";
+import { collaborationKeys } from "@/lib/workflows/query-keys";
+import { useCollaborationStore } from "@/stores/collaboration.store";
 import { createPeekReplySubmitter } from "./use-peek-reply";
 import { usePeekReply } from "./use-peek-reply";
 
@@ -65,6 +67,7 @@ describe("createPeekReplySubmitter", () => {
           sessionName: "Session One",
           conversationId: "conv-one",
           textLength: 5,
+          collaborationRequested: false,
         },
       },
       {
@@ -164,6 +167,50 @@ describe("createPeekReplySubmitter", () => {
     );
   });
 
+  it("forwards the selected collaboration configuration", async () => {
+    const calls: RequestInit[] = [];
+    const submitPeekReply = createPeekReplySubmitter({
+      async fetcher(_url, _traceLabel, options) {
+        calls.push(options);
+        return { ok: true };
+      },
+      logger: noopLogger,
+    });
+
+    await submitPeekReply({
+      projectName: "Project One",
+      sessionName: "Session One",
+      conversationId: "conv-one",
+      text: "/collab Compare these approaches",
+      collab: {
+        negotiationRounds: 4,
+        autonomousResolutionThreshold: "minor",
+        agentTwo: {
+          backend: "codex",
+          model: "gpt-5.4",
+          reasoningEffort: "xhigh",
+          fastMode: true,
+        },
+      },
+    });
+
+    expect(calls[0]?.body).toBe(
+      JSON.stringify({
+        prompt: "/collab Compare these approaches",
+        collab: {
+          negotiationRounds: 4,
+          autonomousResolutionThreshold: "minor",
+          agentTwo: {
+            backend: "codex",
+            model: "gpt-5.4",
+            reasoningEffort: "xhigh",
+            fastMode: true,
+          },
+        },
+      }),
+    );
+  });
+
   it("rejects with the ApiCallError raised by the fetcher", async () => {
     const error = new ApiCallError("Conversation is busy", "CONVERSATION_BUSY");
     const submitPeekReply = createPeekReplySubmitter({
@@ -191,10 +238,12 @@ describe("usePeekReply", () => {
   beforeEach(() => {
     fetchSpy.mockReset();
     vi.stubGlobal("fetch", fetchSpy);
+    useCollaborationStore.setState({ collabConfigDraftsByConversation: {} });
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    useCollaborationStore.setState({ collabConfigDraftsByConversation: {} });
   });
 
   it("invalidates the peek transcript and active conversations after a reply", async () => {
@@ -223,5 +272,151 @@ describe("usePeekReply", () => {
       expect(client.getQueryState(messagesKey)?.isInvalidated).toBe(true);
       expect(client.getQueryState(activeKey)?.isInvalidated).toBe(true);
     });
+  });
+
+  it("clears only a successfully submitted collaboration draft", async () => {
+    const client = makeClient();
+    const collaborationListKey = collaborationKeys.list("p", "s");
+    const draft = {
+      agentTwo: { backend: "codex" as const, model: "gpt-5.4" },
+      negotiationRounds: 4,
+      autonomousResolutionThreshold: "minor" as const,
+    };
+    useCollaborationStore.setState({
+      collabConfigDraftsByConversation: {
+        "p::s::c1": draft,
+        "p::s::ordinary": draft,
+      },
+    });
+    client.setQueryData(collaborationListKey, []);
+    fetchSpy.mockResolvedValue(new Response(null, { status: 200 }));
+
+    const { result } = renderHook(
+      () =>
+        usePeekReply({
+          projectName: "p",
+          sessionName: "s",
+          conversationId: "c1",
+        }),
+      { wrapper: wrapperFor(client) },
+    );
+
+    await result.current.mutateAsync({
+      text: "/collab compare",
+      collab: {
+        negotiationRounds: 4,
+        autonomousResolutionThreshold: "minor",
+        agentTwo: { backend: "codex", model: "gpt-5.4" },
+      },
+      collabDraft: draft,
+    });
+
+    expect(
+      useCollaborationStore.getState().collabConfigDraftsByConversation,
+    ).toEqual({ "p::s::ordinary": draft });
+    await waitFor(() => {
+      expect(client.getQueryState(collaborationListKey)?.isInvalidated).toBe(
+        true,
+      );
+    });
+  });
+
+  it("preserves collaboration settings changed while submission is pending", async () => {
+    const client = makeClient();
+    const submittedDraft = {
+      agentTwo: {
+        backend: "codex" as const,
+        model: "gpt-5.4",
+        effort: "high",
+        fastMode: false,
+      },
+      negotiationRounds: 4,
+      autonomousResolutionThreshold: "minor" as const,
+    };
+    const nextDraft = {
+      ...submittedDraft,
+      agentTwo: { ...submittedDraft.agentTwo, fastMode: true },
+    };
+    useCollaborationStore.setState({
+      collabConfigDraftsByConversation: { "p::s::c1": submittedDraft },
+    });
+    let resolveFetch!: (response: Response) => void;
+    fetchSpy.mockReturnValue(
+      new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      }),
+    );
+
+    const { result } = renderHook(
+      () =>
+        usePeekReply({
+          projectName: "p",
+          sessionName: "s",
+          conversationId: "c1",
+        }),
+      { wrapper: wrapperFor(client) },
+    );
+
+    const submission = result.current.mutateAsync({
+      text: "/collab compare",
+      collab: {
+        negotiationRounds: 4,
+        autonomousResolutionThreshold: "minor",
+        agentTwo: {
+          backend: "codex",
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+          fastMode: false,
+        },
+      },
+      collabDraft: submittedDraft,
+    });
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+
+    useCollaborationStore
+      .getState()
+      .setCollabConfigDraft("p", "s", "c1", nextDraft);
+    resolveFetch(new Response(null, { status: 200 }));
+    await submission;
+
+    expect(
+      useCollaborationStore.getState().collabConfigDraftsByConversation[
+        "p::s::c1"
+      ],
+    ).toEqual(nextDraft);
+  });
+
+  it("preserves the collaboration draft when submission fails", async () => {
+    const client = makeClient();
+    const draft = {
+      agentTwo: { backend: "codex" as const, model: "gpt-5.4" },
+      negotiationRounds: 4,
+      autonomousResolutionThreshold: "minor" as const,
+    };
+    useCollaborationStore.setState({
+      collabConfigDraftsByConversation: { "p::s::c1": draft },
+    });
+    fetchSpy.mockRejectedValue(new Error("offline"));
+
+    const { result } = renderHook(
+      () =>
+        usePeekReply({
+          projectName: "p",
+          sessionName: "s",
+          conversationId: "c1",
+        }),
+      { wrapper: wrapperFor(client) },
+    );
+
+    await expect(
+      result.current.mutateAsync({
+        text: "/collab compare",
+        collab: { agentTwo: { backend: "codex" } },
+        collabDraft: draft,
+      }),
+    ).rejects.toThrow("offline");
+    expect(
+      useCollaborationStore.getState().collabConfigDraftsByConversation,
+    ).toEqual({ "p::s::c1": draft });
   });
 });

@@ -16,7 +16,10 @@ import {
 } from "@/components/session/prompt/PromptEditor";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { useMultilineVoice } from "@/hooks/use-multiline-voice";
-import type { SerializedPromptDoc } from "@/lib/prompt-editor";
+import {
+  deserializePromptDoc,
+  type SerializedPromptDoc,
+} from "@/lib/prompt-editor";
 import { imagePayloadSchema, type ImagePayload } from "@/lib/images/schemas";
 import { cn } from "@/lib/ui/cn";
 import {
@@ -27,6 +30,8 @@ import {
 export interface RichPromptInputHandle {
   focus(): void;
   clear(): void;
+  /** Replace canonical prompt content while preserving current attachments. */
+  replacePrompt(prompt: string): void;
   serialize(): SerializedPromptDoc;
   primaryAction(): void;
   isVoiceBusy(): boolean;
@@ -208,6 +213,12 @@ export const RichPromptInput = forwardRef<
       clear: () => {
         editorRef.current?.clear();
         clearImages();
+      },
+      replacePrompt: (prompt) => {
+        const document = serialize();
+        editorRef.current?.editor?.commands.setContent(
+          deserializePromptDoc({ ...document, prompt }),
+        );
       },
       serialize,
       primaryAction,

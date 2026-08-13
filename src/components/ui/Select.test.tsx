@@ -21,16 +21,18 @@ afterEach(cleanup);
 function Picker({
   open,
   value,
+  contentLayer,
 }: {
   open?: boolean;
   value?: string;
+  contentLayer?: "menu" | "popover";
 }): React.JSX.Element {
   return (
     <Select open={open} value={value}>
       <SelectTrigger aria-label="Model">
         <SelectValue placeholder="Select a model" />
       </SelectTrigger>
-      <SelectContent>
+      <SelectContent contentLayer={contentLayer}>
         <SelectItem value="opus" description="Highly capable">
           Opus
         </SelectItem>
@@ -86,5 +88,13 @@ describe("Select", () => {
     expect(listbox.className).toContain("bg-bg-elevated");
     expect(listbox.className).toContain("shadow-menu");
     expect(listbox.className).toContain("z-menu");
+  });
+
+  it("can elevate nested listboxes to the popover layer", () => {
+    render(<Picker open value="opus" contentLayer="popover" />);
+    const listbox = screen.getByRole("listbox");
+
+    expect(listbox.className).toContain("z-popover");
+    expect(listbox.className).not.toContain("z-menu");
   });
 });

@@ -6,6 +6,7 @@ import {
   SelectTrigger,
   SelectContent,
   SelectItem,
+  type SelectContentLayer,
 } from "@/components/ui/Select";
 import { cn } from "@/lib/ui/cn";
 
@@ -39,6 +40,8 @@ interface ReasoningLevelSelectorProps {
    * composer region) steals focus from the editor.
    */
   onOpenChange?(open: boolean): void;
+  /** Elevates the portaled listbox when the selector sits inside a popover. */
+  contentLayer?: SelectContentLayer;
 }
 
 // Base trigger geometry/box, reused by the rainbow variant. The non-rainbow
@@ -88,6 +91,7 @@ export default function ReasoningLevelSelector({
   disabledTooltip,
   availableLevels,
   onOpenChange,
+  contentLayer,
 }: ReasoningLevelSelectorProps): React.JSX.Element {
   const visibleOptions = EFFORT_OPTIONS.filter((option) =>
     availableLevels.includes(option.id),
@@ -163,7 +167,7 @@ export default function ReasoningLevelSelector({
           </span>
         </SelectTrigger>
       )}
-      <SelectContent side="top" align="end">
+      <SelectContent side="top" align="end" contentLayer={contentLayer}>
         {visibleOptions.map((option) => (
           <SelectItem
             key={option.id}

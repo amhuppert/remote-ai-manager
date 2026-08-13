@@ -451,6 +451,7 @@ export default function ProjectDetailView({
                     projectName={projectName}
                     sessionName={PROJECT_CONVERSATION_SESSION_SENTINEL}
                     activeConversationId={activeTabId ?? ""}
+                    backendDefaults={backendDefaults}
                     showNewConversationButton={false}
                     showCollapseControl={false}
                     enableSearchHotkey={false}

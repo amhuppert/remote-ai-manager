@@ -26,7 +26,9 @@ import {
   RichPromptInput,
   type RichPromptInputHandle,
 } from "@/components/rich-prompt/RichPromptInput";
+import CollabConfigRow from "@/components/session/CollabConfigRow";
 import { BranchIcon, CloseIcon } from "@/components/icons";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/catalog";
 import type {
   ActiveConversation,
   SessionActiveConversation,
@@ -39,8 +41,31 @@ import {
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SerializedPromptDoc } from "@/lib/prompt-editor";
+import {
+  hasCollabPrefix,
+  stripCollabPrefix,
+} from "@/lib/conversation-commands/parse";
+import { buildAgentTwoStartRequest } from "@/lib/workflows/collaboration/agent-two-request";
+import { oppositeCollaborationBackend } from "@/lib/workflows/collaboration/backend-pair";
+import {
+  type CollabConfigDraft,
+  seedAgentTwoDraft,
+  useClearCollabConfigDraft,
+  useCollabConfigDraft,
+  useSetCollabConfigDraft,
+} from "@/stores/collaboration.store";
+import type { PeekCollabConfig } from "@/components/session/sidebar/use-peek-reply";
 
 type ActiveConversationStatus = ActiveConversation["status"];
+
+type PeekReplyArgs =
+  | [text: string, images: ImagePayload[]]
+  | [
+      text: string,
+      images: ImagePayload[],
+      collab: PeekCollabConfig,
+      collabDraft: CollabConfigDraft,
+    ];
 
 export interface PeekApprovalGate {
   isSubmitting: boolean;
@@ -61,9 +86,10 @@ interface PeekPopoverProps {
   anchorEl: HTMLElement | null;
   conversation: SessionActiveConversation;
   transcriptMessages: TranscriptMessage[];
+  backendDefaults: BackendSelectionDefaultsById | null;
   onClose: () => void;
   onOpenFull: () => void;
-  onReplyText: (text: string, images: ImagePayload[]) => void;
+  onReplyText: (...args: PeekReplyArgs) => void;
   /** Reply mutation in flight — the send control shows a visible sending state. */
   isSendingReply?: boolean;
   onAnswerQuestion: (answers: Record<string, AskQuestionAnswer>) => void;
@@ -128,11 +154,13 @@ function logPeekDebug(message: string, fields: Record<string, unknown>): void {
 
 function PeekReplyComposer({
   conversation,
+  backendDefaults,
   onReplyText,
   isSending = false,
 }: {
   conversation: SessionActiveConversation;
-  onReplyText: (text: string, images: ImagePayload[]) => void;
+  backendDefaults: BackendSelectionDefaultsById | null;
+  onReplyText: (...args: PeekReplyArgs) => void;
   isSending?: boolean;
 }): React.JSX.Element {
   const [replyText, setReplyText] = useState("");
@@ -141,6 +169,25 @@ function PeekReplyComposer({
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [placeholder, setPlaceholder] = useState(DEFAULT_REPLY_PLACEHOLDER);
   const promptRef = useRef<RichPromptInputHandle | null>(null);
+  const collabConfigDraft = useCollabConfigDraft(
+    conversation.projectName,
+    conversation.sessionName,
+    conversation.id,
+  );
+  const setCollabConfigDraft = useSetCollabConfigDraft();
+  const clearCollabConfigDraft = useClearCollabConfigDraft();
+  const originatingAgent = conversation.agentBackend;
+  const hasCollabCommand = hasCollabPrefix(replyText);
+  const effectiveCollabConfig = useMemo(() => {
+    if (backendDefaults === null) return null;
+    const agentTwo =
+      collabConfigDraft.agentTwo ??
+      seedAgentTwoDraft(
+        oppositeCollaborationBackend(originatingAgent),
+        backendDefaults,
+      );
+    return { ...collabConfigDraft, agentTwo };
+  }, [backendDefaults, collabConfigDraft, originatingAgent]);
 
   const handleReplyTextChange = useCallback((text: string) => {
     setReplyText(text);
@@ -152,63 +199,146 @@ function PeekReplyComposer({
       if (isSending) return;
       const trimmed = document.prompt.trim();
       if (trimmed === "" && document.images.length === 0) return;
+      const collaborationRequested = hasCollabPrefix(trimmed);
+      if (collaborationRequested && stripCollabPrefix(trimmed).trim() === "") {
+        return;
+      }
+      if (collaborationRequested && effectiveCollabConfig === null) return;
       logPeekDebug("peek.reply.submit", {
         conversationId: conversation.id,
         status: conversation.status,
         textLength: trimmed.length,
         imageCount: document.images.length,
+        collaborationRequested,
       });
-      onReplyText(trimmed, document.images);
+      if (collaborationRequested && effectiveCollabConfig !== null) {
+        const agentTwo = buildAgentTwoStartRequest(
+          effectiveCollabConfig.agentTwo,
+        );
+        onReplyText(
+          trimmed,
+          document.images,
+          {
+            negotiationRounds: effectiveCollabConfig.negotiationRounds,
+            autonomousResolutionThreshold:
+              effectiveCollabConfig.autonomousResolutionThreshold,
+            ...(agentTwo !== null ? { agentTwo } : {}),
+          },
+          effectiveCollabConfig,
+        );
+      } else {
+        onReplyText(trimmed, document.images);
+      }
       promptRef.current?.clear();
       setReplyText("");
       setHasReplyText(false);
       setHasImages(false);
       setPlaceholder(DEFAULT_REPLY_PLACEHOLDER);
     },
-    [conversation.id, conversation.status, isSending, onReplyText],
+    [
+      conversation.id,
+      conversation.status,
+      effectiveCollabConfig,
+      isSending,
+      onReplyText,
+    ],
   );
 
   const handleSubmit = useCallback(() => {
     promptRef.current?.primaryAction();
   }, []);
 
-  const sendDisabled = (!hasReplyText && !hasImages && !voiceBusy) || isSending;
+  const collabBriefMissing =
+    hasCollabCommand && stripCollabPrefix(replyText).trim() === "";
+  const sendDisabled =
+    (!hasReplyText && !hasImages && !voiceBusy) ||
+    isSending ||
+    collabBriefMissing ||
+    (hasCollabCommand && effectiveCollabConfig === null);
+
+  const dismissCollab = useCallback(() => {
+    const document = promptRef.current?.serialize();
+    if (document !== undefined) {
+      promptRef.current?.replacePrompt(stripCollabPrefix(document.prompt));
+    }
+    clearCollabConfigDraft(
+      conversation.projectName,
+      conversation.sessionName,
+      conversation.id,
+    );
+  }, [clearCollabConfigDraft, conversation]);
 
   return (
-    <div className="peek__composer-box grid grid-cols-[minmax(0,1fr)_auto] items-end gap-sm rounded-md border border-solid border-cyan-dim bg-bg-surface px-[10px] py-[8px] shadow-[0_0_0_3px_var(--color-cyan-glow)] focus-within:border-cyan focus-within:shadow-[0_0_0_3px_var(--color-cyan-glow-strong)]">
-      <RichPromptInput
-        ref={promptRef}
-        capabilityContext={{
-          projectName: conversation.projectName,
-          sessionName: conversation.sessionName,
-          conversationId: conversation.id,
-          backend: conversation.agentBackend,
-          isWorkflowManagedConversation: isWorkflowLaneRole(conversation.role),
-        }}
-        value={replyText}
-        onValueChange={handleReplyTextChange}
-        onDocumentChange={(document) =>
-          setHasReplyText(document.prompt.trim() !== "")
-        }
-        onSubmit={submitReply}
-        onImagesChange={(images) => setHasImages(images.length > 0)}
-        onVoiceStateChange={setVoiceBusy}
-        ariaLabel="Reply text"
-        placeholder={placeholder}
-        submitLabel="Send"
-        showSubmitControl={false}
-        disabled={isSending}
-      />
-      <div className="inline-flex items-center gap-xs">
-        <button
-          type="button"
-          className="inline-flex min-h-[28px] cursor-pointer items-center justify-center rounded-sm border-0 bg-cyan px-[10px] py-[4px] font-mono text-[9.5px] font-semibold tracking-[0.06em] text-text-inverse uppercase disabled:cursor-not-allowed disabled:opacity-50"
-          onClick={handleSubmit}
-          disabled={sendDisabled}
-          aria-busy={isSending || undefined}
+    <div className="flex flex-col">
+      {hasCollabCommand &&
+      effectiveCollabConfig !== null &&
+      backendDefaults !== null ? (
+        <CollabConfigRow
+          config={effectiveCollabConfig}
+          originatingAgent={originatingAgent}
+          onChange={(next) =>
+            setCollabConfigDraft(
+              conversation.projectName,
+              conversation.sessionName,
+              conversation.id,
+              next,
+            )
+          }
+          onDismiss={dismissCollab}
+          backendDefaults={backendDefaults}
+          projectName={conversation.projectName}
+          selectContentLayer="popover"
+        />
+      ) : hasCollabCommand ? (
+        <div
+          className="rounded-t-md border border-b-0 border-solid border-border-subtle bg-bg-base px-md py-sm font-mono text-[0.7rem] text-text-secondary"
+          role="status"
         >
-          {isSending ? "Sending…" : "Send"}
-        </button>
+          Loading collaboration controls…
+        </div>
+      ) : null}
+      <div
+        className={cn(
+          "peek__composer-box grid grid-cols-[minmax(0,1fr)_auto] items-end gap-sm rounded-md border border-solid border-cyan-dim bg-bg-surface px-[10px] py-[8px] shadow-[0_0_0_3px_var(--color-cyan-glow)] focus-within:border-cyan focus-within:shadow-[0_0_0_3px_var(--color-cyan-glow-strong)]",
+          hasCollabCommand && "rounded-t-none",
+        )}
+      >
+        <RichPromptInput
+          ref={promptRef}
+          capabilityContext={{
+            projectName: conversation.projectName,
+            sessionName: conversation.sessionName,
+            conversationId: conversation.id,
+            backend: conversation.agentBackend,
+            isWorkflowManagedConversation: isWorkflowLaneRole(
+              conversation.role,
+            ),
+          }}
+          value={replyText}
+          onValueChange={handleReplyTextChange}
+          onDocumentChange={(document) =>
+            setHasReplyText(document.prompt.trim() !== "")
+          }
+          onSubmit={submitReply}
+          onImagesChange={(images) => setHasImages(images.length > 0)}
+          onVoiceStateChange={setVoiceBusy}
+          ariaLabel="Reply text"
+          placeholder={placeholder}
+          submitLabel="Send"
+          showSubmitControl={false}
+          disabled={isSending}
+        />
+        <div className="inline-flex items-center gap-xs">
+          <button
+            type="button"
+            className="inline-flex min-h-[28px] cursor-pointer items-center justify-center rounded-sm border-0 bg-cyan px-[10px] py-[4px] font-mono text-[9.5px] font-semibold tracking-[0.06em] text-text-inverse uppercase disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={handleSubmit}
+            disabled={sendDisabled}
+            aria-busy={isSending || undefined}
+          >
+            {isSending ? "Sending…" : "Send"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -218,6 +348,7 @@ export default function PeekPopover({
   anchorEl,
   conversation,
   transcriptMessages,
+  backendDefaults,
   onClose,
   onOpenFull,
   onReplyText,
@@ -488,7 +619,7 @@ export default function PeekPopover({
             {(!hasPendingQuestions ||
               (conversation.pendingApproval !== null &&
                 approvalGate != null)) && (
-              <footer className="flex-none border-x-0 border-t border-b-0 border-solid border-border-default bg-bg-base px-md pt-[9px] pb-md">
+              <footer className="max-h-[55dvh] flex-none overflow-y-auto border-x-0 border-t border-b-0 border-solid border-border-default bg-bg-base px-md pt-[9px] pb-md">
                 {conversation.pendingApproval !== null &&
                   approvalGate != null && (
                     <ApprovalGatePanel
@@ -509,6 +640,7 @@ export default function PeekPopover({
                 {!hasPendingQuestions && (
                   <PeekReplyComposer
                     conversation={conversation}
+                    backendDefaults={backendDefaults}
                     onReplyText={onReplyText}
                     isSending={isSendingReply}
                   />

@@ -6,6 +6,7 @@ import ModelSelector from "@/components/ModelSelector";
 import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
 import CodexSpeedToggle from "@/components/session/prompt/CodexSpeedToggle";
 import AgentProfilePicker from "@/components/agent-profiles/AgentProfilePicker";
+import type { SelectContentLayer } from "@/components/ui/Select";
 import { STANDARD_AGENT_PROFILE_VALUE } from "@/components/agent-profiles/agent-profile-picker-state";
 import {
   backendLabel,
@@ -58,6 +59,8 @@ export interface CollabConfigRowProps {
   backendDefaults: BackendSelectionDefaultsById;
   /** Scopes the profile picker's listing; absent outside a project. */
   projectName?: string;
+  /** Stacking tier for Agent Two's portaled profile/model/effort listboxes. */
+  selectContentLayer?: SelectContentLayer;
 }
 
 const AGENT_LABEL: Record<CollabAgent, string> = {
@@ -116,6 +119,7 @@ export default function CollabConfigRow({
   agentOne,
   backendDefaults,
   projectName,
+  selectContentLayer,
 }: CollabConfigRowProps): React.JSX.Element {
   const negotiationRoundsId = useId();
   const thresholdGroupId = useId();
@@ -283,6 +287,7 @@ export default function CollabConfigRow({
             onChange={(selection) =>
               updateAgentTwo({ ...agentTwo, profile: selection.value })
             }
+            contentLayer={selectContentLayer}
           />
         </div>
         <ModelSelector
@@ -304,12 +309,14 @@ export default function CollabConfigRow({
               ...(effort !== undefined ? { effort } : {}),
             });
           }}
+          contentLayer={selectContentLayer}
         />
         {agentTwoEffortSupported && agentTwoEffort !== undefined && (
           <ReasoningLevelSelector
             value={agentTwoEffort}
             availableLevels={agentTwoEffortLevels}
             onChange={(level) => updateAgentTwo({ ...agentTwo, effort: level })}
+            contentLayer={selectContentLayer}
           />
         )}
         {backendSupportsFastMode(agentTwo.backend) && (

@@ -2,6 +2,14 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { streamingMutationFetch } from "@/lib/api/fetcher";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import type { ImagePayload } from "@/lib/images/schemas";
+import type { RunPromptRequest } from "@/lib/prompt/schemas";
+import { collaborationKeys } from "@/lib/workflows/query-keys";
+import {
+  type CollabConfigDraft,
+  useClearCollabConfigDraftIfMatches,
+} from "@/stores/collaboration.store";
+
+export type PeekCollabConfig = NonNullable<RunPromptRequest["collab"]>;
 
 export interface PeekReplyLogger {
   info(message: string, fields: Record<string, unknown>): void;
@@ -23,7 +31,26 @@ export interface PeekReplyParams {
   conversationId: string;
   text: string;
   images?: ImagePayload[];
+  collab?: PeekCollabConfig;
 }
+
+interface OrdinaryPeekReplyMutationVariables {
+  text: string;
+  images?: ImagePayload[];
+  collab?: undefined;
+  collabDraft?: undefined;
+}
+
+interface CollaborationPeekReplyMutationVariables {
+  text: string;
+  images?: ImagePayload[];
+  collab: PeekCollabConfig;
+  collabDraft: CollabConfigDraft;
+}
+
+type PeekReplyMutationVariables =
+  | OrdinaryPeekReplyMutationVariables
+  | CollaborationPeekReplyMutationVariables;
 
 export interface UsePeekReplyParams {
   projectName: string;
@@ -54,6 +81,7 @@ export const createPeekReplySubmitter =
     conversationId,
     text,
     images,
+    collab,
   }: PeekReplyParams): Promise<unknown> => {
     const trimmed = text.trim();
     const url = promptUrl({ projectName, sessionName, conversationId });
@@ -63,6 +91,7 @@ export const createPeekReplySubmitter =
       sessionName,
       conversationId,
       textLength: trimmed.length,
+      collaborationRequested: collab !== undefined,
     });
 
     try {
@@ -72,6 +101,7 @@ export const createPeekReplySubmitter =
         body: JSON.stringify({
           prompt: trimmed,
           ...(images?.length ? { images } : {}),
+          ...(collab !== undefined ? { collab } : {}),
         }),
       });
       deps.logger.info("peek_reply.success", {
@@ -118,18 +148,31 @@ export function usePeekReply({
   conversationId,
 }: UsePeekReplyParams) {
   const queryClient = useQueryClient();
+  const clearCollabConfigDraftIfMatches = useClearCollabConfigDraftIfMatches();
 
   return useMutation({
     mutationKey: peekReplyKeys.submit(projectName, sessionName, conversationId),
-    mutationFn: ({ text, images }: { text: string; images?: ImagePayload[] }) =>
+    mutationFn: ({ text, images, collab }: PeekReplyMutationVariables) =>
       productionSubmitPeekReply({
         projectName,
         sessionName,
         conversationId,
         text,
         images,
+        collab,
       }),
-    onSuccess: () => {
+    onSuccess: (_result, variables) => {
+      if (variables.collab !== undefined) {
+        clearCollabConfigDraftIfMatches(
+          projectName,
+          sessionName,
+          conversationId,
+          variables.collabDraft,
+        );
+        void queryClient.invalidateQueries({
+          queryKey: collaborationKeys.all,
+        });
+      }
       void queryClient.invalidateQueries({
         queryKey: conversationKeys.messages(
           projectName,

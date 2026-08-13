@@ -180,3 +180,27 @@ export const StaticOpen: Story = {
     </div>
   ),
 };
+
+/** Elevated content for a select portaled from inside another popover. */
+export const NestedPopoverLayer: Story = {
+  render: () => (
+    <div className="flex h-[280px] items-start justify-center pt-[16px]">
+      <Select defaultOpen defaultValue="opus">
+        <SelectTrigger aria-label="Nested model">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent contentLayer="popover">
+          {MODELS.map((model) => (
+            <SelectItem
+              key={model.id}
+              value={model.id}
+              description={model.desc}
+            >
+              {model.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  ),
+};

@@ -8,6 +8,7 @@ import {
   SelectTrigger,
   SelectContent,
   SelectItem,
+  type SelectContentLayer,
 } from "@/components/ui/Select";
 
 interface ModelSelectorProps {
@@ -22,6 +23,8 @@ interface ModelSelectorProps {
    * composer region) steals focus from the editor.
    */
   onOpenChange?(open: boolean): void;
+  /** Elevates the portaled listbox when the selector sits inside a popover. */
+  contentLayer?: SelectContentLayer;
 }
 
 export default function ModelSelector({
@@ -30,6 +33,7 @@ export default function ModelSelector({
   disabled = false,
   backend,
   onOpenChange,
+  contentLayer,
 }: ModelSelectorProps): React.JSX.Element {
   const { data: backends } = useBackendCatalogQuery();
   const entry = backends.find((b) => b.id === backend);
@@ -56,7 +60,7 @@ export default function ModelSelector({
           {selected.label}
         </span>
       </SelectTrigger>
-      <SelectContent side="top" align="end">
+      <SelectContent side="top" align="end" contentLayer={contentLayer}>
         {options.map((option) => (
           <SelectItem
             key={option.id}

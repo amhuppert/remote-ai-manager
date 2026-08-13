@@ -222,6 +222,7 @@ function ConversationsPageInner(props: Props): React.JSX.Element {
           projectName={resolved?.projectName ?? ""}
           sessionName={resolved?.sessionName ?? ""}
           activeConversationId={params.conversationId ?? ""}
+          backendDefaults={props.backendDefaults}
           mobileOpen={mobileSidebarOpen}
           onMobileClose={closeMobileSidebar}
           showNewConversationButton={resolved !== null}

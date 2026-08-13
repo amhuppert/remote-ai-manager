@@ -95,6 +95,11 @@ import {
 import { usePeekReply } from "@/components/session/sidebar/use-peek-reply";
 import { useConversationMessagesQuery } from "@/hooks/conversation/use-conversation-messages-query";
 import { useClientStateReady } from "@/hooks/use-client-state-ready";
+import { useFullConfigQuery } from "@/lib/config/queries";
+import {
+  resolveConfiguredBackendSelectionDefaults,
+  type BackendSelectionDefaultsById,
+} from "@/lib/agent-backends/catalog";
 import {
   filterConversations,
   splitNeedsYou,
@@ -169,6 +174,8 @@ interface Props {
   projectName: string;
   sessionName: string;
   activeConversationId: string;
+  /** Config-resolved selections used by Agent Two's controls in Peek. */
+  backendDefaults?: BackendSelectionDefaultsById;
   mobileOpen?: boolean;
   onMobileClose?: () => void;
   showNewConversationButton?: boolean;
@@ -224,6 +231,7 @@ function ConversationSidebar({
   projectName,
   sessionName,
   activeConversationId,
+  backendDefaults,
   mobileOpen,
   onMobileClose,
   showNewConversationButton = true,
@@ -551,6 +559,16 @@ function ConversationSidebar({
     scopeRefSessionName(scopeRefFromStoreSessionName(sessionName)) ??
     "";
   const peekConversationId = peek?.conversationId ?? "";
+  const peekConfigQuery = useFullConfigQuery({
+    enabled: peek !== null && backendDefaults === undefined,
+  });
+  const peekBackendDefaults = useMemo(() => {
+    if (backendDefaults !== undefined) return backendDefaults;
+    if (peekConfigQuery.data === undefined) return null;
+    return resolveConfiguredBackendSelectionDefaults(
+      peekConfigQuery.data.config,
+    );
+  }, [backendDefaults, peekConfigQuery.data]);
   const peekMessagesQuery = useConversationMessagesQuery(
     peekProjectName,
     peekSessionName,
@@ -1143,6 +1161,7 @@ function ConversationSidebar({
           anchorEl={peek.anchorEl}
           conversation={peekConversation}
           transcriptMessages={peekMessagesQuery.data ?? []}
+          backendDefaults={peekBackendDefaults}
           forkProjectName={peekConversation.projectName}
           onClose={closePeek}
           onOpenFull={() => {
@@ -1157,8 +1176,14 @@ function ConversationSidebar({
             if (onMobileClose) onMobileClose();
             closePeek();
           }}
-          onReplyText={(text, images) => {
-            peekReplyMutation.mutate({ text, images });
+          onReplyText={(...args) => {
+            if (args.length === 2) {
+              const [text, images] = args;
+              peekReplyMutation.mutate({ text, images });
+              return;
+            }
+            const [text, images, collab, collabDraft] = args;
+            peekReplyMutation.mutate({ text, images, collab, collabDraft });
           }}
           isSendingReply={peekReplyMutation.isPending}
           onAnswerQuestion={(answers) => {

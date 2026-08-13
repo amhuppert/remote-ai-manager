@@ -7,8 +7,13 @@ import type {
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
 import PeekPopover from "@/components/session/sidebar/PeekPopover";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/catalog";
 
 const now = new Date("2026-05-15T12:42:00.000Z");
+const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
+  claude: { modelId: "opus", effort: "high" },
+  codex: { modelId: "gpt-5.4", effort: "high", codexFastMode: false },
+};
 const minutesAgo = (minutes: number) =>
   new Date(now.getTime() - minutes * 60_000).toISOString();
 
@@ -222,6 +227,7 @@ function PeekStoryFrame({
         anchorEl={anchorEl}
         conversation={conversation}
         transcriptMessages={transcriptMessages}
+        backendDefaults={BACKEND_DEFAULTS}
         onClose={fn()}
         onOpenFull={fn()}
         onReplyText={fn()}
