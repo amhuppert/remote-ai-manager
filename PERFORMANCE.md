@@ -6,7 +6,7 @@ Durable record of performance issues found in Command Center, their root causes,
 
 Reproduction and verification tooling:
 
-- `bun run logs:analyze -- report` against `~/.config/cc/logs/global.log` produces a JSON report of slow requests, p95s, and accessor counts. Use this to spot regressions before merging server-side perf-sensitive changes.
+- `bun run logs:analyze -- report` against `~/.config/cc/logs/global.log` produces a concise Markdown report of slow requests, p95s, and accessor counts. Use `--format json` only when the result feeds code. Use this to spot regressions before merging server-side perf-sensitive changes.
 - `bun run logs:analyze -- compare --before <before>.log --after <after>.log` quantifies a fix.
 
 ## Patterns to follow

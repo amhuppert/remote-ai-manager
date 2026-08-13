@@ -16,7 +16,7 @@ export const elementClassificationSchema = z
   .object({
     elementId: z.string().min(1),
     kind: specElementKindSchema,
-    classification: z.enum(["unchanged", "modified", "removed"]),
+    classification: z.enum(["added", "unchanged", "modified", "removed"]),
     directlyChanged: z.boolean(),
   })
   .strict();
@@ -56,9 +56,11 @@ export function diffRevisions(
       elementId: draftRow.elementId,
       kind: draftRow.payload.kind,
       classification:
-        baseRow?.payloadHash === draftRow.payloadHash
-          ? "unchanged"
-          : "modified",
+        baseRow === undefined
+          ? "added"
+          : baseRow.payloadHash === draftRow.payloadHash
+            ? "unchanged"
+            : "modified",
       directlyChanged: baseRow?.payloadHash !== draftRow.payloadHash,
     };
     classifications.push(classification);

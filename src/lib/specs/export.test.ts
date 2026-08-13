@@ -25,6 +25,7 @@ import type { Db } from "@/lib/state-store/schemas";
 
 import {
   buildPinnedSpecDocument,
+  compareCanonicalSpecBundles,
   loadSpecExportState,
   pinnedSpecDocumentPath,
   renderCanonicalBundle,
@@ -127,6 +128,24 @@ beforeEach(async () => {
     createdAt: CREATED_AT,
     updatedAt: CREATED_AT,
   });
+  // This criterion is appended after the task in global revision order. The
+  // rendered document still has to place it under R1, which is the read shape a
+  // reviewer navigates and the lane document promises.
+  await specs.createDraftElement({
+    id: "criterion-1",
+    specId,
+    revisionId,
+    kind: "criterion",
+    parentElementId: "requirement-1",
+    position: 3,
+    payload: {
+      kind: "criterion",
+      text: "The exported revision nests criteria under their requirements.",
+      validationStrategy: { kinds: ["test_run"] },
+    },
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  });
   await specs.proposeRevision({
     revisionId,
     proposedAt: "2026-07-18T16:01:00.000Z",
@@ -194,11 +213,12 @@ describe("canonical spec export and verification", () => {
       }),
     ]);
     expect(JSON.parse(first.manifest)).toMatchObject({
-      formatVersion: 2,
+      formatVersion: 3,
       elementOrdering: {
         scope: "revision",
         sortKeys: ["position", "elementId"],
         nesting: "parentElementId",
+        renderedTraversal: "parent-then-children",
         omittedPositionOnCreate: "append",
       },
       spec: { id: specId, slug: "portable-spec" },
@@ -219,6 +239,7 @@ describe("canonical spec export and verification", () => {
                 touchedPaths: ["src/lib/specs", "src/lib/state-store"],
               },
             },
+            { id: "criterion-1", handle: "R1.1", position: 3 },
           ],
         },
       ],
@@ -233,6 +254,41 @@ describe("canonical spec export and verification", () => {
     expect(first.markdownFiles[0]?.content).toContain(
       "- Touched paths: src/lib/specs, src/lib/state-store",
     );
+    const markdown = first.markdownFiles.at(0)?.content ?? "";
+    expect(markdown.indexOf("## R1 — Requirement")).toBeLessThan(
+      markdown.indexOf("### R1.1 — Acceptance criterion"),
+    );
+    expect(markdown.indexOf("### R1.1 — Acceptance criterion")).toBeLessThan(
+      markdown.indexOf("## T1 — Export the complete plan"),
+    );
+  });
+
+  it("reports an older bundle format as an explicit actionable mismatch", async () => {
+    const current = renderCanonicalBundle(
+      await loadSpecExportState(exportDeps, specId),
+    );
+    const olderManifest = {
+      ...(JSON.parse(current.manifest) as Record<string, unknown>),
+      formatVersion: 2,
+    };
+    const older = {
+      ...current,
+      manifest: `${JSON.stringify(olderManifest)}\n`,
+    };
+
+    expect(compareCanonicalSpecBundles(current, older)).toEqual({
+      ok: false,
+      code: "bundle_format_mismatch",
+      currentFormatVersion: 3,
+      againstFormatVersion: 2,
+      message: "canonical bundle format 2 differs from current format 3",
+      instruction:
+        "Export a fresh canonical bundle, then verify against that file.",
+      issue: {
+        path: "bundle.manifest.formatVersion",
+        message: "expected current format 3, found 2",
+      },
+    });
   });
 
   it("carries questions and assumptions in the canonical manifest (portable representation)", async () => {
@@ -299,11 +355,9 @@ describe("canonical spec export and verification", () => {
   });
 
   /**
-   * R12 bundle compatibility, exercised through `spec verify --against`'s own
-   * comparator. The bundle format is unchanged in shape: a spec authored before
-   * executionLane existed carries no trace of it anywhere in the bundle, so an
-   * archived bundle still compares equal — while a lane that is actually there
-   * is ordinary bundle content and differs like any other field.
+   * Within canonical format 3, an undeclared optional executionLane carries no
+   * trace in the bundle. Declaring the field remains ordinary content drift;
+   * cross-format compatibility is covered by the version-mismatch contract.
    */
   it("keeps a pre-executionLane bundle equal and detects a declared execution lane as a real difference", async () => {
     const archived = renderCanonicalBundle(

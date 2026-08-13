@@ -69,8 +69,26 @@ Errors go to stderr, one actionable line first, detail after.
 
 ## Output and the `--json` envelope
 
-Default output is human-terse one-liners. Every command also supports
-`--json`, which prints a single JSON envelope on stdout:
+Default output is terse, line-oriented text for an agent's own reading. Use
+`--json` only when the output feeds code, such as a script, orchestrator, or
+`jq` pipeline. For every new or changed query command, structured mode changes
+representation but does not widen the selected disclosure level or include
+records text mode omitted.
+
+New or changed query commands return a bounded summary or outline by default.
+Every row that can be expanded carries the stable handle its drill-down command
+accepts, and every truncation states what was omitted plus the exact command
+that reveals more. In JSON, the same disclosure facts are fields such as
+`total`, `returned`, `truncated`, and `next`; they are never text-only. Full
+documents on these surfaces are opt-in and become file-backed artifacts instead
+of large stdout payloads.
+
+`cctl workflow status --json` and `cctl spec status --json` are documented
+legacy exceptions. Unlike their bounded text views, they still return their
+full active-execution or lifecycle projections. Treat that behavior as
+migration debt, not as precedent for a new or changed query.
+
+Every command supports `--json`, which prints one JSON envelope on stdout:
 
 - `ok` (boolean) — success/failure.
 - `error` (string) — present when `ok` is false.
@@ -460,8 +478,10 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec list`
 - `cctl spec measures` — compute native SDD pilot measures
   - `cctl spec measures`
-- `cctl spec show` — read a spec's full or summary view
+- `cctl spec show` — inspect a bounded spec outline or write a detailed artifact
   - `cctl spec show <slug> [--summary]`
+  - `cctl spec show <slug> --rendered [--out <file>]`
+  - `cctl spec show <slug> --full [--out <file>]`
 - `cctl spec status` — inspect a spec's phase and gate readiness
   - `cctl spec status <slug>`
 - `cctl spec comments` — read reviewer comments as typed rows
@@ -480,7 +500,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec diff <slug>`
   - `cctl spec diff <slug> --baseline governance`
   - `cctl spec diff <slug> --from <revisionId> --to <revisionId>`
-- `cctl spec schema` — print the schema of every input document this family accepts
+- `cctl spec schema` — list offline input and response contract documents
   - `cctl spec schema`
   - `cctl spec schema <document>`
 - `cctl spec delta` — compare the approved spec against a delivered execution
@@ -566,6 +586,45 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl version`
 
 <!-- END GENERATED COMMAND REFERENCE -->
+
+## Native SDD read disclosure
+
+Read a spec through a pull-based ladder rather than fetching its complete view
+up front:
+
+1. `cctl spec show <slug> --summary` returns counts plus zero-returned/truncation
+   disclosure and the exact default-outline next command.
+2. `cctl spec show <slug>` returns a bounded nested outline with stable handles,
+   per-element state, and explicit omission metadata.
+3. `cctl spec get <slug>/<handle>` returns one element in full as line-oriented
+   text by default or the named `element` envelope with `--json`.
+4. `cctl spec show <slug> --rendered` writes the canonical current revision as
+   Markdown, while `--full` writes the complete JSON view. Both return a small,
+   file-backed artifact manifest instead of embedding the document on stdout.
+
+`--json` preserves whichever level was selected. For an artifact read it
+serializes the manifest; it does not put the rendered or full body back into
+the envelope. Read the returned path with ranged file tools or search it
+locally. If even a bounded summary or outline would exceed the stdout budget,
+the CLI writes that exact inline envelope to JSON and returns a
+`storage: "artifact"` receipt with `reason: "stdout_budget_exceeded"`.
+
+Inline summary and outline show envelopes are flattened: `spec` is the spec
+identity, while view data such as `counts`, `requirements`, and `tasks` are
+sibling fields. Artifact show receipts instead carry `storage: "artifact"` and
+`artifact: {path, format, bytes, sha256}`; rendered/full receipts also carry a
+bounded `revision`. Status, lint, and get keep their named payloads under
+`status`, `lint`, and `element`. The get receipt also hoists
+`elementId`/`kind`/`elementVersion`; use those identity fields instead of
+traversing the durable snapshot row's nested `element` objects.
+
+Revision fields answer different questions. `baseRevision` is the immediate
+parent named by the current revision's `basedOnRevisionId`. `currentRevision`
+is the spec's latest revision, whether draft, proposed, or approved.
+`currentApprovedRevision` is the latest revision whose state is approved and
+may therefore differ from both. Inspect
+the machine-readable envelope map and these semantics offline with
+`cctl spec schema read-envelopes`.
 
 ## cctl validate
 

@@ -145,7 +145,11 @@ describe("lint", () => {
         authoringStage,
       );
 
-      expect(lint(draft, records())).toEqual([]);
+      expect(
+        lint(draft, records()).filter((finding) =>
+          finding.ruleId.startsWith("9.3."),
+        ),
+      ).toEqual([]);
     },
   );
 
@@ -174,9 +178,97 @@ describe("lint", () => {
         authoringStage,
       );
 
-      expect(lint(draft, records())).toEqual([]);
+      expect(
+        lint(draft, records()).filter((finding) =>
+          finding.ruleId.startsWith("9.3."),
+        ),
+      ).toEqual([]);
     },
   );
+
+  it("9.13 advises when a design-stage revision carries no design content", () => {
+    const draft = snapshot(
+      [
+        requirement("requirement-1", "R1"),
+        criterion("criterion-1", "R1.1", "requirement-1"),
+      ],
+      "design",
+    );
+
+    expect(lint(draft, records())).toContainEqual({
+      ruleId: "9.13.design-stage-without-design-content",
+      severity: "advisory",
+      elementHandle: "native-sdd",
+      message:
+        "Design-stage revision carries no decision or design narrative elements.",
+    });
+  });
+
+  it.each([
+    {
+      name: "decision",
+      element: {
+        id: "decision-1",
+        handle: "D1",
+        payloadHash: "decision-1-hash",
+        payload: {
+          kind: "decision" as const,
+          title: "Design authority",
+          chosenApproach: "Keep design state explicit.",
+          rejectedAlternatives: [],
+          reason: "The stage should carry its own substance.",
+          tracedRequirementElementIds: ["requirement-1"],
+        },
+      },
+    },
+    {
+      name: "design narrative",
+      element: {
+        id: "section-design",
+        handle: "S-design",
+        payloadHash: "section-design-hash",
+        payload: {
+          kind: "section" as const,
+          role: "design_narrative" as const,
+          title: "Design",
+          body: "The server owns the authoring state projection.",
+        },
+      },
+    },
+  ])("9.13 accepts a design-stage $name", ({ element }) => {
+    const draft = snapshot(
+      [
+        requirement("requirement-1", "R1"),
+        criterion("criterion-1", "R1.1", "requirement-1"),
+        element,
+      ],
+      "design",
+    );
+
+    expect(
+      lint(draft, records()).filter(
+        (finding) =>
+          finding.ruleId === "9.13.design-stage-without-design-content",
+      ),
+    ).toEqual([]);
+  });
+
+  it("9.13 does not advise before the design stage", () => {
+    const draft = snapshot(
+      [
+        requirement("requirement-1", "R1"),
+        criterion("criterion-1", "R1.1", "requirement-1"),
+      ],
+      "requirements",
+    );
+
+    expect(
+      lint(draft, records()).filter(
+        (finding) =>
+          finding.ruleId === "9.13.design-stage-without-design-content",
+      ),
+    ).toEqual([]);
+  });
 
   it("9.4 names an untraced task", () => {
     const draft = snapshot([

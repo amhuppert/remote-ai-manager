@@ -158,6 +158,7 @@ export interface AuthoringPendingBlock {
 
 export interface AuthoringNextAction {
   kind:
+    | "approve_gate"
     | "approve_subject"
     | "sign_off_revision"
     | "resolve_conditions"
@@ -584,6 +585,10 @@ function projectPendingBlock(
         .map((subject) => subject.subject),
     }));
   const first = pending[0];
+  const nextGateSubjectCount =
+    first === undefined
+      ? 0
+      : pending.filter((subject) => subject.gate === first.gate).length;
   // An open draft owes a propose before it owes anything to a human: the
   // subjects below are what the review will ask for, not what it is waiting on.
   const draft = input.snapshot?.revision.state === "draft";
@@ -614,7 +619,9 @@ function projectPendingBlock(
       ? signOff?.state === "blocked"
         ? `Resolve the unmet sign-off conditions, then sign ${revisionLabel} off in Spec Studio.`
         : `Ask a human to sign ${revisionLabel} off in Spec Studio; approving the last subject does not sign it off.`
-      : `Ask a human to approve ${first.subject} at the ${first.gate} gate in Spec Studio, or request it with gate ${first.gate} and subject ${first.subject}.`;
+      : nextGateSubjectCount > 1
+        ? `Ask a human to approve all ${nextGateSubjectCount} outstanding subjects at the ${first.gate} gate in Spec Studio, or request the ${first.gate} gate without a subject.`
+        : `Ask a human to approve ${first.subject} at the ${first.gate} gate in Spec Studio, or request it with gate ${first.gate} and subject ${first.subject}.`;
   // A draft cannot carry review comments — commenting refuses outside a
   // proposed revision — so the lead only decorates the in-review block, where
   // a human weighing "approve or Request Changes" is exactly who reads it.
@@ -701,8 +708,25 @@ function projectNextAction(
           : `${openCommentLead(open, input.specSlug)} Repair or answer them in the draft, then propose it again.`,
     };
   }
-  const first = inGateOrder(pending)[0];
+  const orderedPending = inGateOrder(pending);
+  const first = orderedPending[0];
   if (first !== undefined) {
+    const gateSubjects = orderedPending.filter(
+      (subject) => subject.gate === first.gate,
+    );
+    if (gateSubjects.length > 1) {
+      return {
+        kind: "approve_gate",
+        actsNext: "human",
+        gate: first.gate,
+        subject: null,
+        elementId: null,
+        instruction:
+          open === null
+            ? `Ask a human to approve all ${gateSubjects.length} outstanding subjects at the ${first.gate} gate in Spec Studio.`
+            : `${openCommentLead(open, input.specSlug)} A human must approve the remaining subjects in Spec Studio or use Request Changes to reopen the draft before repairs can land.`,
+      };
+    }
     return {
       kind: "approve_subject",
       actsNext: "human",

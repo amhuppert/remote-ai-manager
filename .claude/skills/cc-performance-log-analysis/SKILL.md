@@ -5,7 +5,7 @@ description: Use when diagnosing Command Center performance issues from structur
 
 # CC Performance Log Analysis
 
-Use `bun run logs:analyze` as the first tool for Command Center performance log diagnosis. It produces bounded JSON for agents and concise Markdown for human handoff. Use manual `jq` only for ad hoc checks after the CLI narrows the problem.
+Use `bun run logs:analyze` as the first tool for Command Center performance log diagnosis. It produces concise Markdown by default for an agent's own reading. Select JSON only when output feeds code, and use manual `jq` only for ad hoc checks after the CLI narrows the problem.
 
 **Two tools.** `logs:analyze` answers the known questions with ranked, severity-tagged findings and trace reconstruction — start there. When you have a question its report does not surface (a custom grouping, a percentile distribution, a cross-cutting join, "is X correlated with Y"), use `bun run logs:duckdb` to query the raw log with SQL — see [Ad-hoc SQL with DuckDB](#ad-hoc-sql-with-duckdb-logsduckdb) below.
 
@@ -16,7 +16,7 @@ Use `bun run logs:analyze` as the first tool for Command Center performance log 
 1. Start with a report:
 
    ```bash
-   bun run logs:analyze -- report --format json --pretty
+   bun run logs:analyze -- report
    ```
 
 2. Read `findings` first. Pick the highest-severity finding with concrete trace IDs or operation keys.
@@ -24,13 +24,13 @@ Use `bun run logs:analyze` as the first tool for Command Center performance log 
 3. Deep-dive one or two traces:
 
    ```bash
-   bun run logs:analyze -- trace <traceId> --format markdown
+   bun run logs:analyze -- trace <traceId>
    ```
 
 4. Use compare mode for before/after validation:
 
    ```bash
-   bun run logs:analyze -- compare --before before.log --after after.log --format json --pretty
+   bun run logs:analyze -- compare --before before.log --after after.log
    ```
 
 5. Use Speedscope only after the report identifies a trace or hotspot worth visual inspection:
@@ -44,13 +44,13 @@ Use `bun run logs:analyze` as the first tool for Command Center performance log 
 Recent full report:
 
 ```bash
-bun run logs:analyze -- report --format json --pretty
+bun run logs:analyze -- report
 ```
 
 Filter by project/session:
 
 ```bash
-bun run logs:analyze -- report --projectName NAME --sessionName SESSION --format json --pretty
+bun run logs:analyze -- report --projectName NAME --sessionName SESSION
 ```
 
 Analyze a time window:
@@ -65,38 +65,38 @@ Analyze across rotated logs (full retained history, not just the active window):
 # --in reads ONE file and does not glob, so merge the rotated set first.
 # Order is irrelevant — every record is timestamped; --since/--until still apply.
 cat "<config-dir>"/logs/global.log* > /tmp/cc-global-merged.log
-bun run logs:analyze -- report --in /tmp/cc-global-merged.log --format json --pretty
+bun run logs:analyze -- report --in /tmp/cc-global-merged.log
 ```
 
 Deep-dive a trace:
 
 ```bash
-bun run logs:analyze -- trace TRACE_ID --format markdown
+bun run logs:analyze -- trace TRACE_ID
 ```
 
 Compare before/after logs:
 
 ```bash
-bun run logs:analyze -- compare --before /tmp/before.log --after /tmp/after.log --format markdown
+bun run logs:analyze -- compare --before /tmp/before.log --after /tmp/after.log
 ```
 
 Include browser timing captured separately:
 
 ```bash
-bun run logs:analyze -- report --client-log /tmp/client-console.jsonl --format json --pretty
+bun run logs:analyze -- report --client-log /tmp/client-console.jsonl
 ```
 
 Create a human-readable handoff:
 
 ```bash
-bun run logs:analyze -- report --format json --markdown-out /tmp/cc-log-analysis.md
+bun run logs:analyze -- report --markdown-out /tmp/cc-log-analysis.md
 ```
 
 Assert performance budgets (CI gating):
 
 ```bash
 # Advisory by default — the report always includes a `budgets` section, exit 0.
-bun run logs:analyze -- report --format json
+bun run logs:analyze -- report
 # With --assert-budgets, any exceeded ceiling makes the command exit non-zero
 # (the report is still emitted so CI can see what violated).
 bun run logs:analyze -- report --assert-budgets

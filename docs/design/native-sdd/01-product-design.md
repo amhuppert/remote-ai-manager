@@ -259,7 +259,7 @@ deterministic local validation before network).
 
 Read verbs (illustrative, not final):
 
-- `cctl spec list` / `cctl spec show <slug>` — inventory and full/summary views.
+- `cctl spec list` / `cctl spec show <slug>` — inventory plus a bounded nested outline by default, counts through `--summary`, and file-backed canonical Markdown/raw detail through `--rendered`/`--full`.
 - `cctl spec status <slug>` — phase, gate states, pending approvals, open questions, coverage.
 - `cctl spec get <slug>/R3` — one requirement/decision/task with its approval + evidence state.
 - `cctl spec search <slug> <query>` — find requirements/decisions by text.

@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+
 import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 import type { SeededWorkflowDocument } from "@/lib/workflow-graph/shared-documents";
 import {
@@ -85,6 +87,86 @@ export interface CanonicalMarkdownFile {
 export interface CanonicalSpecBundle {
   readonly markdownFiles: CanonicalMarkdownFile[];
   readonly manifest: string;
+}
+
+export const CURRENT_CANONICAL_SPEC_BUNDLE_FORMAT_VERSION = 3;
+
+export type CanonicalSpecBundleComparison =
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      readonly code: "bundle_format_mismatch";
+      readonly message: string;
+      readonly instruction: string;
+      readonly issue: { readonly path: string; readonly message: string };
+      readonly currentFormatVersion: number;
+      readonly againstFormatVersion: number;
+    }
+  | {
+      readonly ok: false;
+      readonly code: "integrity_mismatch";
+      readonly message: string;
+      readonly instruction: string;
+      readonly issue: { readonly path: string; readonly message: string };
+    };
+
+function canonicalBundleFormatVersion(
+  bundle: CanonicalSpecBundle,
+): number | null {
+  try {
+    const manifest: unknown = JSON.parse(bundle.manifest);
+    if (
+      typeof manifest !== "object" ||
+      manifest === null ||
+      !("formatVersion" in manifest)
+    ) {
+      return null;
+    }
+    const formatVersion = manifest.formatVersion;
+    return typeof formatVersion === "number" &&
+      Number.isSafeInteger(formatVersion) &&
+      formatVersion > 0
+      ? formatVersion
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function compareCanonicalSpecBundles(
+  current: CanonicalSpecBundle,
+  against: CanonicalSpecBundle,
+): CanonicalSpecBundleComparison {
+  const currentFormatVersion = canonicalBundleFormatVersion(current);
+  const againstFormatVersion = canonicalBundleFormatVersion(against);
+  if (
+    currentFormatVersion !== null &&
+    againstFormatVersion !== null &&
+    currentFormatVersion !== againstFormatVersion
+  ) {
+    return {
+      ok: false,
+      code: "bundle_format_mismatch",
+      currentFormatVersion,
+      againstFormatVersion,
+      message: `canonical bundle format ${againstFormatVersion} differs from current format ${currentFormatVersion}`,
+      instruction:
+        "Export a fresh canonical bundle, then verify against that file.",
+      issue: {
+        path: "bundle.manifest.formatVersion",
+        message: `expected current format ${currentFormatVersion}, found ${againstFormatVersion}`,
+      },
+    };
+  }
+  if (isDeepStrictEqual(current, against)) return { ok: true };
+  return {
+    ok: false,
+    code: "integrity_mismatch",
+    message: "current canonical export differs",
+    instruction:
+      "Review the live spec or export a fresh canonical bundle before continuing.",
+    issue: { path: "bundle", message: "current canonical export differs" },
+  };
 }
 
 /**
@@ -223,10 +305,9 @@ function renderElement(row: SpecRevisionElement, handle: string): string {
         ...(payload.laneGroup === undefined
           ? []
           : [`- Lane group: ${payload.laneGroup}`]),
-        // Rendered only when declared, so a bundle exported before the field
-        // existed stays byte-identical and `verify --against` keeps reporting
-        // it clean; a declared lane is ordinary content that differs like any
-        // other field.
+        // Optional payload fields stay absent when undeclared, so two bundles
+        // in the same canonical format compare equal; a declared lane is
+        // ordinary content that differs like any other field.
         ...(payload.executionLane === undefined
           ? []
           : [`- Execution lane: ${payload.executionLane}`]),
@@ -237,7 +318,50 @@ function renderElement(row: SpecRevisionElement, handle: string): string {
   }
 }
 
-function renderRevisionMarkdown(
+function renderedRevisionElements(
+  elements: readonly SpecRevisionElement[],
+): SpecRevisionElement[] {
+  const ordered = [...elements].sort((left, right) =>
+    left.version.position === right.version.position
+      ? left.element.id.localeCompare(right.element.id)
+      : left.version.position - right.version.position,
+  );
+  const childrenByParent = new Map<string, SpecRevisionElement[]>();
+  const knownElementIds = new Set(ordered.map(({ element }) => element.id));
+  for (const row of ordered) {
+    const parentElementId = row.element.parentElementId;
+    if (parentElementId === null || !knownElementIds.has(parentElementId)) {
+      continue;
+    }
+    const siblings = childrenByParent.get(parentElementId) ?? [];
+    siblings.push(row);
+    childrenByParent.set(parentElementId, siblings);
+  }
+
+  const rendered: SpecRevisionElement[] = [];
+  const emitted = new Set<string>();
+  const appendSubtree = (row: SpecRevisionElement): void => {
+    if (emitted.has(row.element.id)) return;
+    emitted.add(row.element.id);
+    rendered.push(row);
+    for (const child of childrenByParent.get(row.element.id) ?? []) {
+      appendSubtree(child);
+    }
+  };
+
+  for (const row of ordered) {
+    if (
+      row.element.parentElementId === null ||
+      !knownElementIds.has(row.element.parentElementId)
+    ) {
+      appendSubtree(row);
+    }
+  }
+  for (const row of ordered) appendSubtree(row);
+  return rendered;
+}
+
+export function renderRevisionMarkdown(
   spec: Spec,
   snapshot: SpecRevisionSnapshot,
 ): string {
@@ -254,7 +378,7 @@ function renderRevisionMarkdown(
     `- State: ${snapshot.revision.state}`,
     `- Authoring stage: ${snapshot.revision.authoringStage}`,
     `- Content hash: ${snapshot.revision.contentHash ?? "editable"}`,
-    ...snapshot.elements.map((row) =>
+    ...renderedRevisionElements(snapshot.elements).map((row) =>
       renderElement(row, handles.get(row.element.id) ?? row.element.id),
     ),
     "",
@@ -271,15 +395,15 @@ const ELEMENT_ORDERING_CONTRACT = {
   scope: "revision",
   sortKeys: ["position", "elementId"],
   nesting: "parentElementId",
+  renderedTraversal: "parent-then-children",
   omittedPositionOnCreate: "append",
 } as const;
 
 function manifestFor(state: SpecExportState): unknown {
   return {
-    // 2 adds elementOrdering. `spec verify --against` compares whole bundles,
-    // so a format change makes an older bundle differ for a spec whose content
-    // never moved; the version is what tells those two cases apart.
-    formatVersion: 2,
+    // Format 3 declares parent-first canonical Markdown. Bundle comparison
+    // reports this version boundary separately from ordinary content drift.
+    formatVersion: CURRENT_CANONICAL_SPEC_BUNDLE_FORMAT_VERSION,
     elementOrdering: ELEMENT_ORDERING_CONTRACT,
     spec: state.spec,
     revisions: state.revisions.map(({ snapshot }) => {

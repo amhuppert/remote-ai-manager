@@ -127,6 +127,10 @@ export const EVERGREEN_LINT_RULES = [
     ruleId: "9.12.conflicting-parallel-surfaces",
     severity: "advisory",
   },
+  {
+    ruleId: "9.13.design-stage-without-design-content",
+    severity: "advisory",
+  },
 ] as const satisfies readonly EvergreenLintRuleDefinition[];
 
 export type EvergreenLintRuleId =
@@ -614,6 +618,22 @@ export function lint(
         "9.2.empty-spec",
         draft.specHandle,
         "Empty spec — nothing to review.",
+      ),
+    );
+  }
+
+  const hasDesignContent = elements.some(
+    (element) =>
+      element.payload.kind === "decision" ||
+      (element.payload.kind === "section" &&
+        element.payload.role === "design_narrative"),
+  );
+  if (draft.authoringStage === "design" && !hasDesignContent) {
+    findings.push(
+      finding(
+        "9.13.design-stage-without-design-content",
+        draft.specHandle,
+        "Design-stage revision carries no decision or design narrative elements.",
       ),
     );
   }

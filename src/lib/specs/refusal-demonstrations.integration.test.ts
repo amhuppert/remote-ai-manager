@@ -1389,7 +1389,7 @@ describe("authoring blocks (ticket #42): the CLI renders the server's projection
       bridgeHost(world),
     );
     expect(summary.exitCode).toBe(0);
-    expect(JSON.parse(summary.stdout).spec).toMatchObject({
+    expect(JSON.parse(summary.stdout)).toMatchObject({
       approvalState: "pending",
       pendingApprovalCount: 1,
     });

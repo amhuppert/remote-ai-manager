@@ -47,9 +47,9 @@ const MIGRATION_SCHEMA_DESCRIPTION =
  *
  * Exported spec bundles: `spec verify --against` a pre-narrowing bundle fails
  * with the integrity mismatch for any spec this migration rewrote — correct,
- * the canonical content genuinely changed; operators re-export. No
- * `formatVersion` bump: the manifest *format* is unchanged, and bumping it
- * would falsely mark every unaffected spec's old bundle format-incompatible.
+ * the canonical content genuinely changed; operators re-export. This frozen
+ * migration owns no export-format policy; later renderer changes may advance
+ * `formatVersion` independently of this persistence repair.
  *
  * Frozen by design: this file binds no live spec schema or domain publisher
  * (the exact lesson of the 0008 freeze) — it carries its own six-kind lenient

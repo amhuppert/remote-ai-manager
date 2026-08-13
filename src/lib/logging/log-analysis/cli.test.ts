@@ -67,6 +67,19 @@ const logLine = JSON.stringify({
 });
 
 describe("runLogAnalysisCli", () => {
+  it("defaults to concise Markdown for an agent's own reading", async () => {
+    const rt = runtime({ "/explicit.log": logLine });
+
+    const exitCode = await runLogAnalysisCli(
+      ["report", "--in", "/explicit.log"],
+      rt,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(rt.stdoutText()).toContain("## Summary");
+    expect(rt.stdoutText()).not.toContain('"schemaVersion"');
+  });
+
   it("report reads explicit --in", async () => {
     const rt = runtime({ "/explicit.log": logLine });
     const exitCode = await runLogAnalysisCli(

@@ -83,7 +83,7 @@ Options:
   --before <path>
   --after <path>
   --client-log <path>
-  --format <json|markdown>
+  --format <json|markdown>  Output format (default: markdown)
   --out <path>
   --markdown-out <path>
   --speedscope-out <path>
@@ -135,7 +135,7 @@ function parseCliOptions(args: readonly string[]): ParsedCliOptions | "help" {
       before: { type: "string" },
       after: { type: "string" },
       "client-log": { type: "string" },
-      format: { type: "string", default: "json" },
+      format: { type: "string", default: "markdown" },
       out: { type: "string" },
       "markdown-out": { type: "string" },
       "speedscope-out": { type: "string" },

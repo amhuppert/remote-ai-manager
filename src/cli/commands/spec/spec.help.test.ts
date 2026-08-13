@@ -577,6 +577,22 @@ describe("cctl spec help nodes", () => {
     expect(text).toContain("cctl spec plan open <slug>");
   });
 
+  it("teaches the bounded show disclosure ladder without using JSON as a depth control", async () => {
+    const text = await helpText(["spec", "show"]);
+
+    expect(text).toContain("bounded nested outline");
+    expect(text).toContain("--summary");
+    expect(text).toContain("--rendered");
+    expect(text).toContain("--full");
+    expect(text).toContain("--out");
+    expect(text).toContain(".cc/temp/");
+    expect(text).toContain("stdout budget");
+    expect(text).toContain("storage: artifact");
+    expect(text).toMatch(/--json[^\n]+does not (?:change|widen)/i);
+    expect(text).toContain("cctl spec show native-sdd");
+    expect(text).toContain("cctl spec show native-sdd --rendered");
+  });
+
   it("reaches the delta from the spec group node", async () => {
     const text = await helpText(["spec"]);
 

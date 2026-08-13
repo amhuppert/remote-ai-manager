@@ -32,6 +32,7 @@ const SECOND_ELEMENT_FILE = "/tmp/native-entry-second-element.json";
 const SECOND_DRAFT_FILE = "/tmp/native-entry-second-draft.json";
 const BATCH_FILE = "/tmp/native-entry-batch.json";
 const STALE_BATCH_FILE = "/tmp/native-entry-stale-batch.json";
+const CURRENT_DETAIL_FILE = "/tmp/native-entry-current-detail.json";
 
 /**
  * A batch that updates the created requirement and adds a criterion under it.
@@ -99,9 +100,11 @@ function requestFromFetch(url: string, init: FetchInit): Request {
 describe("native /spec first-save visibility", () => {
   let db: Db;
   let host: CliHost;
+  let written: Map<string, string>;
 
   beforeEach(() => {
     db = _createTestDb({ inMemory: true });
+    written = new Map<string, string>();
     db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(PROJECT_PATH);
     const specs = createSpecsRepo(db, createWriteQueue());
     const review = createSpecReviewRepo(db);
@@ -199,6 +202,14 @@ describe("native /spec first-save visibility", () => {
             }),
           });
         }
+        if (segments[4] === "outline") {
+          return readHandlers.getSpecOutlineGET(request, {
+            params: Promise.resolve({
+              name: segments[2] ?? "",
+              slug: segments[3] ?? "",
+            }),
+          });
+        }
         return readHandlers.getSpecGET(request, {
           params: Promise.resolve({
             name: segments[2] ?? "",
@@ -247,6 +258,9 @@ describe("native /spec first-save visibility", () => {
       },
       async readFileBytes() {
         return null;
+      },
+      async writeTextFile(filePath, content) {
+        written.set(filePath, content);
       },
       async sleep() {},
       platform: "darwin",
@@ -307,18 +321,14 @@ describe("native /spec first-save visibility", () => {
     );
     expect(shown.exitCode).toBe(0);
     expect(JSON.parse(shown.stdout)).toMatchObject({
-      spec: {
-        spec: { slug: "audit-log" },
-        currentRevision: {
-          elements: [
-            {
-              version: {
-                payload: { statement: "Audit events are durable." },
-              },
-            },
-          ],
+      view: "outline",
+      spec: { slug: "audit-log" },
+      requirements: [
+        {
+          elementId: "requirement-1",
+          summary: "Audit events are durable.",
         },
-      },
+      ],
     });
   });
 
@@ -439,32 +449,37 @@ describe("native /spec first-save visibility", () => {
     );
     expect(shown.exitCode).toBe(0);
     const body = JSON.parse(shown.stdout) as {
-      spec: {
-        currentRevision: {
-          elements: Array<{ version: { payload: { statement: string } } }>;
-        };
-      };
+      requirements: Array<{ summary: string }>;
     };
-    expect(
-      body.spec.currentRevision.elements.map(
-        ({ version }) => version.payload.statement,
-      ),
-    ).toEqual(["Audit events are durable.", "Audit events are queryable."]);
+    expect(body.requirements.map(({ summary }) => summary)).toEqual([
+      "Audit events are durable.",
+      "Audit events are queryable.",
+    ]);
   });
 
   async function currentElementIds(): Promise<string[]> {
     const shown = await runCli(
-      ["spec", "show", "audit-log", "--json"],
+      [
+        "spec",
+        "show",
+        "audit-log",
+        "--full",
+        "--out",
+        CURRENT_DETAIL_FILE,
+        "--json",
+      ],
       env,
       host,
     );
     expect(shown.exitCode).toBe(0);
-    const body = JSON.parse(shown.stdout) as {
-      spec: {
-        currentRevision: { elements: Array<{ element: { id: string } }> };
-      };
+    const body = JSON.parse(written.get(CURRENT_DETAIL_FILE) ?? "null") as {
+      currentRevision: {
+        elements: Array<{ element: { id: string } }>;
+      } | null;
     };
-    return body.spec.currentRevision.elements.map(({ element }) => element.id);
+    return (
+      body.currentRevision?.elements.map(({ element }) => element.id) ?? []
+    );
   }
 
   it("lands an array --file as one batch of element-granular writes", async () => {

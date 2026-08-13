@@ -174,15 +174,15 @@ describe("AuthoringService propose transaction", () => {
       expect.arrayContaining([
         expect.objectContaining({
           elementId: "requirement-1",
-          classification: "modified",
+          classification: "added",
         }),
         expect.objectContaining({
           elementId: "criterion-1",
-          classification: "modified",
+          classification: "added",
         }),
         expect.objectContaining({
           elementId: "task-1",
-          classification: "modified",
+          classification: "added",
         }),
       ]),
     );

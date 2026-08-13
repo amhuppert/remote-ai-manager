@@ -210,6 +210,7 @@ describe("booleanFlagNames() over the real registry", () => {
       "params",
       "park",
       "quiet",
+      "rendered",
       "skip-warm",
       "stdout",
       "summary",

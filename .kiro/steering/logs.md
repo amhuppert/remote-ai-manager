@@ -260,14 +260,14 @@ Three timing surfaces, not connection lifetime:
 
 ## Agent Log Analysis CLI
 
-Use `logs:analyze` as the first tool for performance diagnosis. It emits bounded JSON by default so agents can rank evidence without reading the entire log.
+Use `logs:analyze` as the first tool for performance diagnosis. It emits concise Markdown by default for an agent's own reading; select `--format json` only when the result feeds code.
 
 ```bash
 bun run logs:analyze -- report
-bun run logs:analyze -- report --in path/to/log --format markdown
+bun run logs:analyze -- report --in path/to/log
 bun run logs:analyze -- report --since 2026-05-21T12:00:00Z --top 20
 bun run logs:analyze -- report --projectName NAME --sessionName SESSION
-bun run logs:analyze -- trace <traceId> --format markdown
+bun run logs:analyze -- trace <traceId>
 bun run logs:analyze -- compare --before before.log --after after.log
 ```
 

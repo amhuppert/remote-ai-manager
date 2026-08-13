@@ -6,6 +6,7 @@ import { GET as commentsGET } from "@/app/api/specs/[name]/[slug]/comments/route
 import { GET as deltaGET } from "@/app/api/specs/[name]/[slug]/delta/route";
 import { GET as diffGET } from "@/app/api/specs/[name]/[slug]/diff/route";
 import { GET as editContextGET } from "@/app/api/specs/[name]/[slug]/edit-context/route";
+import { GET as outlineGET } from "@/app/api/specs/[name]/[slug]/outline/route";
 import { GET as planGET } from "@/app/api/specs/[name]/[slug]/plan/route";
 import { GET as planDiffGET } from "@/app/api/specs/[name]/[slug]/plan/diff/route";
 import { GET as planReviewGET } from "@/app/api/specs/[name]/[slug]/plan/review/route";
@@ -18,6 +19,7 @@ import {
   specDeltaGET,
   specDiffGET,
   specEditContextGET,
+  specOutlineGET,
   specPlanAttemptPreviewGET,
   specPlanDiffGET,
   specPlanGET,
@@ -47,6 +49,10 @@ describe("spec API route mounting", () => {
 
   it("mounts the edit-context read the CLI write path uses instead of a full detail fetch", () => {
     expect(editContextGET).toBe(specEditContextGET);
+  });
+
+  it("mounts the bounded current-revision outline behind `cctl spec show`", () => {
+    expect(outlineGET).toBe(specOutlineGET);
   });
 
   it("mounts the review-comment read behind `cctl spec comments`", () => {

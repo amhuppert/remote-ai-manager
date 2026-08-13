@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 
 import { createLogger } from "@/lib/logging";
@@ -24,6 +23,10 @@ import {
   draftHealth,
   type DraftHealth,
 } from "@/lib/specs/draft-health";
+import {
+  compareCanonicalSpecBundles,
+  renderRevisionMarkdown,
+} from "@/lib/specs/export";
 import { specMeasuresReportSchema } from "@/lib/specs/measures";
 import {
   canonicalSpecBundleSchema,
@@ -36,6 +39,7 @@ import {
   specLintViewSchema,
   specProjectSearchViewSchema,
   specSearchViewSchema,
+  specShowOutlineViewSchema,
   specStatusViewSchema,
   specSummaryViewSchema,
   type CanonicalSpecBundle,
@@ -43,10 +47,13 @@ import {
   type SpecCommentView,
   type SpecCommentsView,
   type SpecDiffView,
+  type SpecElementGetResponse,
   type SpecProjectSearchView,
   type SpecSearchHit,
+  type SpecShowOutlineView,
   type SpecStatusExecution,
   type SpecStatusView,
+  type SpecSummaryView,
 } from "@/lib/specs/view-schemas";
 import { flagNamesFor } from "../../help-registry";
 import {
@@ -69,12 +76,24 @@ import {
 } from "../../shared";
 import { deliveryPlanPreviewText } from "./plan-preview-text";
 import { countOf, gateLines, signOffLines } from "./projection-text";
+import {
+  specGetEnvelopeSchema,
+  specLintEnvelopeSchema,
+  specShowArtifactEnvelopeSchema,
+  specShowOutlineInlineEnvelopeSchema,
+  specShowOutlineSpillEnvelopeSchema,
+  specShowSummaryInlineEnvelopeSchema,
+  specShowSummarySpillEnvelopeSchema,
+  specStatusEnvelopeSchema,
+  type SpecShowArtifact,
+  type SpecShowArtifactRevision,
+  type SpecShowOutlineInlineEnvelope,
+  type SpecShowSummaryInlineEnvelope,
+} from "./read-envelopes";
 
 const logger = createLogger("cli.spec");
-const specShowResponseSchema = z.union([
-  specDetailViewSchema,
-  specSummaryViewSchema,
-]);
+export const SPEC_SHOW_STDOUT_BUDGET_BYTES = 60 * 1024;
+const SPEC_SHOW_OUT_PATH_BUDGET_BYTES = 4 * 1024;
 
 /**
  * The execution states `projectSpecPhase` collapses into `phase: executing`.
@@ -674,6 +693,276 @@ export async function runSpecMeasures(
   };
 }
 
+type SpecShowView = "summary" | "outline" | "rendered" | "full";
+
+function showRevisionRef(
+  revision:
+    | SpecShowOutlineView["revision"]
+    | SpecSummaryView["currentRevision"],
+) {
+  if (revision === null) return null;
+  return {
+    role: "current" as const,
+    id: revision.id,
+    number: revision.number,
+    state: revision.state,
+    authoringStage: revision.authoringStage,
+    basedOnRevisionId: revision.basedOnRevisionId,
+  };
+}
+
+function showArtifactRevisionRef(
+  revision:
+    | SpecShowOutlineView["revision"]
+    | SpecSummaryView["currentRevision"],
+): SpecShowArtifactRevision {
+  if (revision === null) return null;
+  return {
+    role: "current",
+    number: revision.number,
+    state: revision.state,
+    authoringStage: revision.authoringStage,
+  };
+}
+
+function showOutlineText(outline: SpecShowOutlineView): string {
+  const revision = outline.revision;
+  const header =
+    revision === null
+      ? `${outline.spec.slug}\tno revision\t${outline.phase.primary}`
+      : `${outline.spec.slug}\trevision ${revision.number}\t${revision.state}\t${revision.authoringStage}`;
+  const requirements = outline.requirements.flatMap((requirement) => [
+    `${requirement.handle}\t${requirement.priority}\t${requirement.risk}\tapproval=${requirement.status.approval} coverage=${requirement.status.coverage} proof=${requirement.status.proof}\t${requirement.summary}`,
+    ...requirement.criteria.map(
+      (criterion) =>
+        `  ${criterion.handle}\tcoverage=${criterion.status.coverage} proof=${criterion.status.proof}\t${criterion.summary}`,
+    ),
+  ]);
+  const decisions = outline.decisions.map(
+    (decision) =>
+      `${decision.handle}\tdecision\tapproval=${decision.status.approval}\t${decision.summary}`,
+  );
+  const tasks = outline.tasks.map(
+    (task) =>
+      `${task.handle}\ttask\tstatus=${task.status.status} evidence=${task.status.claimEvidenceCount}\t${task.summary}`,
+  );
+  const disclosure = Object.entries(outline.disclosure).flatMap(
+    ([collection, value]) =>
+      collection === "next" || typeof value === "string"
+        ? []
+        : [
+            `${collection}: ${value.total} total, ${value.returned} returned, truncated=${value.truncated ? "yes" : "no"}`,
+          ],
+  );
+  return `${[
+    header,
+    `counts: ${outline.counts.requirements} requirements, ${outline.counts.criteria} criteria, ${outline.counts.decisions} decisions, ${outline.counts.tasks} tasks, ${outline.counts.sections} sections`,
+    "requirements:",
+    ...(requirements.length === 0 ? ["  none"] : requirements),
+    "decisions:",
+    ...(decisions.length === 0 ? ["  none"] : decisions),
+    "tasks:",
+    ...(tasks.length === 0 ? ["  none"] : tasks),
+    "disclosure:",
+    ...disclosure.map((line) => `  ${line}`),
+    `next: ${outline.disclosure.next}`,
+  ].join("\n")}\n`;
+}
+
+function showSummaryDisclosure(
+  summary: SpecSummaryView,
+): SpecShowSummaryInlineEnvelope["disclosure"] {
+  const entry = (total: number) => ({
+    total,
+    returned: 0 as const,
+    truncated: total > 0,
+  });
+  return {
+    requirements: entry(summary.counts.requirements),
+    criteria: entry(summary.counts.criteria),
+    decisions: entry(summary.counts.decisions),
+    tasks: entry(summary.counts.tasks),
+    next: `cctl spec show ${summary.spec.slug}`,
+  };
+}
+
+function showSummaryText(
+  summary: SpecSummaryView,
+  disclosure: SpecShowSummaryInlineEnvelope["disclosure"],
+): string {
+  const revision = summary.currentRevision;
+  const disclosureLines = Object.entries(disclosure).flatMap(
+    ([collection, value]) =>
+      collection === "next" || typeof value === "string"
+        ? []
+        : [
+            `${collection}: ${value.total} total, ${value.returned} returned, truncated=${value.truncated ? "yes" : "no"}`,
+          ],
+  );
+  return `${[
+    `${summary.spec.slug}\t${summary.phase.primary}\t${summary.spec.name}`,
+    revision === null
+      ? "revision: none"
+      : `revision: ${revision.number} (${revision.state}, ${revision.authoringStage})`,
+    `elements: ${summary.counts.requirements} requirements, ${summary.counts.criteria} criteria, ${summary.counts.decisions} decisions, ${summary.counts.tasks} tasks`,
+    `approvals: ${summary.approvalState} (${summary.pendingApprovalCount} pending)`,
+    `delivery: ${summary.delivery.deliveredCount}/${summary.delivery.totalInScope} delivered`,
+    "disclosure:",
+    ...disclosureLines.map((line) => `  ${line}`),
+    `next: ${disclosure.next}`,
+  ].join("\n")}\n`;
+}
+
+function showArtifactText(
+  view: Extract<SpecShowView, "rendered" | "full">,
+  revision: SpecShowArtifactRevision,
+  artifact: SpecShowArtifact,
+): string {
+  return `${[
+    `spec show\t${view}\t${revision === null ? "no revision" : `revision ${revision.number}`}`,
+    `artifact: ${artifact.path}`,
+    `format: ${artifact.format}`,
+    `bytes: ${artifact.bytes}`,
+    `sha256: ${artifact.sha256}`,
+  ].join("\n")}\n`;
+}
+
+function showSpillText(
+  view: Extract<SpecShowView, "summary" | "outline">,
+  artifact: SpecShowArtifact,
+): string {
+  return `${[
+    `spec show\t${view}\tstdout budget exceeded`,
+    `artifact: ${artifact.path}`,
+    `format: ${artifact.format}`,
+    `bytes: ${artifact.bytes}`,
+    `sha256: ${artifact.sha256}`,
+  ].join("\n")}\n`;
+}
+
+function defaultShowArtifactStem(slug: string): string {
+  return Buffer.byteLength(slug, "utf8") <= 120
+    ? slug
+    : `spec-${createHash("sha256").update(slug, "utf8").digest("hex").slice(0, 12)}`;
+}
+
+async function writeShowArtifact(
+  host: CliHost,
+  path: string,
+  format: SpecShowArtifact["format"],
+  content: string,
+  json: boolean,
+): Promise<ReadResult<SpecShowArtifact>> {
+  if (host.writeTextFile === undefined) {
+    return {
+      ok: false,
+      result: failure({
+        exitCode: EXIT_OPERATION_FAILED,
+        message: "spec show: this CLI host cannot write artifact files",
+        code: "write_unavailable",
+        json,
+      }),
+    };
+  }
+  try {
+    await host.writeTextFile(path, content);
+  } catch {
+    return {
+      ok: false,
+      result: failure({
+        exitCode: EXIT_OPERATION_FAILED,
+        message: `spec show: could not write ${JSON.stringify(path)}`,
+        code: "write_failed",
+        instruction: "Name a writable file with --out and retry.",
+        json,
+      }),
+    };
+  }
+  return {
+    ok: true,
+    value: {
+      path,
+      format,
+      bytes: Buffer.byteLength(content, "utf8"),
+      sha256: `sha256:${createHash("sha256").update(content, "utf8").digest("hex")}`,
+    },
+  };
+}
+
+type InlineShowEnvelope =
+  | SpecShowOutlineInlineEnvelope
+  | SpecShowSummaryInlineEnvelope;
+
+async function boundedInlineShowResult(input: {
+  readonly host: CliHost;
+  readonly json: boolean;
+  readonly view: Extract<SpecShowView, "summary" | "outline">;
+  readonly text: string;
+  readonly envelope: InlineShowEnvelope;
+}): Promise<{ result: CliResult; spilled: boolean }> {
+  const structured = `${JSON.stringify(input.envelope)}\n`;
+  const selected = render(input.json, input.text, input.envelope);
+  const largestInlineBytes = Math.max(
+    Buffer.byteLength(structured, "utf8"),
+    Buffer.byteLength(input.text, "utf8"),
+  );
+  if (largestInlineBytes < SPEC_SHOW_STDOUT_BUDGET_BYTES) {
+    return {
+      result: { exitCode: EXIT_OK, stdout: selected, stderr: "" },
+      spilled: false,
+    };
+  }
+
+  const content = `${JSON.stringify(input.envelope, null, 2)}\n`;
+  const digest = createHash("sha256").update(content, "utf8").digest("hex");
+  const written = await writeShowArtifact(
+    input.host,
+    `.cc/temp/spec-${input.view}-${digest.slice(0, 12)}.json`,
+    "json",
+    content,
+    input.json,
+  );
+  if (!written.ok) return { result: written.result, spilled: false };
+  const receipt =
+    input.view === "outline"
+      ? specShowOutlineSpillEnvelopeSchema.parse({
+          ok: true,
+          command: "spec show",
+          view: input.view,
+          storage: "artifact",
+          reason: "stdout_budget_exceeded",
+          artifact: written.value,
+        })
+      : specShowSummarySpillEnvelopeSchema.parse({
+          ok: true,
+          command: "spec show",
+          view: input.view,
+          storage: "artifact",
+          reason: "stdout_budget_exceeded",
+          artifact: written.value,
+        });
+  const stdout = render(
+    input.json,
+    showSpillText(input.view, written.value),
+    receipt,
+  );
+  if (Buffer.byteLength(stdout, "utf8") >= SPEC_SHOW_STDOUT_BUDGET_BYTES) {
+    return {
+      result: failure({
+        exitCode: EXIT_OPERATION_FAILED,
+        message: "spec show: bounded artifact receipt exceeded its invariant",
+        code: "receipt_budget_exceeded",
+        json: input.json,
+      }),
+      spilled: false,
+    };
+  }
+  return {
+    result: { exitCode: EXIT_OK, stdout, stderr: "" },
+    spilled: true,
+  };
+}
+
 export async function runSpecShow(
   rest: string[],
   flags: GlobalFlags,
@@ -688,29 +977,195 @@ export async function runSpecShow(
   if (extra) return extra;
   const slug = validateSlug(rest[0], "show", json);
   if (!slug.ok) return slug.result;
+  const selectedLevels = ["summary", "rendered", "full"].filter(
+    (name) => values[name] === "true",
+  );
+  if (selectedLevels.length > 1) {
+    return usageFailure(
+      "spec show: pass at most one of --summary, --rendered, or --full",
+      json,
+    );
+  }
+  const rendered = values["rendered"] === "true";
+  const full = values["full"] === "true";
+  const out = values["out"];
+  if (out !== undefined && !rendered && !full) {
+    return usageFailure("spec show: --out requires --rendered or --full", json);
+  }
+  if (
+    out !== undefined &&
+    Buffer.byteLength(out, "utf8") > SPEC_SHOW_OUT_PATH_BUDGET_BYTES
+  ) {
+    return usageFailure(
+      `spec show: --out path exceeds ${SPEC_SHOW_OUT_PATH_BUDGET_BYTES} bytes`,
+      json,
+    );
+  }
   const resolved = await resolveProjectContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const summary = values["summary"] === "true";
+  if (summary) {
+    const response = await requestTyped(
+      host,
+      resolved.context,
+      `${specBasePath(resolved.context, slug.value)}/summary`,
+      specSummaryViewSchema,
+      "show",
+      json,
+    );
+    if (!response.ok) return response.result;
+    const disclosure = showSummaryDisclosure(response.value);
+    const envelope = specShowSummaryInlineEnvelopeSchema.parse({
+      ok: true,
+      command: "spec show",
+      view: "summary" as const,
+      storage: "inline",
+      spec: {
+        id: response.value.spec.id,
+        slug: response.value.spec.slug,
+        name: response.value.spec.name,
+      },
+      revision: showRevisionRef(response.value.currentRevision),
+      phase: response.value.phase,
+      counts: response.value.counts,
+      pendingApprovalCount: response.value.pendingApprovalCount,
+      approvalState: response.value.approvalState,
+      delivery: {
+        allWaived: response.value.delivery.allWaived,
+        deliveredCount: response.value.delivery.deliveredCount,
+        provenCount: response.value.delivery.provenCount,
+        totalInScope: response.value.delivery.totalInScope,
+        deliveredExternallyCount:
+          response.value.delivery.deliveredExternallyCriterionIds.length,
+      },
+      linkedWork: response.value.linkedWork,
+      imported: response.value.imported,
+      disclosure,
+    });
+    const output = await boundedInlineShowResult({
+      host,
+      json,
+      view: "summary",
+      text: showSummaryText(response.value, disclosure),
+      envelope,
+    });
+    logger.debug("cli.spec.read_complete", {
+      command: "show",
+      slug: slug.value,
+      view: "summary",
+      wroteOutput: output.spilled,
+    });
+    return output.result;
+  }
+
+  if (!rendered && !full) {
+    const response = await requestTyped(
+      host,
+      resolved.context,
+      `${specBasePath(resolved.context, slug.value)}/outline`,
+      specShowOutlineViewSchema,
+      "show",
+      json,
+    );
+    if (!response.ok) return response.result;
+    const envelope = specShowOutlineInlineEnvelopeSchema.parse({
+      ok: true,
+      command: "spec show",
+      view: "outline",
+      storage: "inline",
+      ...response.value,
+    });
+    const output = await boundedInlineShowResult({
+      host,
+      json,
+      view: "outline",
+      text: showOutlineText(response.value),
+      envelope,
+    });
+    logger.debug("cli.spec.read_complete", {
+      command: "show",
+      slug: slug.value,
+      view: "outline",
+      wroteOutput: output.spilled,
+      returnedRequirementCount: response.value.requirements.length,
+      returnedCriterionCount: response.value.disclosure.criteria.returned,
+    });
+    return output.result;
+  }
+
   const response = await requestTyped(
     host,
     resolved.context,
-    `${specBasePath(resolved.context, slug.value)}${summary ? "/summary" : ""}`,
-    specShowResponseSchema,
+    specBasePath(resolved.context, slug.value),
+    specDetailViewSchema,
     "show",
     json,
   );
   if (!response.ok) return response.result;
+  const current = response.value.currentRevision;
+  const view = rendered ? "rendered" : "full";
+  let content: string;
+  let path: string;
+  if (rendered) {
+    if (current === null) {
+      return failure({
+        exitCode: EXIT_OPERATION_FAILED,
+        message:
+          "spec show: the requested spec has no current revision to render",
+        code: "no_current_revision",
+        json,
+      });
+    }
+    content = renderRevisionMarkdown(response.value.spec, current);
+    path =
+      out ??
+      `.cc/temp/${defaultShowArtifactStem(response.value.spec.slug)}-revision-${current.revision.number}.md`;
+  } else {
+    content = `${JSON.stringify(response.value, null, 2)}\n`;
+    path =
+      out ??
+      `.cc/temp/${defaultShowArtifactStem(response.value.spec.slug)}-spec-detail.json`;
+  }
+  const written = await writeShowArtifact(
+    host,
+    path,
+    rendered ? "markdown" : "json",
+    content,
+    json,
+  );
+  if (!written.ok) return written.result;
+  const revision = showArtifactRevisionRef(current?.revision ?? null);
   logger.debug("cli.spec.read_complete", {
     command: "show",
     slug: slug.value,
-    summary,
+    view,
+    wroteOutput: true,
+    artifactBytes: written.value.bytes,
   });
+  const envelope = specShowArtifactEnvelopeSchema.parse({
+    ok: true,
+    command: "spec show",
+    view,
+    storage: "artifact",
+    revision,
+    artifact: written.value,
+  });
+  const stdout = render(
+    json,
+    showArtifactText(view, revision, written.value),
+    envelope,
+  );
+  if (Buffer.byteLength(stdout, "utf8") >= SPEC_SHOW_STDOUT_BUDGET_BYTES) {
+    return failure({
+      exitCode: EXIT_OPERATION_FAILED,
+      message: "spec show: bounded artifact receipt exceeded its invariant",
+      code: "receipt_budget_exceeded",
+      json,
+    });
+  }
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, `${JSON.stringify(response.value, null, 2)}\n`, {
-      ok: true,
-      spec: response.value,
-    }),
+    stdout,
     stderr: "",
   };
 }
@@ -748,24 +1203,25 @@ export async function runSpecStatus(
     openQuestionCount: response.value.openQuestions.length,
     activeExecutionCount: executions.length,
   });
+  const envelope = specStatusEnvelopeSchema.parse({
+    ok: true,
+    status: response.value,
+    executions: executions.map((execution) => {
+      const progress = describeExecution(execution);
+      return {
+        id: execution.id,
+        state: execution.state,
+        workflowDefinitionId: execution.workflowDefinitionId,
+        workflowExecutionId: execution.workflowExecutionId,
+        workflowStatus: execution.workflowStatus,
+        laneState: progress.laneState,
+        actsNext: progress.actsNext,
+      };
+    }),
+  });
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, statusText(response.value, executions), {
-      ok: true,
-      status: response.value,
-      executions: executions.map((execution) => {
-        const progress = describeExecution(execution);
-        return {
-          id: execution.id,
-          state: execution.state,
-          workflowDefinitionId: execution.workflowDefinitionId,
-          workflowExecutionId: execution.workflowExecutionId,
-          workflowStatus: execution.workflowStatus,
-          laneState: progress.laneState,
-          actsNext: progress.actsNext,
-        };
-      }),
-    }),
+    stdout: render(json, statusText(response.value, executions), envelope),
     stderr: "",
   };
 }
@@ -917,18 +1373,19 @@ export async function runSpecLint(
     findingCount: health.total,
     blockingCount: health.blocking,
   });
+  const envelope = specLintEnvelopeSchema.parse({
+    ok: true,
+    lint: {
+      revisionId: response.value.revisionId,
+      total: health.total,
+      blocking: health.blocking,
+      counts: health.counts,
+      groups: health.groups,
+    },
+  });
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, lintText(slug.value, health), {
-      ok: true,
-      lint: {
-        revisionId: response.value.revisionId,
-        total: health.total,
-        blocking: health.blocking,
-        counts: health.counts,
-        groups: health.groups,
-      },
-    }),
+    stdout: render(json, lintText(slug.value, health), envelope),
     stderr: "",
   };
 }
@@ -991,6 +1448,54 @@ function parseGetTarget(
   };
 }
 
+function specGetTextValue(value: string | number | boolean | null): string {
+  if (value === null) return "none";
+  return String(value).replace(/\n/gu, "\n  ");
+}
+
+/**
+ * A complete line-oriented representation of one typed response. `spec get`
+ * is already the narrowest read in the disclosure ladder, so text mode keeps
+ * every field and row that JSON carries; it changes representation, not depth.
+ */
+function specGetFieldLines(value: unknown, path: string): string[] {
+  if (Array.isArray(value)) {
+    if (value.length === 0) return [`${path}: none`];
+    return value.flatMap((item, index) =>
+      specGetFieldLines(item, `${path}[${index}]`),
+    );
+  }
+  if (typeof value === "object" && value !== null) {
+    const entries = Object.entries(value);
+    if (entries.length === 0) return [`${path}: none`];
+    return entries.flatMap(([field, item]) =>
+      specGetFieldLines(item, path.length === 0 ? field : `${path}.${field}`),
+    );
+  }
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    value === null
+  ) {
+    return [`${path}: ${specGetTextValue(value)}`];
+  }
+  return [`${path}: unavailable`];
+}
+
+function specGetText(response: SpecElementGetResponse): string {
+  let header: string;
+  if ("question" in response) {
+    header = `${response.slug}/${response.handle}\tquestion\t${response.question.status}`;
+  } else if ("assumption" in response) {
+    header = `${response.slug}/${response.handle}\tassumption\t${response.assumption.disposition}`;
+  } else {
+    const payload = response.element.version.payload;
+    header = `${response.slug}/${response.handle}\t${payload.kind}\trevision ${response.revision.number} (${response.revision.state}, ${response.revision.authoringStage})`;
+  }
+  return `${[header, ...specGetFieldLines(response, "")].join("\n")}\n`;
+}
+
 export async function runSpecGet(
   rest: string[],
   flags: GlobalFlags,
@@ -1035,13 +1540,14 @@ export async function runSpecGet(
           elementVersion: response.value.element.version.elementVersion,
         }
       : {};
+  const envelope = specGetEnvelopeSchema.parse({
+    ok: true,
+    element: response.value,
+    ...identity,
+  });
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, `${JSON.stringify(response.value, null, 2)}\n`, {
-      ok: true,
-      element: response.value,
-      ...identity,
-    }),
+    stdout: render(json, specGetText(response.value), envelope),
     stderr: "",
   };
 }
@@ -1619,18 +2125,33 @@ export async function runSpecVerify(
       json,
     );
     if (!current.ok) return current.result;
-    if (!isDeepStrictEqual(current.value, against.value)) {
+    const comparison = compareCanonicalSpecBundles(
+      current.value,
+      against.value,
+    );
+    if (!comparison.ok) {
       logger.debug("cli.spec.integrity_mismatch", {
         slug: slug.value,
         against: againstPath ?? null,
-        mismatchKind: "export",
+        mismatchKind: comparison.code,
       });
       return integrityFailure(
-        `spec ${slug.value} differs from ${againstPath}`,
-        "Review the live spec or export a fresh canonical bundle before continuing.",
-        { against: againstPath },
-        [{ path: "bundle", message: "current canonical export differs" }],
+        comparison.code === "bundle_format_mismatch"
+          ? comparison.message
+          : `spec ${slug.value} differs from ${againstPath}`,
+        comparison.instruction,
+        {
+          against: againstPath,
+          ...(comparison.code === "bundle_format_mismatch"
+            ? {
+                currentFormatVersion: comparison.currentFormatVersion,
+                againstFormatVersion: comparison.againstFormatVersion,
+              }
+            : {}),
+        },
+        [comparison.issue],
         json,
+        comparison.code,
       );
     }
   }

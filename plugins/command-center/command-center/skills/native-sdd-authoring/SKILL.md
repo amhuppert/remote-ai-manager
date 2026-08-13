@@ -5,6 +5,38 @@ description: Author and review native Command Center specs and graph-shaped deli
 
 # Native SDD Authoring
 
+## Reading specs without flooding context
+
+Start with `cctl spec show <slug>`. Its default is a bounded nested outline with
+stable handles, per-element state, and explicit omission metadata, which is the
+navigation map for targeted `cctl spec get <slug>/<handle>` calls; get renders
+complete line-oriented text by default and a named `element` envelope only
+with `--json`. Use `--summary` when counts alone answer the question; its
+disclosure reports zero returned rows, truncation by collection, and the exact
+default-outline next command.
+
+Use `cctl spec show <slug> --rendered` for the canonical current-revision
+Markdown and `--full` for the complete JSON view. Both are file-backed: stdout
+is a small artifact manifest, and `--json` serializes that same manifest rather
+than widening the selected disclosure level or embedding the document. Read or
+search the returned path progressively. If even a bounded summary or outline
+would exceed the stdout budget, the CLI writes that exact inline envelope to a
+JSON file and returns an artifact receipt with
+`reason: "stdout_budget_exceeded"`.
+
+Inline summary and outline show envelopes are flattened: `spec` is identity,
+while view data such as `counts`, `requirements`, and `tasks` are sibling
+fields. Artifact receipts instead carry `storage: "artifact"` and
+`artifact: {path, format, bytes, sha256}`; rendered/full receipts also carry a
+bounded `revision`. Status, lint, and get keep named payloads under `status`,
+`lint`, and `element`. Get also hoists `elementId`/`kind`/`elementVersion`, so
+identity never requires traversing the nested snapshot row. In a full show
+artifact, `baseRevision` is the immediate parent named by the current revision's
+`basedOnRevisionId`, `currentRevision` is the spec's latest revision regardless
+of state, and `currentApprovedRevision` is the latest revision whose state is
+approved. Inspect the offline field map and revision semantics with
+`cctl spec schema read-envelopes`.
+
 ## One-context-provable criteria
 
 Give every selected criterion exactly one owning delivery-plan context. Let that context contain as many ordered tasks as its single validation thesis needs; task boundaries organize work but never manufacture separate validator contracts.

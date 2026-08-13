@@ -123,9 +123,9 @@ dependency — DuckDB is a dev/analysis tool here, not part of the app runtime.
 
 ## When to use this vs `logs:analyze`
 
-- **`logs:analyze`** — known questions, ranked severity, agent-consumable JSON,
-  trace reconstruction with inclusive/exclusive time, before/after `compare`. The
-  default for "is CC slow and why?".
+- **`logs:analyze`** — known questions, ranked severity, concise Markdown by
+  default, opt-in JSON for code, trace reconstruction with inclusive/exclusive
+  time, and before/after `compare`. The default for "is CC slow and why?".
 - **this** — a novel question, a percentile *distribution*, a cross-cutting join
   (e.g. join request timing to state-store timing by `trace_id`), or exploration
   where you don't yet know what you're looking for.

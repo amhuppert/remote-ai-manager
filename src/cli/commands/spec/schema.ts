@@ -1,13 +1,14 @@
 /**
- * `cctl spec schema` — the agent surface describing its own input documents
- * (R24.4). Off this repository the element write, delivery-plan edit, and
- * discovered-task documents are otherwise knowable only by
- * reading `src/lib/specs/**`, so every shape here is DERIVED from the schemas
- * the server parses with: the JSON Schema, the enumerated values, and the
- * admitting authoring stage all come from those sources, and the worked
- * examples are pinned to them by `schema.test.ts`. A second hand-written copy
- * of any shape would drift on the first change and is the one thing this
- * command must not contain.
+ * `cctl spec schema` — the agent surface describing its input documents and
+ * read-envelope reference (R24.4). Off this repository the element write,
+ * delivery-plan edit, and discovered-task documents are otherwise knowable
+ * only by reading `src/lib/specs/**`, so every input shape here is DERIVED from
+ * the schemas the server parses with: the JSON Schema, enumerated values, and
+ * admitting authoring stage all come from those sources. Read-envelope field
+ * lists are likewise derived from the runtime schemas that validate CLI
+ * output, and the worked examples are pinned by `schema.test.ts`. A second
+ * hand-written copy of a production shape would drift on the first change and
+ * is the one thing this command must not contain.
  *
  * The command is entirely local: it never reaches the server, because the
  * caller who needs it most is authoring from a repository where no CC server
@@ -59,6 +60,7 @@ import {
   type CliResult,
   type GlobalFlags,
 } from "../../shared";
+import { SPEC_READ_ENVELOPE_FIELDS } from "./read-envelopes";
 
 /** One enumerated field, addressed by its path inside the document. */
 interface EnumFact {
@@ -806,6 +808,121 @@ function guidanceDocument(): SchemaDocument {
   };
 }
 
+const readEnvelopeReferenceSchema = z
+  .object({
+    envelopes: z.array(
+      z
+        .object({
+          command: z.enum([
+            "spec show",
+            "spec status",
+            "spec lint",
+            "spec get",
+          ]),
+          view: z.enum(["summary", "outline", "rendered", "full"]).nullable(),
+          payloadFields: z.array(z.string().min(1)).min(1),
+          disclosure: z.string().min(1),
+        })
+        .strict(),
+    ),
+    revisionRoles: z
+      .object({
+        baseRevision: z.string().min(1),
+        currentRevision: z.string().min(1),
+        currentApprovedRevision: z.string().min(1),
+      })
+      .strict(),
+  })
+  .strict();
+
+const READ_ENVELOPE_REFERENCE: z.infer<typeof readEnvelopeReferenceSchema> = {
+  envelopes: [
+    {
+      command: "spec show",
+      view: "outline",
+      payloadFields: [...SPEC_READ_ENVELOPE_FIELDS.show.outline],
+      disclosure:
+        "storage: inline carries the bounded nested current-revision outline and reports total, returned, truncated, and next; when either serialization would exceed the stdout budget, storage: artifact carries reason: stdout_budget_exceeded and the exact inline envelope moves to artifact.path",
+    },
+    {
+      command: "spec show",
+      view: "summary",
+      payloadFields: [...SPEC_READ_ENVELOPE_FIELDS.show.summary],
+      disclosure:
+        "storage: inline carries counts and rollups only; disclosure reports zero returned rows, truncation per counted collection, and the exact default-outline next command; when either serialization would exceed the stdout budget, storage: artifact carries reason: stdout_budget_exceeded and the exact inline envelope moves to artifact.path",
+    },
+    {
+      command: "spec show",
+      view: "rendered",
+      payloadFields: [...SPEC_READ_ENVELOPE_FIELDS.show.rendered],
+      disclosure:
+        "artifact is {path, format, bytes, sha256}; canonical Markdown is in the file, not stdout",
+    },
+    {
+      command: "spec show",
+      view: "full",
+      payloadFields: [...SPEC_READ_ENVELOPE_FIELDS.show.full],
+      disclosure:
+        "artifact is {path, format, bytes, sha256}; raw SpecDetailView is in the file, not stdout",
+    },
+    {
+      command: "spec status",
+      view: null,
+      payloadFields: [...SPEC_READ_ENVELOPE_FIELDS.status],
+      disclosure:
+        "status is the complete lifecycle projection; executions is its active execution subset",
+    },
+    {
+      command: "spec lint",
+      view: null,
+      payloadFields: [...SPEC_READ_ENVELOPE_FIELDS.lint],
+      disclosure:
+        "lint is {revisionId, total, blocking, counts, groups}; findings live under lint.groups[].findings",
+    },
+    {
+      command: "spec get",
+      view: null,
+      payloadFields: [...SPEC_READ_ENVELOPE_FIELDS.get],
+      disclosure:
+        "element is the complete addressed view; content-element identity is also hoisted beside it",
+    },
+  ],
+  revisionRoles: {
+    baseRevision:
+      "the immediate parent named by currentRevision.revision.basedOnRevisionId",
+    currentRevision:
+      "the latest revision and lineage head regardless of draft, proposed, approved, or withdrawn state",
+    currentApprovedRevision:
+      "the latest approved revision; it need not be an ancestor of the current lineage head",
+  },
+};
+
+function readEnvelopeDocument(): SchemaDocument {
+  const schema = jsonSchemaOf(readEnvelopeReferenceSchema);
+  return {
+    id: "read-envelopes",
+    title: "Native SDD read envelope and revision-role reference",
+    usedBy: [
+      "cctl spec show <slug>",
+      "cctl spec status <slug>",
+      "cctl spec lint <slug>",
+      "cctl spec get <slug>/<handle>",
+    ],
+    jsonSchema: schema,
+    enums: collectEnums(schema, ""),
+    example: READ_ENVELOPE_REFERENCE,
+    notes: [
+      "Every success envelope carries ok: true. Show is flattened: command, view, storage, spec identity, revision, and the selected view fields are siblings rather than a named show payload. Status, lint, and get keep their named payloads under status, lint, and element.",
+      "Summary and outline normally use storage: inline. If either text or JSON serialization would exceed the stdout budget, storage: artifact and reason: stdout_budget_exceeded point to the exact inline envelope in artifact.path. Rendered and full always use storage: artifact.",
+      "baseRevision is the currentRevision lineage head's immediate basedOnRevisionId parent; it is the review comparison base, not a synonym for an approved revision.",
+      "currentRevision is the latest revision and lineage head regardless of state.",
+      "currentApprovedRevision is the latest approved revision and is not assumed to be an ancestor of currentRevision.",
+      "Lint counts are lint.total and lint.blocking; grouped findings are lint.groups[].findings.",
+      "--json changes serialization only and does not widen the selected disclosure level. Full and rendered show bodies remain file-backed artifacts.",
+    ],
+  };
+}
+
 function allDocuments(): SchemaDocument[] {
   return [
     ...elementDocuments(),
@@ -814,6 +931,7 @@ function allDocuments(): SchemaDocument[] {
     createDocument(),
     importBundleDocument(),
     ...otherDocuments(),
+    readEnvelopeDocument(),
   ];
 }
 
@@ -872,11 +990,16 @@ export function runSpecSchema(
   const documents = allDocuments();
   const requested = rest[0];
   if (requested === undefined) {
+    const index = documents.map(({ id, title, usedBy }) => ({
+      id,
+      title,
+      usedBy,
+    }));
     return {
       exitCode: EXIT_OK,
       stdout: render(json, `${indexText(documents)}\n`, {
         ok: true,
-        documents,
+        documents: index,
         hint: "run `cctl spec schema <document>` for its generated schema or mechanical reference",
       }),
       stderr: "",
@@ -901,7 +1024,7 @@ export function runSpecSchema(
       ok: true,
       documents: [selected],
       hint:
-        selected.id === "guidance"
+        selected.id === "guidance" || selected.id === "read-envelopes"
           ? "consult the relevant `cctl spec <command> --help` leaf for the same generated reference at the point of use"
           : `write this document to a file, then run: ${selected.usedBy[0]}`,
     }),

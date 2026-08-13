@@ -1,23 +1,45 @@
 # CLI (`cctl`) Design Principles
 
-`cctl` is the primary interface agents use to act on Command Center. Its design target is a
-**calling agent**, not a human: machine-checkable exit codes, terse actionable text, and output
-that steers the next step. Full design history: `docs/design/cc-cli/` (esp. `01-cli-foundation.md`
-§6 and `04-progressive-disclosure.md`).
+`cctl` is the primary interface agents use to act on Command Center. Full design history lives in
+`docs/design/cc-cli/` (especially `01-cli-foundation.md` §6 and
+`04-progressive-disclosure.md`).
 
-## The CLI is a progressive-disclosure graph
+## Principle ownership
 
-Every subcommand is a node in a disclosure graph, and its `--help` is a mini-skill: description,
-usage, flags, examples, optional domain context, **edges to related commands** (one-liners), and
-**edges out to skills** ("load X when Y"). Agents navigate pull-based, node by node, instead of
-front-loading one large document. Hints, error messages, and help share one vocabulary — a hint
-that names a command should match that command's help node.
+Load the relevant agentic-engineering-principles skill before changing this surface:
 
-- Keep high-traffic nodes (top usage, group indexes) terse; richness lives at the leaves the agent
-  deliberately navigates to.
-- Examples earn their place: teach failure-prone shapes (e.g. range syntax, file payload shapes),
-  don't restate the usage line.
-- `domainContext` is optional and ≤ 4 lines — only when a CC domain-model fact genuinely helps.
+- `agentic-engineering-principles:cli-tools-for-agents` owns the generic agent-CLI contract,
+  including text-first output, exit classes, structured errors, file payloads, and long jobs.
+- `agentic-engineering-principles:query-output-disclosure` owns progressive disclosure of data:
+  bounded defaults, handles, omission metadata, drill-down, and file spillover.
+- `agentic-engineering-principles:progressive-disclosure-tooling` owns help as a disclosure graph
+  and derivation from one typed registry.
+- `agentic-engineering-principles:agent-feedback-tiers` owns the hint/reminder/instruction
+  vocabulary and reminder admission rule.
+
+This document records only Command Center's concrete implementation and stricter local
+invariants. Do not copy the generic principle prose back into it.
+
+## Command Center output and query disclosure
+
+- Render terse, line-oriented text by default for an agent to read. `--json` is opt-in for output
+  that feeds code. For every new or changed query, it preserves the selected disclosure level and
+  changes serialization, never volume or field selection. Legacy `workflow status --json` is the
+  explicit exception: it still returns the full active-execution payload. Native SDD `spec status
+  --json` is the other legacy exception: its text sections are bounded while its structured status
+  projection carries every row. Both are migration debt, not patterns to copy.
+- Every new or changed query defaults to a bounded digest or outline unless its leaf help names an
+  established explicit detail selector. Its stable handles appear verbatim in outline rows and are
+  accepted by their drill-down commands.
+- Any omission in a new or changed query is explicit in text and JSON: state `total`, `returned`,
+  and `truncated`, then name the exact follow-up command that reveals the omitted data. A cap
+  without disclosure is a defect.
+- Native SDD `spec show` uses a four-level ladder: `--summary` for counts, a bounded nested outline
+  by default, one-element detail through `spec get`, and file-backed artifacts for `--rendered`
+  and `--full`. Artifact stdout is a small manifest with the path, format, byte count, SHA-256
+  content hash, and, when applicable, a bounded revision; it never embeds the full document.
+- JSON envelopes use named payload fields rather than a generic blob. Response fields and revision
+  semantics must remain inspectable offline through the owning `spec schema` leaf.
 
 ## Single source of truth: the help registry
 
@@ -59,44 +81,18 @@ dependency change help's exit code or write to stderr. New context providers go 
 `src/lib/agent-help/providers.ts`, return `[]` when they have nothing worth saying, and stay
 read-only.
 
-## The three-tier output contract
+## Command Center feedback and error wiring
 
-| Tier | Field | Semantics | Agent obligation |
-|---|---|---|---|
-| Hint | `hint?: string` | Advisory next step | Ignorable by contract |
-| Reminders | `reminders?: string[]` | Invariants binding while work continues | Keep true |
-| Instruction | `instruction?: string` (legacy `stopInstruction` retained) | Do this now | Obey first |
+CC renders primary output → detail/issues → `reminder:` lines → `hint:` line and carries the same
+facts in JSON as `error`/`issues`/`code`/`instruction`/`reminders`/`hint`. The legacy
+`stopInstruction` spelling remains only where the workflow protocol still emits it. The server
+authors reminders through directly tested state rules such as
+`src/lib/workflow-graph/lane-reminders.ts`; the CLI only renders them.
 
-Tier misuse is a review-blocking defect: **nothing load-bearing in `hint`, nothing actionable-now
-in `reminders`.** Text rendering order: primary output → detail/issues → `reminder:` lines →
-`hint:` line. The `--json` envelope carries `error`/`issues`/`code`/`reminders`/`hint` — structured
-detail must never be text-mode-only.
-
-## Reminders: server-authored, state-conditional, earned
-
-Reminders exist to reinforce critical invariants at the decision point (recency beats system-prompt
-distance). Their power comes from scarcity. A reminder ships only when ALL hold:
-
-1. **Earned by an observed failure** — cites a real incident/failure class (workflow-audit finding,
-   memory, bug), never a speculated risk. Same discipline as `PERFORMANCE.md`.
-2. **State-conditional** — fired by a runtime-state predicate, not unconditionally per command.
-   Always-on text belongs in a skill or system prompt, not here.
-3. **Tier-true** — violable *after* the command succeeds (else it's an instruction or a hint).
-4. **Capped** — ≤ 2 per response, priority-ordered.
-
-The server computes reminders (e.g. `src/lib/workflow-graph/lane-reminders.ts` — pure,
-directly-tested rule engine with a required `evidence` field per rule); **the CLI is a dumb
-renderer and never authors reminders.** Expanding the rule set or reaching beyond lane verbs
-requires post-hoc evidence from `graph-workflow-audit` that existing reminders reduce violations.
-
-## Error contract (unchanged floor — keep it)
-
-Exit codes: `0` OK · `1` operation failed (server said no) · `2` usage/validation · `3`
-connection/auth · `4` version mismatch (reserved). One actionable line first on stderr, naming the
-missing/offending flag/file/identity; validation issues one per line (`  <path>: <message>`);
-exit-3 failures point at `cctl doctor`. Deterministic local checks (flags, `--file` parse,
-identity) fail at exit 2 **before** any network round-trip. Server routes return
-`{ error, code?, issues? }` — never flatten computed issues into a prose string.
+CC implements the shared exit taxonomy as `0` success, `1` operation failure, `2` local usage or
+validation failure, `3` connection/auth failure, and reserved `4` version mismatch. Exit-3 output
+points at `cctl doctor`. Routes retain computed error detail as `{ error, code?, issues? }`; local
+flag, identity, and payload checks fail before a network request.
 
 ## Conversation scope: identity is scope-discriminated, never sentinel-shaped
 

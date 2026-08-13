@@ -245,7 +245,7 @@
 
 - [x] 11. Spec HTTP route surface
 - [x] 11.1 Read routes and resolution
-  - Route-resolution adapters for project-scoped spec addressing with alias-aware slug resolution; read endpoints for inventory, full/summary views, status (phase, gate states, pending approvals, open questions, coverage), single element with approval and evidence state, current-draft lint findings (the same list refusals return), and text search over requirements and decisions
+  - Route-resolution adapters for project-scoped spec addressing with alias-aware slug resolution; read endpoints for inventory, a bounded current-revision outline, counts-only summary, file-backed rendered/full detail, status (phase, gate states, pending approvals, open questions, coverage), single element with approval and evidence state, current-draft lint findings (the same list refusals return), and text search over requirements and decisions
   - Done when: route tests cover alias-resolved reads, status payload completeness, the lint-findings read matching predicate output, and 404s through the shared resolution ladder
   - _Requirements: 1.6, 2.14, 6.3_
 

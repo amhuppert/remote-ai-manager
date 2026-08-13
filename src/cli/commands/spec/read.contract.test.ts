@@ -44,6 +44,7 @@ import type {
 } from "@/lib/specs/schemas";
 import { runCli } from "../../core";
 import type { CliEnv, CliHost, FetchInit } from "../../shared";
+import { SPEC_SHOW_STDOUT_BUDGET_BYTES } from "./read";
 
 const PROJECT_PATH = "/repos/demo";
 const CREATED_AT = "2026-07-18T00:00:00.000Z";
@@ -355,7 +356,7 @@ const bundle = {
   // The manifest the export renderer produces, cut down to the revisions and
   // elements the CLI's export summary counts.
   manifest: `${JSON.stringify({
-    formatVersion: 2,
+    formatVersion: 3,
     spec: { slug: "native-sdd" },
     revisions: [
       {
@@ -813,6 +814,10 @@ function makeHost(
     questionCount?: number;
     /** Seed review comments on the current revision. */
     comments?: readonly SpecCommentRow[];
+    /** Inflate one element past the known cctl stdout pipe ceiling. */
+    largeBodyBytes?: number;
+    /** Inflate display metadata without changing the canonical slug. */
+    specNameBytes?: number;
   } = {},
 ): CliHost & {
   requests: RecordedRequest[];
@@ -832,12 +837,35 @@ function makeHost(
       ? {}
       : { authoringStage: options.draftStage }),
   };
-  const seededSpec = spec;
+  const seededSpec =
+    options.specNameBytes === undefined
+      ? spec
+      : { ...spec, name: "n".repeat(options.specNameBytes) };
+  const contentSnapshot: SpecRevisionSnapshot =
+    options.largeBodyBytes === undefined
+      ? snapshot
+      : {
+          ...snapshot,
+          elements: snapshot.elements.map((row) =>
+            row.version.payload.kind === "requirement"
+              ? {
+                  ...row,
+                  version: {
+                    ...row.version,
+                    payload: {
+                      ...row.version.payload,
+                      statement: "x".repeat(options.largeBodyBytes ?? 0),
+                    },
+                  },
+                }
+              : row,
+          ),
+        };
   const plannedSnapshot: SpecRevisionSnapshot =
     options.unplannedCoverage === true
       ? {
-          ...snapshot,
-          elements: snapshot.elements.map((row) =>
+          ...contentSnapshot,
+          elements: contentSnapshot.elements.map((row) =>
             row.version.payload.kind === "task"
               ? {
                   ...row,
@@ -852,7 +880,7 @@ function makeHost(
               : row,
           ),
         }
-      : snapshot;
+      : contentSnapshot;
   const seededSnapshot: SpecRevisionSnapshot =
     options.orphanedCoverage === true || options.orphanedDependency === true
       ? {
@@ -1024,6 +1052,8 @@ function makeHost(
       }
       if (tail === "summary")
         return handlers.getSpecSummaryGET(request, context);
+      if (tail === "outline")
+        return handlers.getSpecOutlineGET(request, context);
       if (tail === "status") return handlers.getSpecStatusGET(request, context);
       if (tail === "comments")
         return handlers.getSpecCommentsGET(request, context);
@@ -1073,12 +1103,258 @@ describe("cctl spec read verbs against seeded read routes", () => {
     );
 
     expect(shown.exitCode).toBe(0);
-    expect(JSON.parse(shown.stdout).spec.spec.slug).toBe("measures");
+    expect(JSON.parse(shown.stdout).spec.slug).toBe("measures");
     expect(measured.exitCode).toBe(0);
     expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
-      "/api/specs/demo/measures",
+      "/api/specs/demo/measures/outline",
       "/api/projects/demo/spec-measures",
     ]);
+  });
+
+  it("defaults to a bounded nested outline in text and JSON", async () => {
+    const host = makeHost();
+    const text = await runCli(["spec", "show", "native-sdd"], baseEnv, host);
+    const structured = await runCli(
+      ["spec", "show", "native-sdd", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("native-sdd\trevision 1\tdraft\tplan");
+    expect(text.stdout).toContain("R1");
+    expect(text.stdout).toContain("  R1.1");
+    expect(text.stdout).toContain("next: cctl spec show native-sdd --rendered");
+    expect(text.stdout).not.toContain('"revisions"');
+
+    const envelope = JSON.parse(structured.stdout);
+    expect(envelope).toMatchObject({
+      ok: true,
+      command: "spec show",
+      view: "outline",
+      storage: "inline",
+      spec: { id: spec.id, slug: "native-sdd", name: "Native SDD" },
+      revision: {
+        role: "current",
+        id: revision.id,
+        number: 1,
+        state: "draft",
+        authoringStage: "plan",
+      },
+      requirements: [
+        {
+          handle: "R1",
+          elementId: "requirement-1",
+          criteria: [
+            { handle: "R1.1", elementId: "criterion-1", elementVersion: 1 },
+          ],
+        },
+      ],
+      disclosure: {
+        next: "cctl spec show native-sdd --rendered",
+      },
+    });
+    expect(envelope).not.toHaveProperty("revisions");
+    expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
+      "/api/specs/demo/native-sdd/outline",
+      "/api/specs/demo/native-sdd/outline",
+    ]);
+  });
+
+  it("spills an outline whose exact identities exceed the stdout budget", async () => {
+    const jsonHost = makeHost({ specNameBytes: 80 * 1024 });
+    const structured = await runCli(
+      ["spec", "show", "native-sdd", "--json"],
+      baseEnv,
+      jsonHost,
+    );
+    const receipt = JSON.parse(structured.stdout);
+
+    expect(structured.exitCode).toBe(0);
+    expect(Buffer.byteLength(structured.stdout, "utf8")).toBeLessThan(
+      SPEC_SHOW_STDOUT_BUDGET_BYTES,
+    );
+    expect(receipt).toMatchObject({
+      ok: true,
+      command: "spec show",
+      view: "outline",
+      storage: "artifact",
+      reason: "stdout_budget_exceeded",
+      artifact: {
+        path: expect.stringMatching(
+          /^\.cc\/temp\/spec-outline-[a-f0-9]{12}\.json$/,
+        ),
+        format: "json",
+        bytes: expect.any(Number),
+        sha256: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+      },
+    });
+    expect(receipt).not.toHaveProperty("spec");
+    const artifact = jsonHost.written.get(receipt.artifact.path) ?? "";
+    const inline = JSON.parse(artifact);
+    expect(inline).toMatchObject({
+      command: "spec show",
+      view: "outline",
+      storage: "inline",
+      spec: { slug: "native-sdd" },
+    });
+    expect(inline.spec.name).toHaveLength(80 * 1024);
+    expect(receipt.artifact.bytes).toBe(Buffer.byteLength(artifact, "utf8"));
+    expect(receipt.artifact.sha256).toBe(
+      `sha256:${createHash("sha256").update(artifact, "utf8").digest("hex")}`,
+    );
+
+    const textHost = makeHost({ specNameBytes: 80 * 1024 });
+    const textResult = await runCli(
+      ["spec", "show", "native-sdd"],
+      baseEnv,
+      textHost,
+    );
+    expect(textResult.exitCode).toBe(0);
+    expect(Buffer.byteLength(textResult.stdout, "utf8")).toBeLessThan(
+      SPEC_SHOW_STDOUT_BUDGET_BYTES,
+    );
+    expect(textResult.stdout).toContain("stdout budget exceeded");
+    expect([...textHost.written.keys()]).toEqual([receipt.artifact.path]);
+  });
+
+  it("keeps summary as counts and JSON as serialization rather than depth", async () => {
+    const host = makeHost();
+    const result = await runCli(
+      ["spec", "show", "native-sdd", "--summary", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope).toMatchObject({
+      ok: true,
+      command: "spec show",
+      view: "summary",
+      storage: "inline",
+      spec: { slug: "native-sdd" },
+      counts: { requirements: 1, criteria: 1, decisions: 0, tasks: 2 },
+      delivery: { deliveredExternallyCount: 0 },
+      disclosure: {
+        requirements: { total: 1, returned: 0, truncated: true },
+        criteria: { total: 1, returned: 0, truncated: true },
+        decisions: { total: 0, returned: 0, truncated: false },
+        tasks: { total: 2, returned: 0, truncated: true },
+        next: "cctl spec show native-sdd",
+      },
+    });
+    expect(envelope.delivery).not.toHaveProperty(
+      "deliveredExternallyCriterionIds",
+    );
+    const summaryRequest = host.requests.at(0);
+    expect(summaryRequest).toBeDefined();
+    expect(new URL(summaryRequest?.url ?? "http://cc.invalid").pathname).toBe(
+      "/api/specs/demo/native-sdd/summary",
+    );
+
+    const text = await runCli(
+      ["spec", "show", "native-sdd", "--summary"],
+      baseEnv,
+      makeHost(),
+    );
+    expect(text.stdout).toContain(
+      "requirements: 1 total, 0 returned, truncated=yes",
+    );
+    expect(text.stdout).toContain("next: cctl spec show native-sdd");
+  });
+
+  it("writes rendered and full reads to files and returns bounded receipts", async () => {
+    const renderedHost = makeHost();
+    const rendered = await runCli(
+      ["spec", "show", "native-sdd", "--rendered", "--json"],
+      baseEnv,
+      renderedHost,
+    );
+    const renderedPath = ".cc/temp/native-sdd-revision-1.md";
+    const renderedReceipt = JSON.parse(rendered.stdout);
+
+    expect(rendered.exitCode).toBe(0);
+    expect(renderedReceipt).toMatchObject({
+      ok: true,
+      command: "spec show",
+      view: "rendered",
+      storage: "artifact",
+      revision: { role: "current", number: 1 },
+      artifact: {
+        path: renderedPath,
+        format: "markdown",
+        bytes: expect.any(Number),
+        sha256: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+      },
+    });
+    expect(renderedReceipt).not.toHaveProperty("spec");
+    const renderedArtifact = renderedHost.written.get(renderedPath) ?? "";
+    expect(renderedArtifact).toContain("### R1.1 — Acceptance criterion");
+    expect(renderedReceipt.artifact.bytes).toBe(
+      Buffer.byteLength(renderedArtifact, "utf8"),
+    );
+    expect(renderedReceipt.artifact.sha256).toBe(
+      `sha256:${createHash("sha256").update(renderedArtifact, "utf8").digest("hex")}`,
+    );
+    expect(rendered.stdout).not.toContain("The spec can be read through cctl.");
+
+    const fullHost = makeHost({ largeBodyBytes: 80 * 1024 });
+    const full = await runCli(
+      ["spec", "show", "native-sdd", "--full", "--json"],
+      baseEnv,
+      fullHost,
+    );
+    const fullPath = ".cc/temp/native-sdd-spec-detail.json";
+    const fullReceipt = JSON.parse(full.stdout);
+    const fullArtifact = fullHost.written.get(fullPath);
+
+    expect(full.exitCode).toBe(0);
+    expect(Buffer.byteLength(full.stdout, "utf8")).toBeLessThan(64 * 1024);
+    expect(Buffer.byteLength(fullArtifact ?? "", "utf8")).toBeGreaterThan(
+      64 * 1024,
+    );
+    expect(fullReceipt).toMatchObject({
+      ok: true,
+      command: "spec show",
+      view: "full",
+      storage: "artifact",
+      artifact: { path: fullPath, format: "json" },
+    });
+    expect(fullReceipt.artifact.bytes).toBe(
+      Buffer.byteLength(fullArtifact ?? "", "utf8"),
+    );
+    expect(fullReceipt.artifact.sha256).toBe(
+      `sha256:${createHash("sha256")
+        .update(fullArtifact ?? "", "utf8")
+        .digest("hex")}`,
+    );
+    expect(
+      specDetailViewSchema.parse(JSON.parse(fullArtifact ?? "{}")).spec.slug,
+    ).toBe("native-sdd");
+    expect(fullReceipt).not.toHaveProperty("currentRevision");
+  });
+
+  it("refuses conflicting show levels and an output path without a file-backed level", async () => {
+    const host = makeHost();
+    const conflicting = await runCli(
+      ["spec", "show", "native-sdd", "--summary", "--full"],
+      baseEnv,
+      host,
+    );
+    const strayOut = await runCli(
+      ["spec", "show", "native-sdd", "--out", "detail.json"],
+      baseEnv,
+      host,
+    );
+
+    expect(conflicting.exitCode).toBe(2);
+    expect(conflicting.stderr).toContain(
+      "one of --summary, --rendered, or --full",
+    );
+    expect(strayOut.exitCode).toBe(2);
+    expect(strayOut.stderr).toContain("--out requires --rendered or --full");
+    expect(host.requests).toEqual([]);
   });
 
   it("renders every remaining active authoring stage and its concluding gate", async () => {
@@ -1547,6 +1823,32 @@ describe("cctl spec read verbs against seeded read routes", () => {
     expect(envelope.elementVersion).toBe(1);
   });
 
+  it("renders spec get as concise text by default", async () => {
+    const host = makeHost();
+    const content = await runCli(
+      ["spec", "get", "native-sdd/R1"],
+      baseEnv,
+      host,
+    );
+    const question = await runCli(
+      ["spec", "get", "native-sdd/Q1"],
+      baseEnv,
+      host,
+    );
+
+    expect(content.exitCode).toBe(0);
+    expect(content.stdout).toContain("native-sdd/R1\trequirement\trevision 1");
+    expect(content.stdout).toContain("Specs are durable product objects.");
+    expect(content.stdout).toContain("priority: must");
+    expect(content.stdout.trimStart()).not.toMatch(/^\{/u);
+    expect(content.stdout).not.toContain('"specId"');
+
+    expect(question.exitCode).toBe(0);
+    expect(question.stdout).toContain("native-sdd/Q1\tquestion\topen");
+    expect(question.stdout).toContain("Which export format is canonical?");
+    expect(question.stdout.trimStart()).not.toMatch(/^\{/u);
+  });
+
   it("gets question and assumption handles as typed views", async () => {
     const host = makeHost();
     const questionResult = await runCli(
@@ -1753,17 +2055,29 @@ describe("cctl spec read verbs against seeded read routes", () => {
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain("revision-from-another-spec");
-      expect(result.stderr).toContain("cctl spec show native-sdd");
+      expect(result.stderr).toContain("cctl spec show native-sdd --full");
     });
     it("defaults to the pair Spec Studio diffs and classes it identically", async () => {
       const host = makeHost({ lineage: true });
       const shown = await runCli(
-        ["spec", "show", "native-sdd", "--json"],
+        [
+          "spec",
+          "show",
+          "native-sdd",
+          "--full",
+          "--out",
+          ".cc/temp/diff-parity-detail.json",
+          "--json",
+        ],
         baseEnv,
         host,
       );
       expect(shown.exitCode, `${shown.stderr}${shown.stdout}`).toBe(0);
-      const detail = specDetailViewSchema.parse(JSON.parse(shown.stdout).spec);
+      const detail = specDetailViewSchema.parse(
+        JSON.parse(
+          host.written.get(".cc/temp/diff-parity-detail.json") ?? "{}",
+        ),
+      );
       const current = detail.currentRevision;
       if (current === null) throw new Error("no current revision");
       // Exactly what SpecReviewMode computes from the detail view it renders.
@@ -2026,7 +2340,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
     );
 
     expect(new URL(host.requests[0]?.url ?? "").pathname).toBe(
-      "/api/specs/demo/search",
+      "/api/specs/demo/search/outline",
     );
     expect(result.stderr).not.toContain("invalid_response");
     expect(JSON.parse(result.stdout)).toEqual({
@@ -2345,10 +2659,9 @@ describe("cctl spec verify --against across migration 0009", () => {
     .loose();
 
   /**
-   * Reconstruct the bundle an old build exported for the frozen legacy seed.
-   * The bundle FORMAT is unchanged by the migration (formatVersion stays 2 —
-   * the content changed, not the manifest shape), so the old bytes differ from
-   * the current export only where migration 0009 rewrote persisted content:
+   * Reconstruct the pre-narrowing content for the frozen legacy seed using the
+   * current bundle format. The bytes differ from the current export only where
+   * migration 0009 rewrote persisted content:
    * the criterion's strategy payload, its payload hash, and the revision
    * content hash. Every patched value comes from the frozen seed constants
    * and the frozen hash helper — nothing is invented.
@@ -2358,7 +2671,7 @@ describe("cctl spec verify --against across migration 0009", () => {
   ): CanonicalSpecBundle {
     const legacyContentHash = contentHashOf(AFFECTED_ELEMENTS);
     const manifest = manifestShapeSchema.parse(JSON.parse(current.manifest));
-    expect(manifest.formatVersion).toBe(2);
+    expect(manifest.formatVersion).toBe(3);
     const revision = manifest.revisions[0];
     if (revision === undefined) throw new Error("manifest revision missing");
     const migratedContentHash = revision.contentHash;
@@ -2479,7 +2792,7 @@ describe("cctl spec verify --against across migration 0009", () => {
       manifestShapeSchema.parse(
         JSON.parse(bundleShapeSchema.parse(JSON.parse(oldCleanRaw)).manifest),
       ).formatVersion,
-    ).toBe(2);
+    ).toBe(3);
     await expect(
       loadSpecExportState(
         {
@@ -2548,8 +2861,8 @@ describe("cctl spec verify --against across migration 0009", () => {
       details: { against: "/tmp/affected-old.json" },
     });
 
-    // (5) The unaffected spec's genuinely-old bundle still matches at exit 0
-    // — no formatVersion bump falsely invalidates untouched specs.
+    // (5) The unaffected spec's pre-migration content still matches at exit 0
+    // when reconstructed in the current bundle format.
     files.set("/tmp/clean-old.json", oldCleanRaw);
     const stillMatches = await runCli(
       [

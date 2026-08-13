@@ -278,6 +278,8 @@ function makeHost(
     skippedWithdrawn?: boolean;
     /** Every dial concluded the stage, so the propose absorbed the sign-off. */
     absorbedSignOff?: boolean;
+    /** Multiple subjects share the next gate, so one subjectless request covers it. */
+    wholeGateNextAction?: boolean;
     /**
      * Blocking finding counts the lint read answers with, consumed in order —
      * the first is the draft before the write, the second after it.
@@ -731,15 +733,25 @@ function makeHost(
               instruction:
                 "Ask a human to approve R1 at the requirements gate in Spec Studio, or request it with gate requirements and subject R1.",
             },
-            nextAction: {
-              kind: "approve_subject",
-              actsNext: "human",
-              gate: "requirements",
-              subject: "R1",
-              elementId: "requirement-id-1",
-              instruction:
-                "Ask a human to approve R1 at the requirements gate in Spec Studio.",
-            },
+            nextAction: options.wholeGateNextAction
+              ? {
+                  kind: "approve_gate",
+                  actsNext: "human",
+                  gate: "requirements",
+                  subject: null,
+                  elementId: null,
+                  instruction:
+                    "Ask a human to approve all outstanding subjects at the requirements gate in Spec Studio.",
+                }
+              : {
+                  kind: "approve_subject",
+                  actsNext: "human",
+                  gate: "requirements",
+                  subject: "R1",
+                  elementId: "requirement-id-1",
+                  instruction:
+                    "Ask a human to approve R1 at the requirements gate in Spec Studio.",
+                },
           });
         case "advance":
           return response({
@@ -1904,6 +1916,7 @@ describe("cctl spec write verbs", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("native-sdd/T9");
+    expect(result.stderr).toContain("cctl spec show native-sdd --rendered");
     expect(actionRequests(host)).toHaveLength(0);
   });
 
@@ -2033,6 +2046,20 @@ describe("cctl spec write verbs", () => {
       "instruction: Ask a human to approve R1 at the requirements gate in Spec Studio, or request it with gate requirements and subject R1.",
     );
     expect(result.stdout).not.toContain("plan gate");
+  });
+
+  it("renders a whole-gate approval request without an arbitrary subject", async () => {
+    const result = await runCli(
+      ["spec", "propose", "native-sdd"],
+      baseEnv,
+      makeHost({ wholeGateNextAction: true }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "next: cctl spec request-approval native-sdd --gate requirements",
+    );
+    expect(result.stdout).not.toContain("--subject R1");
   });
 
   /**

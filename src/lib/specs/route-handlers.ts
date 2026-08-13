@@ -90,6 +90,7 @@ import {
   type ApprovalApplicability,
 } from "./approval-applicability";
 import {
+  approvalHeld,
   currentExecution,
   elementHandle,
   latestRevision,
@@ -191,6 +192,7 @@ import type {
   SpecDiffView,
   SpecQuestionView,
   SpecRevisionSnapshotView,
+  SpecShowOutlineView,
   SpecEditContextView,
   SpecExecutionView,
   SpecGateAdmissionView,
@@ -232,6 +234,10 @@ import {
 } from "./schemas";
 
 const logger = createLogger("specs.routes");
+
+export const SPEC_OUTLINE_ROOT_LIMIT = 12;
+export const SPEC_OUTLINE_CRITERIA_PER_REQUIREMENT_LIMIT = 6;
+const SPEC_OUTLINE_SUMMARY_LIMIT = 160;
 
 export type SpecRouteContext = {
   params: Promise<Record<string, string>>;
@@ -861,6 +867,84 @@ function criterionProofState(
   return "pending";
 }
 
+function criterionOutlineStatus(
+  deps: SpecRouteDeps,
+  snapshot: SpecRevisionSnapshot,
+  criterion: SpecRevisionElement,
+  requirementTaskRows: readonly SpecRevisionElement[],
+): SpecShowOutlineView["requirements"][number]["criteria"][number]["status"] {
+  return {
+    coverage: requirementTaskRows.some(
+      ({ version }) =>
+        version.payload.kind === "task" &&
+        version.payload.coveredCriterionElementIds.includes(
+          criterion.element.id,
+        ),
+    )
+      ? "covered"
+      : "uncovered",
+    proof: criterionProofState(deps, criterion.element.id, snapshot.revision),
+  };
+}
+
+function requirementStatus(
+  deps: SpecRouteDeps,
+  snapshot: SpecRevisionSnapshot,
+  requirement: SpecRevisionElement,
+  approvals: readonly SpecApprovalRow[],
+  related?: {
+    readonly criteria: readonly SpecRevisionElement[];
+    readonly tasks: readonly SpecRevisionElement[];
+  },
+): ReturnType<typeof projectRequirementStatus> {
+  const criteria =
+    related?.criteria ??
+    snapshot.elements.filter(
+      ({ element }) =>
+        element.kind === "criterion" &&
+        element.parentElementId === requirement.element.id,
+    );
+  const taskRows =
+    related?.tasks ??
+    snapshot.elements.filter(
+      ({ version }) =>
+        version.payload.kind === "task" &&
+        version.payload.tracedRequirementElementIds.includes(
+          requirement.element.id,
+        ),
+    );
+  return projectRequirementStatus({
+    approvalValidity: latestApprovalValidity(
+      approvals,
+      "requirement",
+      requirement.element.id,
+    ),
+    criteria: criteria.map((criterion) => {
+      const status = criterionOutlineStatus(
+        deps,
+        snapshot,
+        criterion,
+        taskRows,
+      );
+      return {
+        covered: status.coverage === "covered",
+        proof: status.proof,
+      };
+    }),
+  });
+}
+
+function outlineApprovalStatus(
+  approvals: readonly SpecApprovalRow[],
+  applies: ApprovalApplicability,
+  subjectKind: "requirement" | "decision",
+  elementId: string,
+): "valid" | "stale" | "closed" | "unapproved" {
+  if (approvalHeld(approvals, applies, subjectKind, elementId)) return "valid";
+  const latest = latestApprovalValidity(approvals, subjectKind, elementId);
+  return latest === "stale" || latest === "closed" ? latest : "unapproved";
+}
+
 function buildElementStatuses(
   deps: SpecRouteDeps,
   snapshot: SpecRevisionSnapshot | null,
@@ -889,42 +973,10 @@ function buildElementStatuses(
 
   const requirements = snapshot.elements
     .filter(({ element }) => element.kind === "requirement")
-    .map((row) => {
-      const criteria = snapshot.elements.filter(
-        ({ element }) =>
-          element.kind === "criterion" &&
-          element.parentElementId === row.element.id,
-      );
-      const taskRows = snapshot.elements.filter(
-        ({ version }) =>
-          version.payload.kind === "task" &&
-          version.payload.tracedRequirementElementIds.includes(row.element.id),
-      );
-      return {
-        elementId: row.element.id,
-        status: projectRequirementStatus({
-          approvalValidity: latestApprovalValidity(
-            approvals,
-            "requirement",
-            row.element.id,
-          ),
-          criteria: criteria.map((criterion) => ({
-            covered: taskRows.some(
-              ({ version }) =>
-                version.payload.kind === "task" &&
-                version.payload.coveredCriterionElementIds.includes(
-                  criterion.element.id,
-                ),
-            ),
-            proof: criterionProofState(
-              deps,
-              criterion.element.id,
-              snapshot.revision,
-            ),
-          })),
-        }),
-      };
-    });
+    .map((row) => ({
+      elementId: row.element.id,
+      status: requirementStatus(deps, snapshot, row, approvals),
+    }));
 
   const tasks = snapshot.elements
     .filter(({ element }) => element.kind === "task")
@@ -1533,7 +1585,7 @@ async function buildStatus(
             total: health.total,
             blocking: health.blocking,
             counts: health.counts.map((entry) => ({ ...entry })),
-            top: health.ordered.slice(0, DRAFT_HEALTH_TOP_FINDINGS),
+            top: statusDraftHealthTop(health.ordered),
           },
     coverage: coverage(state.currentSnapshot),
     delivery: projectDeliveryDisplay(displayCriteria),
@@ -1543,6 +1595,20 @@ async function buildStatus(
       admissions,
     ),
   };
+}
+
+function statusDraftHealthTop(findings: readonly LintFinding[]): LintFinding[] {
+  const top = findings.slice(0, DRAFT_HEALTH_TOP_FINDINGS);
+  const emptyDesign = findings.find(
+    ({ ruleId }) => ruleId === "9.13.design-stage-without-design-content",
+  );
+  if (
+    emptyDesign === undefined ||
+    top.some(({ ruleId }) => ruleId === emptyDesign.ruleId)
+  ) {
+    return top;
+  }
+  return [...top, emptyDesign];
 }
 
 /**
@@ -1599,6 +1665,304 @@ async function buildSummary(deps: SpecRouteDeps, spec: Spec) {
     delivery: status.delivery,
     linkedWork: linkedWork(deps.findLinksBySpecId(spec.id)),
     imported: status.imported,
+  };
+}
+
+function outlineCounts(
+  snapshot: SpecRevisionSnapshot | null,
+): SpecShowOutlineView["counts"] {
+  const counts: SpecShowOutlineView["counts"] = {
+    requirements: 0,
+    criteria: 0,
+    decisions: 0,
+    tasks: 0,
+    sections: 0,
+  };
+  for (const { element } of snapshot?.elements ?? []) {
+    switch (element.kind) {
+      case "requirement":
+        counts.requirements += 1;
+        break;
+      case "criterion":
+        counts.criteria += 1;
+        break;
+      case "decision":
+        counts.decisions += 1;
+        break;
+      case "task":
+        counts.tasks += 1;
+        break;
+      case "section":
+        counts.sections += 1;
+        break;
+    }
+  }
+  return counts;
+}
+
+function outlineDisclosure(total: number, returned: number) {
+  return { total, returned, truncated: returned < total };
+}
+
+function outlineSummary(text: string): string {
+  const singleLine = text.replace(/\s+/gu, " ").trim();
+  if (singleLine.length <= SPEC_OUTLINE_SUMMARY_LIMIT) return singleLine;
+  return `${singleLine.slice(0, SPEC_OUTLINE_SUMMARY_LIMIT - 1)}…`;
+}
+
+function outlineIdentity(
+  row: SpecRevisionElement,
+  handle: string,
+  summary: string,
+) {
+  return {
+    handle,
+    elementId: row.element.id,
+    elementVersion: row.version.elementVersion,
+    summary: outlineSummary(summary),
+  };
+}
+
+interface AddressableOutlineRow {
+  readonly row: SpecRevisionElement;
+  readonly handle: string;
+}
+
+function addressableOutlineRow(
+  specSlug: string,
+  snapshot: SpecRevisionSnapshot,
+  row: SpecRevisionElement,
+): AddressableOutlineRow | null {
+  const handle = elementHandleInSnapshot(snapshot, row.element.id);
+  return handle !== null && isWellFormedElementHandle(handle, specSlug)
+    ? { row, handle }
+    : null;
+}
+
+async function buildOutline(
+  deps: SpecRouteDeps,
+  spec: Spec,
+): Promise<SpecShowOutlineView> {
+  const state = await loadCurrentState(deps, spec.id);
+  const reconciled = await loadReconciledExecutions(deps, spec);
+  const snapshot = state.currentSnapshot;
+  const counts = outlineCounts(snapshot);
+  const outlinePhase = phase(
+    spec,
+    state.revisions,
+    reconciled.rows,
+    deliveryCriteria(deps, state.currentApprovedSnapshot, reconciled.rows),
+  );
+  const empty = outlineDisclosure(0, 0);
+  if (snapshot === null) {
+    return {
+      spec: { id: spec.id, slug: spec.slug, name: spec.name },
+      revision: null,
+      phase: outlinePhase,
+      counts,
+      requirements: [],
+      decisions: [],
+      tasks: [],
+      disclosure: {
+        requirements: empty,
+        criteria: empty,
+        decisions: empty,
+        tasks: empty,
+        sections: empty,
+        next: `cctl spec show ${spec.slug} --rendered`,
+      },
+    };
+  }
+
+  const ordered = [...snapshot.elements].sort((left, right) =>
+    left.version.position === right.version.position
+      ? left.element.id.localeCompare(right.element.id)
+      : left.version.position - right.version.position,
+  );
+  const criteriaByRequirement = new Map<string, SpecRevisionElement[]>();
+  const tasksByRequirement = new Map<string, SpecRevisionElement[]>();
+  for (const row of ordered) {
+    if (
+      row.version.payload.kind === "criterion" &&
+      row.element.parentElementId !== null
+    ) {
+      const rows = criteriaByRequirement.get(row.element.parentElementId) ?? [];
+      rows.push(row);
+      criteriaByRequirement.set(row.element.parentElementId, rows);
+    }
+    if (row.version.payload.kind === "task") {
+      for (const requirementId of row.version.payload
+        .tracedRequirementElementIds) {
+        const rows = tasksByRequirement.get(requirementId) ?? [];
+        rows.push(row);
+        tasksByRequirement.set(requirementId, rows);
+      }
+    }
+  }
+  const addressable = (row: SpecRevisionElement) =>
+    addressableOutlineRow(spec.slug, snapshot, row);
+  const requirementEntries = ordered
+    .filter(({ version }) => version.payload.kind === "requirement")
+    .flatMap((row) => {
+      const entry = addressable(row);
+      return entry === null ? [] : [entry];
+    })
+    .slice(0, SPEC_OUTLINE_ROOT_LIMIT);
+  const decisionEntries = ordered
+    .filter(({ version }) => version.payload.kind === "decision")
+    .flatMap((row) => {
+      const entry = addressable(row);
+      return entry === null ? [] : [entry];
+    })
+    .slice(0, SPEC_OUTLINE_ROOT_LIMIT);
+  const taskEntries = ordered
+    .filter(({ version }) => version.payload.kind === "task")
+    .flatMap((row) => {
+      const entry = addressable(row);
+      return entry === null ? [] : [entry];
+    })
+    .slice(0, SPEC_OUTLINE_ROOT_LIMIT);
+  const selectedApprovalElementIds = new Set([
+    ...requirementEntries.map(({ row }) => row.element.id),
+    ...decisionEntries.map(({ row }) => row.element.id),
+  ]);
+  const approvals = deps
+    .findApprovalsBySpecId(spec.id)
+    .filter(
+      (approval) =>
+        approval.element_id !== null &&
+        selectedApprovalElementIds.has(approval.element_id),
+    );
+  const applies = await loadApprovalApplicability(deps, state, approvals);
+  const taskStatuses = buildElementStatuses(
+    deps,
+    { ...snapshot, elements: taskEntries.map(({ row }) => row) },
+    [],
+    reconciled.rows,
+    deps.findTaskClaimsBySpecId(spec.id),
+  );
+  const taskStatusById = new Map(
+    taskStatuses.tasks.map((entry) => [entry.elementId, entry.status]),
+  );
+  let returnedCriteria = 0;
+  const requirements: SpecShowOutlineView["requirements"] =
+    requirementEntries.flatMap(({ row, handle }) => {
+      const payload = row.version.payload;
+      if (payload.kind !== "requirement") return [];
+      const taskRows = tasksByRequirement.get(row.element.id) ?? [];
+      const criterionRows = criteriaByRequirement.get(row.element.id) ?? [];
+      const criteria = criterionRows
+        .flatMap((criterion) => {
+          const entry = addressable(criterion);
+          return entry === null ? [] : [entry];
+        })
+        .slice(0, SPEC_OUTLINE_CRITERIA_PER_REQUIREMENT_LIMIT)
+        .flatMap(({ row: criterion, handle: criterionHandle }) => {
+          const criterionPayload = criterion.version.payload;
+          if (criterionPayload.kind !== "criterion") return [];
+          return [
+            {
+              ...outlineIdentity(
+                criterion,
+                criterionHandle,
+                criterionPayload.text,
+              ),
+              validationKinds: [
+                ...new Set(criterionPayload.validationStrategy.kinds),
+              ],
+              status: criterionOutlineStatus(
+                deps,
+                snapshot,
+                criterion,
+                taskRows,
+              ),
+            },
+          ];
+        });
+      returnedCriteria += criteria.length;
+      return [
+        {
+          ...outlineIdentity(row, handle, payload.statement),
+          priority: payload.priority,
+          risk: payload.risk,
+          status: {
+            ...requirementStatus(deps, snapshot, row, approvals, {
+              criteria: criterionRows,
+              tasks: taskRows,
+            }),
+            approval: outlineApprovalStatus(
+              approvals,
+              applies,
+              "requirement",
+              row.element.id,
+            ),
+          },
+          criteria,
+        },
+      ];
+    });
+  const decisions: SpecShowOutlineView["decisions"] = decisionEntries.flatMap(
+    ({ row, handle }) =>
+      row.version.payload.kind === "decision"
+        ? [
+            {
+              ...outlineIdentity(row, handle, row.version.payload.title),
+              status: {
+                approval: outlineApprovalStatus(
+                  approvals,
+                  applies,
+                  "decision",
+                  row.element.id,
+                ),
+              },
+            },
+          ]
+        : [],
+  );
+  const tasks: SpecShowOutlineView["tasks"] = taskEntries.flatMap(
+    ({ row, handle }) =>
+      row.version.payload.kind === "task"
+        ? [
+            {
+              ...outlineIdentity(row, handle, row.version.payload.title),
+              status: (() => {
+                const status = taskStatusById.get(row.element.id) ?? {
+                  status: "pending" as const,
+                  claimEvidenceIds: [],
+                };
+                return {
+                  status: status.status,
+                  claimEvidenceCount: status.claimEvidenceIds.length,
+                };
+              })(),
+            },
+          ]
+        : [],
+  );
+
+  return {
+    spec: { id: spec.id, slug: spec.slug, name: spec.name },
+    revision: {
+      role: "current",
+      id: snapshot.revision.id,
+      number: snapshot.revision.number,
+      state: snapshot.revision.state,
+      authoringStage: snapshot.revision.authoringStage,
+      basedOnRevisionId: snapshot.revision.basedOnRevisionId,
+    },
+    phase: outlinePhase,
+    counts,
+    requirements,
+    decisions,
+    tasks,
+    disclosure: {
+      requirements: outlineDisclosure(counts.requirements, requirements.length),
+      criteria: outlineDisclosure(counts.criteria, returnedCriteria),
+      decisions: outlineDisclosure(counts.decisions, decisions.length),
+      tasks: outlineDisclosure(counts.tasks, tasks.length),
+      sections: outlineDisclosure(counts.sections, 0),
+      next: `cctl spec show ${spec.slug} --rendered`,
+    },
   };
 }
 
@@ -1831,6 +2195,27 @@ export function createSpecRouteHandlers(
     const resolved = await resolveSpecRoute(deps, context);
     if (!resolved.ok) return resolved.response;
     return NextResponse.json(await buildSummary(deps, resolved.value.spec));
+  }
+
+  async function getSpecOutlineGET(
+    _request: Request,
+    context: SpecRouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSpecRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const outline = await buildOutline(deps, resolved.value.spec);
+    logger.debug("specs.routes.outline.complete", {
+      projectName: resolved.value.projectName,
+      specId: resolved.value.spec.id,
+      requestedSlug: resolved.value.requestedSlug,
+      resolvedSlug: resolved.value.spec.slug,
+      revisionId: outline.revision?.id ?? null,
+      returnedRequirementCount: outline.requirements.length,
+      returnedCriterionCount: outline.disclosure.criteria.returned,
+      returnedDecisionCount: outline.decisions.length,
+      returnedTaskCount: outline.tasks.length,
+    });
+    return NextResponse.json(outline);
   }
 
   async function getSpecGET(
@@ -2702,7 +3087,7 @@ export function createSpecRouteHandlers(
       return notFound(
         requestedTo === null
           ? `Spec ${spec.slug} has no revision to diff`
-          : `Revision ${requestedTo} is not part of spec ${spec.slug} — list its revisions with cctl spec show ${spec.slug}`,
+          : `Revision ${requestedTo} is not part of spec ${spec.slug} — write its full revision list with cctl spec show ${spec.slug} --full`,
       );
     }
 
@@ -2735,7 +3120,7 @@ export function createSpecRouteHandlers(
           null);
     if (baseRevisionId !== null && from === null) {
       return notFound(
-        `Revision ${baseRevisionId} is not part of spec ${spec.slug} — list its revisions with cctl spec show ${spec.slug}`,
+        `Revision ${baseRevisionId} is not part of spec ${spec.slug} — write its full revision list with cctl spec show ${spec.slug} --full`,
       );
     }
 
@@ -2823,6 +3208,7 @@ export function createSpecRouteHandlers(
     listSpecsGET,
     getSpecMeasuresGET,
     getSpecSummaryGET,
+    getSpecOutlineGET,
     getSpecGET,
     getSpecStatusGET,
     getSpecCommentsGET,
@@ -2843,6 +3229,7 @@ const handlers = createSpecRouteHandlers();
 export const specsInventoryGET = withTracing(handlers.listSpecsGET);
 export const specMeasuresGET = withTracing(handlers.getSpecMeasuresGET);
 export const specSummaryGET = withTracing(handlers.getSpecSummaryGET);
+export const specOutlineGET = withTracing(handlers.getSpecOutlineGET);
 export const specDetailGET = withTracing(handlers.getSpecGET);
 export const specStatusGET = withTracing(handlers.getSpecStatusGET);
 export const specCommentsGET = withTracing(handlers.getSpecCommentsGET);

@@ -17,11 +17,18 @@ import type {
   SpecTaskClaimRow,
   SpecWaiverRow,
 } from "./schemas";
-import { createSpecRouteHandlers, type SpecRouteDeps } from "./route-handlers";
+import { lint } from "./lint";
+import {
+  createSpecRouteHandlers,
+  SPEC_OUTLINE_CRITERIA_PER_REQUIREMENT_LIMIT,
+  SPEC_OUTLINE_ROOT_LIMIT,
+  type SpecRouteDeps,
+} from "./route-handlers";
 import {
   specCommentsViewSchema,
   specDetailViewSchema,
   specEditContextViewSchema,
+  specShowOutlineViewSchema,
   specProjectSearchViewSchema,
   specStatusViewSchema,
 } from "./view-schemas";
@@ -312,6 +319,621 @@ function createDeps(overrides: Partial<SpecRouteDeps> = {}): SpecRouteDeps {
 }
 
 describe("spec read route handlers", () => {
+  it("returns a bounded nested current-revision outline with stable handles and domain status", async () => {
+    const multilineStatement = `  Agents can inspect   the current revision\nwithout transferring ${"every payload ".repeat(20)}  `;
+    const [requirementRow, criterionRow, decisionRow, taskRow] =
+      snapshot.elements;
+    if (
+      requirementRow === undefined ||
+      criterionRow === undefined ||
+      decisionRow === undefined ||
+      taskRow === undefined
+    ) {
+      throw new Error("outline fixture requires four content elements");
+    }
+    const outlineSnapshot: SpecRevisionSnapshot = {
+      ...snapshot,
+      elements: [
+        {
+          ...requirementRow,
+          version: {
+            ...requirementRow.version,
+            payload: {
+              kind: "requirement",
+              statement: multilineStatement,
+              priority: "must",
+              risk: "medium",
+            },
+          },
+        },
+        decisionRow,
+        taskRow,
+        criterionRow,
+        {
+          element: {
+            id: "section-1",
+            specId: spec.id,
+            kind: "section",
+            number: null,
+            parentElementId: null,
+            createdAt: revision.createdAt,
+          },
+          version: {
+            revisionId: revision.id,
+            elementId: "section-1",
+            position: 4,
+            payload: {
+              kind: "section",
+              role: "intent_problem",
+              title: "Problem",
+              body: "The read path is too large.",
+            },
+            payloadHash: "section-hash",
+            elementVersion: 1,
+            createdAt: revision.createdAt,
+            updatedAt: revision.createdAt,
+          },
+        },
+      ],
+    };
+    const handlers = createSpecRouteHandlers(
+      createDeps({
+        getRevisionSnapshot: async (revisionId) =>
+          revisionId === revision.id ? outlineSnapshot : null,
+      }),
+    );
+
+    const response = await handlers.getSpecOutlineGET(
+      new Request("http://cc.test/api/specs/demo/old-slug/outline"),
+      routeContext({ name: "demo", slug: "old-slug" }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = specShowOutlineViewSchema.parse(await response.json());
+    expect(body).toMatchObject({
+      spec: { id: spec.id, slug: spec.slug, name: spec.name },
+      revision: {
+        role: "current",
+        id: revision.id,
+        number: 1,
+        state: "draft",
+        authoringStage: "plan",
+        basedOnRevisionId: null,
+      },
+      phase: { primary: "draft", authoringStage: "plan" },
+      counts: {
+        requirements: 1,
+        criteria: 1,
+        decisions: 1,
+        tasks: 1,
+        sections: 1,
+      },
+      requirements: [
+        {
+          handle: "R1",
+          elementId: "requirement-1",
+          elementVersion: 1,
+          priority: "must",
+          risk: "medium",
+          status: {
+            approval: "unapproved",
+            coverage: "covered",
+            proof: "pending",
+          },
+          criteria: [
+            {
+              handle: "R1.1",
+              elementId: "criterion-1",
+              elementVersion: 1,
+              validationKinds: ["test_run"],
+              status: { coverage: "covered", proof: "pending" },
+              summary: "The old slug returns the current spec",
+            },
+          ],
+        },
+      ],
+      decisions: [
+        {
+          handle: "D1",
+          elementId: "decision-1",
+          elementVersion: 1,
+          summary: "Compose shared route resolution",
+          status: { approval: "unapproved" },
+        },
+      ],
+      tasks: [
+        {
+          handle: "T1",
+          elementId: "task-1",
+          elementVersion: 1,
+          summary: "Build read routes",
+          status: { status: "pending", claimEvidenceCount: 0 },
+        },
+      ],
+      disclosure: {
+        requirements: { total: 1, returned: 1, truncated: false },
+        criteria: { total: 1, returned: 1, truncated: false },
+        decisions: { total: 1, returned: 1, truncated: false },
+        tasks: { total: 1, returned: 1, truncated: false },
+        sections: { total: 1, returned: 0, truncated: true },
+        next: `cctl spec show ${spec.slug} --rendered`,
+      },
+    });
+    expect(body.requirements[0]?.summary).toHaveLength(160);
+    expect(body.requirements[0]?.summary).not.toContain("\n");
+    expect(body.requirements[0]?.summary.endsWith("…")).toBe(true);
+  });
+
+  it("shows approvals only when they apply to the current amendment content", async () => {
+    const approvedRevision: SpecRevision = {
+      ...revision,
+      id: "revision-approved",
+      state: "approved",
+      contentHash: "approved-content-hash",
+      proposedAt: revision.createdAt,
+      approvedAt: revision.createdAt,
+    };
+    const amendmentRevision: SpecRevision = {
+      ...revision,
+      id: "revision-amendment",
+      number: 2,
+      basedOnRevisionId: approvedRevision.id,
+    };
+    const snapshotFor = (
+      targetRevision: SpecRevision,
+      changed: boolean,
+    ): SpecRevisionSnapshot => ({
+      revision: targetRevision,
+      elements: snapshot.elements.map((entry) => ({
+        ...entry,
+        version: {
+          ...entry.version,
+          revisionId: targetRevision.id,
+          ...(changed && entry.element.kind === "requirement"
+            ? {
+                payload: {
+                  kind: "requirement" as const,
+                  statement: "The amendment changes this requirement.",
+                  priority: "must" as const,
+                  risk: "high" as const,
+                },
+                payloadHash: "amended-requirement-hash",
+              }
+            : {}),
+          ...(changed && entry.element.kind === "decision"
+            ? {
+                payload: {
+                  kind: "decision" as const,
+                  title: "The amendment changes this decision",
+                  chosenApproach: "Use the amended approach",
+                  rejectedAlternatives: [],
+                  reason: "The prior decision no longer applies",
+                  tracedRequirementElementIds: ["requirement-1"],
+                },
+                payloadHash: "amended-decision-hash",
+              }
+            : {}),
+        },
+      })),
+    });
+    const approvedSnapshot = snapshotFor(approvedRevision, false);
+    const amendmentSnapshot = snapshotFor(amendmentRevision, true);
+    const approvals: SpecApprovalRow[] = [
+      {
+        id: "approval-requirement",
+        spec_id: spec.id,
+        subject_kind: "requirement",
+        element_id: "requirement-1",
+        revision_id: approvedRevision.id,
+        approver: "alex",
+        granted_at: revision.createdAt,
+        validity: "valid",
+      },
+      {
+        id: "approval-decision",
+        spec_id: spec.id,
+        subject_kind: "decision",
+        element_id: "decision-1",
+        revision_id: approvedRevision.id,
+        approver: "alex",
+        granted_at: revision.createdAt,
+        validity: "valid",
+      },
+    ];
+    const handlers = createSpecRouteHandlers(
+      createDeps({
+        listRevisions: async () => [approvedRevision, amendmentRevision],
+        getRevisionSnapshot: async (revisionId) =>
+          revisionId === approvedRevision.id
+            ? approvedSnapshot
+            : revisionId === amendmentRevision.id
+              ? amendmentSnapshot
+              : null,
+        findApprovalsBySpecId: () => approvals,
+      }),
+    );
+
+    const response = await handlers.getSpecOutlineGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/outline"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = specShowOutlineViewSchema.parse(await response.json());
+    expect(body.requirements[0]?.status.approval).toBe("unapproved");
+    expect(body.decisions[0]?.status.approval).toBe("unapproved");
+  });
+
+  it("preserves stale and closed approval state in the element outline", async () => {
+    const approvals: SpecApprovalRow[] = [
+      {
+        id: "approval-requirement-stale",
+        spec_id: spec.id,
+        subject_kind: "requirement",
+        element_id: "requirement-1",
+        revision_id: revision.id,
+        approver: "alex",
+        granted_at: revision.createdAt,
+        validity: "stale",
+      },
+      {
+        id: "approval-decision-closed",
+        spec_id: spec.id,
+        subject_kind: "decision",
+        element_id: "decision-1",
+        revision_id: revision.id,
+        approver: "alex",
+        granted_at: revision.createdAt,
+        validity: "closed",
+      },
+    ];
+    const handlers = createSpecRouteHandlers(
+      createDeps({ findApprovalsBySpecId: () => approvals }),
+    );
+
+    const response = await handlers.getSpecOutlineGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/outline"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+    const body = specShowOutlineViewSchema.parse(await response.json());
+
+    expect(body.requirements[0]?.status.approval).toBe("stale");
+    expect(body.decisions[0]?.status.approval).toBe("closed");
+  });
+
+  it("caps root collections and each requirement's nested criteria while reporting every omission", async () => {
+    const requirements = Array.from(
+      { length: SPEC_OUTLINE_ROOT_LIMIT + 1 },
+      (_, index) => ({
+        element: {
+          id: `requirement-${index + 1}`,
+          specId: spec.id,
+          kind: "requirement" as const,
+          number: index + 1,
+          parentElementId: null,
+          createdAt: revision.createdAt,
+        },
+        version: {
+          revisionId: revision.id,
+          elementId: `requirement-${index + 1}`,
+          position: index,
+          payload: {
+            kind: "requirement" as const,
+            statement: `Requirement ${index + 1} ${"bounded summary ".repeat(20)}`,
+            priority: "must" as const,
+            risk: "low" as const,
+          },
+          payloadHash: `requirement-hash-${index + 1}`,
+          elementVersion: 1,
+          createdAt: revision.createdAt,
+          updatedAt: revision.createdAt,
+        },
+      }),
+    );
+    const criteria = requirements.flatMap((requirement, requirementIndex) =>
+      Array.from(
+        { length: SPEC_OUTLINE_CRITERIA_PER_REQUIREMENT_LIMIT + 1 },
+        (_, criterionIndex) => ({
+          element: {
+            id: `criterion-${requirementIndex + 1}-${criterionIndex + 1}`,
+            specId: spec.id,
+            kind: "criterion" as const,
+            number: criterionIndex + 1,
+            parentElementId: requirement.element.id,
+            createdAt: revision.createdAt,
+          },
+          version: {
+            revisionId: revision.id,
+            elementId: `criterion-${requirementIndex + 1}-${criterionIndex + 1}`,
+            position:
+              requirements.length +
+              requirementIndex *
+                (SPEC_OUTLINE_CRITERIA_PER_REQUIREMENT_LIMIT + 1) +
+              criterionIndex,
+            payload: {
+              kind: "criterion" as const,
+              text: `Criterion ${requirementIndex + 1}.${criterionIndex + 1} ${"bounded summary ".repeat(20)}`,
+              validationStrategy: {
+                kinds: [
+                  "test_run" as const,
+                  "test_run" as const,
+                  "validator_verdict" as const,
+                ],
+              },
+            },
+            payloadHash: `criterion-hash-${requirementIndex + 1}-${criterionIndex + 1}`,
+            elementVersion: 1,
+            createdAt: revision.createdAt,
+            updatedAt: revision.createdAt,
+          },
+        }),
+      ),
+    );
+    const decisions = Array.from(
+      { length: SPEC_OUTLINE_ROOT_LIMIT + 1 },
+      (_, index) => ({
+        element: {
+          id: `decision-${index + 1}`,
+          specId: spec.id,
+          kind: "decision" as const,
+          number: index + 1,
+          parentElementId: null,
+          createdAt: revision.createdAt,
+        },
+        version: {
+          revisionId: revision.id,
+          elementId: `decision-${index + 1}`,
+          position: requirements.length + criteria.length + index,
+          payload: {
+            kind: "decision" as const,
+            title: `Decision ${index + 1} ${"bounded summary ".repeat(20)}`,
+            chosenApproach: "Choose it",
+            rejectedAlternatives: [],
+            reason: "Bounded output",
+            tracedRequirementElementIds: [],
+          },
+          payloadHash: `decision-hash-${index + 1}`,
+          elementVersion: 1,
+          createdAt: revision.createdAt,
+          updatedAt: revision.createdAt,
+        },
+      }),
+    );
+    const tasks = Array.from(
+      { length: SPEC_OUTLINE_ROOT_LIMIT + 1 },
+      (_, index) => ({
+        element: {
+          id: `task-${index + 1}`,
+          specId: spec.id,
+          kind: "task" as const,
+          number: index + 1,
+          parentElementId: null,
+          createdAt: revision.createdAt,
+        },
+        version: {
+          revisionId: revision.id,
+          elementId: `task-${index + 1}`,
+          position:
+            requirements.length + criteria.length + decisions.length + index,
+          payload: {
+            kind: "task" as const,
+            title: `Task ${index + 1} ${"bounded summary ".repeat(20)}`,
+            instructions: "Build it",
+            tracedRequirementElementIds: [],
+            tracedDecisionElementIds: [],
+            coveredCriterionElementIds: [],
+            dependsOnTaskElementIds: [],
+          },
+          payloadHash: `task-hash-${index + 1}`,
+          elementVersion: 1,
+          createdAt: revision.createdAt,
+          updatedAt: revision.createdAt,
+        },
+      }),
+    );
+    const firstRequirement = requirements.at(0);
+    if (firstRequirement === undefined) {
+      throw new Error("bounded outline fixture requires one requirement");
+    }
+    const unaddressableRequirement = {
+      ...firstRequirement,
+      element: {
+        ...firstRequirement.element,
+        id: "0-unaddressable-requirement",
+        number: 1e21,
+      },
+      version: {
+        ...firstRequirement.version,
+        elementId: "0-unaddressable-requirement",
+        position: 0,
+      },
+    };
+    const boundedSnapshot: SpecRevisionSnapshot = {
+      revision,
+      elements: [
+        unaddressableRequirement,
+        ...requirements,
+        ...criteria,
+        ...decisions,
+        ...tasks,
+      ],
+    };
+    const handlers = createSpecRouteHandlers(
+      createDeps({
+        getRevisionSnapshot: async (revisionId) =>
+          revisionId === revision.id ? boundedSnapshot : null,
+        findTaskClaimsBySpecId: () => [
+          {
+            id: "claim-with-many-evidence-ids",
+            spec_id: spec.id,
+            execution_id: null,
+            task_element_id: "task-1",
+            evidence_ids_json: JSON.stringify(
+              Array.from(
+                { length: 2_000 },
+                (_, index) => `evidence-${index}-${"x".repeat(100)}`,
+              ),
+            ),
+            status: "accepted",
+            actor_json: JSON.stringify({
+              kind: "agent",
+              conversationId: "outline-size-test",
+            }),
+            claimed_at: revision.createdAt,
+          },
+          {
+            id: "unselected-malformed-claim",
+            spec_id: spec.id,
+            execution_id: null,
+            task_element_id: `task-${SPEC_OUTLINE_ROOT_LIMIT + 1}`,
+            evidence_ids_json: "not-json",
+            status: "accepted",
+            actor_json: JSON.stringify({ kind: "agent" }),
+            claimed_at: revision.createdAt,
+          },
+        ],
+      }),
+    );
+
+    const response = await handlers.getSpecOutlineGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/outline"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+    const body = specShowOutlineViewSchema.parse(await response.json());
+
+    expect(body.requirements).toHaveLength(SPEC_OUTLINE_ROOT_LIMIT);
+    expect(body.requirements[0]?.criteria).toHaveLength(
+      SPEC_OUTLINE_CRITERIA_PER_REQUIREMENT_LIMIT,
+    );
+    expect(body.requirements[0]?.criteria[0]?.validationKinds).toEqual([
+      "test_run",
+      "validator_verdict",
+    ]);
+    expect(JSON.stringify(body)).not.toContain("0-unaddressable-requirement");
+    expect(body.decisions).toHaveLength(SPEC_OUTLINE_ROOT_LIMIT);
+    expect(body.tasks).toHaveLength(SPEC_OUTLINE_ROOT_LIMIT);
+    expect(body.tasks[0]?.status).toEqual({
+      status: "claimed",
+      claimEvidenceCount: 2_000,
+    });
+    expect(JSON.stringify(body)).not.toContain("evidence-1999-");
+    expect(body.disclosure).toMatchObject({
+      requirements: {
+        total: SPEC_OUTLINE_ROOT_LIMIT + 2,
+        returned: SPEC_OUTLINE_ROOT_LIMIT,
+        truncated: true,
+      },
+      criteria: {
+        total:
+          (SPEC_OUTLINE_ROOT_LIMIT + 1) *
+          (SPEC_OUTLINE_CRITERIA_PER_REQUIREMENT_LIMIT + 1),
+        returned:
+          SPEC_OUTLINE_ROOT_LIMIT * SPEC_OUTLINE_CRITERIA_PER_REQUIREMENT_LIMIT,
+        truncated: true,
+      },
+      decisions: {
+        total: SPEC_OUTLINE_ROOT_LIMIT + 1,
+        returned: SPEC_OUTLINE_ROOT_LIMIT,
+        truncated: true,
+      },
+      tasks: {
+        total: SPEC_OUTLINE_ROOT_LIMIT + 1,
+        returned: SPEC_OUTLINE_ROOT_LIMIT,
+        truncated: true,
+      },
+    });
+    expect(Buffer.byteLength(JSON.stringify(body), "utf8")).toBeLessThan(
+      60 * 1024,
+    );
+  });
+
+  it("surfaces the empty-design advisory in status for an approved design revision", async () => {
+    const approvedDesignRevision: SpecRevision = {
+      ...revision,
+      state: "approved",
+      authoringStage: "design",
+      contentHash: "approved-design-hash",
+      proposedAt: revision.createdAt,
+      approvedAt: revision.createdAt,
+    };
+    const approvedDesignSnapshot: SpecRevisionSnapshot = {
+      revision: approvedDesignRevision,
+      elements: snapshot.elements
+        .filter(({ element }) =>
+          ["requirement", "criterion"].includes(element.kind),
+        )
+        .map((entry) => ({
+          ...entry,
+          version: {
+            ...entry.version,
+            revisionId: approvedDesignRevision.id,
+          },
+        })),
+    };
+    const [approvedRequirement, approvedCriterion] =
+      approvedDesignSnapshot.elements;
+    if (approvedRequirement === undefined || approvedCriterion === undefined) {
+      throw new Error(
+        "approved design fixture requires requirement and criterion",
+      );
+    }
+    const handlers = createSpecRouteHandlers(
+      createDeps({
+        listRevisions: async () => [approvedDesignRevision],
+        getRevisionSnapshot: async (revisionId) =>
+          revisionId === approvedDesignRevision.id
+            ? approvedDesignSnapshot
+            : null,
+        lintDraft: async () => [
+          ...Array.from({ length: 6 }, (_unused, index) => ({
+            ruleId: `test.blocker-${index + 1}`,
+            severity: "blocks_propose" as const,
+            elementHandle: `R${index + 1}`,
+            message: `Blocking finding ${index + 1}.`,
+          })),
+          ...lint(
+            {
+              specHandle: spec.slug,
+              authoringStage: "design",
+              elements: [
+                {
+                  id: "requirement-1",
+                  handle: "R1",
+                  payloadHash: "requirement-hash",
+                  payload: approvedRequirement.version.payload,
+                },
+                {
+                  id: "criterion-1",
+                  handle: "R1.1",
+                  parentElementId: "requirement-1",
+                  payloadHash: "criterion-hash",
+                  payload: approvedCriterion.version.payload,
+                },
+              ],
+            },
+            {},
+          ),
+        ],
+      }),
+    );
+
+    const response = await handlers.getSpecStatusGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/status"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    expect(response.status).toBe(200);
+    const status = specStatusViewSchema.parse(await response.json());
+    expect(status.draftHealth?.top).toContainEqual({
+      ruleId: "9.13.design-stage-without-design-content",
+      severity: "advisory",
+      elementHandle: spec.slug,
+      message:
+        "Design-stage revision carries no decision or design narrative elements.",
+    });
+    expect(status.draftHealth?.top).toHaveLength(6);
+  });
+
   it("keeps an approved legacy plan revision and its task readable", async () => {
     const approvedPlan = {
       ...revision,

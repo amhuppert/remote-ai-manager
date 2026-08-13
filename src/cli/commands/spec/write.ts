@@ -821,6 +821,8 @@ function nextActionCommand(
   action: SpecProposeResultView["nextAction"],
 ): string {
   switch (action?.kind) {
+    case "approve_gate":
+      return `cctl spec request-approval ${slug} --gate ${action.gate}`;
     case "approve_subject":
       return `cctl spec request-approval ${slug} --gate ${action.gate}${
         action.subject === null ? "" : ` --subject ${action.subject}`
@@ -1735,7 +1737,7 @@ export async function runSpecRemove(
         exitCode: EXIT_OPERATION_FAILED,
         message: `spec remove: the open draft of ${slug.value} carries no ${slug.value}/${handle}`,
         code: "not_found",
-        instruction: `Nothing was removed. Read the elements the draft carries with \`cctl spec show ${slug.value}\`, then remove the handles it lists.`,
+        instruction: `Nothing was removed. Write the complete rendered draft with \`cctl spec show ${slug.value} --rendered\`, then remove the handles it lists.`,
         json,
       });
     }

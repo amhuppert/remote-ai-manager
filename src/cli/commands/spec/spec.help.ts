@@ -50,7 +50,10 @@ export const specHelpEntries: CommandHelpEntry[] = [
     domainContext:
       "A slug identifies the durable spec across renames through aliases. Element handles are R3, R3.2, D2, T7, Q2, or A1; qualify them as <slug>/<handle> when no slug argument is present.",
     related: [
-      { command: "spec show", oneLiner: "read a spec's current full view" },
+      {
+        command: "spec show",
+        oneLiner: "navigate a spec's bounded current-revision outline",
+      },
       {
         command: "spec status",
         oneLiner: "inspect lifecycle gates, approvals, questions, and coverage",
@@ -131,23 +134,56 @@ export const specHelpEntries: CommandHelpEntry[] = [
   },
   {
     path: ["spec", "show"],
-    summary: "read a spec's full or summary view",
+    summary: "inspect a bounded spec outline or write a detailed artifact",
     description:
-      "Read the current full spec view, including revisions, current content, and status. Pass --summary for counts and approval state without element content.",
-    usage: ["cctl spec show <slug> [--summary]"],
+      "Read a bounded nested outline of the current revision by default. Pass --summary for counts only, --rendered for canonical Markdown, or --full for the raw detail projection. Summary and outline name what they omitted and the exact next command. Rendered and full views are written under .cc/temp/ by default and stdout returns a small artifact receipt; --out selects another file. If a summary or outline still exceeds the hard stdout budget, its exact envelope moves to a JSON artifact and stdout returns a storage: artifact receipt.",
+    usage: [
+      "cctl spec show <slug> [--summary]",
+      "cctl spec show <slug> --rendered [--out <file>]",
+      "cctl spec show <slug> --full [--out <file>]",
+    ],
     flags: [
       {
         name: "summary",
         kind: "boolean",
-        description: "return the compact summary view instead of full content",
+        description: "return counts and approval state only",
+      },
+      {
+        name: "rendered",
+        kind: "boolean",
+        description: "write the current revision as canonical Markdown",
+      },
+      {
+        name: "full",
+        kind: "boolean",
+        description: "write the complete raw detail projection as JSON",
+      },
+      {
+        name: "out",
+        kind: "value",
+        description: "write --rendered or --full content to this path",
       },
     ],
     examples: [
       {
-        invocation: "cctl spec show native-sdd --summary --json",
-        explanation: "read compact counts, phase, revision, and approval state",
+        invocation: "cctl spec show native-sdd",
+        explanation:
+          "read the bounded current-revision outline with requirements, nested criteria, statuses, and omission counts",
+      },
+      {
+        invocation: "cctl spec show native-sdd --rendered",
+        explanation:
+          "write canonical Markdown under .cc/temp/ and receive its path, size, and hash",
+      },
+      {
+        invocation:
+          "cctl spec show native-sdd --full --out /tmp/native-sdd.json --json",
+        explanation:
+          "write the raw detail projection to an explicit file and serialize the bounded receipt as JSON",
       },
     ],
+    domainContext:
+      "--json changes serialization only; it does not change or widen the selected disclosure level. The default outline is server-bounded and reports total, returned, and truncated for each collection plus the exact --rendered follow-up. Criteria are nested under their requirements even though durable position remains one global revision order.",
     related: [
       { command: "spec list", oneLiner: "discover spec slugs" },
       { command: "spec status", oneLiner: "inspect lifecycle readiness" },
@@ -171,7 +207,10 @@ export const specHelpEntries: CommandHelpEntry[] = [
     domainContext:
       "The remaining-stage sequence is pinned to the open draft, not derived from the current preset: a policy change never moves an open draft's stage, so a draft opened under one preset keeps walking its own sequence under the new dials. Each remaining stage names the gate that concludes it and whether that concluding step is an advance or a propose. Gate applicability is measured against the nearest APPROVED ancestor, so a gate stays consulted for content that entered through an attempt a human withdrew, and an earlier admission is reported as history rather than as current satisfaction. The findings tier names counts per severity and the first few findings; the enumerated sections — executions, pending subject approvals, open questions, assumptions, plan tasks — are bounded to ten items each in the text rendering and state what they left out, while --json carries every row.",
     related: [
-      { command: "spec show", oneLiner: "read the full current spec" },
+      {
+        command: "spec show",
+        oneLiner: "navigate the bounded current-revision outline",
+      },
       { command: "spec get", oneLiner: "inspect one pending element" },
       {
         command: "spec lint",
@@ -326,12 +365,12 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "get"],
     summary: "read one spec element with approval and evidence state",
     description:
-      "Read one requirement, criterion, decision, or task, or a question/assumption record by its Q/A handle. Use a qualified handle, or pass the slug and a bare handle as separate arguments.",
+      "Read one requirement, criterion, decision, or task, or a question/assumption record by its Q/A handle. Text mode is a complete line-oriented field view; --json wraps the same selected element under the named element payload. Use a qualified handle, or pass the slug and a bare handle as separate arguments.",
     usage: ["cctl spec get <slug>/<handle>", "cctl spec get <slug> <handle>"],
     flags: [],
     examples: [
       {
-        invocation: "cctl spec get native-sdd/R3.2 --json",
+        invocation: "cctl spec get native-sdd/R3.2",
         explanation:
           "read the criterion plus its approval, evidence, verdict, and waiver state",
       },
@@ -376,7 +415,10 @@ export const specHelpEntries: CommandHelpEntry[] = [
     ],
     related: [
       { command: "spec list", oneLiner: "read the full project inventory" },
-      { command: "spec show", oneLiner: "read the full matching spec" },
+      {
+        command: "spec show",
+        oneLiner: "navigate the matching spec's bounded outline",
+      },
       { command: "spec get", oneLiner: "read one matched handle" },
       {
         command: "spec create",
@@ -438,7 +480,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     related: [
       {
         command: "spec show",
-        oneLiner: "list the revision ids --from/--to take",
+        oneLiner: "use --full to write the revision ids --from/--to take",
       },
       { command: "spec status", oneLiner: "inspect gate and sign-off state" },
       {
@@ -449,9 +491,9 @@ export const specHelpEntries: CommandHelpEntry[] = [
   },
   {
     path: ["spec", "schema"],
-    summary: "print the schema of every input document this family accepts",
+    summary: "list offline input and response contract documents",
     description:
-      "Print the JSON Schema, enumerated values, field constraints, and a worked example for each schema-backed --file document, or run `cctl spec schema guidance` for the registry-generated materializer, lint, and evidence reference. The draft and create documents are published separately because they are different shapes — only a draft element states the baseElementVersion it replaces. Everything is generated from the schemas and typed registries production uses, so it cannot drift. Runs entirely offline — no server, no project.",
+      "List the offline contract documents, or name one to print its JSON Schema, enumerated values, constraints, worked example, and semantic notes. Input shapes come from the schemas production parses; guidance comes from typed registries; `read-envelopes` documents response payload fields and revision roles. Runs entirely offline — no server, no project.",
     usage: ["cctl spec schema", "cctl spec schema <document>"],
     flags: [],
     examples: [
@@ -471,9 +513,9 @@ export const specHelpEntries: CommandHelpEntry[] = [
           "read the whole-spec document `cctl spec import` takes, with a worked example covering every artifact a bundle can carry",
       },
       {
-        invocation: "cctl spec schema --json",
+        invocation: "cctl spec schema read-envelopes",
         explanation:
-          "return every input document at once for a machine that is about to author",
+          "read named response payloads and the exact base/current/approved revision semantics",
       },
       {
         invocation: "cctl spec schema guidance",
@@ -557,7 +599,8 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
       {
         command: "spec show",
-        oneLiner: "read the current approved content the delta compares",
+        oneLiner:
+          "use --full to write the approved snapshot the delta compares",
       },
     ],
   },
@@ -605,20 +648,23 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
     ],
     domainContext:
-      "The bundle format did not change with the default: a file this command writes is the same bytes `cctl spec verify --against` already accepts. The content hash covers those exact bytes, so two exports of unchanged content report the same hash.",
+      "The destination default does not transform the bundle: a file this command writes contains the same canonical format 3 bytes that --stdout emits. Format 3 renders parents before their children. `cctl spec verify --against` reports an older format as bundle_format_mismatch and directs the caller to export a fresh bundle; ordinary content drift remains integrity_mismatch. The content hash covers the exact current bytes, so two exports of unchanged content report the same hash.",
     related: [
       {
         command: "spec verify",
         oneLiner: "verify integrity against an export",
       },
-      { command: "spec show", oneLiner: "read the live full view" },
+      {
+        command: "spec show",
+        oneLiner: "use --full to write the live raw detail view",
+      },
     ],
   },
   {
     path: ["spec", "verify"],
     summary: "recompute spec integrity and report consistency findings",
     description:
-      "Recompute immutable revision hashes, and report the consistency findings hashes cannot see: an abandonment whose cleanup never finished, a run still holding the session's execution slot after its spec execution was abandoned, and live proposals an approved revision forked past. A hash mismatch exits with integrity_mismatch; clean hashes with outstanding findings exit with spec_inconsistent, and each finding names the exact act that disposes of it. With --against, validate the bundle locally before network and compare it with the current canonical export.",
+      "Recompute immutable revision hashes, and report the consistency findings hashes cannot see: an abandonment whose cleanup never finished, a run still holding the session's execution slot after its spec execution was abandoned, and live proposals an approved revision forked past. A hash or same-format content mismatch exits with integrity_mismatch; an older canonical bundle exits with bundle_format_mismatch and directs the caller to export a fresh bundle; clean hashes with outstanding findings exit with spec_inconsistent, and each finding names the exact act that disposes of it. With --against, validate the bundle locally before network and compare it with the current canonical export.",
     usage: ["cctl spec verify <slug> [--against <bundle.json>]"],
     flags: [
       {

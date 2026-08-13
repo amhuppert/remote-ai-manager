@@ -21,7 +21,9 @@ const SOURCE_PLUGIN_ROOT = path.join(
 );
 const SKILL_NAME = "native-sdd-authoring";
 const GENERATED_REFERENCE_COMMAND = "cctl spec schema guidance";
+const READ_ENVELOPE_REFERENCE_COMMAND = "cctl spec schema read-envelopes";
 const EXPECTED_SECTIONS = [
+  "Reading specs without flooding context",
   "One-context-provable criteria",
   "Typed integration/closeout ownership",
   "Placement: shared lanes and disjoint ownership",
@@ -128,7 +130,9 @@ describe("native-sdd-authoring managed skill", () => {
     expect(sections).toEqual(EXPECTED_SECTIONS);
     for (const section of EXPECTED_SECTIONS) {
       expect(sectionBody(loadedSkill, section)).toContain(
-        GENERATED_REFERENCE_COMMAND,
+        section === "Reading specs without flooding context"
+          ? READ_ENVELOPE_REFERENCE_COMMAND
+          : GENERATED_REFERENCE_COMMAND,
       );
     }
   });

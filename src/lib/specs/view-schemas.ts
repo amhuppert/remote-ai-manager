@@ -30,6 +30,8 @@ import {
   specGatePresetSchema,
   specGateSchema,
   specImportedCountsSchema,
+  requirementPrioritySchema,
+  requirementRiskSchema,
   specProofVerdictRowSchema,
   specQuestionStatusSchema,
   specRevisionElementSchema,
@@ -197,6 +199,7 @@ export type AuthoringPendingBlockView = z.infer<
 export const authoringNextActionSchema = z
   .object({
     kind: z.enum([
+      "approve_gate",
       "approve_subject",
       "sign_off_revision",
       "resolve_conditions",
@@ -751,6 +754,123 @@ export const specSummaryViewSchema = z
   .strict();
 export type SpecSummaryView = z.infer<typeof specSummaryViewSchema>;
 
+const specOutlineCollectionDisclosureSchema = z
+  .object({
+    total: z.number().int().nonnegative(),
+    returned: z.number().int().nonnegative(),
+    truncated: z.boolean(),
+  })
+  .strict();
+
+const specOutlineElementIdentitySchema = z
+  .object({
+    handle: z.string().min(1),
+    elementId: z.string().min(1),
+    elementVersion: z.number().int().positive(),
+    summary: z.string().max(160),
+  })
+  .strict();
+
+const specOutlineCriterionStatusSchema = z
+  .object({
+    coverage: z.enum(["covered", "uncovered"]),
+    proof: z.enum(["pending", "proven", "waived", "delivered_externally"]),
+  })
+  .strict();
+
+export const specOutlineCriterionViewSchema = specOutlineElementIdentitySchema
+  .extend({
+    validationKinds: z
+      .array(evidenceKindSchema)
+      .max(evidenceKindSchema.options.length),
+    status: specOutlineCriterionStatusSchema,
+  })
+  .strict();
+
+export const specOutlineRequirementViewSchema = specOutlineElementIdentitySchema
+  .extend({
+    priority: requirementPrioritySchema,
+    risk: requirementRiskSchema,
+    status: requirementStatusSchema,
+    criteria: z.array(specOutlineCriterionViewSchema),
+  })
+  .strict();
+
+export const specOutlineDecisionViewSchema = specOutlineElementIdentitySchema
+  .extend({
+    status: z
+      .object({
+        approval: z.union([
+          z.literal("unapproved"),
+          specApprovalRowSchema.shape.validity,
+        ]),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const specOutlineTaskViewSchema = specOutlineElementIdentitySchema
+  .extend({
+    status: taskWorkStatusSchema
+      .omit({ claimEvidenceIds: true })
+      .extend({ claimEvidenceCount: z.number().int().nonnegative() })
+      .strict(),
+  })
+  .strict();
+
+/**
+ * The bounded current-revision read used by agent-facing `spec show`.
+ * Requirements own their criteria in this projection even though snapshot
+ * storage remains globally ordered. Every omitted collection reports how to
+ * reach the canonical rendered artifact.
+ */
+export const specShowOutlineViewSchema = z
+  .object({
+    spec: z
+      .object({
+        id: z.string().min(1),
+        slug: z.string().min(1),
+        name: z.string(),
+      })
+      .strict(),
+    revision: z
+      .object({
+        role: z.literal("current"),
+        id: z.string().min(1),
+        number: z.number().int().positive(),
+        state: specRevisionStateSchema,
+        authoringStage: specAuthoringStageSchema,
+        basedOnRevisionId: z.string().min(1).nullable(),
+      })
+      .strict()
+      .nullable(),
+    phase: specPhaseProjectionSchema,
+    counts: z
+      .object({
+        requirements: z.number().int().nonnegative(),
+        criteria: z.number().int().nonnegative(),
+        decisions: z.number().int().nonnegative(),
+        tasks: z.number().int().nonnegative(),
+        sections: z.number().int().nonnegative(),
+      })
+      .strict(),
+    requirements: z.array(specOutlineRequirementViewSchema),
+    decisions: z.array(specOutlineDecisionViewSchema),
+    tasks: z.array(specOutlineTaskViewSchema),
+    disclosure: z
+      .object({
+        requirements: specOutlineCollectionDisclosureSchema,
+        criteria: specOutlineCollectionDisclosureSchema,
+        decisions: specOutlineCollectionDisclosureSchema,
+        tasks: specOutlineCollectionDisclosureSchema,
+        sections: specOutlineCollectionDisclosureSchema,
+        next: z.string().min(1),
+      })
+      .strict(),
+  })
+  .strict();
+export type SpecShowOutlineView = z.infer<typeof specShowOutlineViewSchema>;
+
 /**
  * One revision currently under review, with the verdict the shared
  * supersession predicate reached about it and the snapshots its diff needs.
@@ -927,10 +1047,8 @@ const specDiffRevisionRefSchema = z
   .strict();
 
 /**
- * One element's class in the comparison. The diff engine reports "added" only
- * on its change list and "unchanged" only on its classifications; this joins
- * both into the single four-value class every reader (CLI, Studio card) shows,
- * so neither surface has to re-derive it. `summary` is null exactly when the
+ * One element's four-value class in the comparison, projected unchanged for
+ * every reader (CLI and Studio cards). `summary` is null exactly when the
  * element is unchanged, and `directlyChanged` is false for a requirement that
  * moved only because one of its criteria did.
  */

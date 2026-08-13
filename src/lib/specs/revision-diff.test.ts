@@ -93,7 +93,7 @@ describe("revision diff classification", () => {
         {
           elementId: "section-1",
           kind: "section",
-          classification: "modified",
+          classification: "added",
           directlyChanged: true,
         },
         {

@@ -123,6 +123,12 @@ async function proposeRefusal(): Promise<Refusal> {
     },
     actor: AGENT,
   });
+  await harness.fixture.specs.advanceDraftAuthoringStage({
+    specId: created.spec.id,
+    revisionId: created.draft.id,
+    expectedStage: "requirements",
+    targetStage: "design",
+  });
   const result = await harness.authoring.proposeRevision({
     specId: created.spec.id,
     revisionId: created.draft.id,
@@ -162,12 +168,19 @@ describe("a real import enforces propose's blocking-lint bar (R6.2)", () => {
         elementHandle: SLUG,
         message: "Empty spec — nothing to review.",
       },
+      {
+        ruleId: "9.13.design-stage-without-design-content",
+        severity: "advisory",
+        elementHandle: SLUG,
+        message:
+          "Design-stage revision carries no decision or design narrative elements.",
+      },
     ]);
     // The one additive difference between the two envelopes, pinned so a reader
     // sees it was weighed rather than missed: an import also reports how many
     // findings it saw. That is metadata about the refusal, not about the
     // findings, so the loop reading `findings` is unaffected by it.
-    expect(result.refusal.details).toEqual({ findingCount: 1 });
+    expect(result.refusal.details).toEqual({ findingCount: 2 });
     expect(proposed.details).toBeUndefined();
   });
 
@@ -213,7 +226,7 @@ describe("a real import enforces propose's blocking-lint bar (R6.2)", () => {
           ? finding.severity
           : null,
       ),
-    ).toEqual(["blocks_propose", "advisory"]);
+    ).toEqual(["blocks_propose", "advisory", "advisory"]);
     expect(result.refusal.unmetConditions).toEqual([
       "Empty spec — nothing to review.",
     ]);
@@ -235,8 +248,10 @@ describe("a dry run applies the identical lint (R6.1, R6.2)", () => {
 
     expect(preview.preview.findings).toEqual(real.refusal.findings);
     expect(preview.preview.blocking).toBe(1);
-    expect(preview.preview.findings.map(({ message }) => message)).toEqual(
-      real.refusal.unmetConditions,
-    );
+    expect(
+      preview.preview.findings
+        .filter(({ severity }) => severity === "blocks_propose")
+        .map(({ message }) => message),
+    ).toEqual(real.refusal.unmetConditions);
   });
 });

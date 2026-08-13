@@ -79,13 +79,53 @@ const listEnvelopeSchema = z
   .object({ ok: z.literal(true), documents: z.array(documentSchema) })
   .passthrough();
 
+const indexDocumentSchema = z
+  .object({
+    id: z.string().min(1),
+    title: z.string().min(1),
+    usedBy: z.array(z.string().min(1)).min(1),
+  })
+  .strict();
+
+const indexEnvelopeSchema = z
+  .object({ ok: z.literal(true), documents: z.array(indexDocumentSchema) })
+  .passthrough();
+
 async function readDocuments() {
-  const result = await runCli(["spec", "schema", "--json"], env, offlineHost());
-  expect(result.exitCode).toBe(0);
-  return listEnvelopeSchema.parse(JSON.parse(result.stdout)).documents;
+  const index = await runCli(["spec", "schema", "--json"], env, offlineHost());
+  expect(index.exitCode).toBe(0);
+  const entries = indexEnvelopeSchema.parse(JSON.parse(index.stdout)).documents;
+  const documents = [];
+  for (const entry of entries) {
+    const result = await runCli(
+      ["spec", "schema", entry.id, "--json"],
+      env,
+      offlineHost(),
+    );
+    expect(result.exitCode).toBe(0);
+    const [document] = listEnvelopeSchema.parse(
+      JSON.parse(result.stdout),
+    ).documents;
+    if (document !== undefined) documents.push(document);
+  }
+  return documents;
 }
 
 describe("cctl spec schema", () => {
+  it("keeps the JSON index at the same disclosure level as the text index", async () => {
+    const result = await runCli(
+      ["spec", "schema", "--json"],
+      env,
+      offlineHost(),
+    );
+
+    expect(result.exitCode).toBe(0);
+    const envelope = indexEnvelopeSchema.parse(JSON.parse(result.stdout));
+    expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThan(64 * 1024);
+    expect(envelope.documents[0]).not.toHaveProperty("jsonSchema");
+    expect(envelope.documents[0]).not.toHaveProperty("example");
+  });
+
   it("publishes active authoring, capture, and delivery-plan inputs", async () => {
     const documents = await readDocuments();
 
@@ -98,7 +138,77 @@ describe("cctl spec schema", () => {
       "discovered-task",
       "plan-edit",
       "guidance",
+      "read-envelopes",
     ]);
+  });
+
+  it("publishes the read envelopes and revision-role semantics offline", async () => {
+    const result = await runCli(
+      ["spec", "schema", "read-envelopes", "--json"],
+      env,
+      offlineHost(),
+    );
+
+    expect(result.exitCode).toBe(0);
+    const [document] = listEnvelopeSchema.parse(
+      JSON.parse(result.stdout),
+    ).documents;
+    expect(document?.id).toBe("read-envelopes");
+    expect(document?.usedBy).toEqual(
+      expect.arrayContaining([
+        "cctl spec show <slug>",
+        "cctl spec status <slug>",
+        "cctl spec lint <slug>",
+        "cctl spec get <slug>/<handle>",
+      ]),
+    );
+    expect(document?.jsonSchema).toMatchObject({ type: "object" });
+    const reference = z
+      .object({
+        envelopes: z.array(
+          z.object({
+            command: z.string(),
+            view: z.string().nullable(),
+            payloadFields: z.array(z.string()),
+            disclosure: z.string(),
+          }),
+        ),
+      })
+      .parse(document?.example);
+    const outline = reference.envelopes.find(
+      ({ command, view }) => command === "spec show" && view === "outline",
+    );
+    expect(outline?.payloadFields).toEqual(
+      expect.arrayContaining([
+        "storage",
+        "spec",
+        "revision",
+        "reason",
+        "artifact",
+      ]),
+    );
+    expect(outline?.disclosure).toContain("storage: inline");
+    expect(outline?.disclosure).toContain("stdout_budget_exceeded");
+    const summary = reference.envelopes.find(
+      ({ command, view }) => command === "spec show" && view === "summary",
+    );
+    expect(summary?.payloadFields).toContain("disclosure");
+    expect(summary?.disclosure).toContain("exact default-outline next command");
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.hint).toContain("consult");
+    expect(envelope.hint).not.toContain("write this document");
+    const notes = document?.notes.join(" ") ?? "";
+    expect(notes).toContain("currentRevision");
+    expect(notes).toContain("lineage head");
+    expect(notes).toContain("baseRevision");
+    expect(notes).toContain("immediate");
+    expect(notes).toContain("currentApprovedRevision");
+    expect(notes).toContain("latest approved");
+    expect(notes).toContain("lint.total");
+    expect(notes).toContain("flattened");
+    expect(notes).toContain("storage");
+    expect(notes).toContain("--json");
+    expect(notes).toContain("does not widen");
   });
 
   /**

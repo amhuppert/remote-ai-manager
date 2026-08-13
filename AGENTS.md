@@ -100,7 +100,7 @@ In Command Center sessions, run `cctl dev ensure` before browser, Playwright, St
 - `.kiro/steering/workflows.md` — lifecycle shapes, workflow modules, adoption matrix, graph configuration
 - `.kiro/steering/data-fetching-and-sse.md` — React Query, responsiveness, typed publication
 - `.kiro/steering/logs.md` — logging architecture and event conventions
-- `.kiro/steering/cli.md` — `cctl` command and output contracts
+- `.kiro/steering/cli.md` — read before changing `cctl` commands, flags, help, query output, response envelopes, or hints
 - `.kiro/steering/notifications.md` — jobs, notifications, and their publication flow
 - `.kiro/steering/project-configuration.md` — `CommandCenter.json` and dev-server behavior
 

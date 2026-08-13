@@ -931,6 +931,41 @@ describe("authoringReviewProjection", () => {
     expect(projection.pendingBlock?.instruction).toContain("requirements");
   });
 
+  it("names one whole-gate approval action when the next gate has multiple subjects", () => {
+    const chain = withdrawnAttemptChain(
+      "Every outstanding requirement stays addressable.",
+    );
+    const current = chain.snapshots.at(-1);
+    if (current === undefined) {
+      throw new Error("withdrawn attempt fixture requires a current snapshot");
+    }
+    current.elements.push(
+      requirement(
+        current.revision.id,
+        "requirement-2",
+        2,
+        "Whole-gate requests cover every subject.",
+        2,
+      ),
+    );
+
+    const projection = project(chain);
+
+    expect(projection.nextAction).toMatchObject({
+      kind: "approve_gate",
+      gate: "requirements",
+      subject: null,
+      elementId: null,
+      actsNext: "human",
+    });
+    expect(projection.nextAction.instruction).toContain(
+      "approve all 2 outstanding subjects at the requirements gate",
+    );
+    expect(projection.pendingBlock?.instruction).toContain(
+      "request the requirements gate without a subject",
+    );
+  });
+
   /**
    * R11.5: under the combined dial the sign-off act IS the approval of every
    * item, which is why `approvalUnmetConditions` requires no per-element
