@@ -342,6 +342,7 @@ interface ExecutionInspectorPanelProps {
   isPausingExecution?: boolean;
   isResumingExecution?: boolean;
   configEditConflict?: boolean;
+  configEditError?: string | null;
   configSaveSucceeded?: boolean;
   /**
    * Opens one lane's transcript. `label` names the use site the transcript
@@ -1558,6 +1559,7 @@ function DetailView({
   isPausingExecution,
   isResumingExecution,
   configEditConflict,
+  configEditError,
   configSaveSucceeded,
   onViewConversation,
   contextTabRequest,
@@ -1590,6 +1592,7 @@ function DetailView({
   isPausingExecution?: boolean;
   isResumingExecution?: boolean;
   configEditConflict?: boolean;
+  configEditError?: string | null;
   configSaveSucceeded?: boolean;
   onViewConversation?: ExecutionInspectorPanelProps["onViewConversation"];
   contextTabRequest?: ContextTabRequest | null;
@@ -2242,6 +2245,7 @@ function DetailView({
               isPausing={isPausingExecution}
               isResuming={isResumingExecution}
               editConflict={configEditConflict}
+              editError={configEditError}
               saveSucceeded={configSaveSucceeded}
               commandOptions={commandOptions}
             />
@@ -2432,6 +2436,7 @@ export default function ExecutionInspectorPanel({
   isPausingExecution,
   isResumingExecution,
   configEditConflict,
+  configEditError,
   configSaveSucceeded,
   onViewConversation,
   onEditSchema,
@@ -2487,6 +2492,7 @@ export default function ExecutionInspectorPanel({
       isPausingExecution={isPausingExecution}
       isResumingExecution={isResumingExecution}
       configEditConflict={configEditConflict}
+      configEditError={configEditError}
       configSaveSucceeded={configSaveSucceeded}
       onViewConversation={onViewConversation}
       contextTabRequest={contextTabRequest}

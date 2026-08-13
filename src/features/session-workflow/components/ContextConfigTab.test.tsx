@@ -844,6 +844,52 @@ describe("ContextConfigTab — validation command selectors", () => {
     ]);
   });
 
+  it("saves a context-validator command selection as a per-context override", () => {
+    const onSaveContextConfig = vi.fn();
+    render(
+      <ContextConfigTab
+        execution={unstartedExecution(contextWithValidationSelectors(), {
+          status: "running",
+        })}
+        contextId="context-impl"
+        onSaveContextConfig={onSaveContextConfig}
+        commandOptions={[
+          {
+            name: "typecheck",
+            cost: 2,
+            pathArgs: "forbid",
+            changedScope: "full_fallback",
+          },
+        ]}
+      />,
+    );
+
+    const block = screen.getByTestId("config-block-agent-validation");
+    fireEvent.click(
+      within(roleSection(block, "contextValidator")).getByRole("checkbox", {
+        name: "typecheck",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(onSaveContextConfig).toHaveBeenCalledWith([
+      {
+        type: "update-context",
+        contextId: "context-impl",
+        agentValidation: {
+          implementer: {
+            value: { mode: "all", except: ["format"] },
+            source: "workflow",
+          },
+          contextValidator: {
+            value: { mode: "only", commands: ["typecheck"] },
+            source: "per-node",
+          },
+        },
+      },
+    ]);
+  });
+
   it("adding a script-validator command sends the whole config in the op", () => {
     const onSaveContextConfig = vi.fn();
     render(
@@ -1206,6 +1252,23 @@ describe("ContextConfigTab — edit payload shape", () => {
 
     const saveButton = screen.getByRole("button", { name: "Saving…" });
     expect(saveButton).toBeDisabled();
+  });
+
+  it("shows the server refusal when a configuration save fails", () => {
+    render(
+      <ContextConfigTab
+        execution={startedExecution(fullContext(), startedContextState(), {
+          status: "paused",
+        })}
+        contextId="context-impl"
+        onSaveContextConfig={vi.fn()}
+        editError={'Unknown validation command "premerge".'}
+      />,
+    );
+
+    expect(screen.getByTestId("config-affordance-error")).toHaveTextContent(
+      'Unknown validation command "premerge".',
+    );
   });
 });
 

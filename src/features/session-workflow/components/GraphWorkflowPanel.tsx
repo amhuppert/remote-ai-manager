@@ -72,6 +72,7 @@ interface GraphWorkflowPanelProps {
   isApprovingDefinition: boolean;
   definitionApprovalError: string | null;
   configEditConflict: boolean;
+  configEditError: string | null;
   configSaveSucceeded: boolean;
   isMutating: boolean;
   pendingAction: ExecutionControlAction | null;
@@ -106,6 +107,7 @@ export default function GraphWorkflowPanel({
   isApprovingDefinition,
   definitionApprovalError,
   configEditConflict,
+  configEditError,
   configSaveSucceeded,
   isMutating,
   pendingAction,
@@ -358,6 +360,7 @@ export default function GraphWorkflowPanel({
                 isPausingExecution={isPausingExecution}
                 isResumingExecution={isResumingExecution}
                 configEditConflict={configEditConflict}
+                configEditError={configEditError}
                 configSaveSucceeded={configSaveSucceeded}
                 onViewConversation={handleViewConversation}
                 onEditSchema={handleEditOutputSchema}
@@ -456,6 +459,7 @@ export default function GraphWorkflowPanel({
                 isPausingExecution={isPausingExecution}
                 isResumingExecution={isResumingExecution}
                 configEditConflict={configEditConflict}
+                configEditError={configEditError}
                 configSaveSucceeded={configSaveSucceeded}
                 onViewConversation={handleViewConversation}
                 onEditSchema={handleEditOutputSchema}

@@ -58,6 +58,23 @@ function pauseFailureMessage(error: Error): string {
   return `Couldn't pause workflow: ${error.message}`;
 }
 
+function configEditErrorMessage(error: Error | null): string | null {
+  if (!error) return null;
+  if (error instanceof ApiCallError && error.code === "revision_conflict") {
+    return null;
+  }
+
+  if (!(error instanceof ApiCallError)) return error.message;
+
+  const issueMessages = (error.issues ?? []).map((issue) => issue.message);
+  const instruction = error.details?.instruction;
+  const messages = [
+    ...(issueMessages.length > 0 ? issueMessages : [error.message]),
+    ...(typeof instruction === "string" ? [instruction] : []),
+  ];
+  return [...new Set(messages)].join(" ");
+}
+
 interface ConnectedGraphWorkflowPanelProps {
   projectName: string;
   sessionName: string;
@@ -224,13 +241,51 @@ export default function ConnectedGraphWorkflowPanel({
   const handleSaveContextConfig = useCallback(
     (operations: WorkflowLiveEditOperation[]) => {
       if (!execution || operations.length === 0) return;
-      configEditMutation.mutate({
+      const contextIds = operations.flatMap((operation) =>
+        "contextId" in operation ? [operation.contextId] : [],
+      );
+      const input = {
         executionId: execution.id,
         baseLiveRevision: execution.liveRevision,
         operations,
+      };
+      logger.info("session_workflow.context_config_save.requested", {
+        projectName,
+        sessionName,
+        executionId: execution.id,
+        baseLiveRevision: execution.liveRevision,
+        operationCount: operations.length,
+        contextIds,
+      });
+      configEditMutation.mutate(input, {
+        onSuccess: () => {
+          logger.info("session_workflow.context_config_save.completed", {
+            projectName,
+            sessionName,
+            executionId: execution.id,
+            baseLiveRevision: execution.liveRevision,
+            operationCount: operations.length,
+            contextIds,
+          });
+        },
+        onError: (error) => {
+          logger.warn("session_workflow.context_config_save.failed", {
+            projectName,
+            sessionName,
+            executionId: execution.id,
+            baseLiveRevision: execution.liveRevision,
+            operationCount: operations.length,
+            contextIds,
+            error: error.message,
+            errorCode: error instanceof ApiCallError ? error.code : undefined,
+            status: error instanceof ApiCallError ? error.status : undefined,
+            issueCount:
+              error instanceof ApiCallError ? (error.issues?.length ?? 0) : 0,
+          });
+        },
       });
     },
-    [execution, configEditMutation],
+    [configEditMutation, execution, projectName, sessionName],
   );
 
   const configEditConflict =
@@ -379,6 +434,7 @@ export default function ConnectedGraphWorkflowPanel({
         approveDefinitionMutation.error,
       )}
       configEditConflict={configEditConflict}
+      configEditError={configEditErrorMessage(configEditMutation.error)}
       configSaveSucceeded={configEditMutation.isSuccess}
       isMutating={
         pauseMutation.isPending ||

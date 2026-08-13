@@ -739,6 +739,59 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
     });
   });
 
+  it("persists context-validator command edits on an unstarted context while the execution runs", async () => {
+    await seedExecution(
+      createWorkflowExecution({
+        status: "running",
+        activeContextIds: ["context-plan"],
+      }),
+    );
+    buildLiveEditDeps.mockResolvedValue({
+      ...TEST_LIVE_EDIT_DEPS,
+      validationCommandPreflight: () => ({
+        commandCosts: { typecheck: 2 },
+        concurrencyLimit: 8,
+      }),
+    });
+
+    const response = await handlers.POST(
+      makeRequest(
+        "POST",
+        updateContext({
+          source: "ui",
+          operations: [
+            {
+              type: "update-context",
+              contextId: "context-implement",
+              agentValidation: {
+                implementer: {
+                  value: { mode: "all", except: [] },
+                  source: "global",
+                },
+                contextValidator: {
+                  value: { mode: "only", commands: ["typecheck"] },
+                  source: "per-node",
+                },
+              },
+            },
+          ],
+        }),
+      ),
+      routeParams,
+    );
+
+    const responseBody = await response.clone().json();
+    expect(response.status, JSON.stringify(responseBody)).toBe(200);
+    const context = (await reload())?.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-implement",
+    );
+    expect(context?.agentValidation?.contextValidator).toEqual({
+      value: { mode: "only", commands: ["typecheck"] },
+      source: "per-node",
+      commands: ["typecheck"],
+    });
+  });
+
   it("attributes the source from the request (ui)", async () => {
     await seedExecution(createWorkflowExecution({ status: "paused" }));
 

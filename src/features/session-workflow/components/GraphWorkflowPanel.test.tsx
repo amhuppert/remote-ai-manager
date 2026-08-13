@@ -41,6 +41,7 @@ const noopCallbacks = {
   isApprovingDefinition: false,
   definitionApprovalError: null,
   configEditConflict: false,
+  configEditError: null,
   configSaveSucceeded: false,
   isMutating: false,
   pendingAction: null,
@@ -67,6 +68,28 @@ describe("GraphWorkflowPanel", () => {
         .querySelector("[data-workflow-execution-id]")
         ?.getAttribute("data-workflow-execution-id"),
     ).toBe("workflow-observed");
+  });
+
+  it("shows a context configuration save refusal in the selected Config tab", async () => {
+    const view = renderWithQuery(
+      <GraphWorkflowPanel
+        execution={createWorkflowExecution({ status: "paused" })}
+        events={[]}
+        archivedExecutions={[]}
+        {...noopCallbacks}
+        configEditError='Unknown validation command "premerge".'
+      />,
+    );
+
+    const contextTitle = screen.getByText("Implement");
+    const contextNode = contextTitle.closest(".react-flow__node");
+    expect(contextNode).not.toBeNull();
+    fireEvent.click(contextNode!);
+    await userEvent.click(screen.getByRole("tab", { name: "Config" }));
+
+    expect(view.getByRole("alert")).toHaveTextContent(
+      'Unknown validation command "premerge".',
+    );
   });
 
   it("offers the definition-approval recovery action for a parked execution", async () => {

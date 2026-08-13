@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -13,6 +19,7 @@ import {
   graphWorkflowHistoryKeys,
   workflowDefinitionKeys,
 } from "@/lib/workflows/query-keys";
+import { validationKeys } from "@/lib/validation/query-keys";
 import { useToastStoreForTesting } from "@/stores/toast.store";
 import ConnectedGraphWorkflowPanel from "./ConnectedGraphWorkflowPanel";
 
@@ -238,5 +245,89 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
         ),
       ).toBeNull();
     });
+  });
+
+  it("surfaces a structured live configuration refusal where Save was clicked", async () => {
+    const execution = createWorkflowExecution({
+      id: "execution-config",
+      status: "paused",
+      seedDefinitionId: "workflow-1",
+      seedDefinitionRevision: 1,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const url = String(input);
+        if (
+          url.endsWith("/graph-workflow/runtime-edits") &&
+          init?.method === "POST"
+        ) {
+          return jsonResponse(
+            {
+              error: "live edit was rejected",
+              code: "invalid_edit",
+              issues: [
+                {
+                  path: "executionContexts.context-implement.agentValidation.contextValidator.value.commands.0",
+                  message:
+                    'unknown-validation-command — Unknown validation command "premerge"',
+                },
+              ],
+            },
+            400,
+          );
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? "GET"} ${url}`);
+      }),
+    );
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
+        mutations: { retry: false },
+      },
+    });
+    queryClient.setQueryData(
+      graphWorkflowExecutionKeys.detail(PROJECT_NAME, SESSION_NAME),
+      execution,
+    );
+    queryClient.setQueryData(
+      workflowDefinitionKeys.detail(PROJECT_NAME, "workflow-1"),
+      { item: createWorkflowDefinitionRecord() },
+    );
+    queryClient.setQueryData(
+      graphWorkflowEventsKeys.list(PROJECT_NAME, SESSION_NAME, execution.id),
+      [],
+    );
+    queryClient.setQueryData(
+      graphWorkflowHistoryKeys.list(PROJECT_NAME, SESSION_NAME),
+      [],
+    );
+    queryClient.setQueryData(validationKeys.commands(), {
+      projects: [{ projectName: PROJECT_NAME, commands: [] }],
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ConnectedGraphWorkflowPanel
+          projectName={PROJECT_NAME}
+          sessionName={SESSION_NAME}
+          isMobile={false}
+          mobilePanel="graph"
+          autoSwitchPanel={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByTestId("rf__node-context-implement"));
+    await userEvent.click(screen.getByRole("tab", { name: "Config" }));
+    fireEvent.change(screen.getByLabelText("Max iterations"), {
+      target: { value: "9" },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      'Unknown validation command "premerge"',
+    );
   });
 });

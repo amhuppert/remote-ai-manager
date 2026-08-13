@@ -631,6 +631,8 @@ interface ContextConfigTabProps {
   isResuming?: boolean;
   /** The last save hit a `revision_conflict` — surface the retry notice. */
   editConflict?: boolean;
+  /** A non-conflict save refusal or request failure to show at the edit site. */
+  editError?: string | null;
   /** The last save succeeded — offer Resume for the pause-to-edit flow. */
   saveSucceeded?: boolean;
   /** Project-scoped registry summaries; undefined = registry unavailable. */
@@ -666,6 +668,7 @@ export default function ContextConfigTab({
   isPausing = false,
   isResuming = false,
   editConflict = false,
+  editError = null,
   saveSucceeded = false,
   commandOptions,
   libraryProjectName,
@@ -899,6 +902,16 @@ export default function ContextConfigTab({
           >
             The execution changed since you started editing. Review your changes
             and retry.
+          </div>
+        )}
+
+        {editError && (
+          <div
+            className="rounded-md border border-solid border-[var(--cc-red-a25)] bg-[var(--cc-red-a10)] px-[12px] py-[8px] text-[0.72rem] text-red"
+            data-testid="config-affordance-error"
+            role="alert"
+          >
+            {editError}
           </div>
         )}
 
