@@ -179,6 +179,16 @@ describe("classifyContextLifecycle", () => {
       expected: "unstarted",
     },
     {
+      name: "a pending context with cleared reservation state is unstarted",
+      execution: makeExecution({
+        contextState: contextState({
+          reservedByBatchId: null,
+          reservedOwnership: null,
+        }),
+      }),
+      expected: "unstarted",
+    },
+    {
       name: "a completed context is frozen",
       execution: makeExecution({
         contextState: contextState({
@@ -230,6 +240,22 @@ describe("classifyContextLifecycle", () => {
       name: "a batchId-assigned context is started",
       execution: makeExecution({
         contextState: contextState({ batchId: "batch-1" }),
+      }),
+      expected: "started",
+    },
+    {
+      name: "a context with a scheduling reservation is started",
+      execution: makeExecution({
+        contextState: contextState({ reservedByBatchId: "batch-1" }),
+      }),
+      expected: "started",
+    },
+    {
+      name: "a context with reserved ownership is started",
+      execution: makeExecution({
+        contextState: contextState({
+          reservedOwnership: { mode: "full", canonicalPrefixes: [] },
+        }),
       }),
       expected: "started",
     },

@@ -306,9 +306,23 @@ export function classifyContextLifecycleFromPin(
     ([taskId, initial]) => deepEqualJson(execution.taskStates[taskId], initial),
   );
 
+  // The reservation schema intentionally represents "unreserved" and "never
+  // admitted" as either absent fields or null, so compare those claims
+  // canonically.
+  const currentContextState = {
+    ...contextState,
+    reservedByBatchId: contextState.reservedByBatchId ?? null,
+    reservedOwnership: contextState.reservedOwnership ?? null,
+  };
+  const initialContextState = {
+    ...pin.contextState,
+    reservedByBatchId: pin.contextState.reservedByBatchId ?? null,
+    reservedOwnership: pin.contextState.reservedOwnership ?? null,
+  };
+
   const isUnstarted =
     !execution.activeContextIds.includes(contextId) &&
-    deepEqualJson(contextState, pin.contextState) &&
+    deepEqualJson(currentContextState, initialContextState) &&
     everyTaskInitial;
 
   return isUnstarted ? "unstarted" : "started";

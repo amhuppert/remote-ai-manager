@@ -343,6 +343,21 @@ describe("projectLiveOutline — context rows", () => {
     expect(byId["verify"]!.editability).toBe("editable");
   });
 
+  it("keeps a dependency-waiting context editable after its reservation is cleared", () => {
+    const execution = buildExecution();
+    execution.contextStates["verify"]!.reservedByBatchId = null;
+    execution.contextStates["verify"]!.reservedOwnership = null;
+
+    const result = projectLiveOutline(execution, { kind: "outline" });
+    if (!result.ok || result.section !== "outline")
+      throw new Error("expected outline");
+    const byId = Object.fromEntries(
+      result.outline.contexts.map((context) => [context.id, context]),
+    );
+
+    expect(byId["verify"]!.editability).toBe("editable");
+  });
+
   it("resolves a started context to editable on a paused (quiescent) execution", () => {
     const result = projectLiveOutline(buildExecution({ status: "paused" }), {
       kind: "outline",

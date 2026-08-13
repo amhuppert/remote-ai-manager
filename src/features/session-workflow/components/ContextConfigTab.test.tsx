@@ -610,10 +610,14 @@ describe("ContextConfigTab — disable matrix per lifecycle × execution status"
     expect(onPauseExecution).toHaveBeenCalledTimes(1);
   });
 
-  it("unstarted context is editable even while the execution is running", () => {
+  it("unstarted context is editable after its reservation state is cleared", () => {
+    const execution = unstartedExecution(fullContext(), { status: "running" });
+    execution.contextStates["context-impl"]!.reservedByBatchId = null;
+    execution.contextStates["context-impl"]!.reservedOwnership = null;
+
     render(
       <ContextConfigTab
-        execution={unstartedExecution(fullContext(), { status: "running" })}
+        execution={execution}
         contextId="context-impl"
         onSaveContextConfig={vi.fn()}
       />,
