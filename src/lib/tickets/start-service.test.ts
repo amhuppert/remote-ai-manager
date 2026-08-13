@@ -13,6 +13,7 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { SSEEvent } from "@/lib/api/sse-events";
+import { EMPTY_TRANSCRIPT_COMPACTION_ERROR } from "@/lib/context-artifacts/service";
 import {
   createPersistenceFixture,
   type PersistenceFixture,
@@ -960,6 +961,64 @@ describe("start", () => {
     const blob = await contentStore.read(snapshot.snapshotKey);
     expect(Buffer.from(blob).toString("utf8")).toBe("retained snapshot");
   });
+
+  it.each(["pending", "failed"] as const)(
+    "starts work without materializing a %s snapshot for an empty conversation",
+    async (snapshotStatus) => {
+      const ticket = await createTicket();
+      const attachment = await repo.addAttachment({
+        id: `conv-empty-${snapshotStatus}`,
+        ticketId: ticket.id,
+        description: "empty conversation context",
+        payload: {
+          kind: "conversation",
+          projectPath: PROJECT_PATH,
+          sessionName: null,
+          conversationId: CONVERSATION_ID,
+          snapshotKey: null,
+          snapshotCapturedAt: null,
+          snapshotStatus,
+          ...(snapshotStatus === "failed"
+            ? { snapshotError: "Conversation snapshot capture failed." }
+            : {}),
+        },
+        createdAt: nextNow(),
+        updatedAt: nextNow(),
+      });
+      const { service, recorded } = makeService({
+        ensureConversationCompaction() {
+          return Promise.resolve({
+            ok: false,
+            reason: EMPTY_TRANSCRIPT_COMPACTION_ERROR,
+          });
+        },
+      });
+
+      const result = await service.start({
+        projectName: PROJECT_NAME,
+        number: ticket.number,
+        mode: "agent",
+      });
+
+      expect(result.ok).toBe(true);
+      expect(recorded.provisions).toHaveLength(1);
+      expect(recorded.materializations[0]?.attachments).not.toContainEqual(
+        expect.objectContaining({ id: attachment.id }),
+      );
+      expect(recorded.kickoffs[0]?.input.prompt).toContain(
+        "The ticket has no attachments.",
+      );
+      expect(recorded.kickoffs[0]?.input.prompt).not.toContain(
+        attachment.description,
+      );
+      const persisted = await repo.find(PROJECT_PATH, ticket.number);
+      expect(
+        persisted?.attachments.find(
+          (candidate) => candidate.id === attachment.id,
+        )?.payload,
+      ).toEqual(attachment.payload);
+    },
+  );
 
   it.each(["pending", "failed"] as const)(
     "captures a %s conversation snapshot before materialization",

@@ -87,6 +87,9 @@ const CARRIED_ENVELOPE_RESERVE_BYTES = 120_000;
 export const SEGMENT_WINDOW_BUDGET_BYTES =
   COMPACTION_MODEL_BUDGET_BYTES - CARRIED_ENVELOPE_RESERVE_BYTES;
 
+export const EMPTY_TRANSCRIPT_COMPACTION_ERROR =
+  "transcript is empty; nothing to compact";
+
 export interface CompactionServiceDeps {
   executeTaskRun(input: ExecuteWorkflowTaskRunInput): Promise<TaskRunResult>;
   readEntries(transcriptPath: string | null): Promise<TranscriptEntriesResult>;
@@ -264,7 +267,7 @@ export function createCompactionService(
 
     const firstEntry = entries[0];
     if (!firstEntry) {
-      return { error: "transcript is empty; nothing to compact" };
+      return { error: EMPTY_TRANSCRIPT_COMPACTION_ERROR };
     }
 
     const canDelta =

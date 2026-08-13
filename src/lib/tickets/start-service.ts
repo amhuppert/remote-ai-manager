@@ -5,6 +5,7 @@ import {
 } from "@/lib/agent-backends/schemas";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import { conversationProfileSelectionSchema } from "@/lib/conversations/schemas";
+import { EMPTY_TRANSCRIPT_COMPACTION_ERROR } from "@/lib/context-artifacts/service";
 import type { PublishFn } from "@/lib/events/publication";
 import { createLogger } from "@/lib/logging";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -468,6 +469,15 @@ export function createTicketStartService(
           conversationId: payload.conversationId,
         });
         if (!ensured.ok) {
+          if (ensured.reason === EMPTY_TRANSCRIPT_COMPACTION_ERROR) {
+            logger.info("start.empty_conversation_skipped", {
+              ticketId: ticket.id,
+              attachmentId: attachment.id,
+              conversationId: payload.conversationId,
+              snapshotStatus: effectiveSnapshotStatus(payload),
+            });
+            continue;
+          }
           await discardConversationSnapshots(ticket.id, conversationSnapshots);
           return fail({
             code: "context_preparation_failed",
