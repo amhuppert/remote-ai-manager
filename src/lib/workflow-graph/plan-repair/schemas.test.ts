@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { findProviderStrictSchemaViolations } from "@/lib/agent-backends/testing/provider-strict-schema";
 import { makeSeededValidatorAssignment } from "../test-fixtures";
 import {
+  decodePlanRepairAgentOutput,
   expandPlanRepairOperations,
   PLAN_REPAIR_VERDICT_JSON_SCHEMA,
   planRepairVerdictSchema,
@@ -53,9 +55,6 @@ describe("planRepairVerdictSchema", () => {
   });
 
   it("rejects an operation entry without a type field at the verdict layer", () => {
-    // The backend's native structured output enforces the generated JSON
-    // schema, so requiring `type` here makes the model produce well-shaped
-    // ops instead of failing later at the allowlist (live-proof regression).
     expect(
       planRepairVerdictSchema.safeParse({
         planningDefect: true,
@@ -74,6 +73,7 @@ describe("planRepairVerdictSchema", () => {
       };
     };
     expect(schema.properties?.operations?.items?.required).toContain("type");
+    expect(schema.properties?.operations?.items?.required).toContain("payload");
   });
 
   it("exports a generated JSON schema for the structured-output gate", () => {
@@ -85,6 +85,56 @@ describe("planRepairVerdictSchema", () => {
     expect(Object.keys(schema.properties ?? {})).toEqual(
       expect.arrayContaining(["planningDefect", "diagnosis", "operations"]),
     );
+  });
+
+  it("stays inside the strict subset a provider-native backend accepts", () => {
+    expect(
+      findProviderStrictSchemaViolations(PLAN_REPAIR_VERDICT_JSON_SCHEMA),
+    ).toEqual([]);
+  });
+
+  it("decodes strict operation envelopes into domain operations", () => {
+    const decoded = decodePlanRepairAgentOutput({
+      planningDefect: true,
+      diagnosis: "The criterion names a removed endpoint",
+      operations: [
+        {
+          type: "update-context",
+          payload: JSON.stringify({
+            contextId: "ctx-1",
+            acceptanceCriteria: "Use the supported endpoint",
+          }),
+        },
+      ],
+    });
+
+    expect(decoded).toEqual({
+      ok: true,
+      verdict: {
+        planningDefect: true,
+        diagnosis: "The criterion names a removed endpoint",
+        operations: [
+          {
+            type: "update-context",
+            contextId: "ctx-1",
+            acceptanceCriteria: "Use the supported endpoint",
+          },
+        ],
+      },
+    });
+  });
+
+  it("rejects an operation payload that is not a JSON object", () => {
+    const decoded = decodePlanRepairAgentOutput({
+      planningDefect: true,
+      diagnosis: "The criterion names a removed endpoint",
+      operations: [{ type: "update-context", payload: "[]" }],
+    });
+
+    expect(decoded).toEqual({
+      ok: false,
+      error: "operations[0].payload must encode a JSON object",
+    });
   });
 });
 

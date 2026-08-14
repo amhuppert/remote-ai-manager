@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { findProviderStrictSchemaViolations } from "@/lib/agent-backends/testing/provider-strict-schema";
 import { validateJsonSchemaSubset } from "@/lib/workflows/primitives/output-schema-subset";
 import type { WorkflowValidatorAdvisory } from "@/lib/workflow-graph/definition-schemas";
 import type {
@@ -208,62 +209,6 @@ describe("non-binding framing", () => {
   });
 });
 
-/**
- * The keyword rules OpenAI's strict structured-output validator enforces on the
- * schema Codex dispatches as `codex_output_schema`, verified against the live
- * provider: `oneOf` is refused outright, every declared property must appear in
- * `required`, and a `const`/`enum` node must carry a `type`. A schema that
- * breaks any of them is rejected with HTTP 400 before the turn runs, which the
- * engine can only surface as a halt.
- */
-function findProviderStrictViolations(
-  node: unknown,
-  path = "$",
-  violations: string[] = [],
-): string[] {
-  if (typeof node !== "object" || node === null || Array.isArray(node)) {
-    return violations;
-  }
-  const schema: Record<string, unknown> = { ...node };
-
-  if ("oneOf" in schema) {
-    violations.push(`${path}.oneOf is not permitted by the provider`);
-  }
-  if (("const" in schema || "enum" in schema) && !("type" in schema)) {
-    violations.push(`${path} declares const/enum without a type`);
-  }
-
-  const properties = schema.properties;
-  if (typeof properties === "object" && properties !== null) {
-    if (schema.additionalProperties !== false) {
-      violations.push(`${path} must declare additionalProperties: false`);
-    }
-    const required = Array.isArray(schema.required) ? schema.required : [];
-    for (const key of Object.keys(properties)) {
-      if (!required.includes(key)) {
-        violations.push(`${path}.required is missing ${JSON.stringify(key)}`);
-      }
-      findProviderStrictViolations(
-        (properties as Record<string, unknown>)[key],
-        `${path}.properties.${key}`,
-        violations,
-      );
-    }
-  }
-
-  if ("items" in schema) {
-    findProviderStrictViolations(schema.items, `${path}.items`, violations);
-  }
-  for (const [index, branch] of (Array.isArray(schema.anyOf)
-    ? schema.anyOf
-    : []
-  ).entries()) {
-    findProviderStrictViolations(branch, `${path}.anyOf[${index}]`, violations);
-  }
-
-  return violations;
-}
-
 describe("dispositions output schema", () => {
   const advisories = stampAdvisoryIdentities({
     roundSeq: 4,
@@ -273,7 +218,7 @@ describe("dispositions output schema", () => {
   const schema = buildAdvisoryDispositionsOutputSchema(advisories);
 
   it("stays inside the strict subset a provider-native backend accepts", () => {
-    expect(findProviderStrictViolations(schema)).toEqual([]);
+    expect(findProviderStrictSchemaViolations(schema)).toEqual([]);
   });
 
   function validate(dispositions: unknown[]): { valid: boolean } {

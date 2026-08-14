@@ -90,6 +90,8 @@ describe("buildPlanRepairPrompt", () => {
     expect(prompt).toContain('"type": "amend-charter"');
     expect(prompt).toContain('"type": "update-context"');
     expect(prompt).toContain('"type": "update-task"');
+    expect(prompt).toContain('"payload"');
+    expect(prompt).toContain("Do not repeat `type` inside `payload`");
   });
 
   // The op vocabulary is the agent's ONLY view of what it may change: a field

@@ -434,7 +434,7 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
       "",
       "## Allowed repair operations",
       "",
-      "Emit live-edit operations from this vocabulary ONLY (plan artifacts, plus the one narrowing operation below; no structural graph changes, no gate or config controls). Every entry in `operations` MUST be a JSON object with a `type` field, using EXACTLY these shapes:",
+      "Choose live-edit operations from this vocabulary ONLY (plan artifacts, plus the one narrowing operation below; no structural graph changes, no gate or config controls). These are the logical operation shapes; the strict transport envelope is shown in the Output section:",
       "```jsonc",
       '{"type": "amend-charter", "rationale": "<required: why the charter changes>", "mission": "...", "conventions": ["..."], "nonGoals": ["..."], "vocabulary": ["..."], "testStrategy": "...", "knownAmbiguities": ["..."], "invariants": [{"id": "...", "statement": "..."}]}  // include only the charter fields you are changing',
       '{"type": "update-context", "contextId": "<id>", "title": "...", "description": "...", "acceptanceCriteria": "...", "outputSchema": {"type": "object", "properties": {}} /* or null to drop it */, "iterationPolicy": {"maxIterations": 10, "continuity": {"enabled": true}}, "circuitBreaker": {"consecutiveFailureThreshold": 3}}  // include only the fields you are changing',
@@ -451,6 +451,8 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
       "## Output",
       "",
       "Return the structured verdict: `planningDefect` (boolean), `diagnosis` (your root-cause analysis — it becomes the halt summary when you decline), and `operations` (empty when planningDefect is false).",
+      "Each `operations` entry MUST use this transport envelope: `type` is the logical operation's type, and `payload` is a JSON-encoded object string containing every other field. Do not repeat `type` inside `payload`.",
+      'Example: `{ "planningDefect": true, "diagnosis": "The criterion names a removed endpoint.", "operations": [{ "type": "update-context", "payload": "{\\"contextId\\":\\"context-implement\\",\\"acceptanceCriteria\\":\\"Use the supported endpoint.\\"}" }] }`',
     ].join("\n"),
   );
 

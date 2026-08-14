@@ -17,8 +17,9 @@ import {
 import type { EnsureActorInputData } from "@/lib/workflows/conversation/manager";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
 import {
+  decodePlanRepairAgentOutput,
   PLAN_REPAIR_VERDICT_JSON_SCHEMA,
-  planRepairVerdictSchema,
+  planRepairAgentOutputSchema,
 } from "./schemas";
 import type {
   PlanRepairAgentInvocation,
@@ -102,7 +103,7 @@ export function createPlanRepairAgentRunner(
       };
     }
 
-    const validated = validateStructuredOutput(planRepairVerdictSchema, {
+    const validated = validateStructuredOutput(planRepairAgentOutputSchema, {
       ...(result.kind === "structured"
         ? { native: result.structuredOutput }
         : {}),
@@ -122,9 +123,24 @@ export function createPlanRepairAgentRunner(
       };
     }
 
+    const decoded = decodePlanRepairAgentOutput(validated.value);
+    if (!decoded.ok) {
+      logger.warn("plan_repair.verdict_unparseable", {
+        executionId: invocation.executionId,
+        contextId: invocation.contextId,
+        stage: "operation_payload",
+        error: decoded.error,
+      });
+      return {
+        kind: "error",
+        message: `repair verdict did not validate: ${decoded.error}`,
+        conversationId: invocation.conversationId,
+      };
+    }
+
     return {
       kind: "verdict",
-      verdict: validated.value,
+      verdict: decoded.verdict,
       conversationId: invocation.conversationId,
     };
   };

@@ -28,24 +28,121 @@ import {
   type ValidatorCohort,
 } from "../config-schemas";
 
-// The verdict the repair agent must return (structured-output enforced).
+export const PLAN_REPAIR_VALIDATOR_ASSIGNMENT_OP_TYPE =
+  "update-validator-assignment";
+
+const PLAN_REPAIR_ALLOWED_OPERATION_TYPES = [
+  "amend-charter",
+  "update-context",
+  "add-task",
+  "update-task",
+  "remove-task",
+  "reorder-tasks",
+  PLAN_REPAIR_VALIDATOR_ASSIGNMENT_OP_TYPE,
+] as const;
+
+const PLAN_REPAIR_LOOP_CONTROL_OPERATION_TYPES = [
+  "raise-loop-max-passes",
+  "amend-loop-predicate",
+  "edit-loop-template",
+] as const;
+
+const PLAN_REPAIR_OUTPUT_OPERATION_TYPES = [
+  ...PLAN_REPAIR_ALLOWED_OPERATION_TYPES,
+  ...PLAN_REPAIR_LOOP_CONTROL_OPERATION_TYPES,
+] as const;
+
+// The normalized verdict consumed by the repair supervisor.
 export const planRepairVerdictSchema = z.object({
   planningDefect: z.boolean(),
   diagnosis: z.string().min(1),
-  // `type` is required HERE (not just at the allowlist) so the backend's
-  // native structured output forces well-shaped ops out of the model —
-  // the first live proof produced typeless operations under a fully loose
-  // schema. Each entry is still re-parsed by `validatePlanRepairOperations`
-  // against the real op union.
+  // Each entry is re-parsed by `validatePlanRepairOperations` against the real
+  // op union after the provider-safe envelope has been decoded.
   operations: z.array(z.looseObject({ type: z.string().min(1) })).default([]),
 });
 export type PlanRepairVerdict = z.infer<typeof planRepairVerdictSchema>;
 
+/**
+ * Provider-native strict object schemas cannot carry an arbitrary JSON Schema
+ * property map inside an `update-context` operation. The transport therefore
+ * keeps the operation discriminator structural and carries the remaining
+ * lossless operation fields as JSON for deterministic decoding and domain
+ * validation.
+ */
+export const planRepairAgentOutputSchema = z
+  .object({
+    planningDefect: z.boolean(),
+    diagnosis: z.string().min(1),
+    operations: z.array(
+      z
+        .object({
+          type: z.enum(PLAN_REPAIR_OUTPUT_OPERATION_TYPES),
+          payload: z.string(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+export type PlanRepairAgentOutput = z.infer<typeof planRepairAgentOutputSchema>;
+
 export const PLAN_REPAIR_VERDICT_JSON_SCHEMA: Record<string, unknown> =
-  z.toJSONSchema(planRepairVerdictSchema, { io: "input" }) as Record<
-    string,
-    unknown
-  >;
+  z.toJSONSchema(planRepairAgentOutputSchema) as Record<string, unknown>;
+
+export type DecodePlanRepairAgentOutputResult =
+  | { ok: true; verdict: PlanRepairVerdict }
+  | { ok: false; error: string };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function decodePlanRepairAgentOutput(
+  output: PlanRepairAgentOutput,
+): DecodePlanRepairAgentOutputResult {
+  const operations: Record<string, unknown>[] = [];
+
+  for (const [index, envelope] of output.operations.entries()) {
+    let payload: unknown;
+    try {
+      payload = JSON.parse(envelope.payload);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ok: false,
+        error: `operations[${index}].payload is not valid JSON: ${message}`,
+      };
+    }
+    if (!isRecord(payload)) {
+      return {
+        ok: false,
+        error: `operations[${index}].payload must encode a JSON object`,
+      };
+    }
+    if (Object.hasOwn(payload, "type")) {
+      return {
+        ok: false,
+        error: `operations[${index}].payload must not repeat the envelope type`,
+      };
+    }
+    operations.push({ type: envelope.type, ...payload });
+  }
+
+  const parsed = planRepairVerdictSchema.safeParse({
+    planningDefect: output.planningDefect,
+    diagnosis: output.diagnosis,
+    operations,
+  });
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    return {
+      ok: false,
+      error: issue
+        ? `${issue.path.join(".") || "verdict"}: ${issue.message}`
+        : "decoded verdict failed validation",
+    };
+  }
+  return { ok: true, verdict: parsed.data };
+}
 
 /**
  * The one op that reaches a validator assignment (R10/D10).
@@ -57,9 +154,6 @@ export const PLAN_REPAIR_VERDICT_JSON_SCHEMA: Record<string, unknown> =
  * the reviewer that keeps objecting — the shapes that would let it do so are
  * not expressible here.
  */
-export const PLAN_REPAIR_VALIDATOR_ASSIGNMENT_OP_TYPE =
-  "update-validator-assignment";
-
 const planRepairValidatorAssignmentOpSchema = z
   .object({
     type: z.literal(PLAN_REPAIR_VALIDATOR_ASSIGNMENT_OP_TYPE),
@@ -81,15 +175,9 @@ export type ValidatorAssignmentNarrowing = z.infer<
 >;
 
 /** Op types the repair agent may emit — plan artifacts, plus D10 narrowing. */
-const ALLOWED_PLAN_REPAIR_OP_TYPES = new Set([
-  "amend-charter",
-  "update-context",
-  "add-task",
-  "update-task",
-  "remove-task",
-  "reorder-tasks",
-  PLAN_REPAIR_VALIDATOR_ASSIGNMENT_OP_TYPE,
-]);
+const ALLOWED_PLAN_REPAIR_OP_TYPES = new Set<string>(
+  PLAN_REPAIR_ALLOWED_OPERATION_TYPES,
+);
 
 /**
  * The three loop repairs R12 admits, at their three grains. Kept OUT of the
@@ -102,11 +190,9 @@ const ALLOWED_PLAN_REPAIR_OP_TYPES = new Set([
  * repairs are refused by the vocabulary rather than by a check this list would
  * have to remember.
  */
-const LOOP_CONTROL_OP_TYPES = new Set([
-  "raise-loop-max-passes",
-  "amend-loop-predicate",
-  "edit-loop-template",
-]);
+const LOOP_CONTROL_OP_TYPES = new Set<string>(
+  PLAN_REPAIR_LOOP_CONTROL_OPERATION_TYPES,
+);
 
 /**
  * The halted loop a repair round is running for. Absent (the default) means the

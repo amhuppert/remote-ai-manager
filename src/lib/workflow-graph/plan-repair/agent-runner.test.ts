@@ -29,6 +29,15 @@ const VERDICT = {
   ],
 };
 
+const AGENT_OUTPUT = {
+  planningDefect: VERDICT.planningDefect,
+  diagnosis: VERDICT.diagnosis,
+  operations: VERDICT.operations.map(({ type, ...payload }) => ({
+    type,
+    payload: JSON.stringify(payload),
+  })),
+};
+
 function makeInvocation(): PlanRepairAgentInvocation {
   return {
     projectPath: "/p",
@@ -59,7 +68,7 @@ describe("plan-repair agent runner", () => {
   it("dispatches an ephemeral session-scoped one-shot with the verdict schema and agent config", async () => {
     const { runner, calls } = makeRunner({
       kind: "structured",
-      structuredOutput: VERDICT,
+      structuredOutput: AGENT_OUTPUT,
       text: "",
       usage: USAGE,
       backendRef: null,
@@ -95,7 +104,7 @@ describe("plan-repair agent runner", () => {
   it("recovers the verdict from text output when no native structured payload exists", async () => {
     const { runner } = makeRunner({
       kind: "text",
-      text: JSON.stringify(VERDICT),
+      text: JSON.stringify(AGENT_OUTPUT),
       usage: USAGE,
       backendRef: null,
       continuationDisposition: "retain",
