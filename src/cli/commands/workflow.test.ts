@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import {
+  CONVERSATION_CAPABILITY_ENV_VAR,
+  CONVERSATION_CAPABILITY_HEADER,
+} from "@/lib/agent-gateway/conversation-capability";
 import { runCli } from "../core";
 import type { CliEnv, CliHost, FetchInit } from "../shared";
 
@@ -275,6 +279,52 @@ describe("cctl workflow status", () => {
     ]);
   });
 
+  it("reads the same Current-or-History projection by explicit cross-project execution id without a capability", async () => {
+    const durableProjection = {
+      ...execution,
+      id: "exec-history-7",
+      durableMarker: "survives-current-to-history",
+    };
+    const currentHost = makeHost(() =>
+      jsonResponse({ execution: durableProjection }),
+    );
+    const historyHost = makeHost(() =>
+      jsonResponse({ execution: durableProjection }),
+    );
+    const explicitEnv = {
+      ...baseEnv,
+      [CONVERSATION_CAPABILITY_ENV_VAR]: "must-not-be-used-for-a-read",
+    };
+    const argv = [
+      "workflow",
+      "status",
+      "exec-history-7",
+      "--project",
+      "another-project",
+      "--session",
+      "archived-session",
+      "--json",
+    ];
+
+    const current = await runCli(argv, explicitEnv, currentHost);
+    const history = await runCli(argv, explicitEnv, historyHost);
+
+    expect(current.exitCode).toBe(0);
+    expect(history.exitCode).toBe(0);
+    expect(JSON.parse(current.stdout).execution).toEqual(durableProjection);
+    expect(JSON.parse(history.stdout).execution).toEqual(durableProjection);
+    for (const host of [currentHost, historyHost]) {
+      const request = host.requests[0];
+      expect(request?.init.method).toBe("GET");
+      expect(new URL(request?.url ?? "").pathname).toBe(
+        "/api/projects/another-project/sessions/archived-session/graph-workflow/executions/exec-history-7",
+      );
+      expect(
+        request?.init.headers[CONVERSATION_CAPABILITY_HEADER],
+      ).toBeUndefined();
+    }
+  });
+
   it("reports no active execution plainly", async () => {
     const host = makeHost(() => jsonResponse({ execution: null }));
     const result = await runCli(["workflow", "status"], baseEnv, host);
@@ -407,17 +457,18 @@ describe("cctl workflow start", () => {
   });
 
   it("reports an approval-required execution as successfully parked instead of a failed start", async () => {
+    // The server accepts a park with a 202 receipt (D7 decision D1); the CLI
+    // reads the disposition from the receipt rather than from a refusal.
     const host = makeHost(() =>
       jsonResponse(
         {
-          error:
-            "Workflow definition approval is required before execution can start",
-          code: "definition_approval_required",
-          executionId: "exec-review-9",
-          instruction:
-            "Record approval for the pending workflow definition before starting execution.",
+          execution: { executionId: "exec-review-9", status: "pending" },
+          receipt: {
+            executionId: "exec-review-9",
+            status: "awaiting_definition_approval",
+          },
         },
-        409,
+        202,
       ),
     );
 
@@ -429,7 +480,7 @@ describe("cctl workflow start", () => {
       "parked wf-1 (run exec-review-9) awaiting definition approval",
     );
     expect(result.stdout).toContain(
-      "Record approval for the pending workflow definition",
+      "Approve the pending workflow definition to resume execution exec-review-9",
     );
   });
 
@@ -437,14 +488,13 @@ describe("cctl workflow start", () => {
     const host = makeHost(() =>
       jsonResponse(
         {
-          error:
-            "Workflow definition approval is required before execution can start",
-          code: "definition_approval_required",
-          executionId: "exec-review-json",
-          instruction:
-            "Record approval for the pending workflow definition before starting execution.",
+          execution: { executionId: "exec-review-json", status: "pending" },
+          receipt: {
+            executionId: "exec-review-json",
+            status: "awaiting_definition_approval",
+          },
         },
-        409,
+        202,
       ),
     );
 
@@ -460,7 +510,7 @@ describe("cctl workflow start", () => {
       executionId: "exec-review-json",
       status: "awaiting_definition_approval",
       instruction:
-        "Record approval for the pending workflow definition before starting execution.",
+        "Approve the pending workflow definition to resume execution exec-review-json.",
     });
   });
 
@@ -550,6 +600,579 @@ describe("cctl workflow start", () => {
     const result = await runCli(["workflow", "start", "wf-1"], baseEnv, host);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("already running");
+  });
+});
+
+describe("cctl workflow run", () => {
+  const plan = {
+    name: "One-off audit",
+    definition: { executionContexts: [], tasks: [], edges: [] },
+    layout: { nodes: [] },
+  };
+  const receipt = {
+    executionId: "exec-one-off-9",
+    status: "running",
+    origin: { kind: "one_off", planName: "One-off audit" },
+    originConversationId: "conv-origin",
+    deepLink:
+      "/projects/cc/sessions/my-session/workflow?execution=exec-one-off-9",
+    startedAt: "2026-08-14T12:00:00.000Z",
+  };
+
+  it("posts the plan and distinct inputs documents, attaches the verified capability, and returns detached receipt facts", async () => {
+    const host = makeHost(
+      (request) => {
+        expect(request.init.method).toBe("POST");
+        expect(JSON.parse(request.init.body ?? "{}")).toEqual({
+          plan,
+          inputs: { target: "staging" },
+        });
+        expect(request.init.headers[CONVERSATION_CAPABILITY_HEADER]).toBe(
+          "signed-conversation-capability",
+        );
+        return jsonResponse({ receipt }, 202);
+      },
+      {
+        "/tmp/plan.json": JSON.stringify(plan),
+        "/tmp/inputs.json": JSON.stringify({ target: "staging" }),
+      },
+    );
+
+    const result = await runCli(
+      [
+        "workflow",
+        "run",
+        "--file",
+        "/tmp/plan.json",
+        "--inputs",
+        "/tmp/inputs.json",
+      ],
+      {
+        ...baseEnv,
+        CC_CONVERSATION_ID: "conv-origin",
+        [CONVERSATION_CAPABILITY_ENV_VAR]: "signed-conversation-capability",
+      },
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(new URL(host.requests[0]?.url ?? "").pathname).toBe(
+      "/api/projects/cc/sessions/my-session/graph-workflow/run",
+    );
+    expect(result.stdout).toContain("exec-one-off-9");
+    expect(result.stdout).toContain("running");
+    expect(result.stdout).toContain("one_off");
+    expect(result.stdout).toContain("conv-origin");
+    expect(result.stdout).toContain(receipt.deepLink);
+    expect(result.stdout).not.toContain("definitionId");
+    expect(host.requests).toHaveLength(1);
+  });
+
+  it("preserves the same receipt facts in JSON without a definition id", async () => {
+    const host = makeHost(() => jsonResponse({ receipt }, 202), {
+      "/tmp/plan.json": JSON.stringify(plan),
+    });
+    const result = await runCli(
+      ["workflow", "run", "--file", "/tmp/plan.json", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ ok: true, ...receipt });
+    expect(result.stdout).not.toContain("definitionId");
+  });
+
+  it("accepts --wait with a bounded duration and rejects timeout misuse before a request", async () => {
+    const acceptedHost = makeHost(
+      (request) =>
+        new URL(request.url).pathname.endsWith("/run")
+          ? jsonResponse({ receipt }, 202)
+          : jsonResponse({ result: null }),
+      { "/tmp/plan.json": JSON.stringify(plan) },
+    );
+    const accepted = await runCli(
+      [
+        "workflow",
+        "run",
+        "--file",
+        "/tmp/plan.json",
+        "--wait",
+        "--timeout",
+        "1ms",
+      ],
+      baseEnv,
+      acceptedHost,
+    );
+    expect(accepted.exitCode).toBe(1);
+    expect(accepted.stderr).toContain("timed out after 1ms");
+    expect(acceptedHost.requests.map((request) => request.init.method)).toEqual(
+      ["POST", "GET"],
+    );
+
+    for (const argv of [
+      ["workflow", "run", "--file", "/tmp/plan.json", "--timeout", "90s"],
+      [
+        "workflow",
+        "run",
+        "--file",
+        "/tmp/plan.json",
+        "--wait",
+        "--timeout",
+        "soon",
+      ],
+    ]) {
+      const host = makeHost(() => jsonResponse({ receipt }, 202), {
+        "/tmp/plan.json": JSON.stringify(plan),
+      });
+      const result = await runCli(argv, baseEnv, host);
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("--timeout");
+      expect(host.requests).toHaveLength(0);
+    }
+  });
+
+  it("renders blocker-bearing lease refusals with text/JSON fact parity", async () => {
+    const details = {
+      executionId: "exec-blocking",
+      status: "halted",
+      origin: { kind: "one_off", planName: "Blocking audit" },
+      originConversationId: "conv-blocking",
+      deepLink:
+        "/projects/cc/sessions/my-session/workflow?execution=exec-blocking",
+      remedy: "resume_or_abandon",
+    };
+    const response = () =>
+      jsonResponse(
+        {
+          error: "The session execution lease is held",
+          code: "lease_held",
+          details,
+        },
+        409,
+      );
+    const files = { "/tmp/plan.json": JSON.stringify(plan) };
+
+    const textResult = await runCli(
+      ["workflow", "run", "--file", "/tmp/plan.json"],
+      baseEnv,
+      makeHost(response, files),
+    );
+    expect(textResult.exitCode).toBe(1);
+    expect(textResult.stderr).toContain("execution: exec-blocking");
+    expect(textResult.stderr).toContain("status: halted");
+    expect(textResult.stderr).toContain("origin: one_off");
+    expect(textResult.stderr).toContain("origin conversation: conv-blocking");
+    expect(textResult.stderr).toContain(`deep link: ${details.deepLink}`);
+    expect(textResult.stderr).toContain("remedy: resume_or_abandon");
+
+    const jsonResult = await runCli(
+      ["workflow", "run", "--file", "/tmp/plan.json", "--json"],
+      baseEnv,
+      makeHost(response, files),
+    );
+    expect(JSON.parse(jsonResult.stdout)).toMatchObject({
+      ok: false,
+      code: "lease_held",
+      details,
+    });
+  });
+
+  it("uses the same blocker-free refusal details for nesting and project scope", async () => {
+    const nestingRemedy =
+      "Ask the conversation that launched this run to start the next one.";
+    const nestingHost = makeHost(
+      () =>
+        jsonResponse(
+          {
+            error: "Workflows cannot nest",
+            code: "workflow_nesting_refused",
+            instruction: nestingRemedy,
+          },
+          403,
+        ),
+      { "/tmp/plan.json": JSON.stringify(plan) },
+    );
+    const nesting = await runCli(
+      ["workflow", "run", "--file", "/tmp/plan.json", "--json"],
+      baseEnv,
+      nestingHost,
+    );
+    expect(JSON.parse(nesting.stdout)).toMatchObject({
+      ok: false,
+      code: "workflow_nesting_refused",
+      details: { remedy: nestingRemedy },
+    });
+    expect(JSON.parse(nesting.stdout).details).not.toHaveProperty(
+      "executionId",
+    );
+
+    const projectHost = makeHost(() => jsonResponse({ receipt }, 202), {
+      "/tmp/plan.json": JSON.stringify(plan),
+    });
+    for (const sessionArgs of [[], ["--session", "forced-session"]]) {
+      const projectResult = await runCli(
+        [
+          "workflow",
+          "run",
+          "--file",
+          "/tmp/plan.json",
+          ...sessionArgs,
+          "--json",
+        ],
+        {
+          ...baseEnv,
+          CC_CONVERSATION_SCOPE: "project",
+          CC_SESSION: "",
+        },
+        projectHost,
+      );
+      expect(projectResult.exitCode).toBe(2);
+      expect(JSON.parse(projectResult.stdout)).toMatchObject({
+        ok: false,
+        code: "project_scope_refused",
+        details: {
+          remedy: expect.stringContaining("session conversation"),
+        },
+      });
+    }
+    expect(projectHost.requests).toHaveLength(0);
+  });
+});
+
+describe("cctl workflow wait", () => {
+  function boundary(
+    boundaryKind:
+      | "definition_approval"
+      | "context_approval"
+      | "lane_question"
+      | "completion",
+    cursor = 41,
+  ) {
+    return {
+      cursor,
+      occurredAt: "2026-08-14T12:01:00.000Z",
+      executionId: "exec-wait-1",
+      boundaryKind,
+      status: boundaryKind === "completion" ? "completed" : "running",
+      contextId:
+        boundaryKind === "context_approval" || boundaryKind === "lane_question"
+          ? "context-review"
+          : null,
+      pendingActions:
+        boundaryKind === "completion"
+          ? []
+          : [{ kind: boundaryKind, action: "operator_action_required" }],
+      outputs: { kind: "no_declared_structured_result" },
+      name: "One-off audit",
+      origin: { kind: "one_off", planName: "One-off audit" },
+      originConversationId: "conv-origin",
+      startedAt: "2026-08-14T12:00:00.000Z",
+      completedAt:
+        boundaryKind === "completion" ? "2026-08-14T12:01:00.000Z" : null,
+      haltReason: null,
+      abandonment: null,
+      documents: [],
+      deepLink:
+        "/projects/cc/sessions/my-session/workflow?execution=exec-wait-1",
+    };
+  }
+
+  for (const boundaryKind of [
+    "completion",
+    "definition_approval",
+    "lane_question",
+    "context_approval",
+  ] as const) {
+    it(`returns exactly once for the next ${boundaryKind} boundary`, async () => {
+      let reads = 0;
+      const host = makeHost(() => {
+        reads += 1;
+        return jsonResponse({ result: boundary(boundaryKind) });
+      });
+      const result = await runCli(
+        ["workflow", "wait", "exec-wait-1", "--json"],
+        baseEnv,
+        host,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(reads).toBe(1);
+      expect(JSON.parse(result.stdout)).toEqual({
+        ok: true,
+        result: boundary(boundaryKind),
+      });
+    });
+  }
+
+  it("passes an opaque cursor through and returns a boundary that already fired without sleeping", async () => {
+    const sleeps: number[] = [];
+    const host = makeHost((request) => {
+      expect(new URL(request.url).searchParams.get("cursor")).toBe("40");
+      return jsonResponse({ result: boundary("completion", 41) });
+    });
+    host.sleep = async (ms) => {
+      sleeps.push(ms);
+    };
+
+    const result = await runCli(
+      ["workflow", "wait", "exec-wait-1", "--cursor", "40", "--timeout", "10s"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("completion");
+    expect(result.stdout).toContain("cursor: 41");
+    expect(sleeps).toEqual([]);
+  });
+
+  it("polls at the established cadence and times out with a non-mutating continuation receipt", async () => {
+    let now = 100;
+    const sleeps: number[] = [];
+    const host = makeHost((request) => {
+      expect(request.init.method).toBe("GET");
+      return jsonResponse({ result: null });
+    });
+    host.now = () => now;
+    host.sleep = async (ms) => {
+      sleeps.push(ms);
+      now += ms;
+    };
+
+    const result = await runCli(
+      [
+        "workflow",
+        "wait",
+        "exec-wait-1",
+        "--cursor",
+        "40",
+        "--timeout",
+        "2s",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(host.requests).toHaveLength(2);
+    expect(
+      host.requests.every((request) => request.init.method === "GET"),
+    ).toBe(true);
+    expect(sleeps).toEqual([1_000, 1_000]);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
+      code: "wait_timeout",
+      details: {
+        executionId: "exec-wait-1",
+        cursor: "40",
+        continueWith: "cctl workflow wait exec-wait-1 --cursor 40 --timeout 2s",
+      },
+    });
+  });
+
+  it("counts request time against the timeout and bounds a hung transport", async () => {
+    let now = 100;
+    const sleeps: number[] = [];
+    const host = Object.assign(
+      makeHost((request) => {
+        expect(request.init.timeoutMs).toBe(2_000);
+        now += 2_000;
+        throw new Error("request aborted at its deadline");
+      }),
+      { now: () => now },
+    );
+    host.sleep = async (ms) => {
+      sleeps.push(ms);
+    };
+
+    const result = await runCli(
+      [
+        "workflow",
+        "wait",
+        "exec-wait-1",
+        "--cursor",
+        "40",
+        "--timeout",
+        "2s",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(host.requests).toHaveLength(1);
+    expect(sleeps).toEqual([]);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
+      code: "wait_timeout",
+      details: {
+        executionId: "exec-wait-1",
+        cursor: "40",
+      },
+    });
+  });
+
+  it("retains explicit project and session addressing in a continuation receipt", async () => {
+    const host = makeHost(() => jsonResponse({ result: null }));
+    const result = await runCli(
+      [
+        "workflow",
+        "wait",
+        "exec-wait-1",
+        "--project",
+        "other-project",
+        "--session",
+        "archived-session",
+        "--cursor",
+        "40",
+        "--timeout",
+        "1ms",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(new URL(host.requests[0]?.url ?? "").pathname).toBe(
+      "/api/projects/other-project/sessions/archived-session/graph-workflow/executions/exec-wait-1/result",
+    );
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
+      code: "wait_timeout",
+      details: {
+        executionId: "exec-wait-1",
+        cursor: "40",
+        project: "other-project",
+        session: "archived-session",
+        continueWith:
+          "cctl workflow wait exec-wait-1 --cursor 40 --project other-project --session archived-session --timeout 1ms",
+      },
+    });
+  });
+
+  it("returns a continuation receipt on disconnect without cancelling or mutating", async () => {
+    const host = makeHost(() => {
+      throw new Error("socket closed");
+    });
+    const result = await runCli(
+      ["workflow", "wait", "exec-wait-1", "--cursor", "40", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(3);
+    expect(host.requests).toHaveLength(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
+      code: "wait_disconnected",
+      details: {
+        executionId: "exec-wait-1",
+        cursor: "40",
+        continueWith: expect.stringContaining(
+          "cctl workflow wait exec-wait-1 --cursor 40",
+        ),
+      },
+    });
+  });
+
+  it("makes run --wait use the same durable result reader", async () => {
+    const plan = {
+      name: "One-off audit",
+      definition: { executionContexts: [], tasks: [], edges: [] },
+      layout: { nodes: [] },
+    };
+    const receipt = {
+      executionId: "exec-wait-1",
+      status: "running",
+      origin: { kind: "one_off", planName: "One-off audit" },
+      originConversationId: "conv-origin",
+      deepLink:
+        "/projects/cc/sessions/my-session/workflow?execution=exec-wait-1",
+      startedAt: "2026-08-14T12:00:00.000Z",
+    };
+    const host = makeHost(
+      (request) =>
+        new URL(request.url).pathname.endsWith("/run")
+          ? jsonResponse({ receipt }, 202)
+          : jsonResponse({ result: boundary("completion") }),
+      { "/tmp/plan.json": JSON.stringify(plan) },
+    );
+
+    const result = await runCli(
+      [
+        "workflow",
+        "run",
+        "--file",
+        "/tmp/plan.json",
+        "--wait",
+        "--timeout",
+        "10s",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(host.requests.map((request) => request.init.method)).toEqual([
+      "POST",
+      "GET",
+    ]);
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: true,
+      ...receipt,
+      result: boundary("completion"),
+    });
+    expect(result.stdout).not.toContain("definitionId");
+  });
+
+  it("keeps the text launch receipt when run --wait reaches a later boundary", async () => {
+    const plan = {
+      name: "One-off audit",
+      definition: { executionContexts: [], tasks: [], edges: [] },
+      layout: { nodes: [] },
+    };
+    const receipt = {
+      executionId: "exec-wait-1",
+      status: "running",
+      origin: { kind: "one_off", planName: "One-off audit" },
+      originConversationId: "conv-origin",
+      deepLink:
+        "/projects/cc/sessions/my-session/workflow?execution=exec-wait-1",
+      startedAt: "2026-08-14T12:00:00.000Z",
+    };
+    const host = makeHost(
+      (request) =>
+        new URL(request.url).pathname.endsWith("/run")
+          ? jsonResponse({ receipt }, 202)
+          : jsonResponse({ result: boundary("completion") }),
+      { "/tmp/plan.json": JSON.stringify(plan) },
+    );
+
+    const result = await runCli(
+      [
+        "workflow",
+        "run",
+        "--file",
+        "/tmp/plan.json",
+        "--wait",
+        "--timeout",
+        "10s",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("launched exec-wait-1  running");
+    expect(result.stdout).toContain("origin conversation: conv-origin");
+    expect(result.stdout).toContain(`deep link: ${receipt.deepLink}`);
+    expect(result.stdout).toContain("exec-wait-1  completion");
+    expect(result.stdout).not.toContain("definitionId");
   });
 });
 

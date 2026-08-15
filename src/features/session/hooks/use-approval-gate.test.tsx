@@ -4,8 +4,10 @@ import { renderHook, waitFor, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type {
+  GraphWorkflowAbandonment,
   GraphWorkflowApprovalDecision,
   GraphWorkflowExecution,
+  GraphWorkflowHaltReason,
 } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 import type { GlobalConfig } from "@/lib/config/schemas";
@@ -63,6 +65,13 @@ const SCOPED_DIFF = {
   totalDeletions: 0,
 };
 
+const RESUMABLE_HALT: GraphWorkflowHaltReason = {
+  type: "circuit_breaker",
+  contextId: GATED_CONTEXT_ID,
+  condition: "retry_exhaustion",
+  summary: null,
+};
+
 function gatedExecution(
   opts: {
     executionStatus?: GraphWorkflowStatus;
@@ -71,10 +80,22 @@ function gatedExecution(
     requestedAt?: string;
     /** Live-edit the placement to full access while the gate stands. */
     placementEditedToFull?: boolean;
+    haltReason?: GraphWorkflowHaltReason | null;
+    abandonment?: GraphWorkflowAbandonment | null;
   } = {},
 ): GraphWorkflowExecution {
+  // A halted fixture carries a resumable reason unless the case supplies its
+  // own. The engine's halt event types `reason` as non-nullable, so a reasonless
+  // halt is not a shape production can reach — and the lease predicate reads the
+  // reason, so defaulting it here keeps "halted" meaning what these cases intend
+  // (a run that is still Current) rather than a lease-free History record.
+  const haltReason =
+    opts.haltReason ??
+    (opts.executionStatus === "halted" ? RESUMABLE_HALT : null);
   const execution = createWorkflowExecution({
     status: opts.executionStatus ?? "running",
+    ...(haltReason ? { haltReason } : {}),
+    ...(opts.abandonment ? { abandonment: opts.abandonment } : {}),
   });
   const contextState = execution.contextStates[GATED_CONTEXT_ID];
   if (!contextState) throw new Error("fixture missing gated context");
@@ -124,6 +145,46 @@ describe("deriveApprovalGateStanding", () => {
       });
     },
   );
+
+  /**
+   * Tenure, not a status set — and the SERVER already decides it this way. The
+   * mirrored set this replaces made the client disagree with the feed: the
+   * server dropped a dead gate's standing while this hook went on rendering it,
+   * offering an operator a decision that could never be applied.
+   */
+  it("drops standing when the halt is not resumable", () => {
+    expect(
+      deriveApprovalGateStanding(
+        gatedExecution({
+          executionStatus: "halted",
+          haltReason: { type: "recovery_error", message: "dead" },
+        }),
+        GATED_CONVERSATION_ID,
+      ),
+    ).toBeNull();
+  });
+
+  it("drops standing when a resumable halt has been abandoned", () => {
+    expect(
+      deriveApprovalGateStanding(
+        gatedExecution({
+          executionStatus: "halted",
+          haltReason: {
+            type: "circuit_breaker",
+            contextId: GATED_CONTEXT_ID,
+            condition: "retry_exhaustion",
+            summary: null,
+          },
+          abandonment: {
+            abandonedAt: "2026-06-10T11:00:00.000Z",
+            actor: { kind: "human" },
+            reason: "superseded",
+          },
+        }),
+        GATED_CONVERSATION_ID,
+      ),
+    ).toBeNull();
+  });
 
   it("marks a context under a file-ownership envelope", () => {
     expect(

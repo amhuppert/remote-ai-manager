@@ -13,8 +13,9 @@ import {
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import { deriveExecutionLaneActivities } from "@/lib/workflow-graph/lane-activity";
 import HaltDetailsDialog from "./HaltDetailsDialog";
+import { holdsExecutionLease } from "@/lib/workflow-graph/lifecycle-classifier";
 
-export type ExecutionControlAction = "pause" | "resume" | "abort" | "clear";
+export type ExecutionControlAction = "pause" | "resume" | "abort" | "abandon";
 
 const wbBtn =
   "inline-flex items-center justify-center gap-[6px] font-medium rounded-sm cursor-pointer transition-all duration-150 border border-border-default whitespace-nowrap";
@@ -58,10 +59,12 @@ interface ExecutionStatusBarProps {
   onPause: () => void;
   onResume: (conflictGuidance?: ConflictDecisionInput[]) => void;
   onAbort: () => void;
-  onClear: () => void;
+  onAbandon?: () => void;
   isMutating: boolean;
   /** Which control mutation is in flight, so its button shows progress. */
   pendingAction: ExecutionControlAction | null;
+  /** False for History: informational status and halt details stay mounted. */
+  allowActions?: boolean;
 }
 
 function ControlLabel({
@@ -112,7 +115,6 @@ function countAwaitingApproval(execution: GraphWorkflowExecution): number {
   ).length;
 }
 
-const terminalStatuses = new Set(["completed", "halted", "aborted"]);
 const resumableStatuses = new Set(["paused", "halted"]);
 
 export default function ExecutionStatusBar({
@@ -122,9 +124,10 @@ export default function ExecutionStatusBar({
   onPause,
   onResume,
   onAbort,
-  onClear,
+  onAbandon,
   isMutating,
   pendingAction,
+  allowActions = true,
 }: ExecutionStatusBarProps) {
   const definition = execution.workingDefinition;
   const index = useMemo(
@@ -142,11 +145,29 @@ export default function ExecutionStatusBar({
       ),
     [execution],
   );
-  const showPause = execution.status === "running";
-  const showResume = resumableStatuses.has(execution.status);
+  const showPause = allowActions && execution.status === "running";
+  const showResume =
+    allowActions &&
+    resumableStatuses.has(execution.status) &&
+    holdsExecutionLease(
+      execution.status,
+      execution.haltReason,
+      execution.abandonment,
+    );
   const showAbort =
-    execution.status !== "completed" && execution.status !== "aborted";
-  const showClear = terminalStatuses.has(execution.status);
+    allowActions &&
+    (execution.status === "pending" ||
+      execution.status === "running" ||
+      execution.status === "paused");
+  const showAbandon =
+    allowActions &&
+    onAbandon !== undefined &&
+    execution.status === "halted" &&
+    holdsExecutionLease(
+      execution.status,
+      execution.haltReason,
+      execution.abandonment,
+    );
   const haltReason = execution.haltReason;
   const secondaryHaltReasons = execution.secondaryHaltReasons;
   const haltHeadline = haltReason
@@ -312,19 +333,19 @@ export default function ExecutionStatusBar({
             />
           </button>
         )}
-        {showClear && (
+        {showAbandon && (
           <button
-            className={cn(wbBtn, wbBtnXs, wbBtnDefault, execControlBtn)}
-            onClick={onClear}
+            className={cn(wbBtn, wbBtnXs, wbBtnDanger, execControlBtn)}
+            onClick={onAbandon}
             disabled={isMutating}
-            aria-busy={pendingAction === "clear" || undefined}
+            aria-busy={pendingAction === "abandon" || undefined}
             type="button"
           >
             <ControlLabel
-              action="clear"
+              action="abandon"
               pendingAction={pendingAction}
-              idleLabel="Clear"
-              pendingLabel="Clearing…"
+              idleLabel="Abandon"
+              pendingLabel="Abandoning…"
             />
           </button>
         )}
@@ -347,7 +368,9 @@ export default function ExecutionStatusBar({
           isMutating={isMutating}
           isResuming={pendingAction === "resume"}
           outputSchemaEvidence={outputSchemaEvidence}
-          {...(onEditSchema !== undefined ? { onEditSchema } : {})}
+          {...(allowActions && onEditSchema !== undefined
+            ? { onEditSchema }
+            : {})}
         />
       )}
     </div>

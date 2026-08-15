@@ -27,7 +27,11 @@ import type {
   GraphWorkflowEventDelivery,
   PublishPlanRepairInput,
 } from "../execution-events";
-import type { MutateActiveResult } from "../execution-repository";
+import {
+  MutationRefusedError,
+  mutateActiveOrRefuse,
+  type MutateActiveResult,
+} from "../execution-repository";
 import type {
   LiveEditApplyOutcome,
   LiveEditApplyRequest,
@@ -97,13 +101,21 @@ export interface PlanRepairSupervisorDeps {
   runRepairAgent(
     invocation: PlanRepairAgentInvocation,
   ): Promise<PlanRepairAgentResult>;
-  /** normalize → resume → kick off the loop (the RESUME handler trio). */
+  /**
+   * normalize → resume → kick off the loop (the RESUME handler trio), fenced
+   * on the round's execution identity: the trio addresses the SESSION, and the
+   * run this round examined may have been abandoned and replaced while its
+   * agent turn was open.
+   */
   resumeExecution(input: {
     projectPath: string;
     sessionName: string;
     projectName: string;
+    executionId: string;
   }): Promise<void>;
   getValidationHistory(
+    projectPath: string,
+    sessionName: string,
     executionId: string,
     contextId: string,
   ): Promise<PlanRepairValidationVerdict[]>;
@@ -142,6 +154,28 @@ function repairConversationId(
   seq: number,
 ): string {
   return `__plan_repair__:${executionId}:${contextId}:${seq}`;
+}
+
+/**
+ * Raised INSIDE a concluding reducer when the session's active row is no
+ * longer the run this round examined, which aborts the mutation.
+ *
+ * Returning the row unchanged would not do: the mutation seam stamps its
+ * staging fences on every committed write, so a "no-op" settle still advances
+ * the successor's `executionStateRevision` — and any event the reducer carried
+ * would still land in the successor's ledger. Refusing the write is the fence;
+ * writing the same bytes back is not.
+ */
+class PlanRepairExecutionFenceError extends MutationRefusedError {
+  constructor(
+    write: string,
+    readonly expectedExecutionId: string,
+    readonly activeExecutionId: string,
+  ) {
+    super(write);
+    this.name = "PlanRepairExecutionFenceError";
+    this.message = `Plan repair ${write} belongs to execution ${expectedExecutionId}, but ${activeExecutionId} holds the session's execution lease`;
+  }
 }
 
 /**
@@ -244,15 +278,18 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
     // abort between the read and this write withdraws without a trace.
     let appended: PlanRepairRound | null = null;
     let priorRounds: PlanRepairRound[] = [];
-    await deps.mutateActive(projectPath, sessionName, (current) => {
+    await mutateFenced(input, executionId, "append_round", (current) => {
       const recheck = evaluatePlanRepairTrigger(current);
       if (
         !recheck.eligible ||
         recheck.contextId !== contextId ||
-        recheck.loopGroupId !== loopGroupId ||
-        current.id !== executionId
+        recheck.loopGroupId !== loopGroupId
       ) {
-        return current;
+        // Withdrawn, not merely unchanged: a resume or abort landed between the
+        // trigger read and this write, and the round it authorized no longer
+        // has a subject. Returning `current` would commit for a round that
+        // never starts.
+        throw new MutationRefusedError("append_round");
       }
       const next = structuredClone(current);
       priorRounds = current.planRepairRounds;
@@ -284,12 +321,13 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       sessionName,
     );
     if (worktreePath === null) {
-      await settleRound(input, round.seq, {
+      await settleRound(input, executionId, round.seq, {
         outcome: "failed",
         diagnosis: "plan repair could not resolve the session worktree",
       });
       await populateHaltSummary(
         input,
+        executionId,
         { contextId, loopGroupId },
         "Plan repair failed: no session worktree available for the repair agent.",
       );
@@ -309,6 +347,8 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
     }
 
     const validationHistory = await deps.getValidationHistory(
+      input.projectPath,
+      input.sessionName,
       executionId,
       contextId,
     );
@@ -346,13 +386,14 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         attempt,
         error: agentResult.message,
       });
-      await settleRound(input, round.seq, {
+      await settleRound(input, executionId, round.seq, {
         outcome: "failed",
         diagnosis: `repair agent turn failed: ${agentResult.message}`,
         conversationId: agentResult.conversationId,
       });
       await populateHaltSummary(
         input,
+        executionId,
         { contextId, loopGroupId },
         `Plan repair attempt ${attempt} failed: ${agentResult.message}`,
       );
@@ -381,7 +422,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
     });
 
     if (!verdict.planningDefect || verdict.operations.length === 0) {
-      await settleRound(input, round.seq, {
+      await settleRound(input, executionId, round.seq, {
         outcome: "declined",
         planningDefect: verdict.planningDefect,
         diagnosis: verdict.diagnosis,
@@ -389,6 +430,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       });
       await populateHaltSummary(
         input,
+        executionId,
         { contextId, loopGroupId },
         `Plan repair declined (attempt ${attempt}): ${verdict.diagnosis}`,
       );
@@ -427,7 +469,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         attempt,
         issues: issueSummary,
       });
-      await settleRound(input, round.seq, {
+      await settleRound(input, executionId, round.seq, {
         outcome: "failed",
         planningDefect: true,
         diagnosis: `${verdict.diagnosis} — repair operations rejected: ${issueSummary}`,
@@ -435,6 +477,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       });
       await populateHaltSummary(
         input,
+        executionId,
         { contextId, loopGroupId },
         `Plan repair attempt ${attempt} produced disallowed operations: ${issueSummary}`,
       );
@@ -512,7 +555,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         attempt,
         issues: issueSummary,
       });
-      await settleRound(input, round.seq, {
+      await settleRound(input, executionId, round.seq, {
         outcome: "failed",
         planningDefect: true,
         diagnosis: `${verdict.diagnosis} — repair operations no longer match the current plan: ${issueSummary}`,
@@ -520,6 +563,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       });
       await populateHaltSummary(
         input,
+        executionId,
         { contextId, loopGroupId },
         `Plan repair attempt ${attempt} no longer matches the current plan (it was edited while the repair ran): ${issueSummary}`,
       );
@@ -551,7 +595,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         contextId,
         attempt,
       });
-      await settleRound(input, round.seq, {
+      await settleRound(input, executionId, round.seq, {
         outcome: "superseded",
         planningDefect: true,
         diagnosis: verdict.diagnosis,
@@ -584,7 +628,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         attempt,
         failure,
       });
-      await settleRound(input, round.seq, {
+      await settleRound(input, executionId, round.seq, {
         outcome: "failed",
         planningDefect: true,
         diagnosis: `${verdict.diagnosis} — apply rejected: ${failure}`,
@@ -592,6 +636,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       });
       await populateHaltSummary(
         input,
+        executionId,
         { contextId, loopGroupId },
         `Plan repair attempt ${attempt} was rejected by the live-edit gates: ${failure}`,
       );
@@ -620,7 +665,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
 
     // Resume last: settle the round first so the applied repair is durable
     // even if resume fails (e.g. the user aborted underneath us).
-    await settleRound(input, round.seq, {
+    await settleRound(input, executionId, round.seq, {
       outcome: "repaired",
       planningDefect: true,
       diagnosis: verdict.diagnosis,
@@ -630,7 +675,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
 
     let resumed = false;
     try {
-      await deps.resumeExecution(input);
+      await deps.resumeExecution({ ...input, executionId });
       resumed = true;
     } catch (error) {
       logger.warn("plan_repair.resume_failed", {
@@ -641,7 +686,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       });
     }
     if (resumed) {
-      await settleRound(input, round.seq, { resumed: true });
+      await settleRound(input, executionId, round.seq, { resumed: true });
       logger.info("plan_repair.resumed", { executionId, contextId, attempt });
     }
 
@@ -660,16 +705,26 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
     return { ran: true, outcome: "repaired", seq: round.seq };
   }
 
+  /**
+   * `executionId` is the identity captured at round start, and every
+   * concluding write is fenced on it (D7 decision D5). These writes address the
+   * SESSION's active row, which an abandon-plus-relaunch turns over mid-round:
+   * a successor relaunched from the same plan carries the same context ids and
+   * restarts its round numbering at 1, so a seq or halt-subject match on the
+   * successor is exactly the collision that would otherwise let a concluded
+   * round settle itself onto a run it never examined.
+   */
   async function settleRound(
     input: MaybeRunPlanRepairInput,
+    executionId: string,
     seq: number,
     patch: Partial<PlanRepairRound>,
   ): Promise<void> {
-    await deps.mutateActive(input.projectPath, input.sessionName, (current) => {
+    await mutateFenced(input, executionId, "settle_round", (current) => {
       const index = current.planRepairRounds.findIndex(
         (round) => round.seq === seq,
       );
-      if (index === -1) return current;
+      if (index === -1) throw new MutationRefusedError("settle_round");
       const next = structuredClone(current);
       const existing = next.planRepairRounds[index]!;
       next.planRepairRounds[index] = {
@@ -682,6 +737,54 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
   }
 
   /**
+   * Every concluding write goes through here so the identity check is part of
+   * the serialized mutation rather than a read that precedes it: the row can
+   * turn over between an advisory read and the write it authorizes, and only a
+   * check inside the reducer sees the row the commit will actually replace.
+   */
+  async function mutateFenced(
+    input: MaybeRunPlanRepairInput,
+    executionId: string,
+    write: string,
+    reduce: (
+      current: GraphWorkflowExecution,
+    ) => MutateActiveResult | GraphWorkflowExecution,
+  ): Promise<GraphWorkflowExecution | null> {
+    // Holder rather than a bare `let`: TS flow analysis does not see the
+    // closure assignment, so a local would narrow to `never` at the read below.
+    const fenced: { rejection: PlanRepairExecutionFenceError | null } = {
+      rejection: null,
+    };
+    const written = await mutateActiveOrRefuse(() =>
+      deps.mutateActive(input.projectPath, input.sessionName, (current) => {
+        if (current.id !== executionId) {
+          const rejected = new PlanRepairExecutionFenceError(
+            write,
+            executionId,
+            current.id,
+          );
+          fenced.rejection = rejected;
+          throw rejected;
+        }
+        return reduce(current);
+      }),
+    );
+    // Logged out here, never in the reducer: `createLogger` appends to disk
+    // synchronously and the reducer runs inside the write queue.
+    const rejection = fenced.rejection;
+    if (rejection !== null) {
+      logger.warn("plan_repair.write_fenced", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        write,
+        expectedExecutionId: rejection.expectedExecutionId,
+        activeExecutionId: rejection.activeExecutionId,
+      });
+    }
+    return written;
+  }
+
+  /**
    * Record the repair verdict on the halt reason so the halt UI explains
    * itself (R8). Guarded: only while still halted on the SAME halt this round
    * was triggered by — a user resume/abort wins. A loop halt is identified by
@@ -690,14 +793,17 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
    */
   async function populateHaltSummary(
     input: MaybeRunPlanRepairInput,
+    executionId: string,
     subject: { contextId: string; loopGroupId: string | null },
     summary: string,
   ): Promise<void> {
-    await deps.mutateActive(input.projectPath, input.sessionName, (current) => {
+    await mutateFenced(input, executionId, "halt_summary", (current) => {
       if (current.status !== "halted" || current.haltReason === null) {
-        return current;
+        throw new MutationRefusedError("halt_summary");
       }
-      if (!haltMatchesSubject(current.haltReason, subject)) return current;
+      if (!haltMatchesSubject(current.haltReason, subject)) {
+        throw new MutationRefusedError("halt_summary");
+      }
       const next = structuredClone(current);
       const nextReason = next.haltReason;
       if (
@@ -746,6 +852,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
     });
     await populateHaltSummary(
       input,
+      execution.id,
       { contextId, loopGroupId },
       `Plan repair attempts exhausted (${attempts} round(s) for ${loopGroupId === null ? "this context" : "this loop"}). Human review required — see the plan-repair rounds for the diagnoses.`,
     );
@@ -770,6 +877,10 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
    * mutation (the repository persists delivery events atomically with the
    * execution write and dispatches pushes post-commit). Best-effort: the round
    * log is the durable record; a failed emit never fails the run.
+   *
+   * Fenced like every other concluding write: the event is filed against the
+   * SESSION's active row, so an unfenced emit records this run's repair round
+   * in the ledger of whichever successor took the slot.
    */
   async function emitRound(
     input: MaybeRunPlanRepairInput,
@@ -777,19 +888,15 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
     conclusion: PlanRepairRoundConclusion,
   ): Promise<void> {
     try {
-      await deps.mutateActive(
-        input.projectPath,
-        input.sessionName,
-        (current) => ({
-          execution: current,
-          ...deps.publishPlanRepairRound({
-            projectPath: input.projectPath,
-            sessionName: input.sessionName,
-            executionId,
-            ...conclusion,
-          }),
+      await mutateFenced(input, executionId, "round_event", (current) => ({
+        execution: current,
+        ...deps.publishPlanRepairRound({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          executionId,
+          ...conclusion,
         }),
-      );
+      }));
     } catch (error) {
       logger.warn("plan_repair.event_emit_failed", {
         executionId,

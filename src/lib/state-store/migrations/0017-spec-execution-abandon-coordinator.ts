@@ -49,6 +49,20 @@ const MIGRATION_SCHEMA_DESCRIPTION =
  * immediate transaction: failure at any stage restores the narrow table and
  * leaves the version unstamped.
  */
+/**
+ * The cleanup-phase copy expression. The rebuild targets the CURRENT floor
+ * DDL, and that floor no longer admits `release_slot` (migration 0026 retired
+ * the phase with the release act it called), so a legacy row parked there
+ * would fail the new CHECK mid-rebuild and brick startup. It advances to
+ * `finalize` here for the same reason 0026 advances it: the abort already ran,
+ * and `finalize` re-observes the linked run before finalizing anything.
+ */
+function cleanupPhaseCopy(legacyColumns: ReadonlySet<string>): string {
+  return legacyColumns.has("cleanup_phase")
+    ? "CASE WHEN cleanup_phase = 'release_slot' THEN 'finalize' ELSE cleanup_phase END"
+    : "NULL";
+}
+
 export const specExecutionAbandonCoordinator: StateMigration = {
   name: "0017-spec-execution-abandon-coordinator",
   up: async ({ context }) => {
@@ -113,7 +127,7 @@ export const specExecutionAbandonCoordinator: StateMigration = {
           )
           SELECT
             id, spec_id, revision_id, scope_json, state,
-            ${legacyOrNull("cleanup_phase")},
+            ${cleanupPhaseCopy(legacyColumns)},
             ${legacyOrNull("linked_workflow_execution_id")},
             ${legacyOrNull("cleanup_last_error")},
             ${legacyOrNull("cleanup_last_error_at")},

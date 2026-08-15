@@ -415,6 +415,7 @@ function makeFakeBackendActorDeps(
     getConversationCapabilities: () => undefined,
     registerBackendRuntime: () => {},
     unregisterBackendRuntime: () => {},
+    mintConversationCapability: () => null,
     buildChildEnv: () => process.env,
     resolvePluginPaths: async () => [],
     getCodexToolPromptHint: () => "",
@@ -425,6 +426,27 @@ function makeFakeBackendActorDeps(
     getActiveAlignmentInjection: async () => null,
     getActiveAlignmentVersion: async () => null,
     getLiveTicketBlock: async () => null,
+    claimWorkflowResults: (input) =>
+      fixture.store.claimGraphWorkflowResultDeliveries(
+        input.projectPath,
+        input.sessionName,
+        input.originConversationId,
+        input.attemptId,
+      ),
+    settleWorkflowResults: (input) =>
+      fixture.store.settleGraphWorkflowResultDeliveries(
+        input.projectPath,
+        input.sessionName,
+        input.originConversationId,
+        input.attemptId,
+      ),
+    releaseWorkflowResults: (input) =>
+      fixture.store.releaseGraphWorkflowResultDeliveries(
+        input.projectPath,
+        input.sessionName,
+        input.originConversationId,
+        input.attemptId,
+      ),
     createReferenceDocument: fixture.store.createReferenceDocument,
     getReferenceDocuments: async () => [],
     readConversationMessages: async () => [],

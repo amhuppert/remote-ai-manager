@@ -211,6 +211,58 @@ describe("runPublish", () => {
     expect(setFinished).not.toHaveBeenCalled();
   });
 
+  /**
+   * The route's check is advisory: it runs before the job, before the lock, and
+   * the answer can be stale by the time the publish happens. This is the
+   * authoritative one — it reads inside the project lock, which is the only
+   * window in which "no run holds the lease" stays true through the publish.
+   */
+  it("re-reads the lease inside the project lock, refusing when a run took it after the route check", async () => {
+    const publish = vi.fn(async () => ({
+      kind: "published" as const,
+      mergeHash: "merge-abc",
+    }));
+    const events: string[] = [];
+    // Answers what the route saw first, then what is true under the lock.
+    const getActiveGraphWorkflowExecution = vi
+      .fn()
+      .mockImplementationOnce(async () => null)
+      .mockImplementationOnce(async () => {
+        events.push("in-lock-read");
+        return {
+          id: "execution-late",
+          status: "running",
+          haltReason: null,
+          abandonment: null,
+          definitionApproval: null,
+        };
+      });
+    const deps = makePublishDeps({
+      publishPreparedMerge: publish,
+      getActiveGraphWorkflowExecution,
+      acquireProjectLock: vi.fn(() => {
+        events.push("lock-acquired");
+        return () => events.push("lock-released");
+      }),
+    });
+
+    // The advisory read the route would have made: clear.
+    expect(await deps.getActiveGraphWorkflowExecution("/proj", "feature")).toBe(
+      null,
+    );
+
+    const out = await runPublish(deps, basePublishInput);
+
+    expect(out).toEqual({
+      status: "failed",
+      error:
+        "Graph workflow execution execution-late is running. Complete or abort it before merging this session.",
+    });
+    expect(publish).not.toHaveBeenCalled();
+    // Order is the point: the deciding read happens after the lock is held.
+    expect(events).toEqual(["lock-acquired", "in-lock-read", "lock-released"]);
+  });
+
   it("allows graph-owned lane merges that do not finalize the session", async () => {
     const publish = vi.fn(async () => ({
       kind: "published" as const,

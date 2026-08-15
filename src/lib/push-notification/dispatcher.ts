@@ -16,6 +16,7 @@ import type {
   PushNotificationConfig,
   Notification,
 } from "@/lib/notifications/schemas";
+import type { GraphWorkflowPushInfo } from "@/lib/workflow-graph/execution-events";
 const logger = createLogger("push-dispatcher");
 
 /** Config reader function — injected for testability, defaults to reading from disk */
@@ -156,6 +157,14 @@ function pushEventFromNotification(notification: Notification): PushEvent {
         sessionName: notification.sessionName ?? undefined,
         contextName: `${notification.specName} · ${notification.deepLinkId}`,
       };
+    case "workflow":
+      return {
+        trigger: "workflow-completed",
+        title: notification.title,
+        message: notification.message,
+        projectName: notification.projectName,
+        sessionName: notification.sessionName,
+      };
     default:
       assertNever(notification);
   }
@@ -246,47 +255,6 @@ export async function pushForConversationStatus(
 // Push for graph workflow events
 // ============================================================
 
-type GraphWorkflowPushInfo =
-  | {
-      kind: "workflow-completed" | "workflow-halted";
-      projectName: string;
-      sessionName: string;
-    }
-  | {
-      kind: "circuit-breaker";
-      projectName: string;
-      sessionName: string;
-      contextTitle: string;
-    }
-  | {
-      kind: "context-completed";
-      projectName: string;
-      sessionName: string;
-      contextTitle: string;
-      completedContexts: number;
-      totalContexts: number;
-    }
-  | {
-      kind: "approval-pending";
-      projectName: string;
-      sessionName: string;
-      contextTitle: string;
-    }
-  | {
-      kind: "plan-repair";
-      projectName: string;
-      sessionName: string;
-      contextTitle?: string;
-      planRepairOutcome?:
-        | "repaired"
-        | "declined"
-        | "failed"
-        | "superseded"
-        | "exhausted";
-      planRepairAttempt?: number;
-      planRepairDiagnosis?: string | null;
-    };
-
 export async function pushForGraphWorkflowEvent(
   config: PushNotificationConfig | undefined,
   info: GraphWorkflowPushInfo,
@@ -301,6 +269,7 @@ export async function pushForGraphWorkflowEvent(
         message: `Graph workflow completed for session ${info.sessionName}`,
         projectName: info.projectName,
         sessionName: info.sessionName,
+        ...(info.dedupeKey ? { dedupeKey: info.dedupeKey } : {}),
       });
       return;
     case "workflow-halted":
@@ -376,7 +345,7 @@ export async function pushForGraphWorkflowEvent(
       }
     }
     default:
-      assertNever(info);
+      assertNever(info.kind);
   }
 }
 
@@ -495,8 +464,8 @@ export function dispatchPushForConversationStatus(
 
 export function dispatchPushForGraphWorkflowEvent(
   info: GraphWorkflowPushInfo,
-): void {
-  getPushConfig()
+): Promise<void> {
+  return getPushConfig()
     .then((config) => pushForGraphWorkflowEvent(config, info))
     .catch(() => {});
 }

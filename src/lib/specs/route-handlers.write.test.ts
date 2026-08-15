@@ -834,7 +834,6 @@ describe("spec write route handlers", () => {
     expect(services.execution.approveExecutionStart).toHaveBeenCalledWith({
       specId: spec.id,
       executionId: "execution-1",
-      approver: "operator",
       projectName: "demo",
       actor: { kind: "human" },
     });

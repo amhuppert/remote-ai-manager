@@ -28,6 +28,11 @@ import { specRevisionExternalDelivery } from "./0021-spec-revision-external-deli
 import { importGateAdmissionBasis } from "./0022-import-gate-admission-basis";
 import { graphWorkflowSeededDocuments } from "./0023-graph-workflow-seeded-documents";
 import { collabLaneFlowAgentIds } from "./0024-collab-lane-flow-agent-ids";
+import { executionLeaseAndResultDeliveries } from "./0024-execution-lease-and-result-deliveries";
+import { graphWorkflowPendingArtifacts } from "./0025-graph-workflow-pending-artifacts";
+import { retireReleaseSlotCleanupPhase } from "./0026-retire-release-slot-cleanup-phase";
+import { workflowResultNotifications } from "./0027-workflow-result-notifications";
+import { workflowResultEffectReceipts } from "./0028-workflow-result-effect-receipts";
 
 /**
  * Ordered registry of state-store migrations. Append new migrations here in
@@ -65,6 +70,11 @@ export const migrations: readonly StateMigration[] = [
   importGateAdmissionBasis,
   graphWorkflowSeededDocuments,
   collabLaneFlowAgentIds,
+  executionLeaseAndResultDeliveries,
+  graphWorkflowPendingArtifacts,
+  retireReleaseSlotCleanupPhase,
+  workflowResultNotifications,
+  workflowResultEffectReceipts,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

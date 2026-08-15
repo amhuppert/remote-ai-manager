@@ -2,7 +2,16 @@ import type {
   ValidationCandidateTree,
   ValidationCandidateTreeResolution,
 } from "@/lib/workflow-graph/validation-round";
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowLaunchDocument,
+} from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
+import type {
+  GraphWorkflowExecutionReservation,
+  GraphWorkflowReservationOutcome,
+} from "@/lib/state-store/setters";
+import { evaluateLeaseAdmission } from "@/lib/workflow-graph/lifecycle-classifier";
 import type {
   GraphWorkflowVisualLayout,
   ResolvedWorkflowSemanticDefinition,
@@ -20,6 +29,7 @@ import type {
 } from "@/lib/workflow-graph/config-schemas";
 import type { AgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
+import { deriveTemplateOriginFromSeedFields } from "@/lib/workflow-graph/execution-origin";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import {
   prepareLiveEditAssignmentSnapshots,
@@ -336,6 +346,24 @@ export function createWorkflowLayout(
   };
 }
 
+/**
+ * The authored document an execution seed snapshots (D7 decision D13). Built
+ * around whatever definition a seed is launching so the snapshot describes the
+ * graph that actually ran rather than a fixture default.
+ */
+export function makeLaunchDocument(
+  definition: WorkflowSemanticDefinition,
+  overrides: Partial<GraphWorkflowLaunchDocument> = {},
+): GraphWorkflowLaunchDocument {
+  return {
+    name: "Workflow Graph Builder",
+    description: "Foundational workflow",
+    definition,
+    layout: createWorkflowLayout(),
+    ...overrides,
+  };
+}
+
 export function createWorkflowDefinitionRecord(
   overrides: Partial<WorkflowDefinitionRecord> = {},
 ): WorkflowDefinitionRecord {
@@ -432,10 +460,24 @@ export function createWorkflowExecution(
   const definition =
     overrides.workingDefinition ?? createResolvedWorkflowDefinition();
 
+  const seedDefinitionId = overrides.seedDefinitionId ?? "workflow-1";
+  const seedDefinitionRevision = overrides.seedDefinitionRevision ?? 1;
+
   return {
     id: "execution-1",
-    seedDefinitionId: "workflow-1",
-    seedDefinitionRevision: 1,
+    // Derived from whatever seed identity the caller asked for, so a fixture
+    // that overrides the seed fields does not silently describe a run whose
+    // origin names a different definition.
+    origin: deriveTemplateOriginFromSeedFields({
+      seedDefinitionId,
+      seedDefinitionRevision,
+      launchedTier: overrides.launchedTier,
+    }),
+    seedDefinitionId,
+    seedDefinitionRevision,
+    launchDocument: null,
+    liveSessionReadOnlyPinned: false,
+    abandonment: null,
     liveRevision: 1,
     executionStateRevision: 0,
     structuralRevision: 0,
@@ -452,6 +494,7 @@ export function createWorkflowExecution(
     launchedTier: "project",
     ownerConversationId: null,
     definitionApproval: null,
+    definitionApprovalClaim: null,
     workingDefinition: definition,
     charter: makeTestCharter(),
     status: "pending",
@@ -575,5 +618,60 @@ export function createWorkflowExecution(
     collaborationContinuations: {},
     pendingMergeRetry: [],
     ...overrides,
+  };
+}
+
+/**
+ * An in-memory stand-in for the authoritative lease reservation, for fixtures
+ * whose "active row" is a plain map rather than SQLite.
+ *
+ * It runs the REAL {@link evaluateLeaseAdmission} over whatever the reader
+ * returns, so the admission rule a fixture exercises is production's — only the
+ * storage is fake. A fixture that hand-rolled its own admit/refuse branch would
+ * be asserting against its own opinion of the lease.
+ */
+export function createInMemoryLeaseReservation(deps: {
+  readActive(
+    projectPath: string,
+    sessionName: string,
+  ): GraphWorkflowExecution | null;
+  installActive(
+    projectPath: string,
+    sessionName: string,
+    execution: GraphWorkflowExecution,
+  ): void;
+  onArchived?(execution: GraphWorkflowExecution): void;
+  onEvents?(events: GraphWorkflowExecutionEvent[]): void;
+}) {
+  return async function reserveActiveGraphWorkflowExecution(
+    projectPath: string,
+    sessionName: string,
+    _label: string,
+    reservation: GraphWorkflowExecutionReservation,
+  ): Promise<GraphWorkflowReservationOutcome> {
+    const incumbent = deps.readActive(projectPath, sessionName);
+    const decision = evaluateLeaseAdmission(incumbent);
+    if (decision.kind === "refuse") {
+      return { reserved: false, refusal: decision };
+    }
+    if (decision.kind === "admit-with-normalization" && incumbent !== null) {
+      deps.onArchived?.(incumbent);
+    }
+    deps.installActive(projectPath, sessionName, reservation.execution);
+    deps.onEvents?.(reservation.events);
+    return {
+      reserved: true,
+      execution: reservation.execution,
+      delivery: {
+        events: reservation.events,
+        pushes: reservation.pushes ?? [],
+      },
+      normalized:
+        decision.kind === "admit-with-normalization"
+          ? decision.incumbent
+          : null,
+      normalizedExecution:
+        decision.kind === "admit-with-normalization" ? incumbent : null,
+    };
   };
 }

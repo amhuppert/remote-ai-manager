@@ -32,7 +32,7 @@ import type { TicketAttachment } from "@/lib/tickets/schemas";
 import {
   approveGraphWorkflowDefinitionForSession,
   launchGraphWorkflowExecution,
-  sessionHasPendingWorkflowDefinitionApproval,
+  findSessionPendingWorkflowDefinitionApproval,
 } from "@/lib/workflow-graph/execution-route-handlers";
 import { workflowConfigOverrideSchema } from "@/lib/workflow-graph/definition-schemas";
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
@@ -165,6 +165,9 @@ export async function createProductionSpecRouteServices(
       },
     },
     writeQueue,
+    async resolveProjectPath(execution) {
+      return (await specs.findById(execution.spec_id))?.projectPath ?? null;
+    },
     async validatedTreeHash(execution, commitSha, relevantPaths) {
       const spec = await specs.findById(execution.spec_id);
       if (spec === null) {
@@ -251,7 +254,22 @@ export async function createProductionSpecRouteServices(
       }
     },
     async workflowEventExists(ref, expectedExecution) {
-      const record = workflowEvents.findRecordById(ref.eventId);
+      const execution = deliveryRepo.findExecutionById(
+        expectedExecution.specExecutionId,
+      );
+      if (
+        execution === null ||
+        execution.session_name === null ||
+        expectedExecution.workflowExecutionId === null
+      ) {
+        return false;
+      }
+      const record = workflowEvents.findRecordById(
+        projectPath,
+        execution.session_name,
+        expectedExecution.workflowExecutionId,
+        ref.eventId,
+      );
       return (
         record !== null &&
         record.executionId === expectedExecution.workflowExecutionId &&
@@ -481,12 +499,10 @@ export async function createProductionSpecRouteServices(
           return { ok: false, reason: getErrorMessage(error) };
         }
       },
-      hasPendingDefinitionApproval(input) {
-        return sessionHasPendingWorkflowDefinitionApproval({
+      findPendingDefinitionApproval(input) {
+        return findSessionPendingWorkflowDefinitionApproval({
           projectPath,
           sessionName: input.sessionName,
-          definitionId: input.definitionId,
-          definitionRevision: input.definitionRevision,
         });
       },
       async ensurePendingDefinitionApproval(input) {
@@ -504,14 +520,12 @@ export async function createProductionSpecRouteServices(
         } catch (error) {
           launchError = error;
         }
-        const pending = await sessionHasPendingWorkflowDefinitionApproval({
+        const park = await findSessionPendingWorkflowDefinitionApproval({
           projectPath,
           sessionName: input.sessionName,
-          definitionId: input.definitionId,
-          definitionRevision: input.definitionRevision,
         });
-        if (pending !== null) {
-          return { ok: true, workflowExecutionId: pending };
+        if (park !== null) {
+          return { ok: true, park };
         }
 
         const reason =
@@ -527,17 +541,12 @@ export async function createProductionSpecRouteServices(
         });
         return { ok: false, reason };
       },
-      grantApproval(input) {
-        return review.grantGateApproval({ ...input, gate: "execution_start" });
-      },
       approveWorkflowDefinition(input) {
         return approveGraphWorkflowDefinitionForSession({
           projectPath,
           projectName: input.projectName,
           sessionName: input.sessionName,
           workflowExecutionId: input.workflowExecutionId,
-          definitionId: input.definitionId,
-          definitionRevision: input.definitionRevision,
         });
       },
     },

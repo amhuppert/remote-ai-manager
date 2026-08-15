@@ -1,4 +1,4 @@
-import { Anybody, Manrope, Geist_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import Providers from "@/components/Providers";
 import NotificationListener from "@/components/NotificationListener";
 import GlobalHotkeyHelp from "@/components/GlobalHotkeyHelp";
@@ -14,23 +14,23 @@ import {
 } from "@/components/hotkeys/HotkeyProvider";
 import "@/app/globals.css";
 
-const anybody = Anybody({
-  subsets: ["latin"],
-  weight: ["400", "600", "800"],
+const anybody = localFont({
+  src: "./fonts/Anybody.woff2",
+  weight: "400 800",
   variable: "--font-anybody",
   display: "swap",
 });
 
-const manrope = Manrope({
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700", "800"],
+const manrope = localFont({
+  src: "./fonts/Manrope.woff2",
+  weight: "300 800",
   variable: "--font-manrope",
   display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
+const geistMono = localFont({
+  src: "./fonts/GeistMono.woff2",
+  weight: "300 700",
   variable: "--font-geist-mono",
   display: "swap",
 });

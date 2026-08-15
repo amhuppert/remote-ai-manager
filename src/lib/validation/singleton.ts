@@ -13,7 +13,7 @@ import {
   type GraphWorkflowCommandSelector,
 } from "@/lib/workflow-graph/config-schemas";
 import { createExecutionTargetResolver } from "@/lib/workflow-graph/execution-target-resolver";
-import { autoReleasesSlot } from "@/lib/workflow-graph/lifecycle-classifier";
+import { holdsExecutionLease } from "@/lib/workflow-graph/lifecycle-classifier";
 import { expandCommandSelector } from "@/lib/workflow-graph/resolve-config";
 import type {
   GraphWorkflowAgentSessionState,
@@ -171,13 +171,22 @@ export function createProductionValidationCallerResolver(
         };
       }
 
-      // Lifecycle contract (design §10): a status that auto-releases the slot
-      // has also released validation ownership. Such a row is normally already
-      // archived — this is the legacy/pre-archive case — and gating callers on
-      // it would keep a finished run blocking the session forever. A resumable
-      // `halted`/`paused` run RETAINS ownership and falls through to the
-      // fail-closed lane rules below, because it can still resume.
-      if (autoReleasesSlot(execution.status)) {
+      // The lease owns validation ownership too (D7 decision D3): a run that no
+      // longer holds it has released its claim on the session's validation.
+      // Such a row is normally already archived — this is the legacy/
+      // pre-normalization case — and gating callers on it would keep a finished
+      // run blocking the session forever. A run that still holds the lease,
+      // including a resumable halt, falls through to the fail-closed lane rules
+      // below, because it can still resume. Reading the whole record rather
+      // than the status is what makes an abandoned or non-resumably halted run
+      // stop blocking here the moment it stops blocking a launch.
+      if (
+        !holdsExecutionLease(
+          execution.status,
+          execution.haltReason,
+          execution.abandonment,
+        )
+      ) {
         if (ref.claimedWorkflow) {
           return ambiguous(
             "claimed workflow identity does not match an active execution",

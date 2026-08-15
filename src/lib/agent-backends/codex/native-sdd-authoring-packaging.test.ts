@@ -230,6 +230,9 @@ describe("native-sdd-authoring managed skill", () => {
     expect(start).toContain("spec abandon");
 
     const abandon = await helpText(["spec", "abandon"]);
-    expect(abandon).toContain("workflow live release");
+    // The backstop a partial abandon receipt names. `workflow live release` was
+    // retired with the explicit slot-release act (D7 decision D5): `aborted`
+    // frees the lease by itself, so abort is the whole recovery.
+    expect(abandon).toContain("workflow live abort");
   });
 });

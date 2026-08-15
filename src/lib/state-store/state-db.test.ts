@@ -41,6 +41,7 @@ const EXPECTED_TABLES = [
   "document_comments",
   "notifications",
   "job_records",
+  "graph_workflow_result_deliveries",
 ] as const;
 
 describe("state-db pragmas", () => {
@@ -803,7 +804,7 @@ describe("state-db forward-only schema_migrations conflict policy", () => {
 
 describe("state-db breaking-cutover versions", () => {
   it("this build understands schema version 7 (the engine-seeded shared-document kind, after the spec-execution abandoning widening at 6, the graph-workflow lane-placement cutover at 5, the validation-status widening at 4, the workflow agent-assignment cutover at 3, evidence-kind narrowing at 2, and the AgentSessionRef cutover at 1)", () => {
-    expect(KNOWN_SCHEMA_VERSION).toBe(7);
+    expect(KNOWN_SCHEMA_VERSION).toBe(8);
   });
 
   it("opens a DB stamped at this build's version but refuses one stamped above it (an older build's DB advanced past this)", () => {

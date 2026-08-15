@@ -11,6 +11,7 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import { createWorkflowExecution, makeProfileSnapshot } from "./test-fixtures";
 import {
   applyLiveExecutionEdits,
+  prepareLiveExecutionEdits,
   type LiveEditDeps,
   type LiveEditOptions,
   type ResolvedContextConfig,
@@ -34,6 +35,7 @@ import {
   buildInitialTaskStates,
 } from "./execution-state";
 import { resolveLoopGroups } from "./loop-resolver";
+import { SESSION_LANE_NAME } from "./lane-identity";
 
 const RESOLVED_DEFAULTS: ResolvedContextConfig = {
   implementer: {
@@ -3957,5 +3959,386 @@ describe("applyLiveExecutionEdits — placement (lwp R10.2)", () => {
       rmSync(worktreePath, { recursive: true, force: true });
       fixture.close();
     }
+  });
+});
+
+/**
+ * The dirty-worktree exemption's LIFETIME invariant (R8.3, decision D10).
+ *
+ * A run admitted over uncommitted changes was admitted because its resolved
+ * mechanics could not write the repository. That is not a launch-time fact: the
+ * frontier every structural mutation rides — operator edits, agent expansion,
+ * loop unrolling, plan repair — re-asks the whole question of the post-batch
+ * state, unconditionally, so no op can widen the run afterwards. A clean
+ * launch pins nothing, so the identical mutations stay legal there.
+ */
+describe("applyLiveExecutionEdits — pinned live-session read-only runs (R8.3)", () => {
+  const DISABLED_COLLABORATION = {
+    ...RESOLVED_DEFAULTS.collaboration,
+    enabled: { value: false, source: "global" as const },
+  };
+
+  const READ_ONLY_OUTPUT_SCHEMA: Record<string, unknown> = {
+    type: "object",
+    properties: { summary: { type: "string" } },
+    required: ["summary"],
+    additionalProperties: false,
+  };
+
+  function asReadOnlyMember(
+    context: GraphWorkflowResolvedContext,
+  ): GraphWorkflowResolvedContext {
+    return {
+      ...context,
+      placement: { lane: SESSION_LANE_NAME, mode: "readOnly" },
+      outputSchema: context.outputSchema ?? { ...READ_ONLY_OUTPUT_SCHEMA },
+      scriptValidator: { commands: [] },
+      collaboration: DISABLED_COLLABORATION,
+    };
+  }
+
+  function asReadOnlyRun(
+    definition: ResolvedWorkflowSemanticDefinition,
+  ): ResolvedWorkflowSemanticDefinition {
+    return {
+      ...definition,
+      executionContexts: definition.executionContexts.map(asReadOnlyMember),
+      ...(definition.loopGroups === undefined
+        ? {}
+        : {
+            loopGroups: definition.loopGroups.map((group) => ({
+              ...group,
+              template: {
+                ...group.template,
+                contexts: group.template.contexts.map(asReadOnlyMember),
+              },
+            })),
+          }),
+    };
+  }
+
+  /** The shape the dirty guard admits, launched dirty (pinned) or clean. */
+  function readOnlyExecution(pinned: boolean): GraphWorkflowExecution {
+    const base = createWorkflowExecution({ status: "paused" });
+    return {
+      ...base,
+      liveSessionReadOnlyPinned: pinned,
+      workingDefinition: asReadOnlyRun(base.workingDefinition),
+    };
+  }
+
+  function readOnlyLoopExecution(pinned: boolean): GraphWorkflowExecution {
+    const base = loopBearingExecution({ status: "paused" });
+    return {
+      ...base,
+      liveSessionReadOnlyPinned: pinned,
+      workingDefinition: asReadOnlyRun(base.workingDefinition),
+    };
+  }
+
+  function codesOf(result: ReturnType<typeof apply>): string[] {
+    return result.ok ? [] : result.issues.map((issue) => issue.code);
+  }
+
+  it("refuses a placement upgrade on a pinned run and accepts the identical edit unpinned", () => {
+    const operation: WorkflowLiveEditOperation = {
+      type: "update-context",
+      contextId: "context-plan",
+      placement: { lane: "delivery", mode: "owned", ownedPaths: ["docs"] },
+    };
+    const pinned = readOnlyExecution(true);
+    const before = structuredClone(pinned);
+
+    const refused = apply(pinned, [operation]);
+
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.code).toBe("invalid_edit");
+    expect(refused.issues).toContainEqual(
+      expect.objectContaining({
+        code: "live-session-read-only-placement",
+        contextId: "context-plan",
+        field: "executionContexts.0.placement",
+      }),
+    );
+    expect(pinned).toEqual(before);
+
+    expect(apply(readOnlyExecution(false), [operation]).ok).toBe(true);
+  });
+
+  it("refuses a write-capable upgrade that stays on the session lane", () => {
+    const refused = apply(readOnlyExecution(true), [
+      {
+        type: "update-context",
+        contextId: "context-plan",
+        placement: { lane: SESSION_LANE_NAME, mode: "full" },
+      },
+    ]);
+
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    // The session lane's own grammar names this one first — it never admits a
+    // write-capable member at all — so the refusal is located there.
+    expect(refused.issues[0]).toMatchObject({ contextId: "context-plan" });
+  });
+
+  it("refuses further edits while a pinned run's state carries a script-validator selection", () => {
+    // The verdict is a property of the post-batch STATE, not of what the batch
+    // changed: a prose edit touches no validation selection, so nothing else on
+    // the frontier looks at one, and only the pin does.
+    function withScriptSelection(pinned: boolean): GraphWorkflowExecution {
+      const base = readOnlyExecution(pinned);
+      return {
+        ...base,
+        workingDefinition: {
+          ...base.workingDefinition,
+          executionContexts: base.workingDefinition.executionContexts.map(
+            (context) =>
+              context.id === "context-implement"
+                ? { ...context, scriptValidator: { commands: ["test"] } }
+                : context,
+          ),
+        },
+      };
+    }
+    const operation: WorkflowLiveEditOperation = {
+      type: "update-context",
+      contextId: "context-plan",
+      acceptanceCriteria: "The findings are reported",
+    };
+
+    expect(codesOf(apply(withScriptSelection(true), [operation]))).toContain(
+      "live-session-read-only-script-validator",
+    );
+    expect(apply(withScriptSelection(false), [operation]).ok).toBe(true);
+  });
+
+  it("refuses enabling collaboration on a pinned run, which no placement gate would see", () => {
+    const operation: WorkflowLiveEditOperation = {
+      type: "update-context",
+      contextId: "context-implement",
+      collaboration: {
+        ...DISABLED_COLLABORATION,
+        enabled: { value: true, source: "per-node" },
+      },
+    };
+
+    expect(codesOf(apply(readOnlyExecution(true), [operation]))).toContain(
+      "live-session-read-only-collaboration",
+    );
+    expect(apply(readOnlyExecution(false), [operation]).ok).toBe(true);
+  });
+
+  it("accepts an edit that leaves the run mechanically read-only", () => {
+    const result = apply(readOnlyExecution(true), [
+      {
+        type: "update-context",
+        contextId: "context-plan",
+        acceptanceCriteria: "The findings are reported",
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("refuses the whole batch, mutating nothing, when a later op widens the run", () => {
+    const pinned = readOnlyExecution(true);
+    const before = structuredClone(pinned);
+
+    const result = apply(pinned, [
+      {
+        type: "update-context",
+        contextId: "context-plan",
+        acceptanceCriteria: "The findings are reported",
+      },
+      {
+        type: "update-context",
+        contextId: "context-verify",
+        placement: { lane: "delivery", mode: "full" },
+      },
+    ]);
+
+    expect(result.ok).toBe(false);
+    expect(codesOf(result)).toContain("live-session-read-only-placement");
+    expect(pinned).toEqual(before);
+  });
+
+  it("refuses an agent expansion that adds a write-capable context to a pinned run", () => {
+    function expandable(pinned: boolean): GraphWorkflowExecution {
+      const base = readOnlyExecution(pinned);
+      return {
+        ...base,
+        workingDefinition: {
+          ...base.workingDefinition,
+          executionContexts: base.workingDefinition.executionContexts.map(
+            (context) =>
+              context.id === "context-plan"
+                ? {
+                    ...context,
+                    mutability: {
+                      allowAgentTaskAdd: true,
+                      allowAgentContextAdd: true,
+                    },
+                  }
+                : context,
+          ),
+        },
+      };
+    }
+    const operations: WorkflowLiveEditOperation[] = [
+      {
+        type: "add-context",
+        id: "context-fix",
+        title: "Fix",
+        acceptanceCriteria: "The fix is landed.",
+        placement: { lane: "delivery", mode: "full" },
+      },
+      {
+        type: "add-edge",
+        sourceContextId: "context-plan",
+        targetContextId: "context-fix",
+      },
+    ];
+    const expansionOptions: LiveEditOptions = {
+      laneAgentContextId: "context-plan",
+      structuralSource: "lane-agent-expansion",
+    };
+
+    const refused = prepareLiveExecutionEdits(
+      expandable(true),
+      { operations },
+      makeDeps(),
+      expansionOptions,
+    );
+
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.issues.map((issue) => issue.code)).toContain(
+      "live-session-read-only-placement",
+    );
+
+    expect(
+      prepareLiveExecutionEdits(
+        expandable(false),
+        { operations },
+        makeDeps(),
+        expansionOptions,
+      ).ok,
+    ).toBe(true);
+  });
+
+  it("refuses a loop-template edit while the body a pass would clone is write-capable", () => {
+    /**
+     * The body template is quantified over because a pass CLONES it: a
+     * write-capable template context is a write-capable run one pass later.
+     * The template edit vocabulary cannot introduce that state (it carries
+     * prose and tasks only), so the frontier's job here is to judge the state
+     * a pinned run is actually in — which is why it re-asks unconditionally
+     * rather than trusting what the batch claims to have touched.
+     */
+    function withWriteCapableBody(pinned: boolean): GraphWorkflowExecution {
+      const base = readOnlyLoopExecution(pinned);
+      const groups = base.workingDefinition.loopGroups ?? [];
+      return {
+        ...base,
+        workingDefinition: {
+          ...base.workingDefinition,
+          loopGroups: groups.map((group) => ({
+            ...group,
+            template: {
+              ...group.template,
+              contexts: group.template.contexts.map((context) =>
+                context.id === "worker"
+                  ? {
+                      ...context,
+                      placement: { lane: "delivery", mode: "full" as const },
+                    }
+                  : context,
+              ),
+            },
+          })),
+        },
+      };
+    }
+    const operation: WorkflowLiveEditOperation = {
+      type: "edit-loop-template",
+      loopGroupId: "refine",
+      operations: [
+        {
+          type: "update-context",
+          contextId: "worker",
+          acceptanceCriteria: "Ship the narrower slice",
+        },
+      ],
+    };
+    const pinned = withWriteCapableBody(true);
+    const before = structuredClone(pinned);
+
+    // Loop-control edits require an attributable request source.
+    const refused = applyLiveExecutionEdits(
+      pinned,
+      { operations: [operation], source: "cli" },
+      makeDeps(),
+    );
+
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.issues).toContainEqual(
+      expect.objectContaining({
+        code: "live-session-read-only-placement",
+        contextId: "worker",
+        field: "loopGroups.0.template.contexts.0.placement",
+      }),
+    );
+    expect(pinned).toEqual(before);
+
+    expect(
+      applyLiveExecutionEdits(
+        withWriteCapableBody(false),
+        { operations: [operation], source: "cli" },
+        makeDeps(),
+      ).ok,
+    ).toBe(true);
+  });
+
+  it("refuses a plan-repair batch that would widen a pinned run", () => {
+    // Repairs ride the same apply core as every other mutation, so the
+    // repair agent's proposed operations answer to the pin too — it cannot
+    // repair a halt by giving a context somewhere to write.
+    const pinned = readOnlyExecution(true);
+    const before = structuredClone(pinned);
+
+    const result = applyLiveExecutionEdits(
+      pinned,
+      {
+        operations: [
+          {
+            type: "update-context",
+            contextId: "context-verify",
+            placement: { lane: "delivery", mode: "owned", ownedPaths: ["src"] },
+          },
+        ],
+        source: "plan-repair",
+      },
+      makeDeps(),
+    );
+
+    expect(codesOf(result)).toContain("live-session-read-only-placement");
+    expect(pinned).toEqual(before);
+  });
+
+  it("lets a read-only loop body unroll another pass on a pinned run", () => {
+    const result = applyLiveExecutionEdits(
+      readOnlyLoopExecution(true),
+      {
+        operations: [
+          { type: "materialize-loop-pass", loopGroupId: "refine", pass: 2 },
+        ],
+      },
+      makeDeps(),
+      { engineLoopSettlement: true },
+    );
+
+    expect(result.ok).toBe(true);
   });
 });

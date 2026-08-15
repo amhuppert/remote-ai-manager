@@ -8,8 +8,10 @@ import { z } from "zod";
 import {
   createAgentAuth,
   createLaneCapabilityVerifier,
+  ensureCapabilitySigningKey,
   ensureInstanceToken,
   mintImplementerLaneCapability,
+  _resetCapabilitySigningKeyCacheForTesting,
   _resetInstanceTokenCacheForTesting,
 } from "@/lib/agent-gateway/token";
 import { LANE_CAPABILITY_HEADER } from "@/lib/agent-gateway/lane-capability";
@@ -244,6 +246,8 @@ async function runPattern(options: {
 
   const configDir = await mkdtemp(path.join(tmpdir(), "cc-pattern-token-"));
   const token = await ensureInstanceToken(configDir);
+  // The lane capability is signed with the server-only key, not this token.
+  await ensureCapabilitySigningKey(configDir);
   const auth = createAgentAuth({ configDir });
   const verifyLaneCapability = createLaneCapabilityVerifier({ configDir });
 
@@ -433,6 +437,7 @@ async function runPattern(options: {
     );
   } finally {
     _resetInstanceTokenCacheForTesting();
+    _resetCapabilitySigningKeyCacheForTesting();
     await rm(configDir, { recursive: true, force: true });
   }
 }

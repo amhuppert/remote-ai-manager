@@ -322,7 +322,7 @@ describe("0017-spec-execution-abandon-coordinator", () => {
     ).not.toThrow();
   });
 
-  it("copies cleanup columns the synchronous floor already appended", async () => {
+  it("copies cleanup columns the synchronous floor already appended, advancing the retired phase", async () => {
     rawDb = new Database(":memory:");
     rawDb.exec(LEGACY_DDL);
     rawDb.exec(`
@@ -352,7 +352,10 @@ describe("0017-spec-execution-abandon-coordinator", () => {
         )
         .get(),
     ).toEqual({
-      cleanup_phase: "release_slot",
+      // `release_slot` was retired with the release act it called; the rebuild
+      // targets the current floor, which no longer admits it, so a row parked
+      // there advances to where a retry would have taken it.
+      cleanup_phase: "finalize",
       linked_workflow_execution_id: "wf-exec-floored",
       cleanup_last_error: "the linked run is still live (running)",
       cleanup_last_error_at: "2026-08-06T10:02:00.000Z",

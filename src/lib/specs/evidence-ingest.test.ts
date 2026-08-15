@@ -74,7 +74,12 @@ describe("EvidenceIngest", () => {
       gitObjectExists: async (ref) =>
         ["commit-abc", "commit-other"].includes(ref.objectId),
       workflowEventExists: async (ref, expectedExecution) => {
-        const record = workflowEvents.findRecordById(ref.eventId);
+        const record = workflowEvents.findRecordById(
+          projectPath,
+          sessionName,
+          expectedExecution.workflowExecutionId ?? "",
+          ref.eventId,
+        );
         return (
           record !== null &&
           record.executionId === expectedExecution.workflowExecutionId &&
@@ -134,6 +139,7 @@ describe("EvidenceIngest", () => {
       workflowEvents,
       evidenceService,
       writeQueue,
+      resolveProjectPath: async () => projectPath,
       validatedTreeHash: vi.fn(
         async (_execution, commitSha, relevantPaths) =>
           `${commitSha}:${relevantPaths.join(",")}`,

@@ -32,7 +32,7 @@ import {
 import { copyConversationRefToClipboard } from "@/lib/conversations/copy-conversation-ref";
 import { useMarkProjectConversationReadMutation } from "@/lib/project-conversations-client/mutations";
 import { useResolveApprovalMutation } from "@/lib/workflows/mutations";
-import { useApprovalScopedChanges } from "@/features/session/hooks/use-approval-gate";
+import { useApprovalScopedChanges } from "@/hooks/use-approval-scoped-changes";
 import { useNotificationsQuery } from "@/lib/notifications/queries";
 import { useDismissNotificationMutation } from "@/lib/notifications/mutations";
 import {

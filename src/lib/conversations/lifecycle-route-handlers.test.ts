@@ -12,6 +12,8 @@ import type { SSEEvent } from "@/lib/api/sse-events";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { SessionState } from "@/lib/sessions/schemas";
+import { ConversationDeletionConflictError } from "@/lib/conversations/service";
+import { conversationDeletedEventSchema } from "@/lib/conversations/schemas";
 function makeConversation(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
@@ -27,6 +29,7 @@ function makeConversation(
 
 function makeSession(conversations: ConversationState[] = []): SessionState {
   return {
+    sessionName: "s1",
     name: "s1",
     branch: "csm/s1",
     worktreePath: "/tmp/worktree",
@@ -59,11 +62,163 @@ function makeDeps(overrides: Partial<ConversationRouteDeps> = {}) {
     resolveMessageNamingContent: vi.fn(async () => "Message basis"),
     generateAndApplyConversationName: vi.fn(async () => "Generated Name"),
     setConversationArchived: vi.fn(async () => {}),
+    deleteConversation: vi.fn(async () => {}),
     broadcast: vi.fn(),
     ...overrides,
   };
   return { deps, conversation, session };
 }
+
+function withAgentPrincipal(
+  deps: ConversationRouteDeps,
+  conversationId: string | null,
+): ConversationRouteDeps {
+  return Object.assign(deps, {
+    auth: {
+      validateOptionalToken: vi.fn(async () => ({ kind: "valid" as const })),
+    },
+    verifyConversationCapability: vi.fn(async () =>
+      conversationId === null
+        ? { kind: "absent" as const }
+        : {
+            kind: "valid" as const,
+            scope: { sessionName: "s1", conversationId },
+            issuedAt: 1,
+          },
+    ),
+    verifyLaneCapability: vi.fn(async () => ({ kind: "absent" as const })),
+  });
+}
+
+// ============================================================================
+// DELETE_CONVERSATION
+// ============================================================================
+
+describe("DELETE_CONVERSATION", () => {
+  it("deletes the addressed idle conversation and returns no content", async () => {
+    const { deps } = makeDeps();
+    const { DELETE_CONVERSATION } = createConversationRouteHandlers(deps);
+
+    const response = await DELETE_CONVERSATION(
+      new Request("http://cc.test/conv", { method: "DELETE" }),
+      context({ name: "demo", session: "s1", conversationId: "conv-1" }),
+    );
+
+    expect(response.status).toBe(204);
+    expect(deps.deleteConversation).toHaveBeenCalledWith(
+      "/repos/demo",
+      "s1",
+      "conv-1",
+    );
+    expect(deps.broadcast).toHaveBeenCalledTimes(1);
+    expect(
+      conversationDeletedEventSchema.parse(
+        vi.mocked(deps.broadcast).mock.calls[0]![0],
+      ),
+    ).toEqual({
+      type: "conversation-deleted",
+      scope: "session",
+      projectName: "demo",
+      sessionName: "s1",
+      conversationId: "conv-1",
+    });
+  });
+
+  it("returns 404 without deleting when the conversation is absent", async () => {
+    const { deps } = makeDeps({
+      getSession: vi.fn(async () => makeSession([])),
+    });
+    const { DELETE_CONVERSATION } = createConversationRouteHandlers(deps);
+
+    const response = await DELETE_CONVERSATION(
+      new Request("http://cc.test/conv", { method: "DELETE" }),
+      context({ name: "demo", session: "s1", conversationId: "missing" }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(deps.deleteConversation).not.toHaveBeenCalled();
+    expect(deps.broadcast).not.toHaveBeenCalled();
+  });
+
+  it("allows a verified conversation to delete itself", async () => {
+    const { deps } = makeDeps();
+    const handlers = createConversationRouteHandlers(
+      withAgentPrincipal(deps, "conv-1"),
+    );
+
+    const response = await handlers.DELETE_CONVERSATION(
+      new Request("http://cc.test/conv", { method: "DELETE" }),
+      context({ name: "demo", session: "s1", conversationId: "conv-1" }),
+    );
+
+    expect(response.status).toBe(204);
+    expect(deps.deleteConversation).toHaveBeenCalledWith(
+      "/repos/demo",
+      "s1",
+      "conv-1",
+    );
+  });
+
+  it("refuses a verified conversation deleting another conversation", async () => {
+    const sibling = makeConversation({ id: "conv-sibling" });
+    const { deps } = makeDeps({
+      getSession: vi.fn(async () =>
+        makeSession([makeConversation({ id: "conv-1" }), sibling]),
+      ),
+    });
+    const handlers = createConversationRouteHandlers(
+      withAgentPrincipal(deps, sibling.id),
+    );
+
+    const response = await handlers.DELETE_CONVERSATION(
+      new Request("http://cc.test/conv", { method: "DELETE" }),
+      context({ name: "demo", session: "s1", conversationId: "conv-1" }),
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "non_owner_principal",
+    });
+    expect(deps.deleteConversation).not.toHaveBeenCalled();
+    expect(deps.broadcast).not.toHaveBeenCalled();
+  });
+
+  it("refuses a token-bearing agent without a signed capability", async () => {
+    const { deps } = makeDeps();
+    const handlers = createConversationRouteHandlers(
+      withAgentPrincipal(deps, null),
+    );
+
+    const response = await handlers.DELETE_CONVERSATION(
+      new Request("http://cc.test/conv", { method: "DELETE" }),
+      context({ name: "demo", session: "s1", conversationId: "conv-1" }),
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "unverified_principal",
+    });
+    expect(deps.deleteConversation).not.toHaveBeenCalled();
+    expect(deps.broadcast).not.toHaveBeenCalled();
+  });
+
+  it("returns a conflict when the conversation is not idle", async () => {
+    const { deps } = makeDeps({
+      deleteConversation: vi.fn(async () => {
+        throw new ConversationDeletionConflictError("conv-1", "running");
+      }),
+    });
+    const { DELETE_CONVERSATION } = createConversationRouteHandlers(deps);
+
+    const response = await DELETE_CONVERSATION(
+      new Request("http://cc.test/conv", { method: "DELETE" }),
+      context({ name: "demo", session: "s1", conversationId: "conv-1" }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(deps.broadcast).not.toHaveBeenCalled();
+  });
+});
 
 function context(params: Record<string, string>) {
   return { params: Promise.resolve(params) };

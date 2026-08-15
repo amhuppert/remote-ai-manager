@@ -294,7 +294,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl fixture session delete <project> <sessionName>`
 
 - `cctl workflow` — list, inspect, start, and delete graph workflows
-  - `cctl workflow <validate|create|replace|edit|list|get|status|start|delete|templates>`
+  - `cctl workflow <validate|create|replace|edit|list|get|status|start|run|wait|abandon|delete|templates>`
   - `cctl workflow <task complete|task add|shared-doc upsert|collab request>  (lane verbs)`
 - `cctl workflow validate` — check a plan.json without saving anything
   - `cctl workflow validate --file .cc/temp/plan.json [--tier global|project] [--json]`
@@ -308,16 +308,22 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl workflow get <id> [--full | --context <ctx> | --task <task> | --charter | --config | --params] [--tier global|project] [--json]`
 - `cctl workflow edit` — apply targeted, atomic edits to a saved definition
   - `cctl workflow edit <id> --file .cc/temp/ops.json [--dry-run] [--tier global|project] [--json]`
-- `cctl workflow status` — show this session's active execution
-  - `cctl workflow status [--json]`
+- `cctl workflow status` — show a Current or History execution projection
+  - `cctl workflow status [<executionId>] [--json]`
 - `cctl workflow start` — launch an execution from a saved definition
   - `cctl workflow start <id> [--file .cc/temp/inputs.json] [--json]`
+- `cctl workflow run` — launch a one-off execution directly from a plan file
+  - `cctl workflow run --file .cc/temp/plan.json [--inputs .cc/temp/inputs.json] [--wait [--timeout <dur>]] [--json]`
+- `cctl workflow wait` — wait for the next durable execution boundary
+  - `cctl workflow wait <executionId> [--cursor <cursor>] [--timeout <dur>] [--json]`
+- `cctl workflow abandon` — audit and abandon a resumably halted execution
+  - `cctl workflow abandon <executionId> --reason <reason> [--json]`
 - `cctl workflow delete` — permanently remove a saved definition
   - `cctl workflow delete <id>`
 - `cctl workflow templates` — list saved workflow templates across both tiers
   - `cctl workflow templates [--tier global|project] [--json]`
 - `cctl workflow live` — act on this session's ACTIVE launched execution
-  - `cctl workflow live <get|ledger|edit|amend|pause|resume|abort|release>`
+  - `cctl workflow live <get|ledger|edit|amend|pause|resume|abort>`
 - `cctl workflow task` — advance a running lane — complete or add tasks
   - `cctl workflow task <complete|add>`
 - `cctl workflow graph` — grow the running graph from inside a lane
@@ -340,8 +346,6 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl workflow live resume [--json]`
 - `cctl workflow live abort` — abort the active execution
   - `cctl workflow live abort --reason <reason> [--json]`
-- `cctl workflow live release` — release the session's execution slot (explicit audited archive)
-  - `cctl workflow live release --reason <reason> [--execution <id>] [--json]`
 - `cctl workflow task complete` — mark the current lane task done (advances the workflow)
   - `cctl workflow task complete <taskId> --summary "<what changed, how verified>"`
 - `cctl workflow task add` — append a newly-discovered task to this lane

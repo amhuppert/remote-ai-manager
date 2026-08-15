@@ -13,7 +13,10 @@ import {
 } from "./runtime-edits";
 import { appendPendingJoin } from "./lane-join";
 import { nextStructuralRevision } from "./structural-revision";
-import { createWorkflowExecution } from "./test-fixtures";
+import {
+  createInMemoryLeaseReservation,
+  createWorkflowExecution,
+} from "./test-fixtures";
 
 function makeDeps(overrides: Partial<LiveEditDeps> = {}): LiveEditDeps {
   let counter = 0;
@@ -842,6 +845,8 @@ describe("the staging seam over the real repository fence", () => {
     }
 
     const repo = createGraphWorkflowExecutionRepository({
+      // No git worktree in this harness; the real exclusion would shell out.
+      ensureCcArtifactsExcluded: async () => {},
       async getSession(projectPath, sessionName) {
         return session(projectPath, sessionName);
       },
@@ -861,6 +866,13 @@ describe("the staging seam over the real repository fence", () => {
         entry.graphWorkflowExecution = execution;
         return { execution, delivery: { events, pushes: pushes ?? [] } };
       },
+      reserveActiveGraphWorkflowExecution: createInMemoryLeaseReservation({
+        readActive: (projectPath, sessionName) =>
+          session(projectPath, sessionName).graphWorkflowExecution,
+        installActive: (projectPath, sessionName, execution) => {
+          session(projectPath, sessionName).graphWorkflowExecution = execution;
+        },
+      }),
       async archiveActiveGraphWorkflowExecution() {
         return { archived: false as const, reason: "no_active" as const };
       },

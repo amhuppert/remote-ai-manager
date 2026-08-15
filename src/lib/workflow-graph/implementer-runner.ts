@@ -82,8 +82,8 @@ export interface GraphWorkflowImplementerRunnerDeps {
   ): FsWriteRestrictionSupport;
   /**
    * Mint the lane's signed expansion capability. Injected so a test can drive
-   * the dispatch path without an instance token; production binds the gateway's
-   * token-keyed minter, which returns null when startup provisioned no token.
+   * the dispatch path without a server key; production binds the gateway's
+   * capability-key minter, which returns null when no key is provisioned.
    */
   mintLaneCapability?(scope: {
     executionId: string;

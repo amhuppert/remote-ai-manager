@@ -197,6 +197,9 @@ function normalizeEvent(
   const { event, occurredAt } = entry;
   const key = `${event.type}-${index}-${occurredAt}`;
   switch (event.type) {
+    case "graph-workflow-boundary":
+    case "graph-workflow-result-recorded":
+      return null;
     case "graph-workflow-task-status": {
       if (event.status === "pending" || event.status === "running") {
         if (event.status !== "running") return null;

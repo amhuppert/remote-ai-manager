@@ -8,6 +8,7 @@
  * `persistence.ts` and `state.ts`.
  */
 
+import { randomUUID } from "node:crypto";
 import type {
   PrepareTurnInput,
   PrepareTurnOutput,
@@ -30,12 +31,14 @@ import type {
   ConversationBackendEvent,
 } from "@/lib/agent-backends/conversation";
 import type { ApplyConversationIdentity } from "@/lib/agent-capabilities/apply";
+import { isOrdinaryConversationRole } from "@/lib/conversations/schemas";
 import type {
   MessageContentBlock,
   ConversationState,
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
+import type { GraphWorkflowResultDelivery } from "@/lib/workflow-graph/schemas";
 import type { AlignmentInjection } from "@/lib/session-alignment/render";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
@@ -112,6 +115,7 @@ import {
   composeUserTranscriptBlocks,
 } from "./pre-turn/document-feedback";
 import { persistTurnImages } from "./pre-turn/image-persistence";
+import { assembleWorkflowResultsBlock } from "./assemble-user-blocks";
 import { expandNativeSpecCommandForAgent } from "@/lib/conversation-commands/native-spec";
 import type {
   CapabilitySeed,
@@ -184,6 +188,16 @@ export interface TurnExecutionDeps {
     runtime: ConversationBackendRuntime,
   ): void;
   unregisterBackendRuntime(conversationId: string): void;
+  /**
+   * Mint the signed conversation capability for a launch-eligible runtime
+   * (D7 D11/D12). Null when the server provisioned no signing key, which leaves
+   * the conversation unable to claim a launch origin — the correct fail-closed
+   * outcome rather than a reason to block the turn.
+   */
+  mintConversationCapability(scope: {
+    sessionName: string;
+    conversationId: string;
+  }): string | null;
 
   // Child environment and plugins (passed to backend factory)
   buildChildEnv(): NodeJS.ProcessEnv;
@@ -230,6 +244,24 @@ export interface TurnExecutionDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<string | null>;
+  claimWorkflowResults(input: {
+    projectPath: string;
+    sessionName: string;
+    originConversationId: string;
+    attemptId: string;
+  }): Promise<GraphWorkflowResultDelivery[]>;
+  settleWorkflowResults(input: {
+    projectPath: string;
+    sessionName: string;
+    originConversationId: string;
+    attemptId: string;
+  }): Promise<number>;
+  releaseWorkflowResults(input: {
+    projectPath: string;
+    sessionName: string;
+    originConversationId: string;
+    attemptId: string;
+  }): Promise<number>;
 
   // Reference documents — production routes through the shared
   // ArtifactRegistry primitive (`register()` on `focus_memory`). Tests can
@@ -435,12 +467,13 @@ export type ActorImplementationDeps = TurnExecutionDeps &
  * state-store writes. The persistence facet gates exactly these for an
  * ephemeral runtime (see {@link ConversationPersistenceAdapter.gateActorDurableWrites}):
  * the direct writes (`mutateConversation`, `createReferenceDocument`, the
- * `markQueued*` delivery-state writes) and the apply services that persist
- * indirectly — `applyMcpAtTurnStart` through `stateManager.mutateConversation`,
- * `applyCapabilityAtTurnStart` / `applyCapabilityWhenIdle` through
- * `writeRuntimeState`. Every other dep (reads, transcript/image I/O, backend
- * call, lock/slot registries) is not a state-store write and passes through
- * untouched. Derived with `Pick` so the signatures have one source of truth.
+ * queue and workflow-result delivery-state writes) and the apply services that
+ * persist indirectly — `applyMcpAtTurnStart` through
+ * `stateManager.mutateConversation`, `applyCapabilityAtTurnStart` /
+ * `applyCapabilityWhenIdle` through `writeRuntimeState`. Every other dep
+ * (reads, transcript/image I/O, backend call, lock/slot registries) is not a
+ * state-store write and passes through untouched. Derived with `Pick` so the
+ * signatures have one source of truth.
  */
 export type ActorDurableWriteSeams = Pick<
   ActorImplementationDeps,
@@ -449,6 +482,9 @@ export type ActorDurableWriteSeams = Pick<
   | "markQueuedDelivered"
   | "markQueuedPending"
   | "markQueuedFailed"
+  | "claimWorkflowResults"
+  | "settleWorkflowResults"
+  | "releaseWorkflowResults"
   | "applyMcpAtTurnStart"
   | "applyCapabilityAtTurnStart"
   | "applyCapabilityWhenIdle"
@@ -490,6 +526,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     messageQueueMod,
     alignmentServiceFactoryMod,
     ticketServiceFactoryMod,
+    agentGatewayTokenMod,
   ] = await Promise.all([
     import("@/lib/prompt/single-flight"),
     import("@/lib/shared/query-semaphore"),
@@ -513,6 +550,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     import("@/lib/conversations/message-queue-service"),
     import("@/lib/session-alignment/service-factory"),
     import("@/lib/tickets/service-factory"),
+    import("@/lib/agent-gateway/token"),
   ]);
 
   // The alignment service holds a repo bound to the live DB; construct it once
@@ -569,6 +607,8 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
       registryMod.getBackendDescriptor(backend).conversation?.capabilities,
     registerBackendRuntime: runtimeRegistryMod.registerRuntime,
     unregisterBackendRuntime: runtimeRegistryMod.unregisterRuntime,
+    mintConversationCapability:
+      agentGatewayTokenMod.mintSessionConversationCapability,
     buildChildEnv: childEnvMod.buildChildEnv,
     resolvePluginPaths: commandsMod.resolvePluginPaths,
     getCodexToolPromptHint: codexToolMod.getCodexToolPromptHint,
@@ -585,6 +625,42 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
       ticketServiceFactoryMod
         .getLiveTicketContextProvider()
         .getForSession(projectPath, sessionName),
+    claimWorkflowResults: ({
+      projectPath,
+      sessionName,
+      originConversationId,
+      attemptId,
+    }) =>
+      stateMod.claimGraphWorkflowResultDeliveries(
+        projectPath,
+        sessionName,
+        originConversationId,
+        attemptId,
+      ),
+    settleWorkflowResults: ({
+      projectPath,
+      sessionName,
+      originConversationId,
+      attemptId,
+    }) =>
+      stateMod.settleGraphWorkflowResultDeliveries(
+        projectPath,
+        sessionName,
+        originConversationId,
+        attemptId,
+      ),
+    releaseWorkflowResults: ({
+      projectPath,
+      sessionName,
+      originConversationId,
+      attemptId,
+    }) =>
+      stateMod.releaseGraphWorkflowResultDeliveries(
+        projectPath,
+        sessionName,
+        originConversationId,
+        attemptId,
+      ),
     createReferenceDocument: stateMod.createReferenceDocument,
     getReferenceDocuments: stateMod.getReferenceDocuments,
     readConversationMessages: transcriptMod.readConversationMessages,
@@ -695,6 +771,9 @@ function fsWritePolicyChanged(
  * rebuilt and prepended per turn — transient by design, never baked into
  * session instructions or the persistent runtime, so attachment changes
  * appear on the next turn without runtime recreation (5.5).
+ *
+ * `workflowResultsBlock` is another transient pre-turn source. It stays out of
+ * the message queue and transcript while appearing before the user's content.
  */
 export function buildEffectivePrompt(
   promptText: string,
@@ -704,6 +783,7 @@ export function buildEffectivePrompt(
   debugLogUrl: string,
   debugManifestPath: string,
   activeTicketBlock: string | null,
+  workflowResultsBlock: string | null = null,
 ): string | MessageContentBlock[] {
   let effectivePrompt: string | MessageContentBlock[] = hasImages
     ? userContentBlocks
@@ -749,6 +829,17 @@ export function buildEffectivePrompt(
     } else {
       effectivePrompt = [
         { type: "text" as const, text: activeTicketBlock },
+        ...effectivePrompt,
+      ];
+    }
+  }
+
+  if (workflowResultsBlock) {
+    if (typeof effectivePrompt === "string") {
+      effectivePrompt = workflowResultsBlock + "\n\n" + effectivePrompt;
+    } else {
+      effectivePrompt = [
+        { type: "text" as const, text: workflowResultsBlock },
         ...effectivePrompt,
       ];
     }
@@ -1213,6 +1304,13 @@ export async function executePromptForMachine(
   const currentTurnMessageId =
     input.queuedDelivery?.messageIds[0] ?? input.streamId ?? null;
   runtimeState.currentTurnMessageId = currentTurnMessageId ?? undefined;
+  const workflowResultAttemptId =
+    input.queuedDelivery?.deliveryAttemptId ??
+    input.streamId ??
+    currentTurnMessageId ??
+    randomUUID();
+  let claimedWorkflowResultCount = 0;
+  let workflowResultsSettled = false;
 
   // Build the user prompt transcript entry once. For normal turns it is
   // appended immediately. For queued (auto-drained) turns the durable queue —
@@ -1566,6 +1664,27 @@ export async function executePromptForMachine(
     // subprocess's snapshot must not survive the swap.
     clearBackgroundActivity();
 
+    // Launch-capability eligibility is decided HERE (D11/D12), the one place
+    // that holds every fact it turns on: the conversation's role, whether the
+    // engine bound this turn to a lane, whether the runtime is durable, and the
+    // conversation's OWN id. Deciding it downstream would read a REDIRECTED id
+    // — a collaboration runtime deliberately points its CC-side id at the
+    // originating conversation — and would therefore mint that human's
+    // authority for a lane. Each condition rules out a runtime that otherwise
+    // looks identical here: a lane and the planner both name a real session and
+    // a real conversation, and an ephemeral runtime names one CC state cannot
+    // resolve as an origin at all.
+    const conversationCapability =
+      runtimeState.workflowContext === undefined &&
+      !isProjectConversation &&
+      input.persistence === "durable" &&
+      isOrdinaryConversationRole(input.role)
+        ? deps.mintConversationCapability({
+            sessionName: input.sessionName,
+            conversationId: input.conversationId,
+          })
+        : null;
+
     const newRuntime = await factory.createRuntime({
       conversationId: input.conversationId,
       projectPath: input.projectPath,
@@ -1579,6 +1698,7 @@ export async function executePromptForMachine(
             input.sessionName,
             input.conversationId,
           ),
+      ...(conversationCapability !== null ? { conversationCapability } : {}),
       worktreePath: input.worktreePath,
       persistedRef: input.backendRef,
       modelId: effectiveModel,
@@ -1689,6 +1809,22 @@ export async function executePromptForMachine(
     abortWiring.notifyActivity();
     switch (event.type) {
       case "input_accepted": {
+        if (claimedWorkflowResultCount > 0 && !workflowResultsSettled) {
+          const settled = await deps.settleWorkflowResults({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            originConversationId: input.conversationId,
+            attemptId: workflowResultAttemptId,
+          });
+          workflowResultsSettled = true;
+          deps.log.info("prompt.workflow_results_settled", {
+            ...scopeRef,
+            conversationId: input.conversationId,
+            attemptId: workflowResultAttemptId,
+            claimed: claimedWorkflowResultCount,
+            settled,
+          });
+        }
         await queuedAccounting.handleInputAccepted();
         break;
       }
@@ -1746,10 +1882,20 @@ export async function executePromptForMachine(
     }
   };
 
+  const syntheticForkSeed: ConversationBackendTurnInput["syntheticForkSeed"] =
+    await resolveSyntheticForkSeed(deps, {
+      sessionName: input.sessionName,
+      agentBackend: input.agentBackend,
+      backendRef: input.backendRef,
+      forkedFrom: input.forkedFrom,
+      transcriptPath: input.transcriptPath,
+    });
+
   // Fetch the linked ticket's current view for this turn. Project
   // conversations are session-less and can never be ticket-linked. A lookup
   // failure degrades to an uncontextualized turn rather than failing it.
   let activeTicketBlock: string | null = null;
+  let workflowResultsBlock: string | null = null;
   if (!isProjectConversation) {
     try {
       activeTicketBlock = await deps.getLiveTicketBlock(
@@ -1758,6 +1904,35 @@ export async function executePromptForMachine(
       );
     } catch (err) {
       deps.log.warn("prompt.live_ticket_block_failed", {
+        ...scopeRef,
+        conversationId: input.conversationId,
+        error: getErrorMessage(err),
+      });
+    }
+
+    try {
+      const claimedWorkflowResults = await deps.claimWorkflowResults({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        originConversationId: input.conversationId,
+        attemptId: workflowResultAttemptId,
+      });
+      claimedWorkflowResultCount = claimedWorkflowResults.length;
+      workflowResultsBlock = assembleWorkflowResultsBlock(
+        claimedWorkflowResults,
+      );
+      if (claimedWorkflowResults.length > 0) {
+        deps.log.info("prompt.workflow_results_claimed", {
+          ...scopeRef,
+          conversationId: input.conversationId,
+          count: claimedWorkflowResults.length,
+          boundaries: claimedWorkflowResults.map(
+            ({ executionId, boundarySeq }) => ({ executionId, boundarySeq }),
+          ),
+        });
+      }
+    } catch (err) {
+      deps.log.warn("prompt.workflow_results_claim_failed", {
         ...scopeRef,
         conversationId: input.conversationId,
         error: getErrorMessage(err),
@@ -1787,6 +1962,7 @@ export async function executePromptForMachine(
     deps.getDebugLogUrl(input.conversationId),
     getDebugManifestPath(input.worktreePath, input.conversationId),
     activeTicketBlock,
+    workflowResultsBlock,
   );
 
   const promptText =
@@ -1796,15 +1972,6 @@ export async function executePromptForMachine(
           .filter((b): b is { type: "text"; text: string } => b.type === "text")
           .map((b) => b.text)
           .join("\n\n");
-
-  const syntheticForkSeed: ConversationBackendTurnInput["syntheticForkSeed"] =
-    await resolveSyntheticForkSeed(deps, {
-      sessionName: input.sessionName,
-      agentBackend: input.agentBackend,
-      backendRef: input.backendRef,
-      forkedFrom: input.forkedFrom,
-      transcriptPath: input.transcriptPath,
-    });
 
   let agentCallResult: AgentCallResult | undefined;
 
@@ -2041,6 +2208,30 @@ export async function executePromptForMachine(
     abortWiring.cleanup();
     runtimeState.currentTurnAutonomous = undefined;
     runtimeState.currentTurnMessageId = undefined;
+    if (claimedWorkflowResultCount > 0 && !workflowResultsSettled) {
+      try {
+        const released = await deps.releaseWorkflowResults({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          originConversationId: input.conversationId,
+          attemptId: workflowResultAttemptId,
+        });
+        deps.log.info("prompt.workflow_results_released", {
+          ...scopeRef,
+          conversationId: input.conversationId,
+          attemptId: workflowResultAttemptId,
+          claimed: claimedWorkflowResultCount,
+          released,
+        });
+      } catch (err) {
+        deps.log.error("prompt.workflow_results_release_failed", {
+          ...scopeRef,
+          conversationId: input.conversationId,
+          attemptId: workflowResultAttemptId,
+          error: getErrorMessage(err),
+        });
+      }
+    }
     await queuedAccounting.settleAfterTurn();
   }
 

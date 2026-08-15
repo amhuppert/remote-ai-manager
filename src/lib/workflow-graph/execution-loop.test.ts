@@ -113,6 +113,15 @@ function createRunningExecution(
     id: "exec-1",
     seedDefinitionId: "def-1",
     seedDefinitionRevision: 1,
+    origin: {
+      kind: "template",
+      definitionId: "def-1",
+      definitionRevision: 1,
+      tier: "project",
+    },
+    launchDocument: null,
+    liveSessionReadOnlyPinned: false,
+    abandonment: null,
     liveRevision: 1,
     executionStateRevision: 0,
     structuralRevision: 0,
@@ -129,6 +138,7 @@ function createRunningExecution(
     launchedTier: "project",
     ownerConversationId: null,
     definitionApproval: null,
+    definitionApprovalClaim: null,
     workingDefinition: {
       ...definition,
       laneMergeValidation: {
@@ -7254,7 +7264,11 @@ describe("execution loop", () => {
           if (overrides.enforceLoopFence) {
             assertLoopFence(projectPath, sessionName, harness.getCurrent());
           }
-          const next = await fn(structuredClone(harness.getCurrent()));
+          const result = await fn(structuredClone(harness.getCurrent()));
+          const next =
+            "execution" in result && "events" in result
+              ? result.execution
+              : result;
           harness.setCurrent(next);
           return next;
         },

@@ -16,6 +16,7 @@ import type { useSessionPageLocalState } from "@/features/session/hooks/use-sess
 import type { useCollabContext } from "@/features/session/hooks/use-collab-context";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import { useWorkflowReceiptTranscriptExtensions } from "./WorkflowReceiptCard";
 
 type LocalState = ReturnType<typeof useSessionPageLocalState>;
 type CollabContext = ReturnType<typeof useCollabContext>;
@@ -89,6 +90,11 @@ export default function ConversationPanelContainer({
   const openMobileSidebar = useOpenMobileSidebar();
   const thinkingExpansionCommand = useThinkingBlockExpansionHotkeys();
   const backgroundActivity = useConversationBackgroundActivity(conversationId);
+  const workflowReceiptExtensions = useWorkflowReceiptTranscriptExtensions({
+    projectName,
+    sessionName,
+    conversationId,
+  });
   const [nav, setNav] = useState<TranscriptNav | null>(null);
 
   const renderMessageRow = useMessageRowRenderer({
@@ -141,6 +147,7 @@ export default function ConversationPanelContainer({
         renderRow: renderCollabRow,
         suppressIndicator: hasActiveCollab,
       }}
+      extensions={workflowReceiptExtensions}
       showInFlightBanners
       leadingSlot={
         <div

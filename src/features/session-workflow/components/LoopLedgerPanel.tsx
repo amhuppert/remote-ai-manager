@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { SectionLabel } from "@/components/ui/SectionHeader";
 import { deriveLoopLedger } from "@/lib/workflow-graph/loop-ledger";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import {
   orderGraphWorkflowEventPages,
   useGraphWorkflowEventPagesQuery,
@@ -22,6 +23,8 @@ export interface LoopLedgerPanelProps {
   projectName: string;
   sessionName: string;
   execution: GraphWorkflowExecution;
+  /** A fully walked history supplied by the historical page selection. */
+  events?: GraphWorkflowExecutionEvent[];
 }
 
 /**
@@ -40,6 +43,7 @@ export default function LoopLedgerPanel({
   projectName,
   sessionName,
   execution,
+  events,
 }: LoopLedgerPanelProps) {
   const loopGroups = useMemo(
     () => execution.workingDefinition.loopGroups ?? [],
@@ -51,17 +55,17 @@ export default function LoopLedgerPanel({
     projectName,
     sessionName,
     execution.id,
-    { enabled: hasLoops },
+    { enabled: hasLoops && events === undefined },
   );
 
   const entries = useMemo(
     () =>
       deriveLoopLedger({
         loopStates: execution.loopStates,
-        events: orderGraphWorkflowEventPages(pagesQuery.data?.pages),
+        events: events ?? orderGraphWorkflowEventPages(pagesQuery.data?.pages),
         loopGroups,
       }),
-    [execution.loopStates, loopGroups, pagesQuery.data?.pages],
+    [events, execution.loopStates, loopGroups, pagesQuery.data?.pages],
   );
 
   if (!hasLoops || entries.length === 0) return null;

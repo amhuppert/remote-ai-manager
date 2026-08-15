@@ -24,7 +24,11 @@ import { createWorkflowCharterService } from "./charter/service";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { createWorkflowStorageService } from "./storage";
-import { createWorkflowDefinition } from "./test-fixtures";
+import {
+  createInMemoryLeaseReservation,
+  createWorkflowDefinition,
+  makeLaunchDocument,
+} from "./test-fixtures";
 import {
   LEGACY_WORKFLOW_PURGE_MIGRATION_ID,
   LEGACY_WORKFLOW_PURGE_PENDING_MIGRATION_ID,
@@ -258,6 +262,8 @@ function setupObservability() {
   });
 
   const repo = createGraphWorkflowExecutionRepository({
+    // No git worktree in this harness; the real exclusion would shell out.
+    ensureCcArtifactsExcluded: async () => {},
     async getSession(projectPath, sessionName) {
       const key = `${projectPath}:${sessionName}`;
       let session = sessions.get(key);
@@ -297,6 +303,21 @@ function setupObservability() {
       // delivery back; the repository performs delivery post-commit.
       return { execution, delivery: { events, pushes: pushes ?? [] } };
     },
+    reserveActiveGraphWorkflowExecution: createInMemoryLeaseReservation({
+      readActive: (projectPath, sessionName) =>
+        sessions.get(`${projectPath}:${sessionName}`)?.graphWorkflowExecution ??
+        null,
+      installActive: (projectPath, sessionName, execution) => {
+        const key = `${projectPath}:${sessionName}`;
+        let session = sessions.get(key);
+        if (!session) {
+          session = makeSession();
+          sessions.set(key, session);
+        }
+        session.graphWorkflowExecution = execution;
+      },
+      onEvents: (events) => appendedEvents.push(...events),
+    }),
     async archiveActiveGraphWorkflowExecution(projectPath, sessionName) {
       const key = `${projectPath}:${sessionName}`;
       const session = sessions.get(key);
@@ -327,12 +348,16 @@ describe("charter lifecycle integration — Observability", () => {
 
     await repo.create("/repo", "session-1", {
       definition,
-      definitionId: "wf-1",
-      definitionRevision: 3,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 3,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(definition),
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
-      launchedTier: "project",
       ownerConversationId: null,
     });
 

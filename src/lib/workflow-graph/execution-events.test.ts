@@ -2,10 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { TESTFAKE_BACKEND_ID } from "@/lib/agent-backends/testing/testfake-backend";
 import {
   type GraphWorkflowExecutionEvent,
+  graphWorkflowBoundaryEventSchema,
+  graphWorkflowBoundaryKindSchema,
   graphWorkflowCharterRegisteredEventSchema,
   graphWorkflowCharterUpdatedEventSchema,
   graphWorkflowExecutionEventSchema,
   graphWorkflowLiveEditAppliedEventSchema,
+  graphWorkflowResultRecordedEventSchema,
 } from "@/lib/workflow-graph/event-schemas";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import type {
@@ -17,6 +20,548 @@ import {
   createGraphWorkflowExecutionEventPublisher,
   type GraphWorkflowEventDelivery,
 } from "./execution-events";
+import { createGraphWorkflowResultDeliveryService } from "./result-delivery-service";
+
+describe("closed workflow boundary vocabulary", () => {
+  it("derives every durable needs-attention and terminal boundary exactly once", () => {
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => "2026-08-14T12:00:00.000Z",
+    });
+    const running = createWorkflowExecution({ status: "running" });
+    const halted = createWorkflowExecution({ ...running, status: "halted" });
+
+    const deliveries = [
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution: null,
+        nextExecution: createWorkflowExecution({
+          status: "pending",
+          definitionApproval: {
+            requestedAt: "2026-08-14T12:00:00.000Z",
+            approvedAt: null,
+          },
+        }),
+      }),
+      publisher.publishApprovalPending({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        execution: running,
+        contextId: "context-plan",
+        conversationId: "conversation-1",
+        requestedAt: "2026-08-14T12:00:00.000Z",
+      }),
+      publisher.publishUserInputPending({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        execution: running,
+        contextId: "context-plan",
+        conversationId: "conversation-1",
+        questionBatchId: "question-batch-1",
+        requestedAt: "2026-08-14T12:00:00.000Z",
+      }),
+      ...(["paused", "halted"] as const).map((status) =>
+        publisher.publishExecutionUpdate({
+          projectPath: "/projects/repo",
+          sessionName: "session-1",
+          previousExecution: running,
+          nextExecution: createWorkflowExecution({ ...running, status }),
+        }),
+      ),
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution: halted,
+        nextExecution: createWorkflowExecution({
+          ...halted,
+          abandonment: {
+            abandonedAt: "2026-08-14T12:00:00.000Z",
+            actor: { kind: "human" },
+            reason: "No longer needed",
+          },
+        }),
+      }),
+      ...(["completed", "aborted"] as const).map((status) =>
+        publisher.publishExecutionUpdate({
+          projectPath: "/projects/repo",
+          sessionName: "session-1",
+          previousExecution: running,
+          nextExecution: createWorkflowExecution({ ...running, status }),
+        }),
+      ),
+    ];
+
+    const boundaries = deliveries.flatMap((delivery) =>
+      delivery.events
+        .filter((row) => row.event.type === "graph-workflow-boundary")
+        .map((row) => graphWorkflowBoundaryEventSchema.parse(row.event)),
+    );
+
+    expect(boundaries.map((boundary) => boundary.boundaryKind)).toEqual(
+      graphWorkflowBoundaryKindSchema.options,
+    );
+  });
+
+  it("captures boundary-time status, pending action, and declared output", () => {
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => "2026-08-14T12:00:00.000Z",
+    });
+    const previous = createWorkflowExecution({
+      status: "running",
+      ownerConversationId: "conversation-origin",
+    });
+    const workingDefinition = {
+      ...previous.workingDefinition,
+      executionContexts: previous.workingDefinition.executionContexts.map(
+        (context) =>
+          context.id === "context-plan"
+            ? {
+                ...context,
+                outputSchema: {
+                  type: "object",
+                  properties: { verdict: { type: "string" } },
+                },
+              }
+            : context,
+      ),
+    };
+    const next = createWorkflowExecution({
+      ...previous,
+      workingDefinition,
+      status: "halted",
+      haltReason: {
+        type: "execution_loop_failed",
+        contextId: "context-plan",
+        cause: "unknown",
+        message: "The workflow needs operator attention.",
+      },
+      contextOutputs: {
+        "context-plan": {
+          capturedAt: "2026-08-14T11:59:00.000Z",
+          iteration: 1,
+          parse: { source: "raw_json" },
+          value: { verdict: "ready" },
+        },
+      },
+    });
+
+    const boundary = publisher
+      .publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution: previous,
+        nextExecution: next,
+      })
+      .events.map((row) => row.event)
+      .find((event) => event.type === "graph-workflow-boundary");
+
+    expect(boundary).toMatchObject({
+      boundaryKind: "halt",
+      workflowStatus: "halted",
+      pendingActions: [{ kind: "resume" }],
+      outputProjection: {
+        kind: "declared_outputs",
+        byContext: {
+          "context-plan": { verdict: "ready" },
+        },
+      },
+    });
+  });
+
+  it.each([
+    {
+      label: "a recovery-error halt",
+      haltReason: {
+        type: "recovery_error" as const,
+        message: "The workflow cannot be recovered.",
+      },
+    },
+    { label: "a halt with no recorded reason", haltReason: null },
+  ])("does not advertise resume for $label", ({ haltReason }) => {
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => "2026-08-14T12:00:00.000Z",
+    });
+    const previous = createWorkflowExecution({ status: "running" });
+    const halted = createWorkflowExecution({
+      ...previous,
+      status: "halted",
+      haltReason,
+    });
+
+    const boundary = publisher
+      .publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution: previous,
+        nextExecution: halted,
+      })
+      .events.map((row) => row.event)
+      .find((event) => event.type === "graph-workflow-boundary");
+
+    expect(boundary).toMatchObject({
+      boundaryKind: "halt",
+      workflowStatus: "halted",
+      pendingActions: [],
+    });
+  });
+
+  it("publishes one typed result-recorded invalidation only through post-commit delivery", () => {
+    let committed = false;
+    const broadcast = vi.fn((event) => {
+      expect(committed).toBe(true);
+      if (event.type === "graph-workflow-result-recorded") {
+        graphWorkflowResultRecordedEventSchema.parse(event);
+      }
+    });
+    const publisher = createGraphWorkflowExecutionEventPublisher({ broadcast });
+    const running = createWorkflowExecution({
+      status: "running",
+      ownerConversationId: "conversation-origin",
+    });
+    const completed = createWorkflowExecution({
+      ...running,
+      status: "completed",
+    });
+    const delivery = publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution: running,
+      nextExecution: completed,
+    });
+    const resultRecorded = graphWorkflowResultRecordedEventSchema.parse({
+      type: "graph-workflow-result-recorded",
+      projectName: "repo",
+      sessionName: "session-1",
+      executionId: completed.id,
+      originConversationId: "conversation-origin",
+      boundaryCursor: 17,
+    });
+
+    expect(broadcast).not.toHaveBeenCalled();
+    committed = true;
+    publisher.deliver({ ...delivery, publications: [resultRecorded] });
+
+    expect(
+      broadcast.mock.calls.filter(
+        ([event]) => event.type === "graph-workflow-result-recorded",
+      ),
+    ).toEqual([[resultRecorded]]);
+  });
+
+  it("marks the origin and dispatches one deduped normal workflow push for a committed completion result", async () => {
+    const markOriginUnread = vi.fn(async () => true);
+    const dispatchPush = vi.fn();
+    let effectPending = true;
+    const resultDeliveryService = createGraphWorkflowResultDeliveryService({
+      markOriginUnread,
+      dispatchPush,
+      commitMissingOriginFallback: vi.fn(),
+      publishFallbackNotification: vi.fn(),
+      settleMissingOriginResult: vi.fn(async () => false),
+      isPostCommitEffectPending: vi.fn(async () => effectPending),
+      markPostCommitEffectDelivered: vi.fn(async () => {
+        effectPending = false;
+        return true;
+      }),
+      listPendingPostCommitEffects: vi.fn(async () => []),
+    });
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      deliverResultRecorded: resultDeliveryService.deliverRecordedResult,
+    });
+    const running = createWorkflowExecution({
+      status: "running",
+      ownerConversationId: "conversation-origin",
+    });
+    const completed = createWorkflowExecution({
+      ...running,
+      status: "completed",
+    });
+    const delivery = publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution: running,
+      nextExecution: completed,
+    });
+    const resultRecorded = graphWorkflowResultRecordedEventSchema.parse({
+      type: "graph-workflow-result-recorded",
+      projectName: "repo",
+      sessionName: "session-1",
+      executionId: completed.id,
+      originConversationId: "conversation-origin",
+      boundaryCursor: 17,
+    });
+
+    await publisher.deliver({
+      ...delivery,
+      publications: [resultRecorded],
+      resultEffects: [{ projectPath: "/projects/repo", event: resultRecorded }],
+    });
+
+    expect(markOriginUnread).toHaveBeenCalledExactlyOnceWith({
+      projectPath: "/projects/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      conversationId: "conversation-origin",
+    });
+    expect(dispatchPush).toHaveBeenCalledExactlyOnceWith({
+      kind: "workflow-completed",
+      projectName: "repo",
+      sessionName: "session-1",
+      dedupeKey: `graph-workflow-result:${completed.id}:17`,
+    });
+    expect(broadcast).toHaveBeenCalledWith(resultRecorded);
+
+    await publisher.deliver({
+      ...delivery,
+      publications: [resultRecorded],
+      resultEffects: [{ projectPath: "/projects/repo", event: resultRecorded }],
+    });
+
+    const repeated = publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution: completed,
+      nextExecution: completed,
+    });
+    await publisher.deliver(repeated);
+
+    expect(markOriginUnread).toHaveBeenCalledTimes(1);
+    expect(dispatchPush).toHaveBeenCalledTimes(1);
+  });
+
+  it("dedupes a completion replay after service restart through the durable effect receipt", async () => {
+    const markOriginUnread = vi.fn(async () => true);
+    const dispatchPush = vi.fn();
+    let effectPending = true;
+    const deps = {
+      markOriginUnread,
+      dispatchPush,
+      commitMissingOriginFallback: vi.fn(),
+      publishFallbackNotification: vi.fn(),
+      settleMissingOriginResult: vi.fn(async () => false),
+      isPostCommitEffectPending: vi.fn(async () => effectPending),
+      markPostCommitEffectDelivered: vi.fn(async () => {
+        effectPending = false;
+        return true;
+      }),
+      listPendingPostCommitEffects: vi.fn(async () => []),
+    };
+    const input = {
+      projectPath: "/projects/repo",
+      event: graphWorkflowResultRecordedEventSchema.parse({
+        type: "graph-workflow-result-recorded",
+        projectName: "repo",
+        sessionName: "session-1",
+        executionId: "execution-1",
+        originConversationId: "conversation-origin",
+        boundaryCursor: 17,
+      }),
+      completionPush: {
+        kind: "workflow-completed" as const,
+        projectName: "repo",
+        sessionName: "session-1",
+      },
+    };
+
+    await createGraphWorkflowResultDeliveryService(deps).deliverRecordedResult(
+      input,
+    );
+    await createGraphWorkflowResultDeliveryService(deps).deliverRecordedResult(
+      input,
+    );
+
+    expect(markOriginUnread).toHaveBeenCalledTimes(1);
+    expect(dispatchPush).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates one session fallback and settles the boundary when the origin was deleted", async () => {
+    const markOriginUnread = vi.fn(async () => false);
+    const dispatchPush = vi.fn();
+    const fallbackNotification = {
+      id: "notification-1",
+      source: "workflow" as const,
+      type: "workflow-result-ready" as const,
+      title: "Workflow result ready",
+      message:
+        'Execution "execution-1" finished after origin conversation "conversation-deleted" was deleted.',
+      read: false,
+      projectName: "repo",
+      sessionName: "session-1",
+      executionId: "execution-1",
+      originConversationId: "conversation-deleted",
+      deepLink: "/projects/repo/session-1/workflow?execution=execution-1",
+      createdAt: "2026-08-14T12:00:00.000Z",
+    };
+    const commitMissingOriginFallback = vi.fn(async () => ({
+      notification: fallbackNotification,
+      created: true,
+      settled: true,
+    }));
+    const publishFallbackNotification = vi.fn();
+    const settleMissingOriginResult = vi.fn(async () => true);
+    const resultDeliveryService = createGraphWorkflowResultDeliveryService({
+      markOriginUnread,
+      dispatchPush,
+      commitMissingOriginFallback,
+      publishFallbackNotification,
+      settleMissingOriginResult,
+      isPostCommitEffectPending: vi.fn(async () => true),
+      markPostCommitEffectDelivered: vi.fn(async () => true),
+      listPendingPostCommitEffects: vi.fn(async () => []),
+    });
+    const resultRecorded = graphWorkflowResultRecordedEventSchema.parse({
+      type: "graph-workflow-result-recorded",
+      projectName: "repo",
+      sessionName: "session-1",
+      executionId: "execution-1",
+      originConversationId: "conversation-deleted",
+      boundaryCursor: 17,
+    });
+    const input = {
+      projectPath: "/projects/repo",
+      event: resultRecorded,
+      completionPush: {
+        kind: "workflow-completed" as const,
+        projectName: "repo",
+        sessionName: "session-1",
+      },
+    };
+
+    await resultDeliveryService.deliverRecordedResult(input);
+    await resultDeliveryService.deliverRecordedResult(input);
+
+    expect(commitMissingOriginFallback).toHaveBeenCalledExactlyOnceWith({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      executionId: "execution-1",
+      boundarySeq: 17,
+      notification: {
+        type: "workflow-result-ready",
+        title: "Workflow result ready",
+        message:
+          'Execution "execution-1" finished after origin conversation "conversation-deleted" was deleted.',
+        projectName: "repo",
+        sessionName: "session-1",
+        executionId: "execution-1",
+        originConversationId: "conversation-deleted",
+        deepLink: "/projects/repo/session-1/workflow?execution=execution-1",
+        dedupeKey: "graph-workflow-origin-missing:execution-1",
+      },
+    });
+    expect(publishFallbackNotification).toHaveBeenCalledExactlyOnceWith(
+      fallbackNotification,
+    );
+    expect(settleMissingOriginResult).not.toHaveBeenCalled();
+    expect(dispatchPush).toHaveBeenCalledExactlyOnceWith({
+      kind: "workflow-completed",
+      projectName: "repo",
+      sessionName: "session-1",
+      dedupeKey: "graph-workflow-result:execution-1:17",
+    });
+  });
+
+  it("uses the missing-origin fallback when deletion races the unread mutation", async () => {
+    const fallbackNotification = {
+      id: "notification-race",
+      source: "workflow" as const,
+      type: "workflow-result-ready" as const,
+      title: "Workflow result ready",
+      message:
+        'Execution "execution-race" finished after origin conversation "conversation-deleted" was deleted.',
+      read: false,
+      projectName: "repo",
+      sessionName: "session-1",
+      executionId: "execution-race",
+      originConversationId: "conversation-deleted",
+      deepLink: "/projects/repo/session-1/workflow?execution=execution-race",
+      createdAt: "2026-08-14T12:00:00.000Z",
+    };
+    const commitMissingOriginFallback = vi.fn(async () => ({
+      notification: fallbackNotification,
+      created: true,
+      settled: true,
+    }));
+    const originExists = vi.fn(async () => false);
+    const deps = {
+      markOriginUnread: vi.fn(async () => {
+        throw new Error("conversation deleted during unread mutation");
+      }),
+      originExists,
+      dispatchPush: vi.fn(),
+      commitMissingOriginFallback,
+      publishFallbackNotification: vi.fn(),
+      settleMissingOriginResult: vi.fn(async () => false),
+      isPostCommitEffectPending: vi.fn(async () => true),
+      markPostCommitEffectDelivered: vi.fn(async () => true),
+      listPendingPostCommitEffects: vi.fn(async () => []),
+    };
+    const service = createGraphWorkflowResultDeliveryService(deps);
+
+    await service.deliverRecordedResult({
+      projectPath: "/projects/repo",
+      event: graphWorkflowResultRecordedEventSchema.parse({
+        type: "graph-workflow-result-recorded",
+        projectName: "repo",
+        sessionName: "session-1",
+        executionId: "execution-race",
+        originConversationId: "conversation-deleted",
+        boundaryCursor: 19,
+      }),
+      completionPush: {
+        kind: "workflow-completed",
+        projectName: "repo",
+        sessionName: "session-1",
+      },
+    });
+
+    expect(originExists).toHaveBeenCalledOnce();
+    expect(commitMissingOriginFallback).toHaveBeenCalledOnce();
+    expect(deps.publishFallbackNotification).toHaveBeenCalledExactlyOnceWith(
+      fallbackNotification,
+    );
+    expect(deps.markPostCommitEffectDelivered).toHaveBeenCalledOnce();
+  });
+
+  it("settles a missing-origin non-completion boundary without a false completion notification", async () => {
+    const commitMissingOriginFallback = vi.fn();
+    const settleMissingOriginResult = vi.fn(async () => true);
+    const markPostCommitEffectDelivered = vi.fn(async () => true);
+    const resultDeliveryService = createGraphWorkflowResultDeliveryService({
+      markOriginUnread: vi.fn(async () => false),
+      dispatchPush: vi.fn(),
+      commitMissingOriginFallback,
+      publishFallbackNotification: vi.fn(),
+      settleMissingOriginResult,
+      isPostCommitEffectPending: vi.fn(async () => true),
+      markPostCommitEffectDelivered,
+      listPendingPostCommitEffects: vi.fn(async () => []),
+    });
+
+    await resultDeliveryService.deliverRecordedResult({
+      projectPath: "/projects/repo",
+      event: graphWorkflowResultRecordedEventSchema.parse({
+        type: "graph-workflow-result-recorded",
+        projectName: "repo",
+        sessionName: "session-1",
+        executionId: "execution-1",
+        originConversationId: "conversation-deleted",
+        boundaryCursor: 11,
+      }),
+      completionPush: null,
+    });
+
+    expect(commitMissingOriginFallback).not.toHaveBeenCalled();
+    expect(settleMissingOriginResult).toHaveBeenCalledExactlyOnceWith({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      executionId: "execution-1",
+      boundarySeq: 11,
+    });
+    expect(markPostCommitEffectDelivered).toHaveBeenCalledOnce();
+  });
+});
 
 /**
  * Derive events and run delivery immediately — the pre-split behavior most of
@@ -210,6 +755,7 @@ describe("graph workflow execution event publisher", () => {
       "graph-workflow-task-status",
       "graph-workflow-circuit-breaker",
       "graph-workflow-shared-documents-updated",
+      "graph-workflow-boundary",
     ]);
     expect(publishedExecution.map((entry) => entry.event.type)).toEqual([
       "graph-workflow-status",
@@ -217,6 +763,7 @@ describe("graph workflow execution event publisher", () => {
       "graph-workflow-task-status",
       "graph-workflow-circuit-breaker",
       "graph-workflow-shared-documents-updated",
+      "graph-workflow-boundary",
     ]);
     expect(publishedExecution[0]?.occurredAt).toBe("2026-03-28T10:00:00.000Z");
   });
@@ -1658,7 +2205,7 @@ describe("graph workflow execution event publisher", () => {
       }),
     );
 
-    expect(broadcast).toHaveBeenCalledExactlyOnceWith({
+    expect(broadcast).toHaveBeenNthCalledWith(1, {
       type: "graph-workflow-approval-pending",
       projectName: "repo",
       sessionName: "session-1",
@@ -1668,7 +2215,14 @@ describe("graph workflow execution event publisher", () => {
       conversationId: "conversation-9",
       requestedAt: "2026-06-10T08:59:00.000Z",
     });
-    expect(updatedExecution).toHaveLength(1);
+    expect(broadcast).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        type: "graph-workflow-boundary",
+        boundaryKind: "context_approval",
+      }),
+    );
+    expect(updatedExecution).toHaveLength(2);
     expect(updatedExecution[0]?.occurredAt).toBe("2026-06-10T09:00:00.000Z");
     expect(updatedExecution[0]?.event).toMatchObject({
       type: "graph-workflow-approval-pending",
@@ -1711,7 +2265,7 @@ describe("graph workflow execution event publisher", () => {
       }),
     );
 
-    expect(broadcast).toHaveBeenCalledExactlyOnceWith({
+    expect(broadcast).toHaveBeenNthCalledWith(1, {
       type: "graph-workflow-approval-resolved",
       projectName: "repo",
       sessionName: "session-1",
@@ -1801,7 +2355,7 @@ describe("graph workflow execution event publisher", () => {
       }),
     );
 
-    expect(broadcast).toHaveBeenCalledExactlyOnceWith({
+    expect(broadcast).toHaveBeenNthCalledWith(1, {
       type: "graph-workflow-user-input-pending",
       projectName: "repo",
       sessionName: "session-1",
@@ -1812,7 +2366,14 @@ describe("graph workflow execution event publisher", () => {
       questionBatchId: "batch-42",
       requestedAt: "2026-06-11T08:59:00.000Z",
     });
-    expect(eventLog).toHaveLength(1);
+    expect(broadcast).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        type: "graph-workflow-boundary",
+        boundaryKind: "lane_question",
+      }),
+    );
+    expect(eventLog).toHaveLength(2);
     expect(eventLog[0]?.occurredAt).toBe("2026-06-11T09:00:00.000Z");
     expect(eventLog[0]?.event).toMatchObject({
       type: "graph-workflow-user-input-pending",
@@ -2679,13 +3240,13 @@ describe("event derivation is pure — delivery is deferred to deliver()", () =>
       requestedAt: "2026-07-20T00:00:00.000Z",
     });
 
-    expect(delivery.events).toHaveLength(1);
+    expect(delivery.events).toHaveLength(2);
     expect(broadcast).not.toHaveBeenCalled();
     expect(dispatchPush).not.toHaveBeenCalled();
 
     publisher.deliver(delivery);
 
-    expect(broadcast).toHaveBeenCalledTimes(1);
+    expect(broadcast).toHaveBeenCalledTimes(2);
     expect(dispatchPush).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "approval-pending" }),
     );

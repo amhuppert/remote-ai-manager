@@ -3,6 +3,7 @@ import {
   needsLegacyMigration,
 } from "@/lib/workflow-graph/migrate-legacy-execution";
 import { normalizeRawDefinitionEdgeIds } from "@/lib/workflow-graph/edge-identity";
+import { floorRawExecutionOrigin } from "@/lib/workflow-graph/execution-origin";
 import { migrateRawExecutionPlacement } from "@/lib/workflow-graph/placement-migration";
 import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
@@ -84,11 +85,17 @@ export function decodeGraphWorkflowExecution(
   // before it existed would be unreadable. This is the boundary for BOTH the
   // active and the archived tier, so a pre-placement archive stays readable and
   // a resumed pre-placement run continues under migrated placement.
+  //
+  // Origin (D7 decision D2) is floored at the same boundary and for the same
+  // reason: it is required on the domain record so every consumer can branch on
+  // it unconditionally, and a row written before it existed carries the seed
+  // fields the template origin is derived from.
   if (typeof upgraded === "object" && upgraded !== null) {
     normalizeRawDefinitionEdgeIds(
       (upgraded as { workingDefinition?: unknown }).workingDefinition,
     );
     migrateRawExecutionPlacement(upgraded);
+    floorRawExecutionOrigin(upgraded);
   }
 
   const parseResult = graphWorkflowExecutionSchema

@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  graphWorkflowAbandonmentSchema,
   graphWorkflowExecutionSchema,
   graphWorkflowHaltReasonSchema,
 } from "@/lib/workflow-graph/schemas";
 import { resolvedWorkflowSemanticDefinitionSchema } from "@/lib/workflow-graph/definition-schemas";
 import type {
+  GraphWorkflowAbandonment,
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
+  GraphWorkflowExecutionOrigin,
   GraphWorkflowHaltReason,
   GraphWorkflowTaskState,
 } from "@/lib/workflow-graph/schemas";
@@ -21,18 +24,23 @@ import {
   buildInitialTaskStates,
 } from "./execution-state";
 import {
-  autoReleasesSlot,
   classifyContextLifecycle,
   classifyExecutionEditability,
-  explicitArchiveEligibility,
+  evaluateLeaseAdmission,
   graphWorkflowLifecycleDecision,
   evaluateGraphWorkflowSessionDelivery,
+  holdsActionableGate,
+  holdsExecutionLease,
   isResumableHalt,
   isTerminalStatus,
-  replacementPolicy,
-  retainsSlotOwnership,
 } from "./lifecycle-classifier";
 import { makeProfileSnapshot } from "./test-fixtures";
+
+const ABANDONMENT = graphWorkflowAbandonmentSchema.parse({
+  abandonedAt: "2026-08-13T00:00:00.000Z",
+  actor: { kind: "human" },
+  reason: "superseded by a fresh plan",
+});
 
 const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
   schemaVersion: 1,
@@ -85,18 +93,32 @@ const INITIAL_CONTEXT_STATE = buildInitialContextState(
 const INITIAL_TASK_STATE = buildInitialTaskState(T1);
 
 interface ExecutionOverrides {
+  id?: string;
   status?: GraphWorkflowStatus;
   activeContextIds?: string[];
   contextState?: GraphWorkflowExecutionContextState;
   taskState?: GraphWorkflowTaskState;
   haltReason?: GraphWorkflowHaltReason | null;
+  abandonment?: GraphWorkflowAbandonment | null;
+  origin?: GraphWorkflowExecutionOrigin;
+  ownerConversationId?: string | null;
+  definitionApproval?: { requestedAt: string; approvedAt: string | null };
 }
 
 function makeExecution(
   overrides: ExecutionOverrides = {},
 ): GraphWorkflowExecution {
   return graphWorkflowExecutionSchema.parse({
-    id: "exec-1",
+    id: overrides.id ?? "exec-1",
+    origin: overrides.origin ?? {
+      kind: "template",
+      definitionId: "seed-1",
+      definitionRevision: 1,
+      tier: "project",
+    },
+    ownerConversationId: overrides.ownerConversationId ?? null,
+    definitionApproval: overrides.definitionApproval ?? null,
+    abandonment: overrides.abandonment ?? null,
     seedDefinitionId: "seed-1",
     seedDefinitionRevision: 1,
     liveRevision: 1,
@@ -131,31 +153,152 @@ function taskState(
   return { ...INITIAL_TASK_STATE, ...patch };
 }
 
+/**
+ * The delivery gate is a LEASE consumer, not a status reader (D7 decision D14).
+ * Blocking on status alone blocked every `halted` run, so a non-resumable or
+ * abandoned halt — a run that will never continue — permanently refused the
+ * merge at both call sites with no act available to clear it.
+ */
 describe("evaluateGraphWorkflowSessionDelivery", () => {
-  const blockingStatuses: GraphWorkflowStatus[] = [
-    "pending",
-    "running",
-    "paused",
-    "halted",
+  const RESUMABLE_HALT = {
+    type: "execution_loop_failed",
+    contextId: null,
+    cause: "unknown",
+    message: "halted",
+  } as const;
+  const NON_RESUMABLE_HALT = {
+    type: "recovery_error",
+    message: "unrecoverable",
+  } as const;
+
+  /**
+   * The refusal names the SAME remedy the launch refusal would (D7 decision D6):
+   * both are "this run holds the session's lease, here is what clears it", and
+   * two independently-worded answers to one question is how a surface ends up
+   * telling an operator to complete a run that has halted.
+   */
+  const leaseHolders = [
+    {
+      label: "pending",
+      status: "pending" as const,
+      haltReason: null,
+      definitionApproval: null,
+      remedy: "inspect_or_pause" as const,
+      sentence: "Complete or abort it before merging this session.",
+    },
+    {
+      label: "pending awaiting definition approval",
+      status: "pending" as const,
+      haltReason: null,
+      definitionApproval: {
+        definitionId: "definition-1",
+        definitionRevision: 1,
+        requestedAt: "2026-01-01T00:00:00Z",
+        approvedAt: null,
+        approvedBy: null,
+      },
+      remedy: "approve_or_abort" as const,
+      sentence: "Approve or abort it before merging this session.",
+    },
+    {
+      label: "running",
+      status: "running" as const,
+      haltReason: null,
+      definitionApproval: null,
+      remedy: "inspect_or_pause" as const,
+      sentence: "Complete or abort it before merging this session.",
+    },
+    {
+      label: "paused",
+      status: "paused" as const,
+      haltReason: null,
+      definitionApproval: null,
+      remedy: "inspect_or_pause" as const,
+      sentence: "Complete or abort it before merging this session.",
+    },
+    {
+      // The correction R13.1 forces: a halted run can never be "completed", and
+      // abandoning it is exactly what admits the merge — so naming
+      // complete-or-abort here pointed at acts its state does not admit.
+      label: "resumably halted",
+      status: "halted" as const,
+      haltReason: RESUMABLE_HALT,
+      definitionApproval: null,
+      remedy: "resume_or_abandon" as const,
+      sentence: "Resume or abandon it before merging this session.",
+    },
   ];
 
-  for (const status of blockingStatuses) {
-    it(`blocks ${status} execution work from being delivered as a finished session`, () => {
+  for (const holder of leaseHolders) {
+    it(`blocks delivery while a ${holder.label} execution holds the lease, naming the ${holder.remedy} remedy`, () => {
       expect(
-        evaluateGraphWorkflowSessionDelivery({ id: "execution-1", status }),
+        evaluateGraphWorkflowSessionDelivery({
+          id: "execution-1",
+          status: holder.status,
+          haltReason: holder.haltReason,
+          abandonment: null,
+          definitionApproval: holder.definitionApproval,
+        }),
       ).toEqual({
         allowed: false,
         executionId: "execution-1",
-        status,
-        message: `Graph workflow execution execution-1 is ${status}. Complete or abort it before merging this session.`,
+        status: holder.status,
+        remedy: holder.remedy,
+        message: `Graph workflow execution execution-1 is ${holder.status}. ${holder.sentence}`,
       });
     });
   }
 
-  for (const status of ["completed", "aborted"] as const) {
-    it(`allows session delivery after the execution is ${status}`, () => {
+  const leaseFree = [
+    {
+      label: "completed",
+      status: "completed" as const,
+      haltReason: null,
+      abandonment: null,
+    },
+    {
+      label: "aborted",
+      status: "aborted" as const,
+      haltReason: null,
+      abandonment: null,
+    },
+    {
+      label: "non-resumably halted",
+      status: "halted" as const,
+      haltReason: NON_RESUMABLE_HALT,
+      abandonment: null,
+    },
+    {
+      label: "abandoned resumable halt",
+      status: "halted" as const,
+      haltReason: RESUMABLE_HALT,
+      abandonment: {
+        abandonedAt: "2026-01-02T00:00:00Z",
+        actor: { kind: "human" as const },
+        reason: "superseded",
+      },
+    },
+    {
+      // Schema-valid and therefore reachable: `haltReason` is nullable. Not a
+      // resumable reason, so it never blocks a merge — the R13 defect this rule
+      // exists to prevent is a halt holding delivery hostage forever.
+      label: "halted with no recorded reason",
+      status: "halted" as const,
+      haltReason: null,
+      abandonment: null,
+    },
+  ];
+
+  for (const free of leaseFree) {
+    it(`allows delivery once a ${free.label} execution has released the lease`, () => {
       expect(
-        evaluateGraphWorkflowSessionDelivery({ id: "execution-1", status }),
+        evaluateGraphWorkflowSessionDelivery({
+          id: "execution-1",
+          status: free.status,
+          haltReason: free.haltReason,
+          abandonment: free.abandonment,
+          definitionApproval: null,
+        }),
       ).toEqual({ allowed: true });
     });
   }
@@ -309,6 +452,35 @@ describe("classifyExecutionEditability", () => {
       expected: { kind: "editable", quiescent: true },
     },
     {
+      // D7 decision D17: an execution-addressed approval is only sound if its
+      // subject is immutable, so a parked snapshot is frozen rather than
+      // "quiescent, therefore fully editable" — otherwise an id-only approval
+      // could admit bytes nobody reviewed.
+      name: "pending awaiting definition approval is not editable",
+      execution: makeExecution({
+        status: "pending",
+        definitionApproval: {
+          requestedAt: "2026-08-13T09:00:00.000Z",
+          approvedAt: null,
+        },
+      }),
+      expected: {
+        kind: "not-editable",
+        reason: "awaiting-definition-approval",
+      },
+    },
+    {
+      name: "pending with an already-approved definition is editable and quiescent",
+      execution: makeExecution({
+        status: "pending",
+        definitionApproval: {
+          requestedAt: "2026-08-13T09:00:00.000Z",
+          approvedAt: "2026-08-13T09:05:00.000Z",
+        },
+      }),
+      expected: { kind: "editable", quiescent: true },
+    },
+    {
       name: "completed is not editable (completed)",
       execution: makeExecution({ status: "completed" }),
       expected: { kind: "not-editable", reason: "completed" },
@@ -361,7 +533,7 @@ describe("classifyExecutionEditability", () => {
   }
 });
 
-describe("isResumableHalt", () => {
+describe("halt resumability and the lease it decides", () => {
   // Typed as an exhaustive Record so a new halt reason type in the schema fails
   // to compile here until this test map classifies it — mirroring the
   // production exhaustiveness guard.
@@ -548,55 +720,320 @@ describe("isResumableHalt", () => {
         expected,
       );
     });
+
+    it(`a halt on ${type} ${expected ? "keeps" : "releases"} the lease`, () => {
+      expect(
+        holdsExecutionLease(
+          "halted",
+          graphWorkflowHaltReasonSchema.parse(reason),
+          null,
+        ),
+      ).toBe(expected);
+    });
+
+    it(`an abandoned halt on ${type} releases the lease`, () => {
+      expect(
+        holdsExecutionLease(
+          "halted",
+          graphWorkflowHaltReasonSchema.parse(reason),
+          ABANDONMENT,
+        ),
+      ).toBe(false);
+    });
   }
 });
 
+/**
+ * THE canonical lease predicate (D7 decision D14). Every admission, resume,
+ * Current/History projection, ambient signal, validation owner, delivery gate,
+ * and the `lease_held` persistence projection consume this one decision, so the
+ * status/halt/abandonment matrix is pinned here rather than restated per site.
+ */
+describe("holdsExecutionLease", () => {
+  const RESUMABLE = graphWorkflowHaltReasonSchema.parse({
+    type: "agent_turn_failed",
+    contextId: "ctx-1",
+    engine: "claude",
+    cause: "sdk_error",
+    message: "turn failed",
+  });
+  const NON_RESUMABLE = graphWorkflowHaltReasonSchema.parse({
+    type: "recovery_error",
+    message: "unrecoverable",
+  });
+
+  for (const status of ["pending", "running", "paused"] as const) {
+    it(`${status} holds the lease`, () => {
+      expect(holdsExecutionLease(status, null, null)).toBe(true);
+    });
+  }
+
+  for (const status of ["completed", "aborted"] as const) {
+    it(`${status} never holds the lease, even carrying a resumable halt reason`, () => {
+      expect(holdsExecutionLease(status, RESUMABLE, null)).toBe(false);
+    });
+  }
+
+  it("keeps the lease for a resumably halted run that was never abandoned", () => {
+    expect(holdsExecutionLease("halted", RESUMABLE, null)).toBe(true);
+  });
+
+  it("releases the lease once an abandonment record exists", () => {
+    expect(holdsExecutionLease("halted", RESUMABLE, ABANDONMENT)).toBe(false);
+  });
+
+  it("releases the lease for a non-resumable halt with no abandonment act", () => {
+    expect(holdsExecutionLease("halted", NON_RESUMABLE, null)).toBe(false);
+  });
+
+  it("releases the lease for a halted run whose reason was not recorded", () => {
+    // The pinned spec's rule is `halted holds IFF isResumableHalt(haltReason)`
+    // (revision 5, D14 — and R3: "halted with a resumable reason"). A null
+    // reason is not a resumable reason, so such a run is lease-free and belongs
+    // in History.
+    //
+    // This deliberately overrides the fail-closed instinct — that an unproven
+    // halt should keep the lease because a wrongly-held one is recoverable by
+    // abandoning it. The spec outranks that reasoning, and it is also the
+    // consistent answer: `classifyExecutionEditability` and
+    // `workflowExecutionAmendmentRefusalInstruction` both already require a
+    // NON-NULL resumable reason, so treating null as lease-holding left a run
+    // that is Current and blocking yet not editable, resumable, or amendable —
+    // reachable only by abandoning a run the UI offers no abandon control for.
+    expect(holdsExecutionLease("halted", null, null)).toBe(false);
+  });
+
+  it("classifies every status in the vocabulary", () => {
+    for (const status of graphWorkflowStatusSchema.options) {
+      expect(typeof holdsExecutionLease(status, null, null)).toBe("boolean");
+    }
+  });
+
+  describe("holdsActionableGate", () => {
+    it("excludes pending, which holds the lease but has not started", () => {
+      // A pending run is waiting on its OWN definition approval, so no context
+      // of it is running and a park on one is not yet a fact. This is the one
+      // place the gate question and the lease question part company.
+      expect(holdsExecutionLease("pending", null, null)).toBe(true);
+      expect(holdsActionableGate("pending", null, null)).toBe(false);
+    });
+
+    for (const status of ["running", "paused"] as const) {
+      it(`${status} can act on a parked gate`, () => {
+        expect(holdsActionableGate(status, null, null)).toBe(true);
+      });
+    }
+
+    it("keeps a resumably halted gate actionable — the decision defers", () => {
+      expect(holdsActionableGate("halted", RESUMABLE, null)).toBe(true);
+    });
+
+    it.each([
+      ["a non-resumable halt", NON_RESUMABLE, null],
+      ["an abandoned halt", RESUMABLE, ABANDONMENT],
+      ["a halt with no recorded reason", null, null],
+    ] as const)("drops the gate for %s", (_label, reason, abandonment) => {
+      expect(holdsActionableGate("halted", reason, abandonment)).toBe(false);
+    });
+
+    for (const status of ["completed", "aborted"] as const) {
+      it(`${status} can never act on a gate`, () => {
+        expect(holdsActionableGate(status, RESUMABLE, null)).toBe(false);
+      });
+    }
+
+    it("classifies every status in the vocabulary", () => {
+      for (const status of graphWorkflowStatusSchema.options) {
+        expect(typeof holdsActionableGate(status, null, null)).toBe("boolean");
+      }
+    });
+  });
+});
+
+/**
+ * THE one admission decision (D7 decision D3). Both start-guard call sites —
+ * the manager's advisory check and the repository's authoritative CAS — consult
+ * this, so a launch can only ever admit (lease free), normalize a lease-free
+ * physical incumbent into History, or refuse naming the lease holder. There is
+ * no branch in which an incumbent is ended as a side effect (R3.4).
+ */
+describe("evaluateLeaseAdmission", () => {
+  const RESUMABLE = graphWorkflowHaltReasonSchema.parse({
+    type: "agent_turn_failed",
+    contextId: "ctx-1",
+    engine: "claude",
+    cause: "sdk_error",
+    message: "turn failed",
+  });
+  const NON_RESUMABLE = graphWorkflowHaltReasonSchema.parse({
+    type: "recovery_error",
+    message: "unrecoverable",
+  });
+
+  it("admits when the session holds no execution at all", () => {
+    expect(evaluateLeaseAdmission(null)).toEqual({ kind: "admit" });
+  });
+
+  const LEASE_HOLDERS: Array<{
+    label: string;
+    overrides: ExecutionOverrides;
+    remedy: string;
+  }> = [
+    {
+      label: "a pending run parked awaiting definition approval",
+      overrides: {
+        status: "pending",
+        definitionApproval: {
+          requestedAt: "2026-08-13T00:00:00.000Z",
+          approvedAt: null,
+        },
+      },
+      remedy: "approve_or_abort",
+    },
+    {
+      label: "a pending run with no approval park",
+      overrides: { status: "pending" },
+      remedy: "inspect_or_pause",
+    },
+    {
+      label: "a running run",
+      overrides: { status: "running" },
+      remedy: "inspect_or_pause",
+    },
+    {
+      label: "a paused run",
+      overrides: { status: "paused" },
+      remedy: "inspect_or_pause",
+    },
+    {
+      label: "a resumably halted run",
+      overrides: { status: "halted", haltReason: RESUMABLE },
+      remedy: "resume_or_abandon",
+    },
+  ];
+
+  for (const holder of LEASE_HOLDERS) {
+    it(`refuses over ${holder.label}, naming it and its remedy`, () => {
+      const incumbent = makeExecution({
+        id: "incumbent-1",
+        ownerConversationId: "conv-origin",
+        ...holder.overrides,
+      });
+
+      expect(evaluateLeaseAdmission(incumbent)).toEqual({
+        kind: "refuse",
+        incumbent: {
+          executionId: "incumbent-1",
+          status: holder.overrides.status,
+          origin: incumbent.origin,
+          originConversationId: "conv-origin",
+        },
+        remedy: holder.remedy,
+      });
+    });
+  }
+
+  it("carries a one-off incumbent's origin and its absent origin conversation", () => {
+    const incumbent = makeExecution({
+      id: "incumbent-one-off",
+      status: "running",
+      origin: { kind: "one_off", planName: "Ship the search box" },
+      ownerConversationId: null,
+    });
+
+    expect(evaluateLeaseAdmission(incumbent)).toMatchObject({
+      kind: "refuse",
+      incumbent: {
+        origin: { kind: "one_off", planName: "Ship the search box" },
+        originConversationId: null,
+      },
+    });
+  });
+
+  const LEASE_FREE: Array<{ label: string; overrides: ExecutionOverrides }> = [
+    { label: "a completed run", overrides: { status: "completed" } },
+    { label: "an aborted run", overrides: { status: "aborted" } },
+    {
+      label: "a non-resumably halted run",
+      overrides: { status: "halted", haltReason: NON_RESUMABLE },
+    },
+    {
+      label: "an abandoned resumable halt",
+      overrides: {
+        status: "halted",
+        haltReason: RESUMABLE,
+        abandonment: ABANDONMENT,
+      },
+    },
+    {
+      // `isResumableHalt` is a claim about a REASON; with none recorded there is
+      // nothing to resume from, so the run is lease-free and normalizes into
+      // History rather than refusing the launch.
+      label: "a halted run whose reason was never recorded",
+      overrides: { status: "halted", haltReason: null },
+    },
+  ];
+
+  for (const freeCase of LEASE_FREE) {
+    it(`admits over ${freeCase.label}, normalizing it into History`, () => {
+      const incumbent = makeExecution({
+        id: "legacy-terminal",
+        ownerConversationId: "conv-origin",
+        ...freeCase.overrides,
+      });
+
+      expect(evaluateLeaseAdmission(incumbent)).toEqual({
+        kind: "admit-with-normalization",
+        incumbent: {
+          executionId: "legacy-terminal",
+          status: freeCase.overrides.status,
+          origin: incumbent.origin,
+          originConversationId: "conv-origin",
+        },
+      });
+    });
+  }
+
+  it("agrees with the lease predicate for every status the vocabulary has", () => {
+    for (const status of graphWorkflowStatusSchema.options) {
+      const incumbent = makeExecution({ status });
+      const decision = evaluateLeaseAdmission(incumbent);
+      expect(decision.kind === "refuse").toBe(
+        holdsExecutionLease(status, incumbent.haltReason, null),
+      );
+    }
+  });
+});
+
 describe("graph-workflow lifecycle contract", () => {
-  // The full decision table (design §10). Every status appears exactly once and
-  // every decision the contract owns is pinned here, so a consumer that keeps a
-  // local copy of any of these rules diverges visibly rather than silently.
+  // The full decision table (design §10), as D7 leaves it: terminality is the
+  // one status-only fact and stays here. Slot ownership, replacement, and
+  // archive eligibility were status-only APPROXIMATIONS of tenure and are gone,
+  // because `holdsExecutionLease` decides tenure from the whole record.
   const TABLE: Record<GraphWorkflowStatus, GraphWorkflowLifecycleDecision> = {
     pending: {
       status: "pending",
       terminal: false,
-      slotOwnership: "retained",
-      explicitArchive: "refused",
-      replacement: "refused",
     },
     running: {
       status: "running",
       terminal: false,
-      slotOwnership: "retained",
-      explicitArchive: "refused",
-      replacement: "refused",
     },
     paused: {
       status: "paused",
       terminal: false,
-      slotOwnership: "retained",
-      explicitArchive: "eligible",
-      replacement: "refused",
     },
     halted: {
       status: "halted",
       terminal: true,
-      slotOwnership: "retained",
-      explicitArchive: "eligible",
-      replacement: "audited-archive",
     },
     completed: {
       status: "completed",
       terminal: true,
-      slotOwnership: "auto-release",
-      explicitArchive: "idempotent",
-      replacement: "audited-archive",
     },
     aborted: {
       status: "aborted",
       terminal: true,
-      slotOwnership: "auto-release",
-      explicitArchive: "idempotent",
-      replacement: "audited-archive",
     },
   };
 
@@ -615,33 +1052,18 @@ describe("graph-workflow lifecycle contract", () => {
 
     it(`${status} predicates agree with the decision row`, () => {
       expect(isTerminalStatus(status)).toBe(expected.terminal);
-      expect(autoReleasesSlot(status)).toBe(
-        expected.slotOwnership === "auto-release",
-      );
-      expect(retainsSlotOwnership(status)).toBe(
-        expected.slotOwnership === "retained",
-      );
-      expect(explicitArchiveEligibility(status)).toBe(expected.explicitArchive);
-      expect(replacementPolicy(status)).toBe(expected.replacement);
     });
   }
 
-  it("never both auto-releases and retains the slot", () => {
+  it("keeps no status-only tenure column at all", () => {
+    // The columns D7 retires: slot ownership, replacement, and — once CLEAR and
+    // `workflow live release` were deleted — archive eligibility. A row that
+    // still carries any of them is a status set masquerading as the lease,
+    // which is the defect the predicate replaces.
     for (const status of graphWorkflowStatusSchema.options) {
-      expect(autoReleasesSlot(status)).toBe(!retainsSlotOwnership(status));
-    }
-  });
-
-  it("refuses replacement for every status that is not terminal", () => {
-    for (const status of graphWorkflowStatusSchema.options) {
-      if (isTerminalStatus(status)) continue;
-      expect(replacementPolicy(status)).toBe("refused");
-    }
-  });
-
-  it("never allows a silent replacement: every replaceable status archives", () => {
-    for (const status of graphWorkflowStatusSchema.options) {
-      expect(replacementPolicy(status)).not.toBe("silent");
+      expect(
+        Object.keys(graphWorkflowLifecycleDecision(status)).sort(),
+      ).toEqual(["status", "terminal"]);
     }
   });
 });

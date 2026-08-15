@@ -28,6 +28,19 @@ function buildExecution(input: {
 }): GraphWorkflowExecution {
   const execution = createWorkflowExecution({
     status: input.executionStatus ?? "running",
+    // A halted fixture carries a resumable reason, the only halt shape the
+    // engine produces (its halt event's reason is non-nullable) and the one the
+    // lease predicate keeps Current.
+    ...(input.executionStatus === "halted"
+      ? {
+          haltReason: {
+            type: "circuit_breaker" as const,
+            contextId: GATED_CONTEXT_ID,
+            condition: "retry_exhaustion" as const,
+            summary: null,
+          },
+        }
+      : {}),
   });
   const contextState = execution.contextStates[GATED_CONTEXT_ID];
   if (!contextState) throw new Error("fixture missing gated context");
@@ -483,11 +496,15 @@ describe("createApprovalGateService.recordDecision", () => {
 
   function buildService() {
     const repo = createGraphWorkflowExecutionRepository({
+      // No git worktree in this harness; the real exclusion would shell out.
+      ensureCcArtifactsExcluded: async () => {},
       getSession: fixture.store.getSession,
       getActiveGraphWorkflowExecution:
         fixture.store.getActiveGraphWorkflowExecution,
       mutateActiveGraphWorkflowExecution:
         fixture.store.mutateActiveGraphWorkflowExecution,
+      reserveActiveGraphWorkflowExecution:
+        fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         fixture.store.archiveActiveGraphWorkflowExecution,
       markGraphWorkflowContextEventsPreReset:

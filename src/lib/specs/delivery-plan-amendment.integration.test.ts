@@ -28,6 +28,7 @@ import {
   authorSpineDraft,
   createSpecSpineWorld,
   proposeSpineRevision,
+  SPINE_PROJECT_PATH,
   SPINE_PROJECT_NAME,
   SPINE_SESSION_NAME,
   SPINE_WORKFLOW_EXECUTION_ID,
@@ -227,7 +228,11 @@ function amendmentEvents(
   world: SpecSpineWorld,
 ): GraphWorkflowExecutionAmendedEvent[] {
   return world.repos.workflowEvents
-    .findByExecution(SPINE_WORKFLOW_EXECUTION_ID)
+    .findByExecution(
+      SPINE_PROJECT_PATH,
+      SPINE_SESSION_NAME,
+      SPINE_WORKFLOW_EXECUTION_ID,
+    )
     .map((entry) => entry.event)
     .filter(
       (event): event is GraphWorkflowExecutionAmendedEvent =>
@@ -239,7 +244,11 @@ function liveEditEvents(
   world: SpecSpineWorld,
 ): GraphWorkflowLiveEditAppliedEvent[] {
   return world.repos.workflowEvents
-    .findByExecution(SPINE_WORKFLOW_EXECUTION_ID)
+    .findByExecution(
+      SPINE_PROJECT_PATH,
+      SPINE_SESSION_NAME,
+      SPINE_WORKFLOW_EXECUTION_ID,
+    )
     .map((entry) => entry.event)
     .filter(
       (event): event is GraphWorkflowLiveEditAppliedEvent =>
@@ -509,9 +518,13 @@ describe("cctl workflow live amend — the authorized amendment", () => {
     const before = world.readActiveWorkflowExecution();
     expect(before?.status).toBe("running");
 
+    // On the human path: this run was launched from the UI, so it recorded no
+    // origin conversation and admits no agent mutation at all (R9.4). The
+    // refusal under test is about the legacy DEFINITION, so it has to be
+    // reached by the caller authority that still gets that far.
     const response = await world.postWorkflowAmend(
       { reason: "add a context", operations: ADDITIVE_OPERATIONS },
-      "agent",
+      "human",
     );
     const payload = (await response.json()) as {
       code?: string;

@@ -63,6 +63,25 @@ export interface SeedCharterResult {
 }
 
 export interface WorkflowCharterService {
+  /**
+   * The REGISTRATION half: snapshot the charter onto a clone, register its
+   * `kind:"charter"` shared-document entry, and compute the charter-registered
+   * delivery. Writes no file, so a launch can compute the complete record it
+   * intends to commit — and validate the charter and its path — before it holds
+   * the execution lease (D7 R5.2: a refused launch writes nothing).
+   */
+  prepareCharter(input: SeedCharterInput): Promise<SeedCharterResult>;
+  /**
+   * The I/O half: render and write `charter.md` into the worktree. Runs only
+   * after the launch's reservation commits, and is idempotent — the write
+   * replaces whatever is there, so a retry over a half-materialized run
+   * converges.
+   */
+  writeCharterDocument(input: {
+    charter: WorkflowCharter;
+    worktreePath: string;
+  }): Promise<void>;
+  /** {@link prepareCharter} then {@link writeCharterDocument}. */
   seedCharter(input: SeedCharterInput): Promise<SeedCharterResult>;
 }
 
@@ -152,7 +171,7 @@ export function createWorkflowCharterService(
   const createDocumentId =
     deps.createDocumentId ?? (() => `doc-charter-${randomUUID()}`);
 
-  async function seedCharter(
+  async function prepareCharter(
     input: SeedCharterInput,
   ): Promise<SeedCharterResult> {
     // Defensive validation: the charter is internal/trusted data already
@@ -160,7 +179,6 @@ export function createWorkflowCharterService(
     // halts the seed before the first iteration rather than reaching agents.
     const charter = workflowCharterSchema.parse(input.charter);
 
-    const markdown = renderCharterMarkdown(charter);
     const charterHash = computeCharterHash(charter);
 
     // Operate on a clone — never mutate the caller's execution.
@@ -174,13 +192,12 @@ export function createWorkflowCharterService(
     });
 
     // Worktree confinement is enforced by the artifact registry: a path that
-    // escapes the worktree throws ArtifactRequiredFailure here.
-    await registry.write({
+    // escapes the worktree throws ArtifactRequiredFailure here — during
+    // registration, so it costs the caller no durable state.
+    await registry.register({
       kind: "graph_shared_document",
       worktreePath: input.worktreePath,
       relativePath: CHARTER_RELATIVE_PATH,
-      contents: markdown,
-      audience: "user_facing",
       description: CHARTER_DESCRIPTION,
       readWhen: CHARTER_READ_WHEN,
       source: { workflowId: nextExecution.id },
@@ -215,5 +232,47 @@ export function createWorkflowCharterService(
     return { nextExecution, charterHash, delivery };
   }
 
-  return { seedCharter };
+  async function writeCharterDocument(input: {
+    charter: WorkflowCharter;
+    worktreePath: string;
+  }): Promise<void> {
+    const charter = workflowCharterSchema.parse(input.charter);
+    const registry = createArtifactRegistry({
+      writeFile,
+      ensureDir,
+      logger: {
+        info: (event, fields) => logger.info(event, fields),
+        warn: (event, fields) => logger.warn(event, fields),
+        error: (event, fields) => logger.error(event, fields),
+      },
+      // The entry is registered by `prepareCharter` and already committed with
+      // the execution; this half only puts the bytes on disk.
+      registration: {
+        async registerSharedDocument() {},
+      },
+    });
+    await registry.write({
+      kind: "graph_shared_document",
+      worktreePath: input.worktreePath,
+      relativePath: CHARTER_RELATIVE_PATH,
+      contents: renderCharterMarkdown(charter),
+      audience: "user_facing",
+      description: CHARTER_DESCRIPTION,
+      readWhen: CHARTER_READ_WHEN,
+      source: {},
+    });
+  }
+
+  async function seedCharter(
+    input: SeedCharterInput,
+  ): Promise<SeedCharterResult> {
+    const prepared = await prepareCharter(input);
+    await writeCharterDocument({
+      charter: prepared.nextExecution.charter,
+      worktreePath: input.worktreePath,
+    });
+    return prepared;
+  }
+
+  return { prepareCharter, writeCharterDocument, seedCharter };
 }

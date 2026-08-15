@@ -354,10 +354,21 @@ export interface PublishActorDeps {
     operation: () => Promise<T>,
   ): Promise<T>;
   setSessionFinished(projectPath: string, sessionName: string): Promise<void>;
+  /**
+   * The delivery gate reads tenure, not status, so this must surface the halt
+   * reason and abandonment too: a status alone cannot tell a resumable halt
+   * (still holding the lease) from a non-resumable or abandoned one (which
+   * holds nothing and must not block the merge). `definitionApproval` rides
+   * along so the refusal can name the canonical remedy for the blocker's own
+   * state.
+   */
   getActiveGraphWorkflowExecution(
     projectPath: string,
     sessionName: string,
-  ): Promise<Pick<GraphWorkflowExecution, "id" | "status"> | null>;
+  ): Promise<Pick<
+    GraphWorkflowExecution,
+    "id" | "status" | "haltReason" | "abandonment" | "definitionApproval"
+  > | null>;
   reconcileTicketSessionLifecycle(input: {
     projectPath: string;
     sessionName: string;
@@ -458,6 +469,7 @@ export async function runPublish(
           sessionName: input.sessionName,
           executionId: deliveryDecision.executionId,
           workflowStatus: deliveryDecision.status,
+          remedy: deliveryDecision.remedy,
         });
         return { status: "failed", error: deliveryDecision.message };
       }

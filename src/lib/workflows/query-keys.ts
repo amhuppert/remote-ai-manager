@@ -51,6 +51,52 @@ export const graphWorkflowExecutionKeys = {
   all: ["graph-workflow-execution"] as const,
   detail: (projectName: string, sessionName: string) =>
     [...graphWorkflowExecutionKeys.all, projectName, sessionName] as const,
+  byId: (projectName: string, sessionName: string, executionId: string) =>
+    [
+      ...graphWorkflowExecutionKeys.all,
+      "by-id",
+      projectName,
+      sessionName,
+      executionId,
+    ] as const,
+};
+
+export const graphWorkflowResultKeys = {
+  all: ["graph-workflow-result"] as const,
+  forExecution: (
+    projectName: string,
+    sessionName: string,
+    executionId: string,
+  ) =>
+    [
+      ...graphWorkflowResultKeys.all,
+      projectName,
+      sessionName,
+      executionId,
+    ] as const,
+  latest: (projectName: string, sessionName: string, executionId: string) =>
+    [
+      ...graphWorkflowResultKeys.forExecution(
+        projectName,
+        sessionName,
+        executionId,
+      ),
+      "latest",
+    ] as const,
+  detail: (
+    projectName: string,
+    sessionName: string,
+    executionId: string,
+    cursor: number | null,
+  ) =>
+    [
+      ...graphWorkflowResultKeys.forExecution(
+        projectName,
+        sessionName,
+        executionId,
+      ),
+      { cursor },
+    ] as const,
 };
 
 /**

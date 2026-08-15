@@ -133,7 +133,7 @@ beforeEach(() => {
     authoring,
     events,
     workflowEvents: {
-      findByExecution(executionId) {
+      findByExecution(_projectPath, _sessionName, executionId) {
         return workflowEventsByExecution.get(executionId) ?? [];
       },
     },

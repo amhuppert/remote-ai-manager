@@ -636,7 +636,6 @@ export type SpecExecutionState = z.infer<typeof specExecutionStateSchema>;
  */
 export const specExecutionCleanupPhaseSchema = z.enum([
   "abort_workflow",
-  "release_slot",
   "finalize",
 ]);
 export type SpecExecutionCleanupPhase = z.infer<

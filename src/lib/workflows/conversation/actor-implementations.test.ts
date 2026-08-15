@@ -83,6 +83,7 @@ import {
 import { createLockManager } from "@/lib/prompt/single-flight";
 import { markPromptNotDelivered } from "@/lib/agent-backends/errors";
 import type { TranscriptBroadcastMeta } from "@/lib/prompt/transcript";
+import type { GraphWorkflowResultDelivery } from "@/lib/workflow-graph/schemas";
 
 // ---------------------------------------------------------------------------
 // Shared mock backend runtime
@@ -3067,6 +3068,200 @@ describe("executePromptForMachine", () => {
       } finally {
         db.close();
       }
+    });
+  });
+
+  describe("workflow result injection", () => {
+    function claimedResults(): GraphWorkflowResultDelivery[] {
+      return [
+        {
+          executionId: "exec-alpha",
+          boundarySeq: 11,
+          projectPath: "/projects/repo",
+          sessionName: "test-session",
+          originConversationId: "conv-1",
+          payload: { status: "halted", output: "first" },
+          recordedAt: "2026-08-14T12:00:01.000Z",
+          state: "delivering",
+          attemptId: "stream-1",
+          attemptCount: 1,
+          deliveredAt: null,
+          effectsDeliveredAt: null,
+        },
+        {
+          executionId: "exec-zeta",
+          boundarySeq: 42,
+          projectPath: "/projects/repo",
+          sessionName: "test-session",
+          originConversationId: "conv-1",
+          payload: { status: "completed", output: "second" },
+          recordedAt: "2026-08-14T12:00:02.000Z",
+          state: "delivering",
+          attemptId: "stream-1",
+          attemptCount: 1,
+          deliveredAt: null,
+          effectsDeliveredAt: null,
+        },
+      ];
+    }
+
+    function registerRuntime(input: ExecutePromptInput): void {
+      const key = conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      );
+      registerConversationRuntime(key, {
+        abortController: new AbortController(),
+      });
+    }
+
+    function assertOrderedResultsBeforeUser(prompt: string, userText: string) {
+      expect(prompt.match(/<workflow-results>/g)).toHaveLength(1);
+      expect(prompt.match(/<\/workflow-results>/g)).toHaveLength(1);
+      expect(prompt.indexOf('"key":"exec-alpha:11"')).toBeLessThan(
+        prompt.indexOf('"key":"exec-zeta:42"'),
+      );
+      expect(prompt.indexOf('"key":"exec-zeta:42"')).toBeLessThan(
+        prompt.indexOf(userText),
+      );
+    }
+
+    it("claims and prepends pending boundaries for a direct turn without changing stored user text", async () => {
+      const append = vi.fn<
+        ActorImplementationDeps["safeAppendTranscriptEntry"]
+      >(async () => {});
+      const claimWorkflowResults = vi.fn(async () => claimedResults());
+      setActorDeps(
+        createMockDeps({
+          safeAppendTranscriptEntry: append,
+          claimWorkflowResults,
+        } as unknown as Partial<ActorImplementationDeps>),
+      );
+      const input = makeExecutePromptInput({ promptText: "direct user text" });
+      registerRuntime(input);
+
+      await executePromptForMachine(input);
+
+      expect(claimWorkflowResults).toHaveBeenCalledWith({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        originConversationId: input.conversationId,
+        attemptId: "stream-1",
+      });
+      const turnInput = mockSendTurn.mock.calls.at(-1)![0] as
+        | ConversationBackendTurnInput
+        | undefined;
+      expect(turnInput).toBeDefined();
+      assertOrderedResultsBeforeUser(turnInput!.promptText, "direct user text");
+      const storedUser = append.mock.calls
+        .map(([, entry]) => entry)
+        .find((entry) => entry.role === "user");
+      expect(storedUser?.content).toEqual([
+        { type: "text", text: "direct user text" },
+      ]);
+    });
+
+    it("claims and prepends pending boundaries for a queued turn without changing stored user text", async () => {
+      const append = vi.fn<
+        ActorImplementationDeps["safeAppendTranscriptEntry"]
+      >(async () => {});
+      const claimWorkflowResults = vi.fn(async () => claimedResults());
+      setActorDeps(
+        createMockDeps({
+          safeAppendTranscriptEntry: append,
+          claimWorkflowResults,
+        } as unknown as Partial<ActorImplementationDeps>),
+      );
+      mockSendTurn.mockImplementation(
+        async (turnInput: ConversationBackendTurnInput) => {
+          await turnInput.onEvent({ type: "input_accepted" });
+          return defaultTurnResult;
+        },
+      );
+      const input = makeExecutePromptInput({
+        promptText: "queued user text",
+        queuedDelivery: {
+          messageIds: ["message-1"],
+          deliveryAttemptId: "queue-attempt-1",
+        },
+      });
+      registerRuntime(input);
+
+      await executePromptForMachine(input);
+
+      expect(claimWorkflowResults).toHaveBeenCalledWith({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        originConversationId: input.conversationId,
+        attemptId: "queue-attempt-1",
+      });
+      const turnInput = mockSendTurn.mock.calls.at(-1)![0] as
+        | ConversationBackendTurnInput
+        | undefined;
+      expect(turnInput).toBeDefined();
+      assertOrderedResultsBeforeUser(turnInput!.promptText, "queued user text");
+      const storedUser = append.mock.calls
+        .map(([, entry]) => entry)
+        .find((entry) => entry.role === "user");
+      expect(storedUser?.content).toEqual([
+        { type: "text", text: "queued user text" },
+      ]);
+    });
+
+    it("returns claimed boundaries to pending when dispatch fails before input acceptance", async () => {
+      const releaseWorkflowResults = vi.fn(async () => 2);
+      const settleWorkflowResults = vi.fn(async () => 0);
+      setActorDeps(
+        createMockDeps({
+          claimWorkflowResults: vi.fn(async () => claimedResults()),
+          releaseWorkflowResults,
+          settleWorkflowResults,
+        } as unknown as Partial<ActorImplementationDeps>),
+      );
+      mockSendTurn.mockRejectedValue(new Error("pre-ack crash"));
+      const input = makeExecutePromptInput({ promptText: "retry safely" });
+      registerRuntime(input);
+
+      await executePromptForMachine(input);
+
+      expect(settleWorkflowResults).not.toHaveBeenCalled();
+      expect(releaseWorkflowResults).toHaveBeenCalledWith({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        originConversationId: input.conversationId,
+        attemptId: "stream-1",
+      });
+    });
+
+    it("settles claimed boundaries at input acceptance and does not release them when the turn later fails", async () => {
+      const releaseWorkflowResults = vi.fn(async () => 0);
+      const settleWorkflowResults = vi.fn(async () => 2);
+      setActorDeps(
+        createMockDeps({
+          claimWorkflowResults: vi.fn(async () => claimedResults()),
+          releaseWorkflowResults,
+          settleWorkflowResults,
+        } as unknown as Partial<ActorImplementationDeps>),
+      );
+      mockSendTurn.mockImplementation(
+        async (turnInput: ConversationBackendTurnInput) => {
+          await turnInput.onEvent({ type: "input_accepted" });
+          throw new Error("post-ack crash");
+        },
+      );
+      const input = makeExecutePromptInput({ promptText: "accepted once" });
+      registerRuntime(input);
+
+      await executePromptForMachine(input);
+
+      expect(settleWorkflowResults).toHaveBeenCalledWith({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        originConversationId: input.conversationId,
+        attemptId: "stream-1",
+      });
+      expect(releaseWorkflowResults).not.toHaveBeenCalled();
     });
   });
 

@@ -1134,9 +1134,18 @@ export function createLinksService(deps: LinksServiceDeps): LinksService {
           .filter((claim) => claim.task_element_id === taskElementId)
           .at(-1);
         const executionEvents = executions.flatMap((execution) => {
-          if (execution.workflow_execution_id === null) return [];
+          if (
+            execution.workflow_execution_id === null ||
+            execution.session_name === null
+          ) {
+            return [];
+          }
           return deps.workflowEvents
-            .findByExecution(execution.workflow_execution_id)
+            .findByExecution(
+              spec.projectPath,
+              execution.session_name,
+              execution.workflow_execution_id,
+            )
             .flatMap(({ event }) =>
               event.type === "graph-workflow-task-status" &&
               event.taskId === compiledWorkflowTaskId(taskElementId)

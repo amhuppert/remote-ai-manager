@@ -120,6 +120,9 @@ export function createActorImplementationDepsFixture(
     })),
     registerBackendRuntime: vi.fn(),
     unregisterBackendRuntime: vi.fn(),
+    // Defaults to the unprovisioned-server outcome, so a test that cares about
+    // launch authority has to opt in and say which identity it expects.
+    mintConversationCapability: vi.fn(() => null),
     buildChildEnv: vi.fn(() => ({ HOME: "/home/test" })),
     resolvePluginPaths: vi.fn(async () => []),
     getCodexToolPromptHint: vi.fn(() => ""),
@@ -129,6 +132,9 @@ export function createActorImplementationDepsFixture(
     getActiveAlignmentInjection: vi.fn(async () => null),
     getActiveAlignmentVersion: vi.fn(async () => null),
     getLiveTicketBlock: vi.fn(async () => null),
+    claimWorkflowResults: vi.fn(async () => []),
+    settleWorkflowResults: vi.fn(async () => 0),
+    releaseWorkflowResults: vi.fn(async () => 0),
     createReferenceDocument: vi.fn(async () => ({})),
     getReferenceDocuments: vi.fn(async () => []),
     readConversationMessages: vi.fn(async () => []),

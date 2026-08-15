@@ -417,8 +417,19 @@ describe("GET /api/conversations/active", () => {
     });
   });
 
-  it("keeps halted graph workflow executions in the active work feed", async () => {
-    const haltedExecution = createWorkflowExecution({ status: "halted" });
+  it("keeps resumably halted graph workflow executions in the active work feed", async () => {
+    // The reason is what makes the halt resumable, and the feed follows the
+    // lease. A reasonless halt is lease-free — and unreachable in production,
+    // since the engine's halt event requires a reason.
+    const haltedExecution = createWorkflowExecution({
+      status: "halted",
+      haltReason: {
+        type: "circuit_breaker",
+        contextId: "context-implement",
+        condition: "retry_exhaustion",
+        summary: null,
+      },
+    });
     vi.mocked(deps.readState).mockResolvedValue(
       makeState({
         sessions: {
@@ -442,6 +453,69 @@ describe("GET /api/conversations/active", () => {
       }),
     ]);
   });
+
+  /**
+   * The feed backs topbar activity and active-work navigation, so it carries
+   * Current only (R12.4). A lease-free run keeps its physical active position
+   * until the next launch normalizes it away (R3.3) — presence in the active
+   * position is therefore not tenure, and a session whose runs are all
+   * historical contributes no ambient row.
+   */
+  it.each([
+    {
+      label: "completed",
+      execution: createWorkflowExecution({ status: "completed" }),
+    },
+    {
+      label: "aborted",
+      execution: createWorkflowExecution({ status: "aborted" }),
+    },
+    {
+      label: "non-resumably halted",
+      execution: createWorkflowExecution({
+        status: "halted",
+        haltReason: { type: "recovery_error", message: "unrecoverable" },
+      }),
+    },
+    {
+      label: "abandoned resumable halt",
+      execution: createWorkflowExecution({
+        status: "halted",
+        haltReason: {
+          type: "circuit_breaker",
+          contextId: "context-implement",
+          condition: "retry_exhaustion",
+          summary: null,
+        },
+        abandonment: {
+          abandonedAt: "2026-06-10T11:00:00.000Z",
+          actor: { kind: "human" },
+          reason: "superseded",
+        },
+      }),
+    },
+  ])(
+    "contributes no active-work row for a $label run still in the active position",
+    async ({ execution }) => {
+      vi.mocked(deps.readState).mockResolvedValue(
+        makeState({
+          sessions: {
+            "my-session": {
+              sessionName: "my-session",
+              conversations: [],
+              graphWorkflowExecution: execution,
+            },
+          },
+        }),
+      );
+
+      const response = await handlers.GET();
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.graphWorkflowExecutions).toEqual([]);
+    },
+  );
 
   it("lists every active context title for parallel graph workflow executions", async () => {
     vi.mocked(deps.readState).mockResolvedValue(

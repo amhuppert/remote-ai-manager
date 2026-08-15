@@ -2,19 +2,24 @@
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
+  orderGraphWorkflowEventPages,
+  useGraphWorkflowEventPagesQuery,
   useGraphWorkflowEventsQuery,
+  useGraphWorkflowExecutionByIdQuery,
   useGraphWorkflowExecutionQuery,
-  useGraphWorkflowHistoryQuery,
+  useGraphWorkflowLatestExecutionResultQuery,
   useWorkflowDefinitionQuery,
 } from "@/lib/workflows/queries";
 import {
   useAbortGraphWorkflowMutation,
+  useAbandonGraphWorkflowMutation,
   useApproveGraphWorkflowDefinitionMutation,
-  useClearGraphWorkflowMutation,
   usePauseGraphWorkflowMutation,
   useResetExecutionContextAssignmentMutation,
   useResetExecutionContextMutation,
   useResumeGraphWorkflowMutation,
+  useRejectGraphWorkflowDefinitionMutation,
+  useResolveApprovalMutation,
   useRuntimeEditGraphWorkflowMutation,
 } from "@/lib/workflows/mutations";
 import { ApiCallError } from "@/lib/api/errors";
@@ -24,6 +29,10 @@ import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import type { ExecutionMobilePanel } from "../SessionWorkflowPage";
 import type { ExecutionControlAction } from "./ExecutionStatusBar";
 import GraphWorkflowPanel from "./GraphWorkflowPanel";
+import ApprovalGatePanel from "@/components/ApprovalGatePanel";
+import { useApprovalScopedChanges } from "@/hooks/use-approval-scoped-changes";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import { holdsExecutionLease } from "@/lib/workflow-graph/lifecycle-classifier";
 
 const logger = createClientLogger("session-workflow");
 
@@ -78,14 +87,77 @@ function configEditErrorMessage(error: Error | null): string | null {
 interface ConnectedGraphWorkflowPanelProps {
   projectName: string;
   sessionName: string;
+  selectedExecutionId?: string | null;
   isMobile: boolean;
   mobilePanel: ExecutionMobilePanel;
   autoSwitchPanel: (panel: ExecutionMobilePanel) => void;
 }
 
+interface CurrentContextApproval {
+  contextId: string;
+  contextTitle: string | null;
+  requestedAt: string;
+  enveloped: boolean;
+}
+
+function CurrentContextApprovalPanel({
+  projectName,
+  sessionName,
+  execution,
+  approval,
+}: {
+  projectName: string;
+  sessionName: string;
+  execution: GraphWorkflowExecution;
+  approval: CurrentContextApproval;
+}) {
+  const resolveMutation = useResolveApprovalMutation(projectName, sessionName);
+  const scopedChanges = useApprovalScopedChanges(
+    projectName,
+    sessionName,
+    approval,
+  );
+
+  return (
+    <ApprovalGatePanel
+      contextTitle={approval.contextTitle}
+      workflowName={
+        execution.launchDocument?.name ??
+        (execution.origin.kind === "one_off"
+          ? execution.origin.planName
+          : execution.origin.definitionId)
+      }
+      requestedAt={approval.requestedAt}
+      isSubmitting={resolveMutation.isPending}
+      conversationBusy={false}
+      executionSuspended={
+        execution.status === "paused" || execution.status === "halted"
+      }
+      scopedChanges={scopedChanges}
+      voiceProjectName={projectName}
+      onApprove={() =>
+        resolveMutation.mutate({
+          executionId: execution.id,
+          contextId: approval.contextId,
+          decision: "approve",
+        })
+      }
+      onReject={(message) =>
+        resolveMutation.mutate({
+          executionId: execution.id,
+          contextId: approval.contextId,
+          decision: "reject",
+          message,
+        })
+      }
+    />
+  );
+}
+
 export default function ConnectedGraphWorkflowPanel({
   projectName,
   sessionName,
+  selectedExecutionId,
   isMobile,
   mobilePanel,
   autoSwitchPanel,
@@ -94,21 +166,37 @@ export default function ConnectedGraphWorkflowPanel({
     projectName,
     sessionName,
   );
-  const execution = executionQuery.data ?? null;
+  const currentExecution = executionQuery.data ?? null;
+  const resolvedSelectionId =
+    selectedExecutionId === undefined
+      ? (currentExecution?.id ?? null)
+      : selectedExecutionId;
+  const selectedIsCurrent =
+    resolvedSelectionId !== null &&
+    resolvedSelectionId === currentExecution?.id;
+  const selectedExecutionQuery = useGraphWorkflowExecutionByIdQuery(
+    projectName,
+    sessionName,
+    resolvedSelectionId,
+    { enabled: resolvedSelectionId !== null && !selectedIsCurrent },
+  );
+  const execution = selectedIsCurrent
+    ? currentExecution
+    : (selectedExecutionQuery.data ?? null);
   const executionId = execution?.id ?? null;
-  const seedDefinitionId = execution?.seedDefinitionId ?? null;
-  const seedDefinitionRevision = execution?.seedDefinitionRevision ?? null;
+  const isHistoricalSelection = executionId !== null && !selectedIsCurrent;
+  // History is self-contained. Passing null here is deliberate: even a
+  // template-origin run must never rejoin mutable definition storage after it
+  // releases the session lease.
+  const seedDefinitionId =
+    selectedIsCurrent &&
+    execution?.launchDocument === null &&
+    execution.origin.kind === "template"
+      ? execution.seedDefinitionId
+      : null;
   const seedDefinitionQuery = useWorkflowDefinitionQuery(
     projectName,
     seedDefinitionId,
-  );
-  // The session's finished runs. `archived: false` entries are the terminal
-  // ACTIVE execution, which the panel already renders in full — showing it in
-  // "previous runs" too would double-report the run on screen.
-  const historyQuery = useGraphWorkflowHistoryQuery(projectName, sessionName);
-  const archivedExecutions = useMemo(
-    () => (historyQuery.data ?? []).filter((item) => item.archived),
-    [historyQuery.data],
   );
   const pauseMutation = usePauseGraphWorkflowMutation(projectName, sessionName);
   const resumeMutation = useResumeGraphWorkflowMutation(
@@ -116,8 +204,15 @@ export default function ConnectedGraphWorkflowPanel({
     sessionName,
   );
   const abortMutation = useAbortGraphWorkflowMutation(projectName, sessionName);
-  const clearMutation = useClearGraphWorkflowMutation(projectName, sessionName);
+  const abandonMutation = useAbandonGraphWorkflowMutation(
+    projectName,
+    sessionName,
+  );
   const approveDefinitionMutation = useApproveGraphWorkflowDefinitionMutation(
+    projectName,
+    sessionName,
+  );
+  const rejectDefinitionMutation = useRejectGraphWorkflowDefinitionMutation(
     projectName,
     sessionName,
   );
@@ -295,7 +390,41 @@ export default function ConnectedGraphWorkflowPanel({
   const eventsQuery = useGraphWorkflowEventsQuery(
     projectName,
     sessionName,
+    selectedIsCurrent ? executionId : null,
+  );
+  const eventPagesQuery = useGraphWorkflowEventPagesQuery(
+    projectName,
+    sessionName,
     executionId,
+    { enabled: isHistoricalSelection },
+  );
+  useEffect(() => {
+    if (
+      !isHistoricalSelection ||
+      !eventPagesQuery.hasNextPage ||
+      eventPagesQuery.isFetchingNextPage
+    ) {
+      return;
+    }
+    void eventPagesQuery.fetchNextPage();
+  }, [
+    eventPagesQuery.fetchNextPage,
+    eventPagesQuery.hasNextPage,
+    eventPagesQuery.isFetchingNextPage,
+    isHistoricalSelection,
+  ]);
+  const events = useMemo(
+    () =>
+      isHistoricalSelection
+        ? orderGraphWorkflowEventPages(eventPagesQuery.data?.pages)
+        : (eventsQuery.data ?? []),
+    [eventPagesQuery.data?.pages, eventsQuery.data, isHistoricalSelection],
+  );
+  const resultQuery = useGraphWorkflowLatestExecutionResultQuery(
+    projectName,
+    sessionName,
+    executionId,
+    { enabled: isHistoricalSelection },
   );
   const handleResetContext = useCallback(
     (contextId: string) => {
@@ -311,30 +440,24 @@ export default function ConnectedGraphWorkflowPanel({
     },
     [executionId, resetAssignmentMutation],
   );
+  // Execution-addressed: gating on a seed definition id would dead-end the
+  // button for a one-off park, which has none (D7 R14.2).
   const handleApproveDefinition = useCallback(() => {
-    if (!executionId || !seedDefinitionId || !seedDefinitionRevision) return;
+    if (!executionId) return;
 
     logger.info("session_workflow.definition_approval.requested", {
       projectName,
       sessionName,
       executionId,
-      definitionId: seedDefinitionId,
-      definitionRevision: seedDefinitionRevision,
     });
     approveDefinitionMutation.mutate(
-      {
-        executionId,
-        definitionId: seedDefinitionId,
-        definitionRevision: seedDefinitionRevision,
-      },
+      { executionId },
       {
         onSuccess: () => {
           logger.info("session_workflow.definition_approval.completed", {
             projectName,
             sessionName,
             executionId,
-            definitionId: seedDefinitionId,
-            definitionRevision: seedDefinitionRevision,
           });
         },
         onError: (error) => {
@@ -342,21 +465,12 @@ export default function ConnectedGraphWorkflowPanel({
             projectName,
             sessionName,
             executionId,
-            definitionId: seedDefinitionId,
-            definitionRevision: seedDefinitionRevision,
             error: error.message,
           });
         },
       },
     );
-  }, [
-    approveDefinitionMutation,
-    executionId,
-    projectName,
-    seedDefinitionId,
-    seedDefinitionRevision,
-    sessionName,
-  ]);
+  }, [approveDefinitionMutation, executionId, projectName, sessionName]);
 
   const pendingAction: ExecutionControlAction | null = pauseMutation.isPending
     ? "pause"
@@ -364,9 +478,43 @@ export default function ConnectedGraphWorkflowPanel({
       ? "resume"
       : abortMutation.isPending
         ? "abort"
-        : clearMutation.isPending
-          ? "clear"
+        : abandonMutation.isPending
+          ? "abandon"
           : null;
+
+  const contextApprovals = useMemo(() => {
+    if (
+      !selectedIsCurrent ||
+      execution === null ||
+      !holdsExecutionLease(
+        execution.status,
+        execution.haltReason,
+        execution.abandonment,
+      )
+    ) {
+      return [];
+    }
+    const approvals: CurrentContextApproval[] = [];
+    for (const state of Object.values(execution.contextStates)) {
+      if (
+        state.status !== "awaiting_approval" ||
+        state.pendingApproval === null ||
+        state.pendingApproval.decision !== null
+      ) {
+        continue;
+      }
+      const context = execution.workingDefinition.executionContexts.find(
+        (candidate) => candidate.id === state.contextId,
+      );
+      approvals.push({
+        contextId: state.contextId,
+        contextTitle: context?.title ?? null,
+        requestedAt: state.pendingApproval.requestedAt,
+        enveloped: state.pendingApproval.approvalScope.kind !== "whole_tree",
+      });
+    }
+    return approvals;
+  }, [execution, selectedIsCurrent]);
 
   const handlePause = useCallback(() => {
     pauseMutation.mutate(undefined, {
@@ -399,9 +547,14 @@ export default function ConnectedGraphWorkflowPanel({
       projectName={projectName}
       sessionName={sessionName}
       execution={execution}
-      events={eventsQuery.data ?? []}
-      archivedExecutions={archivedExecutions}
-      layout={seedDefinitionQuery.data?.item.layout ?? null}
+      events={events}
+      layout={
+        execution?.launchDocument?.layout ??
+        seedDefinitionQuery.data?.item.layout ??
+        null
+      }
+      actionCapability={selectedIsCurrent ? "current" : "read-only"}
+      result={resultQuery.data ?? null}
       onPause={handlePause}
       onResume={(conflictGuidance) =>
         resumeMutation.mutate(
@@ -411,8 +564,19 @@ export default function ConnectedGraphWorkflowPanel({
         )
       }
       onAbort={() => abortMutation.mutate()}
-      onClear={() => clearMutation.mutate()}
+      onAbandon={() => {
+        if (executionId === null) return;
+        abandonMutation.mutate({
+          executionId,
+          reason:
+            "Operator abandoned the resumably halted execution from Current detail.",
+        });
+      }}
       onApproveDefinition={handleApproveDefinition}
+      onRejectDefinition={() => {
+        if (executionId === null) return;
+        rejectDefinitionMutation.mutate({ executionId });
+      }}
       onAddTask={handleAddTask}
       onUpdateTask={handleUpdateTask}
       onRemoveTask={handleRemoveTask}
@@ -430,8 +594,9 @@ export default function ConnectedGraphWorkflowPanel({
       isPausingExecution={pauseMutation.isPending}
       isResumingExecution={resumeMutation.isPending}
       isApprovingDefinition={approveDefinitionMutation.isPending}
+      isRejectingDefinition={rejectDefinitionMutation.isPending}
       definitionApprovalError={definitionApprovalErrorMessage(
-        approveDefinitionMutation.error,
+        approveDefinitionMutation.error ?? rejectDefinitionMutation.error,
       )}
       configEditConflict={configEditConflict}
       configEditError={configEditErrorMessage(configEditMutation.error)}
@@ -440,8 +605,9 @@ export default function ConnectedGraphWorkflowPanel({
         pauseMutation.isPending ||
         resumeMutation.isPending ||
         abortMutation.isPending ||
-        clearMutation.isPending ||
         approveDefinitionMutation.isPending ||
+        rejectDefinitionMutation.isPending ||
+        abandonMutation.isPending ||
         runtimeEditMutation.isPending ||
         configEditMutation.isPending ||
         resetContextMutation.isPending ||
@@ -451,6 +617,21 @@ export default function ConnectedGraphWorkflowPanel({
       isMobile={isMobile}
       mobilePanel={mobilePanel}
       autoSwitchPanel={autoSwitchPanel}
+      humanApprovalPanel={
+        execution === null || contextApprovals.length === 0 ? null : (
+          <>
+            {contextApprovals.map((approval) => (
+              <CurrentContextApprovalPanel
+                key={`${approval.contextId}:${approval.requestedAt}`}
+                projectName={projectName}
+                sessionName={sessionName}
+                execution={execution}
+                approval={approval}
+              />
+            ))}
+          </>
+        )
+      }
     />
   );
 }

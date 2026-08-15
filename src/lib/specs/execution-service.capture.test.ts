@@ -356,7 +356,7 @@ beforeEach(() => {
   seedSpec();
   idSequence = new Map();
   cleanupCalls = [];
-  workflowPlacement = { kind: "active", status: "running" };
+  workflowPlacement = { kind: "active", status: "running", leaseHeld: true };
   observeFailure = null;
   interposeOnCapture = null;
 
@@ -485,12 +485,14 @@ beforeEach(() => {
       },
       async abort(target) {
         cleanupCalls.push(`abort:${target.workflowExecutionId}`);
-        workflowPlacement = { kind: "active", status: "aborted" };
+        // `aborted` releases the lease on its own — there is no second act.
+        workflowPlacement = { kind: "archived", status: "aborted" };
         return { ok: true };
       },
-      async release(target) {
-        cleanupCalls.push(`release:${target.workflowExecutionId}`);
-        workflowPlacement = { kind: "archived", status: "aborted" };
+      async abandon(target) {
+        cleanupCalls.push(`abandon:${target.workflowExecutionId}`);
+        // The audited act relocates the run itself, halt disposition intact.
+        workflowPlacement = { kind: "archived", status: "halted" };
         return { ok: true };
       },
     },
@@ -789,12 +791,9 @@ describe("spec capture — post-launch blocking", () => {
     // attempt, which is what keeps `exact-approval` true of the retired run.
     expect(plans.findAttemptById(ATTEMPT_ID)?.content_json).toBe(pinnedPlan);
 
-    // The production coordinator ran: it aborted the linked run and released
-    // the session's slot before finalizing.
-    expect(cleanupCalls).toEqual([
-      `abort:${WORKFLOW_EXECUTION_ID}`,
-      `release:${WORKFLOW_EXECUTION_ID}`,
-    ]);
+    // The production coordinator ran: one workflow act — the abort, which
+    // releases the session's lease by itself — and then finalize.
+    expect(cleanupCalls).toEqual([`abort:${WORKFLOW_EXECUTION_ID}`]);
     expect(
       fixture.db
         .prepare(

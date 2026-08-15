@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { emitOrDeferRepositoryLog } from "@/lib/state-store/deferred-repo-logging";
 import { createLogger } from "@/lib/logging";
 import {
   graphWorkflowExecutionEventSchema,
@@ -22,36 +23,79 @@ const logger = createLogger("state-store.graph-workflow-events");
  * write amplification of rewriting the whole blob on every event.
  */
 export interface GraphWorkflowEventsRepo {
+  append(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+    occurredAt: string,
+    event: GraphWorkflowExecutionEvent,
+  ): GraphWorkflowEventRecord;
   appendMany(
     projectPath: string,
     sessionName: string,
     executionId: string,
     occurredAt: string,
     events: GraphWorkflowExecutionEvent[],
-  ): void;
-  findByExecution(executionId: string): GraphWorkflowExecutionEvent[];
-  findRecordsByExecution(executionId: string): GraphWorkflowEventRecord[];
-  findRecordById(id: number): GraphWorkflowEventRecord | null;
-  findTail(executionId: string, limit: number): GraphWorkflowExecutionEvent[];
+  ): GraphWorkflowEventRecord[];
+  findByExecution(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+  ): GraphWorkflowExecutionEvent[];
+  findRecordsByExecution(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+  ): GraphWorkflowEventRecord[];
+  findRecordById(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+    id: number,
+  ): GraphWorkflowEventRecord | null;
+  findBoundaryAfter(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+    cursor?: number | null,
+  ): GraphWorkflowEventRecord | null;
+  findTail(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+    limit: number,
+  ): GraphWorkflowExecutionEvent[];
   findPage(
+    projectPath: string,
+    sessionName: string,
     executionId: string,
     query: GraphWorkflowEventPageQuery,
   ): GraphWorkflowEventPage;
   findLatestForContext(
+    projectPath: string,
+    sessionName: string,
     executionId: string,
     contextId: string,
     eventType: string,
   ): GraphWorkflowExecutionEvent | null;
   markPreReset(
+    projectPath: string,
+    sessionName: string,
     executionId: string,
     contextId: string,
     boundaryId: number,
   ): number;
-  deleteByExecution(executionId: string): void;
+  deleteByExecution(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+  ): void;
 }
 
 export interface GraphWorkflowEventRecord extends GraphWorkflowExecutionEvent {
   id: number;
+  projectPath: string;
+  sessionName: string;
   executionId: string;
 }
 
@@ -93,6 +137,8 @@ interface EventStorageRow {
 
 interface EventRecordStorageRow extends EventStorageRow {
   id: number;
+  project_path: string;
+  session_name: string;
   execution_id: string;
 }
 
@@ -129,10 +175,17 @@ function logAndThrowValidationFailure(
   executionId: string,
   issues: unknown,
 ): never {
-  logger.error("state-store.graph-workflow-events.schema_validation_failure", {
-    executionId,
-    issues,
-  });
+  // `appendMany` runs inside the lease reservation's immediate transaction, so
+  // this branch is reachable while SQLite's write lock is held.
+  emitOrDeferRepositoryLog(() =>
+    logger.error(
+      "state-store.graph-workflow-events.schema_validation_failure",
+      {
+        executionId,
+        issues,
+      },
+    ),
+  );
   throw new PersistenceError({
     kind: "validation",
     entity: "graph_workflow_event",
@@ -195,19 +248,26 @@ function rowToRecord(rawRow: unknown): GraphWorkflowEventRecord {
     !("id" in rawRow) ||
     typeof rawRow.id !== "number" ||
     !("execution_id" in rawRow) ||
-    typeof rawRow.execution_id !== "string"
+    typeof rawRow.execution_id !== "string" ||
+    !("project_path" in rawRow) ||
+    typeof rawRow.project_path !== "string" ||
+    !("session_name" in rawRow) ||
+    typeof rawRow.session_name !== "string"
   ) {
     return logAndThrowValidationFailure("unknown", [
       {
         code: "invalid_record_shape",
         path: [],
-        message: "event record requires numeric id and execution_id",
+        message:
+          "event record requires numeric id and project/session/execution identity",
       },
     ]);
   }
   const row = rawRow as EventRecordStorageRow;
   return {
     id: row.id,
+    projectPath: row.project_path,
+    sessionName: row.session_name,
     executionId: row.execution_id,
     ...rowToDomain(row.execution_id, row),
   };
@@ -230,7 +290,9 @@ function timed<T>(
     if (identifier.contextId !== undefined) {
       payload.contextId = identifier.contextId;
     }
-    logger.info(`state-store.graph-workflow-events.${op}.timing`, payload);
+    emitOrDeferRepositoryLog(() =>
+      logger.info(`state-store.graph-workflow-events.${op}.timing`, payload),
+    );
   }
 }
 
@@ -247,47 +309,59 @@ export function createGraphWorkflowEventsRepo(db: Db): GraphWorkflowEventsRepo {
   const findByExecutionStmt = db.prepare(
     `SELECT occurred_at, event_type, context_id, pre_reset, event_json
        FROM graph_workflow_events
-      WHERE execution_id = ?
+      WHERE project_path = ? AND session_name = ? AND execution_id = ?
       ORDER BY id ASC`,
   );
   const findRecordsByExecutionStmt = db.prepare(
-    `SELECT id, execution_id, occurred_at, event_type, context_id, pre_reset,
-            event_json
+    `SELECT id, project_path, session_name, execution_id, occurred_at,
+            event_type, context_id, pre_reset, event_json
        FROM graph_workflow_events
-      WHERE execution_id = ?
+      WHERE project_path = ? AND session_name = ? AND execution_id = ?
       ORDER BY id ASC`,
   );
   const findRecordByIdStmt = db.prepare(
-    `SELECT id, execution_id, occurred_at, event_type, context_id, pre_reset,
-            event_json
+    `SELECT id, project_path, session_name, execution_id, occurred_at,
+            event_type, context_id, pre_reset, event_json
        FROM graph_workflow_events
-      WHERE id = ?
+      WHERE project_path = ? AND session_name = ? AND execution_id = ?
+        AND id = ?
+      LIMIT 1`,
+  );
+  const findBoundaryAfterStmt = db.prepare(
+    `SELECT id, project_path, session_name, execution_id, occurred_at,
+            event_type, context_id, pre_reset, event_json
+       FROM graph_workflow_events
+      WHERE project_path = ? AND session_name = ? AND execution_id = ?
+        AND event_type = 'graph-workflow-boundary' AND id > ?
+      ORDER BY id ASC
       LIMIT 1`,
   );
   const findTailStmt = db.prepare(
     `SELECT occurred_at, event_type, context_id, pre_reset, event_json
        FROM graph_workflow_events
-      WHERE execution_id = ?
+      WHERE project_path = ? AND session_name = ? AND execution_id = ?
       ORDER BY id DESC
       LIMIT ?`,
   );
   // One statement per (direction, has-cursor) combination: a keyset page is a
   // different WHERE and ORDER BY, and SQLite plans each of these against the
-  // (execution_id, id) primary-key order without a sort.
+  // full-scope execution index without a sort.
   const pageStmts = {
     asc: db.prepare(
-      `SELECT id, execution_id, occurred_at, event_type, context_id, pre_reset,
-              event_json
+      `SELECT id, project_path, session_name, execution_id, occurred_at,
+              event_type, context_id, pre_reset, event_json
          FROM graph_workflow_events
-        WHERE execution_id = ? AND id > ?
+        WHERE project_path = ? AND session_name = ? AND execution_id = ?
+          AND id > ?
         ORDER BY id ASC
         LIMIT ?`,
     ),
     desc: db.prepare(
-      `SELECT id, execution_id, occurred_at, event_type, context_id, pre_reset,
-              event_json
+      `SELECT id, project_path, session_name, execution_id, occurred_at,
+              event_type, context_id, pre_reset, event_json
          FROM graph_workflow_events
-        WHERE execution_id = ? AND id < ?
+        WHERE project_path = ? AND session_name = ? AND execution_id = ?
+          AND id < ?
         ORDER BY id DESC
         LIMIT ?`,
     ),
@@ -295,17 +369,20 @@ export function createGraphWorkflowEventsRepo(db: Db): GraphWorkflowEventsRepo {
   const findLatestForContextStmt = db.prepare(
     `SELECT occurred_at, event_type, context_id, pre_reset, event_json
        FROM graph_workflow_events
-      WHERE execution_id = ? AND context_id = ? AND event_type = ?
+      WHERE project_path = ? AND session_name = ? AND execution_id = ?
+        AND context_id = ? AND event_type = ?
       ORDER BY id DESC
       LIMIT 1`,
   );
   const markPreResetStmt = db.prepare(
     `UPDATE graph_workflow_events
         SET pre_reset = 1
-      WHERE execution_id = ? AND context_id = ? AND id <= ? AND pre_reset = 0`,
+      WHERE project_path = ? AND session_name = ? AND execution_id = ?
+        AND context_id = ? AND id <= ? AND pre_reset = 0`,
   );
   const deleteByExecutionStmt = db.prepare(
-    `DELETE FROM graph_workflow_events WHERE execution_id = ?`,
+    `DELETE FROM graph_workflow_events
+      WHERE project_path = ? AND session_name = ? AND execution_id = ?`,
   );
 
   const insertManyTxn = db.transaction(
@@ -316,9 +393,10 @@ export function createGraphWorkflowEventsRepo(db: Db): GraphWorkflowEventsRepo {
       occurredAt: string,
       events: GraphWorkflowExecutionEvent[],
     ) => {
+      const records: GraphWorkflowEventRecord[] = [];
       for (const event of events) {
         const storage = eventToStorageRow(event, occurredAt);
-        insertStmt.run({
+        const inserted = insertStmt.run({
           project_path: projectPath,
           session_name: sessionName,
           execution_id: executionId,
@@ -328,48 +406,110 @@ export function createGraphWorkflowEventsRepo(db: Db): GraphWorkflowEventsRepo {
           pre_reset: storage.pre_reset,
           event_json: storage.event_json,
         });
+        records.push({
+          id: Number(inserted.lastInsertRowid),
+          projectPath,
+          sessionName,
+          executionId,
+          occurredAt: storage.occurred_at,
+          event: event.event,
+          preReset: storage.pre_reset === 1,
+        });
       }
+      return records;
     },
   );
 
   return {
+    append(projectPath, sessionName, executionId, occurredAt, event) {
+      const records = timed("append", { executionId }, () =>
+        insertManyTxn(projectPath, sessionName, executionId, occurredAt, [
+          event,
+        ]),
+      );
+      const record = records[0];
+      if (record === undefined) {
+        throw new PersistenceError({
+          kind: "validation",
+          entity: "graph_workflow_event",
+          identifier: executionId,
+          issues: [
+            {
+              code: "insert_failed",
+              path: [],
+              message: "event insert returned no durable row",
+            },
+          ],
+        });
+      }
+      return record;
+    },
     appendMany(projectPath, sessionName, executionId, occurredAt, events) {
-      if (events.length === 0) return;
-      timed("appendMany", { executionId }, () => {
+      if (events.length === 0) return [];
+      return timed("appendMany", { executionId }, () =>
         insertManyTxn(
           projectPath,
           sessionName,
           executionId,
           occurredAt,
           events,
-        );
-      });
+        ),
+      );
     },
-    findByExecution(executionId) {
+    findByExecution(projectPath, sessionName, executionId) {
       return timed("findByExecution", { executionId }, () => {
-        const rows = findByExecutionStmt.all(executionId) as unknown[];
+        const rows = findByExecutionStmt.all(
+          projectPath,
+          sessionName,
+          executionId,
+        ) as unknown[];
         return rows.map((row) => rowToDomain(executionId, row));
       });
     },
-    findRecordsByExecution(executionId) {
+    findRecordsByExecution(projectPath, sessionName, executionId) {
       return timed("findRecordsByExecution", { executionId }, () => {
-        const rows = findRecordsByExecutionStmt.all(executionId) as unknown[];
+        const rows = findRecordsByExecutionStmt.all(
+          projectPath,
+          sessionName,
+          executionId,
+        ) as unknown[];
         return rows.map(rowToRecord);
       });
     },
-    findRecordById(id) {
-      return timed("findRecordById", {}, () => {
-        const row: unknown = findRecordByIdStmt.get(id);
+    findRecordById(projectPath, sessionName, executionId, id) {
+      return timed("findRecordById", { executionId }, () => {
+        const row: unknown = findRecordByIdStmt.get(
+          projectPath,
+          sessionName,
+          executionId,
+          id,
+        );
         return row === undefined ? null : rowToRecord(row);
       });
     },
-    findTail(executionId, limit) {
+    findBoundaryAfter(projectPath, sessionName, executionId, cursor) {
+      return timed("findBoundaryAfter", { executionId }, () => {
+        const row: unknown = findBoundaryAfterStmt.get(
+          projectPath,
+          sessionName,
+          executionId,
+          cursor ?? 0,
+        );
+        return row === undefined ? null : rowToRecord(row);
+      });
+    },
+    findTail(projectPath, sessionName, executionId, limit) {
       return timed("findTail", { executionId }, () => {
-        const rows = findTailStmt.all(executionId, limit) as unknown[];
+        const rows = findTailStmt.all(
+          projectPath,
+          sessionName,
+          executionId,
+          limit,
+        ) as unknown[];
         return rows.map((row) => rowToDomain(executionId, row)).reverse();
       });
     },
-    findPage(executionId, query) {
+    findPage(projectPath, sessionName, executionId, query) {
       if (!Number.isInteger(query.limit) || query.limit < 1) {
         throw new PersistenceError({
           kind: "validation",
@@ -399,6 +539,8 @@ export function createGraphWorkflowEventsRepo(db: Db): GraphWorkflowEventsRepo {
         // a full page that happens to end on the log's last row still reports
         // no cursor.
         const rows = pageStmts[direction].all(
+          projectPath,
+          sessionName,
           executionId,
           cursor,
           limit + 1,
@@ -413,9 +555,17 @@ export function createGraphWorkflowEventsRepo(db: Db): GraphWorkflowEventsRepo {
         };
       });
     },
-    findLatestForContext(executionId, contextId, eventType) {
+    findLatestForContext(
+      projectPath,
+      sessionName,
+      executionId,
+      contextId,
+      eventType,
+    ) {
       return timed("findLatestForContext", { executionId, contextId }, () => {
         const row: unknown = findLatestForContextStmt.get(
+          projectPath,
+          sessionName,
           executionId,
           contextId,
           eventType,
@@ -424,15 +574,21 @@ export function createGraphWorkflowEventsRepo(db: Db): GraphWorkflowEventsRepo {
         return rowToDomain(executionId, row);
       });
     },
-    markPreReset(executionId, contextId, boundaryId) {
+    markPreReset(projectPath, sessionName, executionId, contextId, boundaryId) {
       return timed("markPreReset", { executionId, contextId }, () => {
-        const info = markPreResetStmt.run(executionId, contextId, boundaryId);
+        const info = markPreResetStmt.run(
+          projectPath,
+          sessionName,
+          executionId,
+          contextId,
+          boundaryId,
+        );
         return info.changes;
       });
     },
-    deleteByExecution(executionId) {
+    deleteByExecution(projectPath, sessionName, executionId) {
       timed("deleteByExecution", { executionId }, () => {
-        deleteByExecutionStmt.run(executionId);
+        deleteByExecutionStmt.run(projectPath, sessionName, executionId);
       });
     },
   };

@@ -1,5 +1,6 @@
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
+import type { GraphWorkflowResultDelivery } from "@/lib/workflow-graph/schemas";
 export interface AssembleUserContentBlocksArgs {
   promptText: string;
   images: readonly ImagePayload[];
@@ -16,6 +17,35 @@ export interface AssembledUserContent {
   rewrittenPromptText: string;
   blocks: MessageContentBlock[];
   assignments: AssembledImageAssignment[];
+}
+
+/**
+ * Render claimed workflow boundaries as one transient, agent-facing block.
+ * The durable event cursor provides the ordering and joins the execution id in
+ * the visible key, so an agent can refer to an exact lifecycle boundary
+ * without the block becoming part of the user's stored message.
+ */
+export function assembleWorkflowResultsBlock(
+  deliveries: readonly GraphWorkflowResultDelivery[],
+): string | null {
+  if (deliveries.length === 0) return null;
+
+  const results = deliveries
+    .slice()
+    .sort(
+      (left, right) =>
+        left.boundarySeq - right.boundarySeq ||
+        left.executionId.localeCompare(right.executionId),
+    )
+    .map((delivery) => ({
+      key: `${delivery.executionId}:${delivery.boundarySeq}`,
+      executionId: delivery.executionId,
+      boundarySeq: delivery.boundarySeq,
+      recordedAt: delivery.recordedAt,
+      result: delivery.payload,
+    }));
+
+  return `<workflow-results>\n${JSON.stringify({ results })}\n</workflow-results>`;
 }
 
 /**

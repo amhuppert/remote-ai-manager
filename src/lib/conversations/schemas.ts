@@ -205,6 +205,21 @@ export function isWorkflowLaneRole(role: ConversationRole): boolean {
   return role === "iteration" || role === "validator";
 }
 
+/**
+ * Conversations a human addresses directly — the only ones eligible for the
+ * signed workflow-launch capability (D7 D11/D12). Written as an ALLOWLIST over
+ * the role enum, not as the negation of {@link isWorkflowLaneRole}: a role added
+ * later is minted no launch authority until someone decides here that it should
+ * have it, which is the direction the mistake must fall in.
+ *
+ * `initialization` is deliberately excluded despite being retired (sessions no
+ * longer produce one). Legacy rows still carry it, and a role no one reviews
+ * for launch authority is exactly the role that should not hold it.
+ */
+export function isOrdinaryConversationRole(role: ConversationRole): boolean {
+  return role === null;
+}
+
 // Distinguishes user-initiated turns from workflow-driven background turns
 // (e.g. smart-merge's validation-fix task_run, graph-workflow's autonomous
 // implementer). Null when no turn is active. The conversation panel uses this
@@ -965,6 +980,17 @@ export const conversationArchivedEventSchema = z.discriminatedUnion("scope", [
 ]);
 export type ConversationArchivedEvent = z.infer<
   typeof conversationArchivedEventSchema
+>;
+
+export const conversationDeletedEventSchema = z
+  .object({
+    type: z.literal("conversation-deleted"),
+    ...sessionEventIdentity,
+    conversationId: z.string(),
+  })
+  .strict();
+export type ConversationDeletedEvent = z.infer<
+  typeof conversationDeletedEventSchema
 >;
 
 // A conversation's profile changed before its first turn. The payload is the

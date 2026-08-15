@@ -185,6 +185,13 @@ export class CodexConversationRuntime
    */
   private readonly ccScopeConversationId: string;
   /**
+   * The signed conversation capability minted for this runtime at spawn
+   * (D11/D12). Carried verbatim rather than re-derived: a runtime cannot tell
+   * its own kind from the fields above, and the id right above this one is a
+   * redirect, so anything derived here would name the wrong conversation.
+   */
+  private readonly conversationCapability: string | undefined;
+  /**
    * Graph-workflow lane identity, present only for implementer-lane
    * conversations so the injected env carries CC_WORKFLOW_EXECUTION_ID /
    * CC_WORKFLOW_CONTEXT_ID for `cctl workflow …`. Undefined for every non-lane
@@ -227,6 +234,7 @@ export class CodexConversationRuntime
     this.conversationTarget = input.conversationTarget;
     this.ccScopeConversationId =
       input.ccScopeConversationId ?? input.conversationId;
+    this.conversationCapability = input.conversationCapability;
     this.workflowExecutionId = input.workflowExecutionId;
     this.workflowContextId = input.workflowContextId;
     this.workflowLaneCapability = input.workflowLaneCapability;
@@ -711,6 +719,9 @@ export class CodexConversationRuntime
           conversationId: this.ccScopeConversationId,
         },
         configDir: this.deps.getConfigDir(),
+        ...(this.conversationCapability !== undefined
+          ? { conversationCapability: this.conversationCapability }
+          : {}),
         ...(this.workflowExecutionId !== undefined
           ? { workflowExecutionId: this.workflowExecutionId }
           : {}),

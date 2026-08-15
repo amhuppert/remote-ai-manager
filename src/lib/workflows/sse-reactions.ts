@@ -18,6 +18,8 @@ import {
   collaborationKeys,
   graphWorkflowEventsKeys,
   graphWorkflowExecutionKeys,
+  graphWorkflowHistoryKeys,
+  graphWorkflowResultKeys,
 } from "@/lib/workflows/query-keys";
 import {
   graphWorkflowApprovalPendingEventSchema,
@@ -27,6 +29,7 @@ import {
   graphWorkflowCharterUpdatedEventSchema,
   graphWorkflowCircuitBreakerEventSchema,
   graphWorkflowContextStatusEventSchema,
+  graphWorkflowExecutionReleasedEventSchema,
   graphWorkflowJoinStatusEventSchema,
   graphWorkflowLaneConcurrentAdmissionEventSchema,
   graphWorkflowLaneCommitEventSchema,
@@ -38,6 +41,7 @@ import {
   graphWorkflowMergeStatusEventSchema,
   graphWorkflowPendingHaltReasonEventSchema,
   graphWorkflowPlanRepairEventSchema,
+  graphWorkflowResultRecordedEventSchema,
   graphWorkflowSharedDocumentsUpdatedEventSchema,
   graphWorkflowStatusEventSchema,
   graphWorkflowTaskStatusEventSchema,
@@ -80,6 +84,31 @@ function invalidateGraphWorkflowEvents(
   });
 }
 
+function invalidateGraphWorkflowById(
+  queryClient: QueryClient,
+  projectName: string,
+  sessionName: string,
+  executionId: string,
+): void {
+  void queryClient.invalidateQueries({
+    queryKey: graphWorkflowExecutionKeys.byId(
+      projectName,
+      sessionName,
+      executionId,
+    ),
+  });
+}
+
+function invalidateGraphWorkflowHistory(
+  queryClient: QueryClient,
+  projectName: string,
+  sessionName: string,
+): void {
+  void queryClient.invalidateQueries({
+    queryKey: graphWorkflowHistoryKeys.list(projectName, sessionName),
+  });
+}
+
 interface SessionScopedEvent {
   projectName: string;
   sessionName: string;
@@ -108,6 +137,12 @@ function registerDetailAndEventsInvalidation<
 ): void {
   addSseListener(es, type, schema, (d) => {
     invalidateGraphWorkflow(queryClient, d.projectName, d.sessionName);
+    invalidateGraphWorkflowById(
+      queryClient,
+      d.projectName,
+      d.sessionName,
+      d.executionId,
+    );
     invalidateGraphWorkflowEvents(
       queryClient,
       d.projectName,
@@ -123,11 +158,69 @@ export function registerWorkflowSseReactions(
 ): void {
   const { queryClient } = deps;
 
-  registerDetailAndEventsInvalidation(
+  addSseListener(
     es,
-    queryClient,
     "graph-workflow-status",
     graphWorkflowStatusEventSchema,
+    (d) => {
+      invalidateGraphWorkflow(queryClient, d.projectName, d.sessionName);
+      invalidateGraphWorkflowById(
+        queryClient,
+        d.projectName,
+        d.sessionName,
+        d.executionId,
+      );
+      invalidateGraphWorkflowHistory(queryClient, d.projectName, d.sessionName);
+      invalidateGraphWorkflowEvents(
+        queryClient,
+        d.projectName,
+        d.sessionName,
+        d.executionId,
+      );
+    },
+  );
+  addSseListener(
+    es,
+    "graph-workflow-execution-released",
+    graphWorkflowExecutionReleasedEventSchema,
+    (d) => {
+      invalidateGraphWorkflow(queryClient, d.projectName, d.sessionName);
+      invalidateGraphWorkflowById(
+        queryClient,
+        d.projectName,
+        d.sessionName,
+        d.executionId,
+      );
+      invalidateGraphWorkflowHistory(queryClient, d.projectName, d.sessionName);
+      invalidateGraphWorkflowEvents(
+        queryClient,
+        d.projectName,
+        d.sessionName,
+        d.executionId,
+      );
+    },
+  );
+  addSseListener(
+    es,
+    "graph-workflow-result-recorded",
+    graphWorkflowResultRecordedEventSchema,
+    (d) => {
+      invalidateGraphWorkflow(queryClient, d.projectName, d.sessionName);
+      invalidateGraphWorkflowById(
+        queryClient,
+        d.projectName,
+        d.sessionName,
+        d.executionId,
+      );
+      invalidateGraphWorkflowHistory(queryClient, d.projectName, d.sessionName);
+      void queryClient.invalidateQueries({
+        queryKey: graphWorkflowResultKeys.forExecution(
+          d.projectName,
+          d.sessionName,
+          d.executionId,
+        ),
+      });
+    },
   );
   registerDetailAndEventsInvalidation(
     es,

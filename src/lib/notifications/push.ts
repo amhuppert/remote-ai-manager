@@ -37,6 +37,8 @@ export interface PushEvent {
   projectName: string;
   sessionName?: string;
   contextName?: string;
+  /** Stable provider identity for replayable durable effects. */
+  dedupeKey?: string;
 }
 
 interface FormattedPush {
@@ -140,6 +142,7 @@ export async function sendPushNotification(
         title: formatted.title,
         message: formatted.body,
         tags: [formatted.tags],
+        ...(event.dedupeKey ? { id: event.dedupeKey } : {}),
       }),
     });
 

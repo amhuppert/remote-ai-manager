@@ -43,6 +43,7 @@ import {
   projectConversationTarget,
   sessionConversationTarget,
 } from "@/lib/conversations/conversation-target";
+import { CONVERSATION_CAPABILITY_ENV_VAR } from "@/lib/agent-gateway/conversation-capability";
 import { getDefaultCodexModel } from "@/lib/agent-backends/schemas";
 import { turnContinuationSchema } from "../errors";
 import {
@@ -580,6 +581,42 @@ describe("CodexConversationRuntime", () => {
       await runtime.sendTurn(makeTurnInput());
 
       expect(envOfFirstTurn().CC_CONVERSATION_ID).toBe("conv-originating");
+    });
+
+    describe("launch capability (D7 D11/D12)", () => {
+      it("carries the capability it was handed into the agent env", async () => {
+        setupThread(minimalSuccessEvents());
+        const runtime = new CodexConversationRuntime(
+          makeCreateInput({ conversationCapability: "cccc1.spawn-minted.sig" }),
+          deps,
+        );
+
+        await runtime.sendTurn(makeTurnInput());
+
+        expect(envOfFirstTurn()[CONVERSATION_CAPABILITY_ENV_VAR]).toBe(
+          "cccc1.spawn-minted.sig",
+        );
+      });
+
+      it("gives a collaboration-internal runtime none, even though its env names the originating conversation", async () => {
+        // The redirect is why this runtime must never derive a capability from
+        // the id it exports: that id belongs to the originating human.
+        setupThread(minimalSuccessEvents());
+        const runtime = new CodexConversationRuntime(
+          makeCreateInput({
+            conversationId: "collab-wf-1-9f3a2b",
+            ccScopeConversationId: "conv-originating",
+          }),
+          deps,
+        );
+
+        await runtime.sendTurn(makeTurnInput());
+
+        expect(envOfFirstTurn().CC_CONVERSATION_ID).toBe("conv-originating");
+        expect(envOfFirstTurn()[CONVERSATION_CAPABILITY_ENV_VAR]).toBe(
+          undefined,
+        );
+      });
     });
 
     it("injects both lane identity vars for a graph-workflow lane conversation", async () => {

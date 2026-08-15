@@ -7,19 +7,10 @@ import { useAnswerQuestionMutation } from "@/lib/conversations/mutations";
 import type { AskQuestionItem } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
+import { holdsActionableGate } from "@/lib/workflow-graph/lifecycle-classifier";
 import { unansweredPendingUserInputs } from "@/lib/workflow-graph/pending-user-input";
 
 export type AskQuestionPanelProps = ComponentProps<typeof AskQuestionPanel>;
-
-/**
- * Execution statuses under which a parked user-input question keeps standing —
- * the park survives pause/halt/restart and disappears only when the execution
- * leaves the in-flight set. Mirrors the approval gate's standing derivation
- * (`use-approval-gate.ts`); keep the two in sync.
- */
-const PARK_STANDING_EXECUTION_STATUSES: ReadonlySet<GraphWorkflowStatus> =
-  new Set(["running", "paused", "halted"]);
 
 export interface UserInputStanding {
   contextId: string;
@@ -46,7 +37,17 @@ export function deriveUserInputStandings(
   contextId: string | null,
 ): UserInputStanding[] {
   if (!execution || contextId === null) return [];
-  if (!PARK_STANDING_EXECUTION_STATUSES.has(execution.status)) return [];
+  // Tenure through the one contract, not a mirrored status set: a park on a run
+  // that can never continue is a question nobody can answer.
+  if (
+    !holdsActionableGate(
+      execution.status,
+      execution.haltReason,
+      execution.abandonment,
+    )
+  ) {
+    return [];
+  }
   const contextState = execution.contextStates[contextId];
   if (!contextState) return [];
   if (contextState.status !== "awaiting_user_input") return [];

@@ -530,7 +530,7 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
     {
       dial: "gate",
       approvalRequired: true,
-      initialStartStatus: 409,
+      initialStartStatus: 202,
       expectedBasis: "human_approval",
       expectedHumanActs: 1,
     },
@@ -574,8 +574,10 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
 
       let humanActs = 0;
       if (dial === "gate") {
+        // The park is an accepted launch; its receipt names the disposition
+        // (D7 decision D1) rather than a 409 the caller has to read as success.
         await expect(startResponse.json()).resolves.toMatchObject({
-          code: "definition_approval_required",
+          receipt: { status: "awaiting_definition_approval" },
         });
         expect(world.readActiveWorkflowExecution()?.status).toBe("pending");
         const approval = await world.postAction(
@@ -617,6 +619,52 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
       ).toHaveLength(dial === "notify" ? 1 : 0);
     },
   );
+
+  /**
+   * The Studio execution-start act spans two authorities: this spec domain's
+   * durable approval and the graph's serialized decision on the park. The
+   * durable approval is a side effect, so it may only be taken once the graph
+   * decision is reserved — otherwise an act the graph refuses leaves an
+   * execution-start admission behind for a run that never started
+   * (`reserve-before-side-effects`).
+   */
+  it("records no execution-start admission when the workflow side refuses the approval", async () => {
+    const slug = "execution-start-lost-race";
+    const authored = await authorSpineDraft(world, slug, "gate");
+    await proposeSpineRevision(world, slug, authored);
+    await approveAndSignOffSpine(world, slug, authored);
+    const started = await startLegacySpineExecution(world, slug, authored);
+
+    world.registerMergeComposition();
+    const startResponse = await world.postWorkflowRoute("START", {
+      definitionId: started.definition.id,
+    });
+    expect(startResponse.status).toBe(202);
+    expect(world.readActiveWorkflowExecution()?.status).toBe("pending");
+
+    // Another approval act holds this park's decision and is at its admission
+    // gate right now, so the Studio act loses the race.
+    await world.reserveWorkflowDefinitionDecision();
+    const approval = await world.postAction(
+      slug,
+      "approve-execution-start",
+      { executionId: started.specExecutionId },
+      "human",
+    );
+
+    expect(approval.status).not.toBe(200);
+    expect(
+      world.repos.review
+        .findGateAdmissionsByRevision(authored.draftRevisionId)
+        .filter((admission) => admission.gate === "execution_start"),
+    ).toHaveLength(0);
+    expect(
+      world.repos.delivery.findExecutionById(started.specExecutionId),
+    ).toMatchObject({ state: "definition_review" });
+    // The park is untouched, so the act that does hold the decision can still
+    // make it.
+    expect(world.readActiveWorkflowExecution()?.status).toBe("pending");
+  });
 
   it("keeps a historical Gate-compiled definition recoverable after the live dial changes to Notify", async () => {
     const slug = "execution-start-policy-drift";
@@ -663,9 +711,9 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
     const startResponse = await world.postWorkflowRoute("START", {
       definitionId: started.definition.id,
     });
-    expect(startResponse.status).toBe(409);
+    expect(startResponse.status).toBe(202);
     await expect(startResponse.json()).resolves.toMatchObject({
-      code: "definition_approval_required",
+      receipt: { status: "awaiting_definition_approval" },
     });
     const pendingExecution = world.readActiveWorkflowExecution();
     expect(pendingExecution).toMatchObject({
@@ -683,8 +731,6 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
 
     const approval = await world.postWorkflowRoute("APPROVE_DEFINITION", {
       executionId: pendingExecution.id,
-      definitionId: pendingExecution.seedDefinitionId,
-      definitionRevision: pendingExecution.seedDefinitionRevision,
     });
     expect(approval.status).toBe(200);
     expect(world.readActiveWorkflowExecution()?.status).toBe("running");
@@ -791,9 +837,9 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
     const startResponse = await world.postWorkflowRoute("START", {
       definitionId: started.definition.id,
     });
-    expect(startResponse.status).toBe(409);
+    expect(startResponse.status).toBe(202);
     await expect(startResponse.json()).resolves.toMatchObject({
-      code: "definition_approval_required",
+      receipt: { status: "awaiting_definition_approval" },
     });
     expect(
       world.reviewNotifications.requested.some(
@@ -811,8 +857,6 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
     // bookkeeping lands as Studio's approve-execution-start — no bypass.
     const approve = await world.postWorkflowRoute("APPROVE_DEFINITION", {
       executionId: pendingExecution.id,
-      definitionId: pendingExecution.seedDefinitionId,
-      definitionRevision: pendingExecution.seedDefinitionRevision,
     });
     expect(approve.status).toBe(200);
 

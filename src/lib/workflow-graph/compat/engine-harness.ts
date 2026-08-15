@@ -49,7 +49,10 @@ import { createGraphWorkflowManager } from "@/lib/workflow-graph/workflow-manage
 import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
 import type { GraphWorkflowSSEEvent } from "@/lib/workflow-graph/event-schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import { stubValidationRoundService } from "@/lib/workflow-graph/test-fixtures";
+import {
+  makeLaunchDocument,
+  stubValidationRoundService,
+} from "@/lib/workflow-graph/test-fixtures";
 import {
   diffContextStatuses,
   normalizeRecording,
@@ -95,6 +98,8 @@ const POST_D4_OBSERVABILITY_EVENT_TYPES = new Set<
   "graph-workflow-lane-concurrent-admission",
   "graph-workflow-lane-landed",
   "graph-workflow-lane-drift-halted",
+  "graph-workflow-boundary",
+  "graph-workflow-result-recorded",
 ]);
 
 /** What the fixture implementer does on one agent turn. */
@@ -486,9 +491,8 @@ export async function runEngineScenario<T>(
     const publisher = createGraphWorkflowExecutionEventPublisher({
       broadcast: (event) => {
         const projected = projectTypedEvent(event);
-        // This corpus compares its pre-D4 event vocabulary. Lane decision
-        // records have independent durable event contracts and are excluded
-        // from this historical baseline.
+        // This corpus compares its pre-D4 event vocabulary. Events introduced
+        // after that baseline have independent contracts and are excluded.
         if (POST_D4_OBSERVABILITY_EVENT_TYPES.has(event.type)) return;
         events.push(projected);
       },
@@ -500,6 +504,8 @@ export async function runEngineScenario<T>(
     let lastEligible: string | null = null;
 
     const repository = createGraphWorkflowExecutionRepository({
+      // No git worktree in this harness; the real exclusion would shell out.
+      ensureCcArtifactsExcluded: async () => {},
       getSession: fixture.store.getSession,
       getActiveGraphWorkflowExecution:
         fixture.store.getActiveGraphWorkflowExecution,
@@ -539,6 +545,8 @@ export async function runEngineScenario<T>(
         );
         return result;
       },
+      reserveActiveGraphWorkflowExecution:
+        fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         fixture.store.archiveActiveGraphWorkflowExecution,
       markGraphWorkflowContextEventsPreReset:
@@ -574,12 +582,16 @@ export async function runEngineScenario<T>(
 
     await repository.create(PROJECT_PATH, SESSION_NAME, {
       definition: scenario.definition,
-      definitionId: DEFINITION_ID,
-      definitionRevision: 1,
+      source: {
+        kind: "template",
+        definitionId: DEFINITION_ID,
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(scenario.definition),
       executionId: EXECUTION_ID,
       startedAt: now(),
       inputs: {},
-      launchedTier: "project",
       ownerConversationId: null,
     });
 
@@ -708,8 +720,15 @@ export async function runEngineScenario<T>(
 
     const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: manager,
-      findLatestContextValidationEvent: (executionId, contextId) =>
+      findLatestContextValidationEvent: (
+        projectPath,
+        sessionName,
+        executionId,
+        contextId,
+      ) =>
         fixture.store.findLatestGraphWorkflowContextEvent(
+          projectPath,
+          sessionName,
           executionId,
           contextId,
           "graph-workflow-validation-result",

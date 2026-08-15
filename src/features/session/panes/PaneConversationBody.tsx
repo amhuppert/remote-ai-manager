@@ -18,6 +18,7 @@ import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { createPaneForkHandler } from "./pane-fork-handler";
+import { useWorkflowReceiptTranscriptExtensions } from "@/features/session/conversation/WorkflowReceiptCard";
 
 export interface PaneConversationBodyProps {
   projectName: string;
@@ -73,6 +74,11 @@ export default function PaneConversationBody({
   const failPrompt = useFailPrompt();
   const thinkingExpansionCommand = useThinkingBlockExpansionHotkeys(isActive);
   const backgroundActivity = useConversationBackgroundActivity(conversationId);
+  const workflowReceiptExtensions = useWorkflowReceiptTranscriptExtensions({
+    projectName,
+    sessionName,
+    conversationId,
+  });
 
   // The pane body only reads collaboration DISPLAY state (passage props,
   // stop, answers) — it renders no config row — so catalog-derived defaults
@@ -178,6 +184,7 @@ export default function PaneConversationBody({
           renderRow: renderCollabRow,
           suppressIndicator: collab.hasActiveCollab,
         }}
+        extensions={workflowReceiptExtensions}
         showInFlightBanners
       />
     </div>

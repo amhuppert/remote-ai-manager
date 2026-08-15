@@ -70,6 +70,14 @@ interface HarnessOptions {
    * live operator actually has, since the turn is minutes long.
    */
   duringAgentTurn?: (current: GraphWorkflowExecution) => GraphWorkflowExecution;
+  /**
+   * A turnover that lands in the narrower window between the supervisor's
+   * advisory trigger read and its first write — the round append. Fires once,
+   * after the read the trigger was evaluated from has been handed back.
+   */
+  afterTriggerRead?: (
+    current: GraphWorkflowExecution,
+  ) => GraphWorkflowExecution;
 }
 
 function makeHarness(options: HarnessOptions) {
@@ -84,11 +92,20 @@ function makeHarness(options: HarnessOptions) {
   const appliedOperations: WorkflowLiveEditOperation[][] = [];
   const published: PublishPlanRepairInput[] = [];
   const agentCalls: { prompt: string; roundsAtCall: number }[] = [];
+  const resumedExecutionIds: string[] = [];
   let resumeCalls = 0;
   let pendingAgent: ((result: PlanRepairAgentResult) => void) | null = null;
 
+  let triggerReadSwapped = false;
   const deps: PlanRepairSupervisorDeps = {
-    getActiveExecution: () => Promise.resolve(execution),
+    getActiveExecution: () => {
+      const seen = execution;
+      if (options.afterTriggerRead && execution && !triggerReadSwapped) {
+        triggerReadSwapped = true;
+        execution = options.afterTriggerRead(execution);
+      }
+      return Promise.resolve(seen);
+    },
     mutateActive: (_p, _s, fn) => {
       if (!execution) {
         return Promise.reject(
@@ -98,7 +115,14 @@ function makeHarness(options: HarnessOptions) {
       const result = fn(execution) as
         | MutateActiveResult
         | GraphWorkflowExecution;
-      execution = "execution" in result ? result.execution : result;
+      const next = "execution" in result ? result.execution : result;
+      // The real seam stamps this on EVERY committed mutation, whether or not
+      // the reducer changed a field. Mirrored here so a write the supervisor
+      // should never have made is visible as one.
+      execution = {
+        ...next,
+        executionStateRevision: next.executionStateRevision + 1,
+      };
       return Promise.resolve(execution);
     },
     applyLiveEdits: (input) => {
@@ -132,8 +156,9 @@ function makeHarness(options: HarnessOptions) {
         pendingAgent = resolve;
       });
     },
-    resumeExecution: () => {
+    resumeExecution: (input) => {
       resumeCalls += 1;
+      resumedExecutionIds.push(input.executionId);
       if (options.resumeError) return Promise.reject(options.resumeError);
       if (execution) execution = { ...execution, status: "running" };
       return Promise.resolve();
@@ -162,6 +187,7 @@ function makeHarness(options: HarnessOptions) {
     published,
     agentCalls,
     resumeCalls: () => resumeCalls,
+    resumedExecutionIds,
     settlePendingAgent: (result: PlanRepairAgentResult) => {
       if (!pendingAgent) throw new Error("no pending agent call");
       pendingAgent(result);
@@ -856,5 +882,163 @@ describe("plan-repair validator narrowing vs. a concurrent cohort edit", () => {
         ? current.haltReason.summary
         : null,
     ).toContain("alpha");
+  });
+});
+
+describe("plan-repair fencing across an abandon-plus-relaunch", () => {
+  /**
+   * The window abandon opens (D7 decision D5): a repair round is in flight, the
+   * operator abandons the halted run, and a successor takes the session's
+   * execution slot before the round concludes. Every concluding write is
+   * addressed to the SESSION's active row, so without an execution-identity
+   * fence the round settles itself — and stamps its diagnosis — onto a run it
+   * never examined. A successor relaunched from the same plan is the realistic
+   * case: same context ids, same halt kind, round numbering restarting at 1.
+   */
+  function successorExecution(): GraphWorkflowExecution {
+    return haltedExecution({
+      id: "execution-successor",
+      planRepairRounds: [
+        {
+          seq: 1,
+          contextId: "context-implement",
+          haltType: "circuit_breaker",
+          loopGroupId: null,
+          startedAt: "2026-07-29T02:00:00.000Z",
+          settledAt: null,
+          outcome: null,
+          planningDefect: null,
+          diagnosis: null,
+          operationCount: 0,
+          resumed: false,
+          conversationId: null,
+        },
+      ],
+    });
+  }
+
+  it("settles no round and stamps no halt summary on the successor when the incumbent is abandoned mid-round", async () => {
+    const harness = makeHarness({
+      initial: haltedExecution({ id: "execution-incumbent" }),
+      // The abandon lands while the repair agent's turn is open, and the
+      // successor is already installed by the time the round concludes.
+      duringAgentTurn: () => successorExecution(),
+      agentResults: [
+        {
+          kind: "error",
+          message: "the repair agent turn failed",
+          conversationId: "conv-repair",
+        },
+      ],
+    });
+    const supervisor = createPlanRepairSupervisor(harness.deps);
+
+    await supervisor.maybeRunPlanRepair(RUN_INPUT);
+
+    const current = harness.current()!;
+    expect(current.id).toBe("execution-successor");
+    // The successor's own round is untouched: it never ran this repair.
+    expect(current.planRepairRounds).toHaveLength(1);
+    expect(current.planRepairRounds[0]?.settledAt).toBeNull();
+    expect(current.planRepairRounds[0]?.outcome).toBeNull();
+    expect(current.haltReason).toMatchObject({ summary: null });
+  });
+
+  it("commits no write at all to the successor", async () => {
+    const successor = successorExecution();
+    const harness = makeHarness({
+      initial: haltedExecution({ id: "execution-incumbent" }),
+      duringAgentTurn: () => successor,
+      agentResults: [
+        {
+          kind: "error",
+          message: "the repair agent turn failed",
+          conversationId: "conv-repair",
+        },
+      ],
+    });
+    const supervisor = createPlanRepairSupervisor(harness.deps);
+
+    await supervisor.maybeRunPlanRepair(RUN_INPUT);
+
+    // A reducer that returns the row unchanged still COMMITS: the seam stamps
+    // the staging fence on every committed mutation, so a "no-op" settle bumps
+    // the successor's revision and races whoever is fencing on it. The fence
+    // has to refuse the write, not write the same bytes back.
+    expect(harness.current()?.executionStateRevision).toBe(
+      successor.executionStateRevision,
+    );
+  });
+
+  it("publishes no round-conclusion event once the successor holds the slot", async () => {
+    const harness = makeHarness({
+      initial: haltedExecution({ id: "execution-incumbent" }),
+      duringAgentTurn: () => successorExecution(),
+      agentResults: [
+        {
+          kind: "error",
+          message: "the repair agent turn failed",
+          conversationId: "conv-repair",
+        },
+      ],
+    });
+    const supervisor = createPlanRepairSupervisor(harness.deps);
+
+    await supervisor.maybeRunPlanRepair(RUN_INPUT);
+
+    // The event is appended through the SESSION's active row, so an unfenced
+    // emit files the incumbent's repair round in the successor's ledger —
+    // History would show a run explaining a repair it never ran.
+    expect(harness.published).toEqual([]);
+  });
+
+  it("appends no round and commits no write when the successor takes the slot before the round starts", async () => {
+    const successor = successorExecution();
+    const harness = makeHarness({
+      initial: haltedExecution({ id: "execution-incumbent" }),
+      // The abandon lands in the window between the trigger read and the
+      // round append — the supervisor's FIRST write, and the one write that
+      // happens before there is any round to fence on.
+      afterTriggerRead: () => successor,
+    });
+    const supervisor = createPlanRepairSupervisor(harness.deps);
+
+    const result = await supervisor.maybeRunPlanRepair(RUN_INPUT);
+
+    expect(result).toEqual({ ran: false, reason: "superseded" });
+    const current = harness.current()!;
+    expect(current.id).toBe("execution-successor");
+    // The successor keeps its own round list — the incumbent's repair never
+    // enters the accounting of a run it did not examine.
+    expect(current.planRepairRounds).toHaveLength(1);
+    // And withdrawing is free: a reducer that returns the row it was handed
+    // still commits, so an unfenced append advances the successor's staging
+    // fence and races whoever is fencing on it.
+    expect(current.executionStateRevision).toBe(
+      successor.executionStateRevision,
+    );
+  });
+
+  it("resumes by the round's execution identity, not by the session alone", async () => {
+    const harness = makeHarness({
+      initial: haltedExecution({ id: "execution-incumbent" }),
+      agentResults: [
+        {
+          kind: "verdict",
+          verdict: {
+            planningDefect: true,
+            diagnosis: "The criteria named a removed endpoint",
+            operations: REPAIR_OPS,
+          },
+          conversationId: "conv-repair",
+        },
+      ],
+      applyOutcomes: [appliedOutcome(2)],
+    });
+    const supervisor = createPlanRepairSupervisor(harness.deps);
+
+    await supervisor.maybeRunPlanRepair(RUN_INPUT);
+
+    expect(harness.resumedExecutionIds).toEqual(["execution-incumbent"]);
   });
 });

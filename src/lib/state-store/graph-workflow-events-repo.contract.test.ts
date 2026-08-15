@@ -116,6 +116,33 @@ function validationResultEvent(
 }
 
 describe("graph-workflow-events-repo append + read", () => {
+  it("returns the inserted durable row ids from append and appendMany", () => {
+    const first = repo.append(
+      PROJECT_PATH,
+      SESSION_NAME,
+      EXECUTION_ID,
+      "2026-01-01Z",
+      statusEvent("2026-01-01T00:00:01Z"),
+    );
+    const rest = repo.appendMany(
+      PROJECT_PATH,
+      SESSION_NAME,
+      EXECUTION_ID,
+      "2026-01-01Z",
+      [
+        contextStatusEvent("2026-01-01T00:00:02Z", "ctx-1"),
+        contextStatusEvent("2026-01-01T00:00:03Z", "ctx-2"),
+      ],
+    );
+
+    expect([first.id, ...rest.map((record) => record.id)]).toEqual([1, 2, 3]);
+    expect(first).toMatchObject({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      executionId: EXECUTION_ID,
+    });
+  });
+
   it("appendMany then findByExecution returns events in insertion order", () => {
     repo.appendMany(PROJECT_PATH, SESSION_NAME, EXECUTION_ID, "2026-01-01Z", [
       statusEvent("2026-01-01T00:00:01Z"),
@@ -123,7 +150,7 @@ describe("graph-workflow-events-repo append + read", () => {
       contextStatusEvent("2026-01-01T00:00:03Z", "ctx-2"),
     ]);
 
-    const out = repo.findByExecution(EXECUTION_ID);
+    const out = repo.findByExecution(PROJECT_PATH, SESSION_NAME, EXECUTION_ID);
     expect(out.map((e) => e.occurredAt)).toEqual([
       "2026-01-01T00:00:01Z",
       "2026-01-01T00:00:02Z",
@@ -140,7 +167,9 @@ describe("graph-workflow-events-repo append + read", () => {
       "2026-01-01Z",
       [],
     );
-    expect(repo.findByExecution(EXECUTION_ID)).toEqual([]);
+    expect(
+      repo.findByExecution(PROJECT_PATH, SESSION_NAME, EXECUTION_ID),
+    ).toEqual([]);
   });
 
   it("findByExecution isolates events by execution id", () => {
@@ -151,8 +180,90 @@ describe("graph-workflow-events-repo append + read", () => {
       statusEvent("2026-01-01T00:00:02Z"),
     ]);
 
-    expect(repo.findByExecution(EXECUTION_ID)).toHaveLength(1);
-    expect(repo.findByExecution("wf-2")).toHaveLength(1);
+    expect(
+      repo.findByExecution(PROJECT_PATH, SESSION_NAME, EXECUTION_ID),
+    ).toHaveLength(1);
+    expect(
+      repo.findByExecution(PROJECT_PATH, SESSION_NAME, "wf-2"),
+    ).toHaveLength(1);
+  });
+
+  it("requires the complete project, session, and execution scope on every read", () => {
+    const otherSession = "s2";
+    createSessionsRepo(db).upsert(
+      PROJECT_PATH,
+      makeSession({
+        sessionName: otherSession,
+        worktreePath: "/wt/s2",
+        branchName: "csm/s2",
+      }),
+    );
+    const primary = repo.append(
+      PROJECT_PATH,
+      SESSION_NAME,
+      EXECUTION_ID,
+      "2026-01-01Z",
+      validationResultEvent("2026-01-01T00:00:01Z", "ctx-1", false),
+    );
+    repo.append(
+      PROJECT_PATH,
+      otherSession,
+      EXECUTION_ID,
+      "2026-01-01Z",
+      validationResultEvent("2026-01-01T00:00:02Z", "ctx-1", true),
+    );
+
+    expect(
+      repo.findRecordById(PROJECT_PATH, otherSession, EXECUTION_ID, primary.id),
+    ).toBeNull();
+    expect(
+      repo.findTail(PROJECT_PATH, SESSION_NAME, EXECUTION_ID, 10),
+    ).toHaveLength(1);
+    expect(
+      repo.findPage(PROJECT_PATH, SESSION_NAME, EXECUTION_ID, { limit: 10 })
+        .records,
+    ).toHaveLength(1);
+    expect(
+      repo.findLatestForContext(
+        PROJECT_PATH,
+        SESSION_NAME,
+        EXECUTION_ID,
+        "ctx-1",
+        "graph-workflow-validation-result",
+      )?.occurredAt,
+    ).toBe("2026-01-01T00:00:01Z");
+
+    repo.deleteByExecution(PROJECT_PATH, SESSION_NAME, EXECUTION_ID);
+    expect(
+      repo.findByExecution(PROJECT_PATH, SESSION_NAME, EXECUTION_ID),
+    ).toEqual([]);
+    expect(
+      repo.findByExecution(PROJECT_PATH, otherSession, EXECUTION_ID),
+    ).toHaveLength(1);
+  });
+
+  it("installs composite scope indexes for execution and context reads", () => {
+    const indexColumns = (indexName: string) =>
+      (
+        db.prepare(`PRAGMA index_info(${indexName})`).all() as Array<{
+          name: string;
+        }>
+      ).map((row) => row.name);
+
+    expect(indexColumns("idx_graph_workflow_events_scope_execution")).toEqual([
+      "project_path",
+      "session_name",
+      "execution_id",
+      "id",
+    ]);
+    expect(indexColumns("idx_graph_workflow_events_scope_context")).toEqual([
+      "project_path",
+      "session_name",
+      "execution_id",
+      "context_id",
+      "event_type",
+      "id",
+    ]);
   });
 
   it("findTail returns the last N events in chronological order", () => {
@@ -163,7 +274,7 @@ describe("graph-workflow-events-repo append + read", () => {
       contextStatusEvent("2026-01-01T00:00:04Z", "ctx-4"),
     ]);
 
-    const tail = repo.findTail(EXECUTION_ID, 2);
+    const tail = repo.findTail(PROJECT_PATH, SESSION_NAME, EXECUTION_ID, 2);
     expect(tail.map((e) => e.occurredAt)).toEqual([
       "2026-01-01T00:00:03Z",
       "2026-01-01T00:00:04Z",
@@ -189,14 +300,16 @@ describe("graph-workflow-events-repo findPage (D4 decision D9)", () => {
   it("walks the whole log forward in bounded pages and reports the cursor", () => {
     seedFour();
 
-    const first = repo.findPage(EXECUTION_ID, { limit: 2 });
+    const first = repo.findPage(PROJECT_PATH, SESSION_NAME, EXECUTION_ID, {
+      limit: 2,
+    });
     expect(first.records.map((row) => row.occurredAt)).toEqual([
       "2026-01-01T00:00:01Z",
       "2026-01-01T00:00:02Z",
     ]);
     expect(first.nextCursor).toBe(first.records[1]?.id);
 
-    const second = repo.findPage(EXECUTION_ID, {
+    const second = repo.findPage(PROJECT_PATH, SESSION_NAME, EXECUTION_ID, {
       limit: 2,
       cursor: first.nextCursor,
     });
@@ -213,13 +326,16 @@ describe("graph-workflow-events-repo findPage (D4 decision D9)", () => {
   it("reads backward from the newest row when asked", () => {
     seedFour();
 
-    const page = repo.findPage(EXECUTION_ID, { limit: 2, direction: "desc" });
+    const page = repo.findPage(PROJECT_PATH, SESSION_NAME, EXECUTION_ID, {
+      limit: 2,
+      direction: "desc",
+    });
     expect(page.records.map((row) => row.occurredAt)).toEqual([
       "2026-01-01T00:00:04Z",
       "2026-01-01T00:00:03Z",
     ]);
 
-    const next = repo.findPage(EXECUTION_ID, {
+    const next = repo.findPage(PROJECT_PATH, SESSION_NAME, EXECUTION_ID, {
       limit: 2,
       direction: "desc",
       cursor: page.nextCursor,
@@ -244,15 +360,21 @@ describe("graph-workflow-events-repo findPage (D4 decision D9)", () => {
 
     // A caller cannot opt out of the ceiling, so no single request can pull the
     // whole log into memory.
-    const page = repo.findPage(EXECUTION_ID, { limit: 100_000 });
+    const page = repo.findPage(PROJECT_PATH, SESSION_NAME, EXECUTION_ID, {
+      limit: 100_000,
+    });
     expect(page.records).toHaveLength(GRAPH_WORKFLOW_EVENT_PAGE_MAX_LIMIT);
     expect(page.nextCursor).not.toBeNull();
 
-    expect(() => repo.findPage(EXECUTION_ID, { limit: 0 })).toThrow();
+    expect(() =>
+      repo.findPage(PROJECT_PATH, SESSION_NAME, EXECUTION_ID, { limit: 0 }),
+    ).toThrow();
   });
 
   it("returns an empty page for an execution with no events", () => {
-    const page = repo.findPage("wf-unknown", { limit: 10 });
+    const page = repo.findPage(PROJECT_PATH, SESSION_NAME, "wf-unknown", {
+      limit: 10,
+    });
     expect(page.records).toEqual([]);
     expect(page.nextCursor).toBeNull();
   });
@@ -267,6 +389,8 @@ describe("graph-workflow-events-repo findLatestForContext", () => {
     ]);
 
     const latest = repo.findLatestForContext(
+      PROJECT_PATH,
+      SESSION_NAME,
       EXECUTION_ID,
       "ctx-1",
       "graph-workflow-validation-result",
@@ -284,6 +408,8 @@ describe("graph-workflow-events-repo findLatestForContext", () => {
     ]);
     expect(
       repo.findLatestForContext(
+        PROJECT_PATH,
+        SESSION_NAME,
         EXECUTION_ID,
         "ctx-1",
         "graph-workflow-validation-result",
@@ -308,10 +434,16 @@ describe("graph-workflow-events-repo markPreReset", () => {
         .get(EXECUTION_ID) as { maxId: number }
     ).maxId;
 
-    const changed = repo.markPreReset(EXECUTION_ID, "ctx-1", boundaryId);
+    const changed = repo.markPreReset(
+      PROJECT_PATH,
+      SESSION_NAME,
+      EXECUTION_ID,
+      "ctx-1",
+      boundaryId,
+    );
     expect(changed).toBe(2);
 
-    const out = repo.findByExecution(EXECUTION_ID);
+    const out = repo.findByExecution(PROJECT_PATH, SESSION_NAME, EXECUTION_ID);
     const ctx1 = out.filter(
       (e) =>
         e.event.type === "graph-workflow-context-status" &&
@@ -338,8 +470,24 @@ describe("graph-workflow-events-repo markPreReset", () => {
         .get(EXECUTION_ID) as { maxId: number }
     ).maxId;
 
-    expect(repo.markPreReset(EXECUTION_ID, "ctx-1", boundaryId)).toBe(1);
-    expect(repo.markPreReset(EXECUTION_ID, "ctx-1", boundaryId)).toBe(0);
+    expect(
+      repo.markPreReset(
+        PROJECT_PATH,
+        SESSION_NAME,
+        EXECUTION_ID,
+        "ctx-1",
+        boundaryId,
+      ),
+    ).toBe(1);
+    expect(
+      repo.markPreReset(
+        PROJECT_PATH,
+        SESSION_NAME,
+        EXECUTION_ID,
+        "ctx-1",
+        boundaryId,
+      ),
+    ).toBe(0);
   });
 });
 
@@ -352,9 +500,13 @@ describe("graph-workflow-events-repo deleteByExecution", () => {
       statusEvent("2026-01-01T00:00:02Z"),
     ]);
 
-    repo.deleteByExecution(EXECUTION_ID);
-    expect(repo.findByExecution(EXECUTION_ID)).toEqual([]);
-    expect(repo.findByExecution("wf-2")).toHaveLength(1);
+    repo.deleteByExecution(PROJECT_PATH, SESSION_NAME, EXECUTION_ID);
+    expect(
+      repo.findByExecution(PROJECT_PATH, SESSION_NAME, EXECUTION_ID),
+    ).toEqual([]);
+    expect(
+      repo.findByExecution(PROJECT_PATH, SESSION_NAME, "wf-2"),
+    ).toHaveLength(1);
   });
 });
 
@@ -495,7 +647,11 @@ describe("graph-workflow-events-repo output-schema rejection durability", () => 
 
     // The halt surfaces read these off the reloaded event, so a field dropped
     // at the serialization boundary silently degrades the halt to a summary.
-    const reloaded = repo.findByExecution(EXECUTION_ID)[0]?.event;
+    const reloaded = repo.findByExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+      EXECUTION_ID,
+    )[0]?.event;
     expect(reloaded?.type).toBe("graph-workflow-validation-result");
     if (reloaded?.type !== "graph-workflow-validation-result") return;
     expect(reloaded.kind).toBe("output_schema");
@@ -563,7 +719,11 @@ describe("graph-workflow-events-repo durability contract", () => {
         return fixture;
       },
       reload: () => {
-        const rows = repo.findByExecution(EXECUTION_ID);
+        const rows = repo.findByExecution(
+          PROJECT_PATH,
+          SESSION_NAME,
+          EXECUTION_ID,
+        );
         return rows[0] ?? null;
       },
     });
@@ -584,7 +744,9 @@ describe("graph-workflow-events-repo durability contract", () => {
         );
         return fixture;
       },
-      reload: () => repo.findByExecution(EXECUTION_ID)[0] ?? null,
+      reload: () =>
+        repo.findByExecution(PROJECT_PATH, SESSION_NAME, EXECUTION_ID)[0] ??
+        null,
     });
   });
 
@@ -604,7 +766,11 @@ describe("graph-workflow-events-repo durability contract", () => {
         return fixture;
       },
       reload: () => {
-        const rows = repo.findByExecution(EXECUTION_ID);
+        const rows = repo.findByExecution(
+          PROJECT_PATH,
+          SESSION_NAME,
+          EXECUTION_ID,
+        );
         return rows[0] ?? null;
       },
     });
@@ -679,7 +845,9 @@ describe("graph-workflow-events-repo durability contract", () => {
       events,
     );
 
-    expect(repo.findByExecution(EXECUTION_ID)).toEqual(events);
+    expect(
+      repo.findByExecution(PROJECT_PATH, SESSION_NAME, EXECUTION_ID),
+    ).toEqual(events);
   });
 
   it("round-trips a refused expansion receipt with its empty id arrays", () => {
@@ -705,7 +873,11 @@ describe("graph-workflow-events-repo durability contract", () => {
       refusal,
     ]);
 
-    const reloaded = repo.findByExecution(EXECUTION_ID)[0]?.event;
+    const reloaded = repo.findByExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+      EXECUTION_ID,
+    )[0]?.event;
     expect(reloaded?.type).toBe("graph-workflow-graph-expanded");
     if (reloaded?.type !== "graph-workflow-graph-expanded") return;
     expect(reloaded.outcome).toBe("refused");

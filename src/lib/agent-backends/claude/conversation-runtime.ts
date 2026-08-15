@@ -887,6 +887,9 @@ const claudeConversationBackendFactory = {
           conversationId: ccScopeConversationId,
         },
         configDir: getConfigDirPath(),
+        ...(input.conversationCapability !== undefined
+          ? { conversationCapability: input.conversationCapability }
+          : {}),
         ...(input.workflowExecutionId !== undefined
           ? { workflowExecutionId: input.workflowExecutionId }
           : {}),

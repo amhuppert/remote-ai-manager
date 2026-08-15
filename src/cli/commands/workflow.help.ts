@@ -39,7 +39,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     description:
       "Author, read, launch, and inspect graph workflows — saved multi-context task graphs and their live executions. Authoring walks the canonical chain validate → create → start. The lane verbs (task complete/add, shared-doc upsert, collab request) are a SEPARATE family for the implementer agent inside a running execution.",
     usage: [
-      "cctl workflow <validate|create|replace|edit|list|get|status|start|delete|templates>",
+      "cctl workflow <validate|create|replace|edit|list|get|status|start|run|wait|abandon|delete|templates>",
       "cctl workflow <task complete|task add|shared-doc upsert|collab request>  (lane verbs)",
     ],
     flags: [],
@@ -347,10 +347,10 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
   {
     path: ["workflow", "status"],
     dynamicContext: true,
-    summary: "show this session's active execution",
+    summary: "show a Current or History execution projection",
     description:
-      "The workflow call you reach for most. Prints a compact per-context table for this session's active execution (<context id>  <state>  <completed>/<total>), with the execution id and any halt reason on the header line. With --json it returns the full execution payload. When nothing is running it says so plainly. No hint.",
-    usage: ["cctl workflow status [--json]"],
+      "The workflow call you reach for most. With no id, prints a compact per-context table for this session's active Current execution. With an execution id, reads that same self-contained projection from Current or History through explicit project/session/execution addressing. Reads are capability-free. With --json it returns the full execution payload. When no-id status finds nothing running it says so plainly. No hint.",
+    usage: ["cctl workflow status [<executionId>] [--json]"],
     flags: [],
     examples: [
       {
@@ -358,8 +358,18 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
         explanation:
           "no id needed — reports this session's running execution; --json returns the full payload",
       },
+      {
+        invocation:
+          "cctl workflow status exec-7 --project another-project --session archived-session --json",
+        explanation:
+          "reads the durable projection by explicit address whether it is in Current or History",
+      },
     ],
     related: [
+      {
+        command: "workflow wait",
+        oneLiner: "wait for this execution's next durable boundary",
+      },
       {
         command: "workflow start",
         oneLiner: "launch an execution to track here",
@@ -397,12 +407,157 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     ],
     related: [
       {
+        command: "workflow wait",
+        oneLiner: "reattach to the next durable boundary by execution id",
+      },
+      {
         command: "workflow status",
         oneLiner: "track the execution you just started",
       },
       {
         command: "workflow create",
         oneLiner: "create the definition to start",
+      },
+    ],
+  },
+  {
+    path: ["workflow", "run"],
+    dynamicContext: true,
+    summary: "launch a one-off execution directly from a plan file",
+    description:
+      "Launch the supplied workflow plan in this session without saving a project, global, synthetic, or hidden template. --file is the plan document; --inputs is a distinct optional JSON object of declared parameter values. Detached by default. --wait opts into a bounded observation wait, and --timeout is valid only with --wait. The receipt carries execution id, status, one_off origin, verified origin conversation, and a deep link — never a definition id. Session conversations only.",
+    usage: [
+      "cctl workflow run --file .cc/temp/plan.json [--inputs .cc/temp/inputs.json] [--wait [--timeout <dur>]] [--json]",
+    ],
+    flags: [
+      {
+        name: "file",
+        kind: "value",
+        valuePlaceholder: "<plan.json>",
+        description: "the one-off workflow plan to launch",
+      },
+      {
+        name: "inputs",
+        kind: "value",
+        valuePlaceholder: "<inputs.json>",
+        description:
+          "optional JSON object of declared launch inputs, separate from the plan",
+      },
+      {
+        name: "wait",
+        kind: "boolean",
+        description: "wait for the next needs-attention or terminal boundary",
+      },
+      {
+        name: "timeout",
+        kind: "value",
+        valuePlaceholder: "<dur>",
+        description: "bound --wait (e.g. 90s, 25m, 500ms)",
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          "cctl workflow run --file .cc/temp/plan.json --inputs .cc/temp/inputs.json",
+        explanation:
+          "launches exactly one durable execution and returns immediately; the plan and input bindings remain distinct documents",
+      },
+      {
+        invocation:
+          "cctl workflow run --file .cc/temp/plan.json --wait --timeout 10m",
+        explanation:
+          "waits only for the next durable boundary; timing out leaves the execution running",
+      },
+    ],
+    related: [
+      {
+        command: "workflow wait",
+        oneLiner: "wait for this run's next durable boundary",
+      },
+      {
+        command: "workflow status",
+        oneLiner: "read the Current run or address this execution by id",
+      },
+      {
+        command: "workflow start",
+        oneLiner: "launch a saved definition instead",
+      },
+    ],
+    skills: [GRAPH_PLANNING_SKILL],
+  },
+  {
+    path: ["workflow", "wait"],
+    dynamicContext: true,
+    summary: "wait for the next durable execution boundary",
+    description:
+      "Poll the durable result endpoint for one execution until its next needs-attention or terminal boundary. Pass the opaque cursor from a prior result to continue after that exact boundary; one invocation returns at most one boundary. --timeout bounds only this client wait. A timeout or disconnect leaves the server-side run untouched and returns the exact continuation command. Explicit --project and --session can address a run outside the ambient scope. Reads are capability-free.",
+    usage: [
+      "cctl workflow wait <executionId> [--cursor <cursor>] [--timeout <dur>] [--json]",
+    ],
+    flags: [
+      {
+        name: "cursor",
+        kind: "value",
+        valuePlaceholder: "<cursor>",
+        description:
+          "opaque boundary cursor to continue after; pass it back unchanged",
+      },
+      {
+        name: "timeout",
+        kind: "value",
+        valuePlaceholder: "<dur>",
+        description: "client wait budget (e.g. 90s, 25m, 500ms)",
+      },
+    ],
+    examples: [
+      {
+        invocation: "cctl workflow wait exec-7 --cursor 41 --timeout 10m",
+        explanation:
+          "returns the first boundary after cursor 41, immediately if it already fired; a timeout prints this reattach command again",
+      },
+    ],
+    related: [
+      {
+        command: "workflow status",
+        oneLiner: "read the execution projection without waiting",
+      },
+      {
+        command: "workflow run",
+        oneLiner: "launch a one-off run, optionally waiting immediately",
+      },
+    ],
+  },
+  {
+    path: ["workflow", "abandon"],
+    dynamicContext: true,
+    summary: "audit and abandon a resumably halted execution",
+    description:
+      "End one explicitly addressed, resumably halted execution and relocate it into History. --reason is required and becomes part of the durable abandonment audit. The mutation is authorized by the server-verified origin-conversation or own-lane capability; the claimed execution id is addressing, never authority. Running work must be aborted instead. There is no release verb.",
+    usage: ["cctl workflow abandon <executionId> --reason <reason> [--json]"],
+    flags: [
+      {
+        name: "reason",
+        kind: "value",
+        valuePlaceholder: "<reason>",
+        description: "required durable reason for abandoning the halted run",
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          "cctl workflow abandon exec-7 --reason 'superseded by a corrected run'",
+        explanation:
+          "audits the reason, releases the lease atomically, and moves the execution to History",
+      },
+    ],
+    related: [
+      {
+        command: "workflow status",
+        oneLiner: "confirm the execution id and resumable halt first",
+      },
+      {
+        command: "workflow live abort",
+        oneLiner: "end a running execution instead",
       },
     ],
   },
@@ -466,9 +621,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     summary: "act on this session's ACTIVE launched execution",
     description:
       "Read and edit the session's running (or paused/resumably-halted) graph-workflow execution in place — per-context config, task, and safe structural edits — plus pause/resume. Aliases: `workflow execution …` and `workflow exec …` are rewritten to `live`. This edits the LIVE execution's working copy; `workflow edit` edits a SAVED definition and does not touch a running run. The canonical loop is get → pause → edit → resume.",
-    usage: [
-      "cctl workflow live <get|ledger|edit|amend|pause|resume|abort|release>",
-    ],
+    usage: ["cctl workflow live <get|ledger|edit|amend|pause|resume|abort>"],
     flags: [],
     examples: [
       {
@@ -793,7 +946,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "abort the active execution",
     description:
-      "End the ACTIVE execution — interrupts running tasks and drives the run to `aborted`. An aborted run auto-releases the session's execution slot, so this normally frees the session in one step; `cctl workflow live release` is the backstop if a run settled without releasing. The reason is recorded on the run's durable release audit event. No active execution exits 2.",
+      "End the ACTIVE execution — interrupts running tasks and drives the run to `aborted`. An aborted run releases the session's execution lease automatically, so this frees the session in one step. The reason is recorded on the run's durable release audit event. No active execution exits 2.",
     usage: ["cctl workflow live abort --reason <reason> [--json]"],
     flags: [
       {
@@ -813,59 +966,10 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     ],
     related: [
       {
-        command: "workflow live release",
-        oneLiner:
-          "backstop if a settled run did not auto-release the session's slot",
-      },
-      {
         command: "workflow live pause",
         oneLiner: "pause instead when the run should continue later",
       },
     ],
-  },
-  {
-    path: ["workflow", "live", "release"],
-    dynamicContext: true,
-    summary: "release the session's execution slot (explicit audited archive)",
-    description:
-      "The explicit, audited archive act: hand this session's execution slot back so validation and a new run are unblocked. Paused and resumably-halted executions release with a durable audit event. A completed/aborted run is normally already auto-released, so releasing again returns an idempotent already-released receipt rather than an error. A running or pending run refuses — abort it first. `--execution` guards against releasing a slot that changed hands since you read it.",
-    usage: [
-      "cctl workflow live release --reason <reason> [--execution <id>] [--json]",
-    ],
-    flags: [
-      {
-        name: "reason",
-        kind: "value",
-        valuePlaceholder: "<reason>",
-        description: "why the slot is being released — recorded durably",
-      },
-      {
-        name: "execution",
-        kind: "value",
-        valuePlaceholder: "<id>",
-        description:
-          "refuse unless this execution still owns the slot (guards against a slot that changed hands)",
-      },
-    ],
-    examples: [
-      {
-        invocation: 'cctl workflow live release --reason "abandoned"',
-        explanation:
-          "free a session pinned by a paused or halted run so `cctl validate` works again; abort first if the run is still running",
-      },
-    ],
-    related: [
-      {
-        command: "workflow live abort",
-        oneLiner: "abort first — a running or pending run refuses release",
-      },
-      {
-        command: "workflow status",
-        oneLiner: "check which execution currently owns the slot",
-      },
-    ],
-    domainContext:
-      "A run that owns the session's execution slot scopes every `cctl validate` call in that session to its lanes. Releasing the slot is what makes the session ordinary again.",
   },
 
   // --- Lane verbs (a separate family) -----------------------------------------

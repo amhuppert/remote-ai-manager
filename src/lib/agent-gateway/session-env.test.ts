@@ -6,6 +6,7 @@ import {
   type ConversationTarget,
 } from "@/lib/conversations/conversation-target";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
+import { CONVERSATION_CAPABILITY_ENV_VAR } from "./conversation-capability";
 import { buildSessionEnvContract } from "./session-env";
 
 const IDENTITY = {
@@ -343,5 +344,89 @@ describe("buildSessionEnvContract", () => {
     expect(build).not.toThrow(
       new RegExp(PROJECT_CONVERSATION_SESSION_SENTINEL),
     );
+  });
+});
+
+/**
+ * Launch-capability distribution (D7 R9.4, decisions D11/D12).
+ *
+ * This function DISTRIBUTES an already-minted capability; it does not decide
+ * who gets one. That separation is the point: the env builder is handed a
+ * redirected conversation id — a collaboration runtime deliberately sets
+ * `ccScopeConversationId` to its ORIGINATING conversation — so a capability
+ * minted from `target.conversationId` here would name the human's conversation
+ * and hand a collaboration lane its authority. Eligibility is therefore decided
+ * at spawn, where the true role, persistence, and conversation id are known,
+ * and arrives here as an opaque token.
+ */
+describe("buildSessionEnvContract launch capability", () => {
+  it("exports the capability it was handed", () => {
+    const env = buildSessionEnvContract({
+      ...IDENTITY,
+      baseEnv: {},
+      serverUrl: null,
+      apiToken: null,
+      conversationCapability: "cccc1.payload.signature",
+    });
+
+    expect(env[CONVERSATION_CAPABILITY_ENV_VAR]).toBe(
+      "cccc1.payload.signature",
+    );
+  });
+
+  it("exports nothing when spawn minted no capability", () => {
+    // The planner's task run, a collaboration runtime, and a lane all reach
+    // this builder looking exactly like an ordinary conversation — a real
+    // session, a real conversation id. Only the absent token separates them.
+    const env = buildSessionEnvContract({
+      ...IDENTITY,
+      baseEnv: {},
+      serverUrl: null,
+      apiToken: null,
+    });
+
+    expect(CONVERSATION_CAPABILITY_ENV_VAR in env).toBe(false);
+  });
+
+  it("refuses to hand a lane a conversation capability alongside its lane identity", () => {
+    // A lane's authority is its lane capability. Holding both would give one
+    // runtime two principals, so a caller that asks for it has a bug worth
+    // failing on rather than a preference worth honouring.
+    const build = () =>
+      buildSessionEnvContract({
+        ...IDENTITY,
+        baseEnv: {},
+        serverUrl: null,
+        apiToken: null,
+        conversationCapability: "cccc1.payload.signature",
+        workflowExecutionId: "exec-1",
+        workflowContextId: "context-1",
+      });
+
+    expect(build).toThrow(/lane/i);
+  });
+
+  it("refuses to hand a project conversation one, which has no session to launch into", () => {
+    const build = () =>
+      buildSessionEnvContract({
+        ...PROJECT_IDENTITY,
+        baseEnv: {},
+        serverUrl: null,
+        apiToken: null,
+        conversationCapability: "cccc1.payload.signature",
+      });
+
+    expect(build).toThrow(/project/i);
+  });
+
+  it("neutralizes an ambient capability rather than letting an outer conversation's survive", () => {
+    const env = buildSessionEnvContract({
+      ...IDENTITY,
+      baseEnv: { [CONVERSATION_CAPABILITY_ENV_VAR]: "cccc1.outer.sig" },
+      serverUrl: null,
+      apiToken: null,
+    });
+
+    expect(env[CONVERSATION_CAPABILITY_ENV_VAR]).toBe("");
   });
 });

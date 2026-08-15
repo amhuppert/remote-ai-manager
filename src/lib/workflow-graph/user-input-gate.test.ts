@@ -9,10 +9,12 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowValidationRound,
 } from "@/lib/workflow-graph/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
+import { createGraphWorkflowResultDeliveriesRepo } from "@/lib/state-store/graph-workflow-result-deliveries-repo";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { laneStateKey } from "./lane-identity";
@@ -383,11 +385,15 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
       now: () => NOW,
     });
     const repo = createGraphWorkflowExecutionRepository({
+      // No git worktree in this harness; the real exclusion would shell out.
+      ensureCcArtifactsExcluded: async () => {},
       getSession: fixture.store.getSession,
       getActiveGraphWorkflowExecution:
         fixture.store.getActiveGraphWorkflowExecution,
       mutateActiveGraphWorkflowExecution:
         fixture.store.mutateActiveGraphWorkflowExecution,
+      reserveActiveGraphWorkflowExecution:
+        fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         fixture.store.archiveActiveGraphWorkflowExecution,
       markGraphWorkflowContextEventsPreReset:
@@ -491,7 +497,14 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
 
   it("parks the context: snapshots questions under the lane key, publishes pending", async () => {
     const service = buildService();
-    await seedExecution(buildExecution(laneFixture()));
+    await fixture.seedConversation(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeConversationState({ id: CONVERSATION_ID }),
+    );
+    const execution = buildExecution(laneFixture());
+    execution.ownerConversationId = CONVERSATION_ID;
+    await seedExecution(execution);
 
     const outcome = await service.enterAwaitingUserInput({
       projectPath: PROJECT_PATH,
@@ -522,6 +535,37 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
     expect(
       broadcasted.some(
         (event) => event.type === "graph-workflow-user-input-pending",
+      ),
+    ).toBe(true);
+
+    const eventRows = fixture.graphWorkflowEvents.findRecordsByExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+      execution.id,
+    );
+    expect(eventRows.map((row) => row.event.type)).toEqual(
+      expect.arrayContaining([
+        "graph-workflow-user-input-pending",
+        "graph-workflow-boundary",
+      ]),
+    );
+    const boundary = eventRows.find(
+      (row) =>
+        row.event.type === "graph-workflow-boundary" &&
+        row.event.boundaryKind === "lane_question",
+    );
+    expect(boundary).toBeDefined();
+    expect(
+      createGraphWorkflowResultDeliveriesRepo(fixture.db).findByBoundary(
+        PROJECT_PATH,
+        SESSION_NAME,
+        execution.id,
+        boundary!.id,
+      ),
+    ).not.toBeNull();
+    expect(
+      broadcasted.some(
+        (event) => event.type === "graph-workflow-result-recorded",
       ),
     ).toBe(true);
   });

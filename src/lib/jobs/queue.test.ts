@@ -8,6 +8,7 @@ import {
   getJob,
   getActiveJobs,
   getConflictAnalysis,
+  getFinalizingSessionMergeJob,
   runRegisteredMergeJob,
   _resetForTesting,
 } from "./queue";
@@ -1504,6 +1505,316 @@ describe("background-jobs", () => {
         executionId: "workflow-execution-parked",
         finalPublish: true,
         candidateValidation,
+      });
+    });
+
+    /**
+     * Whether a merge finalizes its session is a fact about the job, and the
+     * launch guard is the reader that needs it: only a session-finalizing merge
+     * makes a session exclusively busy. Inferring it from jobType would refuse
+     * launches during every graph lane merge — which the workflow itself runs.
+     */
+    it("records that a user-driven session merge finalizes the session on publish", async () => {
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      mockPublishActor.mockResolvedValue({
+        status: "ready-to-land" as const,
+        parkedRef: "refs/cc-merges/session-job",
+        preparedSha: "prepared-sha",
+        targetWorktreePath: "/projects/foo",
+      });
+
+      const result = dispatchMergeJob(BASE_MERGE_PARAMS);
+      expect(result.ok).toBe(true);
+      await waitForJobCompletions();
+
+      expect(
+        getJob(BASE_MERGE_PARAMS.projectPath, BASE_MERGE_PARAMS.sessionName),
+      ).toMatchObject({ finalizeSessionOnPublish: true });
+    });
+
+    it("records that a graph lane merge does not finalize the session", async () => {
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      mockPublishActor.mockResolvedValue({
+        status: "ready-to-land" as const,
+        parkedRef: "refs/cc-merges/graph-job",
+        preparedSha: "prepared-sha",
+        targetWorktreePath: "/projects/foo",
+      });
+
+      await runRegisteredMergeJob({
+        machine: testMachine,
+        broadcast: mockBroadcast,
+        input: {
+          jobId: "lane-job",
+          projectPath: BASE_MERGE_PARAMS.projectPath,
+          projectName: BASE_MERGE_PARAMS.projectName,
+          sessionName: BASE_MERGE_PARAMS.sessionName,
+          worktreePath: BASE_MERGE_PARAMS.worktreePath,
+          branchName: BASE_MERGE_PARAMS.branchName,
+          message: BASE_MERGE_PARAMS.message,
+          autoResolve: true,
+          validationMode: {
+            mode: "run",
+            source: "graph_lane_merge",
+            selection: { mode: "only", commands: ["typecheck"] },
+          },
+          targetBranch: "main",
+          targetWorktreePath: "/projects/foo",
+          finalizeSessionOnPublish: false,
+          executionId: "workflow-execution-lane",
+        },
+      });
+
+      expect(
+        getJob(BASE_MERGE_PARAMS.projectPath, BASE_MERGE_PARAMS.sessionName),
+      ).toMatchObject({ finalizeSessionOnPublish: false });
+    });
+
+    /**
+     * The reader behind the workflow launch guard. What it must NOT do is
+     * report a graph lane merge: the engine runs those itself, so a false block
+     * there has the engine refuse its own next launch.
+     */
+    describe("getFinalizingSessionMergeJob", () => {
+      it("reports a running session merge", async () => {
+        let finishMerge!: (value: MergeMainOutput) => void;
+        mockMergeMain.mockReturnValue(
+          new Promise<MergeMainOutput>((resolve) => {
+            finishMerge = resolve;
+          }),
+        );
+        mockPublishActor.mockResolvedValue({
+          status: "completed" as const,
+          mergeHash: "abc123",
+        });
+
+        const result = dispatchMergeJob(BASE_MERGE_PARAMS);
+        expect(result.ok).toBe(true);
+
+        expect(
+          getFinalizingSessionMergeJob(
+            BASE_MERGE_PARAMS.projectPath,
+            BASE_MERGE_PARAMS.sessionName,
+          ),
+        ).toMatchObject({
+          branchName: BASE_MERGE_PARAMS.branchName,
+          finalizeSessionOnPublish: true,
+        });
+
+        finishMerge({ status: "clean", conflictFiles: [] });
+        await waitForJobCompletions();
+      });
+
+      it("reports nothing for a running graph lane merge", async () => {
+        let finishMerge!: (value: MergeMainOutput) => void;
+        mockMergeMain.mockReturnValue(
+          new Promise<MergeMainOutput>((resolve) => {
+            finishMerge = resolve;
+          }),
+        );
+        mockPublishActor.mockResolvedValue({
+          status: "completed" as const,
+          mergeHash: "abc123",
+        });
+
+        const running = runRegisteredMergeJob({
+          machine: testMachine,
+          broadcast: mockBroadcast,
+          input: {
+            jobId: "lane-job-running",
+            projectPath: BASE_MERGE_PARAMS.projectPath,
+            projectName: BASE_MERGE_PARAMS.projectName,
+            sessionName: BASE_MERGE_PARAMS.sessionName,
+            worktreePath: BASE_MERGE_PARAMS.worktreePath,
+            branchName: BASE_MERGE_PARAMS.branchName,
+            message: BASE_MERGE_PARAMS.message,
+            autoResolve: true,
+            validationMode: {
+              mode: "run",
+              source: "graph_lane_merge",
+              selection: { mode: "only", commands: ["typecheck"] },
+            },
+            targetBranch: "main",
+            targetWorktreePath: "/projects/foo",
+            finalizeSessionOnPublish: false,
+            executionId: "workflow-execution-lane-running",
+          },
+        });
+
+        expect(
+          getJob(BASE_MERGE_PARAMS.projectPath, BASE_MERGE_PARAMS.sessionName),
+        ).toMatchObject({ status: "running" });
+        expect(
+          getFinalizingSessionMergeJob(
+            BASE_MERGE_PARAMS.projectPath,
+            BASE_MERGE_PARAMS.sessionName,
+          ),
+        ).toBeNull();
+
+        finishMerge({ status: "clean", conflictFiles: [] });
+        await running;
+        await waitForJobCompletions();
+      });
+
+      it("reports nothing once the session merge is parked ready to land", async () => {
+        mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+        mockPublishActor.mockResolvedValue({
+          status: "ready-to-land" as const,
+          parkedRef: "refs/cc-merges/session-parked",
+          preparedSha: "prepared-sha",
+          targetWorktreePath: "/projects/foo",
+        });
+
+        const result = dispatchMergeJob(BASE_MERGE_PARAMS);
+        expect(result.ok).toBe(true);
+        await waitForJobCompletions();
+
+        // Parked awaiting an operator decision: it publishes nothing until a
+        // land re-entry starts a new running job, so it is not in flight.
+        expect(
+          getJob(BASE_MERGE_PARAMS.projectPath, BASE_MERGE_PARAMS.sessionName),
+        ).toMatchObject({ status: "ready-to-land" });
+        expect(
+          getFinalizingSessionMergeJob(
+            BASE_MERGE_PARAMS.projectPath,
+            BASE_MERGE_PARAMS.sessionName,
+          ),
+        ).toBeNull();
+      });
+
+      it("reports nothing for a session with no job at all", () => {
+        expect(
+          getFinalizingSessionMergeJob(
+            BASE_MERGE_PARAMS.projectPath,
+            "some-other-session",
+          ),
+        ).toBeNull();
+      });
+
+      /**
+       * A discard drops the parked commit and publishes nothing, so it finishes
+       * no session. Marking it finalizing would block every launch for the
+       * duration of a git ref delete.
+       */
+      it("reports nothing for a running discard of a parked merge", async () => {
+        let finishDiscard!: () => void;
+        mockDiscardParkedRefActor.mockReturnValue(
+          new Promise<void>((resolve) => {
+            finishDiscard = resolve;
+          }),
+        );
+
+        const result = dispatchMergeJob({
+          ...BASE_MERGE_PARAMS,
+          entryMode: "discard",
+          preparedSha: "prepared-sha",
+          parkedRef: "refs/cc-merges/discarded",
+        });
+        expect(result.ok).toBe(true);
+
+        expect(
+          getJob(BASE_MERGE_PARAMS.projectPath, BASE_MERGE_PARAMS.sessionName),
+        ).toMatchObject({ status: "running", finalizeSessionOnPublish: false });
+        expect(
+          getFinalizingSessionMergeJob(
+            BASE_MERGE_PARAMS.projectPath,
+            BASE_MERGE_PARAMS.sessionName,
+          ),
+        ).toBeNull();
+
+        finishDiscard();
+        await waitForJobCompletions();
+      });
+
+      /**
+       * Re-entry is the same saga, not a new one: a graph lane merge parked as
+       * ready-to-land is still the workflow's own work when an operator lands
+       * it, so the fact has to survive the new job. Losing it here would both
+       * false-block the engine's next launch and hand the publish actor a
+       * session delivery gate to run against the workflow's own Current run.
+       */
+      it("carries an explicit non-finalizing fact through a land re-entry", async () => {
+        let finishPublish!: (value: PublishActorOutput) => void;
+        mockPublishActor.mockReturnValue(
+          new Promise<PublishActorOutput>((resolve) => {
+            finishPublish = resolve;
+          }),
+        );
+
+        const result = dispatchMergeJob({
+          ...BASE_MERGE_PARAMS,
+          entryMode: "land",
+          preparedSha: "prepared-sha",
+          expectedTargetSha: "expected-target-sha",
+          parkedRef: "refs/cc-merges/graph-parked",
+          executionId: "workflow-execution-landed",
+          finalizeSessionOnPublish: false,
+        });
+        expect(result.ok).toBe(true);
+        // The land entry routes straight to the delivery gate and then to
+        // publish; hold the publish open so the job is observably in flight.
+        await vi.waitFor(() => {
+          expect(mockPublishActor).toHaveBeenCalled();
+        });
+
+        expect(
+          getJob(BASE_MERGE_PARAMS.projectPath, BASE_MERGE_PARAMS.sessionName),
+        ).toMatchObject({ status: "running", finalizeSessionOnPublish: false });
+        expect(
+          getFinalizingSessionMergeJob(
+            BASE_MERGE_PARAMS.projectPath,
+            BASE_MERGE_PARAMS.sessionName,
+          ),
+        ).toBeNull();
+        // The machine context reads the same decision the job record does, so
+        // the publish actor neither runs the session delivery gate nor finishes
+        // the session.
+        expect(mockPublishActor).toHaveBeenCalledWith(
+          expect.objectContaining({ finalizeSession: false }),
+        );
+
+        finishPublish({ status: "completed", mergeHash: "landed-hash" });
+        await waitForJobCompletions();
+      });
+
+      it("carries an explicit non-finalizing fact through a conflict-resolution retry", async () => {
+        mockResolveConflictsActor.mockResolvedValue({
+          status: "resolved",
+          conflicts: [],
+        });
+        mockCommitChangesActor.mockResolvedValue({ hash: "resolve_hash" });
+        let finishPublish!: (value: PublishActorOutput) => void;
+        mockPublishActor.mockReturnValue(
+          new Promise<PublishActorOutput>((resolve) => {
+            finishPublish = resolve;
+          }),
+        );
+
+        const result = dispatchResolveConflictsJob({
+          ...BASE_RESOLVE_PARAMS,
+          executionId: "workflow-execution-retry",
+          finalizeSessionOnPublish: false,
+        });
+        expect(result.ok).toBe(true);
+        await vi.waitFor(() => {
+          expect(mockPublishActor).toHaveBeenCalled();
+        });
+
+        expect(
+          getJob(BASE_MERGE_PARAMS.projectPath, BASE_MERGE_PARAMS.sessionName),
+        ).toMatchObject({ status: "running", finalizeSessionOnPublish: false });
+        expect(
+          getFinalizingSessionMergeJob(
+            BASE_MERGE_PARAMS.projectPath,
+            BASE_MERGE_PARAMS.sessionName,
+          ),
+        ).toBeNull();
+        expect(mockPublishActor).toHaveBeenCalledWith(
+          expect.objectContaining({ finalizeSession: false }),
+        );
+
+        finishPublish({ status: "completed", mergeHash: "resolved-hash" });
+        await waitForJobCompletions();
       });
     });
   });

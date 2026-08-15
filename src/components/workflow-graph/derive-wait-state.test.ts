@@ -103,6 +103,15 @@ function makeExecution(
     id: "exec-1",
     seedDefinitionId: "def-1",
     seedDefinitionRevision: 1,
+    origin: {
+      kind: "template",
+      definitionId: "def-1",
+      definitionRevision: 1,
+      tier: "project",
+    },
+    launchDocument: null,
+    liveSessionReadOnlyPinned: false,
+    abandonment: null,
     liveRevision: 1,
     executionStateRevision: 0,
     structuralRevision: 0,
@@ -119,6 +128,7 @@ function makeExecution(
     launchedTier: "project",
     ownerConversationId: null,
     definitionApproval: null,
+    definitionApprovalClaim: null,
     workingDefinition:
       makeDefinition() as unknown as ResolvedWorkflowSemanticDefinition,
     charter: makeTestCharter(),

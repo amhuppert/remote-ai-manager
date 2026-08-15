@@ -2,12 +2,17 @@ import { readConfig } from "@/lib/config/loader";
 import { createLogger } from "@/lib/logging";
 import { ensureCcArtifactsExcluded } from "@/lib/git/worktree";
 import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowLaunchDocument } from "@/lib/workflow-graph/schemas";
 import {
   StaleLoopFenceError,
   getCurrentLoopFence,
   loopFenceAppliesTo,
   matchesLoopFence,
 } from "./loop-fence";
+import {
+  ExecutionTurnoverError,
+  assertExecutionPrincipalFence,
+} from "./principal-fence";
 import {
   createWorkflowCharterService,
   type WorkflowCharterService,
@@ -28,10 +33,15 @@ import {
   buildInitialTaskStates,
 } from "./execution-state";
 import { IllegalContextStatusTransitionError } from "./context-transitions";
-import { replacementPolicy } from "./lifecycle-classifier";
+import { toHaltReason } from "./errors";
+import {
+  buildExecutionProvenance,
+  describeLaunchSource,
+  type GraphWorkflowLaunchSource,
+} from "./execution-origin";
 import { substituteContent } from "./parameter-substitution";
-import type { TemplateTier } from "./template-library-service";
 import { resolveWorkflowDefinition } from "./resolve-config";
+import { collectLiveSessionReadOnlyViolations } from "./live-session-read-only";
 import { seedAssignmentSnapshots } from "./seed-assignment-snapshots";
 import {
   WorkflowAssignmentReferenceError,
@@ -61,22 +71,46 @@ import {
 } from "@/lib/validation/preflight";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
 import type {
-  GraphWorkflowStatus,
-  WorkflowSemanticDefinition,
-} from "@/lib/workflow-graph/definition-schemas";
-import { WorkflowStartGuardError } from "./workflow-manager";
+  GraphWorkflowExecution,
+  GraphWorkflowPendingArtifacts,
+} from "@/lib/workflow-graph/schemas";
+import type {
+  GraphWorkflowArchiveOutcome,
+  GraphWorkflowExecutionReservation,
+  GraphWorkflowReservationOutcome,
+} from "@/lib/state-store/setters";
+import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
+import {
+  leaseHeldStartGuardError,
+  transitionToNonRunningState,
+} from "./workflow-manager";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { stopExecutionLaneDevServers as defaultStopExecutionLaneDevServers } from "@/lib/workflow-graph/dev-server-lane-cleanup";
+import { unregisterExecutionLogger as defaultUnregisterExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 export { GraphWorkflowValidationError } from "./validation";
 
 const logger = createLogger("graph-workflow-execution-repository");
 
 export interface GraphWorkflowExecutionSeed {
   definition: WorkflowSemanticDefinition;
-  definitionId: string;
-  definitionRevision: number;
+  /**
+   * Where the definition content came from (D7 decision D2). One field rather
+   * than a definition id plus a tier plus an origin: `buildExecutionProvenance`
+   * derives the persisted `origin` AND the legacy-shaped seed projection from
+   * it, so a launch that has no saved definition cannot accidentally describe
+   * itself as one.
+   */
+  source: GraphWorkflowLaunchSource;
+  /**
+   * The authored document this run was launched from, snapshotted once here
+   * (D7 decision D13): the submitted `{name, description, definition, layout}`
+   * for a one-off run, and the template record's same four fields for a
+   * template run. Required for BOTH origins because History renders a run from
+   * its own record — a template that is later edited or deleted must not change
+   * or erase what a past run shows.
+   */
+  launchDocument: GraphWorkflowLaunchDocument;
   executionId: string;
   startedAt: string;
   /**
@@ -85,12 +119,6 @@ export interface GraphWorkflowExecutionSeed {
    * `boundInputs` and substituted into the definition before resolution.
    */
   inputs: Record<string, string>;
-  /**
-   * The tier the template was resolved from. Snapshotted onto the execution as
-   * the additive `launchedTier` audit annotation, parallel to `boundInputs` —
-   * it rides the definition tier and never mutates after seed.
-   */
-  launchedTier: TemplateTier;
   /**
    * The conversation that launched this run, as captured server-side by the
    * start seam (`null` for a launch with no conversation identity, e.g. a
@@ -106,6 +134,15 @@ export interface GraphWorkflowExecutionSeed {
    * that seeds nothing.
    */
   seededDocuments?: readonly SeededWorkflowDocument[];
+  /**
+   * Whether the launch guard admitted this run under the dirty-worktree
+   * exemption (R8, decision D10). Written once, with the row, because it is the
+   * invariant every later structural mutation is judged against: pinning it
+   * after creation would leave a window where a mutation could widen the run
+   * the guard admitted only because it was mechanically read-only. Omitted on a
+   * clean-worktree launch, which pins nothing.
+   */
+  liveSessionReadOnlyPinned?: boolean;
 }
 
 /**
@@ -123,6 +160,47 @@ export interface GraphWorkflowExecutionSeed {
  */
 export interface MutateActiveResult extends GraphWorkflowEventDelivery {
   execution: GraphWorkflowExecution;
+}
+
+/**
+ * Thrown from inside a `mutateActive` reducer that has decided to write
+ * nothing.
+ *
+ * A reducer cannot decline by returning the row it was handed. The seam stamps
+ * `executionStateRevision` and recomputes `structuralRevision` on every reducer
+ * return (`deriveMutateResult`), so an unchanged return still commits, still
+ * advances the fence a staged finalize compares against, and still publishes an
+ * update for the very run the caller just refused to act on. Race losers and
+ * refusals have to be write-free (`reserve-before-side-effects`), and aborting
+ * the mutation is the only way a reducer gets that.
+ *
+ * The refusal DETAIL stays with the caller: this carries only enough to
+ * identify the write, because the caller already holds the typed refusal it
+ * means to return and knows how to log it outside the write queue.
+ */
+export class MutationRefusedError extends Error {
+  constructor(readonly write: string) {
+    super(`Mutation "${write}" was refused by its reducer and wrote nothing`);
+    this.name = "MutationRefusedError";
+  }
+}
+
+/**
+ * Run a mutation whose reducer may refuse, resolving to null when it did.
+ *
+ * Every other failure propagates: a refusal is a decision the caller encoded,
+ * while an illegal transition or a stale loop fence is not something to
+ * swallow.
+ */
+export async function mutateActiveOrRefuse(
+  run: () => Promise<GraphWorkflowExecution>,
+): Promise<GraphWorkflowExecution | null> {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof MutationRefusedError) return null;
+    throw error;
+  }
 }
 
 function isMutateActiveResult(
@@ -175,6 +253,32 @@ export interface GraphWorkflowExecutionRepositoryDeps {
     delivery: GraphWorkflowEventDelivery;
   }>;
   /**
+   * THE authoritative lease reservation: read the incumbent, decide admission,
+   * and either install the candidate (relocating a lease-free incumbent into
+   * History in the same transaction) or refuse — all inside one serialized
+   * critical section. Nothing outside the row may be written before this
+   * resolves, which is what makes a losing racer provably artifact-free.
+   */
+  reserveActiveGraphWorkflowExecution(
+    projectPath: string,
+    sessionName: string,
+    label: string,
+    reservation: GraphWorkflowExecutionReservation,
+  ): Promise<GraphWorkflowReservationOutcome>;
+  /**
+   * What a reserved execution still owes the filesystem, or null once its
+   * materialization succeeded. Optional so a fixture can hold the record in
+   * memory; production defaults to the state store's own table, which is what
+   * makes a crash-time retry possible at all.
+   */
+  getGraphWorkflowPendingArtifacts?(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+  ): Promise<GraphWorkflowPendingArtifacts | null>;
+  /** Settle one execution's outstanding-artifact record. */
+  clearGraphWorkflowPendingArtifacts?(executionId: string): Promise<boolean>;
+  /**
    * Move the active execution to the archived-executions table and null the
    * active blob (its events stay in `graph_workflow_events`).
    */
@@ -183,6 +287,7 @@ export interface GraphWorkflowExecutionRepositoryDeps {
     sessionName: string,
     audit?: { reason: string; actor: string | null },
     guard?: (execution: GraphWorkflowExecution) => boolean,
+    stamp?: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
   ): Promise<GraphWorkflowArchiveOutcome>;
   /**
    * Mark every persisted event for a context up to the current boundary as
@@ -208,6 +313,21 @@ export interface GraphWorkflowExecutionRepositoryDeps {
   readRepoConfig?: (projectPath: string) => Promise<PerRepoConfig | null>;
   agentProfileLibrary?: AgentProfileLibraryService;
   assignmentReferences?: AssignmentReferenceChecker;
+  /**
+   * Winner-only post-commit teardown for a normalized incumbent's surviving
+   * resources. Injected rather than imported so a test can observe that the
+   * cleanup ran exactly once, on the admit path only.
+   */
+  stopExecutionLaneDevServers?(input: {
+    execution: GraphWorkflowExecution;
+    projectPath: string;
+  }): Promise<void>;
+  unregisterExecutionLogger?(executionId: string): void;
+  /**
+   * Git-exclude CC's `.cc` namespace in a worktree. Injectable so the
+   * materialization failure path can be exercised without a real git worktree.
+   */
+  ensureCcArtifactsExcluded?(worktreePath: string): Promise<void>;
 }
 
 /**
@@ -219,6 +339,24 @@ interface ExecutionAssignmentSeedingDeps {
   library: AgentProfileLibraryService;
   assignmentReferences: AssignmentReferenceChecker;
   projectPath: string;
+}
+
+/**
+ * The durable form of the authored launch document (D7 decision D13).
+ *
+ * The seed carries a document straight from its author, so an optional field
+ * the author simply did not set can arrive as an explicit `undefined` property
+ * (`{outputSchema: undefined}`). The store serializes blobs with
+ * `stableStringify`, which writes such a property as `null` — and a `null` in a
+ * slot whose schema accepts only the value or its absence fails the re-parse on
+ * read, making the row unloadable. Snapshotting the document as the JSON it is
+ * about to become resolves that distinction once, here, instead of teaching
+ * every reader to tolerate a null it should never have been shown.
+ */
+function toDurableLaunchDocument(
+  document: GraphWorkflowLaunchDocument,
+): GraphWorkflowLaunchDocument {
+  return JSON.parse(JSON.stringify(document)) as GraphWorkflowLaunchDocument;
 }
 
 async function createExecutionFromSeed(
@@ -239,8 +377,7 @@ async function createExecutionFromSeed(
   const concrete = substituteContent(seed.definition, seed.inputs);
 
   logger.info("graph-workflow.substitution", {
-    definitionId: seed.definitionId,
-    revision: seed.definitionRevision,
+    ...describeLaunchSource(seed.source),
     parameterCount: seed.definition.parameters.length,
     boundInputCount: Object.keys(seed.inputs).length,
   });
@@ -319,7 +456,7 @@ async function createExecutionFromSeed(
   if (frozen.issues.length > 0) {
     logger.warn("graph-workflow.validation_preflight_rejected", {
       boundary: "start.resolved",
-      definitionId: seed.definitionId,
+      ...describeLaunchSource(seed.source),
       issueCount: frozen.issues.length,
       codes: frozen.issues.map((issue) => issue.code),
     });
@@ -330,15 +467,49 @@ async function createExecutionFromSeed(
   }
   const workingDefinition = frozen.definition;
 
+  // The dirty-worktree exemption's seed-time tie (R8, decision D10). The launch
+  // guard proved eligibility against a resolution it built from its OWN config
+  // read; `workingDefinition` is the resolution the execution will actually run,
+  // built from the independent read above and then frozen. Nothing makes the two
+  // agree — a global default can move between the reads, and the freeze can
+  // widen a selection the guard never saw — so a seed that carries the pin is
+  // re-proven against the bytes about to be persisted. Anything else would land
+  // a write-capable run wearing a read-only pin, and every later structural
+  // mutation would then be judged against a property the run never had.
+  //
+  // Refusing is the only safe outcome: the launch was admitted over uncommitted
+  // changes solely because of this property, so losing it retracts the
+  // admission rather than downgrading the pin. It fails here, before the
+  // reservation, so the refusal costs neither a row nor a byte.
+  if (seed.liveSessionReadOnlyPinned === true) {
+    const pinIssues = collectLiveSessionReadOnlyViolations(workingDefinition);
+    if (pinIssues.length > 0) {
+      logger.warn("graph-workflow.start.dirty_exemption_retracted", {
+        ...describeLaunchSource(seed.source),
+        executionId: seed.executionId,
+        issueCount: pinIssues.length,
+        codes: pinIssues.map((issue) => issue.code),
+      });
+      throw new GraphWorkflowValidationError(
+        pinIssues,
+        "Workflow was admitted over uncommitted changes as a wholly read-only live-session run, but its resolved configuration is write-capable",
+      );
+    }
+  }
+
   const contextStates = buildInitialContextStates(workingDefinition);
   const taskStates = buildInitialTaskStates(workingDefinition);
 
   return graphWorkflowExecutionSchema.parse({
     id: seed.executionId,
-    seedDefinitionId: seed.definitionId,
-    seedDefinitionRevision: seed.definitionRevision,
+    // Provenance, recorded rather than left to be re-derived from the seed
+    // projection columns later (D7 decision D2). The authoritative `origin` and
+    // the legacy-shaped projection beside it come from one derivation, so a
+    // one-off run's filler can never be mistaken for a definition identity.
+    ...buildExecutionProvenance(seed.source, seed.executionId),
+    launchDocument: toDurableLaunchDocument(seed.launchDocument),
+    liveSessionReadOnlyPinned: seed.liveSessionReadOnlyPinned ?? false,
     boundInputs: seed.inputs,
-    launchedTier: seed.launchedTier,
     ownerConversationId: seed.ownerConversationId,
     definitionApproval:
       concrete.approvalRequired === true
@@ -385,10 +556,19 @@ export function createGraphWorkflowExecutionRepository(
     return deps.getActiveGraphWorkflowExecution(projectPath, sessionName);
   }
 
+  /**
+   * `fence` is the launch's non-lease admission facts, re-asked inside the
+   * reserving transaction and declining by throwing the caller's own guard
+   * error (see `GraphWorkflowExecutionReservation.fence`). It rides the
+   * reservation rather than being checked here because everything in this
+   * function is asynchronous: a check made anywhere above would be stale by the
+   * time the lease is actually taken.
+   */
   async function create(
     projectPath: string,
     sessionName: string,
     seed: GraphWorkflowExecutionSeed,
+    fence?: () => void,
   ): Promise<GraphWorkflowExecution> {
     // Start-boundary preflight. The seed definition is checked against the
     // current registry and capacity because either may have changed since
@@ -410,7 +590,7 @@ export function createGraphWorkflowExecutionRepository(
       logger.warn("graph-workflow.validation_preflight_rejected", {
         boundary: "start.authored",
         projectPath,
-        definitionId: seed.definitionId,
+        ...describeLaunchSource(seed.source),
         issueCount: commandSelectionIssues.length,
         codes: commandSelectionIssues.map((issue) => issue.code),
       });
@@ -431,6 +611,162 @@ export function createGraphWorkflowExecutionRepository(
       validationPreflight,
     );
 
+    const worktreePath = await resolveSeedWorktreePath(
+      projectPath,
+      sessionName,
+    );
+
+    // Registration, not materialization: the charter and every launcher-seeded
+    // document are validated (worktree confinement included) and registered
+    // onto the candidate, and their delivery computed — with no file written.
+    // Splitting the seed here is what lets the reservation commit the COMPLETE
+    // record in one transaction while every byte of `.cc` I/O still waits for
+    // the lease. A path that escapes the worktree therefore refuses the launch
+    // with neither a row nor a file (R5.2).
+    const { nextExecution: charteredExecution, delivery: charterDelivery } =
+      await charterService.prepareCharter({
+        charter: baseExecution.charter,
+        worktreePath,
+        execution: baseExecution,
+        projectPath,
+        sessionName,
+      });
+    const seededDocuments = seed.seededDocuments ?? [];
+    const candidate = await seededDocumentService.registerDocuments({
+      documents: seededDocuments,
+      worktreePath,
+      execution: charteredExecution,
+    });
+
+    // THE authoritative admission (D7 R3.5, R5.2). Everything above this line
+    // is a pure read or an in-memory registration, so this reservation is the
+    // launch's FIRST mutation of any kind. The seam re-reads the incumbent
+    // inside its serialized critical section and runs the same
+    // `evaluateLeaseAdmission` the manager's advisory guard consulted, so the
+    // two can only agree; a lease holder refuses here with the standard blocker
+    // and a lease-free physical incumbent is relocated into History atomically
+    // with the winner's installation.
+    const reserveDelivery = combineEventDeliveries([
+      charterDelivery,
+      eventPublisher.publishExecutionUpdate({
+        projectPath,
+        sessionName,
+        previousExecution: null,
+        nextExecution: candidate,
+      }),
+    ]);
+    const reservation = await deps.reserveActiveGraphWorkflowExecution(
+      projectPath,
+      sessionName,
+      "graphWorkflowExecution.reserve",
+      {
+        execution: candidate,
+        events: reserveDelivery.events,
+        pushes: reserveDelivery.pushes,
+        // The bytes, not just the registrations: the transaction that installs
+        // the winner is the last moment they are guaranteed to exist, since the
+        // `.cc` writes below run after it and the execution row stores only
+        // where each document goes, never what it says.
+        seededDocuments,
+        ...(fence !== undefined && { fence }),
+      },
+    );
+    if (!reservation.reserved) {
+      logger.warn("graph-workflow.execution.create_conflict_rejected", {
+        projectPath,
+        sessionName,
+        attemptedExecutionId: candidate.id,
+        activeExecutionId: reservation.refusal.incumbent.executionId,
+        activeStatus: reservation.refusal.incumbent.status,
+      });
+      throw leaseHeldStartGuardError({
+        projectPath,
+        sessionName,
+        refusal: reservation.refusal,
+      });
+    }
+    if (reservation.normalized !== null) {
+      logger.info("graph-workflow.execution.archived", {
+        projectPath,
+        sessionName,
+        executionId: reservation.normalized.executionId,
+        status: reservation.normalized.status,
+        reason: "normalized_on_admission",
+      });
+      // WINNER ONLY, post-commit: a legacy terminal row can still own live
+      // resources — lane dev servers and a registered execution logger — that
+      // no explicit release act ever tore down, because normalization is
+      // precisely the path where the operator performed no such act. Moving the
+      // record to History without this would leave those servers running beside
+      // the successor, competing for the same lane worktrees. Best-effort: the
+      // lease is already won, so a failed teardown must not fail the launch.
+      await releaseNormalizedIncumbentResources({
+        projectPath,
+        sessionName,
+        execution: reservation.normalizedExecution,
+        executionId: reservation.normalized.executionId,
+      });
+    }
+    // Post-commit, post-critical-section: the reservation seam has durably
+    // committed the event rows; the repository (which owns the publisher, hence
+    // the broadcaster + push dispatcher) performs delivery now — no reducer ever
+    // holds a delivery capability (`post-commit-delivery`).
+    await eventPublisher.deliver(reservation.delivery);
+
+    // WINNER ONLY, post-commit: the out-of-row artifacts. A losing racer never
+    // reaches this line, which is the whole reason the reservation moved ahead
+    // of it.
+    await materializeArtifacts({
+      projectPath,
+      sessionName,
+      executionId: reservation.execution.id,
+      worktreePath,
+      seededDocuments,
+    });
+    return reservation.execution;
+  }
+
+  /**
+   * Tear down what a normalized incumbent left running. Runs once, after the
+   * reserving transaction commits, and only for the launch that won the lease —
+   * a refused racer must never reach it, or a refusal would end live work.
+   *
+   * Best-effort throughout: the successor is already durably installed, so a
+   * failed stop is a logged warning rather than a failed launch.
+   */
+  async function releaseNormalizedIncumbentResources(input: {
+    projectPath: string;
+    sessionName: string;
+    execution: GraphWorkflowExecution | null;
+    executionId: string;
+  }): Promise<void> {
+    try {
+      if (input.execution !== null) {
+        const stopLaneDevServers =
+          deps.stopExecutionLaneDevServers ??
+          defaultStopExecutionLaneDevServers;
+        await stopLaneDevServers({
+          execution: input.execution,
+          projectPath: input.projectPath,
+        });
+      }
+      const unregisterLogger =
+        deps.unregisterExecutionLogger ?? defaultUnregisterExecutionLogger;
+      unregisterLogger(input.executionId);
+    } catch (err) {
+      logger.warn("graph-workflow.execution.normalized_cleanup_failed", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        executionId: input.executionId,
+        error: getErrorMessage(err),
+      });
+    }
+  }
+
+  async function resolveSeedWorktreePath(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<string> {
     const session = await deps.getSession(projectPath, sessionName);
     if (!session) {
       throw new Error(
@@ -442,160 +778,189 @@ export function createGraphWorkflowExecutionRepository(
         `Cannot seed charter: session "${sessionName}" has no worktree path`,
       );
     }
+    return session.worktreePath;
+  }
 
-    // Keep CC's .cc artifact namespace git-ignored before any file lands in
-    // it, so the charter, materialized shared docs, and agent scratch (logs,
-    // live-run evidence) are never committed by a lane's `add -A` sweep and
-    // never churn the session worktree (which would trip the dirty-start gate
-    // and the final-join precondition). Best-effort: a failure here must not
-    // block starting the workflow.
-    try {
-      await ensureCcArtifactsExcluded(session.worktreePath);
-    } catch (err) {
-      logger.warn("graph-workflow.cc_artifacts_exclude_failed", {
-        projectPath,
-        sessionName,
-        worktreePath: session.worktreePath,
-        error: getErrorMessage(err),
-      });
-    }
-
-    // Seed the charter before the first iteration: write charter.md inside the
-    // worktree, register the kind:"charter" shared-document entry, snapshot the
-    // charter onto the execution, and compute the charter-registered event. A
-    // render/write/register failure throws here, halting the seed with no
-    // partial charter state.
-    const { nextExecution: charteredExecution, delivery: charterDelivery } =
-      await charterService.seedCharter({
-        charter: baseExecution.charter,
-        worktreePath: session.worktreePath,
-        execution: baseExecution,
-        projectPath,
-        sessionName,
-      });
-
-    // Documents the launching tier rendered ride the same channel, in the same
-    // pre-CAS window: written into the session worktree, captured into the
-    // central store, registered as kind:"seeded" entries. Seeding HERE — not
-    // after launch — is what makes them reach a lane, because the loop kickoff
-    // is fire-and-forget and a definition-approval park throws before it. A
-    // failure throws for the same reason the charter's does: a run whose
-    // agents are pointed at a document that does not exist is worse than a run
-    // that refused to start, and nothing is persisted yet to unwind.
-    const seededExecution = await seededDocumentService.seedDocuments({
-      documents: seed.seededDocuments ?? [],
-      worktreePath: session.worktreePath,
-      execution: charteredExecution,
-    });
-
-    // Replacement runs through the AUDITED archive before the CAS, never as a
-    // silent overwrite (lifecycle contract, design §10). The contract decides
-    // whether the incumbent may be replaced at all; a replaceable one is
-    // archived here — which durably records it in
-    // `graph_workflow_archived_executions` — so by the time the CAS runs there
-    // is nothing left to overwrite. An unreplaceable incumbent is rejected with
-    // the same guard error the start path raises.
-    const incumbent = await deps.getActiveGraphWorkflowExecution(
+  /**
+   * Put a reserved execution's registered artifacts on disk: the `.cc`
+   * git-exclusion, the charter document, and every document the launching tier
+   * seeded. Runs only for the execution that WON the lease, and only after its
+   * row — which already carries every one of those registrations — is durably
+   * committed.
+   *
+   * Idempotent, so a retry over a run whose materialization was interrupted
+   * converges rather than duplicating: the exclusion is already idempotent, and
+   * each document write replaces its file and its central-store copy.
+   *
+   * A failure halts the LOCATED winner (`execution_loop_failed`, cause `io` —
+   * resumable) rather than unwinding it. The lease is already won at this
+   * point, so the alternatives are a durable halted record the operator can see
+   * and retry, or a row nobody can explain; the halt is the honest one.
+   */
+  async function materializeArtifacts(input: {
+    projectPath: string;
+    sessionName: string;
+    executionId: string;
+    worktreePath?: string;
+    seededDocuments: readonly SeededWorkflowDocument[];
+  }): Promise<GraphWorkflowExecution> {
+    const { projectPath, sessionName, executionId } = input;
+    const worktreePath =
+      input.worktreePath ??
+      (await resolveSeedWorktreePath(projectPath, sessionName));
+    const reserved = await deps.getActiveGraphWorkflowExecution(
       projectPath,
       sessionName,
     );
-    if (incumbent) {
-      if (replacementPolicy(incumbent.status) !== "audited-archive") {
-        logger.warn("graph-workflow.execution.create_conflict_rejected", {
-          projectPath,
-          sessionName,
-          attemptedExecutionId: seededExecution.id,
-          activeExecutionId: incumbent.id,
-          activeStatus: incumbent.status,
-        });
-        throw new WorkflowStartGuardError(
-          "active_execution",
-          `Session "${sessionName}" already has an active graph workflow execution`,
-        );
-      }
-      logger.info("graph-workflow.execution.archived", {
-        projectPath,
-        sessionName,
-        executionId: incumbent.id,
-        status: incumbent.status,
-        reason: "replaced_on_start",
-      });
-      await deps.archiveActiveGraphWorkflowExecution(projectPath, sessionName);
+    if (!reserved || reserved.id !== executionId) {
+      throw new Error(
+        `Cannot materialize graph workflow execution "${executionId}": it no longer holds the active row for session "${sessionName}"`,
+      );
     }
 
-    // Conflict details captured (pure) inside the reducer and logged AFTER the
-    // critical section, so the queue callback performs no logging I/O
-    // (`no-slow-work-in-critical-section`). The reducer throws the guard error
-    // without logging; the catch below reconstructs the warn from this data.
-    let createConflict: {
-      activeExecutionId: string;
-      activeStatus: GraphWorkflowStatus;
-    } | null = null;
-    const { execution, delivery } = await deps
-      .mutateActiveGraphWorkflowExecution(
+    try {
+      // Keep CC's .cc artifact namespace git-ignored BEFORE any file lands in
+      // it, so the charter, materialized shared docs, and agent scratch (logs,
+      // live-run evidence) are never committed by a lane's `add -A` sweep and
+      // never churn the session worktree (which would trip the dirty-start gate
+      // and the final-join precondition).
+      //
+      // A failure here fails the whole materialization rather than being
+      // logged and stepped over. Continuing would write exactly the artifacts
+      // the exclusion exists to hide, into a worktree that will now commit
+      // them, and then settle the pending record — so the run proceeds with a
+      // dirty tree and no durable statement that anything is wrong. Halting the
+      // located winner leaves an operator something to see and retry, which is
+      // what the exclusion being ordered first was always for.
+      await (deps.ensureCcArtifactsExcluded ?? ensureCcArtifactsExcluded)(
+        worktreePath,
+      );
+
+      await charterService.writeCharterDocument({
+        charter: reserved.charter,
+        worktreePath,
+      });
+      await seededDocumentService.writeDocuments({
+        documents: input.seededDocuments,
+        worktreePath,
+        executionId,
+      });
+      // Settled LAST, and only on the success path: while the record stands,
+      // it is the durable statement that this run's artifacts may be missing,
+      // and it carries the only copy of the bytes needed to rewrite them.
+      // Clearing it before the writes land would trade a retryable run for an
+      // unrepairable one.
+      const clearPending = deps.clearGraphWorkflowPendingArtifacts;
+      if (clearPending !== undefined) {
+        await clearPending(executionId);
+      }
+      return reserved;
+    } catch (err) {
+      await haltAfterMaterializationFailure(
         projectPath,
         sessionName,
-        "graphWorkflowExecution.create",
-        (current) => {
-          // Compare-and-set inside the write-queue critical section. start()'s
-          // active-execution guard runs a long async gauntlet (git probes,
-          // definition load, charter seeding) before create, so two concurrent
-          // starts can both pass it — the second create must not silently
-          // overwrite the first execution, which would leave two loop drivers
-          // on one execution under matching (executionId, loopEpoch) fences.
-          //
-          // The slot must be EMPTY here: any replaceable incumbent was already
-          // archived above through the audited path. So a non-null `current` is
-          // always a conflict — including a terminal one, which can only mean a
-          // concurrent start won the race after our archive. Refusing it is
-          // what makes silent replacement impossible.
-          if (current) {
-            createConflict = {
-              activeExecutionId: current.id,
-              activeStatus: current.status,
-            };
-            throw new WorkflowStartGuardError(
-              "active_execution",
-              `Session "${sessionName}" already has an active graph workflow execution`,
-            );
-          }
-          const updateDelivery = eventPublisher.publishExecutionUpdate({
-            projectPath,
-            sessionName,
-            previousExecution: null,
-            nextExecution: seededExecution,
-          });
-          const combined = combineEventDeliveries([
-            charterDelivery,
-            updateDelivery,
-          ]);
-          return {
-            execution: seededExecution,
-            events: combined.events,
-            pushes: combined.pushes,
-          };
-        },
-      )
-      .catch((err: unknown) => {
-        // Log the CAS-conflict rejection OUTSIDE the write-queue critical section
-        // (the reducer threw inside it without logging).
-        if (err instanceof WorkflowStartGuardError && createConflict !== null) {
-          logger.warn("graph-workflow.execution.create_conflict_rejected", {
-            projectPath,
-            sessionName,
-            attemptedExecutionId: seededExecution.id,
-            activeExecutionId: createConflict.activeExecutionId,
-            activeStatus: createConflict.activeStatus,
-          });
-        }
-        throw err;
+        executionId,
+        err,
+      );
+      throw err;
+    }
+  }
+
+  /**
+   * The kickoff-side repair for a launch whose artifacts never reached disk.
+   *
+   * The lease CAS deliberately commits BEFORE any `.cc` write, so a crash in
+   * between leaves a durable execution whose charter and seeded documents are
+   * missing — and whose agents would otherwise start against a worktree lacking
+   * the very sources the run points them at. The reserving transaction records
+   * what the launch owes, contents included, so every path that (re)starts
+   * driving an execution can settle that debt from durable state alone: no
+   * caller has to still be holding the seed.
+   *
+   * A no-op for the overwhelmingly common case — a run whose materialization
+   * already succeeded owns no record, so this is one indexed point read.
+   * Returns null in exactly that case.
+   */
+  async function ensureArtifactsMaterialized(input: {
+    projectPath: string;
+    sessionName: string;
+    executionId: string;
+  }): Promise<GraphWorkflowExecution | null> {
+    const readPending = deps.getGraphWorkflowPendingArtifacts;
+    if (readPending === undefined) return null;
+    const pending = await readPending(
+      input.projectPath,
+      input.sessionName,
+      input.executionId,
+    );
+    if (pending === null) return null;
+
+    logger.info("graph-workflow.execution.artifacts_retry", {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      executionId: input.executionId,
+      documentCount: pending.documents.length,
+      recordedAt: pending.recordedAt,
+    });
+    return materializeArtifacts({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      executionId: input.executionId,
+      seededDocuments: pending.documents,
+    });
+  }
+
+  function assertStillReserved(
+    execution: GraphWorkflowExecution,
+    executionId: string,
+    sessionName: string,
+  ): void {
+    if (execution.id === executionId) return;
+    throw new Error(
+      `Cannot materialize graph workflow execution "${executionId}": it no longer holds the active row for session "${sessionName}"`,
+    );
+  }
+
+  async function haltAfterMaterializationFailure(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+    cause: unknown,
+  ): Promise<void> {
+    const haltReason = toHaltReason(cause, { cause: "io" });
+    try {
+      await mutateActive(projectPath, sessionName, (execution) => {
+        // Locate the winner before halting: a concurrent transition may already
+        // have moved on, and halting whatever happens to hold the row would end
+        // a run this failure has nothing to do with.
+        assertStillReserved(execution, executionId, sessionName);
+        // The shared execution-level transition owner, not a local status
+        // write: a second copy of "what halting means" here would drift from
+        // every other halt in the engine.
+        return transitionToNonRunningState(
+          execution,
+          "halted",
+          null,
+          haltReason,
+        );
       });
-    // Post-commit, post-critical-section: the mutation seam has durably
-    // committed the event rows; the repository (which owns the publisher, hence
-    // the broadcaster + push dispatcher) performs delivery now — no reducer ever
-    // holds a delivery capability (`post-commit-delivery`).
-    eventPublisher.deliver(delivery);
-    return execution;
+      logger.error("graph-workflow.execution.materialization_failed", {
+        projectPath,
+        sessionName,
+        executionId,
+        haltReasonType: haltReason.type,
+        error: getErrorMessage(cause),
+      });
+    } catch (haltError) {
+      logger.error("graph-workflow.execution.materialization_failed", {
+        projectPath,
+        sessionName,
+        executionId,
+        haltReasonType: haltReason.type,
+        error: getErrorMessage(cause),
+        haltError: getErrorMessage(haltError),
+      });
+    }
   }
 
   async function update(
@@ -626,21 +991,23 @@ export function createGraphWorkflowExecutionRepository(
         };
       },
     );
-    eventPublisher.deliver(delivery);
+    await eventPublisher.deliver(delivery);
   }
 
   /**
-   * Loop-generation fence, checked inside the write-queue critical section
-   * against the *persisted* execution: a mutation issued by a superseded loop
-   * instance (its generation retired by a lifecycle transition) is
-   * rejected atomically before the mutator runs. Also asserts an active
-   * execution exists, narrowing `current` to non-null for the reducer.
+   * Both fences, checked inside the write-queue critical section against the
+   * *persisted* execution, before the mutator runs and therefore write-free.
    *
-   * Purely computational: it throws {@link StaleLoopFenceError} (which carries
-   * the fence + observed generation) but performs NO logging — logging is I/O
-   * and this runs inside the queue critical section (`no-slow-work-in-critical-
-   * section`). The rejection is logged by `mutateActive`'s catch, outside the
-   * lock.
+   * The loop fence rejects a mutation issued by a superseded loop instance (its
+   * generation retired by a lifecycle transition). The principal fence rejects
+   * one issued by an agent whose authority was established against a different
+   * execution — the run it read settled and a successor took the lease. Also
+   * asserts an active execution exists, narrowing `current` for the reducer.
+   *
+   * Purely computational: it throws errors carrying the fence and what was
+   * observed, but performs NO logging — logging is I/O and this runs inside the
+   * queue critical section (`no-slow-work-in-critical-section`). The rejections
+   * are logged by `mutateActive`'s catch, outside the lock.
    */
   function assertMutableActive(
     projectPath: string,
@@ -655,6 +1022,7 @@ export function createGraphWorkflowExecutionRepository(
     ) {
       throw new StaleLoopFenceError(fence, current);
     }
+    assertExecutionPrincipalFence(projectPath, sessionName, current);
     if (!current) {
       throw new Error(
         "Session does not have an active graph workflow execution",
@@ -754,6 +1122,14 @@ export function createGraphWorkflowExecutionRepository(
             activeExecutionId: err.actualExecutionId,
             activeLoopEpoch: err.actualLoopEpoch,
           });
+        } else if (err instanceof ExecutionTurnoverError) {
+          logger.warn("graph-workflow.principal_fence.turnover_rejected", {
+            projectPath,
+            sessionName,
+            authorizedExecutionId: err.fence.executionId,
+            activeExecutionId: err.actualExecutionId,
+            principal: err.fence.principal.kind,
+          });
         } else if (err instanceof IllegalContextStatusTransitionError) {
           logger.error("graph-workflow.context_transition.illegal", {
             projectPath,
@@ -768,22 +1144,43 @@ export function createGraphWorkflowExecutionRepository(
       });
     // Delivery is performed by the mutation seam post-commit, never by the
     // reducer (`post-commit-delivery`).
-    eventPublisher.deliver(delivery);
+    await eventPublisher.deliver(delivery);
     return execution;
   }
 
+  /**
+   * `stamp` lets an act whose whole point is the release — abandon — commit the
+   * record change and the relocation together. It is pure and runs inside the
+   * archive's critical section, so it obeys the same reducer rules the mutation
+   * seam imposes: no I/O, no awaits.
+   *
+   * The principal assertion is composed into `guard`, which the state store
+   * evaluates against its authoritative read inside the archive transaction.
+   * Checking before this seam would leave abandon with the same lane-turnover
+   * gap that `mutateActive` closes inside its reducer.
+   */
   async function archiveActive(
     projectPath: string,
     sessionName: string,
     audit?: { reason: string; actor: string | null },
     guard?: (execution: GraphWorkflowExecution) => boolean,
+    stamp?: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
   ): Promise<GraphWorkflowArchiveOutcome> {
-    return deps.archiveActiveGraphWorkflowExecution(
+    const fencedGuard = (execution: GraphWorkflowExecution): boolean => {
+      assertExecutionPrincipalFence(projectPath, sessionName, execution);
+      return guard?.(execution) ?? true;
+    };
+    const outcome = await deps.archiveActiveGraphWorkflowExecution(
       projectPath,
       sessionName,
       audit,
-      guard,
+      fencedGuard,
+      stamp,
     );
+    if (outcome.archived && outcome.delivery !== undefined) {
+      await eventPublisher.deliver(outcome.delivery);
+    }
+    return outcome;
   }
 
   async function markContextEventsPreReset(
@@ -803,6 +1200,8 @@ export function createGraphWorkflowExecutionRepository(
   return {
     getActive,
     create,
+    materializeArtifacts,
+    ensureArtifactsMaterialized,
     update,
     mutateActive,
     archiveActive,

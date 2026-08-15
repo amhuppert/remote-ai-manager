@@ -292,6 +292,26 @@ function ResolvedSetupStrip({
   );
 }
 
+function HistoricalContextConfiguration({
+  context,
+}: {
+  context: ResolvedContextDefinition;
+}) {
+  return (
+    <section
+      aria-label="Historical context configuration"
+      className="flex flex-col gap-sm"
+    >
+      <p className="m-0 text-[0.72rem] text-text-secondary">
+        Historical configuration from the execution snapshot.
+      </p>
+      <pre className="m-0 overflow-x-auto rounded-md border border-solid border-border-subtle bg-bg-raised p-md font-mono text-[0.7rem] leading-relaxed whitespace-pre-wrap text-text-secondary">
+        {JSON.stringify(context, null, 2)}
+      </pre>
+    </section>
+  );
+}
+
 interface ExecutionInspectorPanelProps {
   execution: GraphWorkflowExecution;
   events: GraphWorkflowExecutionEvent[];
@@ -380,6 +400,8 @@ interface ExecutionInspectorPanelProps {
   /** Project-scoped registry summaries for the config tab's command
    * multi-selects; undefined = registry unavailable. */
   commandOptions?: readonly ValidationCommandSummary[];
+  /** Historical runs retain every inspection surface but expose no edits. */
+  readOnly?: boolean;
 }
 
 export interface ContextTabRequest {
@@ -1564,6 +1586,7 @@ function DetailView({
   onViewConversation,
   contextTabRequest,
   commandOptions,
+  readOnly = false,
 }: {
   execution: GraphWorkflowExecution;
   events: GraphWorkflowExecutionEvent[];
@@ -1597,6 +1620,7 @@ function DetailView({
   onViewConversation?: ExecutionInspectorPanelProps["onViewConversation"];
   contextTabRequest?: ContextTabRequest | null;
   commandOptions?: readonly ValidationCommandSummary[];
+  readOnly?: boolean;
 }) {
   const [activeTab, setActiveTab] = useState<DetailTab>("tasks");
   // Honour a host's deep link exactly once per request, adjusting state during
@@ -1786,10 +1810,12 @@ function DetailView({
   const iterationCount = contextState?.iterationCount ?? 0;
 
   const canAddTasks =
+    !readOnly &&
     contextState?.status !== "completed" &&
     context.mutability?.allowAgentTaskAdd;
 
   const canResetContext =
+    !readOnly &&
     onResetContext != null &&
     (execution.status === "paused" || execution.status === "halted") &&
     contextState?.status !== "completed";
@@ -1895,7 +1921,9 @@ function DetailView({
               outputSchemaEvidence={outputSchemaHaltEvidence}
               // Already inside the refusing context: the action only has to
               // move the operator to the tab that owns the contract.
-              onEditSchema={() => setActiveTab("config")}
+              {...(!readOnly
+                ? { onEditSchema: () => setActiveTab("config") }
+                : {})}
             />
           )}
 
@@ -1973,7 +2001,8 @@ function DetailView({
                 {tasks.map((task, index) => {
                   const taskState = execution.taskStates[task.id];
                   const isExpanded = expandedTaskId === task.id;
-                  const isEditable = isTaskEditable(execution, task.id);
+                  const isEditable =
+                    !readOnly && isTaskEditable(execution, task.id);
                   const hasConversation = !!taskState?.lastConversationId;
                   const isRunning = isTaskConversationLive(execution, task.id);
                   const isViewing = viewingTaskId === task.id;
@@ -2231,24 +2260,28 @@ function DetailView({
           </TabsContent>
 
           <TabsContent value="config">
-            <ContextConfigTab
-              key={contextId}
-              execution={execution}
-              contextId={contextId}
-              onSaveContextConfig={onSaveContextConfig}
-              libraryProjectName={libraryProjectName}
-              {...(onResetAssignment ? { onResetAssignment } : {})}
-              resettingAssignmentId={resettingAssignmentId}
-              onPauseExecution={onPauseExecution}
-              onResumeExecution={onResumeExecution}
-              isSaving={isSavingConfig}
-              isPausing={isPausingExecution}
-              isResuming={isResumingExecution}
-              editConflict={configEditConflict}
-              editError={configEditError}
-              saveSucceeded={configSaveSucceeded}
-              commandOptions={commandOptions}
-            />
+            {readOnly ? (
+              <HistoricalContextConfiguration context={context} />
+            ) : (
+              <ContextConfigTab
+                key={contextId}
+                execution={execution}
+                contextId={contextId}
+                onSaveContextConfig={onSaveContextConfig}
+                libraryProjectName={libraryProjectName}
+                {...(onResetAssignment ? { onResetAssignment } : {})}
+                resettingAssignmentId={resettingAssignmentId}
+                onPauseExecution={onPauseExecution}
+                onResumeExecution={onResumeExecution}
+                isSaving={isSavingConfig}
+                isPausing={isPausingExecution}
+                isResuming={isResumingExecution}
+                editConflict={configEditConflict}
+                editError={configEditError}
+                saveSucceeded={configSaveSucceeded}
+                commandOptions={commandOptions}
+              />
+            )}
           </TabsContent>
 
           <TabsContent value="history">
@@ -2443,6 +2476,7 @@ export default function ExecutionInspectorPanel({
   onOpenAdvisoryOrigin,
   contextTabRequest,
   commandOptions,
+  readOnly = false,
 }: ExecutionInspectorPanelProps) {
   const selectedContext = selectedContextId
     ? execution.workingDefinition.executionContexts.find(
@@ -2460,7 +2494,7 @@ export default function ExecutionInspectorPanel({
         {...(onOpenAdvisoryOrigin !== undefined
           ? { onOpenAdvisoryOrigin }
           : {})}
-        onEditSchema={onEditSchema}
+        {...(!readOnly && onEditSchema !== undefined ? { onEditSchema } : {})}
         onViewConversation={onViewConversation}
       />
     );
@@ -2497,6 +2531,7 @@ export default function ExecutionInspectorPanel({
       onViewConversation={onViewConversation}
       contextTabRequest={contextTabRequest}
       commandOptions={commandOptions}
+      readOnly={readOnly}
     />
   );
 }

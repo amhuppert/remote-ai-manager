@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { rm } from "node:fs/promises";
 import {
   DEFAULT_AGENT_BACKEND_ID,
   type AgentBackendId,
@@ -7,6 +8,7 @@ import {
 import type {
   ConversationState,
   ConversationRole,
+  ConversationStatus,
   ForkedFrom,
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
@@ -77,6 +79,15 @@ export class ForkCreationError extends Error {
   }
 }
 
+export class ConversationDeletionConflictError extends Error {
+  constructor(conversationId: string, status: ConversationStatus) {
+    super(
+      `Conversation "${conversationId}" must be idle before deletion; current status is "${status}"`,
+    );
+    this.name = "ConversationDeletionConflictError";
+  }
+}
+
 const logger = createLogger("conversations");
 
 // ============================================================
@@ -90,6 +101,13 @@ export interface ConversationsDeps {
   getConversation: typeof defaultGetConversation;
   getSessionConversations: typeof defaultGetSessionConversations;
   setConversationPendingPromptText: typeof defaultSetConversationPendingPromptText;
+  stopConversationActor?(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    reason: string,
+  ): Promise<void>;
+  removeTranscript?(transcriptPath: string): Promise<void>;
   /**
    * Override config dir for transcript path resolution. When omitted, the
    * global config dir (resolved from CC_CONFIG_DIR / OS defaults) is used.
@@ -131,6 +149,19 @@ const defaultConversationsDeps: ConversationsDeps = {
   getConversation: defaultGetConversation,
   getSessionConversations: defaultGetSessionConversations,
   setConversationPendingPromptText: defaultSetConversationPendingPromptText,
+  stopConversationActor: async (
+    projectPath,
+    sessionName,
+    conversationId,
+    reason,
+  ) => {
+    const { stopConversationActor } =
+      await import("@/lib/workflows/conversation/manager");
+    stopConversationActor(projectPath, sessionName, conversationId, reason);
+  },
+  removeTranscript: async (transcriptPath) => {
+    await rm(transcriptPath, { force: true });
+  },
   getContinuityAdapter: defaultGetContinuityAdapter,
   resolveProfileSnapshot: resolveConversationProfileSnapshot,
 };
@@ -149,6 +180,8 @@ export function createConversationService(
     getConversation,
     getSessionConversations,
     setConversationPendingPromptText: setPendingPromptTextDep,
+    stopConversationActor = defaultConversationsDeps.stopConversationActor!,
+    removeTranscript = defaultConversationsDeps.removeTranscript!,
     configDir,
     getContinuityAdapter = defaultGetContinuityAdapter,
     resolveProfileSnapshot = resolveConversationProfileSnapshot,
@@ -238,6 +271,83 @@ export function createConversationService(
     sessionName: string,
   ): Promise<ConversationState[]> {
     return getSessionConversations(projectPath, sessionName);
+  }
+
+  async function deleteConversation(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): Promise<void> {
+    const conversation = await getConversation(
+      projectPath,
+      sessionName,
+      conversationId,
+    );
+    if (conversation === null) {
+      throw new Error(
+        `Conversation "${conversationId}" not found in session "${sessionName}"`,
+      );
+    }
+    if (conversation.status !== "new" && conversation.status !== "awaiting") {
+      throw new ConversationDeletionConflictError(
+        conversationId,
+        conversation.status,
+      );
+    }
+
+    await stopConversationActor(
+      projectPath,
+      sessionName,
+      conversationId,
+      "conversation deleted",
+    );
+    await mutateSession(
+      projectPath,
+      sessionName,
+      "deleteConversation",
+      (session) => {
+        const index = session.conversations.findIndex(
+          (candidate) => candidate.id === conversationId,
+        );
+        if (index < 0) {
+          throw new Error(
+            `Conversation "${conversationId}" not found in session "${sessionName}"`,
+          );
+        }
+        const current = session.conversations[index]!;
+        if (current.status !== "new" && current.status !== "awaiting") {
+          throw new ConversationDeletionConflictError(
+            conversationId,
+            current.status,
+          );
+        }
+        session.conversations.splice(index, 1);
+      },
+    );
+
+    let transcriptCleanup: "absent" | "removed" | "failed" = "absent";
+    if (conversation.transcriptPath !== null) {
+      try {
+        await removeTranscript(conversation.transcriptPath);
+        transcriptCleanup = "removed";
+      } catch (error) {
+        transcriptCleanup = "failed";
+        logger.warn("conversation.transcript_remove_failure", {
+          projectPath,
+          sessionName,
+          conversationId,
+          transcriptPath: conversation.transcriptPath,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+
+    logger.info("conversation.deleted", {
+      projectPath,
+      sessionName,
+      conversationId,
+      transcriptCleanup,
+    });
   }
 
   /** Update the agent backend for a conversation that has no prompts yet */
@@ -712,6 +822,7 @@ export function createConversationService(
 
   return {
     createConversation,
+    deleteConversation,
     getConversation: getConversationById,
     getSessionConversations: getSessionConversationsList,
     setConversationBackend,
@@ -783,6 +894,7 @@ function extractUserText(message: TranscriptMessage): string {
 const defaultService = createConversationService();
 
 export const createConversation = defaultService.createConversation;
+export const deleteConversation = defaultService.deleteConversation;
 export const getConversation = defaultService.getConversation;
 export const getSessionConversations = defaultService.getSessionConversations;
 export const setConversationBackend = defaultService.setConversationBackend;

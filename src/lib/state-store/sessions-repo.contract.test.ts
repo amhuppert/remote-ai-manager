@@ -68,6 +68,12 @@ function makeFullSession(overrides: Partial<SessionState> = {}): SessionState {
     parentSessionName: "ancestor",
     graphWorkflowExecution: {
       id: "wf-1",
+      origin: {
+        kind: "template",
+        definitionId: "seed-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
       seedDefinitionId: "seed-1",
       seedDefinitionRevision: 1,
       workingDefinition: {},
@@ -419,12 +425,15 @@ describe("sessions-repo findListItemsByProject projection", () => {
     // The has_active_graph_workflow flag is derived by a correlated subquery
     // against graph_workflow_executions, not the (now vestigial) sessions
     // column. Seed one active and one terminal execution in the new table.
+    // `lease_held` is written explicitly because that projection — not the
+    // status — is what the subquery reads; its column default is deliberately
+    // "held", so a row seeded without it would read as active.
     const insertExecution = db.prepare(
       `INSERT INTO graph_workflow_executions
          (project_path, session_name, execution_id, seed_definition_id,
           seed_definition_revision, started_at, status, completed_at,
-          definition_json, runtime_json, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          definition_json, runtime_json, updated_at, lease_held)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     insertExecution.run(
       PROJECT_PATH,
@@ -438,6 +447,7 @@ describe("sessions-repo findListItemsByProject projection", () => {
       "{}",
       "{}",
       "2026-02-01T00:00:00Z",
+      1,
     );
     insertExecution.run(
       PROJECT_PATH,
@@ -451,6 +461,7 @@ describe("sessions-repo findListItemsByProject projection", () => {
       "{}",
       "{}",
       "2026-01-15T00:00:00Z",
+      0,
     );
 
     db.prepare(
@@ -494,6 +505,75 @@ describe("sessions-repo findListItemsByProject projection", () => {
     expect(done?.hasActiveGraphWorkflow).toBe(false);
     expect(done?.workflowEnvelopes).toBeNull();
   });
+
+  /**
+   * The ambient "this session has live workflow work" signal is lease tenure,
+   * read from the derived `lease_held` projection that the repository writes on
+   * every `setActive`.
+   *
+   * The status list this replaces could not be right: it named statuses this
+   * domain does not even have (`failed`, `cancelled`), so `aborted` counted as
+   * active, and no status list can see halt resumability or abandonment — the
+   * two facts that decide whether a halted run still holds anything. A run that
+   * can never continue kept advertising itself as live work on every session
+   * list, with no act available to clear it.
+   */
+  it.each([
+    { name: "aborted", status: "aborted", leaseHeld: 0, expected: false },
+    { name: "abandoned-halt", status: "halted", leaseHeld: 0, expected: false },
+    {
+      name: "unresumable-halt",
+      status: "halted",
+      leaseHeld: 0,
+      expected: false,
+    },
+    { name: "resumable-halt", status: "halted", leaseHeld: 1, expected: true },
+    { name: "paused", status: "paused", leaseHeld: 1, expected: true },
+    { name: "pending", status: "pending", leaseHeld: 1, expected: true },
+  ])(
+    "reports a $name execution as ambient-active: $expected",
+    ({ name, status, leaseHeld, expected }) => {
+      const sessionName = `session-${name}`;
+      db.prepare(
+        `INSERT INTO sessions
+           (project_path, session_name, worktree_path, branch_name,
+            created_at, last_activity_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(
+        PROJECT_PATH,
+        sessionName,
+        `/wt/${sessionName}`,
+        `csm/${sessionName}`,
+        "2026-01-01T00:00:00Z",
+        "2026-02-01T00:00:00Z",
+      );
+      db.prepare(
+        `INSERT INTO graph_workflow_executions
+           (project_path, session_name, execution_id, seed_definition_id,
+            seed_definition_revision, started_at, status, completed_at,
+            definition_json, runtime_json, updated_at, lease_held)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        PROJECT_PATH,
+        sessionName,
+        `wf-${name}`,
+        "seed",
+        1,
+        "2026-01-01T00:00:00Z",
+        status,
+        null,
+        "{}",
+        "{}",
+        "2026-02-01T00:00:00Z",
+        leaseHeld,
+      );
+
+      const row = repo
+        .findListItemsByProject(PROJECT_PATH)
+        .find((r) => r.sessionName === sessionName);
+      expect(row?.hasActiveGraphWorkflow).toBe(expected);
+    },
+  );
 });
 
 describe("canonicalSessionRow", () => {

@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
-import { assembleUserContentBlocks } from "./assemble-user-blocks";
+import type { GraphWorkflowResultDelivery } from "@/lib/workflow-graph/schemas";
+import {
+  assembleUserContentBlocks,
+  assembleWorkflowResultsBlock,
+} from "./assemble-user-blocks";
 
 function img(
   id: string,
@@ -186,5 +190,56 @@ describe("assembleUserContentBlocks", () => {
       { attachmentId: "b", serverIndex: 2, mediaType: "image/jpeg" },
       { attachmentId: "strip", serverIndex: 3, mediaType: "image/webp" },
     ]);
+  });
+});
+
+describe("assembleWorkflowResultsBlock", () => {
+  it("renders one structured block in durable boundary order with stable keys", () => {
+    const deliveries: GraphWorkflowResultDelivery[] = [
+      {
+        executionId: "exec-zeta",
+        boundarySeq: 42,
+        projectPath: "/projects/repo",
+        sessionName: "test-session",
+        originConversationId: "conv-1",
+        payload: { status: "completed", output: "second" },
+        recordedAt: "2026-08-14T12:00:02.000Z",
+        state: "delivering",
+        attemptId: "turn-1",
+        attemptCount: 1,
+        deliveredAt: null,
+        effectsDeliveredAt: null,
+      },
+      {
+        executionId: "exec-alpha",
+        boundarySeq: 11,
+        projectPath: "/projects/repo",
+        sessionName: "test-session",
+        originConversationId: "conv-1",
+        payload: { status: "halted", output: "first" },
+        recordedAt: "2026-08-14T12:00:01.000Z",
+        state: "delivering",
+        attemptId: "turn-1",
+        attemptCount: 1,
+        deliveredAt: null,
+        effectsDeliveredAt: null,
+      },
+    ];
+
+    const block = assembleWorkflowResultsBlock(deliveries);
+    if (block === null) throw new Error("Expected a workflow results block");
+
+    expect(block.match(/<workflow-results>/g)).toHaveLength(1);
+    expect(block.match(/<\/workflow-results>/g)).toHaveLength(1);
+    expect(block.indexOf('"key":"exec-alpha:11"')).toBeLessThan(
+      block.indexOf('"key":"exec-zeta:42"'),
+    );
+    expect(block).toContain('"executionId":"exec-alpha"');
+    expect(block).toContain('"boundarySeq":42');
+    expect(block).toContain('"output":"second"');
+  });
+
+  it("returns null when there are no claimed results", () => {
+    expect(assembleWorkflowResultsBlock([])).toBeNull();
   });
 });

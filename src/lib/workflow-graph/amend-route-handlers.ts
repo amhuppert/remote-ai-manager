@@ -26,8 +26,11 @@ import {
   getSession as defaultGetSession,
   getActiveGraphWorkflowExecution,
   mutateActiveGraphWorkflowExecution,
+  reserveActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
   markGraphWorkflowContextEventsPreReset,
+  getGraphWorkflowPendingArtifacts,
+  clearGraphWorkflowPendingArtifacts,
 } from "@/lib/state-store";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
@@ -66,8 +69,6 @@ import type { PrepareAssignmentSnapshotsResult } from "./live-edit-preparation";
 import type { LiveEditDeps } from "./runtime-edits";
 
 /** Shared with the spec routes: an absent token is a human at a browser. */
-const CALLER_CONVERSATION_HEADER = "x-cc-conversation-id";
-const CALLER_BACKEND_HEADER = "x-cc-agent-backend";
 const logger = createLogger("workflow-graph.amend-route");
 
 type RouteContext = {
@@ -116,15 +117,31 @@ export interface GraphWorkflowAmendRouteDeps {
     markdown: string;
   }): Promise<void>;
   auth: GraphWorkflowAmendAuth;
+  /**
+   * Principal verification seams for the shared mutation guard. Optional so
+   * production inherits the registered verifiers and tests inject their own.
+   */
+  verifyConversationCapability?: WorkflowMutationGuardDeps["verifyConversationCapability"];
+  verifyLaneCapability?: WorkflowMutationGuardDeps["verifyLaneCapability"];
 }
+
+import {
+  guardExecutionMutation,
+  runPinnedMutation,
+  type WorkflowMutationGuardDeps,
+} from "./mutation-guard";
+import type { WorkflowRequestPrincipal } from "./request-principal";
 
 const eventPublisher = createGraphWorkflowExecutionEventPublisher();
 const executionRepository = createGraphWorkflowExecutionRepository({
   getSession: defaultGetSession,
   getActiveGraphWorkflowExecution,
   mutateActiveGraphWorkflowExecution,
+  reserveActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
   markGraphWorkflowContextEventsPreReset,
+  getGraphWorkflowPendingArtifacts,
+  clearGraphWorkflowPendingArtifacts,
   eventPublisher,
 });
 
@@ -165,51 +182,35 @@ function respondLiveEditFailure(failure: LiveEditFailure): Response {
   return NextResponse.json(body, { status: failure.status });
 }
 
-/**
- * The actor, decided by the transport. A body-supplied actor would let the
- * caller choose its own attribution, which is the one thing an audit row of
- * this kind must not allow (`evidence-legality`).
- */
-function resolveAmendmentActor(
-  request: Request,
-):
-  | { ok: true; actor: WorkflowAmendmentActor }
-  | { ok: false; response: Response } {
-  if (request.headers.get("authorization") === null) {
-    return { ok: true, actor: { kind: "human" } };
-  }
-  const conversationId = request.headers
-    .get(CALLER_CONVERSATION_HEADER)
-    ?.trim();
-  if (!conversationId) {
-    return {
-      ok: false,
-      response: NextResponse.json(
-        {
-          error:
-            "Originating conversation identity is required for an agent amendment",
-          code: "validation",
-        },
-        { status: 400 },
-      ),
-    };
-  }
-  const backend = request.headers.get(CALLER_BACKEND_HEADER)?.trim();
-  return {
-    ok: true,
-    actor: {
-      kind: "agent",
-      conversationId,
-      ...(backend ? { backend } : {}),
-    },
-  };
-}
-
 function describeActor(actor: WorkflowAmendmentActor): string {
   if (actor.kind === "human") return "human";
   return actor.backend === undefined
     ? `agent:${actor.conversationId}`
     : `agent:${actor.conversationId} (${actor.backend})`;
+}
+
+/**
+ * The audit actor for an established principal.
+ *
+ * Which backend wrote an amendment is worth recording, but a caller cannot be
+ * the one to say: the amendment row is evidence, and evidence a caller labels
+ * itself with is worthless. The backend is therefore read from the session's
+ * own record of that conversation — the server already knows it — and is simply
+ * absent when the session no longer carries the conversation.
+ */
+function buildAmendmentActor(
+  principal: WorkflowRequestPrincipal,
+  session: SessionState,
+): WorkflowAmendmentActor {
+  if (principal.kind === "human_ui") return { kind: "human" };
+  const backend = session.conversations.find(
+    (conversation) => conversation.id === principal.conversationId,
+  )?.agentBackend;
+  return {
+    kind: "agent",
+    conversationId: principal.conversationId,
+    ...(backend === undefined ? {} : { backend }),
+  };
 }
 
 export function createGraphWorkflowAmendRouteHandlers(
@@ -276,10 +277,6 @@ export function createGraphWorkflowAmendRouteHandlers(
     }
     const amendmentRequest = parsed.data;
 
-    const actorResolution = resolveAmendmentActor(request);
-    if (!actorResolution.ok) return actorResolution.response;
-    const actor = actorResolution.actor;
-
     const params = await context.params;
     const projectName = params["name"] ?? "";
     const sessionName = decodeURIComponent(params["session"] ?? "");
@@ -297,6 +294,25 @@ export function createGraphWorkflowAmendRouteHandlers(
         "Session does not have an active graph workflow execution",
       );
     }
+
+    // Attribution is DERIVED from the server-established principal, never from
+    // the caller's own header: letting a caller name itself in an audit row is
+    // the one thing a row of this kind must not allow (`evidence-legality`),
+    // and it is the same forgery the lifecycle verbs refuse. Guarded before the
+    // amendment below, which commits — a refusal must be write-free.
+    const guarded = await guardExecutionMutation({
+      request,
+      session: resolved.value.session,
+      deps,
+      verb: "amend",
+      projectPath,
+      execution,
+    });
+    if ("refusal" in guarded) return guarded.refusal;
+    const actor: WorkflowAmendmentActor = buildAmendmentActor(
+      guarded.principal,
+      resolved.value.session,
+    );
 
     if (!isWorkflowExecutionAmendableStatus(execution.status)) {
       logger.warn("graph-workflow.amend.refused", {
@@ -327,29 +343,33 @@ export function createGraphWorkflowAmendRouteHandlers(
     }
 
     const additions = amendmentAdditions(amendmentRequest.operations);
-    const outcome = await applyLiveEditsToActiveExecution(
-      {
-        projectPath,
-        sessionName,
-        request: {
-          executionId: execution.id,
-          baseLiveRevision: execution.liveRevision,
-          source: actor.kind === "human" ? "ui" : "cli",
-          operations: toLiveEditOperations(amendmentRequest.operations),
-          amendment: {
-            reason: amendmentRequest.reason,
-            actor: describeActor(actor),
-            policyActor: actor,
-            operations: amendmentRequest.operations,
-            addedContextIds: additions.contextIds,
-            addedTaskIds: additions.taskIds,
-            addedEdgeIds: additions.edgeIds,
-            hashDefinition: workingDefinitionHash,
+    const acted = await runPinnedMutation(guarded.fence, "amend", () =>
+      applyLiveEditsToActiveExecution(
+        {
+          projectPath,
+          sessionName,
+          request: {
+            executionId: execution.id,
+            baseLiveRevision: execution.liveRevision,
+            source: actor.kind === "human" ? "ui" : "cli",
+            operations: toLiveEditOperations(amendmentRequest.operations),
+            amendment: {
+              reason: amendmentRequest.reason,
+              actor: describeActor(actor),
+              policyActor: actor,
+              operations: amendmentRequest.operations,
+              addedContextIds: additions.contextIds,
+              addedTaskIds: additions.taskIds,
+              addedEdgeIds: additions.edgeIds,
+              hashDefinition: workingDefinitionHash,
+            },
           },
         },
-      },
-      deps,
+        deps,
+      ),
     );
+    if (acted.kind === "turnover") return acted.refusal;
+    const outcome = acted.value;
 
     if (!outcome.ok) {
       if (outcome.kind === "no_active_execution") {

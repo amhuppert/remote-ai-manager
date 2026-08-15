@@ -1,13 +1,22 @@
 import type {
-  GraphWorkflowArchiveEligibility,
+  GraphWorkflowAbandonment,
+  GraphWorkflowDefinitionApproval,
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
   GraphWorkflowHaltReason,
+  GraphWorkflowLeaseIncumbent,
+  GraphWorkflowLeaseRemedy,
   GraphWorkflowLifecycleDecision,
-  GraphWorkflowReplacementPolicy,
   GraphWorkflowTaskState,
 } from "@/lib/workflow-graph/schemas";
-import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
+import {
+  graphWorkflowAbandonmentSchema,
+  graphWorkflowHaltReasonSchema,
+} from "@/lib/workflow-graph/schemas";
+import {
+  graphWorkflowStatusSchema,
+  type GraphWorkflowStatus,
+} from "@/lib/workflow-graph/definition-schemas";
 import { assertNever } from "@/lib/shared/assert-never";
 import { deepEqualJson } from "@/lib/shared/deep-equal";
 import {
@@ -24,17 +33,19 @@ import {
  */
 
 /**
- * THE lifecycle contract (design §10): terminality, slot ownership, explicit
- * archive eligibility, and replacement policy for every execution status,
- * decided here and nowhere else. Before this table those rules were restated
- * per call site and had already diverged — the start guard treated `halted` as
- * freely replaceable while the validation resolver failed closed on it — so any
- * consumer keeping a local copy is the defect this module exists to prevent.
+ * THE lifecycle contract (design §10): terminality for every execution status,
+ * decided here and nowhere else. Before this table the rule was restated per
+ * call site and had already diverged — the start guard treated `halted` as
+ * freely replaceable while the validation resolver failed closed on it — so
+ * any consumer keeping a local copy is the defect this module exists to
+ * prevent.
  *
- * The two axes people conflate are deliberately separate columns: `terminal`
- * says the run has ENDED, `slotOwnership` says whether it still OWNS the
- * session's execution slot. `halted` is both terminal and slot-owning, because
- * it can still be resumed.
+ * What the table deliberately does NOT decide is tenure. `terminal` says the
+ * run has ENDED; whether it still holds the session's one lease depends on the
+ * halt reason and the abandonment record, which no status column can see —
+ * that is `holdsExecutionLease`. D7 removed the status-only slot-ownership,
+ * replacement, and archive-eligibility columns that approximated it: each was
+ * a status set standing in for tenure, and the lease answers all three.
  */
 const LIFECYCLE_CONTRACT: Record<
   GraphWorkflowStatus,
@@ -43,44 +54,26 @@ const LIFECYCLE_CONTRACT: Record<
   pending: {
     status: "pending",
     terminal: false,
-    slotOwnership: "retained",
-    explicitArchive: "refused",
-    replacement: "refused",
   },
   running: {
     status: "running",
     terminal: false,
-    slotOwnership: "retained",
-    explicitArchive: "refused",
-    replacement: "refused",
   },
   paused: {
     status: "paused",
     terminal: false,
-    slotOwnership: "retained",
-    explicitArchive: "eligible",
-    replacement: "refused",
   },
   halted: {
     status: "halted",
     terminal: true,
-    slotOwnership: "retained",
-    explicitArchive: "eligible",
-    replacement: "audited-archive",
   },
   completed: {
     status: "completed",
     terminal: true,
-    slotOwnership: "auto-release",
-    explicitArchive: "idempotent",
-    replacement: "audited-archive",
   },
   aborted: {
     status: "aborted",
     terminal: true,
-    slotOwnership: "auto-release",
-    explicitArchive: "idempotent",
-    replacement: "audited-archive",
   },
 };
 
@@ -91,36 +84,9 @@ export function graphWorkflowLifecycleDecision(
   return LIFECYCLE_CONTRACT[status];
 }
 
-/** Whether the run has ended. Says nothing about slot ownership. */
+/** Whether the run has ended. Says nothing about the lease. */
 export function isTerminalStatus(status: GraphWorkflowStatus): boolean {
   return LIFECYCLE_CONTRACT[status].terminal;
-}
-
-/** Whether reaching this status releases the session's slot with no further act. */
-export function autoReleasesSlot(status: GraphWorkflowStatus): boolean {
-  return LIFECYCLE_CONTRACT[status].slotOwnership === "auto-release";
-}
-
-/**
- * Whether the run keeps the session's execution slot AND its validation
- * ownership until it is resumed, abandoned, or explicitly archived.
- */
-export function retainsSlotOwnership(status: GraphWorkflowStatus): boolean {
-  return LIFECYCLE_CONTRACT[status].slotOwnership === "retained";
-}
-
-/** Whether an explicit, audited archive act may release this run. */
-export function explicitArchiveEligibility(
-  status: GraphWorkflowStatus,
-): GraphWorkflowArchiveEligibility {
-  return LIFECYCLE_CONTRACT[status].explicitArchive;
-}
-
-/** How a new execution may take the slot from an incumbent in this status. */
-export function replacementPolicy(
-  status: GraphWorkflowStatus,
-): GraphWorkflowReplacementPolicy {
-  return LIFECYCLE_CONTRACT[status].replacement;
 }
 
 export type ContextLifecycle = "frozen" | "unstarted" | "started";
@@ -129,8 +95,34 @@ export type ExecutionEditability =
   | { kind: "editable"; quiescent: boolean }
   | {
       kind: "not-editable";
-      reason: "completed" | "aborted" | "halt-not-resumable";
+      reason:
+        | "completed"
+        | "aborted"
+        | "halt-not-resumable"
+        | "awaiting-definition-approval";
     };
+
+/**
+ * Whether the run is parked awaiting a human definition decision — the one
+ * state approve and reject act on (D7 decision D17).
+ *
+ * Owned here because it decides two things at once: which act the lease remedy
+ * names, and whether the snapshot is editable. Approve and reject address the
+ * EXECUTION alone, which is sound only while the bytes under review cannot
+ * change between the read and the decision, so the park has to freeze the
+ * snapshot — and a predicate restated per call site would let one surface
+ * freeze while another kept editing.
+ */
+export function awaitsDefinitionApproval(
+  status: GraphWorkflowStatus,
+  definitionApproval: GraphWorkflowDefinitionApproval | null,
+): boolean {
+  return (
+    status === "pending" &&
+    definitionApproval !== null &&
+    definitionApproval.approvedAt === null
+  );
+}
 
 export type GraphWorkflowSessionDeliveryDecision =
   | { allowed: true }
@@ -138,34 +130,59 @@ export type GraphWorkflowSessionDeliveryDecision =
       allowed: false;
       executionId: string;
       status: GraphWorkflowExecution["status"];
+      remedy: GraphWorkflowLeaseRemedy;
       message: string;
     };
 
+/**
+ * The operator-facing half of each canonical remedy, phrased for delivery. The
+ * remedy token is the decision; this is only its sentence, so the two surfaces
+ * that refuse a merge cannot word one blocker two ways.
+ */
+const DELIVERY_REMEDY_SENTENCE: Record<GraphWorkflowLeaseRemedy, string> = {
+  approve_or_abort: "Approve or abort it before merging this session.",
+  inspect_or_pause: "Complete or abort it before merging this session.",
+  resume_or_abandon: "Resume or abandon it before merging this session.",
+};
+
+/**
+ * The delivery gate asks the ONE lease question, not a status question. A
+ * status-only gate blocked every `halted` execution, so a non-resumable or
+ * abandoned halt — a run that can never continue — refused the merge forever
+ * with no act available to clear it. Tenure is what makes work "still in
+ * flight", and tenure is `holdsExecutionLease`.
+ *
+ * The refusal carries the SAME remedy a launch refusal would (decision D6).
+ * Derived rather than fixed because the one sentence this used to print —
+ * complete or abort — names acts a halted run does not admit, while abandoning
+ * it is precisely what admits the merge (R13.1).
+ */
 export function evaluateGraphWorkflowSessionDelivery(
-  execution: Pick<GraphWorkflowExecution, "id" | "status"> | null,
+  execution: Pick<
+    GraphWorkflowExecution,
+    "id" | "status" | "haltReason" | "abandonment" | "definitionApproval"
+  > | null,
 ): GraphWorkflowSessionDeliveryDecision {
   if (execution === null) return { allowed: true };
 
-  switch (execution.status) {
-    case "completed":
-    case "aborted":
-      return { allowed: true };
-    case "pending":
-    case "running":
-    case "paused":
-    case "halted":
-      return {
-        allowed: false,
-        executionId: execution.id,
-        status: execution.status,
-        message: `Graph workflow execution ${execution.id} is ${execution.status}. Complete or abort it before merging this session.`,
-      };
-    default:
-      return assertNever(
-        execution.status,
-        `unhandled execution status: ${String(execution.status)}`,
-      );
+  if (
+    !holdsExecutionLease(
+      execution.status,
+      execution.haltReason,
+      execution.abandonment,
+    )
+  ) {
+    return { allowed: true };
   }
+
+  const remedy = leaseRemedyFor(execution);
+  return {
+    allowed: false,
+    executionId: execution.id,
+    status: execution.status,
+    remedy,
+    message: `Graph workflow execution ${execution.id} is ${execution.status}. ${DELIVERY_REMEDY_SENTENCE[remedy]}`,
+  };
 }
 
 /**
@@ -214,6 +231,209 @@ const HALT_RESUMABILITY: Record<GraphWorkflowHaltReason["type"], boolean> = {
 
 export function isResumableHalt(reason: GraphWorkflowHaltReason): boolean {
   return HALT_RESUMABILITY[reason.type];
+}
+
+/**
+ * THE lease predicate (D7 decision D14): whether this run still owns the
+ * session's one execution slot. Admission, resume, the Current/History split,
+ * ambient signals, validation caller-ownership, the delivery gate, and the
+ * `lease_held` persistence projection all consume this one decision, so a
+ * consumer keeping a local status set is the defect this replaces — a set
+ * cannot see halt resumability or abandonment, the two facts that decide a
+ * halted run's tenure.
+ *
+ * The status-only slot-ownership rule this supersedes reported every `halted`
+ * run as slot-owning, because a status is all it had.
+ */
+export function holdsExecutionLease(
+  status: GraphWorkflowStatus,
+  haltReason: GraphWorkflowHaltReason | null,
+  abandonment: GraphWorkflowAbandonment | null,
+): boolean {
+  switch (status) {
+    case "pending":
+    case "running":
+    case "paused":
+      return true;
+    case "halted":
+      // Abandon is the explicit, audited end of a resumable halt's tenure; the
+      // status stays `halted` because the engine state is a fact, so the record
+      // is what releases the lease.
+      if (abandonment !== null) return false;
+      // Held IFF the reason is a resumable one. A run halted with NO recorded
+      // reason is therefore lease-free: `isResumableHalt` is a claim about a
+      // reason, and there is none to resume from. `classifyExecutionEditability`
+      // and `workflowExecutionAmendmentRefusalInstruction` already draw the line
+      // here, so the alternative — holding the lease for an unproven halt —
+      // produced a run that was Current and launch-blocking yet neither
+      // editable, resumable, nor amendable.
+      return haltReason !== null && isResumableHalt(haltReason);
+    case "completed":
+    case "aborted":
+      return false;
+    default:
+      return assertNever(
+        status,
+        `unhandled execution status: ${String(status)}`,
+      );
+  }
+}
+
+/**
+ * The lease predicate over a RAW stored record — a row read straight out of
+ * SQLite, or a legacy-shaped blob mid-upgrade, before anything has validated it
+ * as a {@link GraphWorkflowExecution}.
+ *
+ * Two callers need tenure before a record is parseable: the schema backfill that
+ * projects `lease_held` onto existing rows, and the legacy upgrade deciding
+ * whether a stored status may be reinterpreted. Both must reach the same verdict
+ * as every parsed consumer, so the decoding lives here rather than being
+ * restated at each site.
+ *
+ * Every unreadable input resolves to lease-HELD: a wrongly-held lease refuses a
+ * launch and is recoverable by abandoning the run, while a wrongly-free one
+ * admits a second Current run for the session.
+ */
+export function rawRecordHoldsExecutionLease(record: {
+  status?: unknown;
+  haltReason?: unknown;
+  abandonment?: unknown;
+}): boolean {
+  const status = graphWorkflowStatusSchema.safeParse(record.status);
+  if (!status.success) return true;
+  const haltReason = graphWorkflowHaltReasonSchema
+    .nullable()
+    .safeParse(record.haltReason ?? null);
+  const abandonment = graphWorkflowAbandonmentSchema
+    .nullable()
+    .safeParse(record.abandonment ?? null);
+  if (!haltReason.success || !abandonment.success) return true;
+  return holdsExecutionLease(status.data, haltReason.data, abandonment.data);
+}
+
+/**
+ * Whether an interaction parked on a context — an approval gate, a user-input
+ * question — can still be acted on.
+ *
+ * TWO facts, because two different things make a park dead. Tenure is the
+ * first: a run that can never continue will never apply the answer, so a
+ * non-resumably halted or abandoned gate is asking for a decision that changes
+ * nothing. Having started is the second: a `pending` run holds the lease but is
+ * still waiting for its own definition approval, so no context of it is
+ * running and any park on one is a fixture, not a fact.
+ *
+ * One authority for both, because the five consumers — the Needs-Input feed,
+ * the two browser standing hooks, the decision recorder, and the chat-open
+ * guard — must agree. They previously kept five private status sets with
+ * "keep in sync" comments, and they duly drifted: the browser rendered gates
+ * the feed had dropped.
+ */
+export function holdsActionableGate(
+  status: GraphWorkflowStatus,
+  haltReason: GraphWorkflowHaltReason | null,
+  abandonment: GraphWorkflowAbandonment | null,
+): boolean {
+  if (status === "pending") return false;
+  return holdsExecutionLease(status, haltReason, abandonment);
+}
+
+/**
+ * The incumbent an admission decision reads. A `Pick` rather than a whole
+ * execution so the decision is provably a function of the lease-relevant
+ * record — and so the serialized reservation can evaluate it against the row
+ * it just read without inflating anything else.
+ */
+export type LeaseAdmissionIncumbent = Pick<
+  GraphWorkflowExecution,
+  | "id"
+  | "status"
+  | "haltReason"
+  | "abandonment"
+  | "origin"
+  | "ownerConversationId"
+  | "definitionApproval"
+>;
+
+/**
+ * The three — and only three — outcomes of a launch meeting an incumbent
+ * (R3.4). `admit-with-normalization` relocates an already-lease-free record
+ * into History, where it stays fully reviewable; nothing here ever ends,
+ * hides, or rewrites a run that still holds the lease.
+ */
+export type LeaseAdmissionDecision =
+  | { kind: "admit" }
+  | { kind: "admit-with-normalization"; incumbent: GraphWorkflowLeaseIncumbent }
+  | {
+      kind: "refuse";
+      incumbent: GraphWorkflowLeaseIncumbent;
+      remedy: GraphWorkflowLeaseRemedy;
+    };
+
+function describeLeaseIncumbent(
+  incumbent: LeaseAdmissionIncumbent,
+): GraphWorkflowLeaseIncumbent {
+  return {
+    executionId: incumbent.id,
+    status: incumbent.status,
+    origin: incumbent.origin,
+    originConversationId: incumbent.ownerConversationId,
+  };
+}
+
+/**
+ * What the refused caller should do about the run that holds the lease
+ * (D7 decision D6). Derived from the same record the refusal read, so the
+ * remedy can never name an act the blocker's state does not admit.
+ *
+ * Shared by BOTH refusals — the launch admission and the delivery gate — because
+ * they ask one question ("what releases this lease?"). A second copy is how the
+ * merge refusal came to tell an operator to complete a run that had halted.
+ */
+function leaseRemedyFor(
+  holder: Pick<GraphWorkflowExecution, "status" | "definitionApproval">,
+): GraphWorkflowLeaseRemedy {
+  if (awaitsDefinitionApproval(holder.status, holder.definitionApproval)) {
+    return "approve_or_abort";
+  }
+  if (holder.status === "halted") return "resume_or_abandon";
+  return "inspect_or_pause";
+}
+
+/**
+ * THE launch admission decision (D7 decision D3), consumed by both start-guard
+ * call sites: the manager's advisory pre-check and the repository's
+ * authoritative reservation inside the serialized CAS. One decision function
+ * for both is what keeps the single-winner race mechanical — the advisory
+ * check can only ever agree with, or be corrected by, the same rule.
+ *
+ * Pure: it decides, and the caller performs. Normalization is a decision here
+ * and a post-commit act there.
+ */
+export function evaluateLeaseAdmission(
+  incumbent: LeaseAdmissionIncumbent | null,
+): LeaseAdmissionDecision {
+  if (incumbent === null) return { kind: "admit" };
+
+  if (
+    holdsExecutionLease(
+      incumbent.status,
+      incumbent.haltReason,
+      incumbent.abandonment,
+    )
+  ) {
+    return {
+      kind: "refuse",
+      incumbent: describeLeaseIncumbent(incumbent),
+      remedy: leaseRemedyFor(incumbent),
+    };
+  }
+
+  // Lease-free but still physically in the active row — the legacy position
+  // R3.3 requires a launch to tolerate with no explicit clear act.
+  return {
+    kind: "admit-with-normalization",
+    incumbent: describeLeaseIncumbent(incumbent),
+  };
 }
 
 /**
@@ -333,11 +553,18 @@ export function classifyContextLifecycleFromPin(
  * or resumably-halted) unlocks the full policy surface including structural ops;
  * a `running` execution is editable but only for ops whose every target is
  * `unstarted`. Terminal (`completed`/`aborted`) and non-resumably-halted
- * executions are read-only.
+ * executions are read-only, and so is a run parked awaiting a definition
+ * decision — the snapshot a human is reviewing must be the snapshot the
+ * execution-addressed approval admits.
  */
 export function classifyExecutionEditability(
   execution: GraphWorkflowExecution,
 ): ExecutionEditability {
+  if (
+    awaitsDefinitionApproval(execution.status, execution.definitionApproval)
+  ) {
+    return { kind: "not-editable", reason: "awaiting-definition-approval" };
+  }
   switch (execution.status) {
     case "running":
       return { kind: "editable", quiescent: false };

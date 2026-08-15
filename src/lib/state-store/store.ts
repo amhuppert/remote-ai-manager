@@ -17,6 +17,9 @@ import { createDocumentCommentsRepo } from "./document-comments-repo";
 import { createGraphWorkflowArchivedExecutionsRepo } from "./graph-workflow-archived-executions-repo";
 import { createGraphWorkflowEventsRepo } from "./graph-workflow-events-repo";
 import { createGraphWorkflowExecutionsRepo } from "./graph-workflow-executions-repo";
+import { createGraphWorkflowResultDeliveriesRepo } from "./graph-workflow-result-deliveries-repo";
+import { createGraphWorkflowPendingArtifactsRepo } from "./graph-workflow-pending-artifacts-repo";
+import { createNotificationsRepo } from "@/lib/notifications/repo";
 import { createProjectConversationsRepo } from "./project-conversations-repo";
 import { createProjectsRepo } from "./projects-repo";
 import { createReferenceDocumentsRepo } from "./reference-documents-repo";
@@ -155,6 +158,13 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     graphWorkflowExecutions:
       deps.repos?.graphWorkflowExecutions ??
       createGraphWorkflowExecutionsRepo(db),
+    graphWorkflowResultDeliveries:
+      deps.repos?.graphWorkflowResultDeliveries ??
+      createGraphWorkflowResultDeliveriesRepo(db),
+    graphWorkflowPendingArtifacts:
+      deps.repos?.graphWorkflowPendingArtifacts ??
+      createGraphWorkflowPendingArtifactsRepo(db),
+    notifications: deps.repos?.notifications ?? createNotificationsRepo(db),
   };
 
   const core: StateStoreCore = { db, writeQueue, repos };
@@ -584,6 +594,16 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     findLatestGraphWorkflowContextEvent:
       accessors.findLatestGraphWorkflowContextEvent,
     getActiveGraphWorkflowExecution: accessors.getActiveGraphWorkflowExecution,
+    getArchivedGraphWorkflowExecutionById:
+      accessors.getArchivedGraphWorkflowExecutionById,
+    getGraphWorkflowExecutionById: accessors.getGraphWorkflowExecutionById,
+    getGraphWorkflowBoundaryResultAfter:
+      accessors.getGraphWorkflowBoundaryResultAfter,
+    getGraphWorkflowPendingArtifacts:
+      accessors.getGraphWorkflowPendingArtifacts,
+    getGraphWorkflowResultDelivery: accessors.getGraphWorkflowResultDelivery,
+    listPendingGraphWorkflowResultEffects:
+      accessors.listPendingGraphWorkflowResultEffects,
     listActiveGraphWorkflowExecutions:
       accessors.listActiveGraphWorkflowExecutions,
     listArchivedGraphWorkflowExecutions:
@@ -620,12 +640,30 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     addPlcSpawnedSessionIds: setters.addPlcSpawnedSessionIds,
     mutateActiveGraphWorkflowExecution:
       setters.mutateActiveGraphWorkflowExecution,
+    reserveActiveGraphWorkflowExecution:
+      setters.reserveActiveGraphWorkflowExecution,
+    clearGraphWorkflowPendingArtifacts:
+      setters.clearGraphWorkflowPendingArtifacts,
     archiveActiveGraphWorkflowExecution:
       setters.archiveActiveGraphWorkflowExecution,
     markGraphWorkflowContextEventsPreReset:
       setters.markGraphWorkflowContextEventsPreReset,
     mutateSessionWorkflowLanes: setters.mutateSessionWorkflowLanes,
     mutateSessionWorkflowEnvelopes: setters.mutateSessionWorkflowEnvelopes,
+    claimGraphWorkflowResultDeliveries:
+      setters.claimGraphWorkflowResultDeliveries,
+    settleGraphWorkflowResultDeliveries:
+      setters.settleGraphWorkflowResultDeliveries,
+    releaseGraphWorkflowResultDeliveries:
+      setters.releaseGraphWorkflowResultDeliveries,
+    settleGraphWorkflowResultDeliveryFallback:
+      setters.settleGraphWorkflowResultDeliveryFallback,
+    commitGraphWorkflowMissingOriginFallback:
+      setters.commitGraphWorkflowMissingOriginFallback,
+    markGraphWorkflowResultEffectDelivered:
+      setters.markGraphWorkflowResultEffectDelivered,
+    recoverGraphWorkflowResultDeliveries:
+      setters.recoverGraphWorkflowResultDeliveries,
     createReferenceDocument: setters.createReferenceDocument,
     deleteReferenceDocument: setters.deleteReferenceDocument,
     upsertSessionMarkdownDocuments: setters.upsertSessionMarkdownDocuments,

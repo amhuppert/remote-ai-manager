@@ -186,11 +186,15 @@ describe("graph-workflow live editing — canonical pause/edit/resume loop (doc 
     broadcast = vi.fn<(_event: GraphWorkflowSSEEvent) => void>();
     const publisher = createGraphWorkflowExecutionEventPublisher({ broadcast });
     const repository = createGraphWorkflowExecutionRepository({
+      // No git worktree in this harness; the real exclusion would shell out.
+      ensureCcArtifactsExcluded: async () => {},
       getSession: fixture.store.getSession,
       getActiveGraphWorkflowExecution:
         fixture.store.getActiveGraphWorkflowExecution,
       mutateActiveGraphWorkflowExecution:
         fixture.store.mutateActiveGraphWorkflowExecution,
+      reserveActiveGraphWorkflowExecution:
+        fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         fixture.store.archiveActiveGraphWorkflowExecution,
       markGraphWorkflowContextEventsPreReset:
@@ -268,7 +272,7 @@ describe("graph-workflow live editing — canonical pause/edit/resume loop (doc 
 
   function liveEditRows() {
     return fixture.graphWorkflowEvents
-      .findByExecution("execution-1")
+      .findByExecution(PROJECT_PATH, SESSION_NAME, "execution-1")
       .filter((row) => row.event.type === "graph-workflow-live-edit-applied");
   }
 

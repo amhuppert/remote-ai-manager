@@ -3,29 +3,13 @@
 import { useCallback } from "react";
 import type { ComponentProps } from "react";
 import type ApprovalGatePanel from "@/components/ApprovalGatePanel";
-import type { ApprovalScopedChanges } from "@/components/ApprovalGatePanel";
-import { getErrorMessage } from "@/lib/shared/errors";
+import { useApprovalScopedChanges } from "@/hooks/use-approval-scoped-changes";
 import { useResolveApprovalMutation } from "@/lib/workflows/mutations";
-import {
-  useGraphWorkflowApprovalSnapshotQuery,
-  useWorkflowDefinitionQuery,
-} from "@/lib/workflows/queries";
-import type {
-  GraphWorkflowApprovalSnapshotResponse,
-  GraphWorkflowExecution,
-} from "@/lib/workflow-graph/schemas";
-import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
+import { useWorkflowDefinitionQuery } from "@/lib/workflows/queries";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import { holdsActionableGate } from "@/lib/workflow-graph/lifecycle-classifier";
 
 export type ApprovalGatePanelProps = ComponentProps<typeof ApprovalGatePanel>;
-
-/**
- * Execution statuses under which an undecided approval gate keeps standing —
- * the gate survives pause/halt/restart and disappears only when the execution
- * leaves the in-flight set. Mirrors the server-side derivation in
- * `src/lib/active-conversations/route-handlers.ts` (keep the two in sync).
- */
-const GATE_STANDING_EXECUTION_STATUSES: ReadonlySet<GraphWorkflowStatus> =
-  new Set(["running", "paused", "halted"]);
 
 export interface ApprovalGateStanding {
   contextId: string;
@@ -42,17 +26,30 @@ export interface ApprovalGateStanding {
 }
 
 /**
- * Gate standing for one conversation: the execution is in-flight and a context
- * owned by this conversation is parked `awaiting_approval` with no recorded
- * decision. Derived purely from execution state so standing is independent of
- * `conversation.status`.
+ * Gate standing for one conversation: the execution still holds the session's
+ * lease and a context owned by this conversation is parked `awaiting_approval`
+ * with no recorded decision. Derived purely from execution state so standing is
+ * independent of `conversation.status`.
+ *
+ * Tenure is read from the one contract rather than mirrored as a local status
+ * set, so this cannot drift from the server's derivation in
+ * `src/lib/active-conversations/route-handlers.ts` — a mirrored set is what let
+ * the client keep rendering a gate the feed had already dropped.
  */
 export function deriveApprovalGateStanding(
   execution: GraphWorkflowExecution | null,
   conversationId: string,
 ): ApprovalGateStanding | null {
   if (!execution) return null;
-  if (!GATE_STANDING_EXECUTION_STATUSES.has(execution.status)) return null;
+  if (
+    !holdsActionableGate(
+      execution.status,
+      execution.haltReason,
+      execution.abandonment,
+    )
+  ) {
+    return null;
+  }
   for (const contextState of Object.values(execution.contextStates)) {
     if (contextState.status !== "awaiting_approval") continue;
     const record = contextState.pendingApproval;
@@ -69,72 +66,6 @@ export function deriveApprovalGateStanding(
     };
   }
   return null;
-}
-
-/**
- * Map the approval API's answer onto what the panel renders. A response that is
- * not a scoped snapshot never degrades into a whole-tree view: `whole_tree`
- * cannot reach here (it is only returned for a full-access member, which never
- * asks), and every other kind renders as its own explicit state.
- */
-function toScopedChanges(
-  response: GraphWorkflowApprovalSnapshotResponse,
-): ApprovalScopedChanges {
-  switch (response.kind) {
-    case "scoped":
-      return {
-        status: "ready",
-        ownedPaths: response.snapshot.ownedPaths,
-        diff: response.snapshot.diff,
-      };
-    case "drifted":
-      return { status: "drifted" };
-    case "unavailable":
-      return { status: "unavailable", reason: response.reason };
-    case "whole_tree":
-      return {
-        status: "unavailable",
-        reason: "this context is no longer under a file-ownership envelope",
-      };
-  }
-}
-
-/**
- * What one parked gate is decided on, for whichever approval surface renders
- * it. Shared by the conversation workspace panel and the sidebar peek so the
- * two surfaces cannot disagree about what a reviewer is shown — every surface
- * that offers Approve has to offer the same frozen artifact behind it (R15.2).
- *
- * Null for a full-access member, which keeps the whole-tree approval view.
- */
-export function useApprovalScopedChanges(
-  projectName: string,
-  sessionName: string,
-  standing: {
-    contextId: string;
-    requestedAt: string;
-    enveloped: boolean;
-  } | null,
-): ApprovalScopedChanges | null {
-  const scoped = standing?.enveloped === true ? standing : null;
-  const snapshotQuery = useGraphWorkflowApprovalSnapshotQuery(
-    projectName,
-    sessionName,
-    scoped?.contextId ?? null,
-    scoped?.requestedAt ?? null,
-  );
-
-  if (scoped === null) return null;
-  if (snapshotQuery.data !== undefined) {
-    return toScopedChanges(snapshotQuery.data);
-  }
-  if (snapshotQuery.error) {
-    return {
-      status: "unavailable",
-      reason: getErrorMessage(snapshotQuery.error),
-    };
-  }
-  return { status: "loading" };
 }
 
 export interface UseApprovalGateArgs {

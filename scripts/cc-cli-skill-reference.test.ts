@@ -74,6 +74,18 @@ describe("spliceReference / extractReference", () => {
 });
 
 describe("committed SKILL.md stays in sync with the registry (the CI check)", () => {
+  it("publishes every one-off lifecycle verb and no removed release verb", () => {
+    const reference = renderCommandReference(allHelpEntries());
+
+    expect(reference).toContain("`cctl workflow run`");
+    expect(reference).toContain("`cctl workflow wait`");
+    expect(reference).toContain(
+      "`cctl workflow status [<executionId>] [--json]`",
+    );
+    expect(reference).toContain("`cctl workflow abandon`");
+    expect(reference).not.toMatch(/workflow live release|live release/);
+  });
+
   it("the on-disk command reference equals the freshly-rendered block", () => {
     // This is the drift gate: if a command's registry entry changes and the
     // generator is not re-run, the committed block no longer matches — exactly

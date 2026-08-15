@@ -16,9 +16,11 @@
  * capability that outlives its lane is inert rather than trusted.
  *
  * Format: `cclc1.<base64url(payload)>.<base64url(HMAC-SHA256(prefix.payload))>`
- * with the instance token as the key. Signed rather than random-and-stored so
- * verification needs no extra persisted state and a restart with the same token
- * file keeps in-flight lanes working.
+ * keyed on the server-only capability key, never the instance token: every lane
+ * already holds the token as `CC_API_TOKEN`, so a token-keyed signature is
+ * caller-computable and would let any lane claim any other lane's binding.
+ * Signed rather than random-and-stored so verification needs no extra persisted
+ * state and a restart with the same key file keeps in-flight lanes working.
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";

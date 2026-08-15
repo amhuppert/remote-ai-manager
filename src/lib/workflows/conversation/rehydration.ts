@@ -257,6 +257,24 @@ export function collectRehydrationCandidates(
   return candidates;
 }
 
+export interface WorkflowResultRecoveryScope {
+  projectPath: string;
+  sessionName: string;
+}
+
+/** Every persisted session, including sessions whose conversation list is empty. */
+export function collectWorkflowResultRecoveryScopes(
+  state: ManagerState,
+): WorkflowResultRecoveryScope[] {
+  const scopes: WorkflowResultRecoveryScope[] = [];
+  for (const [projectPath, project] of Object.entries(state.projects)) {
+    for (const sessionName of Object.keys(project.sessions)) {
+      scopes.push({ projectPath, sessionName });
+    }
+  }
+  return scopes;
+}
+
 export interface RehydrateConversationActorsDeps {
   /**
    * The startup-only whole-state read. Assembles the project/session/
@@ -282,18 +300,34 @@ export interface RehydrateConversationActorsDeps {
     conversationId: string,
     expectedSchemaVersion: number,
   ): Snapshot<unknown> | null;
+  recoverWorkflowResultClaims?(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<number>;
+  reconcileWorkflowResultEffects?(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<number>;
 }
 
 async function defaultRehydrateDeps(): Promise<RehydrateConversationActorsDeps> {
   const stateMod = await import("@/lib/state-store");
   const { getProjectDisplayName } = await import("@/lib/projects/resolver");
   const { validateRestoredSnapshot } = await import("./persistence");
+  const { getGraphWorkflowResultDeliveryService } =
+    await import("@/lib/workflow-graph/result-delivery-service");
   return {
     readAllForStartup: readAllForStartupFromDb,
     listAllProjectConversations: stateMod.listAllProjectConversations,
     getProjectDisplayName,
     getConversationMachineSnapshot: stateMod.getConversationMachineSnapshot,
     validateRestoredSnapshot,
+    recoverWorkflowResultClaims: stateMod.recoverGraphWorkflowResultDeliveries,
+    reconcileWorkflowResultEffects: (projectPath, sessionName) =>
+      getGraphWorkflowResultDeliveryService().reconcilePendingResults(
+        projectPath,
+        sessionName,
+      ),
   };
 }
 
@@ -308,6 +342,52 @@ export async function rehydrateConversationActors(
   const resolved = deps ?? (await defaultRehydrateDeps());
   const projectConversations = await resolved.listAllProjectConversations();
   const state = resolved.readAllForStartup();
+  const candidates = collectRehydrationCandidates(state, projectConversations);
+  const workflowResultScopes = collectWorkflowResultRecoveryScopes(state);
+
+  if (resolved.reconcileWorkflowResultEffects) {
+    for (const { projectPath, sessionName } of workflowResultScopes) {
+      try {
+        await resolved.reconcileWorkflowResultEffects(projectPath, sessionName);
+      } catch (err) {
+        logger.error(
+          "conversation-manager.workflow_result_effect_reconciliation_failed",
+          {
+            scope: "session",
+            projectPath,
+            sessionName,
+            error: getErrorMessage(err),
+          },
+        );
+      }
+    }
+  }
+
+  if (resolved.recoverWorkflowResultClaims) {
+    for (const { projectPath, sessionName } of workflowResultScopes) {
+      try {
+        const recovered = await resolved.recoverWorkflowResultClaims(
+          projectPath,
+          sessionName,
+        );
+        if (recovered > 0) {
+          logger.info("conversation-manager.workflow_result_claims_recovered", {
+            scope: "session",
+            projectPath,
+            sessionName,
+            recovered,
+          });
+        }
+      } catch (err) {
+        logger.error("conversation-manager.workflow_result_recovery_failed", {
+          scope: "session",
+          projectPath,
+          sessionName,
+          error: getErrorMessage(err),
+        });
+      }
+    }
+  }
 
   let count = 0;
   let skippedNonResumable = 0;
@@ -317,7 +397,7 @@ export async function rehydrateConversationActors(
     storeSessionName,
     worktreePath,
     conversation,
-  } of collectRehydrationCandidates(state, projectConversations)) {
+  } of candidates) {
     const owner: ConversationSnapshotOwner = isProjectSentinel(storeSessionName)
       ? "project"
       : "session";

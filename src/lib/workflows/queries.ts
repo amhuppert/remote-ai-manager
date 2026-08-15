@@ -6,6 +6,7 @@ import {
   graphWorkflowEventsKeys,
   graphWorkflowExecutionKeys,
   graphWorkflowHistoryKeys,
+  graphWorkflowResultKeys,
   collaborationKeys,
   projectTemplatesKeys,
 } from "@/lib/workflows/query-keys";
@@ -14,6 +15,7 @@ import {
   workflowDefinitionGetResponseSchema,
 } from "@/lib/workflow-definitions/schemas";
 import {
+  graphWorkflowBoundaryKindSchema,
   graphWorkflowExecutionEventPageResponseSchema,
   graphWorkflowExecutionEventsResponseSchema,
   type GraphWorkflowExecutionEventPageResponse,
@@ -21,13 +23,20 @@ import {
 } from "@/lib/workflow-graph/event-schemas";
 import {
   graphWorkflowApprovalSnapshotResponseSchema,
+  graphWorkflowAbandonmentSchema,
   graphWorkflowExecutionFullResponseSchema,
   graphWorkflowExecutionHistoryItemSchema,
+  graphWorkflowExecutionOriginSchema,
+  graphWorkflowHaltReasonSchema,
 } from "@/lib/workflow-graph/schemas";
 import {
+  graphWorkflowSharedDocumentEntrySchema,
+  graphWorkflowStatusSchema,
   parameterDeclarationSchema,
   prerequisiteSchema,
 } from "@/lib/workflow-graph/definition-schemas";
+import { graphWorkflowResultOutputProjectionSchema } from "@/lib/workflow-graph/result-output-contract";
+import type { GraphWorkflowBoundaryResultProjection } from "@/lib/workflow-graph/execution-result-projection";
 import { collaborationListResponseSchema } from "@/lib/collaboration/schemas";
 import {
   workflowDefinitionScopeApi,
@@ -207,6 +216,148 @@ export function useGraphWorkflowExecutionQuery(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/execution`,
         graphWorkflowExecutionFullResponseSchema,
       ).then((r) => r.execution),
+  });
+}
+
+/**
+ * One Current-or-History execution addressed by durable execution id.
+ *
+ * This is deliberately distinct from the Current query: a historical deep
+ * link must remain readable after the session lease moves to a newer run.
+ */
+export function useGraphWorkflowExecutionByIdQuery(
+  projectName: string,
+  sessionName: string,
+  executionId: string | null,
+  options: { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: graphWorkflowExecutionKeys.byId(
+      projectName,
+      sessionName,
+      executionId ?? "",
+    ),
+    queryFn: () =>
+      apiFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/executions/${encodeURIComponent(executionId!)}`,
+        graphWorkflowExecutionFullResponseSchema,
+      ).then((r) => r.execution),
+    enabled: executionId !== null && options.enabled !== false,
+  });
+}
+
+const graphWorkflowBoundaryResultSchema = z.object({
+  cursor: z.number().int().min(1),
+  occurredAt: z.string(),
+  executionId: z.string().trim().min(1),
+  boundaryKind: graphWorkflowBoundaryKindSchema,
+  status: graphWorkflowStatusSchema,
+  contextId: z.string().nullable(),
+  pendingActions: z.array(z.record(z.string(), z.unknown())),
+  outputs: graphWorkflowResultOutputProjectionSchema,
+  name: z.string().trim().min(1),
+  origin: graphWorkflowExecutionOriginSchema,
+  originConversationId: z.string().trim().min(1).nullable(),
+  startedAt: z.string(),
+  completedAt: z.string().nullable(),
+  haltReason: graphWorkflowHaltReasonSchema.nullable(),
+  abandonment: graphWorkflowAbandonmentSchema.nullable(),
+  documents: z.array(graphWorkflowSharedDocumentEntrySchema),
+  deepLink: z.string().trim().min(1),
+});
+
+const graphWorkflowBoundaryResultResponseSchema = z.object({
+  result: graphWorkflowBoundaryResultSchema.nullable(),
+});
+
+function fetchGraphWorkflowExecutionResultAfter(
+  projectName: string,
+  sessionName: string,
+  executionId: string,
+  cursor: number | null,
+): Promise<GraphWorkflowBoundaryResultProjection | null> {
+  const suffix = cursor === null ? "" : `?cursor=${cursor}`;
+  return apiFetch(
+    `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/executions/${encodeURIComponent(executionId)}/result${suffix}`,
+    graphWorkflowBoundaryResultResponseSchema,
+  ).then((response) => response.result);
+}
+
+/** Read the first durable boundary result after an optional event cursor. */
+export function useGraphWorkflowExecutionResultQuery(
+  projectName: string,
+  sessionName: string,
+  executionId: string | null,
+  cursor: number | null = null,
+  options: { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: graphWorkflowResultKeys.detail(
+      projectName,
+      sessionName,
+      executionId ?? "",
+      cursor,
+    ),
+    queryFn: () => {
+      if (executionId === null) {
+        throw new Error("Execution result query requires an execution id");
+      }
+      return fetchGraphWorkflowExecutionResultAfter(
+        projectName,
+        sessionName,
+        executionId,
+        cursor,
+      );
+    },
+    enabled: executionId !== null && options.enabled !== false,
+  });
+}
+
+/**
+ * Read the latest durable boundary projection by walking the opaque result
+ * cursor until the server reports that no later boundary exists.
+ *
+ * The result endpoint deliberately returns the FIRST boundary after a cursor;
+ * treating its cursorless response as "latest" pins a long-lived execution to
+ * its first pause or halt. This one query owns that traversal for browser
+ * consumers, and result-recorded SSE invalidates its execution-scoped prefix.
+ */
+export function useGraphWorkflowLatestExecutionResultQuery(
+  projectName: string,
+  sessionName: string,
+  executionId: string | null,
+  options: { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: graphWorkflowResultKeys.latest(
+      projectName,
+      sessionName,
+      executionId ?? "",
+    ),
+    queryFn: async () => {
+      if (executionId === null) {
+        throw new Error(
+          "Latest execution result query requires an execution id",
+        );
+      }
+      let cursor: number | null = null;
+      let latest: GraphWorkflowBoundaryResultProjection | null = null;
+      for (;;) {
+        const next = await fetchGraphWorkflowExecutionResultAfter(
+          projectName,
+          sessionName,
+          executionId,
+          cursor,
+        );
+        if (next === null) return latest;
+        if (cursor !== null && next.cursor <= cursor) {
+          throw new Error("Execution result cursor did not advance");
+        }
+        latest = next;
+        cursor = next.cursor;
+      }
+    },
+    enabled: executionId !== null && options.enabled !== false,
   });
 }
 

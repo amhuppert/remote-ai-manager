@@ -327,6 +327,8 @@ export interface GraphWorkflowIterationOrchestratorDeps {
    * context index resolves in a single row lookup.
    */
   findLatestContextValidationEvent(
+    projectPath: string,
+    sessionName: string,
     executionId: string,
     contextId: string,
   ): Promise<GraphWorkflowExecutionEvent | null>;
@@ -644,10 +646,14 @@ function isReopeningFailure(
 
 async function resolveLatestContextValidationFailureFeedback(
   deps: GraphWorkflowIterationOrchestratorDeps,
+  projectPath: string,
+  sessionName: string,
   execution: GraphWorkflowExecution,
   contextId: string,
 ): Promise<LatestContextValidationFailureFeedback | undefined> {
   const latest = await deps.findLatestContextValidationEvent(
+    projectPath,
+    sessionName,
     execution.id,
     contextId,
   );
@@ -3560,6 +3566,8 @@ export function createGraphWorkflowIterationOrchestrator(
    * the retry.
    */
   async function resolveLatestOutputSchemaRejection(
+    projectPath: string,
+    sessionName: string,
     execution: GraphWorkflowExecution,
     contextId: string,
   ): Promise<GraphWorkflowOutputCaptureRejection | undefined> {
@@ -3577,6 +3585,8 @@ export function createGraphWorkflowIterationOrchestrator(
     }
 
     const latest = await deps.findLatestContextValidationEvent(
+      projectPath,
+      sessionName,
       execution.id,
       contextId,
     );
@@ -3921,6 +3931,7 @@ export function createGraphWorkflowIterationOrchestrator(
     let iterationNumber = 0;
     let consecutiveFailureCount = 0;
     let approvalRequestedAt: string | null = null;
+    let finalizationWithheldMissingOutput = false;
 
     // Frozen BEFORE the parking mutation, because reading git inside a
     // `mutateActive` reducer would put I/O in the write-queue critical section.
@@ -3993,16 +4004,7 @@ export function createGraphWorkflowIterationOrchestrator(
           // so the guard above does not fire and this branch would otherwise
           // write `completed` over a halted context that never produced its
           // declared output (R2). Leave the context wherever the halt put it.
-          execLogger?.iteration(
-            input.contextId,
-            "iteration.finalize_withheld_missing_output",
-            { conversationId },
-          );
-          logger.warn("graph-workflow.iteration.finalize_withheld", {
-            executionId: finalizedExecution.id,
-            contextId: input.contextId,
-            reason: "output_not_captured",
-          });
+          finalizationWithheldMissingOutput = true;
         } else if (gateEnabled) {
           approvalGateService.enterAwaitingApproval(finalizedExecution, {
             contextId: input.contextId,
@@ -4032,9 +4034,33 @@ export function createGraphWorkflowIterationOrchestrator(
           finalizedExecution,
           { hasLiveIteration: false },
         );
+        if (approvalRequestedAt !== null) {
+          const delivery = eventPublisher.publishApprovalPending({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            execution: finalizedExecution,
+            contextId: input.contextId,
+            conversationId,
+            requestedAt: approvalRequestedAt,
+          });
+          return { execution: finalizedExecution, ...delivery };
+        }
         return finalizedExecution;
       },
     );
+
+    if (finalizationWithheldMissingOutput) {
+      execLogger?.iteration(
+        input.contextId,
+        "iteration.finalize_withheld_missing_output",
+        { conversationId },
+      );
+      logger.warn("graph-workflow.iteration.finalize_withheld", {
+        executionId: persistedExecution.id,
+        contextId: input.contextId,
+        reason: "output_not_captured",
+      });
+    }
 
     execLogger?.iteration(input.contextId, "iteration.completed", {
       conversationId,
@@ -4087,28 +4113,9 @@ export function createGraphWorkflowIterationOrchestrator(
         conversationId,
         requestedAt,
       });
-      // This follow-up mutation only persists the approval-pending history
-      // entry that the publisher appends alongside its SSE broadcast and push
-      // dispatch.
-      const executionWithApprovalEvent =
-        await deps.executionRepository.mutateActive(
-          input.projectPath,
-          input.sessionName,
-          (latest) => {
-            const delivery = eventPublisher.publishApprovalPending({
-              projectPath: input.projectPath,
-              sessionName: input.sessionName,
-              execution: latest,
-              contextId: input.contextId,
-              conversationId,
-              requestedAt,
-            });
-            return { execution: latest, ...delivery };
-          },
-        );
       return {
         conversationId,
-        execution: executionWithApprovalEvent,
+        execution: persistedExecution,
         shouldContinueInContext,
       };
     }
@@ -4186,6 +4193,8 @@ export function createGraphWorkflowIterationOrchestrator(
     let parkedResult: GraphWorkflowIterationResult | null = null;
     try {
       const previousRejection = await resolveLatestOutputSchemaRejection(
+        input.projectPath,
+        input.sessionName,
         initialExecution,
         input.contextId,
       );
@@ -4303,6 +4312,8 @@ export function createGraphWorkflowIterationOrchestrator(
     const latestContextValidationFailure =
       await resolveLatestContextValidationFailureFeedback(
         deps,
+        input.projectPath,
+        input.sessionName,
         initialExecution,
         input.contextId,
       );
@@ -4883,6 +4894,8 @@ export function createGraphWorkflowIterationOrchestrator(
       // Sampled before the validator turn below, which would otherwise bury the
       // rejection this iteration is retrying (see the resolver's contract).
       const previousOutputRejection = await resolveLatestOutputSchemaRejection(
+        input.projectPath,
+        input.sessionName,
         initialExecution,
         input.contextId,
       );
@@ -5063,6 +5076,8 @@ export function createGraphWorkflowIterationOrchestrator(
           latestContextValidationFailure:
             await resolveLatestContextValidationFailureFeedback(
               deps,
+              input.projectPath,
+              input.sessionName,
               midExecution,
               input.contextId,
             ),

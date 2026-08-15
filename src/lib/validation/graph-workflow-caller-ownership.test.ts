@@ -16,6 +16,15 @@ import {
   createGraphWorkflowExecutionRouteHandlers,
   OWNER_CONVERSATION_HEADER,
 } from "@/lib/workflow-graph/execution-route-handlers";
+import {
+  CONVERSATION_CAPABILITY_HEADER,
+  mintConversationCapability,
+  verifyConversationCapability,
+} from "@/lib/agent-gateway/conversation-capability";
+import {
+  LANE_CAPABILITY_HEADER,
+  verifyLaneCapability,
+} from "@/lib/agent-gateway/lane-capability";
 import { createGraphWorkflowManager } from "@/lib/workflow-graph/workflow-manager";
 import {
   createWorkflowDefinitionRecord,
@@ -134,6 +143,8 @@ function resolverDeps(opts: {
 describe("createProductionValidationCallerResolver ownership of a slot-holding execution", () => {
   const PROJECT_PATH = "/repo";
   const SESSION_NAME = "session-1";
+  /** Stands in for the server-only key; deliberately not the instance token. */
+  const CAPABILITY_SECRET = "server-only-capability-key";
   const OWNER_CONVERSATION_ID = "conv-owner";
   const OTHER_CONVERSATION_ID = "conv-other";
   const FORGED_CONVERSATION_ID = "conv-forged";
@@ -171,6 +182,9 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
    * ever writes one.
    */
   async function startThroughProductionRoute(input: {
+    /** The conversation the caller can PROVE it is (a signed capability). */
+    capabilityFor?: string;
+    /** A conversation id the caller merely asserts in a header. */
     header?: string;
     body?: Record<string, unknown>;
   }): Promise<void> {
@@ -180,11 +194,15 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
       now: () => T,
     });
     const repository = createGraphWorkflowExecutionRepository({
+      // No git worktree in this harness; the real exclusion would shell out.
+      ensureCcArtifactsExcluded: async () => {},
       getSession: fixture.store.getSession,
       getActiveGraphWorkflowExecution:
         fixture.store.getActiveGraphWorkflowExecution,
       mutateActiveGraphWorkflowExecution:
         fixture.store.mutateActiveGraphWorkflowExecution,
+      reserveActiveGraphWorkflowExecution:
+        fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         fixture.store.archiveActiveGraphWorkflowExecution,
       markGraphWorkflowContextEventsPreReset:
@@ -213,6 +231,7 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
         name === "repo" ? PROJECT_PATH : null,
       getSession: fixture.store.getSession,
       startExecution: (startInput) => manager.start(startInput),
+      runExecution: (runInput) => manager.run(runInput),
       // The loop never runs, so the started execution holds the slot with zero
       // lane conversations — exactly the state that stranded planners.
       kickOffExecutionLoop: async () => {},
@@ -231,6 +250,24 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
       recordPendingHaltReason: unusedResolverDep("recordPendingHaltReason"),
       drainAndHalt: unusedResolverDep("drainAndHalt"),
       recordApprovalDecision: unusedResolverDep("recordApprovalDecision"),
+      auth: {
+        // Transport mirrors the caller: an agent presents the instance token,
+        // the browser presents nothing.
+        validateOptionalToken: async (request: Request) =>
+          request.headers.get("authorization") === null
+            ? ({ kind: "absent" } as const)
+            : ({ kind: "valid" } as const),
+      },
+      verifyConversationCapability: async (request: Request) =>
+        verifyConversationCapability(
+          request.headers.get(CONVERSATION_CAPABILITY_HEADER),
+          CAPABILITY_SECRET,
+        ),
+      verifyLaneCapability: async (request: Request) =>
+        verifyLaneCapability(
+          request.headers.get(LANE_CAPABILITY_HEADER),
+          CAPABILITY_SECRET,
+        ),
     });
 
     const response = await handlers.START(
@@ -244,6 +281,21 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
           }),
           headers: {
             "content-type": "application/json",
+            // The caller PROVES which conversation it is; the claim header
+            // rides along in the forgery cases and must change nothing.
+            ...(input.capabilityFor === undefined
+              ? {}
+              : {
+                  authorization: "Bearer instance-token",
+                  [CONVERSATION_CAPABILITY_HEADER]: mintConversationCapability(
+                    {
+                      sessionName: SESSION_NAME,
+                      conversationId: input.capabilityFor,
+                    },
+                    CAPABILITY_SECRET,
+                    1_760_000_000_000,
+                  ),
+                }),
             ...(input.header === undefined
               ? {}
               : { [OWNER_CONVERSATION_HEADER]: input.header }),
@@ -296,9 +348,9 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
     );
 
     await startThroughProductionRoute({
-      header: OWNER_CONVERSATION_ID,
-      // A client-supplied owner claim rides along; only the verified header may
-      // become the owner.
+      capabilityFor: OWNER_CONVERSATION_ID,
+      // A client-supplied owner claim rides along; only the conversation the
+      // signature names may become the owner.
       body: { ownerConversationId: FORGED_CONVERSATION_ID },
     });
 
@@ -370,7 +422,9 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
       SESSION_NAME,
       conversation(OWNER_CONVERSATION_ID),
     );
-    await startThroughProductionRoute({ header: OWNER_CONVERSATION_ID });
+    await startThroughProductionRoute({
+      capabilityFor: OWNER_CONVERSATION_ID,
+    });
 
     // The bypass grants a plain session-scoped caller. A lane identity claim
     // has no lane to match, so it stays refused.
@@ -399,8 +453,11 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
             ...(status === "halted"
               ? {
                   haltReason: {
-                    type: "recovery_error" as const,
-                    message: "stalled",
+                    type: "circuit_breaker" as const,
+                    contextId: "context-implement",
+                    condition: "retry_exhaustion" as const,
+                    summary: "validator blocked completion",
+                    failureCount: 2,
                   },
                 }
               : {}),
@@ -408,8 +465,9 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
         }),
       );
 
-      // A resumable run RETAINS ownership, and it has lanes to classify with —
-      // so the owner bypass does not apply and the lane rules still govern.
+      // A run that still HOLDS THE LEASE keeps validation ownership, and it has
+      // lanes to classify with — so the owner bypass does not apply and the
+      // lane rules still govern.
       await expect(
         resolver.resolveCaller({
           projectPath: PROJECT_PATH,
@@ -426,4 +484,55 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
       ).resolves.toMatchObject({ kind: "graph_lane" });
     },
   );
+
+  /**
+   * Validation ownership follows the lease, not the status (D7 decision D3).
+   * Both rows below are `halted` with lanes — the status-only rule this
+   * replaced kept BOTH of them owning the session's validation forever, even
+   * though neither can ever resume.
+   */
+  it.each([
+    {
+      label: "a non-resumable halt",
+      overrides: {
+        haltReason: { type: "recovery_error" as const, message: "stalled" },
+      },
+    },
+    {
+      label: "an explicitly abandoned resumable halt",
+      overrides: {
+        haltReason: {
+          type: "circuit_breaker" as const,
+          contextId: "context-implement",
+          condition: "retry_exhaustion" as const,
+          summary: "validator blocked completion",
+          failureCount: 2,
+        },
+        abandonment: {
+          abandonedAt: T,
+          actor: { kind: "human" as const },
+          reason: "superseded by a fresh plan",
+        },
+      },
+    },
+  ])("releases validation ownership on $label", async ({ overrides }) => {
+    const resolver = createProductionValidationCallerResolver(
+      resolverDeps({
+        session: session(),
+        execution: activeLaneExecution({
+          status: "halted",
+          ownerConversationId: OWNER_CONVERSATION_ID,
+          ...overrides,
+        }),
+      }),
+    );
+
+    await expect(
+      resolver.resolveCaller({
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        conversationId: "conv-unrelated",
+      }),
+    ).resolves.toMatchObject({ kind: "session" });
+  });
 });

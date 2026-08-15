@@ -394,6 +394,24 @@ describe("pushForGraphWorkflowEvent", () => {
     });
   });
 
+  it("preserves the durable delivery identity on a workflow completion push", async () => {
+    await pushForGraphWorkflowEvent(pushConfig, {
+      kind: "workflow-completed",
+      projectName: "proj",
+      sessionName: "sess",
+      dedupeKey: "graph-workflow-result:execution-1:17",
+    });
+
+    expect(sendPushNotification).toHaveBeenCalledExactlyOnceWith(pushConfig, {
+      trigger: "workflow-completed",
+      title: "Graph workflow completed",
+      message: "Graph workflow completed for session sess",
+      projectName: "proj",
+      sessionName: "sess",
+      dedupeKey: "graph-workflow-result:execution-1:17",
+    });
+  });
+
   it("sends push when workflow is halted", async () => {
     await pushForGraphWorkflowEvent(pushConfig, {
       kind: "workflow-halted",

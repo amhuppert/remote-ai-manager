@@ -6,20 +6,10 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
 } from "@/lib/workflow-graph/schemas";
-import type {
-  GraphWorkflowStatus,
-  GraphWorkflowTaskDefinition,
-} from "@/lib/workflow-graph/definition-schemas";
+import type { GraphWorkflowTaskDefinition } from "@/lib/workflow-graph/definition-schemas";
+import { holdsActionableGate } from "@/lib/workflow-graph/lifecycle-classifier";
 
 const logger = createLogger("workflow-graph.approval-gate");
-
-/**
- * Execution statuses under which a decision may be recorded. `paused` and
- * `halted` are the deferred path: the decision persists and the gate wait
- * applies it after the execution resumes (requirements 7.1, 7.5).
- */
-const DECISION_RECORDABLE_EXECUTION_STATUSES: ReadonlySet<GraphWorkflowStatus> =
-  new Set(["running", "paused", "halted"]);
 
 const NO_ACTIVE_EXECUTION_MESSAGE =
   "Session does not have an active graph workflow execution";
@@ -248,7 +238,19 @@ export function createApprovalGateService(
         input.projectPath,
         input.sessionName,
         (draft) => {
-          if (!DECISION_RECORDABLE_EXECUTION_STATUSES.has(draft.status)) {
+          // A decision is recordable while the run still holds the lease.
+          // `paused` and a resumable `halted` are the deferred path: the
+          // decision persists and the gate wait applies it after the execution
+          // resumes (requirements 7.1, 7.5). A halt that can never resume — or
+          // an abandoned one — has no such future, so recording against it
+          // would persist a decision nothing will ever apply.
+          if (
+            !holdsActionableGate(
+              draft.status,
+              draft.haltReason,
+              draft.abandonment,
+            )
+          ) {
             guardFailure = "execution_not_running";
             return draft;
           }

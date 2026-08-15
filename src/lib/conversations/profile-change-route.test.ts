@@ -65,6 +65,7 @@ function handlers(
         conversations: [conversation],
       }),
     createConversation: async () => conversation,
+    deleteConversation: async () => {},
     renameConversation: async () => {},
     resolveConversationNamingContent: async () => null,
     resolveMessageNamingContent: async () => null,

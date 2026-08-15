@@ -294,6 +294,18 @@ export function projectTypedEvent(
         subject: null,
         detail: `r${event.liveRevision}:${event.policyBasis}:+${event.addedContextIds.length}c+${event.addedTaskIds.length}t`,
       };
+    case "graph-workflow-boundary":
+      return {
+        kind: event.type,
+        subject: event.contextId,
+        detail: `${event.boundaryKind}:${event.workflowStatus}`,
+      };
+    case "graph-workflow-result-recorded":
+      return {
+        kind: event.type,
+        subject: event.originConversationId,
+        detail: String(event.boundaryCursor),
+      };
     default: {
       const unprojected: never = event;
       throw new Error(

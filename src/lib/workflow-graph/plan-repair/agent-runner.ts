@@ -5,10 +5,24 @@
  * execution is quiescent, so no lane turn can race it), a `task_run` turn with
  * the verdict JSON schema enforced at the structured-output gate, and robust
  * candidate extraction for backends that only return text.
+ *
+ * The turn runs under the session-reader write envelope — its own scratch and
+ * temp only, with repository metadata denied — for EVERY run, not only a run
+ * pinned read-only by the dirty-worktree exemption (D7 decision D10). A repair
+ * agent changes the plan through live-edit operations it returns; it has no
+ * reason to touch the worktree at all, so the confinement costs nothing and
+ * makes "the repair cannot write the candidate" mechanical rather than
+ * prompted. Establishment is fail-closed: an envelope that cannot be composed
+ * ends the attempt instead of dispatching an unconfined turn.
  */
 
 import { createLogger } from "@/lib/logging";
+import { getErrorMessage } from "@/lib/shared/errors";
 import { validateStructuredOutput } from "@/lib/agent-backends/structured-output";
+import {
+  composeImplementerLaneWriteEnvelope,
+  type ImplementerLaneWriteEnvelope,
+} from "@/lib/workflow-graph/implementer-lane-write-envelope";
 import {
   executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun,
   type ExecuteWorkflowTaskRunInput,
@@ -33,6 +47,7 @@ export interface PlanRepairAgentRunnerDeps {
     input: ExecuteWorkflowTaskRunInput,
   ): Promise<TaskRunResult>;
   getProjectDisplayName?(projectPath: string): string;
+  composeWriteEnvelope?: typeof composeImplementerLaneWriteEnvelope;
 }
 
 function buildRepairActorInput(
@@ -66,12 +81,42 @@ export function createPlanRepairAgentRunner(
     deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
   const getProjectDisplayName =
     deps.getProjectDisplayName ?? defaultGetProjectDisplayName;
+  const composeWriteEnvelope =
+    deps.composeWriteEnvelope ?? composeImplementerLaneWriteEnvelope;
 
   return async function runRepairAgent(
     invocation: PlanRepairAgentInvocation,
   ): Promise<PlanRepairAgentResult> {
     const projectName = getProjectDisplayName(invocation.projectPath);
+
+    // Read-only by construction: no owned prefix, and payloads land in the
+    // agent's private scratch so the turn creates nothing in the repository.
+    let writeEnvelope: ImplementerLaneWriteEnvelope;
+    try {
+      writeEnvelope = composeWriteEnvelope({
+        executionId: invocation.executionId,
+        contextId: invocation.contextId,
+        worktreePath: invocation.worktreePath,
+        ownedPaths: [],
+        payloadLocation: "scratch",
+      });
+    } catch (error) {
+      const message = `Cannot establish the plan-repair write envelope: ${getErrorMessage(error)}`;
+      logger.error("plan_repair.write_envelope_failed", {
+        executionId: invocation.executionId,
+        contextId: invocation.contextId,
+        worktreePath: invocation.worktreePath,
+        error: getErrorMessage(error),
+      });
+      return {
+        kind: "error",
+        message,
+        conversationId: invocation.conversationId,
+      };
+    }
+
     const result = await executeWorkflowTaskRun({
+      fsWritePolicy: writeEnvelope.policy,
       projectPath: invocation.projectPath,
       sessionName: invocation.sessionName,
       conversationId: invocation.conversationId,

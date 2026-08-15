@@ -32,6 +32,7 @@ import {
   validateWorkflowDefinition,
 } from "./validation";
 import { validatePlacements } from "./placement-validation";
+import { collectLiveSessionReadOnlyViolations } from "./live-session-read-only";
 import {
   classifyContextLifecycle,
   classifyContextLifecycleFromPin,
@@ -3622,6 +3623,11 @@ function checkLiveEditFrontier(
     };
   }
 
+  const pinIssues = checkLiveSessionReadOnlyPin(next);
+  if (pinIssues.length > 0) {
+    return { code: "invalid_edit", issues: pinIssues };
+  }
+
   const mapIssues = checkRuntimeMapConsistency(next);
   if (mapIssues.length > 0) {
     return { code: "invalid_edit", issues: mapIssues };
@@ -3657,6 +3663,30 @@ function checkPlacements(
 ): WorkflowGraphValidationError[] {
   if (!ctx.placementTouched) return [];
   return validatePlacements(next.workingDefinition);
+}
+
+/**
+ * Frontier check — the dirty-worktree exemption's lifetime invariant (R8.3,
+ * decision D10). A run admitted over uncommitted changes was admitted BECAUSE
+ * its resolved mechanics could not write the repository, so every later
+ * structural mutation has to leave that true: a write-capable grade, a lane
+ * other than the session, a script-validator selection, or an enabled
+ * collaborator would each hand the run a write surface the launch guard never
+ * approved.
+ *
+ * Deliberately unlike {@link checkPlacements}, this is UNCONDITIONAL for a
+ * pinned execution: the question is keyed on the run's pin, never on whether
+ * the batch claimed to touch placement. Enabling collaboration touches no
+ * placement at all and would sail past a placement-scoped gate, and the
+ * post-batch state is the only thing that can answer whether the invariant
+ * still holds. A clean-worktree launch pins nothing, so this costs an unpinned
+ * run one boolean read.
+ */
+function checkLiveSessionReadOnlyPin(
+  next: GraphWorkflowExecution,
+): WorkflowGraphValidationError[] {
+  if (!next.liveSessionReadOnlyPinned) return [];
+  return collectLiveSessionReadOnlyViolations(next.workingDefinition);
 }
 
 /**

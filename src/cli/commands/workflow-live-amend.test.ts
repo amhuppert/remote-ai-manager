@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { runCli } from "../core";
 import { helpEntryFor } from "../help-registry";
 import type { CliEnv, CliHost, FetchInit } from "../shared";
+import {
+  CONVERSATION_CAPABILITY_ENV_VAR,
+  CONVERSATION_CAPABILITY_HEADER,
+} from "@/lib/agent-gateway/conversation-capability";
 
 /**
  * `cctl workflow live amend` — the CLI half of the audited amendment. What is
@@ -20,6 +24,7 @@ const baseEnv: CliEnv = {
   CC_SESSION: "my-session",
   CC_CONVERSATION_ID: "conversation-7",
   CC_AGENT_BACKEND: "codex",
+  [CONVERSATION_CAPABILITY_ENV_VAR]: "conversation-capability",
 };
 
 interface RecordedRequest {
@@ -163,6 +168,9 @@ describe("cctl workflow live amend", () => {
       "conversation-7",
     );
     expect(request?.init.headers?.["x-cc-agent-backend"]).toBe("codex");
+    expect(request?.init.headers?.[CONVERSATION_CAPABILITY_HEADER]).toBe(
+      "conversation-capability",
+    );
     const body = JSON.parse(request?.init.body ?? "{}");
     expect(body.reason).toBe(
       "the migration needs its own verification context",

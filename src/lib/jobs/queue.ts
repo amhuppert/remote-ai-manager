@@ -142,6 +142,31 @@ export function getActiveJobs(): BackgroundJob[] {
   return Array.from(registry.values()).filter((j) => j.status === "running");
 }
 
+/**
+ * The session's in-flight merge that will also finalize the session, or null.
+ *
+ * The symmetric half of the delivery gate: while this job is running, the
+ * session is about to be marked finished under the project lock, so a workflow
+ * launch must be refused — otherwise the two admit each other in the window
+ * between the merge route's advisory lease check and the publish, seeding a
+ * fresh run into a session that is being closed.
+ *
+ * `finalizeSessionOnPublish` is read rather than `jobType` because a graph lane
+ * merge is a merge job too, and it is the workflow's OWN work; blocking on it
+ * would have the engine refuse itself. A `ready-to-land` candidate is parked
+ * awaiting an operator decision and publishes nothing until a land re-entry
+ * starts a new running job, so only `running` counts as in flight.
+ */
+export function getFinalizingSessionMergeJob(
+  projectPath: string,
+  sessionName: string,
+): BackgroundJob | null {
+  const job = getJob(projectPath, sessionName);
+  if (job === undefined) return null;
+  if (job.status !== "running") return null;
+  return job.finalizeSessionOnPublish === true ? job : null;
+}
+
 /** Get the stored conflict analysis for a session, if any */
 export function getConflictAnalysis(
   projectPath: string,
@@ -578,6 +603,14 @@ export interface DispatchMergeParams {
   executionId?: string;
   finalPublish?: boolean;
   candidateValidation?: BackgroundJob["candidateValidation"];
+  /**
+   * Whether this job's publish also finishes the session. Omitted means the
+   * user-driven session merge, which is finalizing by definition; a re-entry
+   * (land, conflict retry) passes the fact forward from the job it continues,
+   * because a graph lane merge parked as ready-to-land is still the workflow's
+   * own work when an operator lands it.
+   */
+  finalizeSessionOnPublish?: boolean;
 }
 
 /**
@@ -691,6 +724,9 @@ export function runRegisteredMergeJob(
         }
         if (input.executionId) job.executionId = input.executionId;
         if (input.finalPublish === true) job.finalPublish = true;
+        // Same `?? true` the machine applies to this very input, so the job
+        // fact and the machine context cannot disagree about one job.
+        job.finalizeSessionOnPublish = input.finalizeSessionOnPublish ?? true;
         if (input.candidateValidation) {
           job.candidateValidation = input.candidateValidation;
         }
@@ -770,6 +806,13 @@ export function dispatchMergeJob(
   if (!provenance.ok) return { ok: false, error: provenance.error };
   const resolvedExecutionId = provenance.executionId;
   const resolvedFinalPublish = provenance.finalPublish;
+  // Decided once and threaded into BOTH the job fact and the machine input, so
+  // the launch guard's reader and the publish actor's gate read one decision.
+  // A discard deletes the parked commit and publishes nothing, so it finishes
+  // no session; a land re-entry inherits the fact of the merge it resumes; a
+  // fresh user-driven session merge is finalizing by definition.
+  const finalizeSessionOnPublish =
+    entryMode === "discard" ? false : (params.finalizeSessionOnPublish ?? true);
 
   return dispatchMachineJob<MergeContext, MergeOutput>({
     jobType: "merge",
@@ -785,6 +828,7 @@ export function dispatchMergeJob(
       if (resolutionContext) job.resolutionContext = resolutionContext;
       if (resolvedExecutionId) job.executionId = resolvedExecutionId;
       if (resolvedFinalPublish === true) job.finalPublish = true;
+      job.finalizeSessionOnPublish = finalizeSessionOnPublish;
       if (candidateValidation) job.candidateValidation = candidateValidation;
     },
     logStart(job) {
@@ -817,6 +861,7 @@ export function dispatchMergeJob(
         jobType: "merge",
         targetBranch,
         targetWorktreePath,
+        finalizeSessionOnPublish,
         ...(entryMode && { entryMode }),
         ...(preparedSha && { preparedSha }),
         ...(expectedTargetSha && { expectedTargetSha }),
@@ -918,6 +963,8 @@ export function dispatchResolveConflictsJob(params: {
   executionId?: string;
   finalPublish?: boolean;
   candidateValidation?: BackgroundJob["candidateValidation"];
+  /** The resumed merge's own fact; see {@link DispatchMergeParams}. */
+  finalizeSessionOnPublish?: boolean;
 }): MergeDispatchResult {
   const {
     projectPath,
@@ -951,6 +998,10 @@ export function dispatchResolveConflictsJob(params: {
   if (!provenance.ok) return { ok: false, error: provenance.error };
   const resolvedExecutionId = provenance.executionId;
   const resolvedFinalPublish = provenance.finalPublish;
+  // Conflict resolution continues a merge that already exists, so its publish
+  // finalizes the session exactly as the merge it resumes would have — which is
+  // not at all when the conflicted merge was a graph lane's.
+  const finalizeSessionOnPublish = params.finalizeSessionOnPublish ?? true;
 
   return dispatchMachineJob<MergeContext, MergeOutput>({
     jobType: "resolve-conflicts",
@@ -966,6 +1017,7 @@ export function dispatchResolveConflictsJob(params: {
       if (resolutionContext) job.resolutionContext = resolutionContext;
       if (resolvedExecutionId) job.executionId = resolvedExecutionId;
       if (resolvedFinalPublish === true) job.finalPublish = true;
+      job.finalizeSessionOnPublish = finalizeSessionOnPublish;
       if (candidateValidation) job.candidateValidation = candidateValidation;
     },
     logStart(job) {
@@ -996,6 +1048,7 @@ export function dispatchResolveConflictsJob(params: {
         decisions,
         targetBranch,
         targetWorktreePath,
+        finalizeSessionOnPublish,
         ...(resolutionContext && { resolutionContext }),
         ...(resolvedExecutionId && { executionId: resolvedExecutionId }),
         ...(resolvedFinalPublish !== undefined && {

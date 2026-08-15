@@ -4,7 +4,7 @@
  * Route files delegate to these handlers, passing production deps.
  * Tests construct handlers via `createConversationRouteHandlers(deps)`.
  *
- * Each lifecycle mutation (create / rename / archive) publishes a dedicated
+ * Each lifecycle mutation (create / delete / rename / archive) publishes a dedicated
  * SSE event after the underlying state change succeeds so streaming clients
  * can react without polling. Broadcasts are emitted directly via `broadcast`
  * (not StatusBus) so that clients can register
@@ -19,7 +19,9 @@ import {
 } from "@/lib/projects/resolver";
 import { getSession as defaultGetSession } from "@/lib/state-store";
 import {
+  ConversationDeletionConflictError,
   createConversation as defaultCreateConversation,
+  deleteConversation as defaultDeleteConversation,
   getSessionConversations as defaultGetSessionConversations,
   renameConversation as defaultRenameConversation,
   setConversationArchived as defaultSetConversationArchived,
@@ -29,6 +31,7 @@ import {
   toPublicConversationStates,
   conversationRenamedEventSchema,
   conversationArchivedEventSchema,
+  conversationDeletedEventSchema,
   conversationProfileChangedEventSchema,
   generateConversationNameRequestSchema,
   generateConversationNameResponseSchema,
@@ -82,6 +85,11 @@ import {
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { createLogger, withTracing } from "@/lib/logging";
+import {
+  classifyRoutePrincipal,
+  invalidTokenResponse,
+  type WorkflowMutationGuardDeps,
+} from "@/lib/workflow-graph/mutation-guard";
 
 const logger = createLogger("conversation-route-handlers");
 
@@ -89,7 +97,7 @@ const logger = createLogger("conversation-route-handlers");
 // Deps interface
 // ---------------------------------------------------------------------------
 
-export interface ConversationRouteDeps {
+export interface ConversationRouteDeps extends WorkflowMutationGuardDeps {
   resolveProjectPath(name: string): Promise<string | null>;
   getProjectDisplayName(projectPath: string): string;
   getSession(
@@ -101,6 +109,11 @@ export interface ConversationRouteDeps {
     sessionName: string,
     opts?: { profile?: AgentProfileRef },
   ): Promise<ConversationState>;
+  deleteConversation(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): Promise<void>;
   renameConversation(
     projectPath: string,
     sessionName: string,
@@ -134,6 +147,7 @@ const defaultDeps: ConversationRouteDeps = {
   getProjectDisplayName: defaultGetProjectDisplayName,
   getSession: defaultGetSession,
   createConversation: defaultCreateConversation,
+  deleteConversation: defaultDeleteConversation,
   renameConversation: defaultRenameConversation,
   resolveConversationNamingContent: defaultResolveConversationNamingContent,
   resolveMessageNamingContent: defaultResolveMessageNamingContent,
@@ -308,6 +322,105 @@ export function createConversationRouteHandlers(
     });
 
     return NextResponse.json({ ok: true });
+  }
+
+  async function DELETE_CONVERSATION(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSessionConversationRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, sessionName, session, conversationId } =
+      resolved.value;
+
+    const classified = await classifyRoutePrincipal(request, session, deps);
+    if (classified.kind === "invalid_token") {
+      logger.warn("conversation_delete.invalid_token_refused", {
+        projectPath,
+        sessionName,
+        conversationId,
+      });
+      return invalidTokenResponse();
+    }
+    if (classified.kind === "unverified") {
+      logger.warn("conversation_delete.unverified_principal_refused", {
+        projectPath,
+        sessionName,
+        conversationId,
+        reason: classified.reason,
+      });
+      return NextResponse.json(
+        {
+          error:
+            "This agent cannot delete a conversation without a verified conversation capability.",
+          code: "unverified_principal",
+          instruction:
+            "Delete the conversation from its own ordinary session conversation, or use the Command Center UI.",
+        },
+        { status: 403 },
+      );
+    }
+
+    const { principal } = classified;
+    if (
+      principal.kind !== "human_ui" &&
+      principal.conversationId !== conversationId
+    ) {
+      logger.warn("conversation_delete.non_owner_principal_refused", {
+        projectPath,
+        sessionName,
+        conversationId,
+        principalKind: principal.kind,
+        principalConversationId: principal.conversationId,
+      });
+      return NextResponse.json(
+        {
+          error: "This agent cannot delete another conversation.",
+          code: "non_owner_principal",
+          instruction:
+            "Delete only the conversation represented by the presented capability, or use the Command Center UI.",
+        },
+        { status: 403 },
+      );
+    }
+
+    try {
+      await deps.deleteConversation(projectPath, sessionName, conversationId);
+    } catch (error) {
+      if (error instanceof ConversationDeletionConflictError) {
+        return jsonError(error.message, 409);
+      }
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to delete conversation";
+      return jsonError(message, 500);
+    }
+
+    const projectName = deps.getProjectDisplayName(projectPath);
+    publishEventBestEffort({
+      publish: deps.broadcast,
+      logger,
+      failureEvent: "conversation_deleted.broadcast_failed",
+      context: { projectName, sessionName, conversationId },
+      build: () =>
+        conversationDeletedEventSchema.parse({
+          type: "conversation-deleted",
+          scope: "session",
+          projectName,
+          sessionName,
+          conversationId,
+        }),
+    });
+
+    logger.info("conversation_delete.completed", {
+      projectPath,
+      sessionName,
+      conversationId,
+      principalKind: principal.kind,
+    });
+
+    return new Response(null, { status: 204 });
   }
 
   async function POST_GENERATE_NAME(
@@ -549,6 +662,7 @@ export function createConversationRouteHandlers(
 
   return {
     POST_CREATE,
+    DELETE_CONVERSATION,
     PATCH_RENAME,
     POST_GENERATE_NAME,
     PATCH_ARCHIVE,
@@ -570,6 +684,9 @@ export const listSessionConversations = withTracing(
 const _defaultConversationHandlers = createConversationRouteHandlers();
 export const createSessionConversation = withTracing(
   _defaultConversationHandlers.POST_CREATE,
+);
+export const deleteSessionConversation = withTracing(
+  _defaultConversationHandlers.DELETE_CONVERSATION,
 );
 export const archiveConversation = withTracing(
   _defaultConversationHandlers.PATCH_ARCHIVE,

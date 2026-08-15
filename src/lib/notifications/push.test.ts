@@ -195,6 +195,25 @@ describe("sendPushNotification", () => {
     });
   });
 
+  it("sends a stable message identity when a durable delivery supplies one", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
+    const config = makeConfig();
+    const event: PushEvent = {
+      trigger: "workflow-completed",
+      title: "Graph workflow completed",
+      message: "Graph workflow completed for session sess",
+      projectName: "proj",
+      sessionName: "sess",
+      dedupeKey: "graph-workflow-result:execution-1:17",
+    };
+
+    await sendPushNotification(config, event);
+
+    const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(options.body as string) as Record<string, unknown>;
+    expect(body.id).toBe("graph-workflow-result:execution-1:17");
+  });
+
   it("sends non-ASCII titles without throwing (em-dash regression)", async () => {
     mockFetch.mockImplementationOnce(async (input, init) => {
       // Force native validation: this is what real fetch does internally.

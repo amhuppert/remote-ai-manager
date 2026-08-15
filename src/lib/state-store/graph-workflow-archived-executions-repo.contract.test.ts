@@ -25,8 +25,13 @@ import { sessionStateSchema } from "@/lib/sessions/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
+import { createStateStore } from "./store";
+import { createWriteQueue } from "./write-queue";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
-import { buildMaximalGraphWorkflowExecution } from "@/lib/shared/testing/graph-workflow-execution-fixture";
+import {
+  buildMaximalGraphWorkflowExecution,
+  buildMaximalLaunchDocument,
+} from "@/lib/shared/testing/graph-workflow-execution-fixture";
 import {
   canonicalValuesAtPath,
   collectValuesAtPath,
@@ -74,6 +79,12 @@ function makeExecution(
 ): GraphWorkflowExecution {
   return graphWorkflowExecutionSchema.parse({
     id: "wf-1",
+    origin: {
+      kind: "template",
+      definitionId: "seed-1",
+      definitionRevision: 1,
+      tier: "project",
+    },
     seedDefinitionId: "seed-1",
     seedDefinitionRevision: 1,
     workingDefinition: {},
@@ -208,6 +219,67 @@ describe("graph-workflow-archived-executions-repo insert + read", () => {
   });
 });
 
+describe("active-or-archived execution accessor", () => {
+  it("finds a running physical active row and a terminal row still occupying Current", async () => {
+    const store = createStateStore({ db, writeQueue: createWriteQueue() });
+    const running = makeExecution({
+      id: "wf-current",
+      status: "running",
+      completedAt: null,
+    });
+    await store.mutateActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "test.seed-current",
+      () => ({ execution: running, events: [] }),
+    );
+
+    expect(
+      await store.getGraphWorkflowExecutionById(
+        PROJECT_PATH,
+        SESSION_NAME,
+        running.id,
+      ),
+    ).toEqual(running);
+
+    const completed = makeExecution({ id: running.id, status: "completed" });
+    await store.mutateActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "test.complete-in-place",
+      () => ({ execution: completed, events: [] }),
+    );
+    expect(
+      await store.getGraphWorkflowExecutionById(
+        PROJECT_PATH,
+        SESSION_NAME,
+        completed.id,
+      ),
+    ).toEqual(completed);
+  });
+
+  it("falls back to a fully scoped archived row and refuses scope mismatch", async () => {
+    const store = createStateStore({ db, writeQueue: createWriteQueue() });
+    const archived = makeExecution({ id: "wf-history" });
+    repo.insert(makeRow({ executionId: archived.id, execution: archived }));
+
+    expect(
+      await store.getGraphWorkflowExecutionById(
+        PROJECT_PATH,
+        SESSION_NAME,
+        archived.id,
+      ),
+    ).toEqual(archived);
+    expect(
+      await store.getGraphWorkflowExecutionById(
+        PROJECT_PATH,
+        "other-session",
+        archived.id,
+      ),
+    ).toBeNull();
+  });
+});
+
 describe("graph-workflow-archived-executions-repo pre-D4 floor", () => {
   /**
    * Write an archived row STRAIGHT to SQLite, bypassing `insert` (which parses
@@ -263,6 +335,22 @@ describe("graph-workflow-archived-executions-repo pre-D4 floor", () => {
     expect(loaded?.workingDefinition.edges.map((edge) => edge.id)).toEqual([
       "ctx-1__ctx-2",
     ]);
+  });
+
+  it("exposes a legacy archive through the common by-id accessor", async () => {
+    const legacy = preD4ArchivedExecution();
+    legacy.id = "wf-pre-d4-by-id";
+    insertRawArchivedRow("wf-pre-d4-by-id", legacy);
+    const store = createStateStore({ db, writeQueue: createWriteQueue() });
+
+    const loaded = await store.getGraphWorkflowExecutionById(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "wf-pre-d4-by-id",
+    );
+
+    expect(loaded?.id).toBe("wf-pre-d4-by-id");
+    expect(loaded?.workingDefinition.edges[0]?.id).toBe("ctx-1__ctx-2");
   });
 
   // The dormant floor R14.1 promises, proven on the archive tier: absent D4
@@ -500,8 +588,24 @@ function maximalResolvedContext(): Record<string, unknown> {
 function buildMaximalExecution(): unknown {
   const execution = {
     id: "wf-maximal",
+    origin: {
+      kind: "template",
+      definitionId: "seed-maximal",
+      definitionRevision: 3,
+      tier: "project",
+    },
     seedDefinitionId: "seed-maximal",
     seedDefinitionRevision: 3,
+    // The authored source snapshot, shared with the active-execution fixture so
+    // the two maximal records cannot drift on the one field History renders a
+    // template-free run from.
+    launchDocument: buildMaximalLaunchDocument(),
+    liveSessionReadOnlyPinned: true,
+    abandonment: {
+      abandonedAt: "2026-01-02T10:00:00.000Z",
+      actor: { kind: "human" },
+      reason: "superseded by a replan",
+    },
     liveRevision: 4,
     executionStateRevision: 17,
     structuralRevision: 9,
@@ -586,6 +690,12 @@ function buildMaximalExecution(): unknown {
     definitionApproval: {
       requestedAt: "2026-01-01T00:00:05Z",
       approvedAt: "2026-01-01T00:00:10Z",
+    },
+    // Populated for the durability probe only: a finalized approval has
+    // consumed its reservation, so a live record never carries both.
+    definitionApprovalClaim: {
+      claimId: "claim-archived-definition-approval",
+      claimedAt: "2026-01-01T00:00:08Z",
     },
     workingDefinition: {
       schemaVersion: 2,

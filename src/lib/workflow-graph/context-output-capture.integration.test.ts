@@ -162,6 +162,8 @@ interface Repository {
         >,
   ): Promise<GraphWorkflowExecution>;
   findLatestContextValidationEvent(
+    projectPath: string,
+    sessionName: string,
     executionId: string,
     contextId: string,
   ): Promise<GraphWorkflowExecutionEvent | null>;
@@ -186,7 +188,12 @@ function createRepository(initial: GraphWorkflowExecution): Repository {
       }
       return active;
     },
-    async findLatestContextValidationEvent(_executionId, contextId) {
+    async findLatestContextValidationEvent(
+      _projectPath,
+      _sessionName,
+      _executionId,
+      contextId,
+    ) {
       for (let i = appendedEvents.length - 1; i >= 0; i -= 1) {
         const entry = appendedEvents[i]!;
         if (

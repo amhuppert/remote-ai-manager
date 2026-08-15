@@ -17,7 +17,11 @@ import {
   createGraphWorkflowSharedDocumentRegistryService,
   createWorkflowSeededDocumentService,
 } from "./shared-documents";
-import { createWorkflowDefinition } from "./test-fixtures";
+import {
+  createInMemoryLeaseReservation,
+  createWorkflowDefinition,
+  makeLaunchDocument,
+} from "./test-fixtures";
 
 /**
  * Engine-seeded shared documents, end to end through the REAL execution
@@ -55,7 +59,11 @@ function seededDocument(overrides: Partial<{ relativePath: string }> = {}) {
   };
 }
 
-function setup() {
+function setup(
+  overrides: {
+    writeFile?: (absolutePath: string, contents: string) => Promise<void>;
+  } = {},
+) {
   const sessionWorktree = newTempDir("cc-seed-session-");
   const configDir = newTempDir("cc-seed-config-");
   const sessions = new Map<string, SessionState>();
@@ -74,6 +82,8 @@ function setup() {
   });
 
   const repo = createGraphWorkflowExecutionRepository({
+    // No git worktree in this harness; the real exclusion would shell out.
+    ensureCcArtifactsExcluded: async () => {},
     async getSession(projectPath, sessionName) {
       return sessions.get(`${projectPath}:${sessionName}`) ?? null;
     },
@@ -98,6 +108,17 @@ function setup() {
       current.graphWorkflowExecution = execution;
       return { execution, delivery: { events, pushes: pushes ?? [] } };
     },
+    reserveActiveGraphWorkflowExecution: createInMemoryLeaseReservation({
+      readActive: (projectPath, sessionName) =>
+        sessions.get(`${projectPath}:${sessionName}`)?.graphWorkflowExecution ??
+        null,
+      installActive: (projectPath, sessionName, execution) => {
+        const key = `${projectPath}:${sessionName}`;
+        const current = sessions.get(key);
+        if (current === undefined) throw new Error(`No session ${key}`);
+        current.graphWorkflowExecution = execution;
+      },
+    }),
     async archiveActiveGraphWorkflowExecution() {
       return { archived: false as const, reason: "no_active" as const };
     },
@@ -105,7 +126,10 @@ function setup() {
       return 0;
     },
     eventPublisher,
-    seededDocumentService: createWorkflowSeededDocumentService({ store }),
+    seededDocumentService: createWorkflowSeededDocumentService({
+      store,
+      ...(overrides.writeFile ? { writeFile: overrides.writeFile } : {}),
+    }),
     readConfig: async () => ({}) as GlobalConfig,
     readRepoConfig: async () => null,
   });
@@ -120,12 +144,16 @@ async function launch(
   const definition: WorkflowSemanticDefinition = createWorkflowDefinition();
   return repo.create(PROJECT_PATH, SESSION_NAME, {
     definition,
-    definitionId: "wf-1",
-    definitionRevision: 1,
+    source: {
+      kind: "template",
+      definitionId: "wf-1",
+      definitionRevision: 1,
+      tier: "project",
+    },
+    launchDocument: makeLaunchDocument(definition),
     executionId: "exec-seeded-1",
     startedAt: "2026-08-11T00:00:00.000Z",
     inputs: {},
-    launchedTier: "project",
     ownerConversationId: null,
     seededDocuments: documents,
   });
@@ -210,16 +238,42 @@ describe("engine-seeded shared documents", () => {
     ).toThrow(/engine/i);
   });
 
-  it("fails the launch when a seeded document cannot be written", async () => {
+  it("fails the launch when a seeded document path escapes the worktree", async () => {
     const { repo, sessions } = setup();
 
     await expect(
       launch(repo, [seededDocument({ relativePath: "../outside/spec.md" })]),
     ).rejects.toThrow();
 
-    // Nothing was persisted: no execution whose plan could cite the document.
+    // Path confinement is checked during REGISTRATION, which runs before the
+    // lease reservation — so this launch never reached the CAS. Nothing was
+    // persisted: no execution whose plan could cite the document.
     expect(
       sessions.get(`${PROJECT_PATH}:${SESSION_NAME}`)?.graphWorkflowExecution,
     ).toBeNull();
+  });
+
+  it("halts the reserved run when a seeded document cannot be written", async () => {
+    const { repo, sessions } = setup({
+      writeFile: async () => {
+        throw new Error("disk full");
+      },
+    });
+
+    await expect(launch(repo, [seededDocument()])).rejects.toThrow(/disk full/);
+
+    // A write failure is different in kind from a bad path: the reservation has
+    // already committed, so the run is the session's Current. It is halted
+    // where it stands — located, reviewable, and retryable — rather than
+    // vanishing into a launch nobody can account for.
+    const active = sessions.get(
+      `${PROJECT_PATH}:${SESSION_NAME}`,
+    )?.graphWorkflowExecution;
+    expect(active?.id).toBe("exec-seeded-1");
+    expect(active?.status).toBe("halted");
+    expect(active?.haltReason).toMatchObject({
+      type: "execution_loop_failed",
+      cause: "io",
+    });
   });
 });

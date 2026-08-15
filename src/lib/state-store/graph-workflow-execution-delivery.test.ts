@@ -19,7 +19,22 @@ import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixtu
 import type { PersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import { createGraphWorkflowExecutionRepository } from "@/lib/workflow-graph/execution-repository";
-import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
+import {
+  createWorkflowDefinition,
+  createWorkflowExecution,
+  makeLaunchDocument,
+} from "@/lib/workflow-graph/test-fixtures";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
+import { createNotificationsRepo } from "@/lib/notifications/repo";
+import {
+  createGraphWorkflowResultDeliveryService,
+  type DeliverRecordedWorkflowResultInput,
+} from "@/lib/workflow-graph/result-delivery-service";
+import { buildGraphWorkflowExecutionDeepLink } from "@/lib/workflow-graph/execution-deep-link";
+import type { WorkflowNotification } from "@/lib/notifications/schemas";
+import { createGraphWorkflowResultDeliveriesRepo } from "@/lib/state-store/graph-workflow-result-deliveries-repo";
+import { createStateStore } from "@/lib/state-store/store";
+import { createWriteQueue } from "@/lib/state-store/write-queue";
 import type {
   GraphWorkflowExecutionEvent,
   GraphWorkflowSSEEvent,
@@ -54,12 +69,18 @@ afterEach(() => {
  */
 function makeRepository(options?: {
   mutateSeam?: PersistenceFixture["store"]["mutateActiveGraphWorkflowExecution"];
+  deliverResultRecorded?(
+    input: DeliverRecordedWorkflowResultInput,
+  ): Promise<void>;
 }) {
   const broadcast = vi.fn<(event: GraphWorkflowSSEEvent) => void>();
   const eventPublisher = createGraphWorkflowExecutionEventPublisher({
     broadcast,
+    deliverResultRecorded: options?.deliverResultRecorded,
   });
   const repo = createGraphWorkflowExecutionRepository({
+    // No git worktree in this harness; the real exclusion would shell out.
+    ensureCcArtifactsExcluded: async () => {},
     async getSession() {
       return { worktreePath: "/repo/wt" } as unknown as SessionState;
     },
@@ -67,6 +88,8 @@ function makeRepository(options?: {
       fixture.store.getActiveGraphWorkflowExecution,
     mutateActiveGraphWorkflowExecution:
       options?.mutateSeam ?? fixture.store.mutateActiveGraphWorkflowExecution,
+    reserveActiveGraphWorkflowExecution:
+      fixture.store.reserveActiveGraphWorkflowExecution,
     archiveActiveGraphWorkflowExecution:
       fixture.store.archiveActiveGraphWorkflowExecution,
     async markGraphWorkflowContextEventsPreReset() {
@@ -99,8 +122,11 @@ describe("graph-workflow execution mutation seam — post-commit delivery", () =
     broadcast.mockImplementation(() => {
       // The broadcaster runs post-commit, so the appended row is already
       // durable and visible when the first wire event fires.
-      rowsVisibleWhenBroadcast =
-        fixture.graphWorkflowEvents.findByExecution("execution-1").length;
+      rowsVisibleWhenBroadcast = fixture.graphWorkflowEvents.findByExecution(
+        PROJECT_PATH,
+        SESSION_NAME,
+        "execution-1",
+      ).length;
     });
 
     // A status change is a real prev→next diff: running -> paused emits exactly
@@ -119,7 +145,11 @@ describe("graph-workflow execution mutation seam — post-commit delivery", () =
 
     // The committed row is durable and reloads.
     expect(
-      fixture.graphWorkflowEvents.findByExecution("execution-1").length,
+      fixture.graphWorkflowEvents.findByExecution(
+        PROJECT_PATH,
+        SESSION_NAME,
+        "execution-1",
+      ).length,
     ).toBeGreaterThanOrEqual(1);
   });
 
@@ -165,8 +195,428 @@ describe("graph-workflow execution mutation seam — post-commit delivery", () =
       SESSION_NAME,
     );
     expect(active?.status).toBe("running");
-    expect(fixture.graphWorkflowEvents.findByExecution("execution-1")).toEqual(
-      [],
+    expect(
+      fixture.graphWorkflowEvents.findByExecution(
+        PROJECT_PATH,
+        SESSION_NAME,
+        "execution-1",
+      ),
+    ).toEqual([]);
+  });
+
+  it("retains result provenance and creates one fallback notification when the origin is deleted", async () => {
+    const originConversationId = "conversation-origin";
+    await fixture.seedConversation(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeConversationState({ id: originConversationId }),
     );
+    const running = runningExecution();
+    const launchDocument = makeLaunchDocument(createWorkflowDefinition(), {
+      name: "Deleted-origin delivery",
+    });
+    const execution = createWorkflowExecution({
+      ...running,
+      ownerConversationId: originConversationId,
+      launchDocument,
+      contextOutputs: {
+        "context-plan": {
+          value: { verdict: "ready" },
+          capturedAt: "2026-08-14T12:00:00.000Z",
+          iteration: 1,
+          parse: { source: "raw_json" },
+        },
+      },
+    });
+    await seedActiveExecution(execution);
+
+    const notificationsRepo = createNotificationsRepo(fixture.db);
+    const published: WorkflowNotification[] = [];
+    const dispatchPush = vi.fn();
+    const resultDeliveryService = createGraphWorkflowResultDeliveryService({
+      async markOriginUnread(input) {
+        return (
+          (await fixture.store.getConversation(
+            input.projectPath,
+            input.sessionName,
+            input.conversationId,
+          )) !== null
+        );
+      },
+      dispatchPush,
+      commitMissingOriginFallback(input) {
+        return fixture.store.commitGraphWorkflowMissingOriginFallback(
+          input.projectPath,
+          input.sessionName,
+          input.executionId,
+          input.boundarySeq,
+          input.notification,
+        );
+      },
+      publishFallbackNotification(notification) {
+        published.push(notification);
+      },
+      settleMissingOriginResult(input) {
+        return fixture.store.settleGraphWorkflowResultDeliveryFallback(
+          input.projectPath,
+          input.sessionName,
+          input.executionId,
+          input.boundarySeq,
+        );
+      },
+      async isPostCommitEffectPending(input) {
+        const row = await fixture.store.getGraphWorkflowResultDelivery(
+          input.projectPath,
+          input.sessionName,
+          input.executionId,
+          input.boundarySeq,
+        );
+        return row !== null && row.effectsDeliveredAt === null;
+      },
+      markPostCommitEffectDelivered(input) {
+        return fixture.store.markGraphWorkflowResultEffectDelivered(
+          input.projectPath,
+          input.sessionName,
+          input.executionId,
+          input.boundarySeq,
+        );
+      },
+      listPendingPostCommitEffects:
+        fixture.store.listPendingGraphWorkflowResultEffects,
+    });
+    const { repo } = makeRepository({
+      deliverResultRecorded: resultDeliveryService.deliverRecordedResult,
+    });
+
+    await repo.update(PROJECT_PATH, SESSION_NAME, {
+      ...execution,
+      status: "halted",
+      haltReason: {
+        type: "recovery_error",
+        message: "Resume after operator repair.",
+      },
+    });
+
+    expect(notificationsRepo.getNotifications().total).toBe(0);
+    await fixture.store.mutateSession(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "test.delete-origin",
+      (session) => {
+        session.conversations = (session.conversations ?? []).filter(
+          (conversation) => conversation.id !== originConversationId,
+        );
+      },
+    );
+
+    await repo.update(PROJECT_PATH, SESSION_NAME, {
+      ...execution,
+      status: "completed",
+      haltReason: null,
+    });
+
+    const restarted = fixture.recreateStore();
+    const reloaded = await restarted.getActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(reloaded).toMatchObject({
+      ownerConversationId: originConversationId,
+      launchDocument,
+      contextOutputs: execution.contextOutputs,
+    });
+    const events = fixture.graphWorkflowEvents.findByExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+      execution.id,
+    );
+    expect(
+      events.some((event) => event.event.type === "graph-workflow-boundary"),
+    ).toBe(true);
+    const deliveries = notificationsRepo.getNotifications().notifications;
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]).toMatchObject({
+      source: "workflow",
+      sessionName: SESSION_NAME,
+      executionId: execution.id,
+      originConversationId,
+      deepLink: buildGraphWorkflowExecutionDeepLink({
+        projectName: "p1",
+        sessionName: SESSION_NAME,
+        executionId: execution.id,
+      }),
+    });
+    expect(published).toHaveLength(1);
+    expect(dispatchPush).toHaveBeenCalledTimes(1);
+
+    const resultRows = createGraphWorkflowResultDeliveriesRepo(
+      fixture.db,
+    ).listByExecution(PROJECT_PATH, SESSION_NAME, execution.id);
+    expect(resultRows.every((row) => row.state === "delivered")).toBe(true);
+    const resultRow = resultRows.find(
+      (row) => row.payload.boundaryKind === "completion",
+    );
+    expect(resultRow).toMatchObject({
+      originConversationId,
+      state: "delivered",
+    });
+
+    const replayService = createGraphWorkflowResultDeliveryService({
+      async markOriginUnread() {
+        return false;
+      },
+      dispatchPush,
+      commitMissingOriginFallback(input) {
+        return restarted.commitGraphWorkflowMissingOriginFallback(
+          input.projectPath,
+          input.sessionName,
+          input.executionId,
+          input.boundarySeq,
+          input.notification,
+        );
+      },
+      publishFallbackNotification(notification) {
+        published.push(notification);
+      },
+      settleMissingOriginResult(input) {
+        return restarted.settleGraphWorkflowResultDeliveryFallback(
+          input.projectPath,
+          input.sessionName,
+          input.executionId,
+          input.boundarySeq,
+        );
+      },
+      async isPostCommitEffectPending(input) {
+        const row = await restarted.getGraphWorkflowResultDelivery(
+          input.projectPath,
+          input.sessionName,
+          input.executionId,
+          input.boundarySeq,
+        );
+        return row !== null && row.effectsDeliveredAt === null;
+      },
+      markPostCommitEffectDelivered(input) {
+        return restarted.markGraphWorkflowResultEffectDelivered(
+          input.projectPath,
+          input.sessionName,
+          input.executionId,
+          input.boundarySeq,
+        );
+      },
+      listPendingPostCommitEffects:
+        restarted.listPendingGraphWorkflowResultEffects,
+    });
+    await replayService.deliverRecordedResult({
+      projectPath: PROJECT_PATH,
+      event: {
+        type: "graph-workflow-result-recorded",
+        projectName: "p1",
+        sessionName: SESSION_NAME,
+        executionId: execution.id,
+        originConversationId,
+        boundaryCursor: resultRow!.boundarySeq,
+      },
+      completionPush: {
+        kind: "workflow-completed",
+        projectName: "p1",
+        sessionName: SESSION_NAME,
+      },
+    });
+
+    expect(notificationsRepo.getNotifications().total).toBe(1);
+    expect(published).toHaveLength(1);
+    expect(dispatchPush).toHaveBeenCalledTimes(1);
+  });
+
+  it("rolls back the fallback notification when ledger settlement fails", async () => {
+    const deliveries = createGraphWorkflowResultDeliveriesRepo(fixture.db);
+    deliveries.record({
+      executionId: "execution-atomic",
+      boundarySeq: 17,
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      originConversationId: "conversation-deleted",
+      payload: { boundaryKind: "completion", status: "completed" },
+      recordedAt: "2026-08-14T12:00:00.000Z",
+      state: "pending",
+      attemptId: null,
+      attemptCount: 0,
+      deliveredAt: null,
+      effectsDeliveredAt: null,
+    });
+    const notifications = createNotificationsRepo(fixture.db);
+    const store = createStateStore({
+      db: fixture.db,
+      writeQueue: createWriteQueue(),
+      repos: {
+        notifications,
+        graphWorkflowResultDeliveries: {
+          ...deliveries,
+          markExecutionFallbackDelivered() {
+            throw new Error("settlement failed");
+          },
+        },
+      },
+    });
+
+    await expect(
+      store.commitGraphWorkflowMissingOriginFallback(
+        PROJECT_PATH,
+        SESSION_NAME,
+        "execution-atomic",
+        17,
+        {
+          type: "workflow-result-ready",
+          title: "Workflow result ready",
+          message: "Execution completed after its origin was deleted.",
+          projectName: "p1",
+          sessionName: SESSION_NAME,
+          executionId: "execution-atomic",
+          originConversationId: "conversation-deleted",
+          deepLink: "/projects/p1/s1/workflow?execution=execution-atomic",
+          dedupeKey: "graph-workflow-origin-missing:execution-atomic",
+        },
+      ),
+    ).rejects.toThrow("settlement failed");
+
+    expect(notifications.getNotifications().total).toBe(0);
+    expect(
+      deliveries.findByBoundary(
+        PROJECT_PATH,
+        SESSION_NAME,
+        "execution-atomic",
+        17,
+      ),
+    ).toMatchObject({ state: "pending" });
+  });
+
+  it("reconciles a committed fallback after a crash before external effects", async () => {
+    const deliveries = createGraphWorkflowResultDeliveriesRepo(fixture.db);
+    deliveries.record({
+      executionId: "execution-reconcile",
+      boundarySeq: 23,
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      originConversationId: "conversation-deleted",
+      payload: { boundaryKind: "completion", status: "completed" },
+      recordedAt: "2026-08-14T12:00:00.000Z",
+      state: "pending",
+      attemptId: null,
+      attemptCount: 0,
+      deliveredAt: null,
+      effectsDeliveredAt: null,
+    });
+    const notificationInput = {
+      type: "workflow-result-ready" as const,
+      title: "Workflow result ready",
+      message: "Execution completed after its origin was deleted.",
+      projectName: "p1",
+      sessionName: SESSION_NAME,
+      executionId: "execution-reconcile",
+      originConversationId: "conversation-deleted",
+      deepLink: "/projects/p1/s1/workflow?execution=execution-reconcile",
+      dedupeKey: "graph-workflow-origin-missing:execution-reconcile",
+    };
+
+    const committed =
+      await fixture.store.commitGraphWorkflowMissingOriginFallback(
+        PROJECT_PATH,
+        SESSION_NAME,
+        "execution-reconcile",
+        23,
+        notificationInput,
+      );
+    expect(committed).toMatchObject({ created: true, settled: true });
+
+    const restarted = fixture.recreateStore();
+    const dispatchPush = vi.fn();
+    const publishFallbackNotification = vi.fn();
+    const publishResultRecorded = vi.fn();
+    const service = createGraphWorkflowResultDeliveryService({
+      markOriginUnread: vi.fn(async () => false),
+      dispatchPush,
+      commitMissingOriginFallback(input) {
+        return restarted.commitGraphWorkflowMissingOriginFallback(
+          input.projectPath,
+          input.sessionName,
+          input.executionId,
+          input.boundarySeq,
+          input.notification,
+        );
+      },
+      publishFallbackNotification,
+      settleMissingOriginResult(input) {
+        return restarted.settleGraphWorkflowResultDeliveryFallback(
+          input.projectPath,
+          input.sessionName,
+          input.executionId,
+          input.boundarySeq,
+        );
+      },
+      async isPostCommitEffectPending(input) {
+        const row = await restarted.getGraphWorkflowResultDelivery(
+          input.projectPath,
+          input.sessionName,
+          input.executionId,
+          input.boundarySeq,
+        );
+        return row !== null && row.effectsDeliveredAt === null;
+      },
+      markPostCommitEffectDelivered(input) {
+        return restarted.markGraphWorkflowResultEffectDelivered(
+          input.projectPath,
+          input.sessionName,
+          input.executionId,
+          input.boundarySeq,
+        );
+      },
+      listPendingPostCommitEffects:
+        restarted.listPendingGraphWorkflowResultEffects,
+      publishResultRecorded,
+    });
+
+    expect(
+      await service.reconcilePendingResults(PROJECT_PATH, SESSION_NAME),
+    ).toBe(1);
+    expect(publishResultRecorded).toHaveBeenCalledOnce();
+    expect(publishFallbackNotification).toHaveBeenCalledExactlyOnceWith(
+      committed.notification,
+    );
+    expect(dispatchPush).toHaveBeenCalledExactlyOnceWith({
+      kind: "workflow-completed",
+      projectName: "p1",
+      sessionName: SESSION_NAME,
+      dedupeKey: "graph-workflow-result:execution-reconcile:23",
+    });
+    expect(createNotificationsRepo(fixture.db).getNotifications().total).toBe(
+      1,
+    );
+    expect(
+      await restarted.getGraphWorkflowResultDelivery(
+        PROJECT_PATH,
+        SESSION_NAME,
+        "execution-reconcile",
+        23,
+      ),
+    ).toMatchObject({
+      state: "delivered",
+      effectsDeliveredAt: expect.any(String),
+    });
+
+    expect(
+      await createGraphWorkflowResultDeliveryService({
+        markOriginUnread: vi.fn(async () => false),
+        dispatchPush,
+        commitMissingOriginFallback: vi.fn(),
+        publishFallbackNotification,
+        settleMissingOriginResult: vi.fn(async () => false),
+        isPostCommitEffectPending: vi.fn(async () => false),
+        markPostCommitEffectDelivered: vi.fn(async () => false),
+        listPendingPostCommitEffects:
+          restarted.listPendingGraphWorkflowResultEffects,
+      }).reconcilePendingResults(PROJECT_PATH, SESSION_NAME),
+    ).toBe(0);
+    expect(dispatchPush).toHaveBeenCalledTimes(1);
+    expect(publishFallbackNotification).toHaveBeenCalledTimes(1);
   });
 });

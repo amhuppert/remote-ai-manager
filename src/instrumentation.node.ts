@@ -6,7 +6,10 @@ import { createContextArtifactsRepo } from "./lib/context-artifacts/repo";
 import { initializeNotifications } from "./lib/notifications/service";
 import { setConfigReader } from "./lib/push-notification/dispatcher";
 import { readConfig, getConfigDirPath } from "./lib/config/loader";
-import { ensureInstanceToken } from "./lib/agent-gateway/token";
+import {
+  ensureCapabilitySigningKey,
+  ensureInstanceToken,
+} from "./lib/agent-gateway/token";
 import {
   installCctl,
   type InstallCctlResult,
@@ -72,7 +75,15 @@ const defaultStartupDeps: StartupDeps = {
   setConfigReader,
   readConfig,
   recoverActiveWorkflowEnvelopes,
-  ensureAgentToken: () => ensureInstanceToken(getConfigDirPath()),
+  ensureAgentToken: async () => {
+    const token = await ensureInstanceToken(getConfigDirPath());
+    // Provisioned alongside the api token and never exported: it signs the
+    // conversation and lane capabilities agent workflow authority is derived
+    // from (D11, D4 R7). Separate from the token precisely because the token IS
+    // exported, so a capability keyed on it would be agent-forgeable.
+    await ensureCapabilitySigningKey(getConfigDirPath());
+    return token;
+  },
   installCli: () =>
     installCctl({
       bundlePath: path.join(process.cwd(), "dist", "cctl", "cctl.mjs"),

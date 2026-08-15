@@ -6,8 +6,10 @@ import {
   createWorkflowExecution,
 } from "@/lib/workflow-graph/test-fixtures";
 import {
+  GRAPH_WORKFLOW_RESULT_OUTPUT_MAX_BYTES,
   contextOwesOutput,
   getContextOutput,
+  projectGraphWorkflowResultOutputs,
   resolveDefinitionUpstreamInputs,
   resolveUpstreamInputs,
 } from "./context-outputs";
@@ -175,6 +177,117 @@ describe("getContextOutput", () => {
         kind: "skipped",
       });
     });
+  });
+});
+
+describe("projectGraphWorkflowResultOutputs", () => {
+  const scope = { projectName: "repo", sessionName: "session-1" };
+
+  it("projects declared scalar and object values under their context id", () => {
+    const execution = makeExecution({
+      schemas: { "context-plan": PLAN_SCHEMA },
+      outputs: {
+        "context-plan": {
+          summary: "Migrate the store first",
+          details: { riskCount: 1 },
+        },
+      },
+    });
+
+    expect(projectGraphWorkflowResultOutputs({ ...scope, execution })).toEqual({
+      kind: "declared_outputs",
+      byContext: {
+        "context-plan": {
+          details: { riskCount: 1 },
+          summary: "Migrate the store first",
+        },
+      },
+    });
+  });
+
+  it("returns an explicit marker when no reached context has a declared result", () => {
+    const execution = makeExecution({
+      outputs: { "context-plan": { incidental: "not declared" } },
+    });
+
+    expect(projectGraphWorkflowResultOutputs({ ...scope, execution })).toEqual({
+      kind: "no_declared_structured_result",
+    });
+  });
+
+  it("inlines a value just below the cap and references one just above it", () => {
+    const below = "b".repeat(GRAPH_WORKFLOW_RESULT_OUTPUT_MAX_BYTES - 3);
+    const above = "a".repeat(GRAPH_WORKFLOW_RESULT_OUTPUT_MAX_BYTES - 1);
+    const execution = makeExecution({
+      schemas: { "context-plan": PLAN_SCHEMA },
+      outputs: { "context-plan": { below, above } },
+    });
+
+    const projection = projectGraphWorkflowResultOutputs({
+      ...scope,
+      execution,
+    });
+
+    expect(projection).toMatchObject({
+      kind: "declared_outputs",
+      byContext: {
+        "context-plan": {
+          below,
+          above: {
+            kind: "output_reference",
+            executionId: execution.id,
+            contextId: "context-plan",
+            outputName: "above",
+            deepLink: `/projects/repo/session-1/workflow?execution=${execution.id}`,
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(projection)).not.toContain(above);
+    expect(execution.contextOutputs["context-plan"]?.value.above).toBe(above);
+  });
+
+  it("references every oversized value independently with stable coordinates", () => {
+    const first = "1".repeat(GRAPH_WORKFLOW_RESULT_OUTPUT_MAX_BYTES);
+    const second = "2".repeat(GRAPH_WORKFLOW_RESULT_OUTPUT_MAX_BYTES);
+    const execution = makeExecution({
+      schemas: {
+        "context-plan": PLAN_SCHEMA,
+        "context-implement": PLAN_SCHEMA,
+      },
+      outputs: {
+        "context-plan": { first },
+        "context-implement": { second },
+      },
+    });
+
+    const projection = projectGraphWorkflowResultOutputs({
+      ...scope,
+      execution,
+    });
+    expect(projection).toMatchObject({
+      kind: "declared_outputs",
+      byContext: {
+        "context-plan": {
+          first: {
+            kind: "output_reference",
+            executionId: execution.id,
+            contextId: "context-plan",
+            outputName: "first",
+          },
+        },
+        "context-implement": {
+          second: {
+            kind: "output_reference",
+            executionId: execution.id,
+            contextId: "context-implement",
+            outputName: "second",
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(projection)).not.toContain(first);
+    expect(JSON.stringify(projection)).not.toContain(second);
   });
 });
 

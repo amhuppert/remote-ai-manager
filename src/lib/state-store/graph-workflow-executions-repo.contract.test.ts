@@ -26,6 +26,11 @@ import type {
   GraphWorkflowLandingIntent,
 } from "@/lib/workflow-graph/schemas";
 import { laneStateKey } from "@/lib/workflow-graph/lane-identity";
+import {
+  buildOneOffSeedCompatibilityFields,
+  ONE_OFF_SEED_DEFINITION_ID_PREFIX,
+} from "@/lib/workflow-graph/execution-origin";
+import { executionLeaseAndResultDeliveries } from "./migrations/0024-execution-lease-and-result-deliveries";
 import { resolveExpansionProvenance } from "@/lib/workflow-graph/expansion-receipts";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 import { buildMaximalGraphWorkflowExecution } from "@/lib/shared/testing/graph-workflow-execution-fixture";
@@ -1257,6 +1262,270 @@ describe("graph-workflow-executions-repo behavior", () => {
     // actually hits the corrupt blob.
     const freshRepo = createGraphWorkflowExecutionsRepo(db);
     expect(() => freshRepo.getActive(PROJECT_PATH, SESSION_NAME)).toThrow();
+  });
+});
+
+describe("graph-workflow-executions-repo derived lease projection", () => {
+  function leaseHeld(): number {
+    const row = db
+      .prepare(
+        `SELECT lease_held FROM graph_workflow_executions
+          WHERE project_path = ? AND session_name = ?`,
+      )
+      .get(PROJECT_PATH, SESSION_NAME) as { lease_held: number };
+    return row.lease_held;
+  }
+
+  function write(patch: Partial<GraphWorkflowExecution>): void {
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      graphWorkflowExecutionSchema.parse({ ...maximalExecution(), ...patch }),
+      "2026-03-01T00:00:00Z",
+    );
+  }
+
+  const RESUMABLE_HALT = {
+    type: "agent_turn_failed",
+    contextId: "ctx-1",
+    engine: "claude",
+    cause: "sdk_error",
+    message: "turn failed",
+  } as const;
+
+  // D15: derived on write from the full record, never declared by a caller —
+  // the structural-revision pattern, so a writer cannot forget it.
+  it("derives lease_held from status, halt reason, and abandonment on every write", () => {
+    write({ status: "running", haltReason: null, abandonment: null });
+    expect(leaseHeld()).toBe(1);
+
+    write({ status: "completed", haltReason: null, abandonment: null });
+    expect(leaseHeld()).toBe(0);
+
+    write({ status: "halted", haltReason: RESUMABLE_HALT, abandonment: null });
+    expect(leaseHeld()).toBe(1);
+
+    write({
+      status: "halted",
+      haltReason: { type: "recovery_error", message: "unrecoverable" },
+      abandonment: null,
+    });
+    expect(leaseHeld()).toBe(0);
+
+    write({
+      status: "halted",
+      haltReason: RESUMABLE_HALT,
+      abandonment: {
+        abandonedAt: "2026-03-02T00:00:00.000Z",
+        actor: { kind: "human" },
+        reason: "superseded",
+      },
+    });
+    expect(leaseHeld()).toBe(0);
+  });
+
+  // Status, halt reason, and abandonment all live in the RUNTIME tier, so the
+  // release almost always arrives on the runtime-only UPDATE path. A projection
+  // written on the full-upsert path alone would leave a finished run looking
+  // ambient-active until its definition happened to change.
+  it("moves the projection on the runtime-only write path", () => {
+    const execution = maximalExecution();
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      graphWorkflowExecutionSchema.parse({
+        ...execution,
+        status: "running",
+        abandonment: null,
+      }),
+      "2026-03-01T00:00:00Z",
+    );
+    const definitionBefore = db
+      .prepare(
+        `SELECT definition_json FROM graph_workflow_executions
+          WHERE project_path = ? AND session_name = ?`,
+      )
+      .get(PROJECT_PATH, SESSION_NAME) as { definition_json: string };
+    expect(leaseHeld()).toBe(1);
+
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      graphWorkflowExecutionSchema.parse({
+        ...execution,
+        status: "aborted",
+        abandonment: null,
+        completedAt: "2026-03-02T00:00:00Z",
+      }),
+      "2026-03-02T00:00:00Z",
+    );
+
+    const after = db
+      .prepare(
+        `SELECT definition_json, lease_held FROM graph_workflow_executions
+          WHERE project_path = ? AND session_name = ?`,
+      )
+      .get(PROJECT_PATH, SESSION_NAME) as {
+      definition_json: string;
+      lease_held: number;
+    };
+    expect(
+      after.definition_json,
+      "this must exercise the runtime-only path, not a full upsert",
+    ).toBe(definitionBefore.definition_json);
+    expect(after.lease_held).toBe(0);
+  });
+
+  it("re-derives the projection when a legacy row is upgraded on read", () => {
+    // Establish a row whose stored bytes say completed while the column lies.
+    write({ status: "completed", haltReason: null, abandonment: null });
+    db.prepare(
+      `UPDATE graph_workflow_executions SET lease_held = 1
+        WHERE project_path = ? AND session_name = ?`,
+    ).run(PROJECT_PATH, SESSION_NAME);
+
+    const reloaded = createGraphWorkflowExecutionsRepo(db).getActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    if (reloaded === null) throw new Error("execution must reload");
+    createGraphWorkflowExecutionsRepo(db).setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      reloaded,
+      "2026-03-03T00:00:00Z",
+    );
+
+    expect(leaseHeld()).toBe(0);
+  });
+});
+
+describe("graph-workflow-executions-repo one-off origin persistence", () => {
+  /**
+   * The pre-D7 required shape of the projection columns: every older reader,
+   * including the `NOT NULL` constraints themselves, resolves a run through
+   * these. A one-off run has no definition record anywhere, so it writes the
+   * legacy-shaped filler rather than leaving them empty.
+   */
+  const preD7ProjectionSchema = z.object({
+    execution_id: z.string().min(1),
+    seed_definition_id: z.string().min(1),
+    seed_definition_revision: z.number().int().min(1),
+    started_at: z.string().min(1),
+    status: z.string().min(1),
+  });
+
+  function oneOffExecution(): GraphWorkflowExecution {
+    const base = maximalExecution();
+    return graphWorkflowExecutionSchema.parse({
+      ...base,
+      origin: { kind: "one_off", planName: "Ship the search box" },
+      ...buildOneOffSeedCompatibilityFields(base.id),
+    });
+  }
+
+  it("keeps a one-off row readable through the pre-D7 required-field shape", () => {
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      oneOffExecution(),
+      "2026-03-01T00:00:00Z",
+    );
+
+    const row = db
+      .prepare(
+        `SELECT execution_id, seed_definition_id, seed_definition_revision,
+                started_at, status
+           FROM graph_workflow_executions
+          WHERE project_path = ? AND session_name = ?`,
+      )
+      .get(PROJECT_PATH, SESSION_NAME);
+    expect(preD7ProjectionSchema.safeParse(row).success).toBe(true);
+    expect(
+      (row as { seed_definition_id: string }).seed_definition_id,
+    ).toContain(ONE_OFF_SEED_DEFINITION_ID_PREFIX);
+  });
+
+  it("reloads a one-off run by its origin, never by the seed sentinel", () => {
+    const execution = oneOffExecution();
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      execution,
+      "2026-03-01T00:00:00Z",
+    );
+
+    const reloaded = createGraphWorkflowExecutionsRepo(db).getActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(reloaded?.origin).toEqual({
+      kind: "one_off",
+      planName: "Ship the search box",
+    });
+    expect(reloaded?.launchDocument).toEqual(execution.launchDocument);
+    // The filler survives untouched, so an older build still parses the row.
+    expect(reloaded?.seedDefinitionId).toBe(execution.seedDefinitionId);
+    expect(reloaded?.seedDefinitionRevision).toBe(1);
+  });
+
+  it("stores the same projections on a fresh floor and on a 0024-upgraded schema", async () => {
+    const upgraded = _createTestDb({ inMemory: true });
+    try {
+      // Take the upgraded database back to the pre-0024 shape, then let the
+      // migration bring it forward — the path a live database actually walks.
+      upgraded.exec(`
+        DROP TABLE graph_workflow_result_deliveries;
+        ALTER TABLE graph_workflow_executions DROP COLUMN lease_held;
+      `);
+      await executionLeaseAndResultDeliveries.up({
+        name: executionLeaseAndResultDeliveries.name,
+        context: { db: upgraded, configDir: null },
+      });
+      upgraded
+        .prepare("INSERT INTO projects (root_path) VALUES (?)")
+        .run(PROJECT_PATH);
+      upgraded
+        .prepare(
+          `INSERT INTO sessions (
+             project_path, session_name, worktree_path, branch_name,
+             created_at, last_activity_at
+           ) VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          PROJECT_PATH,
+          SESSION_NAME,
+          `${PROJECT_PATH}/.worktrees/${SESSION_NAME}`,
+          `csm/${SESSION_NAME}`,
+          "2026-01-01T00:00:00Z",
+          "2026-01-01T00:00:00Z",
+        );
+
+      const execution = oneOffExecution();
+      const read = `SELECT execution_id, seed_definition_id, seed_definition_revision,
+                           started_at, status, completed_at, definition_json,
+                           runtime_json, updated_at, lease_held
+                      FROM graph_workflow_executions
+                     WHERE project_path = ? AND session_name = ?`;
+      repo.setActive(
+        PROJECT_PATH,
+        SESSION_NAME,
+        execution,
+        "2026-03-01T00:00:00Z",
+      );
+      createGraphWorkflowExecutionsRepo(upgraded).setActive(
+        PROJECT_PATH,
+        SESSION_NAME,
+        execution,
+        "2026-03-01T00:00:00Z",
+      );
+
+      expect(upgraded.prepare(read).get(PROJECT_PATH, SESSION_NAME)).toEqual(
+        db.prepare(read).get(PROJECT_PATH, SESSION_NAME),
+      );
+    } finally {
+      upgraded.close();
+    }
   });
 });
 

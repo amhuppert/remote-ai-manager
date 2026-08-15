@@ -9,8 +9,11 @@ import {
   getSession as defaultGetSession,
   getActiveGraphWorkflowExecution,
   mutateActiveGraphWorkflowExecution,
+  reserveActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
   markGraphWorkflowContextEventsPreReset,
+  getGraphWorkflowPendingArtifacts,
+  clearGraphWorkflowPendingArtifacts,
 } from "@/lib/state-store";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
@@ -38,6 +41,11 @@ import {
 } from "./live-edit-apply";
 import type { PrepareAssignmentSnapshotsResult } from "./live-edit-preparation";
 import type { LiveEditDeps } from "./runtime-edits";
+import {
+  guardExecutionMutation,
+  runPinnedMutation,
+  type WorkflowMutationGuardDeps,
+} from "./mutation-guard";
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -48,8 +56,11 @@ const executionRepository = createGraphWorkflowExecutionRepository({
   getSession: defaultGetSession,
   getActiveGraphWorkflowExecution,
   mutateActiveGraphWorkflowExecution,
+  reserveActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
   markGraphWorkflowContextEventsPreReset,
+  getGraphWorkflowPendingArtifacts,
+  clearGraphWorkflowPendingArtifacts,
   eventPublisher,
 });
 
@@ -92,6 +103,13 @@ export interface GraphWorkflowRuntimeEditRouteDeps {
     worktreePath: string;
     markdown: string;
   }): Promise<void>;
+  /**
+   * Principal verification seams for the shared mutation guard. Optional so
+   * production inherits the registered verifiers and tests inject their own.
+   */
+  auth?: WorkflowMutationGuardDeps["auth"];
+  verifyConversationCapability?: WorkflowMutationGuardDeps["verifyConversationCapability"];
+  verifyLaneCapability?: WorkflowMutationGuardDeps["verifyLaneCapability"];
 }
 
 const defaultDeps: GraphWorkflowRuntimeEditRouteDeps = {
@@ -127,7 +145,10 @@ function respondLiveEditFailure(failure: LiveEditFailure): Response {
 async function resolveSession(
   context: RouteContext,
   deps: GraphWorkflowRuntimeEditRouteDeps,
-): Promise<{ error: Response } | { projectPath: string; sessionName: string }> {
+): Promise<
+  | { error: Response }
+  | { projectPath: string; sessionName: string; session: SessionState }
+> {
   const params = await context.params;
   const projectName = params["name"] ?? "";
   const sessionName = decodeURIComponent(params["session"] ?? "");
@@ -137,7 +158,11 @@ async function resolveSession(
     sessionName,
   );
   if (!resolved.ok) return { error: resolved.response };
-  return { projectPath: resolved.value.projectPath, sessionName };
+  return {
+    projectPath: resolved.value.projectPath,
+    sessionName,
+    session: resolved.value.session,
+  };
 }
 
 export function createGraphWorkflowRuntimeEditRouteHandlers(
@@ -179,12 +204,33 @@ export function createGraphWorkflowRuntimeEditRouteHandlers(
     if ("error" in resolved) {
       return resolved.error;
     }
-    const { projectPath, sessionName } = resolved;
+    const { projectPath, sessionName, session } = resolved;
 
-    const outcome = await applyLiveEditsToActiveExecution(
-      { projectPath, sessionName, request: editRequest },
+    // A live edit restructures a run in flight, so it is scoped exactly like
+    // the lifecycle verbs: the human UI session-wide, an agent only on the run
+    // it originated or the lane it is currently driving (R9.1/R9.4). Guarded
+    // before the apply below, which commits — a refusal must be write-free.
+    const guarded = await guardExecutionMutation({
+      request,
+      session,
       deps,
+      verb: "edit",
+      projectPath,
+      execution: await deps.getActiveExecution(projectPath, sessionName),
+    });
+    if ("refusal" in guarded) return guarded.refusal;
+
+    // Pinned to the run the guard authorized: an edit that landed on the
+    // successor the lease turned over to would restructure a run this caller
+    // was never admitted on.
+    const acted = await runPinnedMutation(guarded.fence, "edit", () =>
+      applyLiveEditsToActiveExecution(
+        { projectPath, sessionName, request: editRequest },
+        deps,
+      ),
     );
+    if (acted.kind === "turnover") return acted.refusal;
+    const outcome = acted.value;
 
     if (!outcome.ok) {
       if (outcome.kind === "no_active_execution") {

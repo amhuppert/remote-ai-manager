@@ -15,6 +15,7 @@ import {
   conversationArchivedEventSchema,
   conversationBackgroundActivityEventSchema,
   conversationCreatedEventSchema,
+  conversationDeletedEventSchema,
   conversationOpenEventSchema,
   conversationProfileChangedEventSchema,
   conversationRenamedEventSchema,
@@ -376,6 +377,42 @@ export function registerConversationSseReactions(
       void queryClient.invalidateQueries({
         queryKey: conversationKeys.active(),
       });
+    },
+  );
+
+  addSseListener(
+    es,
+    "conversation-deleted",
+    conversationDeletedEventSchema,
+    (d) => {
+      queryClient.setQueryData(
+        conversationKeys.list(d.projectName, d.sessionName),
+        (prev: unknown) => {
+          if (!Array.isArray(prev)) return prev;
+          return prev.filter(
+            (conversation) =>
+              !(
+                conversation !== null &&
+                typeof conversation === "object" &&
+                "id" in conversation &&
+                conversation.id === d.conversationId
+              ),
+          );
+        },
+      );
+      queryClient.setQueryData(
+        conversationKeys.active(),
+        (prev: ActiveConversationsResponse | undefined) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            conversations: prev.conversations.filter(
+              (conversation) => conversation.id !== d.conversationId,
+            ),
+          };
+        },
+      );
+      invalidateConversationViews(queryClient, d.projectName, d.sessionName);
     },
   );
 

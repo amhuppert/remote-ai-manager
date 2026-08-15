@@ -423,6 +423,9 @@ describe("conversation persistence facet", () => {
       "markQueuedDelivered",
       "markQueuedPending",
       "markQueuedFailed",
+      "claimWorkflowResults",
+      "settleWorkflowResults",
+      "releaseWorkflowResults",
       "applyMcpAtTurnStart",
       "applyCapabilityAtTurnStart",
       "applyCapabilityWhenIdle",
@@ -454,6 +457,18 @@ describe("conversation persistence facet", () => {
         }),
         markQueuedFailed: vi.fn(async () => {
           reached.push("markQueuedFailed");
+        }),
+        claimWorkflowResults: vi.fn(async () => {
+          reached.push("claimWorkflowResults");
+          return [];
+        }),
+        settleWorkflowResults: vi.fn(async () => {
+          reached.push("settleWorkflowResults");
+          return 0;
+        }),
+        releaseWorkflowResults: vi.fn(async () => {
+          reached.push("releaseWorkflowResults");
+          return 0;
         }),
         applyMcpAtTurnStart: vi.fn(async () => {
           reached.push("applyMcpAtTurnStart");

@@ -270,6 +270,8 @@ export interface SpecRouteDeps {
   findExecutionsBySpecId(specId: string): SpecExecutionRow[];
   findTaskClaimsBySpecId(specId: string): SpecTaskClaimRow[];
   findWorkflowEventsByExecution(
+    projectPath: string,
+    sessionName: string,
     executionId: string,
   ): GraphWorkflowExecutionEvent[];
   reconcileExecution(
@@ -476,8 +478,8 @@ function createDefaultDeps(): SpecRouteDeps {
     findAssumptionsBySpecId: (specId) => review.findAssumptionsBySpecId(specId),
     findExecutionsBySpecId: (specId) => delivery.findExecutionsBySpecId(specId),
     findTaskClaimsBySpecId: (specId) => delivery.findTaskClaimsBySpecId(specId),
-    findWorkflowEventsByExecution: (executionId) =>
-      workflowEvents.findByExecution(executionId),
+    findWorkflowEventsByExecution: (projectPath, sessionName, executionId) =>
+      workflowEvents.findByExecution(projectPath, sessionName, executionId),
     async reconcileExecution(projectPath, execution) {
       const services = await loadProductionSpecRouteServices(projectPath);
       const result = await services.execution.getStatus(execution.id);
@@ -947,6 +949,7 @@ function outlineApprovalStatus(
 
 function buildElementStatuses(
   deps: SpecRouteDeps,
+  projectPath: string,
   snapshot: SpecRevisionSnapshot | null,
   approvals: readonly SpecApprovalRow[],
   executions: readonly SpecExecutionRow[],
@@ -983,9 +986,18 @@ function buildElementStatuses(
     .map((row) => {
       const latestClaim = claimByTaskId.get(row.element.id);
       const executionEvents = snapshotExecutions.flatMap((execution) => {
-        if (execution.workflow_execution_id === null) return [];
+        if (
+          execution.workflow_execution_id === null ||
+          execution.session_name === null
+        ) {
+          return [];
+        }
         return deps
-          .findWorkflowEventsByExecution(execution.workflow_execution_id)
+          .findWorkflowEventsByExecution(
+            projectPath,
+            execution.session_name,
+            execution.workflow_execution_id,
+          )
           .flatMap(({ event }) =>
             event.type === "graph-workflow-task-status" &&
             event.taskId === compiledWorkflowTaskId(row.element.id)
@@ -1836,6 +1848,7 @@ async function buildOutline(
   const applies = await loadApprovalApplicability(deps, state, approvals);
   const taskStatuses = buildElementStatuses(
     deps,
+    spec.projectPath,
     { ...snapshot, elements: taskEntries.map(({ row }) => row) },
     [],
     reconciled.rows,
@@ -2367,6 +2380,7 @@ export function createSpecRouteHandlers(
       );
     const elementStatuses = buildElementStatuses(
       deps,
+      resolved.value.spec.projectPath,
       proofSnapshot,
       approvals,
       executions,
@@ -4086,7 +4100,6 @@ export function createSpecWriteRouteHandlers(
                 ...input,
                 specId,
                 actor: actor.value,
-                approver: "operator",
                 projectName: name ?? "",
               }),
           );

@@ -102,6 +102,10 @@ export const setSessionSpawnedFrom = defaultStore.setSessionSpawnedFrom;
 export const addPlcSpawnedSessionIds = defaultStore.addPlcSpawnedSessionIds;
 export const mutateActiveGraphWorkflowExecution =
   defaultStore.mutateActiveGraphWorkflowExecution;
+export const reserveActiveGraphWorkflowExecution =
+  defaultStore.reserveActiveGraphWorkflowExecution;
+export const clearGraphWorkflowPendingArtifacts =
+  defaultStore.clearGraphWorkflowPendingArtifacts;
 export const archiveActiveGraphWorkflowExecution =
   defaultStore.archiveActiveGraphWorkflowExecution;
 export const markGraphWorkflowContextEventsPreReset =
@@ -110,6 +114,24 @@ export const mutateSessionWorkflowLanes =
   defaultStore.mutateSessionWorkflowLanes;
 export const mutateSessionWorkflowEnvelopes =
   defaultStore.mutateSessionWorkflowEnvelopes;
+export const claimGraphWorkflowResultDeliveries =
+  defaultStore.claimGraphWorkflowResultDeliveries;
+export const settleGraphWorkflowResultDeliveries =
+  defaultStore.settleGraphWorkflowResultDeliveries;
+export const releaseGraphWorkflowResultDeliveries =
+  defaultStore.releaseGraphWorkflowResultDeliveries;
+export const settleGraphWorkflowResultDeliveryFallback =
+  defaultStore.settleGraphWorkflowResultDeliveryFallback;
+export const commitGraphWorkflowMissingOriginFallback =
+  defaultStore.commitGraphWorkflowMissingOriginFallback;
+export const markGraphWorkflowResultEffectDelivered =
+  defaultStore.markGraphWorkflowResultEffectDelivered;
+export const recoverGraphWorkflowResultDeliveries =
+  defaultStore.recoverGraphWorkflowResultDeliveries;
+export const getGraphWorkflowResultDelivery =
+  defaultStore.getGraphWorkflowResultDelivery;
+export const listPendingGraphWorkflowResultEffects =
+  defaultStore.listPendingGraphWorkflowResultEffects;
 export const getGraphWorkflowEventsTail =
   defaultStore.getGraphWorkflowEventsTail;
 export const getGraphWorkflowEventsPage =
@@ -118,6 +140,14 @@ export const findLatestGraphWorkflowContextEvent =
   defaultStore.findLatestGraphWorkflowContextEvent;
 export const getActiveGraphWorkflowExecution =
   defaultStore.getActiveGraphWorkflowExecution;
+export const getArchivedGraphWorkflowExecutionById =
+  defaultStore.getArchivedGraphWorkflowExecutionById;
+export const getGraphWorkflowExecutionById =
+  defaultStore.getGraphWorkflowExecutionById;
+export const getGraphWorkflowBoundaryResultAfter =
+  defaultStore.getGraphWorkflowBoundaryResultAfter;
+export const getGraphWorkflowPendingArtifacts =
+  defaultStore.getGraphWorkflowPendingArtifacts;
 export const listActiveGraphWorkflowExecutions =
   defaultStore.listActiveGraphWorkflowExecutions;
 export const listArchivedGraphWorkflowExecutions =

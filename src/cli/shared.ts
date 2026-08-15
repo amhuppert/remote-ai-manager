@@ -14,6 +14,14 @@ import { createLogger } from "@/lib/logging";
 import { booleanFlagNames, renderTopUsage } from "./help-registry";
 import { flattenDiagnosticText } from "@/lib/shared/diagnostic-text";
 import { getErrorMessage } from "@/lib/shared/errors";
+import {
+  CONVERSATION_CAPABILITY_ENV_VAR,
+  CONVERSATION_CAPABILITY_HEADER,
+} from "@/lib/agent-gateway/conversation-capability";
+import {
+  LANE_CAPABILITY_ENV_VAR,
+  LANE_CAPABILITY_HEADER,
+} from "@/lib/agent-gateway/lane-capability";
 
 const logger = createLogger("cli.shared");
 
@@ -25,6 +33,23 @@ export interface CliResult {
 
 /** Environment as the CLI sees it — a plain record so tests inject it directly. */
 export type CliEnv = Record<string, string | undefined>;
+
+export interface CliPrincipalCapabilities {
+  conversation?: string;
+  lane?: string;
+}
+
+/** Signed principal credentials distributed to this agent's environment. */
+export function resolveCliPrincipalCapabilities(
+  env: CliEnv,
+): CliPrincipalCapabilities {
+  const conversation = env[CONVERSATION_CAPABILITY_ENV_VAR];
+  const lane = env[LANE_CAPABILITY_ENV_VAR];
+  return {
+    ...(conversation ? { conversation } : {}),
+    ...(lane ? { lane } : {}),
+  };
+}
 
 /**
  * Request init the CLI hands to its injected fetch. `body` is optional so the
@@ -44,9 +69,9 @@ export interface FetchInit {
   rawBody?: Uint8Array<ArrayBuffer>;
   /**
    * Optional per-request timeout in ms. The real host (`index.ts`) maps it to
-   * `AbortSignal.timeout`; injected test hosts ignore it. Used by the
-   * best-effort help-context fetch (doc 04 §4.4), which must fail open on
-   * timeout so `--help` never stalls.
+   * `AbortSignal.timeout`; injected test hosts can inspect or emulate it. Used
+   * by best-effort help context and bounded polling so neither operation can
+   * stall beyond its caller-owned budget.
    */
   timeoutMs?: number;
 }
@@ -79,6 +104,8 @@ export interface CliHost {
    * fake so the loop advances without real time.
    */
   sleep(ms: number): Promise<void>;
+  /** Current wall-clock milliseconds for bounded polling; defaults to Date.now. */
+  now?(): number;
   /** Stream human progress before the command's final result is available. */
   writeStdout?(text: string): void;
   /**
@@ -867,6 +894,10 @@ export interface CliRequestParams {
   rawBody?: Uint8Array<ArrayBuffer>;
   /** Extra request headers (e.g. the caller-conversation audit header). */
   headers?: Record<string, string>;
+  /** Server-signed caller authority; values are never logged. */
+  principalCapabilities?: CliPrincipalCapabilities;
+  /** Bound the complete HTTP operation; the real host aborts at this deadline. */
+  timeoutMs?: number;
 }
 
 function coerceIssues(value: unknown): RequestIssue[] | undefined {
@@ -962,11 +993,21 @@ function buildRequestInit(params: CliRequestParams): FetchInit {
     "x-cc-cli-build": formatBuildStamp(BUILD_INFO),
     "content-type": "application/json",
     ...(params.headers ?? {}),
+    ...(params.principalCapabilities?.conversation
+      ? {
+          [CONVERSATION_CAPABILITY_HEADER]:
+            params.principalCapabilities.conversation,
+        }
+      : {}),
+    ...(params.principalCapabilities?.lane
+      ? { [LANE_CAPABILITY_HEADER]: params.principalCapabilities.lane }
+      : {}),
   };
   if (params.token !== null)
     headers["authorization"] = `Bearer ${params.token}`;
 
   const init: FetchInit = { method: params.method, headers };
+  if (params.timeoutMs !== undefined) init.timeoutMs = params.timeoutMs;
   if (params.rawBody !== undefined) init.rawBody = params.rawBody;
   else if (params.body !== undefined) init.body = JSON.stringify(params.body);
   return init;
@@ -1050,6 +1091,15 @@ export async function cliRequest(
 ): Promise<CliRequestResult> {
   const url = new URL(params.path, params.server);
   const init = buildRequestInit(params);
+  if (params.principalCapabilities !== undefined) {
+    logger.debug("cli.request_principal_attached", {
+      method: params.method,
+      path: params.path,
+      hasConversationCapability:
+        params.principalCapabilities.conversation !== undefined,
+      hasLaneCapability: params.principalCapabilities.lane !== undefined,
+    });
+  }
 
   let response: Response;
   try {

@@ -1,3 +1,4 @@
+import { holdsExecutionLease } from "@/lib/workflow-graph/lifecycle-classifier";
 import type Database from "better-sqlite3";
 import { fromPromise } from "xstate";
 
@@ -33,7 +34,6 @@ import type {
 } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
-import type { TemplateTier } from "@/lib/workflow-graph/template-library-service";
 import {
   createWorkflowExecution,
   makeProfileSnapshot,
@@ -137,11 +137,23 @@ import {
 import {
   createSpecRouteHandlers,
   createSpecWriteRouteHandlers,
-  SPEC_CALLER_BACKEND_HEADER,
   SPEC_CALLER_CONVERSATION_HEADER,
   type SpecMutationServices,
 } from "./route-handlers";
 import { registerSpecWorkflowComposition } from "./workflow-composition";
+import { conversationStateSchema } from "@/lib/conversations/schemas";
+import {
+  CONVERSATION_CAPABILITY_HEADER,
+  mintConversationCapability,
+  verifyConversationCapability,
+} from "@/lib/agent-gateway/conversation-capability";
+import {
+  LANE_CAPABILITY_HEADER,
+  verifyLaneCapability,
+} from "@/lib/agent-gateway/lane-capability";
+import type { OptionalTokenValidation } from "@/lib/agent-gateway/token";
+import type { GraphWorkflowExecutionSeed } from "@/lib/workflow-graph/execution-repository";
+import { buildExecutionProvenance } from "@/lib/workflow-graph/execution-origin";
 
 type Db = InstanceType<typeof Database>;
 
@@ -151,6 +163,13 @@ export const SPINE_SESSION_NAME = "spine-session";
 export const SPINE_CONVERSATION_ID = "conversation-spine";
 export const SPINE_WORKFLOW_EXECUTION_ID = "workflow-execution-spine";
 export const SPINE_BEARER_TOKEN = "contract-token";
+/**
+ * Stands in for the server-only capability signing key. It is deliberately NOT
+ * the bearer token: the whole point of the key is that a holder of the exported
+ * instance token cannot mint a capability with it, and a fixture that reused
+ * the token would prove the opposite of what the routes enforce.
+ */
+const SPINE_CAPABILITY_SECRET = "spine-server-only-capability-key";
 
 class InMemoryWorkflowDefinitions implements ExecutionWorkflowDefinitions {
   records: WorkflowDefinitionRecord[] = [];
@@ -311,16 +330,16 @@ export interface SpecSpineWorld {
       | "STATUS"
       | "EXECUTION"
       | "PAUSE"
-      | "ABORT"
-      | "RELEASE",
+      | "ABORT",
     body?: unknown,
     headers?: Record<string, string>,
   ): Promise<Response>;
   /**
    * Drive the REAL `graph-workflow/amend` route — the one authorized way to
    * change a launched delivery-plan definition. `human` posts with no token
-   * (the Studio control); `agent` posts the bearer token plus the caller
-   * conversation header, as `cctl workflow live amend` does.
+   * (the Studio control); `agent` posts the bearer token plus its signed
+   * conversation capability, which is what the route derives the audit actor
+   * from — a claimed conversation id would prove nothing.
    */
   postWorkflowAmend(
     body: unknown,
@@ -339,21 +358,35 @@ export interface SpecSpineWorld {
   haltWorkflowExecution(reason: GraphWorkflowHaltReason): Promise<void>;
   /** Park the active run at `paused` — non-terminal, yet archive-eligible. */
   pauseWorkflowExecution(): Promise<void>;
+  /**
+   * Hold the parked run's definition decision through the production manager,
+   * the way a concurrent approval act at its admission gate holds it. Every
+   * other decision on that park loses to it.
+   */
+  reserveWorkflowDefinitionDecision(): Promise<void>;
   markWorkflowContextRunning(contextId: string, taskId: string): Promise<void>;
   setWorkflowExecutionStatus(
     status: GraphWorkflowExecution["status"],
   ): Promise<void>;
   readActiveWorkflowExecution(): GraphWorkflowExecution | null;
   /**
+   * The most recently relocated run, whole. History renders from the record, so
+   * what an audited release preserved on it — halt reason, abandonment — is
+   * only assertable here.
+   */
+  readArchivedWorkflowExecution(): GraphWorkflowExecution | null;
+  /**
    * Fault injection for the spec→workflow cleanup port, so a test can stop the
    * abandon coordinator at a chosen phase boundary and assert the reached
    * phase is durable. `beforeOp` throws to simulate an unreachable workflow
-   * store; `abortIsNoOp` accepts the abort but leaves the run live, which is
-   * how the "never reports success over a live run" invariant is proved.
+   * store; the `*IsNoOp` flags accept the act but leave the run live, which is
+   * how the "never reports success over a live run" invariant is proved for
+   * each of the two acts that end a run.
    */
   cleanupFaults: {
-    beforeOp: ((op: "observe" | "abort" | "release") => void) | null;
+    beforeOp: ((op: "observe" | "abort" | "abandon") => void) | null;
     abortIsNoOp: boolean;
+    abandonIsNoOp: boolean;
   };
 }
 
@@ -620,6 +653,7 @@ export function createSpecSpineWorld(
       },
     },
     writeQueue,
+    resolveProjectPath: async () => SPINE_PROJECT_PATH,
     async validatedTreeHash(_execution, commitSha) {
       const tree = treeByCommit.get(commitSha);
       if (tree === undefined) {
@@ -671,7 +705,12 @@ export function createSpecSpineWorld(
     },
     gitObjectExists: async (ref) => knownCommits.has(ref.objectId),
     async workflowEventExists(ref, expectedExecution) {
-      const record = workflowEvents.findRecordById(ref.eventId);
+      const record = workflowEvents.findRecordById(
+        SPINE_PROJECT_PATH,
+        SPINE_SESSION_NAME,
+        expectedExecution.workflowExecutionId ?? "",
+        ref.eventId,
+      );
       return (
         record !== null &&
         record.executionId === expectedExecution.workflowExecutionId &&
@@ -748,8 +787,6 @@ export function createSpecSpineWorld(
           projectName: string;
           sessionName: string;
           workflowExecutionId: string;
-          definitionId: string;
-          definitionRevision: number;
         }) => Promise<
           Awaited<
             ReturnType<ExecutionStartGatePort["approveWorkflowDefinition"]>
@@ -757,12 +794,9 @@ export function createSpecSpineWorld(
         >)
       | null;
     hasPending:
-      | ((input: {
-          projectName: string;
-          sessionName: string;
-          definitionId: string;
-          definitionRevision: number;
-        }) => Promise<string | null>)
+      | (() => ReturnType<
+          ExecutionStartGatePort["findPendingDefinitionApproval"]
+        >)
       | null;
     ensurePending:
       | ((input: {
@@ -797,9 +831,9 @@ export function createSpecSpineWorld(
       }
       return workflowDefinitionGateRef.launchApproved(input);
     },
-    async hasPendingDefinitionApproval(input) {
+    async findPendingDefinitionApproval() {
       if (workflowDefinitionGateRef.hasPending === null) return null;
-      return workflowDefinitionGateRef.hasPending(input);
+      return workflowDefinitionGateRef.hasPending();
     },
     async ensurePendingDefinitionApproval(input) {
       if (workflowDefinitionGateRef.ensurePending === null) {
@@ -807,8 +841,6 @@ export function createSpecSpineWorld(
       }
       return workflowDefinitionGateRef.ensurePending(input);
     },
-    grantApproval: (input) =>
-      reviewService.grantGateApproval({ ...input, gate: "execution_start" }),
     async approveWorkflowDefinition(input) {
       if (workflowDefinitionGateRef.approve === null) {
         return { ok: false, reason: "unavailable" };
@@ -866,11 +898,11 @@ export function createSpecSpineWorld(
       },
     },
     executionStartGate,
-    // Late-bound over the same workflow seams production wires: abort sends
-    // the real manager's abort event and release performs the explicit
-    // archive act, so the abandon coordinator drives the run exactly as it
-    // does live. `cleanupFaults` is the only test affordance — it injects the
-    // infrastructure faults a phase boundary has to survive.
+    // Late-bound over the same workflow seams production wires: abort sends the
+    // real manager's abort event and abandon runs the real audited act, so the
+    // coordinator drives the run exactly as it does live — including what each
+    // act leaves behind. `cleanupFaults` is the only test affordance; it
+    // injects the infrastructure faults a phase boundary has to survive.
     workflowCleanup: {
       async observe(target) {
         cleanupFaults.beforeOp?.("observe");
@@ -890,22 +922,25 @@ export function createSpecSpineWorld(
         await workflowManager.send(target.projectPath, target.sessionName, {
           type: "abort",
         });
+        // Deliberately no archive: the production abort seam transitions the
+        // run and stops. `aborted` holds no lease, so the record projects into
+        // History from wherever it sits and the next launch normalizes it —
+        // archiving here would model a relocation production never performs.
         return { ok: true };
       },
-      async release(target) {
-        cleanupFaults.beforeOp?.("release");
-        if (
-          activeWorkflowExecution === null ||
-          activeWorkflowExecution.id !== target.workflowExecutionId
-        ) {
-          return { ok: false, reason: "the run no longer owns the slot" };
-        }
-        archivedWorkflowStatuses.set(
-          activeWorkflowExecution.id,
-          activeWorkflowExecution.status,
-        );
-        activeWorkflowExecution = null;
-        return { ok: true };
+      async abandon(target) {
+        cleanupFaults.beforeOp?.("abandon");
+        if (cleanupFaults.abandonIsNoOp) return { ok: true };
+        const outcome = await workflowManager.abandon({
+          projectPath: target.projectPath,
+          sessionName: target.sessionName,
+          executionId: target.workflowExecutionId,
+          reason: target.reason,
+          actor: target.actor,
+        });
+        return outcome.ok
+          ? { ok: true }
+          : { ok: false, reason: `abandon refused (${outcome.reason})` };
       },
     },
   });
@@ -1099,8 +1134,12 @@ export function createSpecSpineWorld(
     findAssumptionsBySpecId: (specId) => review.findAssumptionsBySpecId(specId),
     findExecutionsBySpecId: (specId) => delivery.findExecutionsBySpecId(specId),
     findTaskClaimsBySpecId: (specId) => delivery.findTaskClaimsBySpecId(specId),
-    findWorkflowEventsByExecution: (executionId) =>
-      workflowEvents.findByExecution(executionId),
+    findWorkflowEventsByExecution: (_projectPath, _sessionName, executionId) =>
+      workflowEvents.findByExecution(
+        SPINE_PROJECT_PATH,
+        SPINE_SESSION_NAME,
+        executionId,
+      ),
     async reconcileExecution(_projectPath, executionRow) {
       const result = await execution.getStatus(executionRow.id);
       return result.ok
@@ -1361,9 +1400,12 @@ export function createSpecSpineWorld(
    * `missing`, and the abandon coordinator must tell those apart.
    */
   const archivedWorkflowStatuses = new Map<string, GraphWorkflowStatus>();
+  /** The whole relocated records, newest last, beside the status index above. */
+  const archivedWorkflowExecutions: GraphWorkflowExecution[] = [];
   const cleanupFaults: SpecSpineWorld["cleanupFaults"] = {
     beforeOp: null,
     abortIsNoOp: false,
+    abandonIsNoOp: false,
   };
   /**
    * Where a run stands, as the production locate seam answers it. Shared by the
@@ -1378,7 +1420,15 @@ export function createSpecSpineWorld(
       activeWorkflowExecution !== null &&
       activeWorkflowExecution.id === workflowExecutionId
     ) {
-      return { kind: "active", status: activeWorkflowExecution.status };
+      return {
+        kind: "active",
+        status: activeWorkflowExecution.status,
+        leaseHeld: holdsExecutionLease(
+          activeWorkflowExecution.status,
+          activeWorkflowExecution.haltReason,
+          activeWorkflowExecution.abandonment,
+        ),
+      };
     }
     const archivedStatus = archivedWorkflowStatuses.get(workflowExecutionId);
     return archivedStatus === undefined
@@ -1432,16 +1482,7 @@ export function createSpecSpineWorld(
     async create(
       _projectPath: string,
       _sessionName: string,
-      seed: {
-        definition: WorkflowDefinitionRecord["definition"];
-        definitionId: string;
-        definitionRevision: number;
-        executionId: string;
-        startedAt: string;
-        inputs: Record<string, string>;
-        launchedTier: TemplateTier;
-        ownerConversationId: string | null;
-      },
+      seed: GraphWorkflowExecutionSeed,
     ): Promise<GraphWorkflowExecution> {
       // Resolve the config cascade and build the runtime maps from THIS
       // definition, as production start does. A raw cast would leave the
@@ -1452,12 +1493,18 @@ export function createSpecSpineWorld(
         now,
         options.currentGlobalAllowAgentTaskAdd ?? false,
       );
+      const provenance = buildExecutionProvenance(
+        seed.source,
+        seed.executionId,
+      );
       activeWorkflowExecution = createWorkflowExecution({
         id: seed.executionId,
-        seedDefinitionId: seed.definitionId,
-        seedDefinitionRevision: seed.definitionRevision,
+        origin: provenance.origin,
+        launchDocument: seed.launchDocument,
+        seedDefinitionId: provenance.seedDefinitionId,
+        seedDefinitionRevision: provenance.seedDefinitionRevision,
         boundInputs: seed.inputs,
-        launchedTier: seed.launchedTier,
+        launchedTier: provenance.launchedTier,
         ownerConversationId: seed.ownerConversationId,
         definitionApproval:
           seed.definition.approvalRequired === true
@@ -1470,12 +1517,30 @@ export function createSpecSpineWorld(
       });
       return activeWorkflowExecution;
     },
-    async archiveActive(): Promise<GraphWorkflowArchiveOutcome> {
-      const archived = activeWorkflowExecution;
+    // Honours guard and stamp because the audited acts built on this seam
+    // (abandon) depend on both: the guard is their admission test and the stamp
+    // is the record change they commit with the relocation.
+    async archiveActive(
+      _projectPath: string,
+      _sessionName: string,
+      _audit?: { reason: string; actor: string | null },
+      guard?: (execution: GraphWorkflowExecution) => boolean,
+      stamp?: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
+    ): Promise<GraphWorkflowArchiveOutcome> {
+      const incumbent = activeWorkflowExecution;
+      if (incumbent === null) return { archived: false, reason: "no_active" };
+      if (guard !== undefined && !guard(incumbent)) {
+        return {
+          archived: false,
+          reason: "guard_rejected",
+          execution: incumbent,
+        };
+      }
+      const released = stamp === undefined ? incumbent : stamp(incumbent);
+      archivedWorkflowStatuses.set(released.id, released.status);
+      archivedWorkflowExecutions.push(released);
       activeWorkflowExecution = null;
-      return archived === null
-        ? { archived: false, reason: "no_active" }
-        : { archived: true, execution: archived };
+      return { archived: true, execution: released };
     },
     async update(
       _projectPath: string,
@@ -1504,7 +1569,21 @@ export function createSpecSpineWorld(
     lastActivityAt: "2026-07-18T10:00:00.000Z",
     archived: false,
     finished: false,
-    conversations: [],
+    // The agent caller this world speaks as is a real session conversation:
+    // capability verification re-checks membership, so a session with none
+    // would make every agent act unverifiable for the wrong reason.
+    conversations: [
+      conversationStateSchema.parse({
+        id: SPINE_CONVERSATION_ID,
+        scope: "session",
+        transcriptPath: null,
+        status: "idle",
+        promptCount: 1,
+        createdAt: "2026-07-18T10:00:00.000Z",
+        lastActivityAt: "2026-07-18T10:00:00.000Z",
+        agentBackend: "codex",
+      }),
+    ],
     source: "cc",
     creationMode: "normal",
     tddEnabled: true,
@@ -1516,7 +1595,39 @@ export function createSpecSpineWorld(
   const unsupported = (operation: string) => async (): Promise<never> => {
     throw new Error(`${operation} is not supported by the spine fixture`);
   };
+  const spineAuth = {
+    async validateOptionalToken(
+      request: Request,
+    ): Promise<OptionalTokenValidation> {
+      const header = request.headers.get("authorization");
+      if (header === null) return { kind: "absent" };
+      return header === `Bearer ${SPINE_BEARER_TOKEN}`
+        ? { kind: "valid" }
+        : { kind: "invalid" };
+    },
+  };
+  /**
+   * Verify against the fixture's key rather than falling through to the
+   * registered verifier, which would read the real config directory of whatever
+   * machine runs the suite.
+   */
+  const spineCapabilityVerifiers = {
+    verifyConversationCapability: async (request: Request) =>
+      verifyConversationCapability(
+        request.headers.get(CONVERSATION_CAPABILITY_HEADER),
+        SPINE_CAPABILITY_SECRET,
+      ),
+    verifyLaneCapability: async (request: Request) =>
+      verifyLaneCapability(
+        request.headers.get(LANE_CAPABILITY_HEADER),
+        SPINE_CAPABILITY_SECRET,
+      ),
+  };
   const workflowHandlers = createGraphWorkflowExecutionRouteHandlers({
+    // Same clock the manager stamps reservations with, so "has this decision's
+    // holder gone away" is asked against the fixture's timeline rather than the
+    // wall clock — which would call every reservation here stranded.
+    now,
     resolveProjectPath: async (name) =>
       name === SPINE_PROJECT_NAME ? SPINE_PROJECT_PATH : null,
     getSession: async (projectPath, sessionName) =>
@@ -1525,44 +1636,31 @@ export function createSpecSpineWorld(
         : null,
     normalizeExecutionAfterRestart: async () => activeWorkflowExecution,
     startExecution: (input) => workflowManager.start(input),
-    markRunning: (
-      context,
-      workflowExecutionId,
-      definitionId,
-      definitionRevision,
-    ) =>
+    runExecution: (input) => workflowManager.run(input),
+    markRunning: (context, workflowExecutionId, origin) =>
       createRegisteredGraphExecutionLifecycleCallbacks().markRunning(
         context,
         workflowExecutionId,
-        definitionId,
-        definitionRevision,
+        origin,
       ),
-    awaitingDefinitionApproval: (
-      context,
-      workflowExecutionId,
-      definitionId,
-      definitionRevision,
-    ) =>
+    awaitingDefinitionApproval: (context, workflowExecutionId, origin) =>
       createRegisteredGraphExecutionLifecycleCallbacks().awaitingDefinitionApproval?.(
         context,
         workflowExecutionId,
-        definitionId,
-        definitionRevision,
+        origin,
       ) ?? Promise.resolve(),
-    admitDefinitionApproval: (
-      context,
-      workflowExecutionId,
-      definitionId,
-      definitionRevision,
-    ) =>
+    admitDefinitionApproval: (context, workflowExecutionId, origin) =>
       createRegisteredGraphExecutionLifecycleCallbacks().admitDefinitionApproval?.(
         context,
         workflowExecutionId,
-        definitionId,
-        definitionRevision,
+        origin,
       ) ?? Promise.resolve({ ok: true as const }),
     recordDefinitionApproval: (input) =>
       workflowManager.recordDefinitionApproval(input),
+    claimDefinitionApproval: (input) =>
+      workflowManager.claimDefinitionApproval(input),
+    releaseDefinitionApprovalClaim: (input) =>
+      workflowManager.releaseDefinitionApprovalClaim(input),
     async kickOffExecutionLoop() {},
     getActiveExecution: async () => activeWorkflowExecution,
     pauseExecution: (projectPath, sessionName) =>
@@ -1586,6 +1684,7 @@ export function createSpecSpineWorld(
       // Released runs are archived, not gone: the locate seam must keep
       // telling "cleared" apart from "never existed".
       archivedWorkflowStatuses.set(active.id, active.status);
+      archivedWorkflowExecutions.push(active);
       activeWorkflowExecution = null;
       return { archived: true, execution: active };
     },
@@ -1593,15 +1692,8 @@ export function createSpecSpineWorld(
       workflowManager.recordPendingHaltReason(input),
     drainAndHalt: (input) => workflowManager.drainAndHalt(input),
     recordApprovalDecision: unsupported("recordApprovalDecision"),
-    auth: {
-      async validateOptionalToken(request) {
-        const header = request.headers.get("authorization");
-        if (header === null) return { kind: "absent" };
-        return header === `Bearer ${SPINE_BEARER_TOKEN}`
-          ? { kind: "valid" }
-          : { kind: "invalid" };
-      },
-    },
+    auth: spineAuth,
+    ...spineCapabilityVerifiers,
   });
   workflowDefinitionGateRef.approve = async (input) =>
     workflowHandlers.approveDefinition({
@@ -1609,15 +1701,11 @@ export function createSpecSpineWorld(
       projectName: input.projectName,
       sessionName: input.sessionName,
       expectedExecutionId: input.workflowExecutionId,
-      expectedDefinitionId: input.definitionId,
-      expectedDefinitionRevision: input.definitionRevision,
     });
-  workflowDefinitionGateRef.hasPending = (input) =>
-    workflowHandlers.hasPendingDefinitionApproval({
+  workflowDefinitionGateRef.hasPending = () =>
+    workflowHandlers.findPendingDefinitionApproval({
       projectPath: SPINE_PROJECT_PATH,
       sessionName: SPINE_SESSION_NAME,
-      expectedDefinitionId: input.definitionId,
-      expectedDefinitionRevision: input.definitionRevision,
     });
   // The production start+kickoff seam, exactly as `launchGraphWorkflowExecution`
   // wires it live: the same route handlers, the same manager, and the owner
@@ -1645,15 +1733,12 @@ export function createSpecSpineWorld(
       definitionId: input.definitionId,
       definitionRevision: input.definitionRevision,
     });
-    const pendingExecutionId =
-      await workflowHandlers.hasPendingDefinitionApproval({
-        projectPath: SPINE_PROJECT_PATH,
-        sessionName: SPINE_SESSION_NAME,
-        expectedDefinitionId: input.definitionId,
-        expectedDefinitionRevision: input.definitionRevision,
-      });
-    if (pendingExecutionId !== null) {
-      return { ok: true, workflowExecutionId: pendingExecutionId };
+    const park = await workflowHandlers.findPendingDefinitionApproval({
+      projectPath: SPINE_PROJECT_PATH,
+      sessionName: SPINE_SESSION_NAME,
+    });
+    if (park !== null) {
+      return { ok: true, park };
     }
     const payload = (await response.json()) as {
       code?: string;
@@ -1688,6 +1773,24 @@ export function createSpecSpineWorld(
       projectPath: SPINE_PROJECT_PATH,
       sessionName: SPINE_SESSION_NAME,
     });
+  }
+
+  /**
+   * Stand in for a concurrent approval act that is at its admission gate right
+   * now: it has reserved the park's decision through the production manager and
+   * has not finalized. Every other decision on that park loses to it, which is
+   * how a losing Studio grant is staged causally rather than modelled.
+   */
+  async function reserveWorkflowDefinitionDecision(): Promise<void> {
+    const reserved = await workflowManager.claimDefinitionApproval({
+      projectPath: SPINE_PROJECT_PATH,
+      sessionName: SPINE_SESSION_NAME,
+    });
+    if (!reserved.ok) {
+      throw new Error(
+        `The park refused the reservation: ${reserved.reason}. The run must be parked awaiting definition approval first.`,
+      );
+    }
   }
 
   /**
@@ -1773,8 +1876,7 @@ export function createSpecSpineWorld(
       | "STATUS"
       | "EXECUTION"
       | "PAUSE"
-      | "ABORT"
-      | "RELEASE",
+      | "ABORT",
     body?: unknown,
     headers: Record<string, string> = {},
   ): Promise<Response> {
@@ -1787,9 +1889,7 @@ export function createSpecSpineWorld(
             ? "/pause"
             : handler === "ABORT"
               ? "/abort"
-              : handler === "RELEASE"
-                ? "/release"
-                : "";
+              : "";
     const isGet = handler === "STATUS" || handler === "EXECUTION";
     const request = new Request(
       `http://cc.test/api/projects/${SPINE_PROJECT_NAME}/sessions/${SPINE_SESSION_NAME}/graph-workflow${suffix}`,
@@ -1837,15 +1937,8 @@ export function createSpecSpineWorld(
     publishCharterUpdated: amendEventPublisher.publishCharterUpdated,
     publishExecutionAmended: amendEventPublisher.publishExecutionAmended,
     writeCharterDocument: async () => {},
-    auth: {
-      async validateOptionalToken(request) {
-        const header = request.headers.get("authorization");
-        if (header === null) return { kind: "absent" };
-        return header === `Bearer ${SPINE_BEARER_TOKEN}`
-          ? { kind: "valid" }
-          : { kind: "invalid" };
-      },
-    },
+    auth: spineAuth,
+    ...spineCapabilityVerifiers,
   });
 
   const runtimeEditHandlers = createGraphWorkflowRuntimeEditRouteHandlers({
@@ -1896,8 +1989,17 @@ export function createSpecSpineWorld(
     };
     if (transport === "agent") {
       headers.authorization = `Bearer ${SPINE_BEARER_TOKEN}`;
-      headers[SPEC_CALLER_CONVERSATION_HEADER] = SPINE_CONVERSATION_ID;
-      headers[SPEC_CALLER_BACKEND_HEADER] = "codex";
+      // What `cctl workflow live amend` presents: a signed capability, not a
+      // conversation id the caller typed. The route derives the audit actor
+      // from the signature, so a claimed header would prove nothing here.
+      headers[CONVERSATION_CAPABILITY_HEADER] = mintConversationCapability(
+        {
+          sessionName: SPINE_SESSION_NAME,
+          conversationId: SPINE_CONVERSATION_ID,
+        },
+        SPINE_CAPABILITY_SECRET,
+        1_760_000_000_000,
+      );
     }
     const request = new Request(
       `http://cc.test/api/projects/${SPINE_PROJECT_NAME}/sessions/${SPINE_SESSION_NAME}/graph-workflow/amend`,
@@ -1944,9 +2046,12 @@ export function createSpecSpineWorld(
     postWorkflowLiveEdit,
     haltWorkflowExecution,
     pauseWorkflowExecution,
+    reserveWorkflowDefinitionDecision,
     markWorkflowContextRunning,
     setWorkflowExecutionStatus,
     readActiveWorkflowExecution: () => activeWorkflowExecution,
+    readArchivedWorkflowExecution: () =>
+      archivedWorkflowExecutions.at(-1) ?? null,
     cleanupFaults,
   };
 }
@@ -2597,13 +2702,17 @@ export async function startSpineWorkflowThroughProductionGate(
   const startResponse = await world.postWorkflowRoute("START", {
     definitionId: started.definition.id,
   });
-  if (startResponse.status === 409) {
-    const payload = (await startResponse.json()) as { code?: string };
-    if (payload.code !== "definition_approval_required") {
-      throw new Error(
-        `Workflow start was refused for an unexpected reason: ${JSON.stringify(payload)}`,
-      );
-    }
+  if (startResponse.status !== 202) {
+    throw new Error(
+      `Workflow start failed with status ${startResponse.status}`,
+    );
+  }
+  // A park is an ACCEPTED launch carrying a receipt (D7 decision D1), so the
+  // disposition is read from the receipt rather than decoded from a refusal.
+  const payload = (await startResponse.json()) as {
+    receipt?: { status?: string };
+  };
+  if (payload.receipt?.status === "awaiting_definition_approval") {
     // The execution-start gate is a human-only act: approval flows through
     // the spec-side approve-execution-start action on human transport, which
     // records the spec approval + execution_start admission with provenance
@@ -2619,10 +2728,6 @@ export async function startSpineWorkflowThroughProductionGate(
         `Execution-start approval failed with status ${approve.status}: ${await approve.text()}`,
       );
     }
-  } else if (startResponse.status !== 202) {
-    throw new Error(
-      `Workflow start failed with status ${startResponse.status}`,
-    );
   }
 
   const linked = world.repos.delivery.findExecutionById(

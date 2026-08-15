@@ -33,6 +33,7 @@ import { cn } from "@/lib/ui/cn";
 import {
   classifyContextLifecycle,
   classifyExecutionEditability,
+  type ExecutionEditability,
 } from "@/lib/workflow-graph/lifecycle-classifier";
 import { deepEqualJson } from "@/lib/shared/deep-equal";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
@@ -463,7 +464,7 @@ type ConfigAffordance =
   | { mode: "pause-to-edit" }
   | {
       mode: "read-only";
-      reason: "completed" | "aborted" | "halt-not-resumable";
+      reason: NotEditableReason;
     };
 
 function resolveAffordance(
@@ -483,14 +484,20 @@ function resolveAffordance(
     : { mode: "pause-to-edit" };
 }
 
-const READ_ONLY_REASON_TEXT: Record<
-  "completed" | "aborted" | "halt-not-resumable",
-  string
-> = {
+// Derived from the classifier so a new not-editable reason fails to compile
+// here until this surface says what it means to an author.
+type NotEditableReason = Extract<
+  ExecutionEditability,
+  { kind: "not-editable" }
+>["reason"];
+
+const READ_ONLY_REASON_TEXT: Record<NotEditableReason, string> = {
   completed: "This execution has completed and can no longer be edited.",
   aborted: "This execution was aborted and can no longer be edited.",
   "halt-not-resumable":
     "This execution halted with a non-resumable reason and can no longer be edited.",
+  "awaiting-definition-approval":
+    "This plan is parked awaiting definition approval; approve or reject it before editing.",
 };
 
 // Why the schema editor is disabled, in the terms of the mode that disabled it.

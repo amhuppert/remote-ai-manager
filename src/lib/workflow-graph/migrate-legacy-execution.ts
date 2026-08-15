@@ -1,3 +1,5 @@
+import { rawRecordHoldsExecutionLease } from "@/lib/workflow-graph/lifecycle-classifier";
+
 export interface LegacyMigrationResult {
   upgradedRecord: Record<string, unknown>;
   repairedFields: string[];
@@ -70,7 +72,20 @@ export function migrateLegacyExecution(
     repaired.push("activeContextId");
   }
 
-  if (upgraded.status !== "paused") {
+  // Pausing is a RECOVERY act: a legacy record's loop cannot still be live, so
+  // whatever it claimed to be doing is reset to a state an operator resumes
+  // from. A run whose TENURE is already over has nothing to recover — it
+  // reached its end — and rewriting it to `paused` does not just mislabel it, it
+  // fabricates tenure: the run would hold the session's lease again and refuse
+  // the next launch, instead of being normalized into History (D7 R3.1, R3.3).
+  //
+  // Tenure, through the canonical predicate, rather than a hand-listed pair of
+  // terminal statuses: `completed` and `aborted` are not the only ways a run
+  // ends. A non-resumable halt and an abandoned one are just as over, and a
+  // status list cannot see either. Every lease-HOLDING status (legacy vocabulary
+  // like `in-progress` included) is still translated.
+  const storedStatus = upgraded.status;
+  if (storedStatus !== "paused" && rawRecordHoldsExecutionLease(upgraded)) {
     upgraded.status = "paused";
     repaired.push("status");
   }

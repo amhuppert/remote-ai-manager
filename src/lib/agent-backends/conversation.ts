@@ -258,6 +258,19 @@ export interface ConversationBackendCreateInput {
    * raw backend session id) that CC state cannot resolve.
    */
   ccScopeConversationId?: string;
+  /**
+   * The signed conversation capability workflow authority is derived from
+   * (D7 D11/D12), minted by the conversation actor for a durable ordinary
+   * conversation — one a human addresses directly.
+   *
+   * Minted upstream under the conversation's OWN id rather than derived here,
+   * because `ccScopeConversationId` above is a redirect: a collaboration lane
+   * points it at its originating conversation, so any authority derived from
+   * the CC-side id would be that human's. Runtimes that are handed none carry
+   * none, which is what keeps a lane, the planner, and a collaboration runtime
+   * unable to claim a launch origin.
+   */
+  conversationCapability?: string;
   projectPath: string;
   projectName: string;
   /**
@@ -352,6 +365,6 @@ export interface ConversationBackendFactory {
 export interface WorkflowLaneIdentity {
   executionId: string;
   contextId: string;
-  /** Absent when the server had no instance token to sign with. */
+  /** Absent when the server has no capability signing key. */
   laneCapability?: string;
 }

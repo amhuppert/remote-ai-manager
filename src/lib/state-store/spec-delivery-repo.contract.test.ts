@@ -257,7 +257,7 @@ function maximalExecution(): SpecExecutionRow {
     session_name: "native-sdd-delivery-maximal",
     delivered_at: "2026-07-18T11:07:00.000Z",
     abandoned_reason: "The pinned execution was superseded by human choice.",
-    cleanup_phase: "release_slot",
+    cleanup_phase: "finalize",
     linked_workflow_execution_id: "workflow-execution-delivery-maximal",
     cleanup_last_error:
       "Graph workflow execution workflow-execution-delivery-maximal is still live (running).",
@@ -414,7 +414,7 @@ describe("spec-delivery-repo durability contract", () => {
     const blocked = repo.saveExecutionCleanupState({
       executionId: execution.id,
       state: "abandoning",
-      cleanupPhase: "release_slot",
+      cleanupPhase: "finalize",
       linkedWorkflowExecutionId: "workflow-execution-abandon-coordinator",
       cleanupLastError: "the linked run is still live (running)",
       cleanupLastErrorAt: "2026-07-18T12:01:00.000Z",
@@ -423,7 +423,7 @@ describe("spec-delivery-repo durability contract", () => {
     });
     expect(repo.findExecutionById(execution.id)).toEqual(blocked);
     expect(blocked).toMatchObject({
-      cleanup_phase: "release_slot",
+      cleanup_phase: "finalize",
       cleanup_last_error: "the linked run is still live (running)",
       cleanup_last_error_at: "2026-07-18T12:01:00.000Z",
     });

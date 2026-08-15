@@ -1,7 +1,9 @@
 import type Database from "better-sqlite3";
+import { emitOrDeferRepositoryLog } from "@/lib/state-store/deferred-repo-logging";
 import { createLogger } from "@/lib/logging";
 import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import { holdsExecutionLease } from "@/lib/workflow-graph/lifecycle-classifier";
 import { PersistenceError } from "../shared/errors";
 import {
   decodeGraphWorkflowExecution,
@@ -19,15 +21,20 @@ const parallelLogger = createLogger("graph-workflow-parallel");
 /**
  * Heavy, near-static fields of a {@link GraphWorkflowExecution} — the working
  * definition and charter plus the execution's identity and the seed-time audit
- * snapshot (`boundInputs`, `launchedTier`, `ownerConversationId`). Written to
- * `definition_json` only when its content hash changes (the definition rarely
- * mutates after a workflow starts; `boundInputs`, `launchedTier`, and
- * `ownerConversationId` are fixed at seed and never mutate).
+ * snapshot (`boundInputs`, `launchedTier`, `ownerConversationId`, `origin`,
+ * `launchDocument`, `liveSessionReadOnlyPinned`). Written to `definition_json`
+ * only when its content hash changes (the definition rarely mutates after a
+ * workflow starts; every field listed here besides `workingDefinition` and
+ * `charter` is fixed at seed and never mutates — which is what makes the
+ * launch document immutable in practice, not merely by convention).
  */
 export const DEFINITION_TIER_KEYS = [
   "id",
+  "origin",
   "seedDefinitionId",
   "seedDefinitionRevision",
+  "launchDocument",
+  "liveSessionReadOnlyPinned",
   "boundInputs",
   "launchedTier",
   "ownerConversationId",
@@ -43,7 +50,9 @@ export const DEFINITION_TIER_KEYS = [
  */
 export const RUNTIME_TIER_KEYS = [
   "status",
+  "abandonment",
   "definitionApproval",
+  "definitionApprovalClaim",
   "liveRevision",
   "executionStateRevision",
   "structuralRevision",
@@ -82,6 +91,13 @@ interface ExecutionProjections {
   startedAt: string;
   status: string;
   completedAt: string | null;
+  /**
+   * The lease as SQL sees it (D7 decision D15): 1 when this run still owns the
+   * session's execution slot. Derived here from the whole record rather than
+   * accepted from a caller, so a writer cannot forget it and it cannot drift
+   * from the classifier's verdict.
+   */
+  leaseHeld: 0 | 1;
 }
 
 interface SplitExecution {
@@ -117,6 +133,13 @@ export function splitExecution(
       startedAt: execution.startedAt,
       status: execution.status,
       completedAt: execution.completedAt,
+      leaseHeld: holdsExecutionLease(
+        execution.status,
+        execution.haltReason,
+        execution.abandonment,
+      )
+        ? 1
+        : 0,
     },
   };
 }
@@ -156,16 +179,27 @@ function isListRow(value: unknown): value is ListStorageRow {
   );
 }
 
+/**
+ * Deferred like every other line this repository emits, because the branch is
+ * reachable from inside the lease reservation: a row can go malformed between
+ * the advisory read and the authoritative one, and the authoritative read runs
+ * under `BEGIN IMMEDIATE`. A corrupt row would otherwise make every launch write
+ * to the log file while holding SQLite's write lock. Nothing is lost — a section
+ * that throws never receives its `flush`, so the line is released with the
+ * orphans once the section has unwound.
+ */
 function logAndThrowValidationFailure(
   identifier: string,
   issues: unknown,
 ): never {
-  logger.error(
-    "state-store.graph-workflow-executions.schema_validation_failure",
-    {
-      identifier,
-      issues,
-    },
+  emitOrDeferRepositoryLog(() =>
+    logger.error(
+      "state-store.graph-workflow-executions.schema_validation_failure",
+      {
+        identifier,
+        issues,
+      },
+    ),
   );
   throw new PersistenceError({
     kind: "validation",
@@ -259,6 +293,27 @@ export interface GraphWorkflowExecutionsRepo {
     sessionName: string,
   ): GraphWorkflowExecution | null;
   /**
+   * `getActive` with this connection's caches for the key dropped first, so the
+   * answer comes from SQLite rather than from what this process last saw.
+   *
+   * The lease CAS is the caller this exists for. Every cache here is invalidated
+   * only by writes made through THIS connection, while the lease is a claim
+   * about the database that another process can change at any moment: the
+   * ordinary advisory read a launch performs first caches "no incumbent", and a
+   * CAS that then trusts that cache takes the write lock, never looks, and
+   * overwrites whoever committed in between. `BEGIN IMMEDIATE` makes the read
+   * that happens here authoritative; not reading is what breaks it.
+   *
+   * The definition-tier hash is dropped with it. That cache decides whether
+   * `setActive` may skip rewriting `definition_json`, and it describes a row
+   * this connection no longer owns — a stale hit would leave the previous
+   * winner's definition under the new execution's runtime.
+   */
+  getActiveAuthoritative(
+    projectPath: string,
+    sessionName: string,
+  ): GraphWorkflowExecution | null;
+  /**
    * Upsert (or, with `execution === null`, delete) the one active execution for
    * a session. `runtime_json` + projection columns are written on every call;
    * `definition_json` is rewritten only when its content hash differs from the
@@ -271,13 +326,6 @@ export interface GraphWorkflowExecutionsRepo {
     execution: GraphWorkflowExecution | null,
     updatedAt: string,
   ): boolean;
-  /** Rewrite both tiers in place after a read-time legacy upgrade. */
-  applyMigration(
-    projectPath: string,
-    sessionName: string,
-    migration: GraphWorkflowExecutionMigration,
-    updatedAt: string,
-  ): void;
   /**
    * Every active execution across all sessions, keyed by
    * `${projectPath}\u0000${sessionName}` (NUL-separated), for the active-conversations feed.
@@ -312,11 +360,11 @@ export function createGraphWorkflowExecutionsRepo(
     `INSERT INTO graph_workflow_executions (
        project_path, session_name, execution_id, seed_definition_id,
        seed_definition_revision, started_at, status, completed_at,
-       definition_json, runtime_json, updated_at
+       definition_json, runtime_json, updated_at, lease_held
      ) VALUES (
        @project_path, @session_name, @execution_id, @seed_definition_id,
        @seed_definition_revision, @started_at, @status, @completed_at,
-       @definition_json, @runtime_json, @updated_at
+       @definition_json, @runtime_json, @updated_at, @lease_held
      )
      ON CONFLICT(project_path, session_name) DO UPDATE SET
        execution_id             = excluded.execution_id,
@@ -327,14 +375,20 @@ export function createGraphWorkflowExecutionsRepo(
        completed_at             = excluded.completed_at,
        definition_json          = excluded.definition_json,
        runtime_json             = excluded.runtime_json,
-       updated_at               = excluded.updated_at`,
+       updated_at               = excluded.updated_at,
+       lease_held               = excluded.lease_held`,
   );
+  // Status, halt reason, and abandonment all live in the runtime tier, so the
+  // lease almost always changes on THIS path — a projection written only by the
+  // full upsert would leave a finished run looking ambient-active until its
+  // definition happened to change.
   const runtimeUpdateStmt = db.prepare(
     `UPDATE graph_workflow_executions
         SET runtime_json = @runtime_json,
             status       = @status,
             completed_at = @completed_at,
-            updated_at   = @updated_at
+            updated_at   = @updated_at,
+            lease_held   = @lease_held
       WHERE project_path = @project_path AND session_name = @session_name`,
   );
   const deleteStmt = db.prepare(
@@ -376,13 +430,35 @@ export function createGraphWorkflowExecutionsRepo(
       if (identifier.sessionName !== undefined) {
         payload.sessionName = identifier.sessionName;
       }
-      logger.info(
-        `state-store.graph-workflow-executions.${op}.timing`,
-        payload,
+      emitOrDeferRepositoryLog(() =>
+        logger.info(
+          `state-store.graph-workflow-executions.${op}.timing`,
+          payload,
+        ),
       );
     }
   }
 
+  /**
+   * A READ, and nothing else: a legacy row is upgraded in memory and handed
+   * back, never written back.
+   *
+   * Read-repair used to persist that upgrade here, which made every reader a
+   * writer. The launch path is where that becomes a defect rather than a
+   * curiosity. A launch reads the incumbent twice — the manager's advisory
+   * guard, then the authoritative CAS — and D7 requires the reservation to be
+   * the launch's FIRST mutation of any kind (`reserve-before-side-effects`), so
+   * that a refused launch leaves no persisted record at all (R5.2) and a
+   * lease-free incumbent is relocated to History by the transaction that
+   * installs its successor rather than by whoever happened to read it first
+   * (R3.3, R3.4). Across processes the repair is worse than redundant: it
+   * rewrites the row from a snapshot taken before another connection's winner
+   * existed, so a read could undo an admission.
+   *
+   * Nothing is lost by deferring it. The upgrade is a pure function of the
+   * stored bytes, so every reader sees the same record whether or not it was
+   * rewritten, and the next ordinary `setActive` persists the upgraded shape.
+   */
   function readActive(
     projectPath: string,
     sessionName: string,
@@ -408,11 +484,17 @@ export function createGraphWorkflowExecutionsRepo(
     }
     const merged = mergeRow(`${projectPath}::${sessionName}`, row);
     if (merged.migration !== null) {
-      applyMigrationInternal(
-        projectPath,
-        sessionName,
-        merged.value,
-        merged.migration,
+      // Emitted from the cached read only. `listActive` re-merges every row on
+      // every call (the feed polls it), so logging there would repeat a line
+      // per legacy row per poll for as long as the row stays unwritten.
+      emitOrDeferRepositoryLog(() =>
+        parallelLogger.info("graph-workflow.parallel.legacy_migrated", {
+          projectPath,
+          sessionName,
+          executionId: merged.migration?.executionId,
+          repairedFields: merged.migration?.repairedFields,
+          persisted: false,
+        }),
       );
     }
     parsedByKey.set(cacheKey, merged.value);
@@ -452,6 +534,7 @@ export function createGraphWorkflowExecutionsRepo(
       definition_json: split.definitionJson,
       runtime_json: split.runtimeJson,
       updated_at: updatedAt,
+      lease_held: split.projections.leaseHeld,
     });
     definitionHashCache.set(
       key(projectPath, sessionName),
@@ -459,31 +542,23 @@ export function createGraphWorkflowExecutionsRepo(
     );
   }
 
-  /**
-   * Re-split and rewrite a migrated execution's tiers. Bumps the cache version
-   * so the in-memory parsed value is refreshed on the next read.
-   */
-  function applyMigrationInternal(
-    projectPath: string,
-    sessionName: string,
-    upgraded: GraphWorkflowExecution,
-    migration: GraphWorkflowExecutionMigration,
-  ): void {
-    const split = splitExecution(upgraded);
-    writeFull(projectPath, sessionName, split, new Date().toISOString());
-    invalidate();
-    parallelLogger.info("graph-workflow.parallel.legacy_migrated", {
-      projectPath,
-      sessionName,
-      executionId: migration.executionId,
-      repairedFields: migration.repairedFields,
-    });
-  }
-
   return {
     getActive(projectPath, sessionName) {
       return timed("getActive", { projectPath, sessionName }, () =>
         readActive(projectPath, sessionName),
+      );
+    },
+    getActiveAuthoritative(projectPath, sessionName) {
+      return timed(
+        "getActiveAuthoritative",
+        { projectPath, sessionName },
+        () => {
+          const cacheKey = key(projectPath, sessionName);
+          ensureParsedFresh();
+          parsedByKey.delete(cacheKey);
+          definitionHashCache.delete(cacheKey);
+          return readActive(projectPath, sessionName);
+        },
       );
     },
     setActive(projectPath, sessionName, execution, updatedAt) {
@@ -513,6 +588,7 @@ export function createGraphWorkflowExecutionsRepo(
             status: split.projections.status,
             completed_at: split.projections.completedAt,
             updated_at: updatedAt,
+            lease_held: split.projections.leaseHeld,
           });
           // The hash cache said the definition was unchanged, but the row is
           // gone (cache/row drift — e.g. an out-of-band delete after the cache
@@ -531,30 +607,6 @@ export function createGraphWorkflowExecutionsRepo(
         return true;
       });
     },
-    applyMigration(projectPath, sessionName, migration, updatedAt) {
-      let candidate: unknown;
-      try {
-        candidate = JSON.parse(migration.upgradedJson);
-      } catch (err) {
-        return logAndThrowValidationFailure(`${projectPath}::${sessionName}`, [
-          {
-            code: "invalid_json",
-            path: ["upgradedJson"],
-            message: getErrorMessage(err),
-          },
-        ]);
-      }
-      const parsed = graphWorkflowExecutionSchema.safeParse(candidate);
-      if (!parsed.success) {
-        return logAndThrowValidationFailure(
-          `${projectPath}::${sessionName}`,
-          parsed.error.issues,
-        );
-      }
-      const split = splitExecution(parsed.data);
-      writeFull(projectPath, sessionName, split, updatedAt);
-      invalidate();
-    },
     listActive() {
       return timed("listActive", {}, () => {
         const rows = listStmt.all() as unknown[];
@@ -570,15 +622,10 @@ export function createGraphWorkflowExecutionsRepo(
             ]);
           }
           const identifier = `${row.project_path}::${row.session_name}`;
+          // Upgraded in memory like every other read: the feed calls this on a
+          // poll, and a launch admitted between two polls must not find its row
+          // overwritten by an enumeration carrying a pre-launch snapshot.
           const merged = mergeRow(identifier, row);
-          if (merged.migration !== null) {
-            applyMigrationInternal(
-              row.project_path,
-              row.session_name,
-              merged.value,
-              merged.migration,
-            );
-          }
           result.set(key(row.project_path, row.session_name), merged.value);
         }
         return result;

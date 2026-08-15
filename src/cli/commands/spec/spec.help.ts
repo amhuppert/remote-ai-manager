@@ -1881,7 +1881,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "abandon"],
     summary: "abandon one execution, or retire the whole spec as a human",
     description:
-      "Record a required durable reason while abandoning the whole spec, or target one execution with --execution. Execution-targeted abandon coordinates the linked workflow abort and execution-slot release before finalizing the spec execution; a partial cleanup refusal names the exact `cctl workflow live abort` or `cctl workflow live release` recovery and tells you to retry this command. Abandoning one execution is ordinary agent work. Retiring the whole spec is the least reversible act on this surface and is human-only: agent transports receive a typed human_act_required refusal, so ask the operator to retire the spec from Spec Studio.",
+      "Record a required durable reason while abandoning the whole spec, or target one execution with --execution. Execution-targeted abandon aborts the linked workflow — which releases the session's execution lease — before finalizing the spec execution; a partial cleanup refusal names the exact `cctl workflow live abort` or `cctl workflow abandon` recovery and tells you to retry this command. Abandoning one execution is ordinary agent work. Retiring the whole spec is the least reversible act on this surface and is human-only: agent transports receive a typed human_act_required refusal, so ask the operator to retire the spec from Spec Studio.",
     usage: [
       "cctl spec abandon <slug> --reason <reason>",
       "cctl spec abandon <slug> --execution <id> --reason <reason>",
@@ -1918,9 +1918,9 @@ export const specHelpEntries: CommandHelpEntry[] = [
         oneLiner: "capture blocking discovered work, then abandon and restart",
       },
       {
-        command: "workflow live release",
+        command: "workflow live abort",
         oneLiner:
-          "the exact backstop a partial abandon receipt names if the slot remains owned",
+          "the exact backstop a partial abandon receipt names if the run still holds the lease",
       },
     ],
   },

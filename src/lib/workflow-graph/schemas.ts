@@ -36,8 +36,10 @@ import {
   graphWorkflowSharedDocumentEntrySchema,
   graphWorkflowStatusSchema,
   graphWorkflowTaskStatusSchema,
+  graphWorkflowVisualLayoutSchema,
   resolvedWorkflowSemanticDefinitionSchema,
   workflowAdvisoryIdentitySchema,
+  workflowSemanticDefinitionSchema,
   workflowValidatorAdvisorySchema,
   workflowValidatorIssueSchema,
 } from "./definition-schemas";
@@ -74,11 +76,17 @@ export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
     type: z.literal("aborted"),
     // Why the abort happened, when something other than a user's abort button
     // caused it. `migration_cutover` is the hard-cutover migration ending a
-    // non-terminal run's resume path; `summary` explains that in the inspector,
-    // mirroring the `max_iterations.summary` precedent. Additive — a
-    // user-initiated abort (and every pre-cutover row) parses as null, and
+    // non-terminal run's resume path; `definition_rejected` is a human ending a
+    // parked launch at the definition gate (D7 decision D17), carried on the
+    // record itself so a History row is recognizably reviewed-and-rejected
+    // without reading the event ledger beside it. `summary` explains either in
+    // the inspector, mirroring the `max_iterations.summary` precedent. Additive
+    // — a user-initiated abort (and every pre-cutover row) parses as null, and
     // resumability is unchanged: an abort is terminal whatever caused it.
-    cause: z.enum(["migration_cutover"]).nullable().default(null),
+    cause: z
+      .enum(["migration_cutover", "definition_rejected"])
+      .nullable()
+      .default(null),
     summary: z.string().nullable().default(null),
   }),
   z.object({
@@ -663,6 +671,38 @@ export const graphWorkflowDefinitionApprovalSchema = z.object({
 });
 export type GraphWorkflowDefinitionApproval = z.infer<
   typeof graphWorkflowDefinitionApprovalSchema
+>;
+
+/**
+ * An approval decision this server has reserved but not yet made (D7 R14.2).
+ *
+ * Approving a park is a saga across two authorities — this graph's serialized
+ * row and the registered admission consumer's own durable records — and either
+ * order of those two writes is unsound on its own: approving first leaves a
+ * gate-refused act with an irreversibly approved run, admitting first leaves a
+ * losing act's admission behind. So the act reserves first, and the reservation
+ * is deliberately NOT the approval: the run stays `pending` with
+ * `definitionApproval.approvedAt` still null, and only an admitted holder
+ * finalizes. Kept beside the approval record rather than inside it so no reader
+ * can mistake a decision in flight for a decision made.
+ *
+ * Held only for the duration of one act. A crash strands it, which restart
+ * normalization releases — the park would otherwise be undecidable, since
+ * approve and reject both refuse while a decision is in flight.
+ *
+ * `claimId` is what makes the reservation an identity rather than a flag. A
+ * sweep that reclaims a stranded reservation does not stop the act that made
+ * it — that act may simply have been slow — so its remaining moves have to fail
+ * against the holder that replaced it. Without the id, a superseded act would
+ * release the new holder's reservation out from under a live admission, or
+ * finalize a decision the new holder is still making.
+ */
+export const graphWorkflowDefinitionApprovalClaimSchema = z.object({
+  claimId: z.string().trim().min(1),
+  claimedAt: z.string().trim().min(1),
+});
+export type GraphWorkflowDefinitionApprovalClaim = z.infer<
+  typeof graphWorkflowDefinitionApprovalClaimSchema
 >;
 
 // Answers recorded for a parked user-input question batch. The answer
@@ -1871,65 +1911,221 @@ export type GraphWorkflowLoopState = z.infer<
 /**
  * Vocabulary of the lifecycle contract (design §10). The decision table itself
  * lives in `lifecycle-classifier.ts` — the single module allowed to decide any
- * of these — but the verdict enums are schemas so every consumer derives its
- * types instead of restating the unions.
+ * of these — but the verdict is a schema so every consumer derives its type
+ * instead of restating it.
  */
-export const graphWorkflowSlotOwnershipSchema = z.enum([
-  // The status ends the run's claim on the session's execution slot: the slot
-  // is archived and released without any further human or agent act.
-  "auto-release",
-  // The run may still resume, so it keeps the slot AND validation ownership
-  // until it is resumed, abandoned, or explicitly archived. Treating one of
-  // these as terminal would admit unrelated validation and race the resume.
-  "retained",
-]);
-export type GraphWorkflowSlotOwnership = z.infer<
-  typeof graphWorkflowSlotOwnershipSchema
->;
-
-export const graphWorkflowArchiveEligibilitySchema = z.enum([
-  // An explicit, audited archive act may release this run.
-  "eligible",
-  // The run already auto-released; the explicit act succeeds as a no-op rather
-  // than reporting a false conflict.
-  "idempotent",
-  // The run is live; archiving it would strand a running loop.
-  "refused",
-]);
-export type GraphWorkflowArchiveEligibility = z.infer<
-  typeof graphWorkflowArchiveEligibilitySchema
->;
-
-export const graphWorkflowReplacementPolicySchema = z.enum([
-  // A new execution may take the slot, but only by archiving the incumbent
-  // through the audited path first. There is deliberately no "silent" verdict.
-  "audited-archive",
-  // The incumbent is live: the start is rejected instead.
-  "refused",
-]);
-export type GraphWorkflowReplacementPolicy = z.infer<
-  typeof graphWorkflowReplacementPolicySchema
->;
-
 export const graphWorkflowLifecycleDecisionSchema = z.object({
   status: graphWorkflowStatusSchema,
   /**
-   * Whether the run has ended. Terminality is NOT slot release: `halted` is
-   * terminal (no further progress happens on its own) yet retains ownership,
-   * because it is resumable.
+   * Whether the run has ended. Terminality is NOT tenure: `halted` is terminal
+   * (no further progress happens on its own) yet may still hold the session's
+   * lease, because it is resumable. Tenure is `holdsExecutionLease`, which
+   * reads the halt reason and the abandonment record a status cannot see.
    */
   terminal: z.boolean(),
-  slotOwnership: graphWorkflowSlotOwnershipSchema,
-  explicitArchive: graphWorkflowArchiveEligibilitySchema,
-  replacement: graphWorkflowReplacementPolicySchema,
 });
 export type GraphWorkflowLifecycleDecision = z.infer<
   typeof graphWorkflowLifecycleDecisionSchema
 >;
+/**
+ * Where a run came from (D7 decision D2). A `template` run names the saved
+ * definition and the revision it was launched from; a `one_off` run has no
+ * definition record anywhere — its authored source is `launchDocument` and its
+ * only human-facing identity is the submitted plan name.
+ *
+ * Provenance, not a dependency: nothing here is resolved against stored
+ * definitions at read time, which is what lets a historical run render after
+ * its template is edited or deleted. A one-off row additionally writes
+ * legacy-shaped filler into the seed fields so an older build's eager
+ * `listActive()` still parses it (see `execution-origin.ts`); every consumer
+ * branches on THIS field and never on that filler.
+ */
+export const graphWorkflowExecutionOriginSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("template"),
+    definitionId: z.string().trim().min(1),
+    definitionRevision: z.number().int().min(1),
+    tier: z.enum(["project", "global"]),
+  }),
+  z.object({
+    kind: z.literal("one_off"),
+    planName: z.string().trim().min(1),
+  }),
+]);
+export type GraphWorkflowExecutionOrigin = z.infer<
+  typeof graphWorkflowExecutionOriginSchema
+>;
+
+/**
+ * What an ACCEPTED launch tells its caller (D7 R1.2, decision D1).
+ *
+ * Two dispositions, both successes: the run began, or it parked awaiting
+ * definition approval — durable, holding the session's lease, and waiting on a
+ * human. `pending` is deliberately absent: a launch receipt reports what the
+ * caller must do next, and "pending" answers that only by accident.
+ */
+export const graphWorkflowLaunchStatusSchema = z.enum([
+  "running",
+  "awaiting_definition_approval",
+]);
+export type GraphWorkflowLaunchStatus = z.infer<
+  typeof graphWorkflowLaunchStatusSchema
+>;
+
+/**
+ * THE launch receipt, returned by both launch transports.
+ *
+ * Addressed by execution identity and origin alone — a one-off run has no
+ * definition id to report and a template run's identity already lives in its
+ * origin, so no surface has to know which verb produced the run it is rendering.
+ */
+export const graphWorkflowLaunchReceiptSchema = z.object({
+  executionId: z.string().trim().min(1),
+  status: graphWorkflowLaunchStatusSchema,
+  origin: graphWorkflowExecutionOriginSchema,
+  originConversationId: z.string().trim().min(1).nullable(),
+  deepLink: z.string().trim().min(1),
+  startedAt: z.string(),
+});
+export type GraphWorkflowLaunchReceipt = z.infer<
+  typeof graphWorkflowLaunchReceiptSchema
+>;
+
+/**
+ * THE receipt every execution-addressed lifecycle act answers with — abandon,
+ * definition approval, definition rejection (D7 R4.1, R14.2).
+ *
+ * Built from the execution's recorded origin for the same reason the launch
+ * receipt is: the seed fields on a one-off row are legacy-shaped filler, and an
+ * act addressed by execution id alone must not hand that filler back as the
+ * identity of a definition the run does not have. `archived` says whether the
+ * act relocated the run into History, which is the one thing the acts differ on
+ * that a caller acts upon.
+ */
+export const graphWorkflowExecutionActReceiptSchema = z.object({
+  executionId: z.string().trim().min(1),
+  status: graphWorkflowStatusSchema,
+  origin: graphWorkflowExecutionOriginSchema,
+  archived: z.boolean(),
+});
+export type GraphWorkflowExecutionActReceipt = z.infer<
+  typeof graphWorkflowExecutionActReceiptSchema
+>;
+
+/**
+ * What the caller of a refused launch should do about the run that holds the
+ * lease (D7 decision D6). Derived from the same admission decision that
+ * refused — never chosen by the surface rendering it, which is how the CLI
+ * text, the JSON envelope, and the UI say the same thing.
+ */
+export const graphWorkflowLeaseRemedySchema = z.enum([
+  // The lease holder is parked awaiting definition approval: decide it or end
+  // the run. Pausing a run that has not started would say nothing.
+  "approve_or_abort",
+  // The lease holder is live (pending-unparked, running, or paused). Look at
+  // what it is doing before ending it.
+  "inspect_or_pause",
+  // The lease holder is a resumable halt: finish it or explicitly abandon it.
+  "resume_or_abandon",
+]);
+export type GraphWorkflowLeaseRemedy = z.infer<
+  typeof graphWorkflowLeaseRemedySchema
+>;
+
+/**
+ * The facts a refusal names about the lease holder. Assembled by the admission
+ * decision from the incumbent record alone — a claimed id never reaches it.
+ */
+export const graphWorkflowLeaseIncumbentSchema = z.object({
+  executionId: z.string().trim().min(1),
+  status: graphWorkflowStatusSchema,
+  origin: graphWorkflowExecutionOriginSchema,
+  originConversationId: z.string().trim().min(1).nullable(),
+});
+export type GraphWorkflowLeaseIncumbent = z.infer<
+  typeof graphWorkflowLeaseIncumbentSchema
+>;
+
+/**
+ * THE launch-refusal payload (D7 decision D6): the incumbent facts, the remedy
+ * the lease decision implies, and the deep link that addresses the run. One
+ * shape serves every launch refusal — the project-scope and nesting refusals
+ * carry the same envelope with no blocker, because they have no incumbent to
+ * name rather than a different payload.
+ */
+export const graphWorkflowLeaseBlockerSchema =
+  graphWorkflowLeaseIncumbentSchema.extend({
+    remedy: graphWorkflowLeaseRemedySchema,
+    deepLink: z.string().trim().min(1),
+  });
+export type GraphWorkflowLeaseBlocker = z.infer<
+  typeof graphWorkflowLeaseBlockerSchema
+>;
+
+/**
+ * The authored document a run was launched from, snapshotted once at seed
+ * (D7 decision D13): the submitted `{name, description, definition, layout}`
+ * for a one-off run, and the template record's same four fields for a template
+ * run. This is the pre-substitution, pre-cascade source — `workingDefinition`
+ * carries the final edited state — plus the durable name, description, and
+ * layout History renders from with no reference to any saved template.
+ */
+export const graphWorkflowLaunchDocumentSchema = z.object({
+  name: z.string().trim().min(1),
+  description: z.string().trim().min(1).nullable().default(null),
+  definition: workflowSemanticDefinitionSchema,
+  layout: graphWorkflowVisualLayoutSchema,
+});
+export type GraphWorkflowLaunchDocument = z.infer<
+  typeof graphWorkflowLaunchDocumentSchema
+>;
+
+/**
+ * The audit an explicit abandon writes (D7 decision D5). Status stays `halted`
+ * — the run's final engine state is a fact — and the Abandoned disposition is
+ * derived from the presence of this record, which is also what ends the run's
+ * lease. The admitted actors are a human UI caller and the origin conversation
+ * under its verified identity, so the actor carries that identity rather than a
+ * free-text label nobody can attribute afterwards.
+ */
+export const graphWorkflowAbandonmentSchema = z.object({
+  abandonedAt: z.string(),
+  actor: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("human") }),
+    z.object({
+      kind: z.literal("conversation"),
+      conversationId: z.string().trim().min(1),
+    }),
+  ]),
+  reason: z.string().trim().min(1),
+});
+export type GraphWorkflowAbandonment = z.infer<
+  typeof graphWorkflowAbandonmentSchema
+>;
+
 export const graphWorkflowExecutionSchema = z.object({
   id: z.string().trim().min(1),
+  // Required with no schema default: absence is floored ONCE, at the stored-row
+  // decode boundary (`decodeGraphWorkflowExecution`), where the seed fields are
+  // available to derive the template origin a pre-D7 row implies. A schema
+  // default could not see them, and an optional field would be a second
+  // compatibility surface for every consumer to re-handle.
+  origin: graphWorkflowExecutionOriginSchema,
   seedDefinitionId: z.string().trim().min(1),
   seedDefinitionRevision: z.number().int().min(1),
+  // Written once at seed and never rewritten — it lives in the definition tier
+  // beside the other seed-time audit fields. `.default(null)` floors rows
+  // written before the snapshot existed; those runs render at whatever fidelity
+  // they actually persisted rather than being blocked or back-filled.
+  launchDocument: graphWorkflowLaunchDocumentSchema.nullable().default(null),
+  // Set by the abandon act and never cleared. `.default(null)` floors every row
+  // written before the act existed to "not abandoned", which is what they were.
+  abandonment: graphWorkflowAbandonmentSchema.nullable().default(null),
+  // Pinned at launch when the dirty-worktree exemption admitted this run
+  // (D7 decision D10), and re-asserted by the live-edit frontier for the whole
+  // execution lifetime. A clean-worktree launch pins nothing, and so does every
+  // row written before the exemption existed — hence the `false` floor.
+  liveSessionReadOnlyPinned: z.boolean().default(false),
   // Optimistic-concurrency token for live edits (doc 06, D4). A bounded scalar
   // counter incremented ONLY by accepted live-edit batches (including the
   // lane-agent `add_task`), never by scheduler ticks, so `baseLiveRevision`
@@ -1998,6 +2194,12 @@ export const graphWorkflowExecutionSchema = z.object({
   // unowned run, which the resolver treats as fail-closed rather than open.
   ownerConversationId: z.string().trim().min(1).nullable().default(null),
   definitionApproval: graphWorkflowDefinitionApprovalSchema
+    .nullable()
+    .default(null),
+  // The in-flight half of a definition decision. `.default(null)` floors rows
+  // written before the field existed to "no decision in flight", which is the
+  // steady state of every park nobody is deciding right now.
+  definitionApprovalClaim: graphWorkflowDefinitionApprovalClaimSchema
     .nullable()
     .default(null),
   workingDefinition: resolvedWorkflowSemanticDefinitionSchema,
@@ -2097,6 +2299,101 @@ export const graphWorkflowExecutionSchema = z.object({
 });
 export type GraphWorkflowExecution = z.infer<
   typeof graphWorkflowExecutionSchema
+>;
+
+/**
+ * Where a recorded boundary result stands with its origin conversation (D7
+ * decision D8). The three states are the message queue's proven claim/recover/
+ * settle shape applied to a ledger that is deliberately NOT a message: nothing
+ * here ever enters the pending-message queue or starts an agent turn.
+ *
+ * `delivering` is a CLAIM, not an outcome — a turn that dies before
+ * acknowledgment leaves it here, and rehydration recovery returns it to
+ * `pending` so the same boundary re-presents under its stable identity.
+ */
+export const graphWorkflowResultDeliveryStateSchema = z.enum([
+  "pending",
+  "delivering",
+  "delivered",
+]);
+export type GraphWorkflowResultDeliveryState = z.infer<
+  typeof graphWorkflowResultDeliveryStateSchema
+>;
+
+/**
+ * One lifecycle boundary's durable result record for its origin conversation
+ * (D7 decision D8), written in the same transaction as the boundary's event
+ * append. `(executionId, boundarySeq)` is the identity: the boundary cursor is
+ * the durable event row id, so a replayed recording collides with itself rather
+ * than delivering the same result twice.
+ *
+ * `payload` is the boundary's result projection, opaque at this layer — the
+ * projection that builds it owns its shape, and the record-time size cap
+ * replaces any single over-large declared output with a reference to the value
+ * that already persists durably in the execution's `contextOutputs`.
+ */
+export const graphWorkflowResultDeliverySchema = z.object({
+  executionId: z.string().trim().min(1),
+  boundarySeq: z.number().int().min(1),
+  projectPath: z.string().trim().min(1),
+  sessionName: z.string().trim().min(1),
+  originConversationId: z.string().trim().min(1),
+  payload: z.record(z.string(), z.unknown()),
+  recordedAt: z.string(),
+  state: graphWorkflowResultDeliveryStateSchema.default("pending"),
+  // The claiming turn's attempt id, cleared when recovery releases the claim.
+  attemptId: z.string().trim().min(1).nullable().default(null),
+  attemptCount: z.number().int().min(0).default(0),
+  deliveredAt: z.string().nullable().default(null),
+  effectsDeliveredAt: z.string().nullable().default(null),
+});
+export type GraphWorkflowResultDelivery = z.infer<
+  typeof graphWorkflowResultDeliverySchema
+>;
+
+/**
+ * A document the launching tier hands the engine to seed into a run: content
+ * the tier already rendered, at a worktree-relative path under the shared
+ * document directory. Deliberately opaque — the engine never learns what the
+ * bytes mean, so no launching tier's vocabulary reaches this layer.
+ */
+export const seededWorkflowDocumentSchema = z.object({
+  relativePath: z.string().trim().min(1),
+  contents: z.string(),
+  description: z.string(),
+  readWhen: z.string(),
+});
+export type SeededWorkflowDocument = z.infer<
+  typeof seededWorkflowDocumentSchema
+>;
+
+/**
+ * The reserved-but-not-yet-materialized artifacts of one execution, recorded in
+ * the SAME transaction that installs the winner's row.
+ *
+ * A launch's `.cc` writes deliberately happen AFTER the lease CAS commits
+ * (`reserve-before-side-effects`), which opens a window: a crash between the
+ * commit and the writes leaves a durable execution whose charter and seeded
+ * documents are missing from the worktree, and whose seeded CONTENTS exist
+ * nowhere — the execution record carries only their registrations. This record
+ * is that missing reconstruction data, and its mere presence is the "artifacts
+ * are not known-materialized" marker a later kickoff retries from. It is
+ * deleted once materialization succeeds, so it is transient rather than a
+ * second copy of the run's documents.
+ *
+ * Its own table, not a field on the execution: the contents are launch-sized
+ * and would otherwise inflate the execution blob every read decodes, for data
+ * that is meaningless minutes after the launch.
+ */
+export const graphWorkflowPendingArtifactsSchema = z.object({
+  executionId: z.string().trim().min(1),
+  projectPath: z.string().trim().min(1),
+  sessionName: z.string().trim().min(1),
+  documents: z.array(seededWorkflowDocumentSchema),
+  recordedAt: z.string(),
+});
+export type GraphWorkflowPendingArtifacts = z.infer<
+  typeof graphWorkflowPendingArtifactsSchema
 >;
 
 /**

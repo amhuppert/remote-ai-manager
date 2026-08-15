@@ -46,6 +46,10 @@ import type {
   GraphWorkflowHaltReason,
 } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
+import {
+  holdsActionableGate,
+  holdsExecutionLease,
+} from "@/lib/workflow-graph/lifecycle-classifier";
 import type { ApiError } from "@/lib/api/errors";
 
 const logger = createLogger("active-conversations.route");
@@ -228,21 +232,11 @@ const ACTIVE_STATUSES: ReadonlySet<ConversationStatus> = new Set([
   "waiting_for_input",
 ]);
 
-/** Graph workflow statuses that qualify as "active". */
-const ACTIVE_GW_STATUSES: ReadonlySet<GraphWorkflowStatus> = new Set([
-  "pending",
-  "running",
-  "paused",
-  "halted",
-]);
-
-/**
- * Execution statuses under which an undecided approval gate keeps its
- * Needs-Input standing — the gate survives pause/halt/restart and disappears
- * only when the execution leaves the in-flight set (aborted, completed).
- */
-const GATE_STANDING_EXECUTION_STATUSES: ReadonlySet<GraphWorkflowStatus> =
-  new Set(["running", "paused", "halted"]);
+// "Active" for the ambient signal is lease tenure, read through the one
+// authority. The status set this replaces treated every `halted` run as active,
+// so a non-resumable or abandoned halt kept advertising itself as live work
+// forever — a status set cannot see halt resumability or abandonment, the two
+// facts that decide a halted run's tenure.
 
 interface PendingApprovalStanding {
   contextId: string;
@@ -257,16 +251,29 @@ interface PendingApprovalStanding {
 
 /**
  * Map conversationId → gate standing for a session's persisted execution.
- * An entry exists when the execution is in-flight and a context is parked
- * `awaiting_approval` with no recorded decision. Derived purely from
- * execution state so standing is independent of `conversation.status`.
+ * An entry exists when the execution still holds the session's lease and a
+ * context is parked `awaiting_approval` with no recorded decision. Derived
+ * purely from execution state so standing is independent of
+ * `conversation.status`.
+ *
+ * Tenure, not a status set, is the test: an approval can only be acted on by a
+ * run that can still continue. The set this replaces kept a non-resumably
+ * halted or abandoned gate in the Needs-Input feed forever — asking for a
+ * decision that would change nothing, with no act available to clear it — while
+ * dropping a `pending` run's gate, which is live work.
  */
 function buildPendingApprovalStandings(
   execution: GraphWorkflowExecution | null,
 ): Map<string, PendingApprovalStanding> {
   const standings = new Map<string, PendingApprovalStanding>();
   if (!execution) return standings;
-  if (!GATE_STANDING_EXECUTION_STATUSES.has(execution.status)) {
+  if (
+    !holdsActionableGate(
+      execution.status,
+      execution.haltReason,
+      execution.abandonment,
+    )
+  ) {
     return standings;
   }
   const executionSuspended =
@@ -658,7 +665,10 @@ export function createActiveConversationsRouteHandlers(
 
           // Collect active graph workflow executions
           const exec = activeExecution;
-          if (exec && ACTIVE_GW_STATUSES.has(exec.status)) {
+          if (
+            exec &&
+            holdsExecutionLease(exec.status, exec.haltReason, exec.abandonment)
+          ) {
             const index = createExecutionIndex(exec.workingDefinition, exec);
             const activeContextIds = [...exec.activeContextIds];
             const activeContextTitles = activeContextIds.map((id) => {

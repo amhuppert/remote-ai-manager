@@ -20,7 +20,7 @@ import { _resetForTesting as resetJobQueue } from "@/lib/jobs/queue";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { resetGraphExecutionLifecycleCallbacksForTesting } from "@/lib/workflow-graph/execution-lifecycle-port";
 import {
-  explicitArchiveEligibility,
+  holdsExecutionLease,
   isTerminalStatus,
 } from "@/lib/workflow-graph/lifecycle-classifier";
 import { _resetDeliveryGateEvaluatorForTesting } from "@/lib/workflows/merge/delivery-gate-port";
@@ -84,9 +84,6 @@ function bridgeHost(world: SpecSpineWorld): CliHost {
         const tail = segments[6];
         if (tail === "abort") {
           return world.postWorkflowRoute("ABORT", await request.json());
-        }
-        if (tail === "release") {
-          return world.postWorkflowRoute("RELEASE", await request.json());
         }
       }
       throw new Error(`Unbridged CLI request: ${init.method} ${url}`);
@@ -170,6 +167,19 @@ describe("spec verify reports execution-lifecycle consistency findings", () => {
     return found;
   }
 
+  /**
+   * The lease, not the row position, is what "released" means (D4/R3.3): the
+   * abort seam transitions the run and stops, so a lease-free record sits in
+   * the active row until the next launch normalizes it.
+   */
+  function expectLeaseReleased(): void {
+    const active = world.readActiveWorkflowExecution();
+    if (active === null) return;
+    expect(
+      holdsExecutionLease(active.status, active.haltReason, active.abandonment),
+    ).toBe(false);
+  }
+
   function activeWorkflow(): GraphWorkflowExecution {
     const active = world.readActiveWorkflowExecution();
     if (active === null) {
@@ -210,7 +220,7 @@ describe("spec verify reports execution-lifecycle consistency findings", () => {
       },
     },
     {
-      phase: "release_slot",
+      phase: "finalize",
       inject: () => {
         let observed = 0;
         world.cleanupFaults.beforeOp = (op) => {
@@ -219,22 +229,11 @@ describe("spec verify reports execution-lifecycle consistency findings", () => {
           if (observed === 2) throw new Error("injected post-abort fault");
         };
       },
+      // The abort already released the lease, so the parked finalize sees a run
+      // History owns — the residue is the spec row alone, which is precisely
+      // the case no other surface reports.
       expectWorld: () => {
-        expect(isTerminalStatus(activeWorkflow().status)).toBe(true);
-      },
-    },
-    {
-      phase: "finalize",
-      inject: () => {
-        let observed = 0;
-        world.cleanupFaults.beforeOp = (op) => {
-          if (op !== "observe") return;
-          observed += 1;
-          if (observed === 3) throw new Error("injected post-release fault");
-        };
-      },
-      expectWorld: () => {
-        expect(world.readActiveWorkflowExecution()).toBeNull();
+        expectLeaseReleased();
       },
     },
   ];
@@ -282,9 +281,7 @@ describe("spec verify reports execution-lifecycle consistency findings", () => {
 
   /**
    * The argv a remedy prints, lifted out of the sentence and run verbatim.
-   * A remedy is only a remedy if THIS is what exits 0 — the `--reason` and
-   * `--execution` tokens included, since a guarded release against a slot that
-   * abort already freed is a 409, not a recovery.
+   * A remedy is only a remedy if THIS is what exits 0, `--reason` included.
    */
   function printedCommands(remedy: string): string[][] {
     const quoted = remedy.match(/cctl workflow live [a-z]+[^']*/g) ?? [];
@@ -313,14 +310,20 @@ describe("spec verify reports execution-lifecycle consistency findings", () => {
     }
   }
 
-  it("reports a running orphan with abort first, and clears it through the exact commands printed", async () => {
+  it("reports a lease-holding running orphan and clears it through the exact command printed", async () => {
     const { specExecutionId } = await liveExecution();
     // The legacy orphan shape: pre-coordinator abandonment touched spec state
     // only. No coordinator re-entry exists from `abandoned`, so the remedy has
-    // to be the workflow-side recovery verbs rather than another abandon.
+    // to be the workflow-side recovery verb rather than another abandon.
     strandRun(specExecutionId);
     const stranded = activeWorkflow();
-    expect(explicitArchiveEligibility(stranded.status)).toBe("refused");
+    expect(
+      holdsExecutionLease(
+        stranded.status,
+        stranded.haltReason,
+        stranded.abandonment,
+      ),
+    ).toBe(true);
 
     const finding = onlyFinding(lifecycleFindings(await report()));
     expect(finding).toMatchObject({
@@ -330,28 +333,35 @@ describe("spec verify reports execution-lifecycle consistency findings", () => {
       ownsExecutionSlot: true,
     });
     expect(finding.remedy).toContain("cctl workflow live abort");
-    expect(finding.remedy).toContain("cctl workflow live release");
-    // The release the abort auto-performs is unguarded on purpose: naming the
-    // run here would print a command that 409s the moment abort succeeds.
-    expect(finding.remedy).not.toContain("--execution");
+    // Abort releases the lease by itself, so there is no second command — and
+    // no release verb left to name.
+    expect(finding.remedy).not.toContain("release --reason");
 
     await runPrinted(finding.remedy);
-    expect(world.readActiveWorkflowExecution()).toBeNull();
+    expectLeaseReleased();
     expect(lifecycleFindings(await report())).toEqual([]);
   });
 
-  it("reports a halted orphan with the guarded release alone, and clears it through the exact command printed", async () => {
+  it("names abandon for a stranded run whose resumable halt still holds the lease", async () => {
     const { specExecutionId } = await liveExecution();
-    // `halted` is terminal yet slot-owning, and the release route admits it
-    // directly — so abort is not part of this recovery at all.
+    // A resumable halt is terminal yet lease-HOLDING, and abandon is the one
+    // act that ends that tenure while preserving the halt reason.
     await world.haltWorkflowExecution({
-      type: "recovery_error",
+      type: "execution_loop_failed",
+      contextId: null,
       message: "halted before the spec gave up on it",
+      cause: "unknown",
     });
     strandRun(specExecutionId);
     const stranded = activeWorkflow();
     expect(stranded.status).toBe("halted");
-    expect(explicitArchiveEligibility(stranded.status)).not.toBe("refused");
+    expect(
+      holdsExecutionLease(
+        stranded.status,
+        stranded.haltReason,
+        stranded.abandonment,
+      ),
+    ).toBe(true);
 
     const finding = onlyFinding(lifecycleFindings(await report()));
     expect(finding).toMatchObject({
@@ -360,29 +370,44 @@ describe("spec verify reports execution-lifecycle consistency findings", () => {
       ownsExecutionSlot: true,
     });
     expect(finding.remedy).toContain(
-      `cctl workflow live release --reason <reason> --execution ${stranded.id}`,
+      `cctl workflow abandon --reason <reason> --execution ${stranded.id}`,
     );
     expect(finding.remedy).not.toContain("abort");
+  });
 
-    await runPrinted(finding.remedy);
-    expect(world.readActiveWorkflowExecution()).toBeNull();
+  it("does not report a stranded run whose halt cannot be resumed — History already owns it", async () => {
+    const { specExecutionId } = await liveExecution();
+    // A non-resumable halt holds no lease (R4.2): it blocks nothing, no act
+    // addresses it, and the next launch normalizes the row. Reporting it would
+    // be a finding that never clears.
+    await world.haltWorkflowExecution({
+      type: "recovery_error",
+      message: "unrecoverable",
+    });
+    const stranded = activeWorkflow();
+    expect(
+      holdsExecutionLease(
+        stranded.status,
+        stranded.haltReason,
+        stranded.abandonment,
+      ),
+    ).toBe(false);
+    strandRun(specExecutionId);
+
     expect(lifecycleFindings(await report())).toEqual([]);
   });
 
-  it("does not report an abandoned execution whose run was already archived while paused", async () => {
+  it("does not report an abandoned execution whose run was already aborted while paused", async () => {
     const { specExecutionId } = await liveExecution();
-    // `paused` is the one status that is non-terminal AND archive-eligible, so
-    // an archived paused run is a legitimate end state: it owns no slot, and
-    // neither live verb could address it. Reporting it would be a finding that
-    // never clears.
+    // Pausing then aborting is the ordinary way a parked run ends: `aborted`
+    // releases the lease automatically, so nothing is left to report.
     await world.pauseWorkflowExecution();
     const paused = activeWorkflow();
     expect(isTerminalStatus(paused.status)).toBe(false);
-    const released = await world.postWorkflowRoute("RELEASE", {
+    const aborted = await world.postWorkflowRoute("ABORT", {
       reason: "parked this run for later",
-      expectedExecutionId: paused.id,
     });
-    expect(released.status).toBe(200);
+    expect(aborted.status).toBe(200);
     expect(world.readActiveWorkflowExecution()).toBeNull();
     strandRun(specExecutionId);
 

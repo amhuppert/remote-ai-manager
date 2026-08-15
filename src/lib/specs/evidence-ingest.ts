@@ -37,6 +37,7 @@ export interface EvidenceIngestDeps {
     workflowDefinitionId: string,
     execution: SpecExecutionRow,
   ): Promise<SpecExecutionOriginMapEntry[]>;
+  resolveProjectPath(execution: SpecExecutionRow): Promise<string | null>;
   /**
    * The linked graph workflow's live status (`null` when the run was deleted
    * from both the active slot and the archive). Terminality for the deferred
@@ -100,6 +101,13 @@ export function createEvidenceIngestService(
     if (execution.workflow_execution_id === null) {
       return emptySummary();
     }
+    if (execution.session_name === null) {
+      return emptySummary();
+    }
+    const projectPath = await deps.resolveProjectPath(execution);
+    if (projectPath === null) {
+      return emptySummary();
+    }
 
     const originMap = await deps.loadOriginMap(
       execution.workflow_definition_id,
@@ -107,6 +115,8 @@ export function createEvidenceIngestService(
     );
     const originsByContext = groupOriginsByContext(originMap);
     const records = deps.workflowEvents.findRecordsByExecution(
+      projectPath,
+      execution.session_name,
       execution.workflow_execution_id,
     );
     const workflowStatus = await deps.getWorkflowExecutionStatus(

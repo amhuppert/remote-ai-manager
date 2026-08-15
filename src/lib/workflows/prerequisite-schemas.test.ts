@@ -10,6 +10,12 @@ import {
 function baseExecution(): Record<string, unknown> {
   return {
     id: "wf-1",
+    origin: {
+      kind: "template",
+      definitionId: "seed-1",
+      definitionRevision: 1,
+      tier: "project",
+    },
     seedDefinitionId: "seed-1",
     seedDefinitionRevision: 1,
     workingDefinition: {},

@@ -20,22 +20,26 @@ import {
 } from "@/lib/workflows/conversation/manager";
 import { createLogger, withTracing } from "@/lib/logging";
 import {
-  autoReleasesSlot,
-  explicitArchiveEligibility,
-  isTerminalStatus,
+  awaitsDefinitionApproval,
+  holdsExecutionLease,
 } from "@/lib/workflow-graph/lifecycle-classifier";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
   getSession as defaultGetSession,
   getActiveGraphWorkflowExecution,
   mutateActiveGraphWorkflowExecution,
+  reserveActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
   markGraphWorkflowContextEventsPreReset,
+  getGraphWorkflowPendingArtifacts,
+  clearGraphWorkflowPendingArtifacts,
   findLatestGraphWorkflowContextEvent,
   listActiveGraphWorkflowExecutions,
   listArchivedGraphWorkflowExecutions,
   getGraphWorkflowEventsPage,
   getGraphWorkflowEventsTail,
+  getGraphWorkflowExecutionById as defaultGetGraphWorkflowExecutionById,
+  getGraphWorkflowBoundaryResultAfter as defaultGetGraphWorkflowBoundaryResultAfter,
 } from "@/lib/state-store";
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import { createGraphLaneStore } from "@/lib/workflow-graph/graph-lane-store";
@@ -57,11 +61,16 @@ import type {
   GraphWorkflowEventPageQuery,
 } from "@/lib/state-store/graph-workflow-events-repo";
 import type {
+  GraphWorkflowAbandonment,
+  GraphWorkflowExecutionActReceipt,
+  GraphWorkflowExecutionOrigin,
   GraphWorkflowExecution,
   GraphWorkflowExecutionJoinKind,
   GraphWorkflowExecutionJoinStatus,
   GraphWorkflowHaltReason,
+  GraphWorkflowLaunchReceipt,
 } from "@/lib/workflow-graph/schemas";
+import { assertNever } from "@/lib/shared/assert-never";
 import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 import type { SeededWorkflowDocument } from "@/lib/workflow-graph/shared-documents";
 import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
@@ -70,6 +79,16 @@ import {
   createAgentAuth,
   type OptionalTokenValidation,
 } from "@/lib/agent-gateway/token";
+import type { ConversationCapabilityVerification } from "@/lib/agent-gateway/conversation-capability";
+import type { LaneCapabilityVerification } from "@/lib/agent-gateway/lane-capability";
+import { authorizeWorkflowLaunch } from "./request-principal";
+import {
+  classifyRoutePrincipal,
+  guardExecutionMutation,
+  guardHumanOnlyAct,
+  invalidTokenResponse,
+  runPinnedMutation,
+} from "./mutation-guard";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import {
   applyLiveEditsToActiveExecution,
@@ -112,12 +131,32 @@ import {
   WorkflowPrerequisitesUnmetError,
   WorkflowStartGuardError,
   WorkflowStartInputError,
+  interruptedDefinitionDecision,
+  type AbandonExecutionInput,
+  type AbandonExecutionResult,
   type RecordPendingHaltReasonInput,
   type RecordPendingHaltReasonResult,
+  type RecordDefinitionApprovalInput,
   type RecordDefinitionApprovalResult,
+  type ClaimDefinitionApprovalInput,
+  type ClaimDefinitionApprovalResult,
+  type ReleaseDefinitionApprovalClaimInput,
+  type ReleaseDefinitionApprovalClaimResult,
+  type RejectDefinitionResult,
   type DrainAndHaltInput,
+  type GraphWorkflowLaunchOutcome,
   type GraphWorkflowResumeOptions,
 } from "@/lib/workflow-graph/workflow-manager";
+import {
+  validateWorkflowPlan,
+  type WorkflowPlanIssue,
+} from "@/lib/workflows/plan-validation";
+import { createValidationCommandPreflight } from "@/lib/validation/preflight";
+import { readRepoConfig as defaultReadRepoConfig } from "@/lib/projects/repo-config";
+import { buildGraphWorkflowExecutionDeepLink } from "./execution-deep-link";
+import type { GraphWorkflowBoundaryResultProjection } from "./execution-result-projection";
+import type { WorkflowDefinitionDraft } from "./storage";
+import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
 import { conflictDecisionInputSchema } from "@/lib/jobs/schemas";
 import { runRegisteredMergeJob } from "@/lib/jobs/queue";
 import { createRegisteredDeliveryGateEvaluator } from "@/lib/workflows/merge/delivery-gate-port";
@@ -182,6 +221,23 @@ const startExecutionSchema = z.object({
   tier: z.enum(["project", "global"]).default("project"),
 });
 
+/**
+ * The inline launch body (D7 R1, decision D1): the plan document in the exact
+ * dialect `workflow validate`/`create` accept, plus a SEPARATE inputs document.
+ *
+ * `plan` stays `unknown` here on purpose — `validateWorkflowPlan` owns the
+ * accept-time parse, and a second Zod shape at this boundary would be a second
+ * place for the dialect to drift. This schema only proves the two documents
+ * arrived in their own channels, which is what keeps `run --file` and
+ * `start --file` from meaning two different things.
+ */
+const runExecutionSchema = z.object({
+  plan: z.unknown().refine((value) => value !== undefined, {
+    message: "plan is required",
+  }),
+  inputs: z.record(z.string(), z.unknown()).optional(),
+});
+
 const resolveApprovalSchema = z.discriminatedUnion("decision", [
   z.object({
     contextId: z.string().trim().min(1),
@@ -214,8 +270,11 @@ const executionRepository = createGraphWorkflowExecutionRepository({
   getSession: defaultGetSession,
   getActiveGraphWorkflowExecution,
   mutateActiveGraphWorkflowExecution,
+  reserveActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
   markGraphWorkflowContextEventsPreReset,
+  getGraphWorkflowPendingArtifacts,
+  clearGraphWorkflowPendingArtifacts,
   eventPublisher,
 });
 
@@ -510,8 +569,15 @@ export function buildLaneIterationToolServer(): GraphWorkflowIterationToolServer
 
 const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
   executionRepository: workflowManager,
-  findLatestContextValidationEvent: (executionId, contextId) =>
+  findLatestContextValidationEvent: (
+    projectPath,
+    sessionName,
+    executionId,
+    contextId,
+  ) =>
     findLatestGraphWorkflowContextEvent(
+      projectPath,
+      sessionName,
       executionId,
       contextId,
       "graph-workflow-validation-result",
@@ -617,9 +683,26 @@ const planRepairSupervisor = createPlanRepairSupervisor({
       writeCharterDocument: defaultWriteCharterDocument,
     }),
   runRepairAgent: createPlanRepairAgentRunner(),
-  resumeExecution: async ({ projectPath, sessionName, projectName }) => {
-    await workflowManager.normalizeAfterRestart(projectPath, sessionName);
-    const execution = await workflowManager.resume(projectPath, sessionName);
+  resumeExecution: async ({
+    projectPath,
+    sessionName,
+    projectName,
+    executionId,
+  }) => {
+    // Fenced on the round's execution: normalize/resume/kick all address the
+    // session, and the run this repair examined may have been abandoned and
+    // replaced while its agent turn was open. Normalization is fenced FIRST
+    // because it is the step with side effects — it rewrites artifacts into the
+    // worktree and rewrites the running state — so an unfenced normalize has
+    // already touched the successor by the time the resume behind it refuses.
+    await workflowManager.normalizeAfterRestart(projectPath, sessionName, {
+      expectedExecutionId: executionId,
+    });
+    // The manager raises a transition conflict rather than resuming the
+    // successor, which the supervisor records as an unresumed round.
+    const execution = await workflowManager.resume(projectPath, sessionName, {
+      expectedExecutionId: executionId,
+    });
     // Fire-and-forget like the RESUME route's kick: the loop owns its own
     // failure handling (recovery_error halts), so a rejection here is only
     // logged.
@@ -636,8 +719,15 @@ const planRepairSupervisor = createPlanRepairSupervisor({
       });
     });
   },
-  getValidationHistory: async (executionId, contextId) => {
+  getValidationHistory: async (
+    projectPath,
+    sessionName,
+    executionId,
+    contextId,
+  ) => {
     const rows = await getGraphWorkflowEventsTail(
+      projectPath,
+      sessionName,
       executionId,
       GRAPH_WORKFLOW_EVENTS_DEFAULT_LIMIT,
     );
@@ -727,6 +817,12 @@ export interface GraphWorkflowExecutionSummary {
 }
 
 export interface GraphWorkflowExecutionRouteDeps {
+  /**
+   * Wall clock for the one question this layer asks of time: whether a
+   * definition decision has been reserved long enough that its holder is no
+   * longer plausibly live. Defaults to the real clock.
+   */
+  now?(): string;
   resolveProjectPath(name: string): Promise<string | null>;
   getSession(
     projectPath: string,
@@ -745,12 +841,32 @@ export interface GraphWorkflowExecutionRouteDeps {
     parameters?: Record<string, unknown>;
     ownerConversationId?: string | null;
     seededDocuments?: readonly SeededWorkflowDocument[];
-  }): Promise<GraphWorkflowExecution>;
+  }): Promise<GraphWorkflowLaunchOutcome>;
+  /**
+   * The inline (`workflow run`) launch, riding the SAME manager gauntlet as
+   * `startExecution` with a one-off source (D7 R1, R2). It receives the plan
+   * already parsed by the accept-time gate, never the raw request body.
+   */
+  runExecution(input: {
+    projectPath: string;
+    sessionName: string;
+    plan: WorkflowDefinitionDraft;
+    inputs?: Record<string, unknown>;
+    ownerConversationId?: string | null;
+  }): Promise<GraphWorkflowLaunchOutcome>;
+  /**
+   * `CommandCenter.json` and the global config, read per RUN request so the
+   * inline plan is preflighted against the command registry and capacity the
+   * launch will actually use — the same reads `workflow validate` and
+   * `workflow create` perform. Optional so a test can drive RUN without a
+   * project on disk.
+   */
+  readRepoConfig?(projectPath: string): Promise<PerRepoConfig | null>;
+  readConfig?(): Promise<GlobalConfig>;
   markRunning?(
     context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
-    definitionId?: string,
-    definitionRevision?: number,
+    origin?: GraphWorkflowExecutionOrigin,
   ): Promise<void>;
   /**
    * Reports an execution that started but parked awaiting definition
@@ -760,20 +876,41 @@ export interface GraphWorkflowExecutionRouteDeps {
   awaitingDefinitionApproval?(
     context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
-    definitionId: string,
-    definitionRevision: number,
+    origin: GraphWorkflowExecutionOrigin,
   ): Promise<void>;
+  /**
+   * Classifies the signed conversation capability a launch presents (D11), from
+   * which the origin principal is derived. Defaults to the registered verifier,
+   * keyed on the server-only capability key.
+   */
+  verifyConversationCapability?(
+    request: Request,
+  ): Promise<ConversationCapabilityVerification>;
+  /**
+   * Classifies the signed lane capability a caller presents (D4 R7). A lane may
+   * act on its OWN execution and is refused as nesting when it tries to launch,
+   * so the mutation guard has to be able to tell a lane from an ordinary
+   * conversation. Defaults to the registered verifier, keyed on the same
+   * server-only capability key.
+   */
+  verifyLaneCapability?(request: Request): Promise<LaneCapabilityVerification>;
   /**
    * Consulted before a pending definition approval is recorded so the
    * registered lifecycle consumer can record its own execution-scoped
-   * admission for definitions it prepared, or refuse with a machine-readable
-   * reason. Defaults to the registered port (admit when nobody claims it).
+   * admission for work it prepared, or refuse with a machine-readable reason.
+   * Consulted for every parked run whatever its origin. Defaults to the
+   * registered port (admit when nobody claims it).
+   *
+   * A REFUSAL MUST BE WRITE-FREE. It is answered by handing the reservation
+   * back, which reopens the park to a rejection or an abort, so a consumer that
+   * has already committed anything durable may not report it as a refusal — it
+   * throws instead, and the reservation is kept for a settlement that finishes
+   * the saga forward. Idempotence is what makes that re-offer safe.
    */
   admitDefinitionApproval?(
     context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
-    definitionId: string,
-    definitionRevision: number,
+    origin: GraphWorkflowExecutionOrigin,
   ): Promise<DefinitionApprovalGateDecision>;
   /**
    * Reports a successful abort so the registered lifecycle consumer can
@@ -793,6 +930,14 @@ export interface GraphWorkflowExecutionRouteDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowExecution>;
+  /**
+   * Write the abandonment audit on the identified resumably halted lease
+   * holder. Relocating the run into History stays with the route, which owns
+   * the resource teardown that must precede it.
+   */
+  abandonExecution?(
+    input: AbandonExecutionInput,
+  ): Promise<AbandonExecutionResult>;
   resetExecutionContext(
     projectPath: string,
     sessionName: string,
@@ -805,9 +950,9 @@ export interface GraphWorkflowExecutionRouteDeps {
     assignmentId: string,
   ): Promise<GraphWorkflowExecution>;
   /**
-   * `audit` is present for the explicit, audited archive act (`live release`,
-   * the spec abandon coordinator); absent for internal auto-release, which is
-   * not a human act and has nothing to attribute.
+   * `audit` is present for an explicit, audited release act (abandon, the
+   * definition rejection); absent for internal auto-release, which is not a
+   * human act and has nothing to attribute.
    */
   archiveExecution(
     projectPath: string,
@@ -831,6 +976,19 @@ export interface GraphWorkflowExecutionRouteDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowExecution | null>;
+  /** Find a named execution in Current first, then History, under full scope. */
+  getExecutionById?(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+  ): Promise<GraphWorkflowExecution | null>;
+  /** Return the first durable boundary result after an opaque event cursor. */
+  getBoundaryResultAfter?(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+    cursor?: number | null,
+  ): Promise<GraphWorkflowBoundaryResultProjection | null>;
   recordPendingHaltReason(
     input: RecordPendingHaltReasonInput,
   ): Promise<RecordPendingHaltReasonResult>;
@@ -851,17 +1009,37 @@ export interface GraphWorkflowExecutionRouteDeps {
    * (the definition-review gate for approval-required definitions). Defaults
    * to the workflow manager's atomic first-approval-wins recording.
    */
-  recordDefinitionApproval?(input: {
+  recordDefinitionApproval?(
+    input: RecordDefinitionApprovalInput,
+  ): Promise<RecordDefinitionApprovalResult>;
+  /**
+   * Reserve the park's decision for this act without deciding it — the
+   * approval saga's arbiter. Defaults to the manager's serialized claim act.
+   */
+  claimDefinitionApproval?(
+    input: ClaimDefinitionApprovalInput,
+  ): Promise<ClaimDefinitionApprovalResult>;
+  /**
+   * Hand an unadmitted reservation back so the park is decidable again.
+   * Defaults to the manager's serialized release act.
+   */
+  releaseDefinitionApprovalClaim?(
+    input: ReleaseDefinitionApprovalClaimInput,
+  ): Promise<ReleaseDefinitionApprovalClaimResult>;
+  /**
+   * The human's other decision at the same gate: end the parked run instead of
+   * admitting it. Defaults to the workflow manager's serialized reject act.
+   */
+  rejectDefinition?(input: {
     projectPath: string;
     sessionName: string;
-    expectedExecutionId?: string;
-    expectedDefinitionId?: string;
-    expectedDefinitionRevision?: number;
-  }): Promise<RecordDefinitionApprovalResult>;
+    executionId: string;
+  }): Promise<RejectDefinitionResult>;
   /**
-   * Transport identity for the definition-approval gate. Definition approval
-   * is a human review act: requests bearing a valid agent token are refused
-   * with `human_act_required`. Defaults to the shared agent-gateway auth.
+   * Transport identity for the definition-approval gate. Approving and
+   * rejecting a definition are human review acts: requests bearing a valid
+   * agent token are refused with `human_act_required`. Defaults to the shared
+   * agent-gateway auth.
    */
   auth?: {
     validateOptionalToken(request: Request): Promise<OptionalTokenValidation>;
@@ -879,6 +1057,8 @@ export interface GraphWorkflowExecutionRouteDeps {
    * execution. Defaults to the real `graph_workflow_events` repo via the store.
    */
   getEventsTail?(
+    projectPath: string,
+    sessionName: string,
     executionId: string,
     limit: number,
   ): Promise<GraphWorkflowExecutionEvent[]>;
@@ -888,6 +1068,8 @@ export interface GraphWorkflowExecutionRouteDeps {
    * cannot serve. Defaults to the real `graph_workflow_events` repo.
    */
   getEventsPage?(
+    projectPath: string,
+    sessionName: string,
     executionId: string,
     query: GraphWorkflowEventPageQuery,
   ): Promise<GraphWorkflowEventPage>;
@@ -913,6 +1095,9 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
   normalizeExecutionAfterRestart: (projectPath, sessionName) =>
     workflowManager.normalizeAfterRestart(projectPath, sessionName),
   startExecution: (input) => workflowManager.start(input),
+  runExecution: (input) => workflowManager.run(input),
+  readRepoConfig: defaultReadRepoConfig,
+  readConfig,
   markRunning: createRegisteredGraphExecutionLifecycleCallbacks().markRunning,
   awaitingDefinitionApproval:
     createRegisteredGraphExecutionLifecycleCallbacks()
@@ -923,12 +1108,18 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
     createRegisteredGraphExecutionLifecycleCallbacks().executionAborted,
   recordDefinitionApproval: (input) =>
     workflowManager.recordDefinitionApproval(input),
+  claimDefinitionApproval: (input) =>
+    workflowManager.claimDefinitionApproval(input),
+  releaseDefinitionApprovalClaim: (input) =>
+    workflowManager.releaseDefinitionApprovalClaim(input),
+  rejectDefinition: (input) => workflowManager.rejectDefinition(input),
   pauseExecution: (projectPath, sessionName) =>
     workflowManager.send(projectPath, sessionName, { type: "pause" }),
   resumeExecution: (projectPath, sessionName, options) =>
     workflowManager.resume(projectPath, sessionName, options),
   abortExecution: (projectPath, sessionName) =>
     workflowManager.send(projectPath, sessionName, { type: "abort" }),
+  abandonExecution: (input) => workflowManager.abandon(input),
   resetExecutionContext: (projectPath, sessionName, contextId) =>
     workflowManager.resetContext(projectPath, sessionName, contextId),
   resetExecutionContextAssignment: (
@@ -950,6 +1141,15 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
   },
   getActiveExecution: (projectPath, sessionName) =>
     workflowManager.getActive(projectPath, sessionName),
+  getExecutionById: (projectPath, sessionName, executionId) =>
+    defaultGetGraphWorkflowExecutionById(projectPath, sessionName, executionId),
+  getBoundaryResultAfter: (projectPath, sessionName, executionId, cursor) =>
+    defaultGetGraphWorkflowBoundaryResultAfter(
+      projectPath,
+      sessionName,
+      executionId,
+      cursor,
+    ),
   recordPendingHaltReason: (input) =>
     workflowManager.recordPendingHaltReason(input),
   drainAndHalt: (input) => workflowManager.drainAndHalt(input),
@@ -958,73 +1158,148 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
   auth: createAgentAuth(),
   listArchivedExecutions: (projectPath, sessionName) =>
     listArchivedGraphWorkflowExecutions(projectPath, sessionName),
-  getEventsTail: (executionId, limit) =>
-    getGraphWorkflowEventsTail(executionId, limit),
-  getEventsPage: (executionId, query) =>
-    getGraphWorkflowEventsPage(executionId, query),
+  getEventsTail: (projectPath, sessionName, executionId, limit) =>
+    getGraphWorkflowEventsTail(projectPath, sessionName, executionId, limit),
+  getEventsPage: (projectPath, sessionName, executionId, query) =>
+    getGraphWorkflowEventsPage(projectPath, sessionName, executionId, query),
   stopExecutionLaneDevServers: (input) =>
     defaultStopExecutionLaneDevServers(input),
 };
 
 /**
- * Header the token-gated CLI/agent surfaces already use to name the calling
- * conversation (`cctl` sends it from `CC_CONVERSATION_ID`). The START handler
- * treats it as a CLAIM: it becomes the execution's owner only after the server
- * confirms the id belongs to this session's conversations. The request body is
- * never consulted, so a forged `ownerConversationId` in the payload has no path
- * to the seed.
+ * Header the token-gated CLI/agent surfaces use to name the calling
+ * conversation (`cctl` sends it from `CC_CONVERSATION_ID`).
+ *
+ * It carries NO authority and nothing here reads it. Ownership and every
+ * mutation principal are derived from a signed capability instead
+ * (`request-principal.ts`), because confirming a claimed id belongs to the
+ * session only proves the conversation exists — every sibling passes that
+ * check. The constant remains because agent transports still send the header
+ * as context; treating it as identity again is the regression to avoid.
  */
 export const OWNER_CONVERSATION_HEADER = "x-cc-conversation-id";
 
-/**
- * Message for a clear/archive the lifecycle contract refuses. Names the remedy
- * rather than only the refusal: a live run has to be paused or aborted before
- * its slot can be released.
- */
-/**
- * `live release`'s body. `expectedExecutionId` is the caller's guard against
- * releasing a slot that changed hands since they read it.
- */
 /** `live abort`'s optional body: the reason is carried onto the release audit row. */
 const abortExecutionSchema = z.object({
   reason: z.string().trim().min(1).optional(),
   actor: z.string().min(1).nullable().optional(),
 });
 
-const releaseExecutionSchema = z.object({
-  reason: z.string().trim().min(1),
-  expectedExecutionId: z.string().min(1).optional(),
-  actor: z.string().min(1).nullable().optional(),
-});
+/**
+ * `workflow abandon`'s body. Strict and execution-addressed: an act that named
+ * a definition could not express a one-off run, which has no saved definition
+ * identity at all, and would let a caller abandon "whatever this template is
+ * running" instead of the run they read.
+ */
+const abandonExecutionSchema = z
+  .object({
+    executionId: z.string().trim().min(1),
+    reason: z.string().trim().min(1),
+  })
+  .strict();
 
-function archiveRefusalMessage(status: GraphWorkflowStatus): string {
-  return `A ${status} graph workflow execution cannot be cleared. Pause it (or abort it) first, then clear.`;
+/**
+ * The body BOTH definition decisions carry (D7 decision D17). Strict and
+ * execution-addressed: a one-off park has no saved-definition identity to
+ * co-guard with, and a template park's definition identity is already pinned by
+ * the immutable snapshot the execution holds — so a definition id in either act
+ * would be a second, origin-conditional meaning for the same decision.
+ */
+const definitionDecisionIdentitySchema = z
+  .object({ executionId: z.string().trim().min(1) })
+  .strict();
+
+/**
+ * Why an abandon was declined, in the operator's terms. Each message names the
+ * act that DOES apply, because every refusal here means the caller's mental
+ * model of the run's tenure is stale in a specific, correctable way.
+ */
+function abandonRefusalMessage(
+  requestedExecutionId: string,
+  refusal: Exclude<AbandonExecutionResult, { ok: true }>,
+): string {
+  switch (refusal.reason) {
+    case "no_active_execution":
+      return `This session owns no graph workflow execution, so ${requestedExecutionId} cannot be abandoned. Re-check with 'cctl workflow status'.`;
+    case "execution_mismatch":
+      return `Execution ${requestedExecutionId} does not hold this session's execution lease; ${refusal.activeExecutionId} does. Re-check with 'cctl workflow status', then abandon the run you mean.`;
+    case "not_lease_holding_halt":
+      return refusal.abandoned
+        ? `Execution ${requestedExecutionId} was already abandoned and belongs to History.`
+        : refusal.status === "halted"
+          ? `Execution ${requestedExecutionId} halted for a reason that cannot be resumed, so it already belongs to History and holds no lease.`
+          : `A ${refusal.status} graph workflow execution cannot be abandoned. Abort it with 'cctl workflow live abort --reason <reason>' instead.`;
+    default:
+      return assertNever(refusal, "unhandled abandon refusal");
+  }
+}
+
+function rejectDefinitionRefusalMessage(
+  requestedExecutionId: string,
+  refusal: Exclude<RejectDefinitionResult, { ok: true }>,
+): string {
+  switch (refusal.reason) {
+    case "no_active_execution":
+      return `This session owns no graph workflow execution, so ${requestedExecutionId} cannot be rejected. Re-check with 'cctl workflow status'.`;
+    case "execution_mismatch":
+      return `Execution ${requestedExecutionId} does not hold this session's execution lease; ${refusal.activeExecutionId} does. Re-check with 'cctl workflow status', then decide on the run you mean.`;
+    case "not_awaiting_approval":
+      return `A ${refusal.status} graph workflow execution is not awaiting definition approval, so there is no definition decision to make. Abort it with 'cctl workflow live abort --reason <reason>' instead.`;
+    case "decision_in_flight":
+      return `An approval is already deciding execution ${requestedExecutionId}. Wait for it to settle, then re-check with 'cctl workflow status'.`;
+    default:
+      return assertNever(refusal, "unhandled definition rejection refusal");
+  }
 }
 
 /**
- * Server-side owner capture for a start request. Returns the claimed
- * conversation only when the session actually owns it; every other case
- * (no header, unknown id, another session's conversation) is an unowned
- * launch rather than an error — a human start from the browser is legitimate
- * and carries no conversation.
+ * Project an accepted launch into the wire receipt (D7 R1.2).
+ *
+ * Both launch verbs answer with this one shape, and it is built from the
+ * execution's recorded origin rather than from the seed projection — which on a
+ * one-off run names a definition that does not exist.
  */
-function captureOwnerConversationId(
-  request: Request,
-  session: SessionState,
-): string | null {
-  const claimed = request.headers.get(OWNER_CONVERSATION_HEADER)?.trim();
-  if (!claimed) return null;
-  const owned = session.conversations.some(
-    (conversation) => conversation.id === claimed,
-  );
-  if (!owned) {
-    logger.warn("graph-workflow.start.owner_capture_rejected", {
-      sessionName: session.sessionName,
-      claimedConversationId: claimed,
-    });
-    return null;
-  }
-  return claimed;
+function buildLaunchReceipt(input: {
+  outcome: GraphWorkflowLaunchOutcome;
+  projectName: string;
+  sessionName: string;
+}): GraphWorkflowLaunchReceipt {
+  const { execution } = input.outcome;
+  return {
+    executionId: execution.id,
+    status: input.outcome.awaitingDefinitionApproval
+      ? "awaiting_definition_approval"
+      : "running",
+    origin: execution.origin,
+    originConversationId: execution.ownerConversationId,
+    deepLink: buildGraphWorkflowExecutionDeepLink({
+      projectName: input.projectName,
+      sessionName: input.sessionName,
+      executionId: execution.id,
+    }),
+    startedAt: execution.startedAt,
+  };
+}
+
+/**
+ * Project the outcome of an execution-addressed lifecycle act into its wire
+ * receipt (D7 R4.1, R14.2).
+ *
+ * Abandon, approve, and reject answer with this one shape rather than the
+ * execution summary, which carries the definition tier the summary's History
+ * and status callers need — and which on a one-off run is compatibility filler
+ * naming a definition that does not exist.
+ */
+function buildExecutionActReceipt(
+  execution: GraphWorkflowExecution,
+  archived: boolean,
+): GraphWorkflowExecutionActReceipt {
+  return {
+    executionId: execution.id,
+    status: execution.status,
+    origin: execution.origin,
+    archived,
+  };
 }
 
 function summarizeExecution(
@@ -1147,8 +1422,16 @@ async function summarizeHistory(
     summarizeExecution(execution, true),
   );
 
+  // History is a LEASE projection, not a storage location (D7 decision D4): a
+  // lease-free run still sitting in the active row belongs here — normalization
+  // has not yet relocated it, and R3.3 requires no explicit act to make it
+  // historical. A terminal-but-resumable halt is deliberately excluded: it is
+  // still Current until it is resumed or abandoned.
   const active = await deps.getActiveExecution(projectPath, sessionName);
-  if (active && isTerminalStatus(active.status)) {
+  if (
+    active &&
+    !holdsExecutionLease(active.status, active.haltReason, active.abandonment)
+  ) {
     items.push(summarizeExecution(active, false));
   }
 
@@ -1198,6 +1481,36 @@ function resolveApprovalConflictMessage(
       return `Context "${contextId}" already has a recorded approval decision (already_decided)`;
     case "execution_not_running":
       return "The graph workflow execution no longer accepts approval decisions (execution_not_running)";
+  }
+}
+
+/**
+ * Why an approval was declined, in the operator's terms. Each message says
+ * what changed under the reviewer, because every refusal here means the park
+ * they were looking at is no longer the park they are deciding.
+ */
+function definitionApprovalRefusalMessage(
+  reason:
+    | "not_awaiting_approval"
+    | "already_decided"
+    | "execution_mismatch"
+    | "decision_in_flight"
+    | "not_reserved"
+    | "claim_superseded",
+): string {
+  switch (reason) {
+    case "already_decided":
+      return "The pending workflow definition is already approved (already_decided)";
+    case "execution_mismatch":
+      return "The active workflow execution changed before approval (execution_mismatch)";
+    case "decision_in_flight":
+      return "Another approval or rejection is already deciding this workflow definition (decision_in_flight)";
+    case "not_reserved":
+      return "The approval was no longer reserved when it went to record (not_reserved)";
+    case "claim_superseded":
+      return "This approval's reservation was reclaimed and another act now holds the decision (claim_superseded)";
+    case "not_awaiting_approval":
+      return "The active execution is not awaiting definition approval (not_awaiting_approval)";
   }
 }
 
@@ -1307,27 +1620,198 @@ function respondToManagerError(error: unknown): Response {
   });
 }
 
+/**
+ * The body field each launch verb carries its bound parameters in. A located
+ * input issue has to point at what the caller actually sent, and the two verbs
+ * deliberately name that document differently — `start` takes `parameters`,
+ * `run` takes a separate `inputs` document beside the plan — so the root is
+ * passed in rather than guessed.
+ */
+type LaunchInputPathRoot = "parameters" | "inputs";
+
+/**
+ * Locate a launch-input refusal in the request body (R1.3).
+ *
+ * The refusal speaks the same `{code, issues:[{path, message}]}` dialect
+ * `validateWorkflowPlan` already returns, so a caller parses one refusal shape
+ * for a plan that fails validation and for an input that fails binding. The
+ * parameter name is a plain object key in the submitted document, which is why
+ * the path is the root joined to the name rather than a re-derived JSON path.
+ */
+function locateLaunchInputIssue(
+  error: WorkflowStartInputError,
+  root: LaunchInputPathRoot,
+): { code: string; issues: WorkflowPlanIssue[] } {
+  return {
+    code: error.inputError.kind,
+    issues: [
+      { path: `${root}.${error.inputError.name}`, message: error.message },
+    ],
+  };
+}
+
+/**
+ * THE launch-refusal mapping, shared by both launch transports (D7 R2).
+ *
+ * Every pre-seed refusal a launch can raise resolves to one response here, so
+ * `workflow start` and `workflow run` cannot answer the same guard differently.
+ * Each of these rejections seeds nothing, which is why none of them engages the
+ * loop-failure halt path (that only applies to a seeded execution).
+ */
+function respondToLaunchRefusal(
+  error: unknown,
+  inputPathRoot: LaunchInputPathRoot,
+): Response {
+  if (error instanceof WorkflowStartGuardError) {
+    if (error.guard === "uncommitted_changes") {
+      const dirtyPaths = error.dirtyPaths ?? [];
+      return NextResponse.json(
+        {
+          error: error.message,
+          code: "uncommitted_changes",
+          details: {
+            totalCount: dirtyPaths.length,
+            paths: dirtyPaths.slice(0, 20).map((entry) => entry.path),
+          },
+        } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+    // The session is being finalized by a merge, so there is no run to name and
+    // no lease to clear — the remedy is the merge, not this session's workflow.
+    if (error.guard === "session_finalizing") {
+      return NextResponse.json(
+        { error: error.message, code: "session_finalizing" } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+    // The lease-held refusal (D7 decision D6). `details` is the blocker the
+    // admission decision built, forwarded verbatim so the CLI and the UI
+    // name the same run and the same remedy without re-reading anything.
+    return NextResponse.json(
+      {
+        error: error.message,
+        code: "lease_held",
+        ...(error.blocker === undefined ? {} : { details: error.blocker }),
+      } satisfies ApiError,
+      { status: 409 },
+    );
+  }
+  if (error instanceof WorkflowPrerequisitesUnmetError) {
+    return NextResponse.json(
+      {
+        error: error.message,
+        code: "prerequisites_unmet",
+        details: { missing: error.missing },
+      } satisfies ApiError,
+      { status: 409 },
+    );
+  }
+  if (error instanceof WorkflowStartInputError) {
+    return NextResponse.json(
+      {
+        error: error.message,
+        ...locateLaunchInputIssue(error, inputPathRoot),
+      },
+      { status: 400 },
+    );
+  }
+  return respondToManagerError(error);
+}
+
 export function createGraphWorkflowExecutionRouteHandlers(
   deps: GraphWorkflowExecutionRouteDeps = defaultDeps,
 ) {
   const executionContract = createRegisteredGraphExecutionContract();
+
+  /**
+   * Launch authority for RUN and START (R9.4/R10.1).
+   *
+   * Two refusals a per-execution guard cannot express live here. A verified
+   * LANE is refused as NESTING — a run must not launch a run, and that holds
+   * even when the session's lease is free, so it is not a lease conflict and
+   * must not be reported as one. An agent that proves nothing is refused
+   * outright. The human UI launches unowned, which is what keeps a browser
+   * launch working with no credentials at all.
+   */
+  async function resolveLaunchPrincipal(input: {
+    request: Request;
+    resolved: {
+      session: SessionState;
+      projectPath: string;
+      sessionName: string;
+    };
+    verb: string;
+  }): Promise<{ refusal: Response } | { ownerConversationId: string | null }> {
+    const classified = await classifyRoutePrincipal(
+      input.request,
+      input.resolved.session,
+      deps,
+    );
+    if (classified.kind === "invalid_token") {
+      return { refusal: invalidTokenResponse() };
+    }
+    if (classified.kind === "unverified") {
+      logger.warn("graph-workflow.run.unverified_principal_refused", {
+        projectPath: input.resolved.projectPath,
+        sessionName: input.resolved.sessionName,
+        reason: classified.reason,
+      });
+      return {
+        refusal: NextResponse.json(
+          {
+            error:
+              "This agent cannot launch a workflow: it presented no verified conversation capability.",
+            code: "unverified_principal",
+            instruction:
+              "Run `cctl workflow run` from an ordinary session conversation. Workflow lanes, the planner, and collaboration runtimes are not minted a capability and cannot launch runs.",
+          } satisfies ApiError & { code: string; instruction: string },
+          { status: 403 },
+        ),
+      };
+    }
+
+    const { principal } = classified;
+    const authorization = authorizeWorkflowLaunch(principal);
+    if (authorization.kind === "refused") {
+      logger.warn("graph-workflow.run.nesting_refused", {
+        projectPath: input.resolved.projectPath,
+        sessionName: input.resolved.sessionName,
+        ...(principal.kind === "lane"
+          ? { laneExecutionId: principal.executionId }
+          : {}),
+      });
+      return {
+        refusal: NextResponse.json(
+          {
+            error:
+              "A workflow lane cannot launch a workflow: runs do not nest inside runs.",
+            code: "workflow_nesting_refused",
+            instruction:
+              "Ask the conversation that launched this run to start the next one, or launch it from the Command Center UI.",
+          } satisfies ApiError & { code: string; instruction: string },
+          { status: 403 },
+        ),
+      };
+    }
+
+    return {
+      ownerConversationId:
+        principal.kind === "conversation" ? principal.conversationId : null,
+    };
+  }
+
   async function markExecutionRunning(
     context: GraphExecutionLifecycleContext,
     execution: GraphWorkflowExecution,
   ): Promise<void> {
     if (deps.markRunning === undefined) return;
     try {
-      await deps.markRunning(
-        context,
-        execution.id,
-        execution.seedDefinitionId,
-        execution.seedDefinitionRevision,
-      );
+      await deps.markRunning(context, execution.id, execution.origin);
     } catch (error) {
       logger.warn("graph-workflow.execution_mark_running_failed", {
         workflowExecutionId: execution.id,
-        definitionId: execution.seedDefinitionId,
-        definitionRevision: execution.seedDefinitionRevision,
+        origin: execution.origin.kind,
         error: getErrorMessage(error),
       });
     }
@@ -1341,38 +1825,35 @@ export function createGraphWorkflowExecutionRouteHandlers(
    */
   async function reportAwaitingDefinitionApproval(
     context: GraphExecutionLifecycleContext,
-    workflowExecutionId: string,
-    definitionId: string,
-    definitionRevision: number,
+    execution: GraphWorkflowExecution,
   ): Promise<void> {
     if (deps.awaitingDefinitionApproval === undefined) return;
     try {
       await deps.awaitingDefinitionApproval(
         context,
-        workflowExecutionId,
-        definitionId,
-        definitionRevision,
+        execution.id,
+        execution.origin,
       );
     } catch (error) {
       logger.warn("graph-workflow.execution_awaiting_approval_report_failed", {
-        workflowExecutionId,
-        definitionId,
-        definitionRevision,
+        workflowExecutionId: execution.id,
+        origin: execution.origin.kind,
         error: getErrorMessage(error),
       });
     }
   }
 
   /**
-   * Auto-release (lifecycle contract, design §10): a run that reached
-   * `completed` or `aborted` no longer owns the session's execution slot, so it
-   * is archived the moment it settles rather than waiting for an operator to
-   * clear it. A resumable `halted`/`paused` run is deliberately left holding
-   * the slot — releasing it would admit unrelated validation and race a resume.
+   * Auto-release (D7 decision D3): a settled run that no longer holds the
+   * session's lease is archived the moment it settles rather than waiting for
+   * an operator to clear it. The lease — not a status set — is the test, so a
+   * non-resumable halt releases here exactly as R4 says it does, while a
+   * resumable halt or a paused run is deliberately left holding: releasing one
+   * would admit unrelated validation and race a resume.
    *
    * Best-effort by design: a failed archive must not turn a successful abort or
-   * a finished run into an error. `CLEAR` remains the explicit recovery alias
-   * for whatever this misses.
+   * a finished run into an error, and admission normalizes whatever this
+   * misses without any explicit clear act.
    */
   async function autoReleaseSettledExecution(
     projectPath: string,
@@ -1381,11 +1862,19 @@ export function createGraphWorkflowExecutionRouteHandlers(
   ): Promise<void> {
     try {
       const active = await deps.getActiveExecution(projectPath, sessionName);
-      if (!active || !autoReleasesSlot(active.status)) return;
-      // CLEAR used to be the only backstop that stopped lane dev servers that
-      // survived earlier cleanup, and completion is the one terminal transition
-      // the manager runs no cleanup for. Auto-release takes CLEAR out of the
-      // operator's hands, so the release carries the backstop itself.
+      if (
+        !active ||
+        holdsExecutionLease(
+          active.status,
+          active.haltReason,
+          active.abandonment,
+        )
+      ) {
+        return;
+      }
+      // No operator act stops lane dev servers that survived earlier cleanup,
+      // and completion is the one terminal transition the manager runs no
+      // cleanup for — so the automatic release carries the backstop itself.
       await deps.stopExecutionLaneDevServers?.({
         execution: active,
         projectPath,
@@ -1541,22 +2030,26 @@ export function createGraphWorkflowExecutionRouteHandlers(
       );
     }
 
-    // Owner identity is produced here, not read off the payload: the claim
-    // arrives in the token-gated caller header and only survives if this
-    // session owns the conversation.
-    const ownerConversationId = captureOwnerConversationId(
+    // Owner identity is DERIVED, never read off a header or payload: a caller
+    // header naming a conversation is a claim every sibling conversation and
+    // every lane can also make, so START answers it with the same signed
+    // principal RUN does (R9.4). A lane is refused here as nesting.
+    const launchPrincipal = await resolveLaunchPrincipal({
       request,
-      resolved.session,
-    );
+      resolved,
+      verb: "start",
+    });
+    if ("refusal" in launchPrincipal) return launchPrincipal.refusal;
+    const ownerConversationId = launchPrincipal.ownerConversationId;
 
-    let execution: GraphWorkflowExecution;
+    let outcome: GraphWorkflowLaunchOutcome;
     try {
       // The active-execution and uncommitted-changes guards plus start-input
       // validation all run inside the shared start path so HTTP and MCP enforce
       // an identical pre-seed chain. Guard/input rejections seed nothing, so
       // they map directly to a response without engaging the loop-failure halt
       // path (which only applies to a seeded execution).
-      execution = await deps.startExecution({
+      outcome = await deps.startExecution({
         projectPath,
         sessionName,
         definitionId: parsed.data.definitionId,
@@ -1570,64 +2063,29 @@ export function createGraphWorkflowExecutionRouteHandlers(
         ...(ownerConversationId !== null ? { ownerConversationId } : {}),
       });
     } catch (error) {
-      if (error instanceof WorkflowDefinitionApprovalRequiredError) {
-        await reportAwaitingDefinitionApproval(
-          { projectPath, sessionName },
-          error.executionId,
-          error.definitionId,
-          error.definitionRevision,
-        );
-        return NextResponse.json(
-          {
-            error: error.message,
-            code: error.code,
-            executionId: error.executionId,
-            instruction: error.instruction,
-          },
-          { status: 409 },
-        );
-      }
-      if (error instanceof WorkflowStartGuardError) {
-        if (error.guard === "uncommitted_changes") {
-          const dirtyPaths = error.dirtyPaths ?? [];
-          return NextResponse.json(
-            {
-              error: error.message,
-              code: "uncommitted_changes",
-              details: {
-                totalCount: dirtyPaths.length,
-                paths: dirtyPaths.slice(0, 20).map((entry) => entry.path),
-              },
-            } satisfies ApiError,
-            { status: 409 },
-          );
-        }
-        return NextResponse.json({ error: error.message } satisfies ApiError, {
-          status: 409,
-        });
-      }
-      if (error instanceof WorkflowPrerequisitesUnmetError) {
-        return NextResponse.json(
-          {
-            error: error.message,
-            code: "prerequisites_unmet",
-            details: {
-              missing: error.missing,
-            },
-          } satisfies ApiError,
-          { status: 409 },
-        );
-      }
-      if (error instanceof WorkflowStartInputError) {
-        return NextResponse.json({ error: error.message } satisfies ApiError, {
-          status: 400,
-        });
-      }
-      if (error instanceof GraphExecutionContractViolationError) {
-        return respondToManagerError(error);
-      }
-      return respondToManagerError(error);
+      return respondToLaunchRefusal(error, "parameters");
     }
+
+    const receipt = buildLaunchReceipt({
+      outcome,
+      projectName: resolved.projectName,
+      sessionName,
+    });
+
+    if (outcome.awaitingDefinitionApproval) {
+      // An accepted launch that has not begun (D7 R14, decision D1). START used
+      // to persist the parked run and then report 409, forcing every caller to
+      // decode a refusal as a success; the receipt says it plainly instead.
+      await reportAwaitingDefinitionApproval(
+        { projectPath, sessionName },
+        outcome.execution,
+      );
+      return NextResponse.json(
+        { execution: summarizeExecution(outcome.execution, false), receipt },
+        { status: 202 },
+      );
+    }
+    const execution = outcome.execution;
 
     try {
       await markExecutionRunning({ projectPath, sessionName }, execution);
@@ -1655,9 +2113,166 @@ export function createGraphWorkflowExecutionRouteHandlers(
           });
         });
       return NextResponse.json(
-        { execution: summarizeExecution(execution, false) },
+        { execution: summarizeExecution(execution, false), receipt },
         { status: 202 },
       );
+    } catch (error) {
+      await reportExecutionLoopFailure({
+        projectPath,
+        sessionName,
+        expectedExecutionId: execution.id,
+        error,
+        phase: "start",
+      });
+      return respondToManagerError(error);
+    }
+  }
+
+  /**
+   * POST .../graph-workflow/run — the inline one-off launch (D7 R1, R2, R14).
+   *
+   * Two things happen here and nowhere else on this path: the submitted plan
+   * passes the SAME accept-time gate `workflow validate`/`create` apply
+   * (legacy-shape detection, dialect parse, structural + placement +
+   * reference checks, command-selector preflight) before any state exists, and
+   * the caller's conversation is captured server-side. Everything after that is
+   * the shared manager gauntlet — no second engine, no reduced validation, and
+   * no definition storage of any kind (R1.1).
+   */
+  async function RUN(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSession(context, deps);
+    if ("error" in resolved) {
+      return resolved.error;
+    }
+    const { projectPath, sessionName } = resolved;
+
+    let rawBody: unknown;
+    try {
+      rawBody = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Request body must be JSON" } satisfies ApiError,
+        { status: 400 },
+      );
+    }
+
+    const body = runExecutionSchema.safeParse(rawBody);
+    if (!body.success) {
+      return NextResponse.json(
+        {
+          error: "Invalid request: plan is required",
+        } satisfies ApiError,
+        { status: 400 },
+      );
+    }
+
+    const [repoConfig, globalConfig] = await Promise.all([
+      (deps.readRepoConfig ?? defaultReadRepoConfig)(projectPath),
+      (deps.readConfig ?? readConfig)(),
+    ]);
+    const validation = validateWorkflowPlan(body.data.plan, {
+      validationCommandPreflight: createValidationCommandPreflight(
+        repoConfig?.validation,
+        globalConfig.validation,
+      ),
+    });
+    if (!validation.ok) {
+      logger.info("graph-workflow.run.plan_rejected", {
+        projectPath,
+        sessionName,
+        code: validation.code ?? "invalid_plan",
+        issueCount: validation.issues.length,
+      });
+      return NextResponse.json(
+        {
+          error: "Workflow plan is invalid",
+          ...(validation.code ? { code: validation.code } : {}),
+          issues: validation.issues,
+        },
+        { status: 400 },
+      );
+    }
+
+    // Launch authority, in the order D11/D12 define it. The origin is a SIGNED
+    // principal, not a claim (R9.4/D11), and an AGENT that cannot prove which
+    // conversation it is does not launch: admitting it unowned would let a
+    // lane, the planner, or a sibling agent consume the session's one lease
+    // with no verified authority. No execution is passed — a launch has none
+    // yet, so there is no origin to scope against.
+    const launchPrincipal = await resolveLaunchPrincipal({
+      request,
+      resolved,
+      verb: "launch",
+    });
+    if ("refusal" in launchPrincipal) return launchPrincipal.refusal;
+    const ownerConversationId = launchPrincipal.ownerConversationId;
+
+    let outcome: GraphWorkflowLaunchOutcome;
+    try {
+      outcome = await deps.runExecution({
+        projectPath,
+        sessionName,
+        plan: validation.draft,
+        ...(body.data.inputs !== undefined ? { inputs: body.data.inputs } : {}),
+        ...(ownerConversationId !== null ? { ownerConversationId } : {}),
+      });
+    } catch (error) {
+      return respondToLaunchRefusal(error, "inputs");
+    }
+
+    const receipt = buildLaunchReceipt({
+      outcome,
+      projectName: resolved.projectName,
+      sessionName,
+    });
+    logger.info("graph-workflow.run.accepted", {
+      projectPath,
+      sessionName,
+      executionId: receipt.executionId,
+      status: receipt.status,
+      origin: receipt.origin.kind,
+    });
+
+    if (outcome.awaitingDefinitionApproval) {
+      // An accepted launch that has not begun: the review is opened and the
+      // loop is deliberately not engaged until a human decides (R14.1).
+      await reportAwaitingDefinitionApproval(
+        { projectPath, sessionName },
+        outcome.execution,
+      );
+      return NextResponse.json({ receipt }, { status: 202 });
+    }
+
+    const execution = outcome.execution;
+    try {
+      await markExecutionRunning({ projectPath, sessionName }, execution);
+      void Promise.resolve()
+        .then(() =>
+          kickOffAndAutoRelease({
+            projectPath,
+            projectName: resolved.projectName,
+            sessionName,
+            execution,
+          }),
+        )
+        .catch(async (error) => {
+          logger.warn("graph-workflow.execution_loop_start_failed", {
+            projectPath,
+            sessionName,
+            error: getErrorMessage(error),
+          });
+          await reportExecutionLoopFailure({
+            projectPath,
+            sessionName,
+            expectedExecutionId: execution.id,
+            error,
+            phase: "start",
+          });
+        });
+      return NextResponse.json({ receipt }, { status: 202 });
     } catch (error) {
       await reportExecutionLoopFailure({
         projectPath,
@@ -1703,41 +2318,44 @@ export function createGraphWorkflowExecutionRouteHandlers(
      */
     seededDocuments?: readonly SeededWorkflowDocument[];
   }): Promise<GraphWorkflowExecution> {
-    let execution: GraphWorkflowExecution;
-    try {
-      execution = await deps.startExecution({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        definitionId: input.definitionId,
-        ...(input.expectedDefinitionRevision !== undefined
-          ? { expectedDefinitionRevision: input.expectedDefinitionRevision }
-          : {}),
-        ...(input.tier !== undefined ? { tier: input.tier } : {}),
-        ...(input.parameters !== undefined
-          ? { parameters: input.parameters }
-          : {}),
-        ...(input.ownerConversationId !== undefined &&
-        input.ownerConversationId !== null
-          ? { ownerConversationId: input.ownerConversationId }
-          : {}),
-        ...(input.seededDocuments !== undefined
-          ? { seededDocuments: input.seededDocuments }
-          : {}),
-      });
-    } catch (error) {
-      if (error instanceof WorkflowDefinitionApprovalRequiredError) {
-        await reportAwaitingDefinitionApproval(
-          {
-            projectPath: input.projectPath,
-            sessionName: input.sessionName,
-          },
-          error.executionId,
-          error.definitionId,
-          error.definitionRevision,
-        );
-      }
-      throw error;
+    const outcome = await deps.startExecution({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      definitionId: input.definitionId,
+      ...(input.expectedDefinitionRevision !== undefined
+        ? { expectedDefinitionRevision: input.expectedDefinitionRevision }
+        : {}),
+      ...(input.tier !== undefined ? { tier: input.tier } : {}),
+      ...(input.parameters !== undefined
+        ? { parameters: input.parameters }
+        : {}),
+      ...(input.ownerConversationId !== undefined &&
+      input.ownerConversationId !== null
+        ? { ownerConversationId: input.ownerConversationId }
+        : {}),
+      ...(input.seededDocuments !== undefined
+        ? { seededDocuments: input.seededDocuments }
+        : {}),
+    });
+
+    // This in-process seam answers a caller that expects a RUNNING execution,
+    // so a park is raised rather than returned: the spec start gate reads the
+    // parked run back through its own pending-approval query and the MCP tool
+    // reports the review, neither of which can proceed with a run that has not
+    // begun. The HTTP transports keep the park as an accepted receipt.
+    if (outcome.awaitingDefinitionApproval) {
+      const parked = new WorkflowDefinitionApprovalRequiredError(
+        outcome.execution.id,
+        outcome.execution.seedDefinitionId,
+        outcome.execution.seedDefinitionRevision,
+      );
+      await reportAwaitingDefinitionApproval(
+        { projectPath: input.projectPath, sessionName: input.sessionName },
+        outcome.execution,
+      );
+      throw parked;
     }
+    const execution = outcome.execution;
 
     await markExecutionRunning(
       { projectPath: input.projectPath, sessionName: input.sessionName },
@@ -1791,17 +2409,28 @@ export function createGraphWorkflowExecutionRouteHandlers(
         resolved.sessionName,
       ));
 
-    const listArchived =
-      deps.listArchivedExecutions ?? listArchivedGraphWorkflowExecutions;
-    const archived = await listArchived(
-      resolved.projectPath,
-      resolved.sessionName,
-    );
+    // Current is a LEASE projection here exactly as it is on EXECUTION and
+    // History (D7 decision D4). A settled run still physically occupying the
+    // active row holds nothing, and reporting it as Current is what made a
+    // finished run render as the live one. It is not hidden: `summarizeHistory`
+    // is the projection that carries a lease-free active row, so the same row
+    // this drops from Current appears in the history list below.
+    const current =
+      execution &&
+      holdsExecutionLease(
+        execution.status,
+        execution.haltReason,
+        execution.abandonment,
+      )
+        ? execution
+        : null;
 
     return NextResponse.json({
-      execution: execution ? summarizeExecution(execution, false) : null,
-      archivedExecutions: archived.map((entry) =>
-        summarizeExecution(entry, true),
+      execution: current ? summarizeExecution(current, false) : null,
+      archivedExecutions: await summarizeHistory(
+        deps,
+        resolved.projectPath,
+        resolved.sessionName,
       ),
     });
   }
@@ -1826,7 +2455,106 @@ export function createGraphWorkflowExecutionRouteHandlers(
         resolved.sessionName,
       ));
 
+    // Current is a LEASE projection, not a row-position one (D7 decision D4).
+    // A settled run awaiting normalization still physically occupies the active
+    // row, but it holds nothing — reporting it as Current is what made a
+    // finished run render as the live one while History, which already carries
+    // it, was told to drop it as a duplicate.
+    if (
+      execution &&
+      !holdsExecutionLease(
+        execution.status,
+        execution.haltReason,
+        execution.abandonment,
+      )
+    ) {
+      return NextResponse.json({ execution: null });
+    }
+
     return NextResponse.json({ execution: execution ?? null });
+  }
+
+  async function EXECUTION_BY_ID(
+    _request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSession(context, deps);
+    if ("error" in resolved) return resolved.error;
+
+    const executionId = decodeURIComponent(
+      (await context.params)["executionId"] ?? "",
+    );
+    const getExecutionById =
+      deps.getExecutionById ?? defaultGetGraphWorkflowExecutionById;
+    const execution = await getExecutionById(
+      resolved.projectPath,
+      resolved.sessionName,
+      executionId,
+    );
+    if (execution === null) {
+      logger.info("graph-workflow.execution_by_id.not_found", {
+        projectPath: resolved.projectPath,
+        sessionName: resolved.sessionName,
+        executionId,
+      });
+      return notFound("Graph workflow execution not found");
+    }
+    return NextResponse.json({ execution });
+  }
+
+  async function EXECUTION_RESULT(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSession(context, deps);
+    if ("error" in resolved) return resolved.error;
+
+    const executionId = decodeURIComponent(
+      (await context.params)["executionId"] ?? "",
+    );
+    const getExecutionById =
+      deps.getExecutionById ?? defaultGetGraphWorkflowExecutionById;
+    const execution = await getExecutionById(
+      resolved.projectPath,
+      resolved.sessionName,
+      executionId,
+    );
+    if (execution === null) {
+      logger.info("graph-workflow.execution_result.not_found", {
+        projectPath: resolved.projectPath,
+        sessionName: resolved.sessionName,
+        executionId,
+      });
+      return notFound("Graph workflow execution not found");
+    }
+
+    const cursorParam = new URL(request.url).searchParams.get("cursor");
+    let cursor: number | null = null;
+    if (cursorParam !== null) {
+      const parsedCursor = Number(cursorParam);
+      if (!Number.isSafeInteger(parsedCursor) || parsedCursor < 1) {
+        logger.info("graph-workflow.execution_result.invalid_cursor", {
+          projectPath: resolved.projectPath,
+          sessionName: resolved.sessionName,
+          executionId,
+        });
+        return NextResponse.json(
+          { error: "cursor must be a positive integer" } satisfies ApiError,
+          { status: 400 },
+        );
+      }
+      cursor = parsedCursor;
+    }
+
+    const getBoundaryResultAfter =
+      deps.getBoundaryResultAfter ?? defaultGetGraphWorkflowBoundaryResultAfter;
+    const result = await getBoundaryResultAfter(
+      resolved.projectPath,
+      resolved.sessionName,
+      executionId,
+      cursor,
+    );
+    return NextResponse.json({ result });
   }
 
   async function HISTORY(
@@ -1882,13 +2610,20 @@ export function createGraphWorkflowExecutionRouteHandlers(
     if (paginated) {
       const cursorParam = Number(url.searchParams.get("cursor"));
       const getEventsPage = deps.getEventsPage ?? getGraphWorkflowEventsPage;
-      const page = await getEventsPage(executionId, {
-        limit,
-        cursor:
-          Number.isInteger(cursorParam) && cursorParam > 0 ? cursorParam : null,
-        direction:
-          url.searchParams.get("direction") === "desc" ? "desc" : "asc",
-      });
+      const page = await getEventsPage(
+        resolved.projectPath,
+        resolved.sessionName,
+        executionId,
+        {
+          limit,
+          cursor:
+            Number.isInteger(cursorParam) && cursorParam > 0
+              ? cursorParam
+              : null,
+          direction:
+            url.searchParams.get("direction") === "desc" ? "desc" : "asc",
+        },
+      );
       return NextResponse.json({
         // `seq` is the wire name for the row's durable ordering key: it is what
         // the caller sends back as `cursor`, so the pair is one vocabulary.
@@ -1903,12 +2638,17 @@ export function createGraphWorkflowExecutionRouteHandlers(
     }
 
     const getEventsTail = deps.getEventsTail ?? getGraphWorkflowEventsTail;
-    const events = await getEventsTail(executionId, limit);
+    const events = await getEventsTail(
+      resolved.projectPath,
+      resolved.sessionName,
+      executionId,
+      limit,
+    );
     return NextResponse.json({ events });
   }
 
   async function PAUSE(
-    _request: Request,
+    request: Request,
     context: RouteContext,
   ): Promise<Response> {
     const resolved = await resolveSession(context, deps);
@@ -1916,13 +2656,26 @@ export function createGraphWorkflowExecutionRouteHandlers(
       return resolved.error;
     }
 
-    try {
-      const execution = await deps.pauseExecution(
+    const guarded = await guardExecutionMutation({
+      request,
+      session: resolved.session,
+      deps,
+      verb: "pause",
+      projectPath: resolved.projectPath,
+      execution: await deps.getActiveExecution(
         resolved.projectPath,
         resolved.sessionName,
+      ),
+    });
+    if ("refusal" in guarded) return guarded.refusal;
+
+    try {
+      const acted = await runPinnedMutation(guarded.fence, "pause", () =>
+        deps.pauseExecution(resolved.projectPath, resolved.sessionName),
       );
+      if (acted.kind === "turnover") return acted.refusal;
       return NextResponse.json({
-        execution: summarizeExecution(execution, false),
+        execution: summarizeExecution(acted.value, false),
       });
     } catch (error) {
       return respondToManagerError(error);
@@ -1954,16 +2707,44 @@ export function createGraphWorkflowExecutionRouteHandlers(
         ? { conflictGuidance: parsedBody.data.conflictGuidance }
         : undefined;
 
+    // Guarded BEFORE the restart normalization below, which mutates: a refused
+    // caller must leave no trace, and normalizing for a caller that is then
+    // turned away is a write a refusal is not allowed to make.
+    const guarded = await guardExecutionMutation({
+      request,
+      session: resolved.session,
+      deps,
+      verb: "resume",
+      projectPath: resolved.projectPath,
+      execution: await deps.getActiveExecution(
+        resolved.projectPath,
+        resolved.sessionName,
+      ),
+    });
+    if ("refusal" in guarded) return guarded.refusal;
+
     try {
-      await deps.normalizeExecutionAfterRestart(
-        resolved.projectPath,
-        resolved.sessionName,
+      // Normalization is part of the act, not a prologue to it: it writes, so
+      // it belongs inside the same pin as the resume it prepares.
+      const acted = await runPinnedMutation(
+        guarded.fence,
+        "resume",
+        async () => {
+          await deps.normalizeExecutionAfterRestart(
+            resolved.projectPath,
+            resolved.sessionName,
+          );
+          return deps.resumeExecution(
+            resolved.projectPath,
+            resolved.sessionName,
+            resumeOptions,
+          );
+        },
       );
-      const execution = await deps.resumeExecution(
-        resolved.projectPath,
-        resolved.sessionName,
-        resumeOptions,
-      );
+      if (acted.kind === "turnover") return acted.refusal;
+      const execution = acted.value;
+      // Deliberately OUTSIDE the fence: the loop outlives this request, carries
+      // its own generation fence, and must not inherit a request-scoped pin.
       void Promise.resolve()
         .then(() =>
           kickOffAndAutoRelease({
@@ -2008,11 +2789,43 @@ export function createGraphWorkflowExecutionRouteHandlers(
     );
     const abortReason = abortBody.success ? abortBody.data.reason : undefined;
 
-    try {
-      const execution = await deps.abortExecution(
+    // Guarded BEFORE the interrupted-decision settlement below, which commits:
+    // a refused abort must be write-free.
+    const guarded = await guardExecutionMutation({
+      request,
+      session: resolved.session,
+      deps,
+      verb: "abort",
+      projectPath: resolved.projectPath,
+      execution: await deps.getActiveExecution(
         resolved.projectPath,
         resolved.sessionName,
+      ),
+    });
+    if ("refusal" in guarded) return guarded.refusal;
+
+    try {
+      const acted = await runPinnedMutation(
+        guarded.fence,
+        "abort",
+        async () => {
+          // A park holding an interrupted decision refuses the abort, because
+          // discarding that reservation could strand an admission already
+          // recorded behind it. Finishing the interrupted saga first is what
+          // makes the run abortable again — and leaves nothing behind either way.
+          await settleInterruptedDefinitionDecision({
+            projectPath: resolved.projectPath,
+            projectName: resolved.projectName,
+            sessionName: resolved.sessionName,
+          });
+          return deps.abortExecution(
+            resolved.projectPath,
+            resolved.sessionName,
+          );
+        },
       );
+      if (acted.kind === "turnover") return acted.refusal;
+      const execution = acted.value;
       // Best-effort: a consumer failure must not mask the successful abort.
       if (deps.executionAborted !== undefined) {
         try {
@@ -2047,6 +2860,110 @@ export function createGraphWorkflowExecutionRouteHandlers(
     }
   }
 
+  /**
+   * `cctl workflow abandon` — the one explicit, audited act that ends a
+   * resumable halt's tenure (D7 decision D5). Addressed by execution identity,
+   * so the run the caller read is the run that ends; a refusal never falls back
+   * to whatever holds the lease now.
+   *
+   * The manager act commits the audit, the released boundary event, and the
+   * relocation into History in one transaction. Lane teardown follows it rather
+   * than preceding it: the act is the authoritative release, so only the caller
+   * whose transaction committed reaches the external cleanup, and it reaches it
+   * holding the whole record — lane references included.
+   */
+  async function ABANDON(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSession(context, deps);
+    if ("error" in resolved) return resolved.error;
+
+    const abandon = deps.abandonExecution;
+    if (abandon === undefined) {
+      return NextResponse.json(
+        { error: "Workflow abandonment is not available" } satisfies ApiError,
+        { status: 501 },
+      );
+    }
+
+    const parsed = abandonExecutionSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          error: `Invalid abandon request: ${parsed.error.issues[0]?.message ?? "malformed body"}`,
+          code: "invalid_request",
+        } satisfies ApiError & { code: string },
+        { status: 400 },
+      );
+    }
+
+    // The shared mutation contract admits the human UI, the run's immutable
+    // ORIGIN conversation, or the execution's current lane. A sibling ordinary
+    // conversation proves who it is but has no authority over this run, while a
+    // stale lane fails freshness. Authorization is against the active run even
+    // when the body names a stale id; only an admitted caller reaches the
+    // service's separate execution-mismatch refusal.
+    const active = await deps.getActiveExecution(
+      resolved.projectPath,
+      resolved.sessionName,
+    );
+    const guarded = await guardExecutionMutation({
+      request,
+      session: resolved.session,
+      deps,
+      verb: "abandon",
+      projectPath: resolved.projectPath,
+      execution: active,
+    });
+    if ("refusal" in guarded) return guarded.refusal;
+
+    // The abandonment is attributed to the principal the SERVER established,
+    // never to a free-text label.
+    const actor: GraphWorkflowAbandonment["actor"] =
+      guarded.principal.kind === "human_ui"
+        ? { kind: "human" }
+        : {
+            kind: "conversation",
+            conversationId: guarded.principal.conversationId,
+          };
+
+    const acted = await runPinnedMutation(guarded.fence, "abandon", () =>
+      abandon({
+        projectPath: resolved.projectPath,
+        sessionName: resolved.sessionName,
+        executionId: parsed.data.executionId,
+        reason: parsed.data.reason,
+        actor,
+      }),
+    );
+    if (acted.kind === "turnover") return acted.refusal;
+    const outcome = acted.value;
+    if (!outcome.ok) {
+      return NextResponse.json(
+        {
+          error: abandonRefusalMessage(parsed.data.executionId, outcome),
+          code: outcome.reason,
+        } satisfies ApiError & { code: string },
+        { status: outcome.reason === "no_active_execution" ? 404 : 409 },
+      );
+    }
+
+    // Post-commit, winner only: the run is already in History, so a failed
+    // teardown cannot un-abandon it — but leaving its lane dev servers running
+    // beside the successor is exactly what this backstop exists to prevent.
+    await deps.stopExecutionLaneDevServers?.({
+      execution: outcome.execution,
+      projectPath: resolved.projectPath,
+    });
+    return NextResponse.json({
+      execution: buildExecutionActReceipt(outcome.execution, true),
+      abandoned: true,
+    });
+  }
+
   async function RESET_CONTEXT(
     request: Request,
     context: RouteContext,
@@ -2072,6 +2989,20 @@ export function createGraphWorkflowExecutionRouteHandlers(
       resolved.projectPath,
       resolved.sessionName,
     );
+    // A reset discards a context's work, so it is scoped exactly like the
+    // lifecycle verbs rather than admitted on transport alone. Authorization is
+    // answered before the state ladder below: a caller with no business here
+    // learns that, not which execution the session happens to hold.
+    const guarded = await guardExecutionMutation({
+      request,
+      session: resolved.session,
+      deps,
+      verb: "reset a context of",
+      projectPath: resolved.projectPath,
+      execution: activeExecution,
+    });
+    if ("refusal" in guarded) return guarded.refusal;
+
     if (!activeExecution) {
       return notFound(
         "Session does not have an active graph workflow execution",
@@ -2089,13 +3020,19 @@ export function createGraphWorkflowExecutionRouteHandlers(
     }
 
     try {
-      const execution = await deps.resetExecutionContext(
-        resolved.projectPath,
-        resolved.sessionName,
-        parsed.data.contextId,
+      const acted = await runPinnedMutation(
+        guarded.fence,
+        "reset a context of",
+        () =>
+          deps.resetExecutionContext(
+            resolved.projectPath,
+            resolved.sessionName,
+            parsed.data.contextId,
+          ),
       );
+      if (acted.kind === "turnover") return acted.refusal;
       return NextResponse.json({
-        execution: summarizeExecution(execution, false),
+        execution: summarizeExecution(acted.value, false),
       });
     } catch (error) {
       return respondToManagerError(error);
@@ -2128,6 +3065,16 @@ export function createGraphWorkflowExecutionRouteHandlers(
       resolved.projectPath,
       resolved.sessionName,
     );
+    const guarded = await guardExecutionMutation({
+      request,
+      session: resolved.session,
+      deps,
+      verb: "reset an assignment of",
+      projectPath: resolved.projectPath,
+      execution: activeExecution,
+    });
+    if ("refusal" in guarded) return guarded.refusal;
+
     if (!activeExecution) {
       return notFound(
         "Session does not have an active graph workflow execution",
@@ -2145,14 +3092,20 @@ export function createGraphWorkflowExecutionRouteHandlers(
     }
 
     try {
-      const execution = await deps.resetExecutionContextAssignment(
-        resolved.projectPath,
-        resolved.sessionName,
-        parsed.data.contextId,
-        parsed.data.assignmentId,
+      const acted = await runPinnedMutation(
+        guarded.fence,
+        "reset an assignment of",
+        () =>
+          deps.resetExecutionContextAssignment(
+            resolved.projectPath,
+            resolved.sessionName,
+            parsed.data.contextId,
+            parsed.data.assignmentId,
+          ),
       );
+      if (acted.kind === "turnover") return acted.refusal;
       return NextResponse.json({
-        execution: summarizeExecution(execution, false),
+        execution: summarizeExecution(acted.value, false),
       });
     } catch (error) {
       return respondToManagerError(error);
@@ -2243,6 +3196,23 @@ export function createGraphWorkflowExecutionRouteHandlers(
       );
     }
 
+    // Deciding a context's approval gate advances the run, so it passes the
+    // same principal gate as the lifecycle verbs. It is not the DEFINITION
+    // decision, which is human-only: a lane's own gate is part of the work the
+    // run is doing, and the origin conversation may answer it.
+    const guarded = await guardExecutionMutation({
+      request,
+      session: resolved.session,
+      deps,
+      verb: "resolve an approval gate of",
+      projectPath: resolved.projectPath,
+      execution: await deps.getActiveExecution(
+        resolved.projectPath,
+        resolved.sessionName,
+      ),
+    });
+    if ("refusal" in guarded) return guarded.refusal;
+
     const decision: ApprovalGateDecisionInput =
       parsed.data.decision === "approve"
         ? { type: "approved" }
@@ -2250,12 +3220,19 @@ export function createGraphWorkflowExecutionRouteHandlers(
 
     let result: RecordDecisionResult;
     try {
-      result = await deps.recordApprovalDecision({
-        projectPath: resolved.projectPath,
-        sessionName: resolved.sessionName,
-        contextId: parsed.data.contextId,
-        decision,
-      });
+      const acted = await runPinnedMutation(
+        guarded.fence,
+        "resolve an approval gate of",
+        () =>
+          deps.recordApprovalDecision({
+            projectPath: resolved.projectPath,
+            sessionName: resolved.sessionName,
+            contextId: parsed.data.contextId,
+            decision,
+          }),
+      );
+      if (acted.kind === "turnover") return acted.refusal;
+      result = acted.value;
     } catch (error) {
       return respondToManagerError(error);
     }
@@ -2287,36 +3264,58 @@ export function createGraphWorkflowExecutionRouteHandlers(
   ): execution is GraphWorkflowExecution {
     return (
       execution !== null &&
-      !isTerminalStatus(execution.status) &&
-      execution.definitionApproval !== null &&
-      execution.definitionApproval.approvedAt === null
+      awaitsDefinitionApproval(execution.status, execution.definitionApproval)
     );
   }
 
   /**
-   * Whether the session's active execution is parked awaiting definition
-   * approval — the only state a definition approval can unblock. Callers that
-   * record their own admission before approving (e.g. the spec-side
-   * execution-start grant) probe this first so a grant never lands with
-   * nothing waiting.
+   * The session's parked execution and the origin it recorded, or null when
+   * nothing is parked. Callers outside this domain (the spec-side
+   * execution-start act) use it to establish WHICH run holds the park before
+   * deciding it: a session's lease says only that some run holds it, and
+   * approving a run one does not mean starts the wrong workflow.
    */
-  async function hasPendingDefinitionApproval(input: {
+  async function findPendingDefinitionApproval(input: {
     projectPath: string;
     sessionName: string;
-    expectedDefinitionId?: string;
-    expectedDefinitionRevision?: number;
-  }): Promise<string | null> {
+  }): Promise<{
+    executionId: string;
+    origin: GraphWorkflowExecutionOrigin;
+  } | null> {
     const active = await deps.getActiveExecution(
       input.projectPath,
       input.sessionName,
     );
-    const matches =
-      executionAwaitsDefinitionApproval(active) &&
-      (input.expectedDefinitionId === undefined ||
-        active.seedDefinitionId === input.expectedDefinitionId) &&
-      (input.expectedDefinitionRevision === undefined ||
-        active.seedDefinitionRevision === input.expectedDefinitionRevision);
-    return matches ? active.id : null;
+    return executionAwaitsDefinitionApproval(active)
+      ? { executionId: active.id, origin: active.origin }
+      : null;
+  }
+
+  /**
+   * Undo this act's own reservation. Best-effort by construction: the caller
+   * is already returning a refusal, and a release that cannot land means the
+   * park turned over — restart normalization releases whatever is stranded.
+   */
+  async function releaseReservation(
+    input: { projectPath: string; sessionName: string },
+    executionId: string,
+    claimId: string,
+  ): Promise<void> {
+    if (deps.releaseDefinitionApprovalClaim === undefined) return;
+    const released = await deps.releaseDefinitionApprovalClaim({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      expectedExecutionId: executionId,
+      claimId,
+    });
+    if (!released.ok) {
+      logger.warn("graph-workflow.definition_approval.claim_release_failed", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        executionId,
+        reason: released.reason,
+      });
+    }
   }
 
   /**
@@ -2325,19 +3324,29 @@ export function createGraphWorkflowExecutionRouteHandlers(
    * lifecycle port and engages the loop exactly like a gate-free START. The
    * HTTP handler and human-only server-side callers (e.g. the spec-side
    * execution-start grant) share this path so approval always starts the run
-   * the same way. Before recording, the registered lifecycle consumer is
-   * consulted so a definition it prepared gets its own execution-scoped
-   * admission recorded (or the approval is refused machine-readably).
+   * the same way. The registered lifecycle consumer records its own
+   * execution-scoped admission for a definition it prepared, or refuses
+   * machine-readably.
+   *
+   * A SAGA in three steps, because the act spans two authorities — this graph's
+   * serialized row and the consumer's own durable records — and neither
+   * two-write order is sound alone: approving before the gate leaves a refused
+   * act with an irreversibly approved run whose only remedy would be a resume
+   * that never consults the gate, while admitting before any reservation leaves
+   * a losing act's admission behind (charter `reserve-before-side-effects`).
+   * So: reserve (decides nothing, arbitrates everything), admit (the
+   * reservation holder's alone), then finalize. Every refusal releases the
+   * reservation and leaves the park exactly as the reviewer found it, which is
+   * what makes "fix this, then approve again" a remedy that works.
    */
   async function approveDefinition(input: {
     projectPath: string;
     projectName: string;
     sessionName: string;
     expectedExecutionId?: string;
-    expectedDefinitionId?: string;
-    expectedDefinitionRevision?: number;
   }): Promise<
     | RecordDefinitionApprovalResult
+    | ClaimDefinitionApprovalResult
     | { ok: false; reason: "unavailable" }
     | {
         ok: false;
@@ -2345,9 +3354,17 @@ export function createGraphWorkflowExecutionRouteHandlers(
         refusal: Exclude<DefinitionApprovalGateDecision, { ok: true }>;
       }
   > {
-    if (deps.recordDefinitionApproval === undefined) {
+    if (
+      deps.recordDefinitionApproval === undefined ||
+      deps.claimDefinitionApproval === undefined
+    ) {
       return { ok: false, reason: "unavailable" };
     }
+    // An interrupted decision on THIS run is finished before a new one is
+    // taken: its reservation stands until the saga it belongs to ends, so a
+    // fresh act would only be refused behind it. Fenced to the named execution
+    // so a stale act never settles — and so never starts — a successor.
+    await settleInterruptedDefinitionDecision(input);
     const active = await deps.getActiveExecution(
       input.projectPath,
       input.sessionName,
@@ -2366,84 +3383,162 @@ export function createGraphWorkflowExecutionRouteHandlers(
       });
       return { ok: false, reason: "execution_mismatch" };
     }
-    if (
-      executionAwaitsDefinitionApproval(active) &&
-      input.expectedDefinitionId !== undefined &&
-      active.seedDefinitionId !== input.expectedDefinitionId
-    ) {
-      logger.warn("graph-workflow.definition_approval.guard_failed", {
-        executionId: active.id,
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        reason: "definition_mismatch",
-        expectedDefinitionId: input.expectedDefinitionId,
-        activeDefinitionId: active.seedDefinitionId,
-      });
-      return { ok: false, reason: "definition_mismatch" };
-    }
-    if (
-      executionAwaitsDefinitionApproval(active) &&
-      input.expectedDefinitionRevision !== undefined &&
-      active.seedDefinitionRevision !== input.expectedDefinitionRevision
-    ) {
-      logger.warn("graph-workflow.definition_approval.guard_failed", {
-        executionId: active.id,
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        reason: "definition_revision_mismatch",
-        expectedDefinitionRevision: input.expectedDefinitionRevision,
-        activeDefinitionRevision: active.seedDefinitionRevision,
-      });
-      return { ok: false, reason: "definition_revision_mismatch" };
-    }
-    if (deps.admitDefinitionApproval !== undefined) {
-      if (executionAwaitsDefinitionApproval(active)) {
-        const contractDecision = executionContract.validateDefinition(
-          active.workingDefinition,
+    // ONE act for both origins (D7 R14.2): the park is validated and offered
+    // to the admission consumer by execution identity and recorded origin,
+    // never by a stored-definition identity a one-off run does not have.
+    // Whether a consumer claims this run — and how it correlates one it does —
+    // is its own decision, downstream of the origin it receives.
+    const parked = executionAwaitsDefinitionApproval(active);
+    if (parked) {
+      // Pure: a contract verdict on bytes already in hand writes nothing, so it
+      // stays ahead of the reservation and refuses an invalid plan without ever
+      // reserving anything.
+      const contractDecision = executionContract.validateDefinition(
+        active.workingDefinition,
+      );
+      if (!contractDecision.ok) {
+        logger.warn(
+          "graph-workflow.definition_approval.execution_contract_rejected",
+          {
+            executionId: active.id,
+            origin: active.origin.kind,
+            code: contractDecision.code,
+            issueCount: contractDecision.issues.length,
+          },
         );
-        if (!contractDecision.ok) {
-          logger.warn(
-            "graph-workflow.definition_approval.execution_contract_rejected",
-            {
-              executionId: active.id,
-              definitionId: active.seedDefinitionId,
-              code: contractDecision.code,
-              issueCount: contractDecision.issues.length,
-            },
-          );
-        }
-        assertGraphExecutionContractAccepted(contractDecision);
+      }
+      assertGraphExecutionContractAccepted(contractDecision);
+    }
+    // COMMIT ONE — the reservation, and the act's arbiter. It decides nothing:
+    // the run stays parked and unapproved, so a caller the gate goes on to
+    // refuse has an act it can hand back whole, and a caller that loses this
+    // race never reaches the gate to write anything at all.
+    const reserved = await deps.claimDefinitionApproval({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      ...(input.expectedExecutionId === undefined
+        ? {}
+        : { expectedExecutionId: input.expectedExecutionId }),
+    });
+    if (!reserved.ok) return reserved;
+
+    return completeReservedApproval(input, {
+      executionId: reserved.execution.id,
+      origin: reserved.execution.origin,
+      claimId: reserved.claimId,
+    });
+  }
+
+  /**
+   * The second half of the approval saga, from a reservation this server holds.
+   *
+   * Split out because a reservation has exactly two ways to end and both run
+   * this code: the act that took it finishes here, and an act INTERRUPTED
+   * before it could finish is finished here too, from the reservation it left
+   * on the row. Nothing else may end a reservation — see
+   * {@link settleInterruptedDefinitionDecision}.
+   *
+   * THE ADMISSION comes first and is still ahead of any approval this graph has
+   * recorded. A consumer that REFUSES is answered by releasing the reservation,
+   * which restores the park byte for byte: nothing was approved, nothing was
+   * materialized, nothing started, and the gate's "fix this, then approve
+   * again" remedy is literally true. That release is why a refusal is the one
+   * answer the consumer contract requires to be write-free.
+   *
+   * Every other unhappy end KEEPS the reservation, because past the refusal the
+   * consumer's records may be durable: a thrown consumer failure carries no
+   * promise about what committed before it (the production spec consumer grants
+   * its approval, admission and event before the notification work that can
+   * throw), and a finalize that refuses does so behind an admission that already
+   * landed. Handing the reservation back there would reopen the park for a
+   * rejection or abort while those records stand — written and lost, which
+   * `reserve-before-side-effects` forbids. A kept reservation refuses every
+   * decision act until {@link settleInterruptedDefinitionDecision} finishes the
+   * saga forward, which is the only end that strands nothing.
+   */
+  async function completeReservedApproval(
+    input: { projectPath: string; projectName: string; sessionName: string },
+    reservation: {
+      executionId: string;
+      origin: GraphWorkflowExecutionOrigin;
+      claimId: string;
+    },
+  ): Promise<
+    | RecordDefinitionApprovalResult
+    | { ok: false; reason: "unavailable" }
+    | {
+        ok: false;
+        reason: "gate_refused";
+        refusal: Exclude<DefinitionApprovalGateDecision, { ok: true }>;
+      }
+  > {
+    if (deps.recordDefinitionApproval === undefined) {
+      return { ok: false, reason: "unavailable" };
+    }
+    let result: RecordDefinitionApprovalResult;
+    try {
+      if (deps.admitDefinitionApproval !== undefined) {
         const admitted = await deps.admitDefinitionApproval(
           {
             projectPath: input.projectPath,
             sessionName: input.sessionName,
           },
-          active.id,
-          active.seedDefinitionId,
-          active.seedDefinitionRevision,
+          reservation.executionId,
+          reservation.origin,
         );
         if (!admitted.ok) {
+          logger.warn("graph-workflow.definition_approval.gate_refused", {
+            executionId: reservation.executionId,
+            origin: reservation.origin.kind,
+            code: admitted.code,
+          });
+          await releaseReservation(
+            input,
+            reservation.executionId,
+            reservation.claimId,
+          );
           return { ok: false, reason: "gate_refused", refusal: admitted };
         }
       }
+
+      // COMMIT TWO — the approval itself, admitted and only now recorded. The
+      // manager refuses a finalize that holds no reservation, so this cannot be
+      // reached by a caller that skipped the gate.
+      result = await deps.recordDefinitionApproval({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        expectedExecutionId: reservation.executionId,
+        claimId: reservation.claimId,
+      });
+    } catch (error) {
+      // Kept, not released: a failure carries no promise about what the
+      // consumer committed before it, and freeing the park under a durable
+      // admission is the one outcome this saga exists to prevent.
+      logger.warn("graph-workflow.definition_approval.reservation_kept", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        executionId: reservation.executionId,
+        origin: reservation.origin.kind,
+        error: getErrorMessage(error),
+      });
+      throw error;
     }
-    const guardedExecutionId = executionAwaitsDefinitionApproval(active)
-      ? active.id
-      : input.expectedExecutionId;
-    const result = await deps.recordDefinitionApproval({
-      projectPath: input.projectPath,
-      sessionName: input.sessionName,
-      ...(guardedExecutionId === undefined
-        ? {}
-        : { expectedExecutionId: guardedExecutionId }),
-      ...(input.expectedDefinitionId === undefined
-        ? {}
-        : { expectedDefinitionId: input.expectedDefinitionId }),
-      ...(input.expectedDefinitionRevision === undefined
-        ? {}
-        : { expectedDefinitionRevision: input.expectedDefinitionRevision }),
-    });
-    if (!result.ok) return result;
+    if (!result.ok) {
+      // Only a run that left the park underneath an admitted act reaches here,
+      // and no act can do that while a reservation stands — so this is the
+      // narrow case of a park that turned over between the reservation and the
+      // finalize. The admission behind it is already durable, so the
+      // reservation is kept rather than handed back to whatever would end the
+      // run next.
+      logger.warn("graph-workflow.definition_approval.reservation_kept", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        executionId: reservation.executionId,
+        origin: reservation.origin.kind,
+        reason: result.reason,
+      });
+      return result;
+    }
 
     await markExecutionRunning(
       { projectPath: input.projectPath, sessionName: input.sessionName },
@@ -2470,48 +3565,110 @@ export function createGraphWorkflowExecutionRouteHandlers(
     return result;
   }
 
+  /**
+   * Finish a decision whose holder went away, before acting on the park it
+   * holds.
+   *
+   * A reservation is taken BEFORE the admission consumer is called, so a
+   * reservation that outlives its holder may already have that consumer's
+   * durable records behind it. Freeing it and then ending the run would strand
+   * those records on a run this server killed — the interrupted act would have
+   * written and lost, which `reserve-before-side-effects` forbids. So an
+   * interrupted decision is FINISHED instead: the admission is re-offered
+   * (consumers make it idempotent for exactly this) and the reservation is
+   * either finalized into the approval it was taken for, or released because
+   * the gate refused it. Either way nothing is left behind, and the park is
+   * decidable again.
+   *
+   * Only a reservation aged past a plausible live holder qualifies; a live
+   * holder finishes its own act, and every decision act refuses while it does.
+   *
+   * FENCED to the execution the caller named, because finishing a decision can
+   * admit, approve and start the run it finishes. An act addressed to a run that
+   * has already turned over would otherwise decide its successor and then refuse
+   * — a refusal that changed another execution, which is exactly what
+   * `reserve-before-side-effects` forbids. A session-addressed caller (abort)
+   * names no execution and settles whatever holds the session, which is the run
+   * it is acting on.
+   */
+  async function settleInterruptedDefinitionDecision(input: {
+    projectPath: string;
+    projectName: string;
+    sessionName: string;
+    expectedExecutionId?: string;
+  }): Promise<void> {
+    if (
+      deps.recordDefinitionApproval === undefined ||
+      deps.releaseDefinitionApprovalClaim === undefined
+    ) {
+      return;
+    }
+    const active = await deps.getActiveExecution(
+      input.projectPath,
+      input.sessionName,
+    );
+    if (active === null) return;
+    if (
+      input.expectedExecutionId !== undefined &&
+      active.id !== input.expectedExecutionId
+    ) {
+      return;
+    }
+    const interrupted = interruptedDefinitionDecision(
+      active,
+      deps.now?.() ?? new Date().toISOString(),
+    );
+    if (interrupted === null) return;
+    logger.warn("graph-workflow.definition_approval.settling_interrupted", {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      executionId: active.id,
+      origin: active.origin.kind,
+    });
+    try {
+      await completeReservedApproval(input, {
+        executionId: active.id,
+        origin: active.origin,
+        claimId: interrupted.claimId,
+      });
+    } catch (error) {
+      // A settlement that cannot finish leaves the reservation standing, which
+      // is the safe end: every decision act refuses behind a live reservation,
+      // so the caller is answered with a write-free conflict instead of a
+      // failure that looks like it acted.
+      logger.warn("graph-workflow.definition_approval.settlement_failed", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        executionId: active.id,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
   async function APPROVE_DEFINITION(
     request: Request,
     context: RouteContext,
   ): Promise<Response> {
     // Definition approval is a human review act (the execution-start gate for
-    // approval-required definitions). Agent transport is refused with the
-    // machine-readable human_act_required code rather than silently admitted.
-    const transport = await (
-      deps.auth ?? createAgentAuth()
-    ).validateOptionalToken(request);
-    if (transport.kind === "invalid") {
-      return NextResponse.json(
-        { error: "Invalid Command Center API token" } satisfies ApiError,
-        { status: 401 },
-      );
-    }
-    if (transport.kind === "valid") {
-      return NextResponse.json(
-        {
-          error: "Workflow definition approval is a human-only act",
-          code: "human_act_required",
-          instruction:
-            "Approve the definition from the Command Center UI (Spec Studio or the session workflow page), not from an agent.",
-        } satisfies ApiError & { code: string; instruction: string },
-        { status: 403 },
-      );
-    }
+    // approval-required definitions), so it is refused to every agent
+    // credential, not merely to agent transport.
+    const humanOnly = await guardHumanOnlyAct({
+      request,
+      deps,
+      error: "Workflow definition approval is a human-only act",
+      instruction:
+        "Approve the definition from the Command Center UI (Spec Studio or the session workflow page), not from an agent.",
+    });
+    if (humanOnly !== null) return humanOnly;
 
     const resolved = await resolveSession(context, deps);
     if ("error" in resolved) {
       return resolved.error;
     }
 
-    const approvalIdentitySchema = z
-      .object({
-        executionId: z.string().min(1),
-        definitionId: z.string().min(1),
-        definitionRevision: z.number().int().positive(),
-      })
-      .strict();
     const rawBody: unknown = await request.json().catch(() => null);
-    const approvalIdentity = approvalIdentitySchema.safeParse(rawBody);
+    const approvalIdentity =
+      definitionDecisionIdentitySchema.safeParse(rawBody);
     if (!approvalIdentity.success) {
       return NextResponse.json(
         {
@@ -2529,8 +3686,6 @@ export function createGraphWorkflowExecutionRouteHandlers(
         projectName: resolved.projectName,
         sessionName: resolved.sessionName,
         expectedExecutionId: approvalIdentity.data.executionId,
-        expectedDefinitionId: approvalIdentity.data.definitionId,
-        expectedDefinitionRevision: approvalIdentity.data.definitionRevision,
       });
     } catch (error) {
       return respondToManagerError(error);
@@ -2565,16 +3720,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
       }
       return NextResponse.json(
         {
-          error:
-            result.reason === "already_decided"
-              ? "The pending workflow definition is already approved (already_decided)"
-              : result.reason === "execution_mismatch"
-                ? "The active workflow execution changed before approval (execution_mismatch)"
-                : result.reason === "definition_mismatch"
-                  ? "The active workflow definition changed before approval (definition_mismatch)"
-                  : result.reason === "definition_revision_mismatch"
-                    ? "The active workflow definition revision changed before approval (definition_revision_mismatch)"
-                    : "The active execution is not awaiting definition approval (not_awaiting_approval)",
+          error: definitionApprovalRefusalMessage(result.reason),
           code: result.reason,
         } satisfies ApiError & { code: string },
         { status: 409 },
@@ -2582,167 +3728,159 @@ export function createGraphWorkflowExecutionRouteHandlers(
     }
 
     return NextResponse.json({
-      execution: summarizeExecution(result.execution, false),
+      execution: buildExecutionActReceipt(result.execution, false),
     });
-  }
-
-  async function CLEAR(
-    _request: Request,
-    context: RouteContext,
-  ): Promise<Response> {
-    const resolved = await resolveSession(context, deps);
-    if ("error" in resolved) {
-      return resolved.error;
-    }
-
-    const activeExecution = await deps.getActiveExecution(
-      resolved.projectPath,
-      resolved.sessionName,
-    );
-    // CLEAR is the explicit, audited archive act of the lifecycle contract —
-    // the operator's recovery alias for "release this slot". With auto-release
-    // in place, a completed/aborted run is normally already archived, so a
-    // missing active execution is the success case, not a conflict: reporting
-    // 409 there would be a dead end for exactly the state the operator wants.
-    if (!activeExecution) {
-      return NextResponse.json({ cleared: true });
-    }
-    const eligibility = explicitArchiveEligibility(activeExecution.status);
-    if (eligibility === "refused") {
-      return NextResponse.json(
-        {
-          error: archiveRefusalMessage(activeExecution.status),
-        } satisfies ApiError,
-        { status: 409 },
-      );
-    }
-
-    // Backstop: stop any lane dev servers that survived prior cleanup before
-    // the execution (and its lane references) is archived away.
-    await deps.stopExecutionLaneDevServers?.({
-      execution: activeExecution,
-      projectPath: resolved.projectPath,
-    });
-    await deps.archiveExecution(resolved.projectPath, resolved.sessionName);
-    return NextResponse.json({ cleared: true });
   }
 
   /**
-   * `cctl workflow live release` — the explicit, audited archive act, named
-   * for what an operator wants ("release this session's slot") rather than for
-   * the storage move. Eligibility is the lifecycle contract's, never a local
-   * copy. A run the contract refuses is reported with the verb that unblocks
-   * it instead of being forced.
+   * The reject half of the definition gate (D7 R14.2, decision D17). Addressed
+   * solely by execution identity, so a one-off park — which has no saved
+   * definition to name — and a template park are the same act.
+   *
+   * Order mirrors ABANDON for the same reasons: the decision is committed
+   * through the serialized mutation first, then lane resources are released,
+   * then the record is relocated into History through the audited archive seam.
+   * `aborted` is lease-free the moment it commits, so the session is free even
+   * if the archive below is missed — admission normalizes the row on the next
+   * launch.
    */
-  async function RELEASE(
+  async function REJECT_DEFINITION(
     request: Request,
     context: RouteContext,
   ): Promise<Response> {
+    // Rejecting a definition is the same human review act as approving one, so
+    // it answers every agent credential with the same refusal.
+    const humanOnly = await guardHumanOnlyAct({
+      request,
+      deps,
+      error: "Workflow definition rejection is a human-only act",
+      instruction:
+        "Reject the definition from the Command Center UI (Spec Studio or the session workflow page), not from an agent.",
+    });
+    if (humanOnly !== null) return humanOnly;
+
     const resolved = await resolveSession(context, deps);
     if ("error" in resolved) return resolved.error;
 
-    const rawBody: unknown = await request.json().catch(() => ({}));
-    const parsed = releaseExecutionSchema.safeParse(rawBody);
+    if (deps.rejectDefinition === undefined) {
+      return NextResponse.json(
+        {
+          error: "Workflow definition rejection is not available",
+        } satisfies ApiError,
+        { status: 501 },
+      );
+    }
+
+    const parsed = definitionDecisionIdentitySchema.safeParse(
+      await request.json().catch(() => null),
+    );
     if (!parsed.success) {
       return NextResponse.json(
-        { error: "reason must be a non-empty string" } satisfies ApiError,
+        {
+          error: `Invalid definition rejection request: ${parsed.error.issues[0]?.message ?? "malformed body"}`,
+          code: "invalid_request",
+        } satisfies ApiError & { code: string },
         { status: 400 },
       );
     }
 
-    const active = await deps.getActiveExecution(
-      resolved.projectPath,
-      resolved.sessionName,
-    );
-    // With auto-release in place a completed/aborted run is normally already
-    // archived, so "nothing active" is the success the operator asked for, not
-    // a conflict — reporting 409 here would dead-end exactly the state they
-    // wanted. Idempotent by design: releasing twice is not an error.
-    if (!active) {
-      // A caller that named an execution asked about THAT run. Reporting a
-      // generic "already released" would let a stale id read as confirmation
-      // that its own target was cleaned up, which it is not.
-      return parsed.data.expectedExecutionId === undefined
-        ? NextResponse.json({ released: true, alreadyReleased: true })
-        : NextResponse.json(
-            {
-              error: `This session owns no execution slot, so execution ${parsed.data.expectedExecutionId} could not be released. Re-check with 'cctl workflow status'.`,
-            } satisfies ApiError,
-            { status: 409 },
-          );
-    }
-    if (
-      parsed.data.expectedExecutionId !== undefined &&
-      parsed.data.expectedExecutionId !== active.id
-    ) {
+    // Same reason as the abort: a rejection may not discard a reservation whose
+    // admission may already have landed, so an interrupted decision is finished
+    // before this one is attempted. If that settlement admits and starts the
+    // run, this rejection arrives too late and is refused as such. Fenced to the
+    // rejected execution: a rejection naming a run that has turned over must not
+    // start its successor on the way to refusing.
+    await settleInterruptedDefinitionDecision({
+      projectPath: resolved.projectPath,
+      projectName: resolved.projectName,
+      sessionName: resolved.sessionName,
+      expectedExecutionId: parsed.data.executionId,
+    });
+    const outcome = await deps.rejectDefinition({
+      projectPath: resolved.projectPath,
+      sessionName: resolved.sessionName,
+      executionId: parsed.data.executionId,
+    });
+    if (!outcome.ok) {
       return NextResponse.json(
         {
-          error: `Execution ${parsed.data.expectedExecutionId} does not own this session's slot; ${active.id} (${active.status}) does. Re-check with 'cctl workflow status', then release the run you mean.`,
-        } satisfies ApiError,
-        { status: 409 },
-      );
-    }
-    if (explicitArchiveEligibility(active.status) === "refused") {
-      return NextResponse.json(
-        {
-          error: `A ${active.status} graph workflow execution still owns this session's slot and cannot be released. Abort it first with 'cctl workflow live abort --reason <reason>', then release.`,
-        } satisfies ApiError,
-        { status: 409 },
+          error: rejectDefinitionRefusalMessage(
+            parsed.data.executionId,
+            outcome,
+          ),
+          code: outcome.reason,
+        } satisfies ApiError & { code: string },
+        { status: outcome.reason === "no_active_execution" ? 404 : 409 },
       );
     }
 
+    // Rejection ends the run exactly as an abort does, so whatever a consumer
+    // pinned to it terminalizes the same way — a linked delivery left
+    // nonterminal is the one difference between the two ends that would matter.
+    // Origin-aware by construction: the consumer decides whether this execution
+    // is its business, which is where template-specific behavior belongs.
+    // Best-effort like ABORT's report: a consumer failure must not mask a
+    // rejection that has already committed.
+    if (deps.executionAborted !== undefined) {
+      try {
+        await deps.executionAborted(outcome.execution.id);
+      } catch (error) {
+        logger.warn("graph-workflow.definition_rejection.report_failed", {
+          workflowExecutionId: outcome.execution.id,
+          error: getErrorMessage(error),
+        });
+      }
+    }
     await deps.stopExecutionLaneDevServers?.({
-      execution: active,
+      execution: outcome.execution,
       projectPath: resolved.projectPath,
     });
-    const expectedId = parsed.data.expectedExecutionId;
-    const outcome = await deps.archiveExecution(
+    const archiveOutcome = await deps.archiveExecution(
       resolved.projectPath,
       resolved.sessionName,
-      { reason: parsed.data.reason, actor: parsed.data.actor ?? null },
+      { reason: "definition_rejected", actor: "human" },
       (current) =>
-        (expectedId === undefined || current.id === expectedId) &&
-        explicitArchiveEligibility(current.status) !== "refused",
+        current.id === outcome.execution.id && current.status === "aborted",
     );
-    if (!outcome.archived) {
-      // The slot turned over between the checks above and the archive itself.
-      return NextResponse.json(
-        {
-          error:
-            outcome.reason === "no_active"
-              ? "This session's execution slot was released by someone else before this request completed; nothing was archived."
-              : `The session's execution slot changed to ${outcome.execution.id} (${outcome.execution.status}) before this request completed. Re-check with 'cctl workflow status', then release the run you mean.`,
-        } satisfies ApiError,
-        { status: 409 },
-      );
+    if (!archiveOutcome.archived) {
+      logger.warn("graph-workflow.definition_rejection.archive_skipped", {
+        projectPath: resolved.projectPath,
+        sessionName: resolved.sessionName,
+        executionId: outcome.execution.id,
+        reason: archiveOutcome.reason,
+      });
     }
     return NextResponse.json({
-      released: true,
-      alreadyReleased: false,
-      executionId: outcome.execution.id,
-      status: outcome.execution.status,
+      execution: buildExecutionActReceipt(
+        outcome.execution,
+        archiveOutcome.archived,
+      ),
+      rejected: true,
     });
   }
 
   return {
     START,
+    RUN,
     launch,
     STATUS,
     EXECUTION,
+    EXECUTION_BY_ID,
+    EXECUTION_RESULT,
     HISTORY,
     EVENTS,
     PAUSE,
     RESUME,
     ABORT,
-    RELEASE,
+    ABANDON,
     RESET_CONTEXT,
     RESET_ASSIGNMENT,
     RESOLVE_APPROVAL,
     APPROVAL_SNAPSHOT,
     APPROVE_DEFINITION,
+    REJECT_DEFINITION,
     approveDefinition,
-    hasPendingDefinitionApproval,
-    CLEAR,
+    findPendingDefinitionApproval,
   };
 }
 
@@ -2779,20 +3917,19 @@ const defaultGraphWorkflowExecutionHandlers =
  * Approve the session's pending workflow definition and start the run through
  * the production seam (workflow manager + execution loop singletons) without
  * HTTP transport. Human-only server-side flows — e.g. the spec-side
- * execution-start gate grant, which records the human approval before calling
- * this — use it so definition approval always engages the same lifecycle-port
- * report and loop kickoff as the HTTP handler. Callers own the human-act
- * enforcement.
+ * execution-start act, which records its own human grant from inside this
+ * saga's admission callback rather than ahead of it — use it so definition
+ * approval always engages the same lifecycle-port report and loop kickoff as
+ * the HTTP handler. Callers own the human-act enforcement.
  */
 export async function approveGraphWorkflowDefinitionForSession(input: {
   projectPath: string;
   projectName: string;
   sessionName: string;
   workflowExecutionId: string;
-  definitionId: string;
-  definitionRevision: number;
 }): Promise<
   | RecordDefinitionApprovalResult
+  | ClaimDefinitionApprovalResult
   | { ok: false; reason: "unavailable" }
   | {
       ok: false;
@@ -2801,44 +3938,43 @@ export async function approveGraphWorkflowDefinitionForSession(input: {
     }
 > {
   return defaultGraphWorkflowExecutionHandlers.approveDefinition({
-    ...input,
+    projectPath: input.projectPath,
+    projectName: input.projectName,
+    sessionName: input.sessionName,
     expectedExecutionId: input.workflowExecutionId,
-    expectedDefinitionId: input.definitionId,
-    expectedDefinitionRevision: input.definitionRevision,
   });
 }
 
 /**
- * Whether the session's active graph workflow execution is parked awaiting
- * definition approval, through the production singletons. Server-side callers
- * that record their own admission before approving (the spec-side
- * execution-start grant) probe this so a grant never lands with nothing
- * waiting to unblock.
+ * The session's park and its recorded origin, through the production
+ * singletons. Server-side callers outside this domain (the spec-side
+ * execution-start act) correlate that origin to the run they mean before
+ * deciding it.
  */
-export async function sessionHasPendingWorkflowDefinitionApproval(input: {
+export async function findSessionPendingWorkflowDefinitionApproval(input: {
   projectPath: string;
   sessionName: string;
-  definitionId: string;
-  definitionRevision: number;
-}): Promise<string | null> {
-  return defaultGraphWorkflowExecutionHandlers.hasPendingDefinitionApproval({
-    projectPath: input.projectPath,
-    sessionName: input.sessionName,
-    expectedDefinitionId: input.definitionId,
-    expectedDefinitionRevision: input.definitionRevision,
-  });
+}): Promise<{
+  executionId: string;
+  origin: GraphWorkflowExecutionOrigin;
+} | null> {
+  return defaultGraphWorkflowExecutionHandlers.findPendingDefinitionApproval(
+    input,
+  );
 }
 
 /**
- * Where the named run stands relative to the session's execution slot. Callers
- * that must clean a specific run up — the spec abandon coordinator, the
- * `cctl workflow live` verbs — need "aborted but still holding the slot"
- * separated from "already released", which a bare status cannot express.
+ * Where the named run stands. Callers that must clean a specific run up — the
+ * spec abandon coordinator, the `cctl workflow live` verbs — need the LEASE,
+ * not the row position: a terminal record still sitting in the active row
+ * holds nothing and is normalized by the next launch, while a resumably halted
+ * one is live work no cleanup may step over. A bare status cannot express
+ * either, since abandonment and halt resumability are invisible to it.
  */
 export type GraphWorkflowExecutionPlacement =
   | { kind: "missing" }
   | { kind: "archived"; status: GraphWorkflowStatus }
-  | { kind: "active"; status: GraphWorkflowStatus };
+  | { kind: "active"; status: GraphWorkflowStatus; leaseHeld: boolean };
 
 /**
  * Locate a named execution without HTTP transport. Resolves against the
@@ -2858,7 +3994,15 @@ export async function locateGraphWorkflowExecution(
     input.sessionName,
   );
   if (active !== null && active.id === input.workflowExecutionId) {
-    return { kind: "active", status: active.status };
+    return {
+      kind: "active",
+      status: active.status,
+      leaseHeld: holdsExecutionLease(
+        active.status,
+        active.haltReason,
+        active.abandonment,
+      ),
+    };
   }
   const listArchived =
     deps.listArchivedExecutions ?? listArchivedGraphWorkflowExecutions;
@@ -2897,67 +4041,68 @@ export async function abortGraphWorkflowExecutionForSession(
 }
 
 /**
- * The explicit, audited archive act of the lifecycle contract, applied to a
- * named run: release the session's slot. Eligibility is the contract's, never
- * a local copy — a status it refuses is reported back rather than forced.
+ * End the session's resumably halted run through the audited abandon act, from
+ * a server-side caller with no HTTP transport (the spec abandon coordinator).
+ *
+ * Deliberately NOT the abort seam above. Abort would answer the lease just as
+ * well and is exactly the wrong act here: it drives the record to `aborted`,
+ * discarding the halt reason and leaving no abandonment audit, so a run ended
+ * by spec cleanup would render in History as an operator's abort. The id guard
+ * lives inside the act, which re-applies it in the archiving transaction.
  */
-export async function releaseGraphWorkflowExecutionForSession(
+export async function abandonGraphWorkflowExecutionForSession(
   input: {
     projectPath: string;
     sessionName: string;
     workflowExecutionId: string;
-    reason?: string;
-    actor?: string | null;
+    reason: string;
+    actor: GraphWorkflowAbandonment["actor"];
   },
   deps: GraphWorkflowExecutionRouteDeps = defaultDeps,
-): Promise<
-  | { released: true }
-  | { released: false; reason: "not_active" }
-  | { released: false; reason: "refused"; status: GraphWorkflowStatus }
-> {
-  const active = await deps.getActiveExecution(
-    input.projectPath,
-    input.sessionName,
-  );
-  if (active === null || active.id !== input.workflowExecutionId) {
-    return { released: false, reason: "not_active" };
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (deps.abandonExecution === undefined) {
+    return { ok: false, reason: "workflow abandonment is not available" };
   }
-  if (explicitArchiveEligibility(active.status) === "refused") {
-    return { released: false, reason: "refused", status: active.status };
+  const outcome = await deps.abandonExecution({
+    projectPath: input.projectPath,
+    sessionName: input.sessionName,
+    executionId: input.workflowExecutionId,
+    reason: input.reason,
+    actor: input.actor,
+  });
+  if (!outcome.ok) {
+    return {
+      ok: false,
+      reason: abandonRefusalMessage(input.workflowExecutionId, outcome),
+    };
   }
+  // Post-commit, winner only — the same backstop the HTTP act performs, for the
+  // same reason: the run is in History, and its lane dev servers must not
+  // outlive it.
   await deps.stopExecutionLaneDevServers?.({
-    execution: active,
+    execution: outcome.execution,
     projectPath: input.projectPath,
   });
-  const outcome = await deps.archiveExecution(
-    input.projectPath,
-    input.sessionName,
-    {
-      reason: input.reason ?? "Released by an explicit archive act.",
-      actor: input.actor ?? null,
-    },
-    (current) =>
-      current.id === input.workflowExecutionId &&
-      explicitArchiveEligibility(current.status) !== "refused",
-  );
-  if (outcome.archived) return { released: true };
-  return outcome.reason === "no_active"
-    ? { released: false, reason: "not_active" }
-    : {
-        released: false,
-        reason: "refused",
-        status: outcome.execution.status,
-      };
+  return { ok: true };
 }
 
 export const startGraphWorkflowExecution = withTracing(
   defaultGraphWorkflowExecutionHandlers.START,
+);
+export const runGraphWorkflowExecution = withTracing(
+  defaultGraphWorkflowExecutionHandlers.RUN,
 );
 export const getGraphWorkflowExecutionStatus = withTracing(
   defaultGraphWorkflowExecutionHandlers.STATUS,
 );
 export const getGraphWorkflowExecutionFull = withTracing(
   defaultGraphWorkflowExecutionHandlers.EXECUTION,
+);
+export const getGraphWorkflowExecutionById = withTracing(
+  defaultGraphWorkflowExecutionHandlers.EXECUTION_BY_ID,
+);
+export const getGraphWorkflowExecutionResult = withTracing(
+  defaultGraphWorkflowExecutionHandlers.EXECUTION_RESULT,
 );
 export const getGraphWorkflowExecutionHistory = withTracing(
   defaultGraphWorkflowExecutionHandlers.HISTORY,
@@ -2974,8 +4119,8 @@ export const resumeGraphWorkflowExecution = withTracing(
 export const abortGraphWorkflowExecution = withTracing(
   defaultGraphWorkflowExecutionHandlers.ABORT,
 );
-export const releaseGraphWorkflowExecution = withTracing(
-  defaultGraphWorkflowExecutionHandlers.RELEASE,
+export const abandonGraphWorkflowExecution = withTracing(
+  defaultGraphWorkflowExecutionHandlers.ABANDON,
 );
 export const resetGraphWorkflowExecutionContext = withTracing(
   defaultGraphWorkflowExecutionHandlers.RESET_CONTEXT,
@@ -2992,6 +4137,6 @@ export const getGraphWorkflowApprovalSnapshot = withTracing(
 export const approveGraphWorkflowDefinition = withTracing(
   defaultGraphWorkflowExecutionHandlers.APPROVE_DEFINITION,
 );
-export const clearGraphWorkflowExecution = withTracing(
-  defaultGraphWorkflowExecutionHandlers.CLEAR,
+export const rejectGraphWorkflowDefinition = withTracing(
+  defaultGraphWorkflowExecutionHandlers.REJECT_DEFINITION,
 );

@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { createLogger, type Logger } from "@/lib/logging";
 import { timed, timedSync } from "@/lib/logging/timed";
+import {
+  captureRepositoryLogs,
+  releaseDeferredRepositoryLogs,
+} from "@/lib/state-store/deferred-repo-logging";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import type { AgentCapabilityOverrides } from "@/lib/agent-capabilities/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
@@ -10,16 +14,34 @@ import type { McpOverrides } from "@/lib/mcp/schemas";
 import type { SessionMarkdownDocument } from "@/lib/documents/schemas";
 import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
 import type { SessionState, SpawnedFrom } from "@/lib/sessions/schemas";
-import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
+import type {
+  GraphWorkflowExecutionEvent,
+  GraphWorkflowResultRecordedEvent,
+  GraphWorkflowSSEEvent,
+} from "@/lib/workflow-graph/event-schemas";
 import type {
   GraphWorkflowEventDelivery,
   GraphWorkflowPushInfo,
 } from "@/lib/workflow-graph/execution-events";
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import { createGraphWorkflowBoundaryEvent } from "@/lib/workflow-graph/execution-events";
+import { projectGraphWorkflowBoundaryResult } from "@/lib/workflow-graph/execution-result-projection";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowLeaseIncumbent,
+  GraphWorkflowResultDelivery,
+  SeededWorkflowDocument,
+} from "@/lib/workflow-graph/schemas";
+import {
+  evaluateLeaseAdmission,
+  type LeaseAdmissionDecision,
+} from "@/lib/workflow-graph/lifecycle-classifier";
 
 import type { GraphWorkflowArchivedExecutionRow } from "./graph-workflow-archived-executions-repo";
+import type { GraphWorkflowEventRecord } from "./graph-workflow-events-repo";
 import { jsonOrNull } from "./serialization";
 import type { StateStoreCore } from "./schemas";
+import type { CreateWorkflowNotificationInput } from "@/lib/notifications/repo";
+import type { WorkflowNotification } from "@/lib/notifications/schemas";
 
 /**
  * What an explicit archive attempt did. `guard_rejected` carries the execution
@@ -27,13 +49,86 @@ import type { StateStoreCore } from "./schemas";
  * slot rather than the one it expected.
  */
 export type GraphWorkflowArchiveOutcome =
-  | { archived: true; execution: GraphWorkflowExecution }
+  | {
+      archived: true;
+      execution: GraphWorkflowExecution;
+      delivery?: GraphWorkflowEventDelivery;
+    }
   | { archived: false; reason: "no_active" }
   | {
       archived: false;
       reason: "guard_rejected";
       execution: GraphWorkflowExecution;
     };
+
+/**
+ * The candidate a launch offers the lease reservation: the fully-built
+ * execution and the pure event rows its installation appends. Inert DATA, not a
+ * reducer — the reservation's whole point is that the ADMISSION decision
+ * belongs to the serialized critical section, not to the caller, so there is
+ * nothing left for a callback to decide.
+ */
+export interface GraphWorkflowExecutionReservation {
+  execution: GraphWorkflowExecution;
+  events: GraphWorkflowExecutionEvent[];
+  pushes?: GraphWorkflowPushInfo[];
+  /**
+   * The launch's seeded documents WITH their contents, recorded in this same
+   * transaction as the winner's outstanding-artifact record. The execution row
+   * carries only registrations, and the `.cc` writes deliberately run after the
+   * commit, so this is the only place the bytes a crash-time retry needs can
+   * survive. A refused launch commits nothing, this record included.
+   */
+  seededDocuments?: readonly SeededWorkflowDocument[];
+  /**
+   * A caller-owned admission fact that is NOT in this row, re-checked at the
+   * last possible moment: inside the reserving transaction, on the same
+   * synchronous section that installs the lease. Returning admits; THROWING the
+   * caller's own typed refusal declines, and the transaction commits nothing —
+   * the same write-free decline a reducer gets from `MutationRefusedError`.
+   *
+   * Evaluated here rather than by the caller before it awaits this seam because
+   * an out-of-section check is stale by construction: whatever it read can
+   * change while the reservation is queued, and the other party may then read
+   * this session's lease, find it free, and proceed. Checked here, the two
+   * orders are exhaustive — either the lease is committed first (and the other
+   * party sees it) or the fact is registered first (and this refuses).
+   *
+   * Must be synchronous, pure and I/O-free (logging included): it runs on the
+   * write queue, so anything slow here holds every other writer.
+   */
+  fence?(): void;
+}
+
+/**
+ * What the authoritative reservation did. A refusal carries the classifier's
+ * own refuse decision — incumbent facts plus remedy — so the caller renders the
+ * standard blocker without re-reading the row it was just refused against
+ * (which would be a fresh TOCTOU on the refusal path).
+ *
+ * `normalized` names a lease-free incumbent this reservation relocated into
+ * History inside the same transaction; `null` means the row was already empty.
+ * `normalizedExecution` is that same incumbent's WHOLE record, because the
+ * winner's post-commit cleanup has to reach resources the summary cannot name —
+ * lane worktrees for dev-server teardown, in particular. Relocating a legacy row
+ * to History while its lane servers keep running beside the successor is the
+ * failure this field exists to prevent.
+ */
+export type GraphWorkflowReservationOutcome =
+  | {
+      reserved: true;
+      execution: GraphWorkflowExecution;
+      delivery: GraphWorkflowEventDelivery;
+      normalized: GraphWorkflowLeaseIncumbent | null;
+      normalizedExecution: GraphWorkflowExecution | null;
+    }
+  | {
+      reserved: false;
+      refusal: Extract<LeaseAdmissionDecision, { kind: "refuse" }>;
+    };
+
+/** Audit reason for the release a launch's normalization performs (D7 R3.3). */
+const NORMALIZED_ON_ADMISSION = "normalized_on_admission";
 
 const logger = createLogger("state-store");
 
@@ -99,6 +194,388 @@ export function createSetters(
 ) {
   const { db, writeQueue, repos } = core;
   const { mutateSession } = mutations;
+
+  function recordBoundaryResultDeliveries(
+    projectPath: string,
+    sessionName: string,
+    execution: GraphWorkflowExecution,
+    records: readonly GraphWorkflowEventRecord[],
+  ): {
+    publications: GraphWorkflowSSEEvent[];
+    resultEffects: NonNullable<GraphWorkflowEventDelivery["resultEffects"]>;
+  } {
+    if (execution.ownerConversationId === null) {
+      return { publications: [], resultEffects: [] };
+    }
+    const publications: GraphWorkflowSSEEvent[] = [];
+    const resultEffects: NonNullable<
+      GraphWorkflowEventDelivery["resultEffects"]
+    > = [];
+    for (const record of records) {
+      if (record.event.type !== "graph-workflow-boundary") continue;
+      const projection = projectGraphWorkflowBoundaryResult({
+        execution,
+        event: record.event,
+        cursor: record.id,
+        occurredAt: record.occurredAt,
+      });
+      const inserted = repos.graphWorkflowResultDeliveries.record({
+        executionId: execution.id,
+        boundarySeq: record.id,
+        projectPath,
+        sessionName,
+        originConversationId: execution.ownerConversationId,
+        payload: { ...projection },
+        recordedAt: record.occurredAt,
+        state: "pending",
+        attemptId: null,
+        attemptCount: 0,
+        deliveredAt: null,
+        effectsDeliveredAt: null,
+      });
+      if (!inserted) {
+        throw new Error(
+          `Boundary result ${execution.id}::${record.id} already exists`,
+        );
+      }
+      const event: GraphWorkflowResultRecordedEvent = {
+        type: "graph-workflow-result-recorded",
+        projectName: record.event.projectName,
+        sessionName,
+        executionId: execution.id,
+        originConversationId: execution.ownerConversationId,
+        boundaryCursor: record.id,
+      };
+      publications.push(event);
+      resultEffects.push({ projectPath, event });
+    }
+    return { publications, resultEffects };
+  }
+
+  async function claimGraphWorkflowResultDeliveries(
+    projectPath: string,
+    sessionName: string,
+    originConversationId: string,
+    attemptId: string,
+  ): Promise<GraphWorkflowResultDelivery[]> {
+    let flushRepositoryLogs: () => void = () => {};
+    let claimed: GraphWorkflowResultDelivery[];
+    try {
+      claimed = await writeQueue.withWriteQueueSync(
+        `claimGraphWorkflowResultDeliveries[${originConversationId}]`,
+        () => {
+          const captured = captureRepositoryLogs(() =>
+            db.transaction(() => {
+              const pending =
+                repos.graphWorkflowResultDeliveries.listUndeliveredForConversation(
+                  projectPath,
+                  sessionName,
+                  originConversationId,
+                );
+              const rows: GraphWorkflowResultDelivery[] = [];
+              for (const delivery of pending) {
+                const didClaim =
+                  repos.graphWorkflowResultDeliveries.markDelivering(
+                    projectPath,
+                    sessionName,
+                    delivery.executionId,
+                    delivery.boundarySeq,
+                    attemptId,
+                  );
+                if (!didClaim) continue;
+                rows.push({
+                  ...delivery,
+                  state: "delivering",
+                  attemptId,
+                  attemptCount: delivery.attemptCount + 1,
+                });
+              }
+              return rows;
+            })(),
+          );
+          flushRepositoryLogs = captured.flush;
+          return captured.value;
+        },
+      );
+    } catch (err) {
+      releaseDeferredRepositoryLogs();
+      throw err;
+    }
+    flushRepositoryLogs();
+    return claimed;
+  }
+
+  async function settleGraphWorkflowResultDeliveries(
+    projectPath: string,
+    sessionName: string,
+    originConversationId: string,
+    attemptId: string,
+  ): Promise<number> {
+    const deliveredAt = new Date().toISOString();
+    let flushRepositoryLogs: () => void = () => {};
+    let settled: number;
+    try {
+      settled = await writeQueue.withWriteQueueSync(
+        `settleGraphWorkflowResultDeliveries[${originConversationId}]`,
+        () => {
+          const captured = captureRepositoryLogs(() =>
+            db.transaction(() => {
+              const claimed = repos.graphWorkflowResultDeliveries
+                .listUndeliveredForConversation(
+                  projectPath,
+                  sessionName,
+                  originConversationId,
+                )
+                .filter(
+                  (delivery) =>
+                    delivery.state === "delivering" &&
+                    delivery.attemptId === attemptId,
+                );
+              let count = 0;
+              for (const delivery of claimed) {
+                if (
+                  repos.graphWorkflowResultDeliveries.markDelivered(
+                    projectPath,
+                    sessionName,
+                    delivery.executionId,
+                    delivery.boundarySeq,
+                    attemptId,
+                    deliveredAt,
+                  )
+                ) {
+                  count++;
+                }
+              }
+              return count;
+            })(),
+          );
+          flushRepositoryLogs = captured.flush;
+          return captured.value;
+        },
+      );
+    } catch (err) {
+      releaseDeferredRepositoryLogs();
+      throw err;
+    }
+    flushRepositoryLogs();
+    if (settled > 0) {
+      storeLogger.info("state.workflow_result_claims_settled", {
+        projectPath,
+        sessionName,
+        originConversationId,
+        attemptId,
+        settled,
+      });
+    }
+    return settled;
+  }
+
+  async function releaseGraphWorkflowResultDeliveries(
+    projectPath: string,
+    sessionName: string,
+    originConversationId: string,
+    attemptId: string,
+  ): Promise<number> {
+    const released = await writeQueue.withWriteQueueSync(
+      `releaseGraphWorkflowResultDeliveries[${originConversationId}]`,
+      () =>
+        repos.graphWorkflowResultDeliveries.resetAttemptToPending(
+          projectPath,
+          sessionName,
+          originConversationId,
+          attemptId,
+        ),
+    );
+    if (released > 0) {
+      storeLogger.info("state.workflow_result_claims_released", {
+        projectPath,
+        sessionName,
+        originConversationId,
+        attemptId,
+        released,
+      });
+    }
+    return released;
+  }
+
+  async function settleGraphWorkflowResultDeliveryFallback(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+    boundarySeq: number,
+  ): Promise<boolean> {
+    let flushRepositoryLogs: () => void = () => {};
+    let settled: boolean;
+    try {
+      settled = await writeQueue.withWriteQueueSync(
+        `settleGraphWorkflowResultDeliveryFallback[${executionId}::${boundarySeq}]`,
+        () => {
+          const captured = captureRepositoryLogs(() =>
+            db.transaction(() => {
+              const delivery =
+                repos.graphWorkflowResultDeliveries.findByBoundary(
+                  projectPath,
+                  sessionName,
+                  executionId,
+                  boundarySeq,
+                );
+              if (delivery === null) return false;
+              return (
+                repos.graphWorkflowResultDeliveries.markExecutionFallbackDelivered(
+                  projectPath,
+                  sessionName,
+                  executionId,
+                  delivery.originConversationId,
+                  new Date().toISOString(),
+                ) > 0
+              );
+            })(),
+          );
+          flushRepositoryLogs = captured.flush;
+          return captured.value;
+        },
+      );
+    } catch (err) {
+      releaseDeferredRepositoryLogs();
+      throw err;
+    }
+    flushRepositoryLogs();
+    if (settled) {
+      storeLogger.info("state.workflow_result_fallback_settled", {
+        projectPath,
+        sessionName,
+        executionId,
+        boundarySeq,
+      });
+    }
+    return settled;
+  }
+
+  async function commitGraphWorkflowMissingOriginFallback(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+    boundarySeq: number,
+    notificationInput: CreateWorkflowNotificationInput,
+  ): Promise<{
+    notification: WorkflowNotification;
+    created: boolean;
+    settled: boolean;
+  }> {
+    let flushRepositoryLogs: () => void = () => {};
+    let committed: {
+      notification: WorkflowNotification;
+      created: boolean;
+      settled: boolean;
+    };
+    try {
+      committed = await writeQueue.withWriteQueueSync(
+        `commitGraphWorkflowMissingOriginFallback[${executionId}::${boundarySeq}]`,
+        () => {
+          const captured = captureRepositoryLogs(() =>
+            db.transaction(() => {
+              const delivery =
+                repos.graphWorkflowResultDeliveries.findByBoundary(
+                  projectPath,
+                  sessionName,
+                  executionId,
+                  boundarySeq,
+                );
+              if (delivery === null) {
+                throw new Error(
+                  `Workflow result ${executionId}::${boundarySeq} was not found`,
+                );
+              }
+              const result =
+                repos.notifications.createWorkflowNotificationInTransaction(
+                  notificationInput,
+                );
+              const settledCount =
+                repos.graphWorkflowResultDeliveries.markExecutionFallbackDelivered(
+                  projectPath,
+                  sessionName,
+                  executionId,
+                  delivery.originConversationId,
+                  new Date().toISOString(),
+                );
+              if (settledCount === 0 && delivery.state !== "delivered") {
+                throw new Error(
+                  `Workflow result ${executionId}::${boundarySeq} could not be settled`,
+                );
+              }
+              return { ...result, settled: settledCount > 0 };
+            })(),
+          );
+          flushRepositoryLogs = captured.flush;
+          return captured.value;
+        },
+      );
+    } catch (err) {
+      releaseDeferredRepositoryLogs();
+      throw err;
+    }
+    flushRepositoryLogs();
+    storeLogger.info("state.workflow_result_missing_origin_committed", {
+      projectPath,
+      sessionName,
+      executionId,
+      boundarySeq,
+      notificationId: committed.notification.id,
+      notificationCreated: committed.created,
+      settled: committed.settled,
+    });
+    return committed;
+  }
+
+  async function markGraphWorkflowResultEffectDelivered(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+    boundarySeq: number,
+  ): Promise<boolean> {
+    const marked = await writeQueue.withWriteQueueSync(
+      `markGraphWorkflowResultEffectDelivered[${executionId}::${boundarySeq}]`,
+      () =>
+        repos.graphWorkflowResultDeliveries.markEffectsDelivered(
+          projectPath,
+          sessionName,
+          executionId,
+          boundarySeq,
+          new Date().toISOString(),
+        ),
+    );
+    if (marked) {
+      storeLogger.info("state.workflow_result_effect_delivered", {
+        projectPath,
+        sessionName,
+        executionId,
+        boundarySeq,
+      });
+    }
+    return marked;
+  }
+
+  async function recoverGraphWorkflowResultDeliveries(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<number> {
+    const recovered = await writeQueue.withWriteQueueSync(
+      `recoverGraphWorkflowResultDeliveries[${sessionName}]`,
+      () =>
+        repos.graphWorkflowResultDeliveries.resetDeliveringToPending(
+          projectPath,
+          sessionName,
+        ),
+    );
+    if (recovered > 0) {
+      storeLogger.info("state.workflow_result_claims_recovered", {
+        projectPath,
+        sessionName,
+        recovered,
+      });
+    }
+    return recovered;
+  }
 
   /**
    * Focused session creation: insert one session row plus its initial child
@@ -978,42 +1455,66 @@ export function createSetters(
         }
       | undefined;
     let holdMs = 0;
+    let flushRepositoryLogs: () => void = () => {};
     try {
       committed = await writeQueue.withWriteQueueSync(
         `${label}[${sessionName}]`,
         () => {
           const startedAt = Date.now();
-          const session = repos.sessions.findByKey(projectPath, sessionName);
-          if (!session) {
-            throw new Error(
-              `Session "${sessionName}" not found in project "${projectPath}" during ${label}`,
+          const captured = captureRepositoryLogs(() => {
+            const session = repos.sessions.findByKey(projectPath, sessionName);
+            if (!session) {
+              throw new Error(
+                `Session "${sessionName}" not found in project "${projectPath}" during ${label}`,
+              );
+            }
+            const { execution, events, pushes } = mutate(
+              repos.graphWorkflowExecutions.getActive(projectPath, sessionName),
             );
-          }
-          const { execution, events, pushes } = mutate(
-            repos.graphWorkflowExecutions.getActive(projectPath, sessionName),
-          );
-          const now = new Date().toISOString();
-          const txn = db.transaction(() => {
-            repos.graphWorkflowExecutions.setActive(
-              projectPath,
-              sessionName,
+            const now = new Date().toISOString();
+            let publications: GraphWorkflowSSEEvent[] = [];
+            let resultEffects: NonNullable<
+              GraphWorkflowEventDelivery["resultEffects"]
+            > = [];
+            const txn = db.transaction(() => {
+              repos.graphWorkflowExecutions.setActive(
+                projectPath,
+                sessionName,
+                execution,
+                now,
+              );
+              const eventRecords = repos.graphWorkflowEvents.appendMany(
+                projectPath,
+                sessionName,
+                execution.id,
+                now,
+                events,
+              );
+              ({ publications, resultEffects } = recordBoundaryResultDeliveries(
+                projectPath,
+                sessionName,
+                execution,
+                eventRecords,
+              ));
+            });
+            txn.immediate();
+            return {
               execution,
-              now,
-            );
-            repos.graphWorkflowEvents.appendMany(
-              projectPath,
-              sessionName,
-              execution.id,
-              now,
-              events,
-            );
+              delivery: {
+                events,
+                pushes: pushes ?? [],
+                publications,
+                resultEffects,
+              },
+            };
           });
-          txn.immediate();
+          flushRepositoryLogs = captured.flush;
           holdMs = Date.now() - startedAt;
-          return { execution, delivery: { events, pushes: pushes ?? [] } };
+          return captured.value;
         },
       );
     } catch (err) {
+      releaseDeferredRepositoryLogs();
       logger.warn("state.mutate.error", {
         label,
         projectPath,
@@ -1022,6 +1523,7 @@ export function createSetters(
       });
       throw err;
     }
+    flushRepositoryLogs();
     // Emitted post-critical-section so the queue callback itself does no I/O.
     logger.info("state.mutate.complete", {
       label,
@@ -1030,6 +1532,233 @@ export function createSetters(
       durationMs: holdMs,
     });
     return committed;
+  }
+
+  /**
+   * THE authoritative lease reservation (D7 R3.1-R3.5, R5.2): the first — and,
+   * on a refusal, the only — thing a launch does. It reads the incumbent inside
+   * the write-queue critical section, decides admission with the one shared
+   * `evaluateLeaseAdmission`, and either commits the winner or returns a
+   * write-free refusal.
+   *
+   * Reserving BEFORE any out-of-row materialization is the point. Building the
+   * charter and seeded documents first (as the launch path did) let a losing
+   * concurrent racer write files into `.cc` and then lose, leaving artifacts
+   * behind and possibly overwriting the winner's — a partial record that no row
+   * inventory would catch. Here a loser touches nothing at all.
+   *
+   * Normalization of a lease-free incumbent rides the SAME transaction as the
+   * winner's installation. Split across two commits it would be possible to
+   * observe a session with neither run: the relocation and the replacement are
+   * one state change, so they are one transaction.
+   */
+  async function reserveActiveGraphWorkflowExecution(
+    projectPath: string,
+    sessionName: string,
+    label: string,
+    reservation: GraphWorkflowExecutionReservation,
+  ): Promise<GraphWorkflowReservationOutcome> {
+    let committed: GraphWorkflowReservationOutcome | undefined;
+    let holdMs = 0;
+    let flushRepositoryLogs: () => void = () => {};
+    function runReservationTransaction(): GraphWorkflowReservationOutcome {
+      // The incumbent read, the admission decision, the normalization and the
+      // winner's installation ALL run inside one immediate transaction.
+      // Deciding admission outside it and only writing inside would leave a
+      // window where two connections both read a free lease, both decide admit,
+      // and then install different winners in sequence — two callers each told
+      // they won, each free to materialize. The in-process write queue
+      // serializes only THIS process's callers, while the lease is a claim about
+      // the database, so the compare and the swap have to hold at the database.
+      // `BEGIN IMMEDIATE` takes the write lock up front, so a second connection
+      // blocks here and reads the winner's row rather than the emptiness that
+      // preceded it.
+      const txn = db.transaction((): GraphWorkflowReservationOutcome => {
+        // Deliberately the AUTHORITATIVE read, not the cached one. Holding the
+        // write lock only guarantees that nobody writes while we decide; it
+        // guarantees nothing about what this connection last saw. The advisory
+        // read a launch performs before getting here caches "no incumbent", so a
+        // cached read inside the lock would decide against a snapshot taken
+        // before the winner existed.
+        const incumbent = repos.graphWorkflowExecutions.getActiveAuthoritative(
+          projectPath,
+          sessionName,
+        );
+        const admission = evaluateLeaseAdmission(incumbent);
+        if (admission.kind === "refuse") {
+          return { reserved: false, refusal: admission };
+        }
+        // After the lease question, before any write: a lease holder reports the
+        // more specific refusal, and a fenced launch still normalizes nothing.
+        reservation.fence?.();
+
+        const now = new Date().toISOString();
+        // A normalization decision implies a non-null incumbent, but only the
+        // row itself proves it to the type system.
+        const normalizedRow =
+          admission.kind === "admit-with-normalization" && incumbent !== null
+            ? incumbent
+            : null;
+        const normalizedEvents: GraphWorkflowExecutionEvent[] = [];
+        if (normalizedRow !== null) {
+          normalizedEvents.push({
+            occurredAt: now,
+            preReset: false,
+            event: {
+              type: "graph-workflow-execution-released",
+              projectName: path.basename(projectPath),
+              sessionName,
+              executionId: normalizedRow.id,
+              status: normalizedRow.status,
+              reason: NORMALIZED_ON_ADMISSION,
+              actor: null,
+            },
+          });
+          repos.graphWorkflowEvents.appendMany(
+            projectPath,
+            sessionName,
+            normalizedRow.id,
+            now,
+            normalizedEvents,
+          );
+          repos.graphWorkflowArchivedExecutions.insert({
+            projectPath,
+            sessionName,
+            executionId: normalizedRow.id,
+            archivedAt: now,
+            status: normalizedRow.status,
+            startedAt: normalizedRow.startedAt,
+            completedAt: normalizedRow.completedAt,
+            execution: normalizedRow,
+          });
+        }
+        repos.graphWorkflowExecutions.setActive(
+          projectPath,
+          sessionName,
+          reservation.execution,
+          now,
+        );
+        const eventRecords = repos.graphWorkflowEvents.appendMany(
+          projectPath,
+          sessionName,
+          reservation.execution.id,
+          now,
+          reservation.events,
+        );
+        const { publications, resultEffects } = recordBoundaryResultDeliveries(
+          projectPath,
+          sessionName,
+          reservation.execution,
+          eventRecords,
+        );
+        // Committed with the row it belongs to, and only for the winner: the
+        // artifacts this launch still owes the filesystem, contents included. A
+        // crash after this commit is exactly the case the record exists for, and
+        // a rolled-back loser takes it with it.
+        repos.graphWorkflowPendingArtifacts.record({
+          executionId: reservation.execution.id,
+          projectPath,
+          sessionName,
+          documents: [...(reservation.seededDocuments ?? [])],
+          recordedAt: now,
+        });
+        return {
+          reserved: true,
+          execution: reservation.execution,
+          delivery: {
+            events: [...normalizedEvents, ...reservation.events],
+            pushes: reservation.pushes ?? [],
+            publications,
+            resultEffects,
+          },
+          normalized:
+            admission.kind === "admit-with-normalization"
+              ? admission.incumbent
+              : null,
+          normalizedExecution: normalizedRow,
+        };
+      });
+      return txn.immediate();
+    }
+
+    try {
+      committed = await writeQueue.withWriteQueueSync(
+        `${label}[${sessionName}]`,
+        () => {
+          const startedAt = Date.now();
+          // The capture opens around the WHOLE section, not just the
+          // transaction. Every repository called here logs its own per-operation
+          // timing, and `createLogger` appends to disk synchronously — including
+          // the session lookup below, which runs while this section holds the
+          // write queue but before `BEGIN IMMEDIATE`, so a transaction-scoped
+          // capture would step right over it. The queued lines are emitted after
+          // the callback returns.
+          const captured = captureRepositoryLogs(() => {
+            const session = repos.sessions.findByKey(projectPath, sessionName);
+            if (!session) {
+              throw new Error(
+                `Session "${sessionName}" not found in project "${projectPath}" during ${label}`,
+              );
+            }
+            return runReservationTransaction();
+          });
+          flushRepositoryLogs = captured.flush;
+          holdMs = Date.now() - startedAt;
+          return captured.value;
+        },
+      );
+    } catch (err) {
+      // The failing operation's own timing is the most useful line here, and a
+      // capture whose section threw never handed back a flush.
+      releaseDeferredRepositoryLogs();
+      logger.warn("state.mutate.error", {
+        label,
+        projectPath,
+        sessionName,
+        error: err instanceof Error ? err : String(err),
+      });
+      throw err;
+    }
+
+    flushRepositoryLogs();
+    // Emitted post-critical-section so the queue callback itself does no I/O.
+    if (committed.reserved) {
+      logger.info("graph-workflow.execution.lease_reserved", {
+        label,
+        projectPath,
+        sessionName,
+        executionId: committed.execution.id,
+        normalizedExecutionId: committed.normalized?.executionId ?? null,
+        durationMs: holdMs,
+      });
+    } else {
+      logger.info("graph-workflow.execution.lease_refused", {
+        label,
+        projectPath,
+        sessionName,
+        attemptedExecutionId: reservation.execution.id,
+        activeExecutionId: committed.refusal.incumbent.executionId,
+        activeStatus: committed.refusal.incumbent.status,
+        remedy: committed.refusal.remedy,
+        durationMs: holdMs,
+      });
+    }
+    return committed;
+  }
+
+  /**
+   * Settle one execution's outstanding-artifact record: its `.cc` writes are on
+   * disk, so nothing is left to reconstruct. Serialized like every other write,
+   * and keyed by execution id alone — the record's identity — so a settle can
+   * never delete another run's.
+   */
+  async function clearGraphWorkflowPendingArtifacts(
+    executionId: string,
+  ): Promise<boolean> {
+    return writeQueue.withWriteQueueSync(
+      `graphWorkflowPendingArtifacts.clear[${executionId}]`,
+      () => repos.graphWorkflowPendingArtifacts.clear(executionId),
+    );
   }
 
   /**
@@ -1042,75 +1771,127 @@ export function createSetters(
    * transaction that moves the execution out of the active slot: releasing IS
    * the state change, so a release whose audit row could be lost separately
    * would leave no durable answer to "who released this session's run".
+   *
+   * `stamp` is the record change the release itself decides — the abandonment
+   * audit, in particular. It runs inside the same transaction for the same
+   * reason: a stamp committed in a write of its own is a lifecycle boundary
+   * with no delivery record, and one that has already released the lease, so a
+   * concurrent launch can normalize the row out from under the relocation this
+   * caller is about to attempt and still be told the act succeeded.
+   *
+   * The deciding READ is inside that transaction too, and it is the
+   * authoritative one. The write queue serializes only this process's callers,
+   * while eligibility here is a claim about the database: another connection
+   * can resume the halted run this caller means to abandon, and a decision
+   * taken from what this connection last parsed would archive a snapshot that
+   * no longer exists and delete the successor's row on the way out. Read,
+   * guard, stamp, audit, insert, and clear therefore share one
+   * `BEGIN IMMEDIATE` — the same structure the lease CAS uses, for the same
+   * reason.
    */
   async function archiveActiveGraphWorkflowExecution(
     projectPath: string,
     sessionName: string,
     audit?: { reason: string; actor: string | null },
     guard?: (execution: GraphWorkflowExecution) => boolean,
+    stamp?: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
   ): Promise<GraphWorkflowArchiveOutcome> {
-    return writeQueue.withWriteQueue(
-      `archiveGraphWorkflowExecution[${sessionName}]`,
-      async () =>
-        timed(
-          logger,
-          "state.mutate",
-          {
-            label: "archiveGraphWorkflowExecution",
-            projectPath,
-            sessionName,
-          },
-          async () => {
-            const execution = repos.graphWorkflowExecutions.getActive(
-              projectPath,
-              sessionName,
-            );
-            if (!execution) return { archived: false, reason: "no_active" };
-            // The caller's expected-id and lifecycle-eligibility test is
-            // re-applied HERE, inside the queue's critical section, against the
-            // row as it is right now. Checking before acquiring the queue is a
-            // TOCTOU: a concurrent resume can turn an eligible `paused` run
-            // into `running`, and a concurrent start can install a different
-            // execution, either of which the stale decision would then archive.
-            // The guard is pure by contract, so it is legal in here.
-            if (guard !== undefined && !guard(execution)) {
-              return { archived: false, reason: "guard_rejected", execution };
-            }
-            const now = new Date().toISOString();
-            const row: GraphWorkflowArchivedExecutionRow = {
-              projectPath,
-              sessionName,
-              executionId: execution.id,
-              archivedAt: now,
-              status: execution.status,
-              startedAt: execution.startedAt,
-              completedAt: execution.completedAt,
-              execution,
-            };
-            const txn = db.transaction(() => {
-              if (audit !== undefined) {
-                repos.graphWorkflowEvents.appendMany(
+    const label = "archiveGraphWorkflowExecution";
+    let holdMs = 0;
+    let flushRepositoryLogs: () => void = () => {};
+    let outcome: GraphWorkflowArchiveOutcome;
+    try {
+      outcome = await writeQueue.withWriteQueueSync(
+        `${label}[${sessionName}]`,
+        () => {
+          const startedAt = Date.now();
+          const captured = captureRepositoryLogs(() => {
+            const txn = db.transaction((): GraphWorkflowArchiveOutcome => {
+              // Deliberately the AUTHORITATIVE read: holding the write lock
+              // stops anyone from writing while we decide, and says nothing
+              // about what this connection last saw. Every caller of this seam
+              // has already read the row advisorily to decide it wants to
+              // archive, so a cached read in here would re-answer from that
+              // very snapshot.
+              const execution =
+                repos.graphWorkflowExecutions.getActiveAuthoritative(
                   projectPath,
                   sessionName,
-                  execution.id,
-                  now,
-                  [
-                    {
-                      occurredAt: now,
-                      preReset: false,
-                      event: {
-                        type: "graph-workflow-execution-released",
-                        projectName: path.basename(projectPath),
-                        sessionName,
-                        executionId: execution.id,
-                        status: execution.status,
-                        reason: audit.reason,
-                        actor: audit.actor,
-                      },
-                    },
-                  ],
                 );
+              if (!execution) return { archived: false, reason: "no_active" };
+              // The caller's expected-id and lifecycle-eligibility test is
+              // re-applied HERE, against the row as it is right now. Checking
+              // before the lock is a TOCTOU: a concurrent resume can turn an
+              // eligible `paused` run into `running`, and a concurrent start
+              // can install a different execution, either of which the stale
+              // decision would then archive. The guard is pure by contract, so
+              // it is legal in here.
+              if (guard !== undefined && !guard(execution)) {
+                return { archived: false, reason: "guard_rejected", execution };
               }
+              // Applied to the row the guard just admitted, so the record that
+              // lands in History is the one the act decided on. Pure by
+              // contract, like the guard above.
+              const released =
+                stamp === undefined ? execution : stamp(execution);
+              const now = new Date().toISOString();
+              const row: GraphWorkflowArchivedExecutionRow = {
+                projectPath,
+                sessionName,
+                executionId: released.id,
+                archivedAt: now,
+                status: released.status,
+                startedAt: released.startedAt,
+                completedAt: released.completedAt,
+                execution: released,
+              };
+              const archiveEvents: GraphWorkflowExecutionEvent[] = [];
+              if (audit !== undefined) {
+                archiveEvents.push({
+                  occurredAt: now,
+                  preReset: false,
+                  event: {
+                    type: "graph-workflow-execution-released",
+                    projectName: path.basename(projectPath),
+                    sessionName,
+                    executionId: released.id,
+                    status: released.status,
+                    reason: audit.reason,
+                    actor: audit.actor,
+                  },
+                });
+              }
+              if (
+                execution.abandonment === null &&
+                released.abandonment !== null
+              ) {
+                const event: GraphWorkflowSSEEvent =
+                  createGraphWorkflowBoundaryEvent({
+                    projectPath,
+                    sessionName,
+                    execution: released,
+                    boundaryKind: "abandon",
+                  });
+                archiveEvents.push({
+                  occurredAt: now,
+                  preReset: false,
+                  event,
+                });
+              }
+              const eventRecords = repos.graphWorkflowEvents.appendMany(
+                projectPath,
+                sessionName,
+                released.id,
+                now,
+                archiveEvents,
+              );
+              const { publications, resultEffects } =
+                recordBoundaryResultDeliveries(
+                  projectPath,
+                  sessionName,
+                  released,
+                  eventRecords,
+                );
               repos.graphWorkflowArchivedExecutions.insert(row);
               repos.graphWorkflowExecutions.setActive(
                 projectPath,
@@ -1118,12 +1899,42 @@ export function createSetters(
                 null,
                 now,
               );
+              return {
+                archived: true,
+                execution: released,
+                delivery: {
+                  events: archiveEvents,
+                  pushes: [],
+                  publications,
+                  resultEffects,
+                },
+              };
             });
-            txn.immediate();
-            return { archived: true, execution };
-          },
-        ),
-    );
+            return txn.immediate();
+          });
+          flushRepositoryLogs = captured.flush;
+          holdMs = Date.now() - startedAt;
+          return captured.value;
+        },
+      );
+    } catch (err) {
+      releaseDeferredRepositoryLogs();
+      logger.warn("state.mutate.error", {
+        label,
+        projectPath,
+        sessionName,
+        error: err instanceof Error ? err : String(err),
+      });
+      throw err;
+    }
+    flushRepositoryLogs();
+    logger.info("state.mutate.complete", {
+      label,
+      projectPath,
+      sessionName,
+      durationMs: holdMs,
+    });
+    return outcome;
   }
 
   /**
@@ -1153,12 +1964,17 @@ export function createSetters(
             const boundaryRow = db
               .prepare(
                 `SELECT MAX(id) AS maxId FROM graph_workflow_events
-                  WHERE execution_id = ?`,
+                  WHERE project_path = ? AND session_name = ?
+                    AND execution_id = ?`,
               )
-              .get(executionId) as { maxId: number | null };
+              .get(projectPath, sessionName, executionId) as {
+              maxId: number | null;
+            };
             const boundaryId = boundaryRow.maxId;
             if (boundaryId === null) return 0;
             return repos.graphWorkflowEvents.markPreReset(
+              projectPath,
+              sessionName,
               executionId,
               contextId,
               boundaryId,
@@ -1404,10 +2220,19 @@ export function createSetters(
     setSessionSpawnedFrom,
     addPlcSpawnedSessionIds,
     mutateActiveGraphWorkflowExecution,
+    reserveActiveGraphWorkflowExecution,
+    clearGraphWorkflowPendingArtifacts,
     archiveActiveGraphWorkflowExecution,
     markGraphWorkflowContextEventsPreReset,
     mutateSessionWorkflowLanes,
     mutateSessionWorkflowEnvelopes,
+    claimGraphWorkflowResultDeliveries,
+    settleGraphWorkflowResultDeliveries,
+    releaseGraphWorkflowResultDeliveries,
+    settleGraphWorkflowResultDeliveryFallback,
+    commitGraphWorkflowMissingOriginFallback,
+    markGraphWorkflowResultEffectDelivered,
+    recoverGraphWorkflowResultDeliveries,
     createReferenceDocument,
     deleteReferenceDocument,
     upsertSessionMarkdownDocuments,

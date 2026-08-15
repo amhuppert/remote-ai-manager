@@ -19,9 +19,11 @@ import { managerStateSchema, type ManagerState } from "@/lib/projects/schemas";
 import type { SessionConversationListItem } from "@/lib/state-store";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import type {
+  GraphWorkflowAbandonment,
   GraphWorkflowApprovalDecision,
   GraphWorkflowApprovalScope,
   GraphWorkflowExecution,
+  GraphWorkflowHaltReason,
 } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 
@@ -476,10 +478,27 @@ describe("GET /api/conversations/active pending approval standing", () => {
       executionStatus?: GraphWorkflowStatus;
       decision?: GraphWorkflowApprovalDecision | null;
       approvalScope?: GraphWorkflowApprovalScope;
+      haltReason?: GraphWorkflowHaltReason | null;
+      abandonment?: GraphWorkflowAbandonment | null;
     } = {},
   ): GraphWorkflowExecution {
+    // A halted fixture defaults to a resumable reason: the halt event types its
+    // reason as non-nullable, so production cannot produce a reasonless halt,
+    // and the lease predicate behind this feed reads that reason.
+    const haltReason =
+      opts.haltReason ??
+      (opts.executionStatus === "halted"
+        ? ({
+            type: "circuit_breaker",
+            contextId: GATED_CONTEXT_ID,
+            condition: "retry_exhaustion",
+            summary: null,
+          } as const)
+        : null);
     const execution = createWorkflowExecution({
       status: opts.executionStatus ?? "running",
+      ...(haltReason ? { haltReason } : {}),
+      ...(opts.abandonment ? { abandonment: opts.abandonment } : {}),
     });
     const contextState = execution.contextStates[GATED_CONTEXT_ID];
     if (!contextState) throw new Error("fixture missing gated context");
@@ -602,6 +621,61 @@ describe("GET /api/conversations/active pending approval standing", () => {
       });
     },
   );
+
+  /**
+   * A gate's standing is lease tenure, not a status set.
+   *
+   * These two halts are the cases a status set cannot see: the run can never
+   * continue, so the approval it is parked on can never be acted on. Keeping it
+   * in the Needs-Input feed asks the operator for a decision that would change
+   * nothing, forever, with no act available to clear it.
+   */
+  it("drops standing when a halt is not resumable", async () => {
+    const rows = await listRows(
+      [gatedConversation()],
+      gatedExecution({
+        executionStatus: "halted",
+        haltReason: { type: "recovery_error", message: "unrecoverable" },
+      }),
+    );
+
+    expect(rows).toHaveLength(0);
+  });
+
+  it("drops standing when a resumable halt has been abandoned", async () => {
+    const rows = await listRows(
+      [gatedConversation()],
+      gatedExecution({
+        executionStatus: "halted",
+        haltReason: {
+          type: "circuit_breaker",
+          contextId: GATED_CONTEXT_ID,
+          condition: "retry_exhaustion",
+          summary: null,
+        },
+        abandonment: {
+          abandonedAt: "2026-06-10T11:00:00.000Z",
+          actor: { kind: "human" },
+          reason: "superseded",
+        },
+      }),
+    );
+
+    expect(rows).toHaveLength(0);
+  });
+
+  it("drops standing for a pending execution that has not started", async () => {
+    // `pending` holds the lease but is still awaiting its own definition
+    // approval, so no context of it is running and a park on one is not yet a
+    // fact. Both halves of that are why the gate predicate is
+    // `holdsActionableGate`, not the lease alone.
+    const rows = await listRows(
+      [gatedConversation()],
+      gatedExecution({ executionStatus: "pending" }),
+    );
+
+    expect(rows).toHaveLength(0);
+  });
 
   it("keeps archived conversations excluded even when gated", async () => {
     const rows = await listRows(

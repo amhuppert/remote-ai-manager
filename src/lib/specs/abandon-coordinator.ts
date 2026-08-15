@@ -1,8 +1,4 @@
 import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
-import {
-  explicitArchiveEligibility,
-  isTerminalStatus,
-} from "@/lib/workflow-graph/lifecycle-classifier";
 import { assertNever } from "@/lib/shared/assert-never";
 import { specExecutionCleanupPhaseSchema } from "./schemas";
 import type { SpecExecutionCleanupPhase } from "./schemas";
@@ -36,10 +32,11 @@ export const INITIAL_ABANDON_CLEANUP_PHASE: SpecExecutionCleanupPhase =
  * fresh at every phase so a retry sees the world as it is now rather than as
  * the previous attempt left it.
  *
- * `active` means the execution is still the session's live row (it owns the
- * slot regardless of status); `archived` means it has already been moved out
- * and owns nothing. The two are deliberately distinct from `status`, because
- * an `aborted` run that failed to auto-release is still slot-owning.
+ * `leaseHeld` — not the row's physical position — is what says the run is
+ * still live work. A terminal record sitting in the active row holds nothing
+ * and is normalized into History by the next launch, so the coordinator has
+ * no act to perform on it; the lease is the only thing that can still block a
+ * clean abandonment.
  */
 export type LinkedWorkflowObservation =
   | { kind: "never_launched" }
@@ -53,17 +50,23 @@ export type LinkedWorkflowObservation =
       kind: "active";
       workflowExecutionId: string;
       status: GraphWorkflowStatus;
+      leaseHeld: boolean;
     };
 
 /**
  * The act a phase calls for. `skip` records an audit note instead of doing
- * work (nothing to abort, nothing to release); `blocked` is the refusal that
- * keeps the coordinator from ever reporting success over a live or
- * slot-owning run, and carries the exact verb that unblocks it.
+ * work (nothing left holding the lease); `blocked` is the refusal that keeps
+ * the coordinator from ever reporting success over a run that still holds the
+ * session's lease, and carries the exact verb that unblocks it.
+ *
+ * Two ways to end a run, chosen by how it holds the lease — never a second
+ * release step. Abort drives a live run to `aborted`, which releases the lease
+ * on its own; abandon ends a resumable halt's tenure while preserving the halt
+ * reason under an audit (R4). Both leave nothing half-done.
  */
 export type AbandonCleanupAct =
   | { kind: "abort_workflow"; workflowExecutionId: string }
-  | { kind: "release_slot"; workflowExecutionId: string }
+  | { kind: "abandon_workflow"; workflowExecutionId: string }
   | { kind: "finalize" }
   | { kind: "skip"; note: string }
   | { kind: "blocked"; reason: string; remedy: string };
@@ -92,8 +95,6 @@ export function nextAbandonCleanupStep(input: {
   switch (input.phase) {
     case "abort_workflow":
       return abortWorkflowStep(input.linkedWorkflow);
-    case "release_slot":
-      return releaseSlotStep(input.linkedWorkflow);
     case "finalize":
       return finalizeStep(input.linkedWorkflow);
     default:
@@ -105,43 +106,6 @@ export function nextAbandonCleanupStep(input: {
 }
 
 function abortWorkflowStep(
-  linked: LinkedWorkflowObservation,
-): AbandonCleanupStep {
-  const skip = (note: string): AbandonCleanupStep => ({
-    act: { kind: "skip", note },
-    nextPhase: "release_slot",
-  });
-  switch (linked.kind) {
-    case "never_launched":
-      return skip(
-        "No graph workflow execution was ever launched for this run.",
-      );
-    case "missing":
-      return skip(
-        `Linked graph workflow execution ${linked.workflowExecutionId} no longer exists.`,
-      );
-    case "archived":
-      return skip(
-        `Linked graph workflow execution ${linked.workflowExecutionId} is already archived (${linked.status}).`,
-      );
-    case "active":
-      return isTerminalStatus(linked.status)
-        ? skip(
-            `Linked graph workflow execution ${linked.workflowExecutionId} is already terminal (${linked.status}).`,
-          )
-        : {
-            act: {
-              kind: "abort_workflow",
-              workflowExecutionId: linked.workflowExecutionId,
-            },
-            nextPhase: "release_slot",
-          };
-    default:
-      return assertNever(linked, "unhandled linked-workflow observation");
-  }
-}
-
-function releaseSlotStep(
   linked: LinkedWorkflowObservation,
 ): AbandonCleanupStep {
   const skip = (note: string): AbandonCleanupStep => ({
@@ -162,21 +126,26 @@ function releaseSlotStep(
         `Linked graph workflow execution ${linked.workflowExecutionId} is already archived (${linked.status}).`,
       );
     case "active":
-      // The lifecycle contract decides archivability; a status it refuses is a
-      // live run, and skipping it here is precisely the orphan this coordinator
-      // exists to prevent — so it repeats the phase and names the abort verb.
-      return explicitArchiveEligibility(linked.status) === "refused"
-        ? {
-            act: liveRunRefusal(linked.workflowExecutionId, linked.status),
-            nextPhase: "release_slot",
-          }
-        : {
-            act: {
-              kind: "release_slot",
-              workflowExecutionId: linked.workflowExecutionId,
-            },
-            nextPhase: "finalize",
-          };
+      // Lease-free means History already owns it, whatever row it physically
+      // occupies — ending it would be a no-op the coordinator would then have
+      // to record as a completed phase.
+      if (!linked.leaseHeld) {
+        return skip(
+          `Linked graph workflow execution ${linked.workflowExecutionId} no longer holds this session's execution lease (${linked.status}).`,
+        );
+      }
+      return {
+        act: {
+          // A halt that still holds the lease is resumable by definition, and
+          // R4 makes abandon the one act that ends that tenure: aborting it
+          // would rewrite the run's final engine state to `aborted` and lose
+          // both the halt reason and the abandonment audit History renders.
+          kind:
+            linked.status === "halted" ? "abandon_workflow" : "abort_workflow",
+          workflowExecutionId: linked.workflowExecutionId,
+        },
+        nextPhase: "finalize",
+      };
     default:
       return assertNever(linked, "unhandled linked-workflow observation");
   }
@@ -184,34 +153,34 @@ function releaseSlotStep(
 
 function finalizeStep(linked: LinkedWorkflowObservation): AbandonCleanupStep {
   // Re-checked at the last moment rather than trusted from the previous phase:
-  // between release and finalize the slot can be re-taken (a resume, a replay
-  // of an older attempt), and finalizing then would report a clean abandonment
-  // over a run that still owns the session.
-  if (linked.kind === "active") {
+  // between the abort and the finalize the session's lease can be taken again
+  // (a resume, a replay of an older attempt), and finalizing then would report
+  // a clean abandonment over live work.
+  if (linked.kind === "active" && linked.leaseHeld) {
     return {
-      act:
-        explicitArchiveEligibility(linked.status) === "refused"
-          ? liveRunRefusal(linked.workflowExecutionId, linked.status)
-          : {
-              kind: "blocked",
-              reason: `Graph workflow execution ${linked.workflowExecutionId} still owns this session's execution slot (${linked.status}).`,
-              remedy:
-                "Release the slot with 'cctl workflow live release --reason <reason>', then retry this command.",
-            },
+      act: liveRunRefusal(linked.workflowExecutionId, linked.status),
       nextPhase: "finalize",
     };
   }
   return { act: { kind: "finalize" }, nextPhase: null };
 }
 
+/**
+ * The refusal, naming the act that actually applies to the blocker. A halted
+ * run keeps the lease because its halt is resumable, and abandon is the one
+ * act that ends that tenure while preserving the halt reason; everything else
+ * still holding the lease is ended by abort, which releases automatically.
+ */
 function liveRunRefusal(
   workflowExecutionId: string,
   status: GraphWorkflowStatus,
 ): Extract<AbandonCleanupAct, { kind: "blocked" }> {
   return {
     kind: "blocked",
-    reason: `Graph workflow execution ${workflowExecutionId} is still live (${status}).`,
+    reason: `Graph workflow execution ${workflowExecutionId} still holds this session's execution lease (${status}).`,
     remedy:
-      "Abort it with 'cctl workflow live abort --reason <reason>', then retry this command.",
+      status === "halted"
+        ? "Abandon it with 'cctl workflow abandon --reason <reason>', then retry this command."
+        : "Abort it with 'cctl workflow live abort --reason <reason>', then retry this command.",
   };
 }

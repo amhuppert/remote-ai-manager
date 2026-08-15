@@ -84,7 +84,17 @@ export interface TranscriptCollab {
  * rows handed back to `render` are exactly the rows passed in.
  */
 export interface TranscriptExtensions {
-  rows: readonly TranscriptExtensionRowData[];
+  rows?: readonly TranscriptExtensionRowData[];
+  /** Derive durable rows from the server-projected transcript on every load. */
+  deriveRows?(
+    messages: readonly TranscriptMessage[],
+  ): readonly TranscriptExtensionRowData[];
+  /** Remove raw units replaced by an extension card before message rendering. */
+  transformContent?(
+    content: readonly TranscriptMessage["content"][number][],
+    messageIndex: number,
+    messages: readonly TranscriptMessage[],
+  ): TranscriptMessage["content"];
   render(row: TranscriptExtensionRowData): ReactNode;
 }
 
@@ -239,7 +249,14 @@ function TranscriptCore({
 
   const collabEnvelope = collab?.envelope;
   const hiddenMessageIndex = collab?.hiddenMessageIndex ?? null;
-  const extensionRows = extensions?.rows;
+  const rawMessages = messages ?? EMPTY_MESSAGES;
+  const extensionRows = useMemo(
+    () => [
+      ...(extensions?.rows ?? []),
+      ...(extensions?.deriveRows?.(rawMessages) ?? []),
+    ],
+    [extensions, rawMessages],
+  );
   const rows = useMemo(
     () =>
       buildConversationRows(
@@ -338,12 +355,22 @@ function TranscriptCore({
   const renderMessage = useCallback<
     ConversationVirtuosoListProps["renderMessage"]
   >(
-    ({ row }) =>
-      activeRenderMessageRow({
-        row,
+    ({ row }) => {
+      const content = extensions?.transformContent?.(
+        row.msg.content,
+        row.messageIndex,
+        rawMessages,
+      );
+      if (content !== undefined && content.length === 0) return null;
+      return activeRenderMessageRow({
+        row:
+          content === undefined || content === row.msg.content
+            ? row
+            : { ...row, msg: { ...row.msg, content } },
         isLast: row.messageIndex === lastVisibleMessageIndex,
-      }),
-    [activeRenderMessageRow, lastVisibleMessageIndex],
+      });
+    },
+    [activeRenderMessageRow, extensions, lastVisibleMessageIndex, rawMessages],
   );
 
   const renderCollabRow = collab?.renderRow;

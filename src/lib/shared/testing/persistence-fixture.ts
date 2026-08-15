@@ -34,7 +34,10 @@ import type { SpecsRepo } from "@/lib/state-store/specs-repo";
 import type { Db } from "@/lib/state-store/schemas";
 import { _createTestDb, truncateAllTables } from "@/lib/state-store/state-db";
 import { createStateStore, type StateStore } from "@/lib/state-store/store";
-import { createWriteQueue } from "@/lib/state-store/write-queue";
+import {
+  createWriteQueue,
+  type WriteQueue,
+} from "@/lib/state-store/write-queue";
 
 /**
  * The conversation load/mutate seam consumers inject today (setter-style via
@@ -132,9 +135,24 @@ function buildStore(db: Db): StateStore {
   });
 }
 
-export function createPersistenceFixture(): PersistenceFixture {
-  const db = _createTestDb({ inMemory: true });
-  const writeQueue = createWriteQueue();
+/**
+ * `db` opts out of the default per-fixture `:memory:` database. Two fixtures
+ * built over two `_createTestDbAtPath` connections to ONE file are two
+ * independent SQLite clients with separate write queues — the only way to
+ * exercise a race that the in-process queue would otherwise serialize away, and
+ * therefore the only way to prove a database-level CAS actually holds.
+ *
+ * `writeQueue` opts out of the default queue so a test can OBSERVE the
+ * serialized section from the outside — what a critical section did while it
+ * held the queue — by wrapping the real implementation rather than mocking the
+ * modules that run inside it.
+ */
+export function createPersistenceFixture(options?: {
+  db?: Db;
+  writeQueue?: WriteQueue;
+}): PersistenceFixture {
+  const db = options?.db ?? _createTestDb({ inMemory: true });
+  const writeQueue = options?.writeQueue ?? createWriteQueue();
   const repos = {
     projects: createProjectsRepo(db),
     sessions: createSessionsRepo(db),

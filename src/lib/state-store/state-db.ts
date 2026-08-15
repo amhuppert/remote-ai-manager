@@ -98,8 +98,16 @@ const DB_FILE_NAME = "command-center.db";
  * build sharing the database would lose every execution's workflow state, not
  * just the seeded run's. Nothing is rewritten: the migration exists only to
  * publish the barrier and stamp the version.
+ *
+ * Version 8 is the session-scoped workflow-result notification source. A
+ * workflow notification is returned by the same whole-result-set read as job,
+ * conversation, and spec notifications, so an older build would reject the
+ * widened source vocabulary and lose the entire notification listing. Migration
+ * `0027-workflow-result-notifications` publishes the barrier, rebuilds the
+ * notification CHECK and columns, and stamps the version before writers can
+ * persist the new source.
  */
-export const KNOWN_SCHEMA_VERSION = 7;
+export const KNOWN_SCHEMA_VERSION = 8;
 
 /**
  * Marker id for the one-time legacy graph-workflow purge. Tracked in the
@@ -212,6 +220,9 @@ const NOTIFICATIONS_TABLE_DDL = `
     spec_gate_request_id  TEXT,
     spec_deep_link_id     TEXT,
     spec_approval_id      TEXT,
+    workflow_execution_id TEXT,
+    workflow_origin_conversation_id TEXT,
+    workflow_deep_link    TEXT,
     CHECK (
       (source = 'job'
         AND session_name IS NOT NULL
@@ -239,6 +250,17 @@ const NOTIFICATIONS_TABLE_DDL = `
         AND branch_name IS NULL
         AND job_id IS NULL
         AND job_type IS NULL)
+      OR
+      (source = 'workflow'
+        AND session_name IS NOT NULL
+        AND workflow_execution_id IS NOT NULL
+        AND workflow_origin_conversation_id IS NOT NULL
+        AND workflow_deep_link IS NOT NULL
+        AND conversation_id IS NULL
+        AND branch_name IS NULL
+        AND job_id IS NULL
+        AND job_type IS NULL
+        AND spec_id IS NULL)
     )
   );
 `;
@@ -274,7 +296,7 @@ export const SPEC_EXECUTIONS_SCHEMA_DDL = `
       'definition_review', 'running', 'delivered', 'abandoned', 'abandoning'
     )),
     cleanup_phase          TEXT CHECK (cleanup_phase IN (
-      'abort_workflow', 'release_slot', 'finalize'
+      'abort_workflow', 'finalize'
     )),
     linked_workflow_execution_id TEXT,
     cleanup_last_error     TEXT,
@@ -1251,6 +1273,86 @@ export const VALIDATION_RUNS_SCHEMA_DDL = `
     ON validation_runs (project_path, command_name);
 `;
 
+/**
+ * The result-delivery ledger (D7 decision D8): one row per lifecycle boundary
+ * of an execution whose origin conversation is alive, inserted in the same
+ * transaction as the boundary's event append. `(execution_id, boundary_seq)` is
+ * the primary key, so a replayed recording collides instead of double-
+ * delivering, and the pending scan a turn performs is one index range.
+ *
+ * Deliberately no FK on `origin_conversation_id`: deleting the origin
+ * conversation must leave the pending rows alive long enough to settle once
+ * into a session-scoped notification. The session FK cascades, because a
+ * deleted session takes its executions with it.
+ *
+ * Exported so migration 0024 applies the identical DDL to pre-floor databases
+ * without a second hand-synced copy.
+ */
+export const GRAPH_WORKFLOW_RESULT_DELIVERIES_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS graph_workflow_result_deliveries (
+    execution_id           TEXT NOT NULL,
+    boundary_seq           INTEGER NOT NULL,
+    project_path           TEXT NOT NULL,
+    session_name           TEXT NOT NULL,
+    origin_conversation_id TEXT NOT NULL,
+    payload_json           TEXT NOT NULL,
+    recorded_at            TEXT NOT NULL,
+    delivery_state         TEXT NOT NULL DEFAULT 'pending' CHECK (
+      delivery_state IN ('pending', 'delivering', 'delivered')
+    ),
+    attempt_id             TEXT,
+    attempt_count          INTEGER NOT NULL DEFAULT 0,
+    delivered_at           TEXT,
+    effects_delivered_at   TEXT,
+    PRIMARY KEY (execution_id, boundary_seq),
+    FOREIGN KEY (project_path, session_name)
+      REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
+  );
+
+  -- Turn assembly claims this conversation's undelivered rows in boundary order.
+  CREATE INDEX IF NOT EXISTS idx_graph_workflow_result_deliveries_pending
+    ON graph_workflow_result_deliveries (
+      origin_conversation_id, delivery_state, boundary_seq
+    );
+  -- Every delivery read is scoped by the full project/session/execution triple.
+  CREATE INDEX IF NOT EXISTS idx_graph_workflow_result_deliveries_session
+    ON graph_workflow_result_deliveries (
+      project_path, session_name, execution_id
+    );
+`;
+
+/**
+ * The reserved-but-unmaterialized artifacts of one launch (D7 R3.4): the seeded
+ * documents' CONTENTS, inserted in the same transaction that installs the
+ * winner's execution row and deleted once its `.cc` writes succeed.
+ *
+ * One row per execution, because the record answers a yes/no question about one
+ * launch — "are this run's artifacts known to be on disk?" — and its presence is
+ * the marker a kickoff retries from. The session FK cascades: a deleted session
+ * has no run left to materialize for.
+ *
+ * Exported so migration 0025 applies the identical DDL to pre-floor databases
+ * without a second hand-synced copy.
+ */
+export const GRAPH_WORKFLOW_PENDING_ARTIFACTS_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS graph_workflow_pending_artifacts (
+    execution_id   TEXT PRIMARY KEY,
+    project_path   TEXT NOT NULL,
+    session_name   TEXT NOT NULL,
+    documents_json TEXT NOT NULL,
+    recorded_at    TEXT NOT NULL,
+    FOREIGN KEY (project_path, session_name)
+      REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
+  );
+
+  -- Every pending-artifact read is scoped by the full project/session/execution
+  -- triple, so a same-id record from another session cannot reach a retry.
+  CREATE INDEX IF NOT EXISTS idx_graph_workflow_pending_artifacts_session
+    ON graph_workflow_pending_artifacts (
+      project_path, session_name, execution_id
+    );
+`;
+
 const SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
     version     INTEGER PRIMARY KEY,
@@ -1549,10 +1651,12 @@ const SCHEMA_DDL = `
       REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
   );
 
-  CREATE INDEX IF NOT EXISTS idx_graph_workflow_events_execution
-    ON graph_workflow_events(execution_id, id);
-  CREATE INDEX IF NOT EXISTS idx_graph_workflow_events_context
-    ON graph_workflow_events(execution_id, context_id, event_type);
+  CREATE INDEX IF NOT EXISTS idx_graph_workflow_events_scope_execution
+    ON graph_workflow_events(project_path, session_name, execution_id, id);
+  CREATE INDEX IF NOT EXISTS idx_graph_workflow_events_scope_context
+    ON graph_workflow_events(
+      project_path, session_name, execution_id, context_id, event_type, id
+    );
 
   CREATE TABLE IF NOT EXISTS graph_workflow_archived_executions (
     project_path    TEXT NOT NULL,
@@ -1583,6 +1687,13 @@ const SCHEMA_DDL = `
     definition_json           TEXT NOT NULL,
     runtime_json              TEXT NOT NULL,
     updated_at                TEXT NOT NULL,
+    -- Derived projection of holdsExecutionLease(status, haltReason,
+    -- abandonment) (D7 decision D15), written by the repository on every
+    -- setActive so SQL-side ambient projections never re-derive the classifier.
+    -- Last in the column list so an ALTER-upgraded database and a fresh floor
+    -- agree on shape. Defaults held: an unprojected row refuses a launch rather
+    -- than admitting a second Current run.
+    lease_held                INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (project_path, session_name),
     FOREIGN KEY (project_path, session_name)
       REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
@@ -1776,6 +1887,10 @@ const SCHEMA_DDL = `
   ${SPEC_DELIVERY_PLAN_SCHEMA_DDL}
 
   ${SPEC_DELIVERY_DISCOVERY_SCHEMA_DDL}
+
+  ${GRAPH_WORKFLOW_RESULT_DELIVERIES_SCHEMA_DDL}
+
+  ${GRAPH_WORKFLOW_PENDING_ARTIFACTS_SCHEMA_DDL}
 `;
 
 function applyConnectionPragmas(db: Db): void {
@@ -1908,7 +2023,7 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
   {
     table: "spec_executions",
     column: "cleanup_phase",
-    type: "TEXT CHECK (cleanup_phase IN ('abort_workflow', 'release_slot', 'finalize'))",
+    type: "TEXT CHECK (cleanup_phase IN ('abort_workflow', 'finalize'))",
   },
   {
     table: "spec_executions",
@@ -1946,6 +2061,21 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     table: "project_conversations",
     column: "name_origin",
     type: "TEXT NOT NULL DEFAULT 'default' CHECK (name_origin IN ('default', 'auto', 'manual'))",
+  },
+  // The repository-derived lease projection (D7 decision D15). Present at open
+  // time rather than only after migration 0024, because the repository writes
+  // it on every setActive. The `1` default is the fail-closed reading of a row
+  // no projection has visited yet — it refuses a launch instead of admitting a
+  // second Current run — and 0024 replaces it with the classifier's verdict.
+  {
+    table: "graph_workflow_executions",
+    column: "lease_held",
+    type: "INTEGER NOT NULL DEFAULT 1",
+  },
+  {
+    table: "graph_workflow_result_deliveries",
+    column: "effects_delivered_at",
+    type: "TEXT",
   },
 ];
 
@@ -2013,7 +2143,7 @@ function notificationColumnExpression(
   return fallback;
 }
 
-function migrateNotificationsTable(db: Db): void {
+function migrateNotificationsTable(db: Db, requireWorkflow = false): void {
   const columns = getTableColumns(db, "notifications");
   if (columns.length === 0) return;
 
@@ -2035,6 +2165,11 @@ function migrateNotificationsTable(db: Db): void {
   const missingRequiredColumns = requiredColumns.some(
     (column) => !columnNames.has(column),
   );
+  const missingWorkflowColumns = [
+    "workflow_execution_id",
+    "workflow_origin_conversation_id",
+    "workflow_deep_link",
+  ].some((column) => !columnNames.has(column));
   const jobContextIsStrict = columns.some(
     (column) =>
       ["session_name", "branch_name", "job_id", "job_type"].includes(
@@ -2042,7 +2177,13 @@ function migrateNotificationsTable(db: Db): void {
       ) && column.notnull === 1,
   );
 
-  if (!missingRequiredColumns && !jobContextIsStrict) return;
+  if (
+    !missingRequiredColumns &&
+    !jobContextIsStrict &&
+    (!requireWorkflow || !missingWorkflowColumns)
+  ) {
+    return;
+  }
 
   db.exec(`
     DROP INDEX IF EXISTS idx_notifications_read;
@@ -2088,7 +2229,10 @@ function migrateNotificationsTable(db: Db): void {
       spec_gate,
       spec_gate_request_id,
       spec_deep_link_id,
-      spec_approval_id
+      spec_approval_id,
+      workflow_execution_id,
+      workflow_origin_conversation_id,
+      workflow_deep_link
     )
     SELECT
       id,
@@ -2163,12 +2307,31 @@ function migrateNotificationsTable(db: Db): void {
         legacyColumnNames,
         "spec_approval_id",
         "NULL",
+      )},
+      ${notificationColumnExpression(
+        legacyColumnNames,
+        "workflow_execution_id",
+        "NULL",
+      )},
+      ${notificationColumnExpression(
+        legacyColumnNames,
+        "workflow_origin_conversation_id",
+        "NULL",
+      )},
+      ${notificationColumnExpression(
+        legacyColumnNames,
+        "workflow_deep_link",
+        "NULL",
       )}
     FROM notifications_legacy_migration;
 
     DROP TABLE notifications_legacy_migration;
   `);
   db.exec(NOTIFICATIONS_INDEX_DDL);
+}
+
+export function migrateNotificationsTableForWorkflowResults(db: Db): void {
+  migrateNotificationsTable(db, true);
 }
 
 /**

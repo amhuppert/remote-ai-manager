@@ -61,6 +61,12 @@ function makeValidDefinitionRecord() {
 function makeValidExecution() {
   return {
     id: "exec-1",
+    origin: {
+      kind: "template",
+      definitionId: "wf-1",
+      definitionRevision: 1,
+      tier: "project",
+    },
     seedDefinitionId: "wf-1",
     seedDefinitionRevision: 1,
     status: "running",

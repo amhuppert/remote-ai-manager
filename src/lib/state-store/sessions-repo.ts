@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
+import { emitOrDeferRepositoryLog } from "@/lib/state-store/deferred-repo-logging";
 import { mcpOverridesSchema } from "@/lib/mcp/schemas";
 import { agentCapabilityOverridesSchema } from "@/lib/agent-capabilities/schemas";
 import {
@@ -405,11 +406,17 @@ function logAndThrowValidationFailure(
   sessionName: string,
   issues: unknown,
 ): never {
-  logger.error("state-store.sessions.schema_validation_failure", {
-    projectPath,
-    sessionName,
-    issues,
-  });
+  // Deferred with this repository's timing lines: the lease reservation looks a
+  // session up inside the serialized write section, so a malformed row would
+  // otherwise put a synchronous filesystem write under the write queue. A
+  // throwing section releases it as an orphan rather than dropping it.
+  emitOrDeferRepositoryLog(() =>
+    logger.error("state-store.sessions.schema_validation_failure", {
+      projectPath,
+      sessionName,
+      issues,
+    }),
+  );
   throw new PersistenceError({
     kind: "validation",
     entity: "session",
@@ -435,12 +442,14 @@ function logColumnQuarantine(
   column: string,
   issues: unknown,
 ): void {
-  logger.error("state-store.sessions.column_quarantined", {
-    projectPath,
-    sessionName,
-    column,
-    issues,
-  });
+  emitOrDeferRepositoryLog(() =>
+    logger.error("state-store.sessions.column_quarantined", {
+      projectPath,
+      sessionName,
+      column,
+      issues,
+    }),
+  );
 }
 
 const opaqueRecordSchema = z.record(z.string(), z.unknown());
@@ -648,10 +657,12 @@ function sessionListRowToProjection(
         workflowEnvelopes = candidate as Record<string, unknown>;
       }
     } catch {
-      logger.warn("state-store.sessions.workflow_envelopes_parse_failed", {
-        projectPath,
-        sessionName: row.session_name,
-      });
+      emitOrDeferRepositoryLog(() =>
+        logger.warn("state-store.sessions.workflow_envelopes_parse_failed", {
+          projectPath,
+          sessionName: row.session_name,
+        }),
+      );
     }
   }
 
@@ -661,10 +672,12 @@ function sessionListRowToProjection(
       const parsed = spawnedFromSchema.safeParse(JSON.parse(row.spawned_from));
       if (parsed.success) spawnedFrom = parsed.data;
     } catch {
-      logger.warn("state-store.sessions.spawned_from_parse_failed", {
-        projectPath,
-        sessionName: row.session_name,
-      });
+      emitOrDeferRepositoryLog(() =>
+        logger.warn("state-store.sessions.spawned_from_parse_failed", {
+          projectPath,
+          sessionName: row.session_name,
+        }),
+      );
     }
   }
 
@@ -701,7 +714,13 @@ function timed<T>(
     const payload: Record<string, unknown> = { durationMs };
     if (projectPath !== undefined) payload.projectPath = projectPath;
     if (sessionName !== undefined) payload.sessionName = sessionName;
-    logger.info(`state-store.sessions.${op}.timing`, payload);
+    // Deferred when a serialized section is open. The session lookup a write
+    // runs before it touches SQLite is inside that section, and `createLogger`
+    // appends to disk synchronously — so emitting here holds the write queue
+    // (the whole system's launch bottleneck) across filesystem I/O.
+    emitOrDeferRepositoryLog(() =>
+      logger.info(`state-store.sessions.${op}.timing`, payload),
+    );
   }
 }
 
@@ -741,15 +760,19 @@ export function createSessionsRepo(db: Db): SessionsRepo {
      WHERE project_path = ?
      ORDER BY created_at ASC, session_name ASC`,
   );
+  // The ambient "this session has live workflow work" signal is lease tenure,
+  // read from the derived `lease_held` column the executions repository writes
+  // on every `setActive`. The status list this replaces named statuses this
+  // domain does not have (`failed`, `cancelled`), so `aborted` counted as
+  // active — and no status list can see halt resumability or abandonment, the
+  // two facts that decide whether a halted run still holds anything.
   const findListItemsByProjectStmt = db.prepare(
     `SELECT
        session_name, worktree_path, branch_name, target_branch,
        parent_session_name, created_at, last_activity_at,
        archived, finished, source, creation_mode, tdd_enabled,
        COALESCE((
-         SELECT CASE WHEN e.status
-                  NOT IN ('completed', 'failed', 'cancelled')
-                THEN 1 ELSE 0 END
+         SELECT e.lease_held
            FROM graph_workflow_executions e
           WHERE e.project_path = sessions.project_path
             AND e.session_name = sessions.session_name
@@ -766,9 +789,7 @@ export function createSessionsRepo(db: Db): SessionsRepo {
        parent_session_name, created_at, last_activity_at,
        archived, finished, source, creation_mode, tdd_enabled,
        COALESCE((
-         SELECT CASE WHEN e.status
-                  NOT IN ('completed', 'failed', 'cancelled')
-                THEN 1 ELSE 0 END
+         SELECT e.lease_held
            FROM graph_workflow_executions e
           WHERE e.project_path = sessions.project_path
             AND e.session_name = sessions.session_name

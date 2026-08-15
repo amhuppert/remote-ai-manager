@@ -101,10 +101,16 @@ export const specNotificationTypeSchema = z.enum([
 ]);
 export type SpecNotificationType = z.infer<typeof specNotificationTypeSchema>;
 
+const workflowNotificationTypeSchema = z.literal("workflow-result-ready");
+export type WorkflowNotificationType = z.infer<
+  typeof workflowNotificationTypeSchema
+>;
+
 export type NotificationType =
   | JobNotificationType
   | ProjectConversationNotificationType
-  | SpecNotificationType;
+  | SpecNotificationType
+  | WorkflowNotificationType;
 
 const notificationBaseSchema = z.object({
   id: z.string(),
@@ -153,11 +159,21 @@ export const specNotificationSchema = notificationBaseSchema.extend({
   approvalId: z.string().min(1).optional(),
 });
 
+export const workflowNotificationSchema = notificationBaseSchema.extend({
+  source: z.literal("workflow"),
+  type: workflowNotificationTypeSchema,
+  sessionName: z.string().min(1),
+  executionId: z.string().min(1),
+  originConversationId: z.string().min(1),
+  deepLink: z.string().min(1),
+});
+
 export const notificationSchema = registerTrustedSchema(
   z.discriminatedUnion("source", [
     jobNotificationSchema,
     projectConversationNotificationSchema,
     specNotificationSchema,
+    workflowNotificationSchema,
   ]),
   "notificationSchema",
 );
@@ -167,6 +183,7 @@ export type ProjectConversationNotification = z.infer<
   typeof projectConversationNotificationSchema
 >;
 export type SpecNotification = z.infer<typeof specNotificationSchema>;
+export type WorkflowNotification = z.infer<typeof workflowNotificationSchema>;
 
 // ============================================================
 // SSE Events

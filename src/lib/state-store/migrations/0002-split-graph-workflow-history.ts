@@ -141,7 +141,8 @@ export const splitGraphWorkflowHistory: StateMigration = {
        )`,
     );
     const deleteEventsForExecution = db.prepare(
-      `DELETE FROM graph_workflow_events WHERE execution_id = ?`,
+      `DELETE FROM graph_workflow_events
+        WHERE project_path = ? AND session_name = ? AND execution_id = ?`,
     );
     const insertArchived = db.prepare(
       `INSERT INTO graph_workflow_archived_executions (
@@ -170,7 +171,7 @@ export const splitGraphWorkflowHistory: StateMigration = {
       executionId: string,
       events: EventInsert[],
     ): void => {
-      deleteEventsForExecution.run(executionId);
+      deleteEventsForExecution.run(projectPath, sessionName, executionId);
       for (const event of events) {
         insertEvent.run({
           project_path: projectPath,

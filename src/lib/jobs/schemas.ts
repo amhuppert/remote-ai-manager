@@ -103,6 +103,18 @@ export const backgroundJobSchema = registerTrustedSchema(
     // in-memory job (like parkedRef) so a resolve-conflicts retry after a
     // conflicts terminal can reuse it; not part of the persisted JobRecord.
     resolutionContext: z.string().optional(),
+    /**
+     * Whether this merge-family job's publish also finalizes the session
+     * (`MergeContext.finalizeSessionOnPublish`), stamped at dispatch from the
+     * same resolved value the machine receives.
+     *
+     * Carried as an explicit fact because the workflow launch guard reads it:
+     * only a session-finalizing merge makes a session exclusively busy, and
+     * jobType cannot tell one from a graph lane merge — the engine runs those
+     * itself, so inferring from jobType would have the engine block its own
+     * work. Absent on commit and rebase jobs, which publish nothing.
+     */
+    finalizeSessionOnPublish: z.boolean().optional(),
   }),
   "backgroundJobSchema",
 );

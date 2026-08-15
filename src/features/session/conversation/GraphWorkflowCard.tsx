@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
+import { holdsExecutionLease } from "@/lib/workflow-graph/lifecycle-classifier";
 import type {
   TemplateLibraryItem,
   TemplateTier,
@@ -576,7 +577,21 @@ export default function GraphWorkflowCard({
   execution,
   isFinished,
 }: GraphWorkflowCardProps): React.JSX.Element {
-  if (execution) {
+  // Ambient indicators reflect Current only (R12.4). The active-execution query
+  // answers with whatever row physically occupies the session's active position,
+  // and a lease-free run is allowed to sit there until the next launch
+  // normalizes it away (R3.3) — so presence of a record is not tenure. A
+  // completed, aborted, abandoned, or non-resumably halted run is History: it
+  // belongs on the workflow page, not on the session card, and the session is
+  // free to launch again.
+  if (
+    execution &&
+    holdsExecutionLease(
+      execution.status,
+      execution.haltReason,
+      execution.abandonment,
+    )
+  ) {
     return (
       <ExecutionStatusCard
         projectName={projectName}

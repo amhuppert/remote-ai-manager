@@ -68,7 +68,9 @@ export default function HaltDetailsDialog({
   onEditSchema,
 }: HaltDetailsDialogProps): React.JSX.Element {
   const hasConflictRecovery =
-    primary.type === "join_failure" && primary.conflictFiles.length > 0;
+    canResume &&
+    primary.type === "join_failure" &&
+    primary.conflictFiles.length > 0;
   // The recovery form below is the canonical conflict-file presentation here;
   // omit the formatter's plain list so each file appears once.
   // This is the full read view, so it is the surface that asks the formatter to

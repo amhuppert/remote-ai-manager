@@ -10,13 +10,16 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  createWorkflowDefinition,
   createWorkflowDefinitionRecord,
   createWorkflowExecution,
+  makeLaunchDocument,
 } from "@/lib/workflow-graph/test-fixtures";
 import {
   graphWorkflowEventsKeys,
   graphWorkflowExecutionKeys,
   graphWorkflowHistoryKeys,
+  graphWorkflowResultKeys,
   workflowDefinitionKeys,
 } from "@/lib/workflows/query-keys";
 import { validationKeys } from "@/lib/validation/query-keys";
@@ -245,6 +248,224 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
         ),
       ).toBeNull();
     });
+  });
+
+  it("renders History from its launch snapshot and every walked event page without reading the source template", async () => {
+    const historical = createWorkflowExecution({
+      id: "execution-history",
+      status: "completed",
+      completedAt: "2026-08-14T15:30:00.000Z",
+      definitionApproval: {
+        requestedAt: "2026-08-14T14:30:00.000Z",
+        approvedAt: "2026-08-14T14:35:00.000Z",
+      },
+      launchDocument: makeLaunchDocument(createWorkflowDefinition(), {
+        name: "Frozen launch document",
+        layout: {
+          workflowId: "workflow-1",
+          contextPositions: {
+            "context-plan": { x: 611, y: 222 },
+            "context-implement": { x: 971, y: 222 },
+            "context-verify": { x: 1331, y: 222 },
+          },
+          viewport: { x: 0, y: 0, zoom: 1 },
+        },
+      }),
+    });
+    const events = [
+      {
+        seq: 4,
+        occurredAt: "2026-08-14T15:30:00.000Z",
+        preReset: false,
+        event: {
+          type: "graph-workflow-status" as const,
+          projectName: PROJECT_NAME,
+          sessionName: SESSION_NAME,
+          executionId: historical.id,
+          workflowStatus: "completed" as const,
+          activeContextIds: [],
+          activeBatchIds: [],
+          activeJoinIds: [],
+          haltReason: null,
+          pendingHaltReason: null,
+          secondaryHaltReasons: [],
+        },
+      },
+      {
+        seq: 3,
+        occurredAt: "2026-08-14T15:20:00.000Z",
+        preReset: false,
+        event: {
+          type: "graph-workflow-approval-resolved" as const,
+          projectName: PROJECT_NAME,
+          sessionName: SESSION_NAME,
+          executionId: historical.id,
+          contextId: "context-plan",
+          conversationId: "conv-plan",
+          decision: "rejected" as const,
+          message: "Add migration evidence.",
+          decidedAt: "2026-08-14T15:20:00.000Z",
+        },
+      },
+      {
+        seq: 2,
+        occurredAt: "2026-08-14T15:10:00.000Z",
+        preReset: false,
+        event: {
+          type: "graph-workflow-approval-pending" as const,
+          projectName: PROJECT_NAME,
+          sessionName: SESSION_NAME,
+          executionId: historical.id,
+          contextId: "context-plan",
+          contextTitle: "Plan",
+          conversationId: "conv-plan",
+          requestedAt: "2026-08-14T15:10:00.000Z",
+        },
+      },
+      {
+        seq: 1,
+        occurredAt: "2026-08-14T15:00:00.000Z",
+        preReset: false,
+        event: {
+          type: "graph-workflow-status" as const,
+          projectName: PROJECT_NAME,
+          sessionName: SESSION_NAME,
+          executionId: historical.id,
+          workflowStatus: "paused" as const,
+          activeContextIds: [],
+          activeBatchIds: [],
+          activeJoinIds: [],
+          haltReason: null,
+          pendingHaltReason: null,
+          secondaryHaltReasons: [],
+        },
+      },
+    ];
+    const fetchSpy = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url.includes("/workflows/workflow-1")) {
+        return jsonResponse({
+          item: createWorkflowDefinitionRecord({
+            name: "Mutated source template",
+            layout: {
+              workflowId: "workflow-1",
+              contextPositions: {
+                "context-plan": { x: 12, y: 34 },
+              },
+              viewport: { x: 0, y: 0, zoom: 1 },
+            },
+          }),
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
+        mutations: { retry: false },
+      },
+    });
+    queryClient.setQueryData(
+      graphWorkflowExecutionKeys.detail(PROJECT_NAME, SESSION_NAME),
+      null,
+    );
+    queryClient.setQueryData(
+      graphWorkflowExecutionKeys.byId(
+        PROJECT_NAME,
+        SESSION_NAME,
+        historical.id,
+      ),
+      historical,
+    );
+    queryClient.setQueryData(
+      graphWorkflowEventsKeys.list(PROJECT_NAME, SESSION_NAME, historical.id),
+      [],
+    );
+    queryClient.setQueryData(
+      graphWorkflowEventsKeys.pages(PROJECT_NAME, SESSION_NAME, historical.id),
+      {
+        pages: [
+          { events: events.slice(0, 2), nextCursor: 2 },
+          { events: events.slice(2), nextCursor: null },
+        ],
+        pageParams: [null, 2],
+      },
+    );
+    queryClient.setQueryData(
+      graphWorkflowResultKeys.latest(PROJECT_NAME, SESSION_NAME, historical.id),
+      {
+        cursor: 2,
+        occurredAt: "2026-08-14T15:30:00.000Z",
+        executionId: historical.id,
+        boundaryKind: "completion",
+        status: "completed",
+        contextId: null,
+        pendingActions: [],
+        outputs: {
+          kind: "declared_outputs",
+          byContext: { "context-plan": { releaseNotes: "Shipped" } },
+        },
+        name: "Frozen launch document",
+        origin: historical.origin,
+        originConversationId: historical.ownerConversationId,
+        startedAt: historical.startedAt,
+        completedAt: historical.completedAt,
+        haltReason: null,
+        abandonment: null,
+        documents: [],
+        deepLink:
+          "/projects/project-1/session-1/workflow?execution=execution-history",
+      },
+    );
+
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <ConnectedGraphWorkflowPanel
+          projectName={PROJECT_NAME}
+          sessionName={SESSION_NAME}
+          selectedExecutionId={historical.id}
+          isMobile={false}
+          mobilePanel="graph"
+          autoSwitchPanel={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Workflow paused")).toBeVisible();
+    expect(screen.getByText("Workflow completed")).toBeVisible();
+    expect(screen.getByText("completion result")).toBeVisible();
+    expect(screen.getByText("context-plan.releaseNotes")).toBeVisible();
+    expect(screen.getByText("Shipped")).toBeVisible();
+    const approvalHistory = screen.getByRole("region", {
+      name: "Approval history",
+    });
+    expect(approvalHistory).toHaveTextContent("Definition approved");
+    expect(approvalHistory).toHaveTextContent("Plan rejected");
+    expect(approvalHistory).toHaveTextContent("Add migration evidence.");
+    await waitFor(() => {
+      const node = view.container.querySelector<HTMLElement>(
+        '.react-flow__node[data-id="context-plan"]',
+      );
+      expect(node?.style.transform).toContain("611px");
+      expect(node?.style.transform).toContain("222px");
+    });
+
+    queryClient.setQueryData(
+      workflowDefinitionKeys.detail(PROJECT_NAME, "workflow-1"),
+      { item: createWorkflowDefinitionRecord({ name: "Edited after launch" }) },
+    );
+    queryClient.removeQueries({
+      queryKey: workflowDefinitionKeys.detail(PROJECT_NAME, "workflow-1"),
+    });
+
+    expect(screen.getByText("Workflow paused")).toBeVisible();
+    expect(
+      fetchSpy.mock.calls.some(([input]) =>
+        String(input).includes("/workflows/workflow-1"),
+      ),
+    ).toBe(false);
   });
 
   it("surfaces a structured live configuration refusal where Save was clicked", async () => {

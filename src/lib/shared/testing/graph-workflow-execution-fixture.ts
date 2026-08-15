@@ -165,6 +165,293 @@ function maximalResolvedContext(): Record<string, unknown> {
 }
 
 /**
+ * A maximal result-delivery record (D7 decision D8) with every persisted leaf
+ * non-default — a claimed, already-retried boundary rather than a freshly
+ * recorded one, so the round-trip harness can tell a dropped attempt field from
+ * an unset one. The payload is a nested projection so a shallow key check
+ * cannot pass a truncated blob.
+ *
+ * MUST NOT be imported by production code; it lives under
+ * `src/lib/shared/testing/`.
+ */
+/**
+ * The maximal pending-artifact record: every persisted key path populated, with
+ * a seeded document whose four fields are each distinct, so the round-trip
+ * harness catches a dropped column or a collapsed document field.
+ */
+export function buildMaximalPendingArtifacts(): Record<string, unknown> {
+  return {
+    executionId: "exec-1",
+    projectPath: "/p1",
+    sessionName: "s1",
+    documents: [
+      {
+        relativePath: ".cc/graph-workflow-docs/spec/ephemeral-workflows.md",
+        contents: "# Ephemeral workflows\n\nRevision 5.\n",
+        description: "The pinned spec this run implements",
+        readWhen: "Before judging whether work satisfies the spec",
+      },
+    ],
+    recordedAt: "2026-08-13T00:00:00.000Z",
+  };
+}
+
+export function buildMaximalResultDelivery(): Record<string, unknown> {
+  return {
+    executionId: "exec-1",
+    boundarySeq: 12,
+    projectPath: "/p1",
+    sessionName: "s1",
+    originConversationId: "conv-origin-1",
+    payload: {
+      executionId: "exec-1",
+      name: "Ship the search box",
+      origin: { kind: "one_off", planName: "Ship the search box" },
+      state: "halted",
+      deepLink: "/projects/p1/sessions/s1/workflow?execution=exec-1",
+      recordedOutputs: {
+        "ctx-1": {
+          verdict: "pass",
+          findings: [{ id: "f-1", severity: "low" }],
+        },
+      },
+      requiredActions: [
+        { kind: "resume_or_abandon", contextId: "ctx-1", label: "Resume" },
+      ],
+    },
+    recordedAt: "2026-08-13T00:00:00.000Z",
+    state: "delivering",
+    attemptId: "attempt-3",
+    attemptCount: 3,
+    deliveredAt: "2026-08-13T00:05:00.000Z",
+    effectsDeliveredAt: "2026-08-13T00:04:00.000Z",
+  };
+}
+
+/**
+ * The AUTHORED document the run was launched from (D7 decision D13) — the
+ * submitted `{name, description, definition, layout}`, before substitution and
+ * before the config cascade resolved anything.
+ *
+ * Deliberately its own literal rather than a projection of `workingDefinition`:
+ * the authored tier is a different shape (reference-bearing assignments, loop
+ * bodies declared by id, a `workflowConfig` block the cascade later folds away),
+ * so a fixture that reused the resolved value would prove durability for a
+ * shape this field never actually holds. Every leaf is non-default so the
+ * round-trip harness can tell a dropped field from an unset one.
+ *
+ * MUST NOT be imported by production code; it lives under
+ * `src/lib/shared/testing/`.
+ */
+export function buildMaximalLaunchDocument(): Record<string, unknown> {
+  const authoredImplementer = {
+    id: "implementer",
+    profile: { tier: "builtin", id: "general-implementer" },
+    focus: "the persistence layer",
+    agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+  };
+  const authoredValidatorCohort = {
+    enabled: false,
+    assignments: [
+      {
+        id: "security-reviewer",
+        profile: { tier: "project", id: "security-reviewer" },
+        focus: "auth boundaries",
+        strategy: "conversation",
+        authority: "blocking",
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+        continuity: { enabled: false, contextLimitTokens: 120_000 },
+      },
+    ],
+  };
+  const authoredPolicies = {
+    scriptValidator: { commands: ["typecheck", "test"] },
+    iterationPolicy: {
+      maxIterations: 7,
+      continuity: { enabled: false, contextLimitTokens: 90_000 },
+    },
+    circuitBreaker: { consecutiveFailureThreshold: 5 },
+    mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: true },
+    planRepair: {
+      enabled: false,
+      maxAttemptsPerContext: 3,
+      agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
+    },
+    collaboration: {
+      enabled: true,
+      secondAgent: {
+        backend: "codex",
+        model: "gpt-5.4",
+        reasoningEffort: "high",
+      },
+      negotiationRounds: 5,
+      autonomousResolutionThreshold: "major",
+    },
+    humanApprovalGate: { enabled: true },
+    askUserQuestions: { enabled: true },
+    agentValidation: {
+      implementer: { mode: "all", except: ["format"] },
+      contextValidator: { mode: "only", commands: ["test"] },
+    },
+  };
+
+  return {
+    name: "Maximal launch plan",
+    description: "The authored document this run was launched from",
+    definition: {
+      schemaVersion: 2,
+      approvalRequired: true,
+      origin: {
+        sourceUri: "workflow-source:maximal/revision/3",
+        label: "Maximal workflow source",
+      },
+      lockedRegions: [
+        {
+          paths: ["/tasks/task-1/instructions"],
+          sourceUri: "workflow-source:maximal/revision/3",
+          reason: "Task instructions come from the source workflow",
+          instruction:
+            "Amend workflow-source:maximal/revision/3 and recompile the definition.",
+        },
+      ],
+      workflowConfig: {
+        implementer: authoredImplementer,
+        contextValidator: authoredValidatorCohort,
+        ...authoredPolicies,
+        laneMergeValidation: {
+          strategy: "every-merge",
+          commands: { mode: "only", commands: ["typecheck"] },
+        },
+      },
+      charter: makeTestCharter(),
+      parameters: [
+        {
+          type: "enum",
+          name: "feature",
+          label: "Feature under change",
+          required: true,
+          options: ["search box", "result list"],
+          default: "search box",
+        },
+        {
+          type: "text",
+          name: "notes",
+          label: "Launch notes",
+          required: false,
+          default: "first line\nsecond line",
+          minLength: 1,
+          maxLength: 4000,
+        },
+      ],
+      prerequisites: [
+        {
+          kind: "path",
+          path: "src/lib/state-store",
+          label: "The persistence layer this plan edits",
+        },
+        {
+          kind: "skill",
+          skill: "graph-workflow-planning",
+          backend: "claude",
+          label: "The planning skill the implementer reads",
+        },
+      ],
+      executionContexts: [
+        {
+          id: "ctx-1",
+          title: "Implement the thing",
+          description: "Detailed description of the context",
+          acceptanceCriteria: "All tests pass and the build is green",
+          placement: {
+            lane: "delivery",
+            mode: "owned",
+            ownedPaths: ["src/feature", "docs/feature.md"],
+          },
+          outputSchema: {
+            type: "object",
+            properties: { verdict: { type: "string", enum: ["pass", "fail"] } },
+            required: ["verdict"],
+            additionalProperties: false,
+          },
+          routing: { cardinality: "exactlyOne" },
+          implementer: authoredImplementer,
+          contextValidator: authoredValidatorCohort,
+          ...authoredPolicies,
+          origin: {
+            sourceUri: "workflow-source:maximal/context/ctx-1",
+            label: "Maximal context source",
+          },
+          metadata: { area: "backend" },
+        },
+        // The loop body, declared by REFERENCE at the authored tier: it is an
+        // ordinary member of executionContexts that the accept-time resolver
+        // later lifts into the versioned template `workingDefinition` carries.
+        {
+          id: "ctx-loop-worker",
+          title: "Refine the draft",
+          acceptanceCriteria: "The judge records a verdict",
+          placement: { lane: "delivery", mode: "readOnly" },
+        },
+      ],
+      tasks: [
+        {
+          id: "task-1",
+          contextId: "ctx-1",
+          order: 1,
+          title: "First task",
+          instructions: "Do the first thing carefully",
+          metadata: { area: "backend" },
+          source: "agent",
+        },
+      ],
+      edges: [
+        {
+          id: "edge-1",
+          sourceContextId: "ctx-1",
+          targetContextId: "ctx-loop-worker",
+          when: {
+            schema: {
+              type: "object",
+              properties: { verdict: { const: "pass" } },
+              required: ["verdict"],
+            },
+          },
+        },
+      ],
+      loopGroups: [
+        {
+          id: "loop-1",
+          title: "Refine until the judge passes",
+          bodyContextIds: ["ctx-loop-worker"],
+          entryContextId: "ctx-loop-worker",
+          exitContextId: "ctx-loop-worker",
+          until: {
+            schema: {
+              type: "object",
+              properties: { verdict: { const: "pass" } },
+              required: ["verdict"],
+            },
+          },
+          maxPasses: 4,
+        },
+      ],
+    },
+    layout: {
+      workflowId: "wf-maximal",
+      contextPositions: {
+        "ctx-1": { x: 120, y: 40 },
+        "ctx-loop-worker": { x: 120, y: 220 },
+      },
+      viewport: { x: -60, y: 15, zoom: 0.75 },
+    },
+  };
+}
+
+/**
  * A maximal {@link GraphWorkflowExecution}-shaped value with EVERY introspectable
  * persisted key path populated to a distinctive non-default value, so the
  * schema-driven durability harness can prove no field is dropped on write or
@@ -179,8 +466,30 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
   const maximalContext = maximalResolvedContext();
   return {
     id: "wf-maximal",
+    // A template run: the recorded provenance deliberately differs from the
+    // seed projection columns (revision 5 vs 3) so a mapping that re-derived
+    // origin from those columns instead of persisting it shows up as a value
+    // mismatch rather than a coincidence.
+    origin: {
+      kind: "template",
+      definitionId: "seed-maximal",
+      definitionRevision: 5,
+      tier: "global",
+    },
     seedDefinitionId: "seed-maximal",
     seedDefinitionRevision: 3,
+    launchDocument: buildMaximalLaunchDocument(),
+    liveSessionReadOnlyPinned: true,
+    // Superimposed on a `running` status the same way the parked context-state
+    // records below are: a real run carries an abandonment only once it is
+    // halted, but the durability harness needs every persisted key path
+    // populated, and abandonment is a plain runtime-tier record with no
+    // status-dependent serialization.
+    abandonment: {
+      abandonedAt: "2026-01-02T10:00:00.000Z",
+      actor: { kind: "conversation", conversationId: "conv-owner-maximal" },
+      reason: "superseded by a replan",
+    },
     liveRevision: 4,
     executionStateRevision: 17,
     // Distinct from every other counter here: a mapping that persisted the wrong
@@ -279,6 +588,13 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
     definitionApproval: {
       requestedAt: "2026-01-01T00:00:00.000Z",
       approvedAt: "2026-01-01T00:00:05.000Z",
+    },
+    // Populated for the durability probe only: in life a finalized approval
+    // has already consumed its reservation, so the two are never both set on a
+    // live record.
+    definitionApprovalClaim: {
+      claimId: "claim-definition-approval-1",
+      claimedAt: "2026-01-01T00:00:03.000Z",
     },
     workingDefinition: {
       schemaVersion: 2,

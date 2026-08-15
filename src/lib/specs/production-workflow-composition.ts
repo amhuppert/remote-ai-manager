@@ -102,6 +102,9 @@ export function createProductionSpecWorkflowComposition(
       },
     },
     writeQueue,
+    async resolveProjectPath(execution) {
+      return (await specsRepo.findById(execution.spec_id))?.projectPath ?? null;
+    },
     async validatedTreeHash(execution, commitSha, relevantPaths) {
       const spec = await specsRepo.findById(execution.spec_id);
       if (spec === null) {
@@ -180,7 +183,25 @@ export function createProductionSpecWorkflowComposition(
       }
     },
     async workflowEventExists(ref, expectedExecution) {
-      const record = workflowEvents.findRecordById(ref.eventId);
+      const execution = deliveryRepo.findExecutionById(
+        expectedExecution.specExecutionId,
+      );
+      const spec =
+        execution === null ? null : await specsRepo.findById(execution.spec_id);
+      if (
+        spec === null ||
+        execution === null ||
+        execution.session_name === null ||
+        expectedExecution.workflowExecutionId === null
+      ) {
+        return false;
+      }
+      const record = workflowEvents.findRecordById(
+        spec.projectPath,
+        execution.session_name,
+        expectedExecution.workflowExecutionId,
+        ref.eventId,
+      );
       return (
         record !== null &&
         record.executionId === expectedExecution.workflowExecutionId &&

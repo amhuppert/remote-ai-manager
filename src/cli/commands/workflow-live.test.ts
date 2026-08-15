@@ -1,12 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { runCli } from "../core";
 import type { CliEnv, CliHost, FetchInit } from "../shared";
+import {
+  CONVERSATION_CAPABILITY_ENV_VAR,
+  CONVERSATION_CAPABILITY_HEADER,
+} from "@/lib/agent-gateway/conversation-capability";
+import {
+  LANE_CAPABILITY_ENV_VAR,
+  LANE_CAPABILITY_HEADER,
+} from "@/lib/agent-gateway/lane-capability";
 
 const baseEnv: CliEnv = {
   CC_SERVER_URL: "http://127.0.0.1:3000",
   CC_API_TOKEN: "env-token",
   CC_PROJECT: "cc",
   CC_SESSION: "my-session",
+  [CONVERSATION_CAPABILITY_ENV_VAR]: "conversation-capability",
 };
 
 interface RecordedRequest {
@@ -867,6 +876,9 @@ describe("cctl workflow live edit", () => {
     expect(body.executionId).toBe("exec-7");
     expect(body.baseLiveRevision).toBe(4);
     expect(body.dryRun).toBeUndefined();
+    expect(request?.init.headers[CONVERSATION_CAPABILITY_HEADER]).toBe(
+      "conversation-capability",
+    );
     expect(result.stdout).toContain("applied 1 operation");
     expect(result.stdout).toContain("liveRev 5");
   });
@@ -982,6 +994,9 @@ describe("cctl workflow live pause / resume", () => {
     expect(new URL(request?.url ?? "").pathname).toBe(
       "/api/projects/cc/sessions/my-session/graph-workflow/pause",
     );
+    expect(request?.init.headers[CONVERSATION_CAPABILITY_HEADER]).toBe(
+      "conversation-capability",
+    );
   });
 
   it("posts to the resume endpoint", async () => {
@@ -993,6 +1008,32 @@ describe("cctl workflow live pause / resume", () => {
     expect(new URL(host.requests[0]?.url ?? "").pathname).toBe(
       "/api/projects/cc/sessions/my-session/graph-workflow/resume",
     );
+    expect(host.requests[0]?.init.headers[CONVERSATION_CAPABILITY_HEADER]).toBe(
+      "conversation-capability",
+    );
+  });
+
+  it("forwards a lane capability instead of inventing conversation authority", async () => {
+    const host = makeHost(() =>
+      jsonResponse({ execution: { status: "paused" } }),
+    );
+    const result = await runCli(
+      ["workflow", "live", "pause"],
+      {
+        ...baseEnv,
+        [CONVERSATION_CAPABILITY_ENV_VAR]: undefined,
+        [LANE_CAPABILITY_ENV_VAR]: "lane-capability",
+      },
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(host.requests[0]?.init.headers[LANE_CAPABILITY_HEADER]).toBe(
+      "lane-capability",
+    );
+    expect(
+      host.requests[0]?.init.headers[CONVERSATION_CAPABILITY_HEADER],
+    ).toBeUndefined();
   });
 
   it("renders a server 409 as exit 1 with the server message", async () => {
@@ -1013,8 +1054,8 @@ describe("cctl workflow live pause / resume", () => {
  * existed only as API routes, so an agent that stranded a run had to call them
  * raw (ticket #47 note 9e5ba960).
  */
-describe("cctl workflow live abort / release", () => {
-  it("posts the reason to the abort endpoint and points at the release step", async () => {
+describe("cctl workflow live abort", () => {
+  it("posts the reason to the abort endpoint and claims no separate release step", async () => {
     const host = makeHost(() =>
       jsonResponse({ execution: { status: "aborted" } }),
     );
@@ -1032,8 +1073,11 @@ describe("cctl workflow live abort / release", () => {
     expect(JSON.parse(String(request?.init.body))).toEqual({
       reason: "superseded",
     });
-    // `aborted` auto-releases, so the receipt must not tell the operator the
-    // slot is still held — that claim sent them to a no-op release.
+    expect(request?.init.headers[CONVERSATION_CAPABILITY_HEADER]).toBe(
+      "conversation-capability",
+    );
+    // `aborted` releases the lease on its own, and no release verb exists to
+    // point at — a receipt naming one would send the operator nowhere.
     expect(result.stdout).not.toContain("cctl workflow live release");
   });
 
@@ -1061,150 +1105,67 @@ describe("cctl workflow live abort / release", () => {
     expect(result.stderr).toContain("--reason");
     expect(host.requests).toHaveLength(0);
   });
+});
 
-  it("releases a paused execution through the release endpoint", async () => {
-    const host = makeHost(() =>
-      jsonResponse({
-        released: true,
-        alreadyReleased: false,
-        executionId: "exec-1",
-        status: "paused",
-      }),
-    );
+describe("cctl workflow abandon", () => {
+  const execution = {
+    executionId: "exec-halted-7",
+    status: "halted",
+    origin: { kind: "one_off", planName: "Recovery run" },
+    archived: true,
+  };
+
+  it("posts the execution id and reason with signed mutation identity", async () => {
+    const host = makeHost(() => jsonResponse({ execution, abandoned: true }));
     const result = await runCli(
-      ["workflow", "live", "release", "--reason", "abandoned"],
+      [
+        "workflow",
+        "abandon",
+        "exec-halted-7",
+        "--reason",
+        "superseded",
+        "--json",
+      ],
       baseEnv,
       host,
     );
+
     expect(result.exitCode).toBe(0);
     expect(new URL(host.requests[0]?.url ?? "").pathname).toBe(
-      "/api/projects/cc/sessions/my-session/graph-workflow/release",
+      "/api/projects/cc/sessions/my-session/graph-workflow/abandon",
     );
-    expect(JSON.parse(String(host.requests[0]?.init.body))).toEqual({
-      reason: "abandoned",
+    expect(host.requests[0]?.init.method).toBe("POST");
+    expect(JSON.parse(host.requests[0]?.init.body ?? "{}")).toEqual({
+      executionId: "exec-halted-7",
+      reason: "superseded",
     });
-    expect(result.stdout).toContain("released");
-  });
-
-  it("releases a resumably-halted execution", async () => {
-    const host = makeHost(() =>
-      jsonResponse({
-        released: true,
-        alreadyReleased: false,
-        executionId: "exec-1",
-        status: "halted",
-      }),
+    expect(host.requests[0]?.init.headers[CONVERSATION_CAPABILITY_HEADER]).toBe(
+      "conversation-capability",
     );
-    const result = await runCli(
-      ["workflow", "live", "release", "--reason", "halted for good"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("released");
-  });
-
-  it("reports an already-released session as success, not a conflict", async () => {
-    // completed/aborted runs auto-release, so this is the normal state after a
-    // finished run — a retry of a partial cleanup must converge, not error.
-    const host = makeHost(() =>
-      jsonResponse({ released: true, alreadyReleased: true }),
-    );
-    const result = await runCli(
-      ["workflow", "live", "release", "--reason", "tidy up", "--json"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
+    expect(JSON.parse(result.stdout)).toEqual({
       ok: true,
-      released: true,
-      alreadyReleased: true,
+      abandoned: true,
+      execution,
     });
   });
 
-  it("surfaces the server's refusal for a running execution, naming abort first", async () => {
-    const host = makeHost(() =>
-      jsonResponse(
-        {
-          error:
-            "A running graph workflow execution still owns this session's slot and cannot be released. Abort it first with 'cctl workflow live abort --reason <reason>', then release.",
-        },
-        409,
-      ),
-    );
-    const result = await runCli(
-      ["workflow", "live", "release", "--reason", "abandoned"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("cctl workflow live abort");
+  it("requires an execution id and durable reason before making a request", async () => {
+    for (const argv of [
+      ["workflow", "abandon", "--reason", "superseded"],
+      ["workflow", "abandon", "exec-halted-7"],
+    ]) {
+      const host = makeHost(() => jsonResponse({}));
+      const result = await runCli(argv, baseEnv, host);
+      expect(result.exitCode).toBe(2);
+      expect(host.requests).toHaveLength(0);
+    }
   });
 
-  it("passes --execution as the expectation guard and surfaces its refusal", async () => {
-    const host = makeHost(() =>
-      jsonResponse(
-        {
-          error:
-            "Execution other-exec does not own this session's slot; exec-1 (paused) does. Re-check with 'cctl workflow status', then release the run you mean.",
-        },
-        409,
-      ),
-    );
-    const result = await runCli(
-      [
-        "workflow",
-        "live",
-        "release",
-        "--reason",
-        "abandoned",
-        "--execution",
-        "other-exec",
-      ],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(1);
-    expect(JSON.parse(String(host.requests[0]?.init.body))).toEqual({
-      reason: "abandoned",
-      expectedExecutionId: "other-exec",
-    });
-    expect(result.stderr).toContain("cctl workflow status");
-  });
-
-  it("surfaces the server's refusal when --execution names a run that owns no slot", async () => {
-    const host = makeHost(() =>
-      jsonResponse(
-        {
-          error:
-            "This session owns no execution slot, so execution stale-exec could not be released. Re-check with 'cctl workflow status'.",
-        },
-        409,
-      ),
-    );
-    const result = await runCli(
-      [
-        "workflow",
-        "live",
-        "release",
-        "--reason",
-        "abandoned",
-        "--execution",
-        "stale-exec",
-      ],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("owns no execution slot");
-  });
-
-  it("refuses release without a reason before reaching the server", async () => {
+  it("does not retain workflow live release as a dispatchable mutation", async () => {
     const host = makeHost(() => jsonResponse({}));
     const result = await runCli(["workflow", "live", "release"], baseEnv, host);
+
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("--reason");
     expect(host.requests).toHaveLength(0);
   });
 });

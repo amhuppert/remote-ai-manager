@@ -73,7 +73,10 @@ export interface LiveOutlineHeader {
    * the three lifecycle-derived values and the header is the authoritative gate.
    */
   editable: boolean;
-  notEditableReason?: "completed" | "aborted" | "halt-not-resumable";
+  notEditableReason?: Extract<
+    ExecutionEditability,
+    { kind: "not-editable" }
+  >["reason"];
   /** Accepted live charter amendments so far (doc 07); 0 for pre-field rows. */
   charterAmendmentCount: number;
   /** Plan-repair rounds run so far (docs/design/cc-cli/08); 0 for pre-D1 rows. */

@@ -34,6 +34,7 @@ import {
 } from "@/lib/shared/testing/capturing-logger";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { readAllForStartupFromDb } from "@/lib/state-store/startup-reader";
+import { createGraphWorkflowResultDeliveriesRepo } from "@/lib/state-store/graph-workflow-result-deliveries-repo";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
@@ -190,6 +191,46 @@ describe("rehydrateConversationActors (project conversations)", () => {
     );
     expect(count).toBe(0);
     expect(validate).not.toHaveBeenCalled();
+  });
+});
+
+describe("workflow-result post-commit reconciliation", () => {
+  it("replays pending effects for a session even when it has no conversation actors", async () => {
+    const reconcileWorkflowResultEffects = vi.fn(async () => 1);
+
+    const count = await rehydrateConversationActors({
+      readAllForStartup: () => stateWith([]),
+      listAllProjectConversations: async () => [],
+      getProjectDisplayName: () => "demo",
+      getConversationMachineSnapshot: () => null,
+      validateRestoredSnapshot: () => null,
+      reconcileWorkflowResultEffects,
+    });
+
+    expect(count).toBe(0);
+    expect(reconcileWorkflowResultEffects).toHaveBeenCalledExactlyOnceWith(
+      "/repo",
+      "feat",
+    );
+  });
+
+  it("recovers abandoned claims for a session with no remaining conversations", async () => {
+    const recoverWorkflowResultClaims = vi.fn(async () => 1);
+
+    const count = await rehydrateConversationActors({
+      readAllForStartup: () => stateWith([]),
+      listAllProjectConversations: async () => [],
+      getProjectDisplayName: () => "demo",
+      getConversationMachineSnapshot: () => null,
+      validateRestoredSnapshot: () => null,
+      recoverWorkflowResultClaims,
+    });
+
+    expect(count).toBe(0);
+    expect(recoverWorkflowResultClaims).toHaveBeenCalledExactlyOnceWith(
+      "/repo",
+      "feat",
+    );
   });
 });
 
@@ -704,6 +745,66 @@ describe("rehydrateOneConversationActor startup recovery", () => {
         CONV_ID,
       )?.getSnapshot().status,
     ).toBe("active");
+  });
+
+  it("resets abandoned workflow-result claims through a restarted store before actor selection", async () => {
+    const fixture = createPersistenceFixture();
+    try {
+      fixture.seedProject("/repo");
+      fixture.seedSession("/repo", "feat");
+      const deliveries = createGraphWorkflowResultDeliveriesRepo(fixture.db);
+      deliveries.record({
+        executionId: "exec-restart",
+        boundarySeq: 7,
+        projectPath: "/repo",
+        sessionName: "feat",
+        originConversationId: CONV_ID,
+        payload: { status: "completed" },
+        recordedAt: "2026-08-14T12:00:00.000Z",
+        state: "pending",
+        attemptId: null,
+        attemptCount: 0,
+        deliveredAt: null,
+        effectsDeliveredAt: null,
+      });
+      deliveries.markDelivering(
+        "/repo",
+        "feat",
+        "exec-restart",
+        7,
+        "abandoned-attempt",
+      );
+      const restartedStore = fixture.recreateStore();
+
+      await rehydrateConversationActors({
+        readAllForStartup: () => stateWith([conv({ id: CONV_ID })]),
+        listAllProjectConversations: async () => [],
+        getProjectDisplayName: () => "demo",
+        getConversationMachineSnapshot: () => null,
+        validateRestoredSnapshot: () => null,
+        recoverWorkflowResultClaims: (projectPath, sessionName) =>
+          restartedStore.recoverGraphWorkflowResultDeliveries(
+            projectPath,
+            sessionName,
+          ),
+      } as RehydrateConversationActorsDeps & {
+        recoverWorkflowResultClaims(
+          projectPath: string,
+          sessionName: string,
+        ): Promise<number>;
+      });
+
+      expect(
+        createGraphWorkflowResultDeliveriesRepo(fixture.db).findByBoundary(
+          "/repo",
+          "feat",
+          "exec-restart",
+          7,
+        ),
+      ).toMatchObject({ state: "pending", attemptId: null, attemptCount: 1 });
+    } finally {
+      fixture.close();
+    }
   });
 });
 

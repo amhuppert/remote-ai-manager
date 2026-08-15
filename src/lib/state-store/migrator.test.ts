@@ -387,14 +387,19 @@ describe("0002-split-graph-workflow-history (production registry)", () => {
     const applied = await runMigrations({ db, configDir: null });
     expect(applied).toContain("0002-split-graph-workflow-history");
 
-    const events =
-      createGraphWorkflowEventsRepo(db).findByExecution("exec-active");
+    const events = createGraphWorkflowEventsRepo(db).findByExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "exec-active",
+    );
     expect(events.map((e) => e.event.type)).toEqual([
       "graph-workflow-status",
       "graph-workflow-context-status",
     ]);
 
     const ctxScoped = createGraphWorkflowEventsRepo(db).findLatestForContext(
+      PROJECT_PATH,
+      SESSION_NAME,
       "exec-active",
       "ctx-1",
       "graph-workflow-context-status",
@@ -473,10 +478,14 @@ describe("0002-split-graph-workflow-history (production registry)", () => {
 
     const eventsRepo = createGraphWorkflowEventsRepo(db);
     expect(
-      eventsRepo.findByExecution("exec-past-a").map((e) => e.event.type),
+      eventsRepo
+        .findByExecution(PROJECT_PATH, SESSION_NAME, "exec-past-a")
+        .map((e) => e.event.type),
     ).toEqual(["graph-workflow-status"]);
     expect(
-      eventsRepo.findByExecution("exec-past-b").map((e) => e.event.type),
+      eventsRepo
+        .findByExecution(PROJECT_PATH, SESSION_NAME, "exec-past-b")
+        .map((e) => e.event.type),
     ).toEqual(["graph-workflow-context-status"]);
 
     const archivedBlob = readArchivedBlob(db, "exec-past-a");
@@ -509,8 +518,12 @@ describe("0002-split-graph-workflow-history (production registry)", () => {
     expect(secondRun).toEqual([]);
 
     const eventsRepo = createGraphWorkflowEventsRepo(db);
-    expect(eventsRepo.findByExecution("exec-active")).toHaveLength(1);
-    expect(eventsRepo.findByExecution("exec-past")).toHaveLength(1);
+    expect(
+      eventsRepo.findByExecution(PROJECT_PATH, SESSION_NAME, "exec-active"),
+    ).toHaveLength(1);
+    expect(
+      eventsRepo.findByExecution(PROJECT_PATH, SESSION_NAME, "exec-past"),
+    ).toHaveLength(1);
     // The past execution 0002 archived, plus the active one 0011 aborted.
     expect(
       createGraphWorkflowArchivedExecutionsRepo(db).listSummariesBySession(
@@ -562,8 +575,12 @@ describe("0002-split-graph-workflow-history (production registry)", () => {
     });
 
     const eventsRepo = createGraphWorkflowEventsRepo(db);
-    expect(eventsRepo.findByExecution("exec-active")).toHaveLength(2);
-    expect(eventsRepo.findByExecution("exec-past")).toHaveLength(1);
+    expect(
+      eventsRepo.findByExecution(PROJECT_PATH, SESSION_NAME, "exec-active"),
+    ).toHaveLength(2);
+    expect(
+      eventsRepo.findByExecution(PROJECT_PATH, SESSION_NAME, "exec-past"),
+    ).toHaveLength(1);
     // `exec-past` (archived by 0002) and `exec-active` (aborted and archived by
     // the 0011 cutover) — one row each, not duplicated by the replay.
     expect(

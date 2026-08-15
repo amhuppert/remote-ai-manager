@@ -15,7 +15,6 @@ const meta = {
     onPause: fn(),
     onResume: fn(),
     onAbort: fn(),
-    onClear: fn(),
     isMutating: false,
     pendingAction: null,
   },

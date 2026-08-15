@@ -11,6 +11,8 @@ import type {
   GraphWorkflowApprovalPendingEvent,
   GraphWorkflowApprovalResolvedEvent,
   GraphWorkflowBatchScheduledEvent,
+  GraphWorkflowBoundaryEvent,
+  GraphWorkflowBoundaryKind,
   GraphWorkflowCharterRegisteredEvent,
   GraphWorkflowCharterUpdatedEvent,
   GraphWorkflowCircuitBreakerEvent,
@@ -55,6 +57,8 @@ import type {
   GraphWorkflowValidatorType,
 } from "@/lib/workflow-graph/definition-schemas";
 import { SESSION_LANE_ID } from "@/lib/workflow-graph/lane-identity";
+import { holdsExecutionLease } from "@/lib/workflow-graph/lifecycle-classifier";
+import { projectGraphWorkflowResultOutputs } from "@/lib/workflow-graph/context-outputs";
 
 const liveEditLogger = createLogger("workflow.live-edit");
 const laneLogger = createLogger("workflow.lanes");
@@ -77,6 +81,15 @@ function defaultBroadcast(event: GraphWorkflowSSEEvent): void {
 export interface GraphWorkflowEventDelivery {
   events: GraphWorkflowExecutionEvent[];
   pushes: GraphWorkflowPushInfo[];
+  /** Typed invalidations derived from inserted row ids; never persisted again. */
+  publications?: GraphWorkflowSSEEvent[];
+  resultEffects?: Array<{
+    projectPath: string;
+    event: Extract<
+      GraphWorkflowSSEEvent,
+      { type: "graph-workflow-result-recorded" }
+    >;
+  }>;
 }
 
 /**
@@ -91,6 +104,10 @@ export function combineEventDeliveries(
   return {
     events: deliveries.flatMap((delivery) => delivery.events),
     pushes: deliveries.flatMap((delivery) => delivery.pushes),
+    publications: deliveries.flatMap((delivery) => delivery.publications ?? []),
+    resultEffects: deliveries.flatMap(
+      (delivery) => delivery.resultEffects ?? [],
+    ),
   };
 }
 
@@ -274,6 +291,7 @@ export interface GraphWorkflowPushInfo {
   planRepairOutcome?: GraphWorkflowPlanRepairEvent["outcome"];
   planRepairAttempt?: number;
   planRepairDiagnosis?: string | null;
+  dedupeKey?: string;
 }
 
 export interface PublishPlanRepairInput {
@@ -296,6 +314,14 @@ export interface GraphWorkflowExecutionEventPublisherDeps {
   broadcast?(event: GraphWorkflowSSEEvent): void;
   now?(): string;
   dispatchPush?(info: GraphWorkflowPushInfo): void;
+  deliverResultRecorded?(input: {
+    projectPath: string;
+    event: Extract<
+      GraphWorkflowSSEEvent,
+      { type: "graph-workflow-result-recorded" }
+    >;
+    completionPush: GraphWorkflowPushInfo | null;
+  }): Promise<void>;
 }
 
 function getNow(deps: GraphWorkflowExecutionEventPublisherDeps): string {
@@ -699,6 +725,108 @@ function buildEvents(
   );
 }
 
+function deriveExecutionBoundaryKind(
+  previousExecution: GraphWorkflowExecution | null,
+  nextExecution: GraphWorkflowExecution,
+): GraphWorkflowBoundaryKind | null {
+  if (
+    previousExecution?.abandonment === null &&
+    nextExecution.abandonment !== null
+  ) {
+    return "abandon";
+  }
+
+  const definitionApprovalParked =
+    nextExecution.status === "pending" &&
+    nextExecution.definitionApproval !== null &&
+    nextExecution.definitionApproval.approvedAt === null &&
+    (previousExecution === null ||
+      previousExecution.definitionApproval?.requestedAt !==
+        nextExecution.definitionApproval.requestedAt);
+  if (definitionApprovalParked) return "definition_approval";
+
+  if (previousExecution?.status === nextExecution.status) return null;
+  switch (nextExecution.status) {
+    case "paused":
+      return "pause";
+    case "halted":
+      return "halt";
+    case "completed":
+      return "completion";
+    case "aborted":
+      return "abort";
+    case "pending":
+    case "running":
+      return null;
+    default:
+      return assertNever(nextExecution.status);
+  }
+}
+
+function projectBoundaryPendingActions(
+  boundaryKind: GraphWorkflowBoundaryKind,
+  contextId: string | null,
+  execution: GraphWorkflowExecution,
+): Array<Record<string, unknown>> {
+  switch (boundaryKind) {
+    case "definition_approval":
+      return [{ kind: "approve_definition" }];
+    case "context_approval":
+      return [{ kind: "resolve_context_approval", contextId }];
+    case "lane_question":
+      return [{ kind: "answer_lane_question", contextId }];
+    case "pause":
+    case "halt":
+      return holdsExecutionLease(
+        execution.status,
+        execution.haltReason,
+        execution.abandonment,
+      )
+        ? [{ kind: "resume" }]
+        : [];
+    case "abandon":
+    case "completion":
+    case "abort":
+      return [];
+    default:
+      return assertNever(boundaryKind);
+  }
+}
+
+export function createGraphWorkflowBoundaryEvent(input: {
+  projectPath: string;
+  sessionName: string;
+  execution: GraphWorkflowExecution;
+  boundaryKind: GraphWorkflowBoundaryKind;
+  contextId?: string | null;
+}): GraphWorkflowBoundaryEvent {
+  const contextId = input.contextId ?? null;
+  const projectName = getProjectName(input.projectPath);
+  return {
+    type: "graph-workflow-boundary",
+    projectName,
+    sessionName: input.sessionName,
+    executionId: input.execution.id,
+    boundaryKind: input.boundaryKind,
+    workflowStatus: input.execution.status,
+    startedAt: input.execution.startedAt,
+    completedAt: input.execution.completedAt,
+    haltReason: input.execution.haltReason,
+    abandonment: input.execution.abandonment,
+    contextId,
+    pendingActions: projectBoundaryPendingActions(
+      input.boundaryKind,
+      contextId,
+      input.execution,
+    ),
+    outputProjection: projectGraphWorkflowResultOutputs({
+      projectName,
+      sessionName: input.sessionName,
+      execution: input.execution,
+    }),
+  };
+}
+
 /**
  * Perform the post-commit delivery of a derived {@link GraphWorkflowEventDelivery}
  * (Design 3.2). Broadcasts each persisted row's inner SSE event through the
@@ -712,59 +840,91 @@ function buildEvents(
 export function deliverGraphWorkflowEvents(
   deps: GraphWorkflowExecutionEventPublisherDeps,
   delivery: GraphWorkflowEventDelivery,
-): void {
+): Promise<void> {
   const send = deps.broadcast ?? defaultBroadcast;
-  for (const row of delivery.events) {
-    send(row.event);
-    if (row.event.type === "graph-workflow-live-edit-applied") {
+  const events = [
+    ...delivery.events.map((row) => row.event),
+    ...(delivery.publications ?? []),
+  ];
+  for (const event of events) {
+    send(event);
+    if (event.type === "graph-workflow-live-edit-applied") {
       liveEditLogger.info("live_edit.applied", {
-        executionId: row.event.executionId,
-        liveRevision: row.event.liveRevision,
-        source: row.event.source,
-        operationCount: row.event.operationCount,
-        affectedContextIds: row.event.affectedContextIds,
+        executionId: event.executionId,
+        liveRevision: event.liveRevision,
+        source: event.source,
+        operationCount: event.operationCount,
+        affectedContextIds: event.affectedContextIds,
       });
     }
-    if (row.event.type === "graph-workflow-lane-created") {
+    if (event.type === "graph-workflow-lane-created") {
       laneLogger.info("lane.created", {
-        executionId: row.event.executionId,
-        laneId: row.event.laneId,
-        kind: row.event.kind,
-        placementSource: row.event.placementSource,
+        executionId: event.executionId,
+        laneId: event.laneId,
+        kind: event.kind,
+        placementSource: event.placementSource,
       });
     }
-    if (row.event.type === "graph-workflow-lane-concurrent-admission") {
+    if (event.type === "graph-workflow-lane-concurrent-admission") {
       laneLogger.info("lane.concurrent_admission", {
-        executionId: row.event.executionId,
-        laneId: row.event.laneId,
-        batchId: row.event.batchId,
-        memberContextIds: row.event.memberContextIds,
-        canonicalCheckResult: row.event.canonicalCheckResult,
+        executionId: event.executionId,
+        laneId: event.laneId,
+        batchId: event.batchId,
+        memberContextIds: event.memberContextIds,
+        canonicalCheckResult: event.canonicalCheckResult,
       });
     }
-    if (row.event.type === "graph-workflow-lane-landed") {
+    if (event.type === "graph-workflow-lane-landed") {
       laneLogger.info("lane.landed", {
-        executionId: row.event.executionId,
-        laneId: row.event.laneId,
-        contextId: row.event.contextId,
-        ownedPathspec: row.event.ownedPathspec,
-        commitSha: row.event.commitSha,
+        executionId: event.executionId,
+        laneId: event.laneId,
+        contextId: event.contextId,
+        ownedPathspec: event.ownedPathspec,
+        commitSha: event.commitSha,
       });
     }
-    if (row.event.type === "graph-workflow-lane-drift-halted") {
+    if (event.type === "graph-workflow-lane-drift-halted") {
       laneLogger.error("lane.drift_halted", {
-        executionId: row.event.executionId,
-        laneId: row.event.laneId,
-        contextId: row.event.contextId,
-        unattributedPaths: row.event.unattributedPaths,
+        executionId: event.executionId,
+        laneId: event.laneId,
+        contextId: event.contextId,
+        unattributedPaths: event.unattributedPaths,
       });
     }
   }
-  if (deps.dispatchPush) {
-    for (const push of delivery.pushes) {
+  const completionPushIndex = delivery.pushes.findIndex(
+    (push) => push.kind === "workflow-completed",
+  );
+  const completionPush =
+    completionPushIndex === -1 ? null : delivery.pushes[completionPushIndex]!;
+  const resultEffects = delivery.resultEffects ?? [];
+  const effectPromises = resultEffects.map(async (effect, index) => {
+    const deliverResult =
+      deps.deliverResultRecorded ??
+      (async (input) => {
+        const { getGraphWorkflowResultDeliveryService } =
+          await import("./result-delivery-service");
+        await getGraphWorkflowResultDeliveryService().deliverRecordedResult(
+          input,
+        );
+      });
+    await deliverResult({
+      ...effect,
+      completionPush: index === 0 ? completionPush : null,
+    });
+  });
+  const dispatchRemainingPushes = (): void => {
+    if (!deps.dispatchPush) return;
+    for (const [index, push] of delivery.pushes.entries()) {
+      if (resultEffects.length > 0 && index === completionPushIndex) continue;
       deps.dispatchPush(push);
     }
+  };
+  if (effectPromises.length === 0) {
+    dispatchRemainingPushes();
+    return Promise.resolve();
   }
+  return Promise.allSettled(effectPromises).then(dispatchRemainingPushes);
 }
 
 /**
@@ -853,6 +1013,10 @@ export function createGraphWorkflowExecutionEventPublisher(
       nextExecution,
     );
     const events: GraphWorkflowSSEEvent[] = [];
+    const boundaryKind = deriveExecutionBoundaryKind(
+      previousExecution,
+      nextExecution,
+    );
 
     const nextActiveBatchIds = deriveActiveBatchIds(nextExecution);
     const previousActiveBatchIds = previousExecution
@@ -1342,6 +1506,17 @@ export function createGraphWorkflowExecutionEventPublisher(
       } satisfies GraphWorkflowSharedDocumentsUpdatedEvent);
     }
 
+    if (boundaryKind !== null) {
+      events.push(
+        createGraphWorkflowBoundaryEvent({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          execution: nextExecution,
+          boundaryKind,
+        }),
+      );
+    }
+
     const occurredAt = getNow(deps);
     return {
       events: buildEvents(occurredAt, events),
@@ -1452,7 +1627,16 @@ export function createGraphWorkflowExecutionEventPublisher(
     };
 
     return {
-      events: buildEvents(getNow(deps), [event]),
+      events: buildEvents(getNow(deps), [
+        event,
+        createGraphWorkflowBoundaryEvent({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          execution: input.execution,
+          boundaryKind: "context_approval",
+          contextId: input.contextId,
+        }),
+      ]),
       pushes: [
         {
           kind: "approval-pending",
@@ -1510,7 +1694,16 @@ export function createGraphWorkflowExecutionEventPublisher(
     // No push here: the existing conversation ask-registration flow already
     // notifies the operator when the question batch registers (Req 2.4).
     return {
-      events: buildEvents(getNow(deps), [event]),
+      events: buildEvents(getNow(deps), [
+        event,
+        createGraphWorkflowBoundaryEvent({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          execution: input.execution,
+          boundaryKind: "lane_question",
+          contextId: input.contextId,
+        }),
+      ]),
       pushes: [],
     };
   }
@@ -1718,8 +1911,8 @@ export function createGraphWorkflowExecutionEventPublisher(
    * after the mutation's transaction has committed; the rare standalone caller
    * that publishes post-commit (e.g. the user-input gate) calls it directly.
    */
-  function deliver(delivery: GraphWorkflowEventDelivery): void {
-    deliverGraphWorkflowEvents(deps, delivery);
+  function deliver(delivery: GraphWorkflowEventDelivery): Promise<void> {
+    return deliverGraphWorkflowEvents(deps, delivery);
   }
 
   return {

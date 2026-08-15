@@ -14,6 +14,7 @@ import {
   createWorkflowDefinition,
   createWorkflowDefinitionRecord,
   createWorkflowExecution,
+  makeLaunchDocument,
 } from "./test-fixtures";
 import { createWorkflowStorageService, type WorkflowScope } from "./storage";
 import { createWorkflowCharterService } from "./charter/service";
@@ -46,11 +47,15 @@ function createServices() {
       resolveConfigDir: () => TEST_DIR,
     }),
     repository: createGraphWorkflowExecutionRepository({
+      // No git worktree in this harness; the real exclusion would shell out.
+      ensureCcArtifactsExcluded: async () => {},
       getSession: stateManager.getSession,
       getActiveGraphWorkflowExecution:
         stateManager.getActiveGraphWorkflowExecution,
       mutateActiveGraphWorkflowExecution:
         stateManager.mutateActiveGraphWorkflowExecution,
+      reserveActiveGraphWorkflowExecution:
+        stateManager.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         stateManager.archiveActiveGraphWorkflowExecution,
       markGraphWorkflowContextEventsPreReset:
@@ -403,12 +408,16 @@ describe("graph workflow execution repository", () => {
 
     const created = await repository.create("/repo", "session-1", {
       definition: createWorkflowDefinition(),
-      definitionId: "workflow-1",
-      definitionRevision: 2,
+      source: {
+        kind: "template",
+        definitionId: "workflow-1",
+        definitionRevision: 2,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(createWorkflowDefinition()),
       executionId: "execution-1",
       startedAt: "2026-03-27T12:00:00.000Z",
       inputs: {},
-      launchedTier: "project",
       ownerConversationId: null,
     });
 

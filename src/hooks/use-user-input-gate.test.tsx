@@ -39,6 +39,19 @@ function parkedExecution(
 ): GraphWorkflowExecution {
   const execution = createWorkflowExecution({
     status: opts.executionStatus ?? "running",
+    // A halted fixture carries a resumable reason: the engine's halt event types
+    // its reason as non-nullable, so a reasonless halt is unreachable in
+    // production, and the lease predicate this gate follows reads that reason.
+    ...(opts.executionStatus === "halted"
+      ? {
+          haltReason: {
+            type: "circuit_breaker" as const,
+            contextId: PARKED_CONTEXT_ID,
+            condition: "retry_exhaustion" as const,
+            summary: null,
+          },
+        }
+      : {}),
   });
   const contextState = execution.contextStates[PARKED_CONTEXT_ID];
   if (!contextState) throw new Error("fixture missing parked context");

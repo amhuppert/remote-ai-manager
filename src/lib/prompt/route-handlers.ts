@@ -58,7 +58,7 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 import type { RunPromptRequest } from "@/lib/prompt/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
+import { holdsActionableGate } from "@/lib/workflow-graph/lifecycle-classifier";
 
 const logger = createLogger("prompt");
 
@@ -66,28 +66,29 @@ const DEFAULT_NEGOTIATION_ROUNDS = 3;
 const DEFAULT_AUTONOMOUS_RESOLUTION_THRESHOLD = "major" as const;
 
 /**
- * Execution statuses under which an undecided approval gate admits chat —
- * mirrors the gate-standing set (the gate survives pause/halt and a decision
- * is recordable in those states, so chat stays available too).
- */
-const GATE_CHAT_EXECUTION_STATUSES: ReadonlySet<GraphWorkflowStatus> = new Set([
-  "running",
-  "paused",
-  "halted",
-]);
-
-/**
- * A managed conversation is chat-open while a context of the session's
- * in-flight execution is parked `awaiting_approval` on this conversation
- * with no recorded decision; the moment a decision lands the managed 403
- * applies again.
+ * A managed conversation is chat-open while a context of an execution that
+ * still holds the session's lease is parked `awaiting_approval` on this
+ * conversation with no recorded decision; the moment a decision lands the
+ * managed 403 applies again.
+ *
+ * Tenure comes from the one contract rather than a set mirroring the gate's:
+ * chat exists to settle a gate, and a gate on a run that can never continue has
+ * nothing left to settle.
  */
 function hasUndecidedApprovalGate(
   execution: GraphWorkflowExecution | null,
   conversationId: string,
 ): boolean {
   if (!execution) return false;
-  if (!GATE_CHAT_EXECUTION_STATUSES.has(execution.status)) return false;
+  if (
+    !holdsActionableGate(
+      execution.status,
+      execution.haltReason,
+      execution.abandonment,
+    )
+  ) {
+    return false;
+  }
   return Object.values(execution.contextStates).some(
     (contextState) =>
       contextState.status === "awaiting_approval" &&

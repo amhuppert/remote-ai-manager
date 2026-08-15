@@ -9,7 +9,10 @@ import {
   createSharedDocumentStore,
   type SharedDocumentStore,
 } from "@/lib/workflow-graph/shared-document-store";
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type {
+  GraphWorkflowExecution,
+  SeededWorkflowDocument,
+} from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowSharedDocumentEntry } from "@/lib/workflow-graph/definition-schemas";
 const logger = createLogger("graph-workflow-shared-documents");
 
@@ -346,18 +349,7 @@ export function createGraphWorkflowSharedDocumentRegistryService(
   };
 }
 
-/**
- * A document the launching tier hands the engine to seed into the run: content
- * the tier already rendered, at a worktree-relative path under the shared
- * document directory. Deliberately opaque — the engine never learns what the
- * bytes mean, so no launching tier's vocabulary reaches this layer.
- */
-export interface SeededWorkflowDocument {
-  relativePath: string;
-  contents: string;
-  description: string;
-  readWhen: string;
-}
+export type { SeededWorkflowDocument };
 
 export interface WorkflowSeededDocumentServiceDeps {
   writeFile(absolutePath: string, contents: string | Uint8Array): Promise<void>;
@@ -379,9 +371,26 @@ export interface SeedWorkflowDocumentsInput {
 }
 
 export interface WorkflowSeededDocumentService {
-  seedDocuments(
+  /**
+   * The REGISTRATION half: validate each document's path against the worktree
+   * confinement rule and register it as a `kind:"seeded"` entry on a clone.
+   * Writes nothing, so a launch can commit the complete record — and refuse an
+   * escaping path — before it holds the execution lease.
+   */
+  registerDocuments(
     input: SeedWorkflowDocumentsInput,
   ): Promise<GraphWorkflowExecution>;
+  /**
+   * The I/O half: write each document into the session worktree and capture it
+   * into the central per-execution store. Runs after the launch's reservation
+   * commits, and is idempotent — both the write and the capture replace, so a
+   * retry over a half-materialized run converges.
+   */
+  writeDocuments(input: {
+    documents: readonly SeededWorkflowDocument[];
+    worktreePath: string;
+    executionId: string;
+  }): Promise<void>;
 }
 
 /**
@@ -392,9 +401,16 @@ export interface WorkflowSeededDocumentService {
  *
  * Every failure throws. A run whose seeded document is missing is a run whose
  * agents are pointed at a source of truth that does not exist, which is the
- * failure this seeding exists to prevent; refusing the launch is louder than a
- * warning nobody reads and leaves nothing persisted to clean up, because the
- * seed runs before the execution's compare-and-set.
+ * failure this seeding exists to prevent; refusing is louder than a warning
+ * nobody reads.
+ *
+ * The seed is split across the launch's lease reservation. Registration runs
+ * BEFORE it — so an escaping path refuses the launch with nothing persisted and
+ * nothing written — and the file/store writes run AFTER it, so no losing racer
+ * can leave bytes in a `.cc` namespace it never won. A write failure is a
+ * located halt on the already-reserved run rather than an unwind: the lease is
+ * won by then, and a durable halted record is reviewable where a vanished one
+ * is not.
  */
 export function createWorkflowSeededDocumentService(
   deps: Partial<Omit<WorkflowSeededDocumentServiceDeps, "store">> & {
@@ -414,7 +430,7 @@ export function createWorkflowSeededDocumentService(
   const createDocumentId =
     deps.createDocumentId ?? (() => `doc-seeded-${randomUUID()}`);
 
-  async function seedDocuments(
+  async function registerDocuments(
     input: SeedWorkflowDocumentsInput,
   ): Promise<GraphWorkflowExecution> {
     if (input.documents.length === 0) {
@@ -465,9 +481,46 @@ export function createWorkflowSeededDocumentService(
         },
       });
 
-      // The artifact registry confines the write to `.cc/graph-workflow-docs`
+      // The artifact registry confines the path to `.cc/graph-workflow-docs`
       // and throws ArtifactRequiredFailure on anything that escapes it, so a
       // launching tier cannot turn a seed into an arbitrary worktree write.
+      // Refusing HERE, before the reservation, is what keeps a rejected launch
+      // free of both files and rows.
+      await registry.register({
+        kind: "graph_shared_document",
+        worktreePath: input.worktreePath,
+        relativePath: document.relativePath,
+        description: document.description,
+        readWhen: document.readWhen,
+        source: { workflowId: nextExecution.id },
+      });
+    }
+
+    return nextExecution;
+  }
+
+  async function writeDocuments(input: {
+    documents: readonly SeededWorkflowDocument[];
+    worktreePath: string;
+    executionId: string;
+  }): Promise<void> {
+    const registry = createArtifactRegistry({
+      writeFile,
+      ensureDir,
+      logger: {
+        info: (event, fields) => logger.info(event, fields),
+        warn: (event, fields) => logger.warn(event, fields),
+        error: (event, fields) => logger.error(event, fields),
+      },
+      // Entries are registered by `registerDocuments` and already committed
+      // with the execution; this half only puts the bytes on disk and into the
+      // central store.
+      registration: {
+        async registerSharedDocument() {},
+      },
+    });
+
+    for (const document of input.documents) {
       const record = await registry.write({
         kind: "graph_shared_document",
         worktreePath: input.worktreePath,
@@ -476,16 +529,19 @@ export function createWorkflowSeededDocumentService(
         audience: "user_facing",
         description: document.description,
         readWhen: document.readWhen,
-        source: { workflowId: nextExecution.id },
+        source: { workflowId: input.executionId },
       });
 
+      // Lane worktrees fork from the committed session branch and `.cc` is
+      // git-ignored, so this capture — not the worktree file — is what reaches
+      // a lane.
       await store.captureFromWorktree({
-        executionId: nextExecution.id,
+        executionId: input.executionId,
         worktreePath: input.worktreePath,
         relativePath: record.relativePath,
       });
 
-      getExecutionLogger(nextExecution.id)?.lifecycle(
+      getExecutionLogger(input.executionId)?.lifecycle(
         "shared_document.seeded",
         {
           relativePath: record.relativePath,
@@ -494,14 +550,12 @@ export function createWorkflowSeededDocumentService(
         },
       );
       logger.info("graph-workflow.shared_document.seeded", {
-        executionId: nextExecution.id,
+        executionId: input.executionId,
         relativePath: record.relativePath,
         bytes: document.contents.length,
       });
     }
-
-    return nextExecution;
   }
 
-  return { seedDocuments };
+  return { registerDocuments, writeDocuments };
 }

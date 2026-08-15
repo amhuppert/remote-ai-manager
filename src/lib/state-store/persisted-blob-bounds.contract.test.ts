@@ -4,7 +4,11 @@ import { compactionEnvelopeSchema } from "@/lib/context-artifacts/schemas";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import { deliveryPlanDocumentSchema } from "@/lib/specs/delivery-plan";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
-import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
+import {
+  graphWorkflowExecutionSchema,
+  graphWorkflowPendingArtifactsSchema,
+  graphWorkflowResultDeliverySchema,
+} from "@/lib/workflow-graph/schemas";
 import { graphWorkflowExecutionEventSchema } from "@/lib/workflow-graph/event-schemas";
 import { persistedConversationSnapshotSchema } from "@/lib/workflows/conversation/persisted-snapshot-codec";
 import {
@@ -130,6 +134,14 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "tracked: grows one metadata-only entry (seq/loopGroupId/kind/rationale/revisions/timestamp) per ACCEPTED loop-control edit, no eviction — like charterAmendments, the amended predicate/cap/template live on the working definition and are deliberately not snapshotted here (D4 R11.2/R12). Growth needs quiescence per edit and is bounded in practice by the plan-repair round caps plus operator action; an execution that accumulated thousands would be a runaway an operator is already watching. In graph_workflow_executions.runtime_json.",
       boundInputs:
         "bounded: one string value per author-declared launch parameter, fixed at seed and never mutated. In graph_workflow_executions.definition_json.",
+      "launchDocument.**":
+        "bounded: the AUTHORED document this run was launched from — the submitted name/description/definition/layout (D7 decision D13) — written ONCE at seed and never rewritten, not even by a live edit (the edited state lives in workingDefinition). Author-shaped content under the same authoring limits as the seeded definition, plus one layout position per authored context. In graph_workflow_executions.definition_json.",
+      "launchDocument.definition.loopGroups[].until.schema.**":
+        "tracked: opaque author-declared loop exit predicate (a record of z.unknown values) as SUBMITTED, on the same accept-time supported-keyword subset contract as its resolved counterpart; sized by one authored predicate and frozen at seed. In graph_workflow_executions.definition_json.",
+      "launchDocument.definition.executionContexts[].outputSchema.**":
+        "tracked: opaque author-declared JSON Schema document as SUBMITTED, on the same accept-time subset contract as the resolved context's outputSchema; sized by one context's authored output shape and frozen at seed. In graph_workflow_executions.definition_json.",
+      "launchDocument.definition.edges[].when.**":
+        "tracked: opaque author-declared edge-guard document as SUBMITTED, on the same accept-time subset contract as the resolved edge guard; sized by one edge's authored guard and frozen at seed. In graph_workflow_executions.definition_json.",
       // --- runtime_json tier (hot, rewritten every tick) ---
       machineSnapshot:
         "tracked: opaque XState snapshot (z.unknown) for the graph-workflow execution machine — a different field from the conversation machineSnapshot that the 2026-07-20 projection+sidecar removed (Design 1), and out of that design's scope. Remains opaque on runtime_json.",
@@ -244,6 +256,16 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: the contexts one scheduling batch dispatched, a subset of the execution contexts.",
       "event.includedContextIds":
         "bounded: the execution contexts assigned to one lane, a subset of the execution contexts.",
+      "event.pendingActions[]":
+        "bounded: one fixed-shape action projected for the boundary; the schema caps the array at one and projectBoundaryPendingActions constructs only the closed approve, answer, resolve, or resume variants.",
+      "event.pendingActions[].*":
+        "tracked: one scalar field from the boundary action constructed by projectBoundaryPendingActions; the persisted producer does not accept caller-authored action payloads.",
+      "event.outputProjection.byContext":
+        "bounded: keyed by the execution's author-fixed contexts and each context's author-declared top-level output fields; every value is capped independently at record time and replaced by a durable-output reference above the cap.",
+      "event.outputProjection.byContext.*":
+        "bounded: keyed by one context's author-declared top-level output fields and written once for this boundary.",
+      "event.outputProjection.byContext.*.*":
+        "tracked: one declared output value, capped independently at record time and replaced by a durable-output reference above the cap.",
       // --- halt descriptors: one halt each, never appended to ---
       "event.haltReason.**":
         "bounded: a single halt descriptor (unmet delivery-gate criteria, conflict files, source lanes, or the edge/context ids of one routing halt), written once when the halt is raised.",
@@ -385,6 +407,24 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
     label: "spec_delivery_plan_attempts content_json",
     schema: deliveryPlanDocumentSchema,
     discharges: {},
+  },
+  {
+    label: "graph_workflow_result_deliveries payload_json",
+    schema: graphWorkflowResultDeliverySchema,
+    discharges: {
+      payload:
+        "bounded: one boundary's result projection (D7 decision D8) — keyed by the projection's own fixed field set (execution identity, state, timestamps, declared outputs per reached context, required actions, deep link), written once at record time and never appended to. A new boundary is a new ROW, not a longer payload. In graph_workflow_result_deliveries.payload_json.",
+      "payload.*":
+        "tracked: opaque projection field values (z.unknown), narrowed by the projection that builds them rather than by this schema. Any single declared-output value over the record-time size cap is replaced at record time by a reference to the durable value in the execution's contextOutputs, so an over-large output cannot inflate this column.",
+    },
+  },
+  {
+    label: "graph_workflow_pending_artifacts row",
+    schema: graphWorkflowPendingArtifactsSchema,
+    discharges: {
+      documents:
+        "bounded: one launch's authored seed set, written once by the reserving transaction and never appended to — no running execution adds a document here. The row is deleted the moment materialization succeeds, so it is transient rather than a growing record. In graph_workflow_pending_artifacts.documents_json.",
+    },
   },
 ];
 

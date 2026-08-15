@@ -7,6 +7,8 @@ import {
   collaborationKeys,
   graphWorkflowEventsKeys,
   graphWorkflowExecutionKeys,
+  graphWorkflowHistoryKeys,
+  graphWorkflowResultKeys,
 } from "@/lib/workflows/query-keys";
 import {
   workflowDefinitionScopeApi,
@@ -224,9 +226,14 @@ export function useStartGraphWorkflowMutation(
       });
     },
     onSettled: () => {
-      void queryClient.invalidateQueries({
-        queryKey: graphWorkflowExecutionKeys.detail(projectName, sessionName),
-      });
+      void Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: graphWorkflowExecutionKeys.detail(projectName, sessionName),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: graphWorkflowHistoryKeys.list(projectName, sessionName),
+        }),
+      ]);
     },
   });
 }
@@ -238,11 +245,10 @@ export function useApproveGraphWorkflowDefinitionMutation(
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (identity: {
-      executionId: string;
-      definitionId: string;
-      definitionRevision: number;
-    }) =>
+    // Execution-addressed (D7 decision D17): a one-off run has no saved
+    // definition to name, and the parked snapshot is frozen, so the execution
+    // id is the whole act for both origins.
+    mutationFn: (identity: { executionId: string }) =>
       mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/approve-definition`,
         "approve-graph-workflow-definition",
@@ -252,10 +258,111 @@ export function useApproveGraphWorkflowDefinitionMutation(
           body: JSON.stringify(identity),
         },
       ),
-    onSettled: async () => {
+    onSettled: async (_data, _error, identity) => {
       await Promise.all([
         queryClient.invalidateQueries({
           queryKey: graphWorkflowExecutionKeys.detail(projectName, sessionName),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: sessionKeys.detail(projectName, sessionName),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: graphWorkflowExecutionKeys.byId(
+            projectName,
+            sessionName,
+            identity.executionId,
+          ),
+        }),
+      ]);
+    },
+  });
+}
+
+export function useRejectGraphWorkflowDefinitionMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (identity: { executionId: string }) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/reject-definition`,
+        "reject-graph-workflow-definition",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(identity),
+        },
+      ),
+    onSettled: async (_data, _error, identity) => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: graphWorkflowExecutionKeys.detail(projectName, sessionName),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: graphWorkflowExecutionKeys.byId(
+            projectName,
+            sessionName,
+            identity.executionId,
+          ),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: graphWorkflowHistoryKeys.list(projectName, sessionName),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: graphWorkflowResultKeys.forExecution(
+            projectName,
+            sessionName,
+            identity.executionId,
+          ),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: sessionKeys.detail(projectName, sessionName),
+        }),
+      ]);
+    },
+  });
+}
+
+export function useAbandonGraphWorkflowMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (variables: { executionId: string; reason: string }) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/abandon`,
+        "abandon-graph-workflow",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(variables),
+        },
+      ),
+    onSettled: async (_data, _error, variables) => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: graphWorkflowExecutionKeys.detail(projectName, sessionName),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: graphWorkflowExecutionKeys.byId(
+            projectName,
+            sessionName,
+            variables.executionId,
+          ),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: graphWorkflowHistoryKeys.list(projectName, sessionName),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: graphWorkflowResultKeys.forExecution(
+            projectName,
+            sessionName,
+            variables.executionId,
+          ),
         }),
         queryClient.invalidateQueries({
           queryKey: sessionKeys.detail(projectName, sessionName),
@@ -347,27 +454,6 @@ export function useAbortGraphWorkflowMutation(
   });
 }
 
-export function useClearGraphWorkflowMutation(
-  projectName: string,
-  sessionName: string,
-) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: () =>
-      mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/clear`,
-        "clear-graph-workflow",
-        { method: "POST" },
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: sessionKeys.detail(projectName, sessionName),
-      });
-    },
-  });
-}
-
 export function useResetExecutionContextMutation(
   projectName: string,
   sessionName: string,
@@ -431,8 +517,13 @@ export function useResetExecutionContextAssignmentMutation(
 }
 
 export type ResolveApprovalVariables =
-  | { contextId: string; decision: "approve" }
-  | { contextId: string; decision: "reject"; message: string };
+  | { executionId?: string; contextId: string; decision: "approve" }
+  | {
+      executionId?: string;
+      contextId: string;
+      decision: "reject";
+      message: string;
+    };
 
 export type ResolveApprovalResult =
   | { status: "ok" }
@@ -454,7 +545,13 @@ export function useResolveApprovalMutation(
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(variables),
+          body: JSON.stringify({
+            contextId: variables.contextId,
+            decision: variables.decision,
+            ...(variables.decision === "reject"
+              ? { message: variables.message }
+              : {}),
+          }),
         },
       );
 
@@ -478,13 +575,25 @@ export function useResolveApprovalMutation(
         body?.code,
       );
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       void queryClient.invalidateQueries({
         queryKey: conversationKeys.active(),
       });
       void queryClient.invalidateQueries({
         queryKey: sessionKeys.detail(projectName, sessionName),
       });
+      void queryClient.invalidateQueries({
+        queryKey: graphWorkflowExecutionKeys.detail(projectName, sessionName),
+      });
+      if (variables.executionId !== undefined) {
+        void queryClient.invalidateQueries({
+          queryKey: graphWorkflowExecutionKeys.byId(
+            projectName,
+            sessionName,
+            variables.executionId,
+          ),
+        });
+      }
     },
   });
 }

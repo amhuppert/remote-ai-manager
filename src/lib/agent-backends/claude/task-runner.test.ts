@@ -38,6 +38,7 @@ import { ClaudeTaskRunner } from "./task-runner";
 import { CLAUDE_DEFAULT_STALL_TIMEOUT_MS } from "./shared";
 import type { AgentTaskRequest } from "../task";
 import { renderStructuredOutputInstruction } from "../structured-output-prompt";
+import { CONVERSATION_CAPABILITY_ENV_VAR } from "@/lib/agent-gateway/conversation-capability";
 
 const mockQuery = vi.mocked(query);
 
@@ -154,6 +155,20 @@ describe("ClaudeTaskRunner", () => {
         CC_SESSION: SCOPE.session,
         CC_CONVERSATION_ID: SCOPE.conversationId,
       });
+    });
+
+    it("carries no launch capability, so the reserved planner and collaboration task runs cannot launch workflows (D7 D11/D12)", async () => {
+      // A task run has the exact shape a shape-based rule would admit: a real
+      // session, a real conversation id, and no lane identity. The reserved
+      // planner runs through this path, so a capability here would hand the
+      // planner the launch authority D12 refuses it. This path never receives
+      // one because only the conversation actor mints, and it never spawns here.
+      await makeScopedRunner().run(
+        makeRequest({ ccSessionScope: { ...SCOPE } }),
+      );
+
+      const env = mockQuery.mock.calls[0]?.[0]?.options?.env;
+      expect(env?.[CONVERSATION_CAPABILITY_ENV_VAR]).toBe(undefined);
     });
 
     it("neutralizes ambient CC_* first, so no outer workflow identity survives", async () => {

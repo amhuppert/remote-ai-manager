@@ -17,6 +17,14 @@ import {
   resetGraphExecutionContractForTesting,
 } from "@/lib/workflow-graph/execution-contract-port";
 import { createWorkflowDefinition } from "@/lib/workflow-graph/test-fixtures";
+import type { GraphWorkflowExecutionOrigin } from "@/lib/workflow-graph/schemas";
+
+const TEMPLATE_ORIGIN: GraphWorkflowExecutionOrigin = {
+  kind: "template",
+  definitionId: "definition-1",
+  definitionRevision: 7,
+  tier: "project",
+};
 
 describe("spec workflow composition", () => {
   afterEach(() => {
@@ -70,8 +78,7 @@ describe("spec workflow composition", () => {
     await callbacks.markRunning(
       { projectPath: "/repo", sessionName: "session-1" },
       "workflow-execution-1",
-      "definition-1",
-      7,
+      TEMPLATE_ORIGIN,
     );
     await callbacks.markDelivered("workflow-execution-1", "merge-sha");
     const association = resolveRegisteredMergeAssociation({
@@ -88,8 +95,7 @@ describe("spec workflow composition", () => {
     expect(markRunning).toHaveBeenCalledWith(
       { projectPath: "/repo", sessionName: "session-1" },
       "workflow-execution-1",
-      "definition-1",
-      7,
+      TEMPLATE_ORIGIN,
     );
     expect(markDelivered).toHaveBeenCalledWith(
       "workflow-execution-1",

@@ -13,6 +13,8 @@ vi.mock("@/lib/logging", async (importOriginal) => ({
 import { _resetPublicationForTesting } from "@/lib/events/publication";
 import { _resetForTesting as resetJobQueue } from "@/lib/jobs/queue";
 import { resetGraphExecutionLifecycleCallbacksForTesting } from "@/lib/workflow-graph/execution-lifecycle-port";
+import { holdsExecutionLease } from "@/lib/workflow-graph/lifecycle-classifier";
+import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
 import { _resetDeliveryGateEvaluatorForTesting } from "@/lib/workflows/merge/delivery-gate-port";
 
 import {
@@ -93,7 +95,21 @@ describe("spec abandon coordinates the linked workflow's cleanup", () => {
       .filter((kind): kind is string => typeof kind === "string");
   }
 
-  it("aborts the workflow, releases the slot, and only then abandons", async () => {
+  /**
+   * The lease, not the row position, is what "the orphan is gone" means (D4):
+   * the production abort seam transitions the run and stops, leaving a
+   * lease-free record the next launch normalizes. Asserting an empty active row
+   * would demand a relocation production does not perform here.
+   */
+  function expectLeaseReleased(): void {
+    const active = world.readActiveWorkflowExecution();
+    if (active === null) return;
+    expect(
+      holdsExecutionLease(active.status, active.haltReason, active.abandonment),
+    ).toBe(false);
+  }
+
+  it("aborts the workflow — which releases the lease — and only then abandons", async () => {
     const { specExecutionId } = await liveExecution();
 
     const response = await abandon(specExecutionId);
@@ -106,19 +122,81 @@ describe("spec abandon coordinates the linked workflow's cleanup", () => {
     expect(stored.linked_workflow_execution_id).toBe(
       stored.workflow_execution_id,
     );
-    // The orphan is gone: the run no longer holds the session's slot.
-    expect(world.readActiveWorkflowExecution()).toBeNull();
+    expect(world.readActiveWorkflowExecution()?.status).toBe("aborted");
+    expectLeaseReleased();
 
+    // One workflow act, not two: `aborted` releases the lease by itself, so
+    // there is no separate slot-released phase to record.
     const kinds = cleanupEventKinds(stored.spec_id);
     expect(kinds).toContain("execution_cleanup_workflow_aborted");
-    expect(kinds).toContain("execution_cleanup_slot_released");
+    expect(kinds).not.toContain("execution_cleanup_slot_released");
     expect(kinds).toContain("execution_abandoned");
+  });
+
+  it("abandons a resumably halted run instead of aborting it, preserving the halt and its audit", async () => {
+    // The act R4 reserves for a halt that still holds the lease. Aborting it
+    // would answer the lease just as well and lose exactly what History needs:
+    // the halt reason the run ended on, and a record of who ended its tenure.
+    const { specExecutionId } = await liveExecution();
+    const halt: GraphWorkflowHaltReason = {
+      type: "execution_loop_failed",
+      contextId: "context-plan",
+      message: "the loop threw",
+      cause: "unknown",
+    };
+    await world.haltWorkflowExecution(halt);
+    const halted = world.readActiveWorkflowExecution();
+    expect(
+      holdsExecutionLease(
+        halted!.status,
+        halted!.haltReason,
+        halted!.abandonment,
+      ),
+    ).toBe(true);
+
+    const response = await abandon(specExecutionId);
+    expect(response.status).toBe(200);
+
+    const stored = row(specExecutionId);
+    expect(stored.state).toBe("abandoned");
+    expect(stored.cleanup_phase).toBeNull();
+    // The audit says what actually happened to the linked run.
+    const kinds = cleanupEventKinds(stored.spec_id);
+    expect(kinds).toContain("execution_cleanup_workflow_abandoned");
+    expect(kinds).not.toContain("execution_cleanup_workflow_aborted");
+    // The run left the lease behind, not its halt disposition.
+    expectLeaseReleased();
+    const archived = world.readArchivedWorkflowExecution();
+    expect(archived?.status).toBe("halted");
+    expect(archived?.haltReason).toEqual(halt);
+    expect(archived?.abandonment).toMatchObject({
+      reason: "superseded by a replanned run",
+    });
+  });
+
+  it("never reports success while a halted linked run still holds the lease", async () => {
+    const { specExecutionId } = await liveExecution();
+    await world.haltWorkflowExecution({
+      type: "execution_loop_failed",
+      contextId: "context-plan",
+      message: "the loop threw",
+      cause: "unknown",
+    });
+    world.cleanupFaults.abandonIsNoOp = true;
+
+    const response = await abandon(specExecutionId);
+    expect(response.status).not.toBe(200);
+    const refusal = (await response.json()) as { instruction?: string };
+    // refusals-name-remedy: the halt's remedy is abandon, never abort.
+    expect(refusal.instruction).toMatch(/cctl workflow abandon/);
+
+    expect(row(specExecutionId).state).toBe("abandoning");
   });
 
   it("never reports success while the linked workflow is still live", async () => {
     const { specExecutionId } = await liveExecution();
     // The abort seam accepts the call but leaves the run live — the coordinator
-    // must refuse rather than finalize over a run that still owns the slot.
+    // must refuse rather than finalize over a run that still holds the lease.
     world.cleanupFaults.abortIsNoOp = true;
 
     const response = await abandon(specExecutionId);
@@ -129,7 +207,9 @@ describe("spec abandon coordinates the linked workflow's cleanup", () => {
       unmetConditions?: string[];
     };
     expect(refusal.instruction).toMatch(/cctl workflow live abort/);
-    expect(refusal.unmetConditions?.join(" ")).toMatch(/still live/);
+    expect(refusal.unmetConditions?.join(" ")).toMatch(
+      /still holds this session's execution lease/,
+    );
 
     const stored = row(specExecutionId);
     expect(stored.state).toBe("abandoning");
@@ -153,41 +233,15 @@ describe("spec abandon coordinates the linked workflow's cleanup", () => {
     },
     {
       name: "after abort",
-      durablePhase: "release_slot",
+      durablePhase: "finalize",
       inject: () => {
         let observed = 0;
         world.cleanupFaults.beforeOp = (op) => {
           if (op !== "observe") return;
           observed += 1;
-          // The second observation is the one taken at `release_slot`, i.e.
-          // immediately after the abort succeeded.
+          // The second observation is the one taken at `finalize`, i.e.
+          // immediately after the abort succeeded and released the lease.
           if (observed === 2) throw new Error("injected post-abort fault");
-        };
-      },
-    },
-    {
-      name: "after release",
-      durablePhase: "finalize",
-      inject: () => {
-        let observed = 0;
-        world.cleanupFaults.beforeOp = (op) => {
-          if (op !== "observe") return;
-          observed += 1;
-          // The third observation is taken at `finalize`, after the slot was
-          // already released.
-          if (observed === 3) throw new Error("injected post-release fault");
-        };
-      },
-    },
-    {
-      name: "before finalize",
-      durablePhase: "finalize",
-      inject: () => {
-        let observed = 0;
-        world.cleanupFaults.beforeOp = (op) => {
-          if (op !== "observe") return;
-          observed += 1;
-          if (observed === 3) throw new Error("injected pre-finalize fault");
         };
       },
     },
@@ -221,7 +275,7 @@ describe("spec abandon coordinates the linked workflow's cleanup", () => {
       expect(settled.state).toBe("abandoned");
       expect(settled.cleanup_phase).toBeNull();
       expect(settled.cleanup_last_error).toBeNull();
-      expect(world.readActiveWorkflowExecution()).toBeNull();
+      expectLeaseReleased();
     });
   }
 

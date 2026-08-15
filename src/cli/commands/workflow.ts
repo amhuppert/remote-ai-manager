@@ -1,8 +1,19 @@
 import { z } from "zod";
+import {
+  graphWorkflowExecutionActReceiptSchema,
+  graphWorkflowExecutionOriginSchema,
+  graphWorkflowLaunchReceiptSchema,
+  graphWorkflowLeaseBlockerSchema,
+  type GraphWorkflowExecutionOrigin,
+  type GraphWorkflowLaunchReceipt,
+} from "@/lib/workflow-graph/schemas";
+import { graphWorkflowBoundaryKindSchema } from "@/lib/workflow-graph/event-schemas";
+import { graphWorkflowStatusSchema } from "@/lib/workflow-graph/definition-schemas";
 import { dispatchGroup } from "../dispatch";
 import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
+  EXIT_CONNECTION,
   EXIT_OPERATION_FAILED,
   EXIT_USAGE,
   checkFlags,
@@ -14,6 +25,7 @@ import {
   issueDetailLines,
   readJsonObjectFile,
   render,
+  resolveCliPrincipalCapabilities,
   resolveLaneContext,
   resolveProjectContext,
   resolveSessionContext,
@@ -57,6 +69,7 @@ import {
   type LedgerDecisionRow,
 } from "./workflow-ledger";
 import { deriveExecutionLaneActivities } from "@/lib/workflow-graph/lane-activity";
+import { parseDuration } from "./agent";
 
 /**
  * `cctl workflow validate|create|replace|list|get|status|delete|start|templates`
@@ -80,6 +93,98 @@ import { deriveExecutionLaneActivities } from "@/lib/workflow-graph/lane-activit
  */
 
 const WORKFLOW_START_HINT = "track progress with 'cctl workflow status'";
+const WORKFLOW_WAIT_POLL_INTERVAL_MS = 1_000;
+const DEFAULT_WORKFLOW_WAIT_BUDGET_MS = 30 * 60 * 1_000;
+const DEFAULT_WORKFLOW_WAIT_TIMEOUT_LABEL = "30m";
+const PROJECT_SCOPE_RUN_REMEDY =
+  "Use or create a session conversation, then run the one-off workflow from that conversation.";
+
+const blockerFreeWorkflowRefusalDetailsSchema = z
+  .object({ remedy: z.string().trim().min(1) })
+  .strict();
+const workflowLaunchRefusalDetailsSchema = z.union([
+  graphWorkflowLeaseBlockerSchema,
+  blockerFreeWorkflowRefusalDetailsSchema,
+]);
+type WorkflowLaunchRefusalDetails = z.infer<
+  typeof workflowLaunchRefusalDetailsSchema
+>;
+
+function formatWorkflowOrigin(origin: GraphWorkflowExecutionOrigin): string {
+  return origin.kind === "one_off"
+    ? `one_off (${origin.planName})`
+    : `template (${origin.tier}:${origin.definitionId}@${origin.definitionRevision})`;
+}
+
+/** One text projection for every launch refusal carrying the typed D7 details. */
+function workflowLaunchRefusalDetailLines(
+  details: WorkflowLaunchRefusalDetails,
+): string[] {
+  return [
+    ...(details && "executionId" in details
+      ? [
+          `  execution: ${details.executionId}`,
+          `  status: ${details.status}`,
+          `  origin: ${formatWorkflowOrigin(details.origin)}`,
+          `  origin conversation: ${details.originConversationId ?? "-"}`,
+          `  deep link: ${details.deepLink}`,
+        ]
+      : []),
+    `  remedy: ${details.remedy}`,
+  ];
+}
+
+/**
+ * Normalize the server's lease/nesting launch refusals onto the one CLI detail
+ * contract. Lease details already arrive in the flat blocker shape; a nesting
+ * refusal has no blocker and carries its remedy as the server instruction.
+ */
+function workflowLaunchFailure(
+  result: Exclude<CliRequestResult, { kind: "ok" }>,
+  json: boolean,
+): CliResult {
+  if (result.kind !== "error") return workflowFailure(result, json);
+
+  let details: WorkflowLaunchRefusalDetails | null = null;
+  if (result.code === "lease_held") {
+    const parsed = workflowLaunchRefusalDetailsSchema.safeParse(result.details);
+    if (parsed.success && "executionId" in parsed.data) details = parsed.data;
+  } else if (
+    result.code === "workflow_nesting_refused" ||
+    result.code === "unverified_principal"
+  ) {
+    const remedy =
+      result.instruction ??
+      "Launch the workflow from an ordinary session conversation.";
+    details = { remedy };
+  }
+
+  if (details === null) return workflowFailure(result, json);
+  return failure({
+    exitCode: EXIT_OPERATION_FAILED,
+    message: result.error,
+    detail: workflowLaunchRefusalDetailLines(details).join("\n"),
+    ...(result.issues ? { issues: result.issues } : {}),
+    ...(result.code ? { code: result.code } : {}),
+    ...(result.reminders ? { reminders: result.reminders } : {}),
+    details,
+    json,
+  });
+}
+
+function projectScopeRunFailure(json: boolean): CliResult {
+  const details: WorkflowLaunchRefusalDetails = {
+    remedy: PROJECT_SCOPE_RUN_REMEDY,
+  };
+  return failure({
+    exitCode: EXIT_USAGE,
+    message: "workflow run requires a session conversation",
+    code: "project_scope_refused",
+    details,
+    detail: workflowLaunchRefusalDetailLines(details).join("\n"),
+    json,
+  });
+}
 
 /**
  * Names the conversation issuing the request. On `workflow start` the server
@@ -168,6 +273,9 @@ const templatesResponseSchema = z.object({
 
 const startResponseSchema = z.object({
   execution: z.object({ executionId: z.string(), status: z.string() }),
+  // The launch receipt (D7 R1.2). Optional so a response from an older server
+  // still parses; the disposition then falls back to "started".
+  receipt: z.object({ status: z.string() }).optional(),
 });
 
 const contextStateSchema = z.object({
@@ -210,6 +318,38 @@ const executionSchema = z.object({
 const statusResponseSchema = z.object({
   execution: executionSchema.nullable(),
 });
+const abandonResponseSchema = z.object({
+  execution: graphWorkflowExecutionActReceiptSchema,
+  abandoned: z.literal(true),
+});
+
+const workflowBoundaryCursorSchema = z.union([
+  z.string().trim().min(1),
+  z.number().int().positive(),
+]);
+const workflowBoundaryResultSchema = z.object({
+  cursor: workflowBoundaryCursorSchema,
+  occurredAt: z.string(),
+  executionId: z.string().trim().min(1),
+  boundaryKind: graphWorkflowBoundaryKindSchema,
+  status: graphWorkflowStatusSchema,
+  contextId: z.string().nullable(),
+  pendingActions: z.array(z.record(z.string(), z.unknown())),
+  outputs: z.unknown(),
+  name: z.string(),
+  origin: graphWorkflowExecutionOriginSchema,
+  originConversationId: z.string().nullable(),
+  startedAt: z.string(),
+  completedAt: z.string().nullable(),
+  haltReason: z.unknown().nullable(),
+  abandonment: z.unknown().nullable(),
+  documents: z.array(z.unknown()),
+  deepLink: z.string(),
+});
+const workflowBoundaryResponseSchema = z.object({
+  result: workflowBoundaryResultSchema.nullable(),
+});
+type WorkflowBoundaryResult = z.infer<typeof workflowBoundaryResultSchema>;
 
 function definitionsPath(context: ProjectContext): string {
   return `/api/projects/${encodePathSegment(context.project)}/workflows`;
@@ -334,6 +474,9 @@ export async function runWorkflow(
       edit: (r) => runWorkflowEdit(r, flags, values, env, host),
       status: (r) => runWorkflowStatus(r, flags, values, env, host),
       start: (r) => runWorkflowStart(r, flags, values, env, host),
+      run: (r) => runWorkflowRun(r, flags, values, env, host),
+      wait: (r) => runWorkflowWait(r, flags, values, env, host),
+      abandon: (r) => runWorkflowAbandon(r, flags, values, env, host),
       delete: (r) => runWorkflowDelete(r, flags, values, env, host),
       templates: (r) => runWorkflowTemplates(r, flags, values, env, host),
       live: (r) => runWorkflowLive(r, flags, values, env, host),
@@ -794,9 +937,13 @@ async function runWorkflowStatus(
   const json = flags.json;
   const denied = checkFlags(values, flagNamesFor("workflow status"), json);
   if (denied) return denied;
-  if (rest.length > 0) {
-    return usageFailure("workflow status takes no arguments", json);
+  if (rest.length > 1) {
+    return usageFailure(
+      "workflow status takes at most one <executionId> argument",
+      json,
+    );
   }
+  const executionId = rest[0];
 
   const resolved = await resolveSessionContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
@@ -807,7 +954,10 @@ async function runWorkflowStatus(
     token: context.token,
     tokenSource: context.tokenSource,
     method: "GET",
-    path: `${graphWorkflowPath(context)}/execution`,
+    path:
+      executionId === undefined
+        ? `${graphWorkflowPath(context)}/execution`
+        : `${graphWorkflowPath(context)}/executions/${encodePathSegment(executionId)}`,
   });
   if (result.kind !== "ok") return workflowFailure(result, json);
 
@@ -988,6 +1138,7 @@ async function runWorkflowStart(
     tokenSource: context.tokenSource,
     method: "POST",
     path: graphWorkflowPath(context),
+    principalCapabilities: resolveCliPrincipalCapabilities(env),
     ...(callerConversationId === null
       ? {}
       : {
@@ -998,38 +1149,35 @@ async function runWorkflowStart(
       ...(parameters !== undefined ? { parameters } : {}),
     },
   });
-  if (
-    result.kind === "error" &&
-    result.status === 409 &&
-    result.code === "definition_approval_required"
-  ) {
-    const executionId = (
-      result.details as { executionId?: unknown } | undefined
-    )?.executionId;
-    if (typeof executionId === "string" && executionId.trim().length > 0) {
-      const instruction =
-        result.instruction ??
-        `Approve the pending workflow definition to resume execution ${executionId}.`;
-      return {
-        exitCode: EXIT_OK,
-        stdout: render(
-          json,
-          `parked ${id} (run ${executionId}) awaiting definition approval\ninstruction: ${instruction}\n`,
-          {
-            ok: true,
-            executionId,
-            status: "awaiting_definition_approval",
-            instruction,
-          },
-        ),
-        stderr: "",
-      };
-    }
-  }
-  if (result.kind !== "ok") return workflowFailure(result, json);
+  if (result.kind !== "ok") return workflowLaunchFailure(result, json);
 
   const parsed = startResponseSchema.safeParse(result.body);
   const executionId = parsed.success ? parsed.data.execution.executionId : null;
+
+  // A park is an ACCEPTED launch carrying a receipt (D7 decision D1): the run
+  // is durable and holds the session's lease, it simply has not begun. Read from
+  // the receipt rather than decoding a refusal as a success.
+  if (
+    parsed.success &&
+    parsed.data.receipt?.status === "awaiting_definition_approval" &&
+    executionId !== null
+  ) {
+    const instruction = `Approve the pending workflow definition to resume execution ${executionId}.`;
+    return {
+      exitCode: EXIT_OK,
+      stdout: render(
+        json,
+        `parked ${id} (run ${executionId}) awaiting definition approval\ninstruction: ${instruction}\n`,
+        {
+          ok: true,
+          executionId,
+          status: "awaiting_definition_approval",
+          instruction,
+        },
+      ),
+      stderr: "",
+    };
+  }
   const humanLine = executionId
     ? `started ${id} (run ${executionId})\n`
     : `started ${id}\n`;
@@ -1040,6 +1188,429 @@ async function runWorkflowStart(
       ok: true,
       ...(executionId ? { executionId } : {}),
       hint: WORKFLOW_START_HINT,
+    }),
+    stderr: "",
+  };
+}
+
+/** `workflow run` launches an authored plan directly; it never writes a definition. */
+async function runWorkflowRun(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("workflow run"), json);
+  if (denied) return denied;
+  if (rest.length > 0) {
+    return usageFailure(
+      "workflow run takes no positional arguments — pass --file",
+      json,
+    );
+  }
+
+  const filePath = values["file"];
+  if (filePath === undefined) {
+    return usageFailure("workflow run requires --file <plan.json>", json);
+  }
+  const wait = values["wait"] !== undefined;
+  const timeoutValue = values["timeout"];
+  if (timeoutValue !== undefined && !wait) {
+    return usageFailure(
+      "workflow run: --timeout only applies with --wait",
+      json,
+    );
+  }
+  let waitBudgetMs = DEFAULT_WORKFLOW_WAIT_BUDGET_MS;
+  if (timeoutValue !== undefined) {
+    const parsedTimeout = parseDuration(timeoutValue);
+    if (parsedTimeout === null) {
+      return usageFailure(
+        `invalid --timeout "${timeoutValue}" — use e.g. 25m, 90s, 500ms`,
+        json,
+      );
+    }
+    waitBudgetMs = parsedTimeout;
+  }
+
+  const plan = await readJsonObjectFile(host, filePath, "plan", json);
+  if (!plan.ok) return plan.result;
+
+  let inputs: Record<string, unknown> | undefined;
+  const inputsPath = values["inputs"];
+  if (inputsPath !== undefined) {
+    const inputDocument = await readJsonObjectFile(
+      host,
+      inputsPath,
+      "inputs",
+      json,
+    );
+    if (!inputDocument.ok) return inputDocument.result;
+    inputs = inputDocument.value;
+  }
+
+  if (env["CC_CONVERSATION_SCOPE"] === "project") {
+    return projectScopeRunFailure(json);
+  }
+
+  const resolved = await resolveSessionContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const context = resolved.context;
+  const result = await cliRequest(host, {
+    server: context.server,
+    token: context.token,
+    tokenSource: context.tokenSource,
+    method: "POST",
+    path: `${graphWorkflowPath(context)}/run`,
+    principalCapabilities: resolveCliPrincipalCapabilities(env),
+    body: {
+      plan: plan.value,
+      ...(inputs !== undefined ? { inputs } : {}),
+    },
+  });
+  if (result.kind !== "ok") return workflowLaunchFailure(result, json);
+
+  const response = z
+    .object({ receipt: graphWorkflowLaunchReceiptSchema })
+    .safeParse(result.body);
+  if (!response.success) {
+    return failure({
+      exitCode: EXIT_OPERATION_FAILED,
+      message: "unexpected workflow run response from the CC server",
+      json,
+    });
+  }
+  const receipt = response.data.receipt;
+  if (wait) {
+    return waitForWorkflowBoundary({
+      context,
+      executionId: receipt.executionId,
+      cursor: null,
+      budgetMs: waitBudgetMs,
+      timeoutLabel: timeoutValue ?? DEFAULT_WORKFLOW_WAIT_TIMEOUT_LABEL,
+      json,
+      host,
+      launchReceipt: receipt,
+      scope:
+        flags.project !== undefined || flags.session !== undefined
+          ? { project: context.project, session: context.session }
+          : undefined,
+    });
+  }
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(json, formatWorkflowLaunchReceipt(receipt), {
+      ok: true,
+      ...receipt,
+    }),
+    stderr: "",
+  };
+}
+
+function formatWorkflowLaunchReceipt(
+  receipt: GraphWorkflowLaunchReceipt,
+): string {
+  return [
+    `launched ${receipt.executionId}  ${receipt.status}`,
+    `  origin: ${formatWorkflowOrigin(receipt.origin)}`,
+    `  origin conversation: ${receipt.originConversationId ?? "-"}`,
+    `  deep link: ${receipt.deepLink}`,
+    "",
+  ].join("\n");
+}
+
+function formatWorkflowBoundaryResult(result: WorkflowBoundaryResult): string {
+  const actions = result.pendingActions.map(
+    (action, index) => `  action[${index + 1}]: ${JSON.stringify(action)}`,
+  );
+  return [
+    `${result.executionId}  ${result.boundaryKind}`,
+    `  status: ${result.status}`,
+    `  cursor: ${String(result.cursor)}`,
+    ...(result.contextId === null ? [] : [`  context: ${result.contextId}`]),
+    `  origin: ${formatWorkflowOrigin(result.origin)}`,
+    `  origin conversation: ${result.originConversationId ?? "-"}`,
+    `  deep link: ${result.deepLink}`,
+    ...actions,
+    `  outputs: ${JSON.stringify(result.outputs)}`,
+    "",
+  ].join("\n");
+}
+
+type WorkflowWaitContinuationDetails = Record<string, unknown> & {
+  executionId: string;
+  cursor: string | null;
+  continueWith: string;
+  project?: string;
+  session?: string;
+};
+
+interface WorkflowWaitScope {
+  project: string;
+  session: string;
+}
+
+function workflowWaitContinuation(input: {
+  executionId: string;
+  cursor: string | null;
+  timeoutLabel: string;
+  scope?: WorkflowWaitScope;
+}): WorkflowWaitContinuationDetails {
+  const cursorArgs = input.cursor === null ? "" : ` --cursor ${input.cursor}`;
+  const scopeArgs =
+    input.scope === undefined
+      ? ""
+      : ` --project ${input.scope.project} --session ${input.scope.session}`;
+  return {
+    executionId: input.executionId,
+    cursor: input.cursor,
+    ...(input.scope ?? {}),
+    continueWith: `cctl workflow wait ${input.executionId}${cursorArgs}${scopeArgs} --timeout ${input.timeoutLabel}`,
+  };
+}
+
+function workflowWaitContinuationFailure(input: {
+  kind: "timeout" | "disconnected";
+  executionId: string;
+  cursor: string | null;
+  timeoutLabel: string;
+  json: boolean;
+  scope?: WorkflowWaitScope;
+  connectionDetail?: string;
+}): CliResult {
+  const details = workflowWaitContinuation(input);
+  const message =
+    input.kind === "timeout"
+      ? `workflow wait timed out after ${input.timeoutLabel} — execution ${input.executionId} continues server-side`
+      : `workflow wait disconnected — execution ${input.executionId} continues server-side`;
+  const detail = [
+    ...(input.connectionDetail ? [input.connectionDetail] : []),
+    `  execution: ${details.executionId}`,
+    `  cursor: ${details.cursor ?? "-"}`,
+    `  continue: ${details.continueWith}`,
+  ].join("\n");
+  return failure({
+    exitCode:
+      input.kind === "timeout" ? EXIT_OPERATION_FAILED : EXIT_CONNECTION,
+    message,
+    detail,
+    code: input.kind === "timeout" ? "wait_timeout" : "wait_disconnected",
+    details,
+    json: input.json,
+  });
+}
+
+async function waitForWorkflowBoundary(input: {
+  context: SessionContext;
+  executionId: string;
+  cursor: string | null;
+  budgetMs: number;
+  timeoutLabel: string;
+  json: boolean;
+  host: CliHost;
+  launchReceipt?: GraphWorkflowLaunchReceipt;
+  scope?: WorkflowWaitScope;
+}): Promise<CliResult> {
+  let remainingBudgetMs = Math.max(0, input.budgetMs);
+  const now = input.host.now ?? Date.now;
+  for (;;) {
+    if (remainingBudgetMs === 0) {
+      return workflowWaitContinuationFailure({
+        kind: "timeout",
+        executionId: input.executionId,
+        cursor: input.cursor,
+        timeoutLabel: input.timeoutLabel,
+        json: input.json,
+        scope: input.scope,
+      });
+    }
+    const params = new URLSearchParams();
+    if (input.cursor !== null) params.set("cursor", input.cursor);
+    const query = params.toString();
+    const requestStartedAt = now();
+    const result = await cliRequest(input.host, {
+      server: input.context.server,
+      token: input.context.token,
+      tokenSource: input.context.tokenSource,
+      method: "GET",
+      path: `${graphWorkflowPath(input.context)}/executions/${encodePathSegment(input.executionId)}/result${query ? `?${query}` : ""}`,
+      timeoutMs: Math.max(1, Math.ceil(remainingBudgetMs)),
+    });
+    const requestElapsedMs = Math.max(0, now() - requestStartedAt);
+    remainingBudgetMs = Math.max(0, remainingBudgetMs - requestElapsedMs);
+    if (result.kind === "connection") {
+      return workflowWaitContinuationFailure({
+        kind: remainingBudgetMs === 0 ? "timeout" : "disconnected",
+        executionId: input.executionId,
+        cursor: input.cursor,
+        timeoutLabel: input.timeoutLabel,
+        json: input.json,
+        scope: input.scope,
+        connectionDetail: result.detail,
+      });
+    }
+    if (remainingBudgetMs === 0) {
+      return workflowWaitContinuationFailure({
+        kind: "timeout",
+        executionId: input.executionId,
+        cursor: input.cursor,
+        timeoutLabel: input.timeoutLabel,
+        json: input.json,
+        scope: input.scope,
+      });
+    }
+    if (result.kind !== "ok") return workflowFailure(result, input.json);
+
+    const parsed = workflowBoundaryResponseSchema.safeParse(result.body);
+    if (!parsed.success) {
+      return failure({
+        exitCode: EXIT_OPERATION_FAILED,
+        message: "unexpected workflow wait response from the CC server",
+        json: input.json,
+      });
+    }
+    if (parsed.data.result !== null) {
+      const humanText = [
+        ...(input.launchReceipt === undefined
+          ? []
+          : [formatWorkflowLaunchReceipt(input.launchReceipt)]),
+        formatWorkflowBoundaryResult(parsed.data.result),
+      ].join("");
+      return {
+        exitCode: EXIT_OK,
+        stdout: render(input.json, humanText, {
+          ok: true,
+          ...(input.launchReceipt ?? {}),
+          result: parsed.data.result,
+        }),
+        stderr: "",
+      };
+    }
+    const sleepMs = Math.min(WORKFLOW_WAIT_POLL_INTERVAL_MS, remainingBudgetMs);
+    const sleepStartedAt = now();
+    await input.host.sleep(sleepMs);
+    const sleepElapsedMs = Math.max(0, now() - sleepStartedAt);
+    remainingBudgetMs = Math.max(
+      0,
+      remainingBudgetMs - Math.max(sleepMs, sleepElapsedMs),
+    );
+  }
+}
+
+async function runWorkflowWait(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("workflow wait"), json);
+  if (denied) return denied;
+  const executionId = rest[0];
+  if (executionId === undefined) {
+    return usageFailure("workflow wait requires an <executionId>", json);
+  }
+  if (rest.length > 1) {
+    return usageFailure(
+      "workflow wait takes a single <executionId> argument",
+      json,
+    );
+  }
+
+  const cursorValue = values["cursor"];
+  const cursor = cursorValue === undefined ? null : cursorValue.trim();
+  if (cursor !== null && cursor.length === 0) {
+    return usageFailure("workflow wait: --cursor must not be empty", json);
+  }
+  const timeoutValue = values["timeout"];
+  let budgetMs = DEFAULT_WORKFLOW_WAIT_BUDGET_MS;
+  if (timeoutValue !== undefined) {
+    const parsedTimeout = parseDuration(timeoutValue);
+    if (parsedTimeout === null) {
+      return usageFailure(
+        `invalid --timeout "${timeoutValue}" — use e.g. 25m, 90s, 500ms`,
+        json,
+      );
+    }
+    budgetMs = parsedTimeout;
+  }
+
+  const resolved = await resolveSessionContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const context = resolved.context;
+  return waitForWorkflowBoundary({
+    context,
+    executionId,
+    cursor,
+    budgetMs,
+    timeoutLabel: timeoutValue ?? DEFAULT_WORKFLOW_WAIT_TIMEOUT_LABEL,
+    json,
+    host,
+    scope:
+      flags.project !== undefined || flags.session !== undefined
+        ? { project: context.project, session: context.session }
+        : undefined,
+  });
+}
+
+/** Explicit, audited release of a resumably halted execution into History. */
+async function runWorkflowAbandon(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("workflow abandon"), json);
+  if (denied) return denied;
+  const executionId = rest[0];
+  if (executionId === undefined) {
+    return usageFailure("workflow abandon requires an <executionId>", json);
+  }
+  if (rest.length > 1) {
+    return usageFailure(
+      "workflow abandon takes a single <executionId> argument",
+      json,
+    );
+  }
+  const reason = (values["reason"] ?? "").trim();
+  if (reason.length === 0) {
+    return usageFailure("workflow abandon requires --reason <reason>", json);
+  }
+
+  const resolved = await resolveSessionContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const context = resolved.context;
+  const result = await cliRequest(host, {
+    server: context.server,
+    token: context.token,
+    tokenSource: context.tokenSource,
+    method: "POST",
+    path: `${graphWorkflowPath(context)}/abandon`,
+    principalCapabilities: resolveCliPrincipalCapabilities(env),
+    body: { executionId, reason },
+  });
+  if (result.kind !== "ok") return workflowLiveFailure(result, json);
+
+  const parsed = abandonResponseSchema.safeParse(result.body);
+  if (!parsed.success) {
+    return failure({
+      exitCode: EXIT_OPERATION_FAILED,
+      message: "unexpected workflow abandon response from the CC server",
+      json,
+    });
+  }
+
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(json, `abandoned ${executionId}\n`, {
+      ok: true,
+      abandoned: true,
+      execution: parsed.data.execution,
     }),
     stderr: "",
   };
@@ -1216,18 +1787,17 @@ async function runWorkflowLive(
       pause: (r) => runWorkflowLivePause(r, flags, values, env, host),
       resume: (r) => runWorkflowLiveResume(r, flags, values, env, host),
       abort: (r) => runWorkflowLiveAbort(r, flags, values, env, host),
-      release: (r) => runWorkflowLiveRelease(r, flags, values, env, host),
     },
   });
 }
 
 /**
  * `workflow live abort` — end the session's active run. The recovery verb the
- * orphan dead end lacked: abort and release existed only as API routes, so an
- * agent that stranded a run had to call them raw (ticket #47 note 9e5ba960).
+ * orphan dead end lacked: it existed only as an API route, so an agent that
+ * stranded a run had to call it raw (ticket #47 note 9e5ba960).
  *
  * `aborted` auto-releases, so this hands the session's execution slot back on
- * its own; `live release` is the backstop for a run that settled without one.
+ * its own — there is no separate release step.
  */
 async function runWorkflowLiveAbort(
   rest: string[],
@@ -1257,6 +1827,7 @@ async function runWorkflowLiveAbort(
     tokenSource: context.tokenSource,
     method: "POST",
     path: `${graphWorkflowPath(context)}/abort`,
+    principalCapabilities: resolveCliPrincipalCapabilities(env),
     body: { reason },
   });
   if (result.kind !== "ok") return workflowFailure(result, json);
@@ -1271,83 +1842,6 @@ async function runWorkflowLiveAbort(
     stderr: "",
   };
 }
-
-/**
- * `workflow live release` — the explicit, audited archive act: hand the
- * session's execution slot back. Releasing an already-released session is a
- * success, not a conflict, so a retry after a partial cleanup converges.
- */
-async function runWorkflowLiveRelease(
-  rest: string[],
-  flags: GlobalFlags,
-  values: Record<string, string>,
-  env: CliEnv,
-  host: CliHost,
-): Promise<CliResult> {
-  const json = flags.json;
-  const denied = checkFlags(
-    values,
-    flagNamesFor("workflow live release"),
-    json,
-  );
-  if (denied) return denied;
-  if (rest.length > 0) {
-    return usageFailure("workflow live release takes no arguments", json);
-  }
-  const reason = (values["reason"] ?? "").trim();
-  if (reason.length === 0) {
-    return usageFailure(
-      "workflow live release requires --reason <reason>",
-      json,
-    );
-  }
-  const expectedExecutionId = values["execution"]?.trim();
-
-  const resolved = await resolveSessionContext(flags, env, host);
-  if (!resolved.ok) return resolved.result;
-  const context = resolved.context;
-
-  const result = await cliRequest(host, {
-    server: context.server,
-    token: context.token,
-    tokenSource: context.tokenSource,
-    method: "POST",
-    path: `${graphWorkflowPath(context)}/release`,
-    body:
-      expectedExecutionId === undefined || expectedExecutionId.length === 0
-        ? { reason }
-        : { reason, expectedExecutionId },
-  });
-  if (result.kind !== "ok") return workflowFailure(result, json);
-
-  const parsed = releaseResponseSchema.safeParse(result.body);
-  const alreadyReleased =
-    parsed.success && parsed.data.alreadyReleased === true;
-  return {
-    exitCode: EXIT_OK,
-    stdout: render(
-      json,
-      alreadyReleased
-        ? "already released — this session owns no execution slot\n"
-        : "released\n",
-      {
-        ok: true,
-        released: true,
-        alreadyReleased,
-        execution: parsed.success ? parsed.data.executionId : undefined,
-        status: parsed.success ? parsed.data.status : undefined,
-      },
-    ),
-    stderr: "",
-  };
-}
-
-const releaseResponseSchema = z.object({
-  released: z.boolean(),
-  alreadyReleased: z.boolean().optional(),
-  executionId: z.string().optional(),
-  status: z.string().optional(),
-});
 
 /** The endpoint body's `section` slice value, for pretty-printing a selector. */
 function liveOutlineSectionValue(body: unknown): unknown {
@@ -1633,6 +2127,7 @@ async function runWorkflowLiveEdit(
     tokenSource: context.tokenSource,
     method: "POST",
     path: `${graphWorkflowPath(context)}/runtime-edits`,
+    principalCapabilities: resolveCliPrincipalCapabilities(env),
     body,
   });
   if (result.kind !== "ok") return workflowLiveFailure(result, json);
@@ -1725,6 +2220,7 @@ async function runWorkflowLiveAmend(
     tokenSource: context.tokenSource,
     method: "POST",
     path: `${graphWorkflowPath(context)}/amend`,
+    principalCapabilities: resolveCliPrincipalCapabilities(env),
     ...(callerConversationId === null
       ? {}
       : {
@@ -1824,6 +2320,7 @@ async function runWorkflowLivePauseResume(
     tokenSource: context.tokenSource,
     method: "POST",
     path: `${graphWorkflowPath(context)}/${action}`,
+    principalCapabilities: resolveCliPrincipalCapabilities(env),
   });
   if (result.kind !== "ok") return workflowFailure(result, json);
 
@@ -1900,6 +2397,7 @@ async function runWorkflowTaskComplete(
     tokenSource: context.tokenSource,
     method: "POST",
     path: `${laneContextPath(context)}/tasks/${encodePathSegment(taskId)}/complete`,
+    principalCapabilities: resolveCliPrincipalCapabilities(env),
     body: { executionId: context.executionId, summary },
   });
   // A 409 halt carries { error: reason, halt, reason }; the generic mapping
@@ -1973,6 +2471,7 @@ async function runWorkflowTaskAdd(
     tokenSource: context.tokenSource,
     method: "POST",
     path: `${laneContextPath(context)}/tasks`,
+    principalCapabilities: resolveCliPrincipalCapabilities(env),
     body: {
       executionId: context.executionId,
       title,
@@ -2092,6 +2591,7 @@ async function runWorkflowGraphExpand(
     tokenSource: context.tokenSource,
     method: "POST",
     path: `${laneContextPath(context)}/expand`,
+    principalCapabilities: resolveCliPrincipalCapabilities(env),
     headers: { "x-cc-lane-capability": capability },
     body: { executionId: context.executionId, request: payload },
   });
@@ -2206,6 +2706,7 @@ async function runWorkflowSharedDocUpsert(
     tokenSource: context.tokenSource,
     method: "PUT",
     path: `${graphWorkflowPath(context)}/shared-documents/${encodedPath}`,
+    principalCapabilities: resolveCliPrincipalCapabilities(env),
     body: {
       executionId: context.executionId,
       contextId: context.contextId,
@@ -2279,6 +2780,7 @@ async function runWorkflowCollabRequest(
     tokenSource: context.tokenSource,
     method: "POST",
     path: `${laneContextPath(context)}/collaboration-requests`,
+    principalCapabilities: resolveCliPrincipalCapabilities(env),
     body: { executionId: context.executionId, brief },
   });
   // 403 (allowAgentCollaboration disabled) carries { error }; exit 1 with text.

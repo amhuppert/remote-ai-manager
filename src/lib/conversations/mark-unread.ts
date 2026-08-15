@@ -65,6 +65,36 @@ export async function markUnreadOnFinish(
   });
 }
 
+export type WorkflowResultUnreadContext = Omit<
+  MarkUnreadOnFinishContext,
+  "role"
+>;
+
+export async function markWorkflowResultUnread(
+  ctx: WorkflowResultUnreadContext,
+  deps: MarkUnreadOnFinishDeps,
+): Promise<void> {
+  await deps.mutateConversation(
+    ctx.projectPath,
+    ctx.sessionName,
+    ctx.conversationId,
+    "conversation.mark-workflow-result-unread",
+    (conversation) => {
+      conversation.unread = true;
+    },
+  );
+
+  deps.publishSessionStatus({
+    type: "conversation-unread",
+    ...conversationEventScopeFields(
+      ctx.projectName,
+      ctx.sessionName,
+      ctx.conversationId,
+    ),
+    unread: true,
+  });
+}
+
 /**
  * Clear `unread` at the start of a user-initiated turn (prompt submit or
  * question answer). Symmetric with markUnreadOnFinish — workflow-managed

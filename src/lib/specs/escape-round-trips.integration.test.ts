@@ -6,6 +6,7 @@ import {
 } from "@/lib/events/publication";
 import { _resetForTesting as resetJobQueue } from "@/lib/jobs/queue";
 import { resetGraphExecutionLifecycleCallbacksForTesting } from "@/lib/workflow-graph/execution-lifecycle-port";
+import { holdsExecutionLease } from "@/lib/workflow-graph/lifecycle-classifier";
 import { _resetDeliveryGateEvaluatorForTesting } from "@/lib/workflows/merge/delivery-gate-port";
 
 import {
@@ -487,9 +488,20 @@ describe("post-launch escape — blocking replan through the capture route", () 
       specExecutionId,
     );
 
-    // The coordinator ran to the end: the workflow no longer owns the slot and
-    // the spec execution is durably abandoned with the blocking reason.
-    expect(world.readActiveWorkflowExecution()).toBeNull();
+    // The coordinator ran to the end: the workflow no longer holds the session's
+    // lease — the abort seam transitions it and stops, leaving a lease-free
+    // record the next launch normalizes — and the spec execution is durably
+    // abandoned with the blocking reason.
+    const released = world.readActiveWorkflowExecution();
+    if (released !== null) {
+      expect(
+        holdsExecutionLease(
+          released.status,
+          released.haltReason,
+          released.abandonment,
+        ),
+      ).toBe(false);
+    }
     expect(
       world.db
         .prepare(

@@ -931,7 +931,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
     });
   });
 
-  it("verifies graph workflow event ordering on the wire matches the existing publisher contract (status → context → task → circuit-breaker → docs)", () => {
+  it("verifies graph workflow event ordering on the wire matches the publisher contract through its boundary", () => {
     const wire = captureWire();
 
     const publisher = createGraphWorkflowExecutionEventPublisher({
@@ -998,6 +998,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       "graph-workflow-task-status",
       "graph-workflow-circuit-breaker",
       "graph-workflow-shared-documents-updated",
+      "graph-workflow-boundary",
     ]);
   });
 

@@ -25,6 +25,7 @@ import {
   authorSpineDraft,
   createSpecSpineWorld,
   proposeSpineRevision,
+  SPINE_PROJECT_PATH,
   SPINE_PROJECT_NAME,
   SPINE_SESSION_NAME,
   SPINE_WORKFLOW_EXECUTION_ID,
@@ -253,7 +254,11 @@ function amendmentEvents(
   world: SpecSpineWorld,
 ): GraphWorkflowExecutionAmendedEvent[] {
   return world.repos.workflowEvents
-    .findByExecution(SPINE_WORKFLOW_EXECUTION_ID)
+    .findByExecution(
+      SPINE_PROJECT_PATH,
+      SPINE_SESSION_NAME,
+      SPINE_WORKFLOW_EXECUTION_ID,
+    )
     .map((entry) => entry.event)
     .filter(
       (event): event is GraphWorkflowExecutionAmendedEvent =>

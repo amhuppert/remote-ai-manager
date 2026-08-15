@@ -375,9 +375,10 @@ export const durableConversationPersistence: ConversationPersistenceAdapter = {
  * returns the shape its caller expects while touching nothing: the MCP apply
  * reports `no_active_runtime` (an ephemeral lane has no persisted runtime to
  * apply, and the actor only fails a turn on `rejected`), the capability applies
- * return `undefined` (their results are discarded), and the direct writes are
- * void no-ops. Annotated so each method is checked against the real seam
- * signature and drift is a compile error.
+ * return `undefined` (their results are discarded), delivery-state operations
+ * return empty outcomes, and the direct writes are void no-ops. Annotated so
+ * each method is checked against the real seam signature and drift is a compile
+ * error.
  */
 const inertActorWriteSeams: ActorDurableWriteSeams = {
   mutateConversation: async () => {},
@@ -385,6 +386,9 @@ const inertActorWriteSeams: ActorDurableWriteSeams = {
   markQueuedDelivered: async () => {},
   markQueuedPending: async () => {},
   markQueuedFailed: async () => {},
+  claimWorkflowResults: async () => [],
+  settleWorkflowResults: async () => 0,
+  releaseWorkflowResults: async () => 0,
   applyMcpAtTurnStart: async (input) => ({
     conversationId: input.conversationId,
     backend: input.backend,

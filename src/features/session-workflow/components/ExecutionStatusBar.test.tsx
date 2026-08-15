@@ -22,7 +22,6 @@ const baseProps = {
   onPause: vi.fn(),
   onResume: vi.fn(),
   onAbort: vi.fn(),
-  onClear: vi.fn(),
   isMutating: false,
   pendingAction: null,
 };
@@ -70,17 +69,16 @@ describe("ExecutionStatusBar per-action pending feedback", () => {
     expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
   });
 
-  it("shows Clearing… while clear is in flight", () => {
+  it("offers no control on a settled run, which released its lease on its own", () => {
     render(
       <ExecutionStatusBar
         {...baseProps}
         execution={makeExecution({ status: "completed", haltReason: null })}
-        isMutating
-        pendingAction="clear"
       />,
     );
 
-    expect(screen.getByRole("button", { name: /clearing…/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Abort" })).toBeNull();
   });
 
   it("keeps static labels when no control action is pending", () => {

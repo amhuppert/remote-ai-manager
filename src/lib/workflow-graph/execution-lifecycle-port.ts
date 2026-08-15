@@ -1,4 +1,5 @@
 import { getGlobalSingleton } from "@/lib/shared/global-singleton";
+import type { GraphWorkflowExecutionOrigin } from "@/lib/workflow-graph/schemas";
 
 const EXECUTION_LIFECYCLE_PORT_KEY =
   "__cc_graph_execution_lifecycle_port" as const;
@@ -23,15 +24,17 @@ export interface GraphExecutionLifecycleContext {
 
 export interface GraphExecutionLifecycleCallbacks {
   /**
-   * Reports a started workflow execution. The definition identity lets a
-   * registered consumer correlate the start with the exact immutable revision
-   * it prepared while the workflow machinery stays ignorant of who listens.
+   * Reports a started workflow execution. The recorded ORIGIN travels with the
+   * execution id so a registered consumer can decide for itself how to
+   * correlate the start — by the immutable definition revision it prepared, or
+   * not at all for a run authored inline — while the workflow machinery stays
+   * ignorant of who listens. The seed fields never appear here: on a one-off
+   * row they are legacy-shaped filler naming a definition that does not exist.
    */
   markRunning(
     context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
-    definitionId?: string,
-    definitionRevision?: number,
+    origin?: GraphWorkflowExecutionOrigin,
   ): Promise<void>;
   markDelivered(workflowExecutionId: string, mergeHash: string): Promise<void>;
   /**
@@ -42,21 +45,20 @@ export interface GraphExecutionLifecycleCallbacks {
   awaitingDefinitionApproval?(
     context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
-    definitionId: string,
-    definitionRevision: number,
+    origin: GraphWorkflowExecutionOrigin,
   ): Promise<void>;
   /**
-   * Consulted before a pending definition approval is recorded. A registered
-   * consumer records its own side of the admission for definitions it
-   * prepared (the caller has already established human transport) or refuses
-   * with a machine-readable reason; definitions no consumer claims admit by
-   * default.
+   * Consulted before a pending definition approval is recorded — for EVERY
+   * parked run, whatever its origin, because approval is one execution-
+   * addressed act. A registered consumer records its own side of the admission
+   * for work it prepared (the caller has already established human transport)
+   * or refuses with a machine-readable reason; a park no consumer claims
+   * admits by default.
    */
   admitDefinitionApproval?(
     context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
-    definitionId: string,
-    definitionRevision: number,
+    origin: GraphWorkflowExecutionOrigin,
   ): Promise<DefinitionApprovalGateDecision>;
   /**
    * Reports an execution that was aborted, so a registered consumer can
@@ -84,24 +86,14 @@ export function registerGraphExecutionLifecycleCallbacks(
 
 export function createRegisteredGraphExecutionLifecycleCallbacks(): GraphExecutionLifecycleCallbacks {
   return {
-    async markRunning(
-      context,
-      workflowExecutionId,
-      definitionId,
-      definitionRevision,
-    ) {
+    async markRunning(context, workflowExecutionId, origin) {
       const callbacks = state().callbacks;
       if (callbacks === null) {
         throw new Error(
           "Graph execution lifecycle callbacks are not registered",
         );
       }
-      await callbacks.markRunning(
-        context,
-        workflowExecutionId,
-        definitionId,
-        definitionRevision,
-      );
+      await callbacks.markRunning(context, workflowExecutionId, origin);
     },
     async markDelivered(workflowExecutionId, mergeHash) {
       const callbacks = state().callbacks;
@@ -115,25 +107,14 @@ export function createRegisteredGraphExecutionLifecycleCallbacks(): GraphExecuti
     // The definition-approval callbacks are optional interest: with no
     // registered consumer (or one that doesn't implement them) a park is
     // unreported and an approval admits by default.
-    async awaitingDefinitionApproval(
-      context,
-      workflowExecutionId,
-      definitionId,
-      definitionRevision,
-    ) {
+    async awaitingDefinitionApproval(context, workflowExecutionId, origin) {
       await state().callbacks?.awaitingDefinitionApproval?.(
         context,
         workflowExecutionId,
-        definitionId,
-        definitionRevision,
+        origin,
       );
     },
-    async admitDefinitionApproval(
-      context,
-      workflowExecutionId,
-      definitionId,
-      definitionRevision,
-    ) {
+    async admitDefinitionApproval(context, workflowExecutionId, origin) {
       const callbacks = state().callbacks;
       if (callbacks?.admitDefinitionApproval === undefined) {
         return { ok: true };
@@ -141,8 +122,7 @@ export function createRegisteredGraphExecutionLifecycleCallbacks(): GraphExecuti
       return callbacks.admitDefinitionApproval(
         context,
         workflowExecutionId,
-        definitionId,
-        definitionRevision,
+        origin,
       );
     },
     async executionAborted(workflowExecutionId) {

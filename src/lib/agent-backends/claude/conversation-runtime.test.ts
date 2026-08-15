@@ -29,6 +29,7 @@ import {
   projectConversationTarget,
   sessionConversationTarget,
 } from "@/lib/conversations/conversation-target";
+import { CONVERSATION_CAPABILITY_ENV_VAR } from "@/lib/agent-gateway/conversation-capability";
 import { renderStructuredOutputInstruction } from "../structured-output-prompt";
 import type { ClaudeCapabilityApplyTarget } from "./runtime-config/adapter";
 import { isUndeliveredQuerySessionError } from "./query-session-errors";
@@ -282,6 +283,65 @@ describe("ClaudeConversationRuntime — SDK options", () => {
     );
 
     runtime.close();
+  });
+
+  describe("launch capability (D7 D11/D12)", () => {
+    const envOfLastQuery = (): Record<string, string> | undefined =>
+      (
+        queryMock.mock.calls[0]![0]! as {
+          options: { env?: Record<string, string> };
+        }
+      ).options.env;
+
+    it("carries the capability it was handed into the agent env", async () => {
+      const mock = createControllableMockQuery();
+      queryMock.mockReturnValue(mock.query);
+
+      const runtime = await createRuntimeWithFakeDeps({
+        conversationId: "conv-ordinary",
+        conversationCapability: "cccc1.spawn-minted.sig",
+        projectPath: "/project",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/project/.worktrees/sess",
+        persistedRef: null,
+        sessionInstructions: [],
+        tooling: {},
+      });
+
+      expect(envOfLastQuery()?.[CONVERSATION_CAPABILITY_ENV_VAR]).toBe(
+        "cccc1.spawn-minted.sig",
+      );
+
+      runtime.close();
+    });
+
+    it("gives a collaboration-internal runtime none, even though its env names the originating conversation", async () => {
+      // The redirect is what makes this runtime indistinguishable from its
+      // origin by id alone. It is also why the runtime must never derive a
+      // capability from the id it exports: that id is the human's.
+      const mock = createControllableMockQuery();
+      queryMock.mockReturnValue(mock.query);
+
+      const runtime = await createRuntimeWithFakeDeps({
+        conversationId: "collab-wf-1-9f3a2b",
+        ccScopeConversationId: "conv-originating",
+        projectPath: "/project",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/project/.worktrees/sess",
+        persistedRef: null,
+        sessionInstructions: [],
+        tooling: {},
+      });
+
+      expect(envOfLastQuery()?.["CC_CONVERSATION_ID"]).toBe("conv-originating");
+      expect(envOfLastQuery()?.[CONVERSATION_CAPABILITY_ENV_VAR]).toBe(
+        undefined,
+      );
+
+      runtime.close();
+    });
   });
 
   it("renders the stored full schema into each turn without using SDK outputFormat", async () => {

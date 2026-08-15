@@ -31,6 +31,7 @@ import type { StateMigration } from "./types";
 type Db = InstanceType<typeof Database>;
 
 const MIGRATION_NAME = "0023-graph-workflow-seeded-documents";
+const MIGRATION_SCHEMA_VERSION = 7;
 /** The last version that predates the `seeded` shared-document kind. */
 const PRE_SEEDED_VERSION = 6;
 
@@ -97,8 +98,8 @@ describe("0023-graph-workflow-seeded-documents", () => {
 
     await runMigration(opened.db);
 
-    expect(stampedVersion(opened.db)).toBe(KNOWN_SCHEMA_VERSION);
-    expect(KNOWN_SCHEMA_VERSION).toBeGreaterThan(PRE_SEEDED_VERSION);
+    expect(stampedVersion(opened.db)).toBe(MIGRATION_SCHEMA_VERSION);
+    expect(MIGRATION_SCHEMA_VERSION).toBeGreaterThan(PRE_SEEDED_VERSION);
     expect(() =>
       enforceSqliteSchemaCompatibility(
         opened.db,
@@ -122,9 +123,9 @@ describe("0023-graph-workflow-seeded-documents", () => {
     await runMigration(db, dir);
 
     expect(
-      existsSync(schemaCompatibilityBarrierPath(dir, KNOWN_SCHEMA_VERSION)),
+      existsSync(schemaCompatibilityBarrierPath(dir, MIGRATION_SCHEMA_VERSION)),
     ).toBe(true);
-    expect(stampedVersion(db)).toBe(KNOWN_SCHEMA_VERSION);
+    expect(stampedVersion(db)).toBe(MIGRATION_SCHEMA_VERSION);
   });
 
   it("replays as a no-op once stamped", async () => {
@@ -136,7 +137,7 @@ describe("0023-graph-workflow-seeded-documents", () => {
     expect(
       db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get(),
     ).toEqual({ count: 1 });
-    expect(stampedVersion(db)).toBe(KNOWN_SCHEMA_VERSION);
+    expect(stampedVersion(db)).toBe(MIGRATION_SCHEMA_VERSION);
   });
 
   it("refuses when the config directory already carries a newer external barrier", async () => {
@@ -163,7 +164,7 @@ describe("0023-graph-workflow-seeded-documents", () => {
     // Barrier-before-mutation: refusing after the barrier is published is the
     // safe direction, so an older reader stays excluded while this build retries.
     expect(
-      existsSync(schemaCompatibilityBarrierPath(dir, KNOWN_SCHEMA_VERSION)),
+      existsSync(schemaCompatibilityBarrierPath(dir, MIGRATION_SCHEMA_VERSION)),
     ).toBe(true);
     expect(stampedVersion(db)).toBe(KNOWN_SCHEMA_VERSION + 1);
   });

@@ -86,10 +86,15 @@ describe("loop ledger over the paginated reader (R16.2)", () => {
     let cursor: number | null = null;
     let pages = 0;
     for (;;) {
-      const page = await fixture.store.getGraphWorkflowEventsPage(executionId, {
-        limit: PAGE_SIZE,
-        cursor,
-      });
+      const page = await fixture.store.getGraphWorkflowEventsPage(
+        PROJECT_PATH,
+        SESSION_NAME,
+        executionId,
+        {
+          limit: PAGE_SIZE,
+          cursor,
+        },
+      );
       events.push(
         ...page.records.map(({ occurredAt, event, preReset }) => ({
           occurredAt,

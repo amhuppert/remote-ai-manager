@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createInMemoryLeaseReservation,
   createWorkflowExecution,
   makeProfileSnapshot,
   seedAssignment,
@@ -193,6 +194,8 @@ function makeHarness(initial: GraphWorkflowExecution): Harness {
   // The REAL repository, so `executionStateRevision` / `structuralRevision` are
   // stamped by the code the staging fence actually reads.
   const repository = createGraphWorkflowExecutionRepository({
+    // No git worktree in this harness; the real exclusion would shell out.
+    ensureCcArtifactsExcluded: async () => {},
     getSession: () =>
       Promise.resolve({ sessionName: SESSION_NAME } as SessionState),
     getActiveGraphWorkflowExecution: () => Promise.resolve(execution),
@@ -216,6 +219,12 @@ function makeHarness(initial: GraphWorkflowExecution): Harness {
         delivery: { events: result.events, pushes: result.pushes ?? [] },
       };
     },
+    reserveActiveGraphWorkflowExecution: createInMemoryLeaseReservation({
+      readActive: () => execution,
+      installActive: (_projectPath, _sessionName, reserved) => {
+        execution = reserved;
+      },
+    }),
     archiveActiveGraphWorkflowExecution: () =>
       Promise.resolve({
         archived: false as const,

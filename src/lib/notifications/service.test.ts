@@ -68,6 +68,19 @@ const specInput = {
   dedupeKey: "spec:spec-1:request-1:requested",
 };
 
+const workflowInput = {
+  type: "workflow-result-ready" as const,
+  title: "Workflow result ready",
+  message:
+    'Execution "execution-1" finished after origin conversation "conversation-deleted" was deleted.',
+  projectName: "my-project",
+  sessionName: "feature",
+  executionId: "execution-1",
+  originConversationId: "conversation-deleted",
+  deepLink: "/projects/my-project/feature/workflow?execution=execution-1",
+  dedupeKey: "graph-workflow-result:execution-1:17",
+};
+
 beforeEach(() => {
   const db = _createTestDb({ inMemory: true });
   _installTestDb(db);
@@ -157,6 +170,39 @@ describe("createSpecNotification", () => {
     const duplicate = service.createSpecNotification({
       ...specInput,
       message: "Duplicate request event",
+    });
+
+    expect(duplicate).toEqual(first);
+    expect(repo.getNotifications().total).toBe(1);
+    expect(published).toEqual([]);
+    expect(pushed).toEqual([]);
+  });
+});
+
+describe("createWorkflowNotification", () => {
+  it("persists and publishes one session-scoped workflow result notification", () => {
+    const service = createService();
+    const notification = service.createWorkflowNotification(workflowInput);
+    const { dedupeKey: _dedupeKey, ...expected } = workflowInput;
+
+    expect(notification).toMatchObject({
+      source: "workflow",
+      ...expected,
+    });
+    expect(repo.getNotifications().notifications).toEqual([notification]);
+    expect(published).toEqual([{ type: "notification-created", notification }]);
+    expect(pushed).toEqual([notification]);
+  });
+
+  it("dedupes replay without publishing or pushing a second time", () => {
+    const service = createService();
+    const first = service.createWorkflowNotification(workflowInput);
+    published.length = 0;
+    pushed.length = 0;
+
+    const duplicate = service.createWorkflowNotification({
+      ...workflowInput,
+      message: "Replay after restart",
     });
 
     expect(duplicate).toEqual(first);

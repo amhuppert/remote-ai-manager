@@ -21,8 +21,11 @@ import {
   getProjectConversation,
   getActiveGraphWorkflowExecution,
   mutateActiveGraphWorkflowExecution,
+  reserveActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
   markGraphWorkflowContextEventsPreReset,
+  getGraphWorkflowPendingArtifacts,
+  clearGraphWorkflowPendingArtifacts,
 } from "@/lib/state-store";
 import { sendConversationEvent } from "@/lib/workflows/conversation/manager";
 import type { ConversationEvent } from "@/lib/workflows/conversation/types";
@@ -376,8 +379,11 @@ const executionRepository = createGraphWorkflowExecutionRepository({
   getSession,
   getActiveGraphWorkflowExecution,
   mutateActiveGraphWorkflowExecution,
+  reserveActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
   markGraphWorkflowContextEventsPreReset,
+  getGraphWorkflowPendingArtifacts,
+  clearGraphWorkflowPendingArtifacts,
   eventPublisher,
 });
 

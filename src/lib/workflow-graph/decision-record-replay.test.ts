@@ -82,9 +82,13 @@ const D4_EVENT_KINDS = [
 
 async function persistedEventKinds(
   store: StateStore,
+  projectPath: string,
+  sessionName: string,
   executionId: string,
 ): Promise<string[]> {
   const rows = await store.getGraphWorkflowEventsTail(
+    projectPath,
+    sessionName,
     executionId,
     EVENT_TAIL_LIMIT,
   );
@@ -255,7 +259,12 @@ describe("R13.3 — routing decisions replay from durable records", () => {
         ).toEqual([{ edgeId: "ctx-classify__ctx-ship", verdict: "inactive" }]);
 
         // And the decision ledger itself replays out of graph_workflow_events.
-        const kinds = await persistedEventKinds(restarted, reloaded.id);
+        const kinds = await persistedEventKinds(
+          restarted,
+          run.projectPath,
+          run.sessionName,
+          reloaded.id,
+        );
         expect(kinds).toContain("graph-workflow-route-resolved");
         expect(kinds).toContain("graph-workflow-context-skipped");
       },
@@ -353,12 +362,16 @@ describe("R13.3 — expansion decisions replay from durable records", () => {
         now: () => NOW,
       });
       const repository = createGraphWorkflowExecutionRepository({
+        // No git worktree in this harness; the real exclusion would shell out.
+        ensureCcArtifactsExcluded: async () => {},
         getSession: (projectPath, sessionName) =>
           fixture.store.getSession(projectPath, sessionName),
         getActiveGraphWorkflowExecution:
           fixture.store.getActiveGraphWorkflowExecution,
         mutateActiveGraphWorkflowExecution:
           fixture.store.mutateActiveGraphWorkflowExecution,
+        reserveActiveGraphWorkflowExecution:
+          fixture.store.reserveActiveGraphWorkflowExecution,
         archiveActiveGraphWorkflowExecution:
           fixture.store.archiveActiveGraphWorkflowExecution,
         markGraphWorkflowContextEventsPreReset:
@@ -453,6 +466,8 @@ describe("R13.3 — expansion decisions replay from durable records", () => {
 
       // Both attempts are in the durable log, acceptance and refusal alike.
       const rows = await restarted.getGraphWorkflowEventsTail(
+        PROJECT_PATH,
+        SESSION_NAME,
         reloaded.id,
         EVENT_TAIL_LIMIT,
       );
@@ -485,12 +500,16 @@ describe("R13.3 — loop decisions replay from durable records", () => {
         now: () => NOW,
       });
       const repository = createGraphWorkflowExecutionRepository({
+        // No git worktree in this harness; the real exclusion would shell out.
+        ensureCcArtifactsExcluded: async () => {},
         getSession: () =>
           Promise.resolve({ sessionName: SESSION_NAME } as SessionState),
         getActiveGraphWorkflowExecution:
           fixture.store.getActiveGraphWorkflowExecution,
         mutateActiveGraphWorkflowExecution:
           fixture.store.mutateActiveGraphWorkflowExecution,
+        reserveActiveGraphWorkflowExecution:
+          fixture.store.reserveActiveGraphWorkflowExecution,
         archiveActiveGraphWorkflowExecution:
           fixture.store.archiveActiveGraphWorkflowExecution,
         markGraphWorkflowContextEventsPreReset:
@@ -553,6 +572,8 @@ describe("R13.3 — loop decisions replay from durable records", () => {
       // The ledger the inspector and the CLI share, over the restarted
       // server's event log plus its reloaded markers.
       const rows = await restarted.getGraphWorkflowEventsTail(
+        PROJECT_PATH,
+        SESSION_NAME,
         reloaded.id,
         EVENT_TAIL_LIMIT,
       );
@@ -617,7 +638,12 @@ describe("R13.3 — a pre-D4 execution's durable log carries no D4 event kind", 
       async (run) => {
         expect(run.settled.status).toBe("completed");
         const restarted = run.restartedStore();
-        const kinds = await persistedEventKinds(restarted, run.settled.id);
+        const kinds = await persistedEventKinds(
+          restarted,
+          run.projectPath,
+          run.sessionName,
+          run.settled.id,
+        );
         expect(kinds.length).toBeGreaterThan(0);
         for (const d4Kind of D4_EVENT_KINDS) {
           expect(kinds).not.toContain(d4Kind);

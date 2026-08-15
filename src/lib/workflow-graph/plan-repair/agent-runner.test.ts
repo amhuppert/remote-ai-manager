@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { checkFsWritePolicy } from "@/lib/agent-backends/fs-write-policy";
 import type {
   ExecuteWorkflowTaskRunInput,
   TaskRunResult,
@@ -38,17 +42,42 @@ const AGENT_OUTPUT = {
   })),
 };
 
-function makeInvocation(): PlanRepairAgentInvocation {
+/**
+ * A real directory, because the write envelope the dispatch composes is
+ * canonicalized against it: a fake path would prove the runner passes SOME
+ * policy, never that the policy actually confines the repair turn.
+ */
+let worktreePath = "";
+
+beforeEach(() => {
+  worktreePath = realpathSync(mkdtempSync(path.join(tmpdir(), "plan-repair-")));
+});
+
+afterEach(() => {
+  rmSync(worktreePath, { recursive: true, force: true });
+  rmSync(
+    path.join(realpathSync(tmpdir()), "cc-implementer-contexts", "exec-1"),
+    {
+      recursive: true,
+      force: true,
+    },
+  );
+});
+
+function makeInvocation(
+  overrides: Partial<PlanRepairAgentInvocation> = {},
+): PlanRepairAgentInvocation {
   return {
     projectPath: "/p",
     sessionName: "s",
     executionId: "exec-1",
     contextId: "ctx-1",
     conversationId: "__plan_repair__:exec-1:ctx-1:1",
-    worktreePath: "/wt/session",
+    worktreePath,
     prompt: "diagnose this halt",
     agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
     timeoutMs: 900_000,
+    ...overrides,
   };
 }
 
@@ -97,8 +126,61 @@ describe("plan-repair agent runner", () => {
     );
     expect(call.actorInput?.persistence).toBe("ephemeral");
     expect(call.actorInput?.conversationScope).toBe("session");
-    expect(call.actorInput?.sessionWorktreePath).toBe("/wt/session");
+    expect(call.actorInput?.sessionWorktreePath).toBe(worktreePath);
     expect(call.origin).toMatchObject({ source: "workflow" });
+  });
+
+  it("confines the repair turn to a session-reader envelope: scratch and tmp only, git denied", async () => {
+    const { runner, calls } = makeRunner({
+      kind: "structured",
+      structuredOutput: AGENT_OUTPUT,
+      text: "",
+      usage: USAGE,
+      backendRef: null,
+      continuationDisposition: "retain",
+    });
+
+    await runner(makeInvocation());
+
+    const policy = calls[0]?.fsWritePolicy;
+    expect(policy).toBeDefined();
+    if (policy === undefined) return;
+    expect(policy.mode).toBe("allowlist");
+    // A repair agent edits the PLAN through live-edit operations; it never
+    // needs a repository write, so nothing inside the worktree is writable and
+    // repository metadata is denied outright.
+    expect(policy.denyWrite).toEqual([path.join(worktreePath, ".git")]);
+    for (const allowed of policy.allowWrite ?? []) {
+      expect(
+        allowed === worktreePath ||
+          allowed.startsWith(`${worktreePath}${path.sep}`),
+      ).toBe(false);
+    }
+    expect(policy.allowWrite).toHaveLength(2);
+    expect(checkFsWritePolicy(policy)).toEqual({ kind: "ok" });
+  });
+
+  it("fails closed when the envelope cannot be established, dispatching no turn", async () => {
+    const { runner, calls } = makeRunner({
+      kind: "structured",
+      structuredOutput: AGENT_OUTPUT,
+      text: "",
+      usage: USAGE,
+      backendRef: null,
+      continuationDisposition: "retain",
+    });
+
+    const result = await runner(
+      makeInvocation({
+        worktreePath: path.join(worktreePath, "gone"),
+      }),
+    );
+
+    expect(result).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("write envelope"),
+    });
+    expect(calls).toHaveLength(0);
   });
 
   it("recovers the verdict from text output when no native structured payload exists", async () => {

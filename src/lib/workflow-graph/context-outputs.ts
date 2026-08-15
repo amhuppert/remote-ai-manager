@@ -30,6 +30,14 @@ import {
   loopInstanceId,
 } from "@/lib/workflow-graph/loop-resolver";
 import { incomingRoutes } from "@/lib/workflow-graph/route-projection";
+import { buildGraphWorkflowExecutionDeepLink } from "@/lib/workflow-graph/execution-deep-link";
+import {
+  GRAPH_WORKFLOW_RESULT_OUTPUT_MAX_BYTES,
+  type GraphWorkflowResultOutputProjection,
+  type GraphWorkflowResultOutputReference,
+} from "@/lib/workflow-graph/result-output-contract";
+
+export { GRAPH_WORKFLOW_RESULT_OUTPUT_MAX_BYTES } from "@/lib/workflow-graph/result-output-contract";
 
 /**
  * The four raw states plus the one that only an execution can report: a
@@ -92,6 +100,63 @@ export type { GraphWorkflowUpstreamInput } from "@/lib/workflow-graph/schemas";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function jsonByteLength(value: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(value) ?? "null").byteLength;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+/**
+ * Project only captured outputs whose contexts still declare an output
+ * contract. Each top-level value is bounded independently, leaving the full
+ * payload untouched in `execution.contextOutputs` for addressed retrieval.
+ */
+export function projectGraphWorkflowResultOutputs(input: {
+  projectName: string;
+  sessionName: string;
+  execution: GraphWorkflowExecution;
+}): GraphWorkflowResultOutputProjection {
+  const byContext: Record<string, Record<string, unknown>> = {};
+  const contexts = [...input.execution.workingDefinition.executionContexts]
+    .filter((context) => context.outputSchema !== undefined)
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const deepLink = buildGraphWorkflowExecutionDeepLink({
+    projectName: input.projectName,
+    sessionName: input.sessionName,
+    executionId: input.execution.id,
+  });
+
+  for (const context of contexts) {
+    const captured = input.execution.contextOutputs[context.id];
+    if (captured === undefined) continue;
+    const values: Record<string, unknown> = {};
+    for (const outputName of Object.keys(captured.value).sort()) {
+      const value = captured.value[outputName];
+      if (jsonByteLength(value) <= GRAPH_WORKFLOW_RESULT_OUTPUT_MAX_BYTES) {
+        values[outputName] = value;
+        continue;
+      }
+      const reference: GraphWorkflowResultOutputReference = {
+        kind: "output_reference",
+        executionId: input.execution.id,
+        contextId: context.id,
+        outputName,
+        deepLink,
+        command: `cctl workflow result --execution ${shellQuote(input.execution.id)} --context ${shellQuote(context.id)} --output ${shellQuote(outputName)}`,
+      };
+      values[outputName] = reference;
+    }
+    byContext[context.id] = values;
+  }
+
+  if (Object.keys(byContext).length === 0) {
+    return { kind: "no_declared_structured_result" };
+  }
+  return { kind: "declared_outputs", byContext };
 }
 
 /**

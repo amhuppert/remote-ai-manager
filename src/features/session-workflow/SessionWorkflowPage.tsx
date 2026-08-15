@@ -1,7 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { Suspense, useCallback, useMemo } from "react";
+import {
+  useParams,
+  usePathname,
+  useRouter,
+  useSearchParams,
+} from "next/navigation";
 import "@/components/workflow-graph/workflow-graph.css";
 import {
   useGraphWorkflowExecutionQuery,
@@ -17,6 +23,8 @@ import {
 import { useWorkflowMobilePanel } from "@/components/workflow-graph/useWorkflowMobilePanel";
 import { WorkflowMobileTabBar } from "@/components/workflow-graph/WorkflowMobileTabBar";
 import ConnectedGraphWorkflowPanel from "./components/ConnectedGraphWorkflowPanel";
+import ArchivedExecutionsList from "./components/ArchivedExecutionsList";
+import { useSessionQuery } from "@/lib/sessions/queries";
 
 export type ExecutionMobilePanel = "graph" | "inspector" | "log";
 
@@ -26,8 +34,11 @@ const executionMobileTabs = [
   { value: "log" as const, label: "Log" },
 ];
 
-export default function SessionWorkflowPage() {
+function SessionWorkflowPageContent() {
   const params = useParams<{ name: string; session: string }>();
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const projectName = params.name;
   const sessionName = decodeURIComponent(params.session);
   const decodedProjectName = decodeURIComponent(projectName);
@@ -37,8 +48,44 @@ export default function SessionWorkflowPage() {
     sessionName,
   );
   const historyQuery = useGraphWorkflowHistoryQuery(projectName, sessionName);
+  const sessionQuery = useSessionQuery(projectName, sessionName);
+  const sessionConversationIds = useMemo<ReadonlySet<string> | null>(
+    () =>
+      sessionQuery.data === undefined
+        ? null
+        : new Set(
+            sessionQuery.data.conversations.map(
+              (conversation) => conversation.id,
+            ),
+          ),
+    [sessionQuery.data],
+  );
+  const history = useMemo(
+    () =>
+      [...(historyQuery.data ?? [])].sort(
+        (left, right) =>
+          Date.parse(right.startedAt) - Date.parse(left.startedAt),
+      ),
+    [historyQuery.data],
+  );
+  const explicitExecutionId = searchParams.get("execution")?.trim() || null;
+  const selectedExecutionId =
+    explicitExecutionId ??
+    executionQuery.data?.id ??
+    history[0]?.executionId ??
+    null;
   const hasGraphWorkflow =
-    executionQuery.data != null || (historyQuery.data?.length ?? 0) > 0;
+    explicitExecutionId !== null ||
+    executionQuery.data != null ||
+    history.length > 0;
+  const handleSelectExecution = useCallback(
+    (executionId: string) => {
+      const next = new URLSearchParams(searchParams.toString());
+      next.set("execution", executionId);
+      router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
 
   const { isMobile, mobilePanel, setMobilePanel, autoSwitchPanel } =
     useWorkflowMobilePanel<ExecutionMobilePanel>("graph");
@@ -71,7 +118,9 @@ export default function SessionWorkflowPage() {
         sessionName={sessionName}
         contentClassName="flex flex-col overflow-hidden max-768:pb-[calc(56px+env(safe-area-inset-bottom,0px))]"
       >
-        {executionQuery.isPending ? (
+        {executionQuery.isPending &&
+        historyQuery.isPending &&
+        explicitExecutionId === null ? (
           <EmptyState>
             <EmptyStateTitle>Loading workflow...</EmptyStateTitle>
           </EmptyState>
@@ -89,14 +138,26 @@ export default function SessionWorkflowPage() {
             </Link>
           </EmptyState>
         ) : (
-          <div className="flex h-full min-h-0 flex-col overflow-hidden">
-            <ConnectedGraphWorkflowPanel
+          <div className="flex h-full min-h-0 overflow-hidden max-768:flex-col">
+            <ArchivedExecutionsList
               projectName={projectName}
               sessionName={sessionName}
-              isMobile={isMobile}
-              mobilePanel={mobilePanel}
-              autoSwitchPanel={autoSwitchPanel}
+              current={executionQuery.data ?? null}
+              executions={history}
+              sessionConversationIds={sessionConversationIds}
+              selectedExecutionId={selectedExecutionId}
+              onSelect={handleSelectExecution}
             />
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <ConnectedGraphWorkflowPanel
+                projectName={projectName}
+                sessionName={sessionName}
+                selectedExecutionId={selectedExecutionId}
+                isMobile={isMobile}
+                mobilePanel={mobilePanel}
+                autoSwitchPanel={autoSwitchPanel}
+              />
+            </div>
           </div>
         )}
       </WorkRailMain>
@@ -108,5 +169,19 @@ export default function SessionWorkflowPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function SessionWorkflowPage() {
+  return (
+    <Suspense
+      fallback={
+        <EmptyState>
+          <EmptyStateTitle>Loading workflow...</EmptyStateTitle>
+        </EmptyState>
+      }
+    >
+      <SessionWorkflowPageContent />
+    </Suspense>
   );
 }

@@ -14,7 +14,9 @@ import {
   graphWorkflowValidatorTypeSchema,
 } from "./definition-schemas";
 import { graphWorkflowCircuitBreakerConditionSchema } from "./config-schemas";
+import { graphWorkflowResultOutputProjectionSchema } from "./result-output-contract";
 import {
+  graphWorkflowAbandonmentSchema,
   graphWorkflowExecutionJoinConflictDetailSchema,
   graphWorkflowExecutionJoinResolvedConflictSchema,
   graphWorkflowExecutionJoinKindSchema,
@@ -85,6 +87,78 @@ export const graphWorkflowPendingHaltReasonEventSchema = z.object({
 });
 export type GraphWorkflowPendingHaltReasonEvent = z.infer<
   typeof graphWorkflowPendingHaltReasonEventSchema
+>;
+
+/**
+ * The closed set of lifecycle boundaries a detached observer can wait for
+ * (D7 decision D7). These names describe the durable fact that was reached,
+ * not the transport event that happened to announce it.
+ */
+export const graphWorkflowBoundaryKindSchema = z.enum([
+  "definition_approval",
+  "context_approval",
+  "lane_question",
+  "pause",
+  "halt",
+  "abandon",
+  "completion",
+  "abort",
+]);
+export type GraphWorkflowBoundaryKind = z.infer<
+  typeof graphWorkflowBoundaryKindSchema
+>;
+
+/**
+ * One durable wait/result boundary. Its enclosing event row id is the opaque
+ * cursor; the row therefore carries the complete boundary-time projection and
+ * never invents a second sequence.
+ */
+export const graphWorkflowBoundaryEventSchema = z.object({
+  type: z.literal("graph-workflow-boundary"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  boundaryKind: graphWorkflowBoundaryKindSchema,
+  workflowStatus: graphWorkflowStatusSchema,
+  startedAt: z.string().nullable().optional(),
+  completedAt: z.string().nullable().optional(),
+  haltReason: graphWorkflowHaltReasonSchema.nullable().optional(),
+  abandonment: graphWorkflowAbandonmentSchema.nullable().optional(),
+  contextId: z.string().nullable().default(null),
+  pendingActions: z.array(z.record(z.string(), z.unknown())).max(1).default([]),
+  outputProjection: z
+    .preprocess((value) => {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        return value;
+      }
+      const candidate = value as Record<string, unknown>;
+      if (
+        candidate.kind === "declared_outputs" ||
+        candidate.kind === "no_declared_structured_result"
+      ) {
+        return value;
+      }
+      return Object.keys(candidate).length === 0
+        ? { kind: "no_declared_structured_result" }
+        : { kind: "declared_outputs", byContext: candidate };
+    }, graphWorkflowResultOutputProjectionSchema)
+    .default({ kind: "no_declared_structured_result" }),
+});
+export type GraphWorkflowBoundaryEvent = z.infer<
+  typeof graphWorkflowBoundaryEventSchema
+>;
+
+/** Post-commit invalidation for the durable result row keyed by this cursor. */
+export const graphWorkflowResultRecordedEventSchema = z.object({
+  type: z.literal("graph-workflow-result-recorded"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  originConversationId: z.string().trim().min(1),
+  boundaryCursor: z.number().int().min(1),
+});
+export type GraphWorkflowResultRecordedEvent = z.infer<
+  typeof graphWorkflowResultRecordedEventSchema
 >;
 
 export const graphWorkflowMergeStatusEventSchema = z.object({
@@ -843,6 +917,8 @@ export type GraphWorkflowLoopDecisionEvent = z.infer<
 >;
 
 const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
+  graphWorkflowBoundaryEventSchema,
+  graphWorkflowResultRecordedEventSchema,
   graphWorkflowExecutionReleasedEventSchema,
   graphWorkflowExecutionAmendedEventSchema,
   graphWorkflowStatusEventSchema,

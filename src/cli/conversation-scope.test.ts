@@ -358,7 +358,10 @@ describe("cctl at project conversation scope — session-only commands", () => {
   const sessionOnlyWorkflowVerbs: string[][] = [
     ["workflow", "validate", "--file", "/tmp/plan.json"],
     ["workflow", "status"],
+    ["workflow", "status", "exec-7"],
     ["workflow", "start", "wf-1"],
+    ["workflow", "wait", "exec-7", "--timeout", "1ms"],
+    ["workflow", "abandon", "exec-7", "--reason", "superseded"],
     ["workflow", "live", "get"],
     ["workflow", "live", "edit", "--file", "/tmp/edit.json"],
     ["workflow", "live", "pause"],
@@ -378,6 +381,22 @@ describe("cctl at project conversation scope — session-only commands", () => {
       expect(host.requests).toHaveLength(0);
     });
   }
+
+  it("workflow run gives project conversations session-conversation guidance without a request", async () => {
+    const host = makeHost();
+    const result = await runCli(
+      ["workflow", "run", "--file", "/tmp/plan.json", "--json"],
+      projectEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "project_scope_refused",
+      details: { remedy: expect.stringContaining("session conversation") },
+    });
+    expect(host.requests).toHaveLength(0);
+  });
 
   it("covers every session-only command in the inventory", () => {
     expect(Object.keys(invocations).sort()).toEqual(

@@ -158,12 +158,16 @@ export interface UserInputGateServiceDeps {
   mutateActive(
     projectPath: string,
     sessionName: string,
-    fn: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
+    fn: (
+      execution: GraphWorkflowExecution,
+    ) =>
+      | GraphWorkflowExecution
+      | ({ execution: GraphWorkflowExecution } & GraphWorkflowEventDelivery),
   ): Promise<GraphWorkflowExecution>;
   /**
    * Derive the pure `graph-workflow-user-input-pending` delivery DATA. The gate
-   * hands it to {@link deliver} directly because it runs post-commit (after the
-   * parking mutation), so it owns delivery timing rather than the mutation seam.
+   * returns it from the parking reducer so the mutation seam appends the event
+   * rows and boundary delivery in the same transaction as the parked state.
    */
   publishUserInputPending(
     input: PublishUserInputPendingInput,
@@ -499,7 +503,17 @@ export function createUserInputGateService(
           roundSeq: input.roundSeq ?? null,
           answers: sameBatch ? existing.answers : null,
         };
-        return draft;
+        if (alreadyStanding) return draft;
+        const delivery = deps.publishUserInputPending({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          execution: draft,
+          contextId: input.contextId,
+          conversationId: input.conversationId,
+          questionBatchId: input.questionBatchId,
+          requestedAt,
+        });
+        return { execution: draft, ...delivery };
       },
     );
 
@@ -523,18 +537,6 @@ export function createUserInputGateService(
       });
       return "parked";
     }
-
-    deps.deliver(
-      deps.publishUserInputPending({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        execution,
-        contextId: input.contextId,
-        conversationId: input.conversationId,
-        questionBatchId: input.questionBatchId,
-        requestedAt,
-      }),
-    );
 
     logger.info("gate.parked", {
       executionId: execution.id,

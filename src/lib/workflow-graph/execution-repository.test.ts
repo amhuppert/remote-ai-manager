@@ -9,23 +9,35 @@ import {
 } from "@/lib/shared/testing/persistence-fixture";
 import { computeCharterHash } from "./charter/render";
 import { createWorkflowCharterService } from "./charter/service";
+import { createWorkflowSeededDocumentService } from "./shared-documents";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import {
   GraphWorkflowValidationError,
   createGraphWorkflowExecutionRepository,
+  type GraphWorkflowExecutionSeed,
 } from "./execution-repository";
+import { evaluateLeaseAdmission } from "./lifecycle-classifier";
 import { LegacyWorkflowSchemaError } from "./schema-cutover-guard";
 import { SEEDED_WORKFLOW_DEFAULTS } from "./resolve-config";
 import { StaleLoopFenceError, runWithLoopFence } from "./loop-fence";
 import {
+  ExecutionTurnoverError,
+  LaneBindingTurnoverError,
+  runWithExecutionPrincipalFence,
+} from "./principal-fence";
+import {
   createWorkflowDefinition,
   createWorkflowExecution,
+  makeLaunchDocument,
 } from "./test-fixtures";
 import type {
   GraphWorkflowExecutionEvent,
   GraphWorkflowSSEEvent,
 } from "@/lib/workflow-graph/event-schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowPendingArtifacts,
+} from "@/lib/workflow-graph/schemas";
 import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
 import { computeContentHash } from "@/lib/agent-profiles/hashing";
 
@@ -46,10 +58,35 @@ interface CapturedWrite {
 function createInMemoryRepo(
   config: GlobalConfig = {} as GlobalConfig,
   repoConfig: PerRepoConfig | null = null,
+  options: {
+    /** Reject the charter file write, standing in for any materialization I/O failure. */
+    failCharterWrite?: boolean;
+    /** Awaited inside the reservation seam, so a test can hold both racers at the CAS. */
+    reserveBarrier?: () => Promise<void>;
+    /** Reject the git-exclusion write that must precede every .cc file. */
+    failExclusion?: boolean;
+  } = {},
 ) {
   const sessions = new Map<string, SessionState>();
   const broadcasts: GraphWorkflowSSEEvent[] = [];
   const writes: CapturedWrite[] = [];
+  /**
+   * Ordered log of every durable act create() performs — `reserve` for the
+   * authoritative CAS, `write:<path>` for each out-of-row file. The
+   * reserve-before-side-effects invariant is an ORDER claim, so it needs an
+   * ordered record rather than two independent counters.
+   */
+  const operations: string[] = [];
+  /** Winner-only post-commit teardown of a normalized incumbent's resources. */
+  const laneDevServerStops: string[] = [];
+  const loggerUnregistrations: string[] = [];
+  /**
+   * Stand-in for the pending-artifact table: what each reserved execution still
+   * owes the filesystem, contents included. Keyed exactly as production keys it,
+   * so a test can prove the record outlives a failed materialization and is
+   * settled by a successful one.
+   */
+  const pendingArtifacts = new Map<string, GraphWorkflowPendingArtifacts>();
 
   // Real event publisher with a capturing broadcast, and a real charter
   // service with an injected capturing fs — so create() exercises the real
@@ -62,14 +99,36 @@ function createInMemoryRepo(
   });
   const charterService = createWorkflowCharterService({
     writeFile: async (absolutePath, contents) => {
+      operations.push(`write:${absolutePath}`);
+      if (options.failCharterWrite === true) {
+        throw new Error("charter write failed: disk is full");
+      }
       writes.push({ absolutePath, contents: String(contents) });
     },
     ensureDir: async () => {},
     publishCharterRegistered: eventPublisher.publishCharterRegistered,
   });
+  const capturedDocuments = new Map<string, string>();
+  const seededDocumentService = createWorkflowSeededDocumentService({
+    writeFile: async (absolutePath, contents) => {
+      operations.push(`write:${absolutePath}`);
+      writes.push({ absolutePath, contents: String(contents) });
+    },
+    ensureDir: async () => {},
+    store: {
+      async captureFromWorktree({ executionId, relativePath }) {
+        capturedDocuments.set(`${executionId}:${relativePath}`, "captured");
+      },
+      async read() {
+        return null;
+      },
+    },
+  });
 
   const appendedEvents: GraphWorkflowExecutionEvent[] = [];
   const mutateCalls: string[] = [];
+  const reserveCalls: string[] = [];
+  const archived: GraphWorkflowExecution[] = [];
 
   function getOrCreateSession(projectPath: string, sessionName: string) {
     const key = `${projectPath}:${sessionName}`;
@@ -106,24 +165,115 @@ function createInMemoryRepo(
       // delivery back; the repository performs delivery post-commit.
       return { execution, delivery: { events, pushes: pushes ?? [] } };
     },
+    async reserveActiveGraphWorkflowExecution(
+      projectPath,
+      sessionName,
+      label,
+      reservation,
+    ) {
+      // The production seam decides admission against the row it reads inside
+      // the write-queue critical section; this double mirrors that ordering
+      // (read → decide → commit or refuse) so the repository's contract with
+      // it is exercised rather than assumed.
+      if (options.reserveBarrier) await options.reserveBarrier();
+      const session = getOrCreateSession(projectPath, sessionName);
+      const decision = evaluateLeaseAdmission(session.graphWorkflowExecution);
+      if (decision.kind === "refuse") {
+        return { reserved: false as const, refusal: decision };
+      }
+      operations.push("reserve");
+      reserveCalls.push(label);
+      // Committed by the reserving transaction itself, so it lands with the
+      // row and only for the winner.
+      pendingArtifacts.set(reservation.execution.id, {
+        executionId: reservation.execution.id,
+        projectPath,
+        sessionName,
+        documents: [...(reservation.seededDocuments ?? [])],
+        recordedAt: "2026-04-04T00:00:00.000Z",
+      });
+      const normalized =
+        decision.kind === "admit-with-normalization"
+          ? decision.incumbent
+          : null;
+      const normalizedExecution =
+        normalized !== null ? session.graphWorkflowExecution : null;
+      if (normalizedExecution !== null) {
+        archived.push(normalizedExecution);
+      }
+      session.graphWorkflowExecution = reservation.execution;
+      appendedEvents.push(...reservation.events);
+      return {
+        reserved: true as const,
+        execution: reservation.execution,
+        delivery: {
+          events: reservation.events,
+          pushes: reservation.pushes ?? [],
+        },
+        normalized,
+        normalizedExecution,
+      };
+    },
     async archiveActiveGraphWorkflowExecution(projectPath, sessionName) {
       const session = getOrCreateSession(projectPath, sessionName);
-      const archived = session.graphWorkflowExecution ?? null;
+      const active = session.graphWorkflowExecution ?? null;
       session.graphWorkflowExecution = null;
-      return archived === null
+      if (active !== null) archived.push(active);
+      return active === null
         ? { archived: false as const, reason: "no_active" as const }
-        : { archived: true as const, execution: archived };
+        : { archived: true as const, execution: active };
     },
     async markGraphWorkflowContextEventsPreReset() {
       return 0;
     },
+    async getGraphWorkflowPendingArtifacts(
+      projectPath,
+      sessionName,
+      executionId,
+    ) {
+      const pending = pendingArtifacts.get(executionId);
+      if (!pending) return null;
+      return pending.projectPath === projectPath &&
+        pending.sessionName === sessionName
+        ? pending
+        : null;
+    },
+    async clearGraphWorkflowPendingArtifacts(executionId) {
+      return pendingArtifacts.delete(executionId);
+    },
     eventPublisher,
     charterService,
+    seededDocumentService,
     readConfig: async () => config,
     readRepoConfig: async () => repoConfig,
+    async stopExecutionLaneDevServers(input) {
+      laneDevServerStops.push(input.execution.id);
+    },
+    unregisterExecutionLogger(executionId) {
+      loggerUnregistrations.push(executionId);
+    },
+    async ensureCcArtifactsExcluded(worktreePath) {
+      operations.push(`exclude:${worktreePath}`);
+      if (options.failExclusion === true) {
+        throw new Error("git exclusion failed: .git/info/exclude is read-only");
+      }
+    },
   });
 
-  return { repo, sessions, broadcasts, writes, appendedEvents, mutateCalls };
+  return {
+    repo,
+    sessions,
+    broadcasts,
+    writes,
+    appendedEvents,
+    mutateCalls,
+    reserveCalls,
+    archived,
+    operations,
+    laneDevServerStops,
+    loggerUnregistrations,
+    pendingArtifacts,
+  };
 }
 
 describe("createGraphWorkflowExecutionRepository.create", () => {
@@ -150,12 +300,16 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     await expect(
       repo.create("/repo", "session-1", {
         definition: legacyDefinition as never,
-        definitionId: "wf-1",
-        definitionRevision: 1,
+        source: {
+          kind: "template",
+          definitionId: "wf-1",
+          definitionRevision: 1,
+          tier: "project",
+        },
+        launchDocument: makeLaunchDocument(legacyDefinition as never),
         executionId: "exec-1",
         startedAt: "2026-04-04T00:00:00.000Z",
         inputs: {},
-        launchedTier: "project",
         ownerConversationId: null,
       }),
     ).rejects.toThrow(LegacyWorkflowSchemaError);
@@ -184,12 +338,16 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     await expect(
       repo.create("/repo", "session-1", {
         definition: legacyDefinition as never,
-        definitionId: "wf-1",
-        definitionRevision: 1,
+        source: {
+          kind: "template",
+          definitionId: "wf-1",
+          definitionRevision: 1,
+          tier: "project",
+        },
+        launchDocument: makeLaunchDocument(legacyDefinition as never),
         executionId: "exec-1",
         startedAt: "2026-04-04T00:00:00.000Z",
         inputs: {},
-        launchedTier: "project",
         ownerConversationId: null,
       }),
     ).rejects.toThrow(LegacyWorkflowSchemaError);
@@ -217,12 +375,16 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     await expect(
       repo.create("/repo", "session-1", {
         definition,
-        definitionId: "wf-1",
-        definitionRevision: 1,
+        source: {
+          kind: "template",
+          definitionId: "wf-1",
+          definitionRevision: 1,
+          tier: "project",
+        },
+        launchDocument: makeLaunchDocument(definition),
         executionId: "exec-1",
         startedAt: "2026-04-04T00:00:00.000Z",
         inputs: {},
-        launchedTier: "project",
         ownerConversationId: null,
       }),
     ).rejects.toMatchObject({
@@ -244,12 +406,16 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     const { repo } = createInMemoryRepo();
     const execution = await repo.create("/repo", "session-1", {
       definition: createWorkflowDefinition(),
-      definitionId: "wf-1",
-      definitionRevision: 1,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(createWorkflowDefinition()),
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
-      launchedTier: "project",
       ownerConversationId: null,
     });
 
@@ -264,14 +430,18 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     // instead of silently overwriting the first execution (which would put
     // two loop drivers on one execution under matching fences).
     const { repo, sessions } = createInMemoryRepo();
-    const seed = {
+    const seed: GraphWorkflowExecutionSeed = {
       definition: createWorkflowDefinition(),
-      definitionId: "wf-1",
-      definitionRevision: 1,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(createWorkflowDefinition()),
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
-      launchedTier: "project" as const,
       ownerConversationId: null,
     };
     const first = await repo.create("/repo", "session-1", seed);
@@ -317,12 +487,16 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
 
       const created = await repo.create("/repo", "session-1", {
         definition: createWorkflowDefinition(),
-        definitionId: "wf-1",
-        definitionRevision: 1,
+        source: {
+          kind: "template",
+          definitionId: "wf-1",
+          definitionRevision: 1,
+          tier: "project",
+        },
+        launchDocument: makeLaunchDocument(createWorkflowDefinition()),
         executionId: "exec-new",
         startedAt: "2026-04-04T00:00:00.000Z",
         inputs: {},
-        launchedTier: "project",
         ownerConversationId: null,
       });
 
@@ -334,16 +508,552 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     }
   });
 
+  it("reserves the active row before writing any out-of-row artifact", async () => {
+    const { repo, operations } = createInMemoryRepo();
+
+    await repo.create("/repo", "session-1", {
+      definition: createWorkflowDefinition(),
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(createWorkflowDefinition()),
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      ownerConversationId: null,
+      seededDocuments: [
+        {
+          relativePath: ".cc/graph-workflow-docs/spec.md",
+          contents: "# spec",
+          description: "the spec",
+          readWhen: "before implementing",
+        },
+      ],
+    });
+
+    // R3.5/R5.2 are order claims, not count claims: the lease must be won
+    // before a single byte lands in `.cc`, so a losing racer has nothing to
+    // clean up. Every side effect must therefore follow the reservation — and
+    // the git exclusion must precede the writes, so nothing ever lands in a
+    // namespace the worktree would commit.
+    expect(operations[0]).toBe("reserve");
+    expect(operations[1]?.startsWith("exclude:")).toBe(true);
+    expect(operations.slice(2).every((op) => op.startsWith("write:"))).toBe(
+      true,
+    );
+    expect(operations.filter((op) => op.startsWith("write:"))).toHaveLength(2);
+  });
+
+  it("tears down a normalized incumbent's surviving resources exactly once, after commit", async () => {
+    // A legacy terminal row reaches normalization precisely because no explicit
+    // release act ever ran for it — so its lane dev servers and registered
+    // logger can still be alive. Relocating the record to History without
+    // stopping them would leave them competing with the successor for the same
+    // lane worktrees.
+    const { repo, sessions, laneDevServerStops, loggerUnregistrations } =
+      createInMemoryRepo();
+    sessions.set("/repo:session-1", {
+      worktreePath: WORKTREE_PATH,
+      graphWorkflowExecution: createWorkflowExecution({
+        id: "exec-terminal",
+        status: "completed",
+      }),
+    } as unknown as SessionState);
+
+    await repo.create("/repo", "session-1", {
+      definition: createWorkflowDefinition(),
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(createWorkflowDefinition()),
+      executionId: "exec-next",
+      startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      ownerConversationId: null,
+    });
+
+    expect(laneDevServerStops).toEqual(["exec-terminal"]);
+    expect(loggerUnregistrations).toEqual(["exec-terminal"]);
+  });
+
+  it("runs no incumbent teardown when the launch is refused", async () => {
+    const { repo, sessions, laneDevServerStops, loggerUnregistrations } =
+      createInMemoryRepo();
+    sessions.set("/repo:session-1", {
+      worktreePath: WORKTREE_PATH,
+      graphWorkflowExecution: createWorkflowExecution({
+        id: "exec-holder",
+        status: "running",
+      }),
+    } as unknown as SessionState);
+
+    await expect(
+      repo.create("/repo", "session-1", {
+        definition: createWorkflowDefinition(),
+        source: {
+          kind: "template",
+          definitionId: "wf-1",
+          definitionRevision: 1,
+          tier: "project",
+        },
+        launchDocument: makeLaunchDocument(createWorkflowDefinition()),
+        executionId: "exec-blocked",
+        startedAt: "2026-04-04T00:00:00.000Z",
+        inputs: {},
+        ownerConversationId: null,
+      }),
+    ).rejects.toMatchObject({ guard: "active_execution" });
+
+    // Cleanup is WINNER-ONLY: a refusal that stopped the incumbent's dev
+    // servers would be a refusal that ended live work.
+    expect(laneDevServerStops).toEqual([]);
+    expect(loggerUnregistrations).toEqual([]);
+  });
+
+  it("refuses a launch over a lease-holding incumbent without writing anything", async () => {
+    const { repo, sessions, writes, appendedEvents, archived, operations } =
+      createInMemoryRepo();
+    sessions.set("/repo:session-1", {
+      worktreePath: WORKTREE_PATH,
+      graphWorkflowExecution: createWorkflowExecution({
+        id: "exec-holder",
+        status: "running",
+      }),
+    } as unknown as SessionState);
+    const before = structuredClone(
+      sessions.get("/repo:session-1")!.graphWorkflowExecution,
+    );
+
+    await expect(
+      repo.create("/repo", "session-1", {
+        definition: createWorkflowDefinition(),
+        source: {
+          kind: "template",
+          definitionId: "wf-1",
+          definitionRevision: 1,
+          tier: "project",
+        },
+        launchDocument: makeLaunchDocument(createWorkflowDefinition()),
+        executionId: "exec-blocked",
+        startedAt: "2026-04-04T00:00:00.000Z",
+        inputs: {},
+        ownerConversationId: null,
+      }),
+    ).rejects.toMatchObject({
+      name: "WorkflowStartGuardError",
+      guard: "active_execution",
+      blocker: expect.objectContaining({
+        executionId: "exec-holder",
+        status: "running",
+        remedy: "inspect_or_pause",
+      }),
+    });
+
+    expect(sessions.get("/repo:session-1")!.graphWorkflowExecution).toEqual(
+      before,
+    );
+    expect(operations).toEqual([]);
+    expect(writes).toEqual([]);
+    expect(appendedEvents).toEqual([]);
+    expect(archived).toEqual([]);
+  });
+
+  it("admits exactly one of two concurrent launches and leaves the loser no artifacts", async () => {
+    // Both racers are held at the reservation seam until each has finished its
+    // whole pre-reservation gauntlet, so the winner is decided by the CAS and
+    // nothing else.
+    let release: () => void = () => {};
+    const bothArrived = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let arrivals = 0;
+    const { repo, sessions, writes, appendedEvents } = createInMemoryRepo(
+      {} as GlobalConfig,
+      null,
+      {
+        reserveBarrier: async () => {
+          arrivals += 1;
+          if (arrivals >= 2) release();
+          await bothArrived;
+        },
+      },
+    );
+    const seed: Omit<GraphWorkflowExecutionSeed, "executionId"> = {
+      definition: createWorkflowDefinition(),
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(createWorkflowDefinition()),
+      startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      ownerConversationId: null,
+    };
+
+    const settled = await Promise.allSettled([
+      repo.create("/repo", "session-1", { ...seed, executionId: "exec-a" }),
+      repo.create("/repo", "session-1", { ...seed, executionId: "exec-b" }),
+    ]);
+
+    const winners = settled.filter((r) => r.status === "fulfilled");
+    const losers = settled.filter((r) => r.status === "rejected");
+    expect(winners).toHaveLength(1);
+    expect(losers).toHaveLength(1);
+
+    const winnerId = winners[0]!.value.id;
+    const loserId = winnerId === "exec-a" ? "exec-b" : "exec-a";
+    expect(losers[0]!.reason).toMatchObject({
+      name: "WorkflowStartGuardError",
+      guard: "active_execution",
+      blocker: expect.objectContaining({ executionId: winnerId }),
+    });
+
+    // Exactly one execution persisted, and no loser artifact of any kind: no
+    // second row, no event carrying the loser id, and only the winner's
+    // charter file on disk.
+    expect(sessions.get("/repo:session-1")!.graphWorkflowExecution?.id).toBe(
+      winnerId,
+    );
+    expect(
+      appendedEvents.filter((row) => JSON.stringify(row).includes(loserId)),
+    ).toEqual([]);
+    expect(writes).toHaveLength(1);
+  });
+
+  it("halts the reserved winner when materialization fails, leaving the run readable", async () => {
+    const { repo, sessions } = createInMemoryRepo({} as GlobalConfig, null, {
+      failCharterWrite: true,
+    });
+
+    await expect(
+      repo.create("/repo", "session-1", {
+        definition: createWorkflowDefinition(),
+        source: {
+          kind: "template",
+          definitionId: "wf-1",
+          definitionRevision: 1,
+          tier: "project",
+        },
+        launchDocument: makeLaunchDocument(createWorkflowDefinition()),
+        executionId: "exec-1",
+        startedAt: "2026-04-04T00:00:00.000Z",
+        inputs: {},
+        ownerConversationId: null,
+      }),
+    ).rejects.toThrow(/disk is full/);
+
+    // The lease was already won when the write failed, so the record stays —
+    // halted for retry or review, never a silently-vanished half-launch.
+    const active = sessions.get("/repo:session-1")!.graphWorkflowExecution;
+    expect(active?.id).toBe("exec-1");
+    expect(active?.status).toBe("halted");
+    expect(active?.haltReason).toMatchObject({
+      type: "execution_loop_failed",
+      cause: "io",
+    });
+  });
+
+  it("halts the reserved winner when the git exclusion fails, before any .cc file is written", async () => {
+    // The exclusion runs FIRST so nothing lands in a namespace the worktree
+    // would commit. Treating its failure as best-effort undid that ordering: the
+    // charter and seeded documents were written into a now-unignored .cc, the
+    // pending record was settled, and the run carried on with a dirty tree and
+    // no durable statement that anything was wrong.
+    const { repo, sessions, writes, pendingArtifacts } = createInMemoryRepo(
+      {} as GlobalConfig,
+      null,
+      { failExclusion: true },
+    );
+
+    await expect(
+      repo.create("/repo", "session-1", {
+        definition: createWorkflowDefinition(),
+        source: {
+          kind: "template",
+          definitionId: "wf-1",
+          definitionRevision: 1,
+          tier: "project",
+        },
+        launchDocument: makeLaunchDocument(createWorkflowDefinition()),
+        executionId: "exec-1",
+        startedAt: "2026-04-04T00:00:00.000Z",
+        inputs: {},
+        ownerConversationId: null,
+        seededDocuments: [
+          {
+            relativePath: ".cc/graph-workflow-docs/spec.md",
+            contents: "# spec",
+            description: "the spec",
+            readWhen: "before implementing",
+          },
+        ],
+      }),
+    ).rejects.toThrow(/exclusion failed/);
+
+    const active = sessions.get("/repo:session-1")!.graphWorkflowExecution;
+    expect(active?.id).toBe("exec-1");
+    expect(active?.status).toBe("halted");
+    expect(active?.haltReason).toMatchObject({
+      type: "execution_loop_failed",
+      cause: "io",
+    });
+    // Nothing reached the unignored namespace, and the debt still stands so a
+    // retry can rewrite everything from durable state.
+    expect(writes).toEqual([]);
+    expect(pendingArtifacts.has("exec-1")).toBe(true);
+  });
+
+  it("materializes idempotently, so a retry rewrites the files and registers nothing new", async () => {
+    const { repo, sessions, writes } = createInMemoryRepo();
+    const seededDocuments = [
+      {
+        relativePath: ".cc/graph-workflow-docs/spec.md",
+        contents: "# spec",
+        description: "the spec",
+        readWhen: "before implementing",
+      },
+    ];
+    const created = await repo.create("/repo", "session-1", {
+      definition: createWorkflowDefinition(),
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(createWorkflowDefinition()),
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      ownerConversationId: null,
+      seededDocuments,
+    });
+    expect(created.sharedDocuments).toHaveLength(2);
+
+    const retried = await repo.materializeArtifacts({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      executionId: "exec-1",
+      seededDocuments,
+    });
+
+    // A retry heals the files without touching the registered set — which is
+    // what makes it safe to run over a run whose first attempt half-finished.
+    expect(writes).toHaveLength(4);
+    expect(retried.sharedDocuments).toEqual(created.sharedDocuments);
+    expect(
+      sessions.get("/repo:session-1")!.graphWorkflowExecution?.sharedDocuments,
+    ).toHaveLength(2);
+  });
+
+  it("settles the outstanding-artifact record once the writes land", async () => {
+    const { repo, pendingArtifacts } = createInMemoryRepo();
+    await repo.create("/repo", "session-1", {
+      definition: createWorkflowDefinition(),
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(createWorkflowDefinition()),
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      ownerConversationId: null,
+      seededDocuments: [
+        {
+          relativePath: ".cc/graph-workflow-docs/spec.md",
+          contents: "# spec",
+          description: "the spec",
+          readWhen: "before implementing",
+        },
+      ],
+    });
+
+    // Absence is the durable statement that this run's artifacts are on disk.
+    expect(pendingArtifacts.has("exec-1")).toBe(false);
+  });
+
+  it("keeps the seeded contents when materialization fails, so a retry can reconstruct them", async () => {
+    const { repo, pendingArtifacts } = createInMemoryRepo(
+      {} as GlobalConfig,
+      null,
+      { failCharterWrite: true },
+    );
+    const seededDocuments = [
+      {
+        relativePath: ".cc/graph-workflow-docs/spec.md",
+        contents: "# spec",
+        description: "the spec",
+        readWhen: "before implementing",
+      },
+    ];
+
+    await expect(
+      repo.create("/repo", "session-1", {
+        definition: createWorkflowDefinition(),
+        source: {
+          kind: "template",
+          definitionId: "wf-1",
+          definitionRevision: 1,
+          tier: "project",
+        },
+        launchDocument: makeLaunchDocument(createWorkflowDefinition()),
+        executionId: "exec-1",
+        startedAt: "2026-04-04T00:00:00.000Z",
+        inputs: {},
+        ownerConversationId: null,
+        seededDocuments,
+      }),
+    ).rejects.toThrow(/disk is full/);
+
+    // The execution row carries registrations, not bytes: without this record
+    // the halted run could never be repaired, because the contents would exist
+    // nowhere.
+    expect(pendingArtifacts.get("exec-1")?.documents).toEqual(seededDocuments);
+  });
+
+  it("reconstructs a crashed launch's artifacts at kickoff from the durable record alone", async () => {
+    const { repo, writes, pendingArtifacts } = createInMemoryRepo();
+    await repo.create("/repo", "session-1", {
+      definition: createWorkflowDefinition(),
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(createWorkflowDefinition()),
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      ownerConversationId: null,
+      seededDocuments: [
+        {
+          relativePath: ".cc/graph-workflow-docs/spec.md",
+          contents: "# spec",
+          description: "the spec",
+          readWhen: "before implementing",
+        },
+      ],
+    });
+    // Stand in for the crash: the reserving transaction committed both the row
+    // and the record, and the process died before the writes landed.
+    pendingArtifacts.set("exec-1", {
+      executionId: "exec-1",
+      projectPath: "/repo",
+      sessionName: "session-1",
+      documents: [
+        {
+          relativePath: ".cc/graph-workflow-docs/spec.md",
+          contents: "# spec",
+          description: "the spec",
+          readWhen: "before implementing",
+        },
+      ],
+      recordedAt: "2026-04-04T00:00:00.000Z",
+    });
+    writes.length = 0;
+
+    // The kickoff caller supplies no contents — only identity. Everything it
+    // rewrites comes from what outlived the crash.
+    const repaired = await repo.ensureArtifactsMaterialized({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      executionId: "exec-1",
+    });
+
+    expect(repaired?.id).toBe("exec-1");
+    expect(
+      writes.map((write) => path.basename(write.absolutePath)).sort(),
+    ).toEqual(["charter.md", "spec.md"]);
+    expect(
+      writes.find((write) => write.absolutePath.endsWith("spec.md"))?.contents,
+    ).toBe("# spec");
+    expect(pendingArtifacts.has("exec-1")).toBe(false);
+  });
+
+  it("does nothing at kickoff for a run that owes no artifacts", async () => {
+    const { repo, writes } = createInMemoryRepo();
+    await repo.create("/repo", "session-1", {
+      definition: createWorkflowDefinition(),
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(createWorkflowDefinition()),
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      ownerConversationId: null,
+    });
+    writes.length = 0;
+
+    expect(
+      await repo.ensureArtifactsMaterialized({
+        projectPath: "/repo",
+        sessionName: "session-1",
+        executionId: "exec-1",
+      }),
+    ).toBeNull();
+    expect(writes).toEqual([]);
+  });
+
+  it("refuses to materialize over an execution that no longer holds the row", async () => {
+    const { repo, sessions } = createInMemoryRepo();
+    await repo.create("/repo", "session-1", {
+      definition: createWorkflowDefinition(),
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(createWorkflowDefinition()),
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      ownerConversationId: null,
+    });
+
+    await expect(
+      repo.materializeArtifacts({
+        projectPath: "/repo",
+        sessionName: "session-1",
+        executionId: "exec-gone",
+        seededDocuments: [],
+      }),
+    ).rejects.toThrow(/exec-gone/);
+    expect(sessions.get("/repo:session-1")!.graphWorkflowExecution?.id).toBe(
+      "exec-1",
+    );
+  });
+
   it("initializes context and task state to execution-start defaults", async () => {
     const { repo } = createInMemoryRepo();
     const execution = await repo.create("/repo", "session-1", {
       definition: createWorkflowDefinition(),
-      definitionId: "wf-1",
-      definitionRevision: 1,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(createWorkflowDefinition()),
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
-      launchedTier: "project",
       ownerConversationId: null,
     });
 
@@ -413,12 +1123,16 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
 
     const execution = await repo.create("/repo", "session-1", {
       definition,
-      definitionId: "wf-1",
-      definitionRevision: 1,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(definition),
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
-      launchedTier: "project",
       ownerConversationId: null,
     });
 
@@ -458,12 +1172,16 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
 
     const execution = await repo.create("/repo", "session-1", {
       definition,
-      definitionId: "wf-1",
-      definitionRevision: 1,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(definition),
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
-      launchedTier: "project",
       ownerConversationId: null,
     });
 
@@ -521,12 +1239,16 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
 
     const execution = await repo.create("/repo", "session-1", {
       definition,
-      definitionId: "wf-1",
-      definitionRevision: 1,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(definition),
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
-      launchedTier: "project",
       ownerConversationId: null,
     });
 
@@ -620,12 +1342,16 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
 
     const execution = await repo.create("/repo", "session-1", {
       definition,
-      definitionId: "wf-loop",
-      definitionRevision: 1,
+      source: {
+        kind: "template",
+        definitionId: "wf-loop",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(definition),
       executionId: "exec-loop",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
-      launchedTier: "project",
       ownerConversationId: null,
     });
 
@@ -685,12 +1411,16 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     await expect(
       repo.create("/repo", "session-1", {
         definition,
-        definitionId: "wf-1",
-        definitionRevision: 1,
+        source: {
+          kind: "template",
+          definitionId: "wf-1",
+          definitionRevision: 1,
+          tier: "project",
+        },
+        launchDocument: makeLaunchDocument(definition),
         executionId: "exec-1",
         startedAt: "2026-04-04T00:00:00.000Z",
         inputs: {},
-        launchedTier: "project",
         ownerConversationId: null,
       }),
     ).rejects.toMatchObject({
@@ -746,12 +1476,16 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     await expect(
       repo.create("/repo", "session-1", {
         definition,
-        definitionId: "wf-1",
-        definitionRevision: 1,
+        source: {
+          kind: "template",
+          definitionId: "wf-1",
+          definitionRevision: 1,
+          tier: "project",
+        },
+        launchDocument: makeLaunchDocument(definition),
         executionId: "exec-1",
         startedAt: "2026-04-04T00:00:00.000Z",
         inputs: {},
-        launchedTier: "project",
         ownerConversationId: null,
       }),
     ).rejects.toMatchObject({
@@ -795,12 +1529,16 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
 
     const execution = await repo.create("/repo", "session-1", {
       definition,
-      definitionId: "wf-1",
-      definitionRevision: 1,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(definition),
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
-      launchedTier: "project",
       ownerConversationId: null,
     });
 
@@ -814,12 +1552,16 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     const { repo } = createInMemoryRepo();
     const execution = await repo.create("/repo", "session-1", {
       definition: createWorkflowDefinition(),
-      definitionId: "wf-1",
-      definitionRevision: 1,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(createWorkflowDefinition()),
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
-      launchedTier: "project",
       ownerConversationId: null,
     });
 
@@ -858,12 +1600,18 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     await expect(
       repo.create("/repo", "session-1", {
         definition: createWorkflowDefinition({ workflowConfig: {} }),
-        definitionId: "wf-1",
-        definitionRevision: 1,
+        source: {
+          kind: "template",
+          definitionId: "wf-1",
+          definitionRevision: 1,
+          tier: "project",
+        },
+        launchDocument: makeLaunchDocument(
+          createWorkflowDefinition({ workflowConfig: {} }),
+        ),
         executionId: "exec-1",
         startedAt: "2026-04-04T00:00:00.000Z",
         inputs: {},
-        launchedTier: "project",
         ownerConversationId: null,
       }),
     ).rejects.toMatchObject({
@@ -902,15 +1650,195 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     await expect(
       repo.create("/repo", "session-1", {
         definition,
-        definitionId: "wf-1",
-        definitionRevision: 1,
+        source: {
+          kind: "template",
+          definitionId: "wf-1",
+          definitionRevision: 1,
+          tier: "project",
+        },
+        launchDocument: makeLaunchDocument(definition),
         executionId: "exec-1",
         startedAt: "2026-04-04T00:00:00.000Z",
         inputs: {},
-        launchedTier: "project",
         ownerConversationId: null,
       }),
     ).rejects.toBeInstanceOf(GraphWorkflowValidationError);
+  });
+});
+
+/**
+ * The dirty-worktree exemption's seed-time tie (R8, decision D10).
+ *
+ * The launch guard decides eligibility against a resolution it builds from its
+ * own config read; THIS is where the resolution the execution will actually run
+ * is built, from a second, independent read. Nothing makes the two agree, so a
+ * seed that carries the pin has to be re-proven against the definition about to
+ * be persisted — otherwise a global default that moved between the two reads
+ * lands a write-capable run wearing a read-only pin.
+ */
+describe("createGraphWorkflowExecutionRepository.create dirty-worktree exemption pin", () => {
+  function liveSessionReadOnlyDefinition(): WorkflowSemanticDefinition {
+    const contexts = ["read-a", "read-b"].map((id) => ({
+      id,
+      title: id,
+      acceptanceCriteria: `${id} reports what it read`,
+      placement: { lane: "session" as const, mode: "readOnly" as const },
+      outputSchema: {
+        type: "object" as const,
+        properties: { summary: { type: "string" } },
+        required: ["summary"],
+        additionalProperties: false,
+      },
+    }));
+    return createWorkflowDefinition({
+      executionContexts: contexts,
+      tasks: contexts.map((context) => ({
+        id: `task-${context.id}`,
+        contextId: context.id,
+        order: 1,
+        title: "Inspect the worktree",
+        instructions: "Read the relevant files and report.",
+        source: "user" as const,
+      })),
+      edges: [],
+    });
+  }
+
+  function pinnedSeed(
+    definition: WorkflowSemanticDefinition,
+    liveSessionReadOnlyPinned: boolean,
+  ): GraphWorkflowExecutionSeed {
+    return {
+      definition,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(definition),
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      ownerConversationId: null,
+      liveSessionReadOnlyPinned,
+    };
+  }
+
+  /** Global defaults that turn every context write-capable through the cascade. */
+  const COLLABORATION_ENABLED = {
+    workflowDefaults: {
+      ...SEEDED_WORKFLOW_DEFAULTS,
+      collaboration: {
+        ...SEEDED_WORKFLOW_DEFAULTS.collaboration,
+        enabled: true,
+      },
+    },
+  } as GlobalConfig;
+
+  it("persists the pin when the definition it is about to run is still wholly live-session read-only", async () => {
+    const { repo, sessions } = createInMemoryRepo();
+
+    const execution = await repo.create(
+      "/repo",
+      "session-1",
+      pinnedSeed(liveSessionReadOnlyDefinition(), true),
+    );
+
+    expect(execution.liveSessionReadOnlyPinned).toBe(true);
+    expect(
+      sessions.get("/repo:session-1")?.graphWorkflowExecution
+        ?.liveSessionReadOnlyPinned,
+    ).toBe(true);
+  });
+
+  it("refuses a pinned seed whose seed-time cascade resolves collaboration enabled, seeding nothing", async () => {
+    const { repo, sessions, operations } = createInMemoryRepo(
+      COLLABORATION_ENABLED,
+    );
+
+    await expect(
+      repo.create(
+        "/repo",
+        "session-1",
+        pinnedSeed(liveSessionReadOnlyDefinition(), true),
+      ),
+    ).rejects.toMatchObject({
+      name: "GraphWorkflowValidationError",
+      errors: [
+        expect.objectContaining({
+          code: "live-session-read-only-collaboration",
+          contextId: "read-a",
+        }),
+        expect.objectContaining({
+          code: "live-session-read-only-collaboration",
+          contextId: "read-b",
+        }),
+      ],
+    });
+    // Refused before the reservation, so neither a row nor a byte survives the
+    // launch the guard admitted on a resolution that no longer holds.
+    expect(
+      sessions.get("/repo:session-1")?.graphWorkflowExecution ?? null,
+    ).toBeNull();
+    expect(operations).toEqual([]);
+  });
+
+  it("refuses a pinned seed whose seed-time cascade inherits a script-validator command", async () => {
+    const { repo, sessions } = createInMemoryRepo(
+      {
+        workflowDefaults: {
+          ...SEEDED_WORKFLOW_DEFAULTS,
+          scriptValidator: { commands: ["typecheck"] },
+        },
+      } as GlobalConfig,
+      {
+        validation: {
+          commands: {
+            typecheck: {
+              command: { full: "scripts/validate/typecheck.sh" },
+              cost: 2,
+              pathArgs: "forbid",
+            },
+          },
+          preMerge: ["typecheck"],
+        },
+      },
+    );
+
+    await expect(
+      repo.create(
+        "/repo",
+        "session-1",
+        pinnedSeed(liveSessionReadOnlyDefinition(), true),
+      ),
+    ).rejects.toMatchObject({
+      name: "GraphWorkflowValidationError",
+      errors: [
+        expect.objectContaining({
+          code: "live-session-read-only-script-validator",
+        }),
+        expect.objectContaining({
+          code: "live-session-read-only-script-validator",
+        }),
+      ],
+    });
+    expect(
+      sessions.get("/repo:session-1")?.graphWorkflowExecution ?? null,
+    ).toBeNull();
+  });
+
+  it("leaves an unpinned seed under the same defaults alone: a clean launch asserts nothing to keep", async () => {
+    const { repo } = createInMemoryRepo(COLLABORATION_ENABLED);
+
+    const execution = await repo.create(
+      "/repo",
+      "session-1",
+      pinnedSeed(liveSessionReadOnlyDefinition(), false),
+    );
+
+    expect(execution.liveSessionReadOnlyPinned).toBe(false);
+    expect(execution.status).toBe("pending");
   });
 });
 
@@ -921,12 +1849,16 @@ describe("createGraphWorkflowExecutionRepository.create charter seed propagation
 
     await repo.create("/repo", "session-1", {
       definition,
-      definitionId: "wf-1",
-      definitionRevision: 1,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(definition),
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
-      launchedTier: "project",
       ownerConversationId: null,
     });
 
@@ -947,12 +1879,16 @@ describe("createGraphWorkflowExecutionRepository.create charter seed propagation
 
     await repo.create("/repo", "session-1", {
       definition: createWorkflowDefinition(),
-      definitionId: "wf-1",
-      definitionRevision: 1,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(createWorkflowDefinition()),
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
-      launchedTier: "project",
       ownerConversationId: null,
     });
 
@@ -968,12 +1904,16 @@ describe("createGraphWorkflowExecutionRepository.create charter seed propagation
 
     await repo.create("/repo", "session-1", {
       definition: createWorkflowDefinition({ charter }),
-      definitionId: "wf-1",
-      definitionRevision: 2,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 2,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(createWorkflowDefinition({ charter })),
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
-      launchedTier: "project",
       ownerConversationId: null,
     });
 
@@ -1004,12 +1944,16 @@ describe("createGraphWorkflowExecutionRepository.create charter seed propagation
     await expect(
       repo.create("/repo", "session-1", {
         definition: createWorkflowDefinition(),
-        definitionId: "wf-1",
-        definitionRevision: 1,
+        source: {
+          kind: "template",
+          definitionId: "wf-1",
+          definitionRevision: 1,
+          tier: "project",
+        },
+        launchDocument: makeLaunchDocument(createWorkflowDefinition()),
         executionId: "exec-1",
         startedAt: "2026-04-04T00:00:00.000Z",
         inputs: {},
-        launchedTier: "project",
         ownerConversationId: null,
       }),
     ).rejects.toThrow(/worktree/);
@@ -1053,12 +1997,16 @@ describe("createGraphWorkflowExecutionRepository.create parameter substitution",
 
     const execution = await repo.create("/repo", "session-1", {
       definition,
-      definitionId: "wf-1",
-      definitionRevision: 1,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(definition),
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs,
-      launchedTier: "project",
       ownerConversationId: null,
     });
 
@@ -1104,12 +2052,16 @@ describe("createGraphWorkflowExecutionRepository.create parameter substitution",
     await expect(
       repo.create("/repo", "session-1", {
         definition,
-        definitionId: "wf-1",
-        definitionRevision: 1,
+        source: {
+          kind: "template",
+          definitionId: "wf-1",
+          definitionRevision: 1,
+          tier: "project",
+        },
+        launchDocument: makeLaunchDocument(definition),
         executionId: "exec-1",
         startedAt: "2026-04-04T00:00:00.000Z",
         inputs: { ac: "   " },
-        launchedTier: "project",
         ownerConversationId: null,
       }),
     ).rejects.toBeInstanceOf(GraphWorkflowValidationError);
@@ -1143,12 +2095,16 @@ describe("createGraphWorkflowExecutionRepository.create parameter substitution",
 
     const execution = await repo.create("/repo", "session-1", {
       definition,
-      definitionId: "wf-1",
-      definitionRevision: 1,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(definition),
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: { ci: literal },
-      launchedTier: "project",
       ownerConversationId: null,
     });
 
@@ -1165,12 +2121,16 @@ describe("createGraphWorkflowExecutionRepository.create parameter substitution",
 
     const execution = await repo.create("/repo", "session-1", {
       definition: createWorkflowDefinition(),
-      definitionId: "wf-1",
-      definitionRevision: 1,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(createWorkflowDefinition()),
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
-      launchedTier: "project",
       ownerConversationId: null,
     });
 
@@ -1183,12 +2143,16 @@ describe("createGraphWorkflowExecutionRepository.create parameter substitution",
 
     const execution = await repo.create("/repo", "session-1", {
       definition: createWorkflowDefinition(),
-      definitionId: "wf-1",
-      definitionRevision: 1,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "global",
+      },
+      launchDocument: makeLaunchDocument(createWorkflowDefinition()),
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
-      launchedTier: "global",
       ownerConversationId: null,
     });
 
@@ -1334,6 +2298,136 @@ describe("createGraphWorkflowExecutionRepository loop-fence enforcement", () => 
   });
 });
 
+/**
+ * The other fence the critical section applies (D7 R9.1/R9.4). A mutation route
+ * authorizes an agent principal against the execution it READ and then writes
+ * through a session-keyed API; if the lease turned over in that gap, the
+ * authorization must not carry to the successor.
+ */
+describe("createGraphWorkflowExecutionRepository principal-fence enforcement", () => {
+  const ORIGIN_PRINCIPAL = {
+    kind: "conversation" as const,
+    conversationId: "origin-conv",
+  };
+
+  function seedActive(
+    harness: ReturnType<typeof createInMemoryRepo>,
+    id: string,
+  ): void {
+    const session = makeSession();
+    session.graphWorkflowExecution = createWorkflowExecution({ id });
+    harness.sessions.set("/repo:session-1", session);
+  }
+
+  it("applies a fenced mutation against the execution it was authorized for", async () => {
+    const harness = createInMemoryRepo();
+    seedActive(harness, "execution-1");
+
+    const next = await runWithExecutionPrincipalFence(
+      {
+        projectPath: "/repo",
+        sessionName: "session-1",
+        executionId: "execution-1",
+        originConversationId: "origin-conv",
+        principal: ORIGIN_PRINCIPAL,
+      },
+      () =>
+        harness.repo.mutateActive("/repo", "session-1", (execution) => ({
+          ...execution,
+          activeContextIds: ["context-updated"],
+        })),
+    );
+
+    expect(next.activeContextIds).toEqual(["context-updated"]);
+  });
+
+  it("rejects a fenced mutation once a successor took the lease, writing nothing", async () => {
+    const harness = createInMemoryRepo();
+    // E1 settled and E2 launched between the route's read and this write.
+    seedActive(harness, "execution-2");
+
+    const mutator = vi.fn((execution: GraphWorkflowExecution) => ({
+      ...execution,
+      activeContextIds: ["context-successor-write"],
+    }));
+
+    await expect(
+      runWithExecutionPrincipalFence(
+        {
+          projectPath: "/repo",
+          sessionName: "session-1",
+          executionId: "execution-1",
+          originConversationId: "origin-conv",
+          principal: ORIGIN_PRINCIPAL,
+        },
+        () => harness.repo.mutateActive("/repo", "session-1", mutator),
+      ),
+    ).rejects.toThrow(ExecutionTurnoverError);
+
+    expect(mutator).not.toHaveBeenCalled();
+    expect(
+      harness.sessions.get("/repo:session-1")?.graphWorkflowExecution
+        ?.activeContextIds,
+    ).toEqual([]);
+    expect(harness.appendedEvents).toEqual([]);
+  });
+
+  it("rejects a fenced lane once its binding rotated, writing nothing", async () => {
+    const harness = createInMemoryRepo();
+    seedActive(harness, "execution-1");
+    const session = harness.sessions.get("/repo:session-1")!;
+    const execution = session.graphWorkflowExecution!;
+    execution.taskStates["task-plan-1"] = {
+      ...execution.taskStates["task-plan-1"]!,
+      status: "running",
+      lastConversationId: "successor-lane-conv",
+    };
+
+    const mutator = vi.fn((active: GraphWorkflowExecution) => ({
+      ...active,
+      activeContextIds: ["context-stale-lane-write"],
+    }));
+
+    await expect(
+      runWithExecutionPrincipalFence(
+        {
+          projectPath: "/repo",
+          sessionName: "session-1",
+          executionId: "execution-1",
+          originConversationId: "origin-conv",
+          principal: {
+            kind: "lane",
+            executionId: "execution-1",
+            contextId: "context-plan",
+            conversationId: "authorized-lane-conv",
+          },
+        },
+        () => harness.repo.mutateActive("/repo", "session-1", mutator),
+      ),
+    ).rejects.toThrow(LaneBindingTurnoverError);
+
+    expect(mutator).not.toHaveBeenCalled();
+    expect(
+      harness.sessions.get("/repo:session-1")?.graphWorkflowExecution
+        ?.activeContextIds,
+    ).toEqual([]);
+    expect(harness.appendedEvents).toEqual([]);
+  });
+
+  it("keeps human-UI and internal mutations, which carry no fence, unaffected", async () => {
+    const harness = createInMemoryRepo();
+    seedActive(harness, "execution-2");
+
+    const next = await harness.repo.mutateActive(
+      "/repo",
+      "session-1",
+      (execution) => ({ ...execution, activeContextIds: ["context-ui-write"] }),
+    );
+
+    expect(next.activeContextIds).toEqual(["context-ui-write"]);
+  });
+});
+
 describe("createGraphWorkflowExecutionRepository.create replacement audit", () => {
   const PROJECT_PATH = "/repo";
   const SESSION_NAME = "session-1";
@@ -1367,6 +2461,8 @@ describe("createGraphWorkflowExecutionRepository.create replacement audit", () =
         fixture.store.getActiveGraphWorkflowExecution,
       mutateActiveGraphWorkflowExecution:
         fixture.store.mutateActiveGraphWorkflowExecution,
+      reserveActiveGraphWorkflowExecution:
+        fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         fixture.store.archiveActiveGraphWorkflowExecution,
       markGraphWorkflowContextEventsPreReset:
@@ -1381,6 +2477,10 @@ describe("createGraphWorkflowExecutionRepository.create replacement audit", () =
         publishCharterRegistered: eventPublisher.publishCharterRegistered,
       }),
       readConfig: async () => ({}) as GlobalConfig,
+      // Injected so materialization does not shell out to git: an exclusion
+      // failure now halts the run rather than being logged and stepped over, so
+      // an uninjected one would fail every test in this group on `spawn git`.
+      ensureCcArtifactsExcluded: async () => {},
     });
   }
 
@@ -1393,15 +2493,19 @@ describe("createGraphWorkflowExecutionRepository.create replacement audit", () =
     );
   }
 
-  function seed(executionId: string) {
+  function seed(executionId: string): GraphWorkflowExecutionSeed {
     return {
       definition: createWorkflowDefinition(),
-      definitionId: "wf-1",
-      definitionRevision: 1,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(createWorkflowDefinition()),
       executionId,
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
-      launchedTier: "project" as const,
       ownerConversationId: null,
     };
   }

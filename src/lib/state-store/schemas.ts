@@ -7,12 +7,15 @@ import type { DocumentCommentsRepo } from "./document-comments-repo";
 import type { GraphWorkflowArchivedExecutionsRepo } from "./graph-workflow-archived-executions-repo";
 import type { GraphWorkflowEventsRepo } from "./graph-workflow-events-repo";
 import type { GraphWorkflowExecutionsRepo } from "./graph-workflow-executions-repo";
+import type { GraphWorkflowResultDeliveriesRepo } from "./graph-workflow-result-deliveries-repo";
+import type { GraphWorkflowPendingArtifactsRepo } from "./graph-workflow-pending-artifacts-repo";
 import type { ProjectConversationsRepo } from "./project-conversations-repo";
 import type { ProjectsRepo } from "./projects-repo";
 import type { ReferenceDocumentsRepo } from "./reference-documents-repo";
 import type { SessionMarkdownDocumentsRepo } from "./session-markdown-documents-repo";
 import type { SessionsRepo } from "./sessions-repo";
 import type { WriteQueue } from "./write-queue";
+import type { NotificationsRepo } from "@/lib/notifications/repo";
 
 export type Db = InstanceType<typeof Database>;
 
@@ -28,6 +31,9 @@ export interface AllRepos {
   graphWorkflowEvents: GraphWorkflowEventsRepo;
   graphWorkflowArchivedExecutions: GraphWorkflowArchivedExecutionsRepo;
   graphWorkflowExecutions: GraphWorkflowExecutionsRepo;
+  graphWorkflowResultDeliveries: GraphWorkflowResultDeliveriesRepo;
+  graphWorkflowPendingArtifacts: GraphWorkflowPendingArtifactsRepo;
+  notifications: NotificationsRepo;
 }
 
 export interface StateStoreDeps {

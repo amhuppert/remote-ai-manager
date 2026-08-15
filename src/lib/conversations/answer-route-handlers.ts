@@ -45,8 +45,11 @@ import {
   mutateConversation,
   getActiveGraphWorkflowExecution,
   mutateActiveGraphWorkflowExecution,
+  reserveActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
   markGraphWorkflowContextEventsPreReset,
+  getGraphWorkflowPendingArtifacts,
+  clearGraphWorkflowPendingArtifacts,
 } from "@/lib/state-store";
 import {
   answerQuestionRequestSchema,
@@ -414,8 +417,11 @@ const executionRepository = createGraphWorkflowExecutionRepository({
   getSession,
   getActiveGraphWorkflowExecution,
   mutateActiveGraphWorkflowExecution,
+  reserveActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
   markGraphWorkflowContextEventsPreReset,
+  getGraphWorkflowPendingArtifacts,
+  clearGraphWorkflowPendingArtifacts,
   eventPublisher,
 });
 

@@ -324,6 +324,12 @@ describe("workflow graph execution schemas", () => {
   it("parses an active execution with working definition, task state, and shared documents", () => {
     const result = graphWorkflowExecutionSchema.safeParse({
       id: "execution-1",
+      origin: {
+        kind: "template",
+        definitionId: "workflow-1",
+        definitionRevision: 4,
+        tier: "project",
+      },
       seedDefinitionId: "workflow-1",
       seedDefinitionRevision: 4,
       workingDefinition: createResolvedDefinition(),
@@ -403,6 +409,12 @@ describe("workflow graph execution schemas", () => {
   it("defaults loopEpoch to 0 for execution rows written before the field existed", () => {
     const result = graphWorkflowExecutionSchema.safeParse({
       id: "execution-legacy",
+      origin: {
+        kind: "template",
+        definitionId: "workflow-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
       seedDefinitionId: "workflow-1",
       seedDefinitionRevision: 1,
       workingDefinition: createResolvedDefinition(),
@@ -420,6 +432,12 @@ describe("workflow graph execution schemas", () => {
   it("round-trips an explicit loopEpoch and rejects non-integer values", () => {
     const base = {
       id: "execution-epoch",
+      origin: {
+        kind: "template",
+        definitionId: "workflow-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
       seedDefinitionId: "workflow-1",
       seedDefinitionRevision: 1,
       workingDefinition: createResolvedDefinition(),
@@ -462,6 +480,12 @@ describe("workflow charter requirement on persisted schemas", () => {
   it("rejects an execution snapshot that omits the charter", () => {
     const result = graphWorkflowExecutionSchema.safeParse({
       id: "execution-no-charter",
+      origin: {
+        kind: "template",
+        definitionId: "workflow-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
       seedDefinitionId: "workflow-1",
       seedDefinitionRevision: 1,
       workingDefinition: createResolvedDefinition(),
@@ -1557,6 +1581,12 @@ describe("graphWorkflowExecutionSchema laneStates", () => {
   it("defaults laneStates to empty object", () => {
     const result = graphWorkflowExecutionSchema.safeParse({
       id: "exec-1",
+      origin: {
+        kind: "template",
+        definitionId: "def-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
       seedDefinitionId: "def-1",
       seedDefinitionRevision: 1,
       workingDefinition: {
@@ -1578,6 +1608,12 @@ describe("graphWorkflowExecutionSchema laneStates", () => {
   it("persists laneStates keyed first by contextId then by lane", () => {
     const result = graphWorkflowExecutionSchema.safeParse({
       id: "exec-1",
+      origin: {
+        kind: "template",
+        definitionId: "def-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
       seedDefinitionId: "def-1",
       seedDefinitionRevision: 1,
       workingDefinition: {
@@ -1655,6 +1691,12 @@ describe("graphWorkflowExecutionSchema laneStates", () => {
   it("rejects legacy lane keying that places lane state directly under the lane key", () => {
     const result = graphWorkflowExecutionSchema.safeParse({
       id: "exec-1",
+      origin: {
+        kind: "template",
+        definitionId: "def-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
       seedDefinitionId: "def-1",
       seedDefinitionRevision: 1,
       workingDefinition: {
@@ -2126,6 +2168,12 @@ describe("graphWorkflowExecutionContextStateSchema parallel-execution fields", (
 describe("graphWorkflowExecutionSchema parallel-execution fields", () => {
   const minimalExecution = {
     id: "exec-1",
+    origin: {
+      kind: "template",
+      definitionId: "def-1",
+      definitionRevision: 1,
+      tier: "project",
+    },
     seedDefinitionId: "def-1",
     seedDefinitionRevision: 1,
     workingDefinition: {
@@ -2210,6 +2258,12 @@ describe("graphWorkflowExecutionSchema parallel-execution fields", () => {
   it("round-trips a fully populated execution with parallel fields", () => {
     const fullExecution = {
       id: "exec-1",
+      origin: {
+        kind: "template",
+        definitionId: "def-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
       seedDefinitionId: "def-1",
       seedDefinitionRevision: 1,
       workingDefinition: {
@@ -2549,6 +2603,12 @@ describe("graphWorkflowContextStatusSchema lifecycle constraints", () => {
 describe("graphWorkflowExecutionSchema lane/join maps", () => {
   const minimalExecution = {
     id: "exec-1",
+    origin: {
+      kind: "template",
+      definitionId: "def-1",
+      definitionRevision: 1,
+      tier: "project",
+    },
     seedDefinitionId: "def-1",
     seedDefinitionRevision: 1,
     workingDefinition: {

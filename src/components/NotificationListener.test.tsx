@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { act, render, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 
 import NotificationListener from "./NotificationListener";
 import { conversationKeys } from "@/lib/conversations/query-keys";
@@ -10,7 +11,18 @@ import {
   collaborationKeys,
   graphWorkflowEventsKeys,
   graphWorkflowExecutionKeys,
+  graphWorkflowHistoryKeys,
+  graphWorkflowResultKeys,
 } from "@/lib/workflows/query-keys";
+import {
+  orderGraphWorkflowEventPages,
+  useGraphWorkflowEventPagesQuery,
+  useGraphWorkflowExecutionByIdQuery,
+  useGraphWorkflowExecutionQuery,
+  useGraphWorkflowLatestExecutionResultQuery,
+  useGraphWorkflowExecutionResultQuery,
+} from "@/lib/workflows/queries";
+import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import { notificationKeys } from "@/lib/notifications/query-keys";
 import type {
@@ -74,6 +86,13 @@ function makeClient() {
       queries: { retry: false },
       mutations: { retry: false },
     },
+  });
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
   });
 }
 
@@ -1334,7 +1353,209 @@ describe("NotificationListener", () => {
     });
   });
 
-  it("invalidates the execution detail and event log (not session detail) on graph-workflow-status", async () => {
+  it("reads Current and a History execution from their distinct endpoints", async () => {
+    const current = createWorkflowExecution({ id: "exec-current" });
+    const historical = createWorkflowExecution({
+      id: "exec-history",
+      status: "completed",
+    });
+    const fetchSpy = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/graph-workflow/execution")) {
+        return jsonResponse({ execution: current });
+      }
+      if (url.endsWith("/graph-workflow/executions/exec-history")) {
+        return jsonResponse({ execution: historical });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const client = makeClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () => ({
+        current: useGraphWorkflowExecutionQuery("proj", "sess"),
+        historical: useGraphWorkflowExecutionByIdQuery(
+          "proj",
+          "sess",
+          "exec-history",
+        ),
+      }),
+      { wrapper },
+    );
+
+    await waitFor(() => {
+      expect(result.current.current.data?.id).toBe("exec-current");
+      expect(result.current.historical.data?.id).toBe("exec-history");
+    });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/projects/proj/sessions/sess/graph-workflow/executions/exec-history",
+    );
+  });
+
+  it("reads an execution result after the requested durable cursor", async () => {
+    const fetchSpy = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        result: {
+          cursor: 42,
+          occurredAt: "2026-08-14T12:01:00.000Z",
+          executionId: "exec-history",
+          boundaryKind: "completion",
+          status: "completed",
+          contextId: null,
+          pendingActions: [],
+          outputs: { kind: "no_declared_structured_result" },
+          name: "Historical run",
+          origin: { kind: "one_off", planName: "Historical run" },
+          originConversationId: "conv-origin",
+          startedAt: "2026-08-14T12:00:00.000Z",
+          completedAt: "2026-08-14T12:01:00.000Z",
+          haltReason: null,
+          abandonment: null,
+          documents: [],
+          deepLink: "/projects/proj/sess/workflow?execution=exec-history",
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const client = makeClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () =>
+        useGraphWorkflowExecutionResultQuery(
+          "proj",
+          "sess",
+          "exec-history",
+          41,
+        ),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.data?.cursor).toBe(42));
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/projects/proj/sessions/sess/graph-workflow/executions/exec-history/result?cursor=41",
+    );
+  });
+
+  it("walks durable boundary cursors to return the latest execution result", async () => {
+    const result = (cursor: number, boundaryKind: "pause" | "completion") => ({
+      cursor,
+      occurredAt: `2026-08-14T12:0${cursor}:00.000Z`,
+      executionId: "exec-history",
+      boundaryKind,
+      status: boundaryKind === "completion" ? "completed" : "paused",
+      contextId: null,
+      pendingActions: [],
+      outputs:
+        boundaryKind === "completion"
+          ? {
+              kind: "declared_outputs" as const,
+              byContext: { "context-plan": { releaseNotes: "Shipped" } },
+            }
+          : { kind: "no_declared_structured_result" as const },
+      name: "Historical run",
+      origin: { kind: "one_off" as const, planName: "Historical run" },
+      originConversationId: "conv-origin",
+      startedAt: "2026-08-14T12:00:00.000Z",
+      completedAt:
+        boundaryKind === "completion" ? "2026-08-14T12:19:00.000Z" : null,
+      haltReason: null,
+      abandonment: null,
+      documents: [],
+      deepLink: "/projects/proj/sess/workflow?execution=exec-history",
+    });
+    const fetchSpy = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/result")) {
+        return jsonResponse({ result: result(11, "pause") });
+      }
+      if (url.endsWith("/result?cursor=11")) {
+        return jsonResponse({ result: result(19, "completion") });
+      }
+      if (url.endsWith("/result?cursor=19")) {
+        return jsonResponse({ result: null });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const client = makeClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result: hook } = renderHook(
+      () =>
+        useGraphWorkflowLatestExecutionResultQuery(
+          "proj",
+          "sess",
+          "exec-history",
+        ),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(hook.current.data?.cursor).toBe(19));
+    expect(hook.current.data?.boundaryKind).toBe("completion");
+    expect(fetchSpy.mock.calls.map(([input]) => String(input))).toEqual([
+      "/api/projects/proj/sessions/sess/graph-workflow/executions/exec-history/result",
+      "/api/projects/proj/sessions/sess/graph-workflow/executions/exec-history/result?cursor=11",
+      "/api/projects/proj/sessions/sess/graph-workflow/executions/exec-history/result?cursor=19",
+    ]);
+  });
+
+  it("walks cursor-paged historical events and exposes the loaded history in log order", async () => {
+    const event = (seq: number) => ({
+      seq,
+      occurredAt: `2026-08-14T12:00:0${seq}.000Z`,
+      preReset: false,
+      event: {
+        type: "graph-workflow-status",
+        projectName: "proj",
+        sessionName: "sess",
+        executionId: "exec-history",
+        workflowStatus: "running",
+      },
+    });
+    const fetchSpy = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      return url.searchParams.get("cursor") === "2"
+        ? jsonResponse({ events: [event(1)], nextCursor: null })
+        : jsonResponse({ events: [event(3), event(2)], nextCursor: 2 });
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const client = makeClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () => useGraphWorkflowEventPagesQuery("proj", "sess", "exec-history"),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.hasNextPage).toBe(true));
+    await act(async () => {
+      await result.current.fetchNextPage();
+    });
+    await waitFor(() => expect(result.current.data?.pages).toHaveLength(2));
+
+    expect(
+      orderGraphWorkflowEventPages(result.current.data?.pages).map(
+        (row) => row.seq,
+      ),
+    ).toEqual([1, 2, 3]);
+    expect(fetchSpy.mock.calls.map(([input]) => String(input))).toEqual([
+      expect.stringContaining("direction=desc"),
+      expect.stringContaining("cursor=2"),
+    ]);
+  });
+
+  it("invalidates Current, the addressed execution, History, and the tail on graph-workflow-status without discarding walked pages", async () => {
     const client = makeClient();
     const invalidateQueries = vi.spyOn(client, "invalidateQueries");
 
@@ -1359,8 +1580,81 @@ describe("NotificationListener", () => {
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: graphWorkflowEventsKeys.list("proj", "sess", "exec-1"),
     });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: graphWorkflowExecutionKeys.byId("proj", "sess", "exec-1"),
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: graphWorkflowHistoryKeys.list("proj", "sess"),
+    });
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: graphWorkflowEventsKeys.pages("proj", "sess", "exec-1"),
+    });
     expect(invalidateQueries).not.toHaveBeenCalledWith({
       queryKey: sessionKeys.detail("proj", "sess"),
+    });
+  });
+
+  it("invalidates Current, addressed detail, History, and the tail when an execution is released", async () => {
+    const { invalidateQueries, es } = emitAndGetSpies();
+
+    es.emit("graph-workflow-execution-released", {
+      type: "graph-workflow-execution-released",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-1",
+      status: "halted",
+      reason: "superseded",
+      actor: "human",
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: graphWorkflowExecutionKeys.detail("proj", "sess"),
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: graphWorkflowExecutionKeys.byId("proj", "sess", "exec-1"),
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: graphWorkflowHistoryKeys.list("proj", "sess"),
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: graphWorkflowEventsKeys.list("proj", "sess", "exec-1"),
+    });
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: graphWorkflowEventsKeys.pages("proj", "sess", "exec-1"),
+    });
+  });
+
+  it("invalidates the addressed result, execution, and History on result recording without discarding walked pages", async () => {
+    const { invalidateQueries, es } = emitAndGetSpies();
+
+    es.emit("graph-workflow-result-recorded", {
+      type: "graph-workflow-result-recorded",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-1",
+      originConversationId: "conv-1",
+      boundaryCursor: 42,
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: graphWorkflowResultKeys.forExecution(
+          "proj",
+          "sess",
+          "exec-1",
+        ),
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: graphWorkflowExecutionKeys.byId("proj", "sess", "exec-1"),
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: graphWorkflowHistoryKeys.list("proj", "sess"),
+    });
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: graphWorkflowEventsKeys.pages("proj", "sess", "exec-1"),
     });
   });
 

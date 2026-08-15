@@ -26,7 +26,15 @@ import type {
   GraphWorkflowEventPage,
   GraphWorkflowEventPageQuery,
 } from "./graph-workflow-events-repo";
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowPendingArtifacts,
+  GraphWorkflowResultDelivery,
+} from "@/lib/workflow-graph/schemas";
+import {
+  projectGraphWorkflowBoundaryResult,
+  type GraphWorkflowBoundaryResultProjection,
+} from "@/lib/workflow-graph/execution-result-projection";
 import type { StateStoreCore } from "./schemas";
 
 const logger = createLogger("state-store");
@@ -616,10 +624,17 @@ export function createAccessors(core: StateStoreCore, log: Logger = logger) {
    * into memory.
    */
   async function getGraphWorkflowEventsTail(
+    projectPath: string,
+    sessionName: string,
     executionId: string,
     limit: number,
   ): Promise<GraphWorkflowExecutionEvent[]> {
-    return repos.graphWorkflowEvents.findTail(executionId, limit);
+    return repos.graphWorkflowEvents.findTail(
+      projectPath,
+      sessionName,
+      executionId,
+      limit,
+    );
   }
 
   /**
@@ -631,10 +646,17 @@ export function createAccessors(core: StateStoreCore, log: Logger = logger) {
    * walking a long log costs one index range per page.
    */
   async function getGraphWorkflowEventsPage(
+    projectPath: string,
+    sessionName: string,
     executionId: string,
     query: GraphWorkflowEventPageQuery,
   ): Promise<GraphWorkflowEventPage> {
-    return repos.graphWorkflowEvents.findPage(executionId, query);
+    return repos.graphWorkflowEvents.findPage(
+      projectPath,
+      sessionName,
+      executionId,
+      query,
+    );
   }
 
   /**
@@ -643,11 +665,15 @@ export function createAccessors(core: StateStoreCore, log: Logger = logger) {
    * lookup. Returns the single most recent row via the context index.
    */
   async function findLatestGraphWorkflowContextEvent(
+    projectPath: string,
+    sessionName: string,
     executionId: string,
     contextId: string,
     eventType: string,
   ): Promise<GraphWorkflowExecutionEvent | null> {
     return repos.graphWorkflowEvents.findLatestForContext(
+      projectPath,
+      sessionName,
       executionId,
       contextId,
       eventType,
@@ -673,6 +699,112 @@ export function createAccessors(core: StateStoreCore, log: Logger = logger) {
         storeSessionName: sessionName,
       });
     }
+  }
+
+  async function getArchivedGraphWorkflowExecutionById(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+  ): Promise<GraphWorkflowExecution | null> {
+    return repos.graphWorkflowArchivedExecutions.findByExecution(
+      projectPath,
+      sessionName,
+      executionId,
+    );
+  }
+
+  /**
+   * One execution addressed independently of its physical Current-or-History
+   * placement. A terminal row still occupying Current is returned before the
+   * archived fallback; both tiers use the complete scope triple.
+   */
+  async function getGraphWorkflowExecutionById(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+  ): Promise<GraphWorkflowExecution | null> {
+    const active = await getActiveGraphWorkflowExecution(
+      projectPath,
+      sessionName,
+    );
+    if (active?.id === executionId) return active;
+    return getArchivedGraphWorkflowExecutionById(
+      projectPath,
+      sessionName,
+      executionId,
+    );
+  }
+
+  async function getGraphWorkflowBoundaryResultAfter(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+    cursor?: number | null,
+  ): Promise<GraphWorkflowBoundaryResultProjection | null> {
+    const execution = await getGraphWorkflowExecutionById(
+      projectPath,
+      sessionName,
+      executionId,
+    );
+    if (execution === null) return null;
+
+    const record = repos.graphWorkflowEvents.findBoundaryAfter(
+      projectPath,
+      sessionName,
+      executionId,
+      cursor,
+    );
+    if (record === null || record.event.type !== "graph-workflow-boundary") {
+      return null;
+    }
+    return projectGraphWorkflowBoundaryResult({
+      execution,
+      event: record.event,
+      cursor: record.id,
+      occurredAt: record.occurredAt,
+    });
+  }
+
+  /**
+   * What a reserved execution still owes the filesystem, or null once its
+   * materialization has succeeded (D7 R3.4). Scoped by the full
+   * project/session/execution triple, so a same-id record from another session
+   * can never reach a retry.
+   */
+  async function getGraphWorkflowPendingArtifacts(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+  ): Promise<GraphWorkflowPendingArtifacts | null> {
+    return repos.graphWorkflowPendingArtifacts.find(
+      projectPath,
+      sessionName,
+      executionId,
+    );
+  }
+
+  async function getGraphWorkflowResultDelivery(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+    boundarySeq: number,
+  ): Promise<GraphWorkflowResultDelivery | null> {
+    return repos.graphWorkflowResultDeliveries.findByBoundary(
+      projectPath,
+      sessionName,
+      executionId,
+      boundarySeq,
+    );
+  }
+
+  async function listPendingGraphWorkflowResultEffects(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<GraphWorkflowResultDelivery[]> {
+    return repos.graphWorkflowResultDeliveries.listPendingEffects(
+      projectPath,
+      sessionName,
+    );
   }
 
   /**
@@ -733,6 +865,12 @@ export function createAccessors(core: StateStoreCore, log: Logger = logger) {
     getGraphWorkflowEventsPage,
     findLatestGraphWorkflowContextEvent,
     getActiveGraphWorkflowExecution,
+    getArchivedGraphWorkflowExecutionById,
+    getGraphWorkflowExecutionById,
+    getGraphWorkflowBoundaryResultAfter,
+    getGraphWorkflowPendingArtifacts,
+    getGraphWorkflowResultDelivery,
+    listPendingGraphWorkflowResultEffects,
     listActiveGraphWorkflowExecutions,
     listArchivedGraphWorkflowExecutions,
   };

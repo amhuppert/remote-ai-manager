@@ -8,12 +8,13 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClientProvider } from "@tanstack/react-query";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
   makeProfileSnapshot,
 } from "@/lib/workflow-graph/test-fixtures";
-import { renderWithQuery } from "@/test/component-mocks";
+import { createTestQueryClient, renderWithQuery } from "@/test/component-mocks";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import GraphWorkflowPanel from "./GraphWorkflowPanel";
@@ -26,8 +27,9 @@ const noopCallbacks = {
   onPause: vi.fn(),
   onResume: vi.fn(),
   onAbort: vi.fn(),
-  onClear: vi.fn(),
+  onAbandon: vi.fn(),
   onApproveDefinition: vi.fn(),
+  onRejectDefinition: vi.fn(),
   onAddTask: vi.fn(),
   onUpdateTask: vi.fn(),
   onRemoveTask: vi.fn(),
@@ -39,6 +41,7 @@ const noopCallbacks = {
   isPausingExecution: false,
   isResumingExecution: false,
   isApprovingDefinition: false,
+  isRejectingDefinition: false,
   definitionApprovalError: null,
   configEditConflict: false,
   configEditError: null,
@@ -94,6 +97,7 @@ describe("GraphWorkflowPanel", () => {
 
   it("offers the definition-approval recovery action for a parked execution", async () => {
     const onApproveDefinition = vi.fn();
+    const onRejectDefinition = vi.fn();
     const execution = createWorkflowExecution({
       status: "pending",
       definitionApproval: {
@@ -108,6 +112,7 @@ describe("GraphWorkflowPanel", () => {
         archivedExecutions={[]}
         {...noopCallbacks}
         onApproveDefinition={onApproveDefinition}
+        onRejectDefinition={onRejectDefinition}
       />,
     );
 
@@ -118,6 +123,15 @@ describe("GraphWorkflowPanel", () => {
     await userEvent.click(approve);
 
     expect(onApproveDefinition).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Reject definition" }),
+    );
+    const dialog = screen.getByRole("alertdialog");
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Reject definition" }),
+    );
+    expect(onRejectDefinition).toHaveBeenCalledTimes(1);
   });
 
   it("disables definition approval while another workflow mutation is in flight", () => {
@@ -163,10 +177,7 @@ describe("GraphWorkflowPanel", () => {
     ).toBeInTheDocument();
   });
 
-  // The assignment-cutover migration empties the active execution table, so
-  // this empty state is exactly where every affected session lands. Its
-  // archived runs — and the reason they were ended — must be reachable here.
-  it("surfaces archived runs and their cutover abort reason in the empty state", () => {
+  it("does not render the former passive archive summary in the detail panel", () => {
     renderWithQuery(
       <GraphWorkflowPanel
         execution={null}
@@ -191,10 +202,7 @@ describe("GraphWorkflowPanel", () => {
       />,
     );
 
-    expect(screen.getByText(/exec-cutover/)).toBeInTheDocument();
-    expect(
-      screen.getByText(/ended by a Command Center schema cutover/i),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/exec-cutover/)).toBeNull();
   });
 
   it("renders status bar with execution status badge and active context info", () => {
@@ -292,7 +300,7 @@ describe("GraphWorkflowPanel", () => {
     expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
   });
 
-  it("shows only Clear button when execution is completed", () => {
+  it("offers no control at all when execution is completed", () => {
     renderWithQuery(
       <GraphWorkflowPanel
         execution={createWorkflowExecution({ status: "completed" })}
@@ -305,12 +313,14 @@ describe("GraphWorkflowPanel", () => {
     expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Abort" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
+    // A completed run releases the lease on its own, so there is nothing left
+    // for an operator to clear.
+    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
   });
 
-  it("shows Resume and Clear buttons when execution is halted", () => {
+  it("shows Resume when execution is halted", () => {
     const onResume = vi.fn();
-    const onClear = vi.fn();
+    const onAbandon = vi.fn();
 
     renderWithQuery(
       <GraphWorkflowPanel
@@ -329,7 +339,7 @@ describe("GraphWorkflowPanel", () => {
         archivedExecutions={[]}
         {...noopCallbacks}
         onResume={onResume}
-        onClear={onClear}
+        onAbandon={onAbandon}
       />,
     );
 
@@ -337,14 +347,18 @@ describe("GraphWorkflowPanel", () => {
     fireEvent.click(resumeBtn);
     expect(onResume).toHaveBeenCalledTimes(1);
 
-    const clearBtn = screen.getByRole("button", { name: "Clear" });
-    fireEvent.click(clearBtn);
-    expect(onClear).toHaveBeenCalledTimes(1);
-
+    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Abandon" }));
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Abandon execution",
+      }),
+    );
+    expect(onAbandon).toHaveBeenCalledTimes(1);
   });
 
-  it("shows only Clear button when execution is aborted", () => {
+  it("offers no control when execution is aborted", () => {
     renderWithQuery(
       <GraphWorkflowPanel
         execution={createWorkflowExecution({
@@ -358,10 +372,209 @@ describe("GraphWorkflowPanel", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Abort" })).toBeNull();
+  });
+
+  it("unmounts every execution mutation when the selected run is read-only", () => {
+    const execution = createWorkflowExecution({
+      status: "halted",
+      definitionApproval: {
+        requestedAt: "2026-08-14T15:00:00.000Z",
+        approvedAt: null,
+      },
+      haltReason: {
+        type: "join_failure",
+        joinId: "join-final",
+        joinKind: "final_publish",
+        contextId: null,
+        sourceLaneIds: ["lane-a", "lane-b"],
+        targetLaneId: "__session__",
+        message: "Historical merge conflict",
+        conflictFiles: ["src/release.ts"],
+      },
+    });
+
+    renderWithQuery(
+      <GraphWorkflowPanel
+        execution={execution}
+        events={[]}
+        actionCapability="read-only"
+        {...noopCallbacks}
+      />,
+    );
+
+    expect(screen.getByText("halted")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /pause/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /resume/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /abort/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /abandon/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /approve/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /reject/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /edit schema/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /reset/i })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("src/release.ts")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Retry merge" })).toBeNull();
+  });
+
+  it("unmounts a definition-reject confirmation when Current becomes History", () => {
+    const execution = createWorkflowExecution({
+      id: "execution-awaiting-definition",
+      status: "pending",
+      definitionApproval: {
+        requestedAt: "2026-08-14T15:00:00.000Z",
+        approvedAt: null,
+      },
+    });
+    const queryClient = createTestQueryClient();
+    const view = renderWithQuery(
+      <GraphWorkflowPanel
+        execution={execution}
+        events={[]}
+        actionCapability="current"
+        {...noopCallbacks}
+      />,
+      queryClient,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Reject definition" }));
+    expect(screen.getByRole("alertdialog")).toBeVisible();
+
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <GraphWorkflowPanel
+          execution={execution}
+          events={[]}
+          actionCapability="read-only"
+          {...noopCallbacks}
+        />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("does not carry an abandon confirmation onto a replacement Current execution", () => {
+    const halted = (id: string) =>
+      createWorkflowExecution({
+        id,
+        status: "halted",
+        haltReason: {
+          type: "circuit_breaker",
+          contextId: "context-plan",
+          condition: "retry_exhaustion",
+          summary: "Tests failed",
+          failureCount: 2,
+        },
+      });
+    const queryClient = createTestQueryClient();
+    const view = renderWithQuery(
+      <GraphWorkflowPanel
+        execution={halted("execution-first")}
+        events={[]}
+        actionCapability="current"
+        {...noopCallbacks}
+      />,
+      queryClient,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Abandon" }));
+    expect(screen.getByRole("alertdialog")).toBeVisible();
+
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <GraphWorkflowPanel
+          execution={halted("execution-replacement")}
+          events={[]}
+          actionCapability="current"
+          {...noopCallbacks}
+        />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("keeps historical definition approval visible but removes its decision control", () => {
+    renderWithQuery(
+      <GraphWorkflowPanel
+        execution={createWorkflowExecution({
+          status: "pending",
+          definitionApproval: {
+            requestedAt: "2026-08-14T15:00:00.000Z",
+            approvedAt: null,
+          },
+        })}
+        events={[]}
+        actionCapability="read-only"
+        {...noopCallbacks}
+      />,
+    );
+
+    expect(screen.getByText("Definition awaiting approval")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Approve definition & start" }),
+    ).toBeNull();
+  });
+
+  it("retains completed definition and context approval history without decision controls", () => {
+    const execution = createWorkflowExecution({
+      status: "completed",
+      completedAt: "2026-08-14T16:00:00.000Z",
+      definitionApproval: {
+        requestedAt: "2026-08-14T14:00:00.000Z",
+        approvedAt: "2026-08-14T14:05:00.000Z",
+      },
+    });
+    const events: GraphWorkflowExecutionEvent[] = [
+      {
+        occurredAt: "2026-08-14T15:00:00.000Z",
+        preReset: false,
+        event: {
+          type: "graph-workflow-approval-pending",
+          projectName: "test-project",
+          sessionName: "test-session",
+          executionId: execution.id,
+          contextId: "context-plan",
+          contextTitle: "Plan",
+          conversationId: "conv-plan",
+          requestedAt: "2026-08-14T15:00:00.000Z",
+        },
+      },
+      {
+        occurredAt: "2026-08-14T15:10:00.000Z",
+        preReset: false,
+        event: {
+          type: "graph-workflow-approval-resolved",
+          projectName: "test-project",
+          sessionName: "test-session",
+          executionId: execution.id,
+          contextId: "context-plan",
+          conversationId: "conv-plan",
+          decision: "rejected",
+          message: "Add migration evidence.",
+          decidedAt: "2026-08-14T15:10:00.000Z",
+        },
+      },
+    ];
+
+    renderWithQuery(
+      <GraphWorkflowPanel
+        execution={execution}
+        events={events}
+        actionCapability="read-only"
+        {...noopCallbacks}
+      />,
+    );
+
+    const history = screen.getByRole("region", { name: "Approval history" });
+    expect(history).toHaveTextContent("Definition approved");
+    expect(history).toHaveTextContent("Plan requested approval");
+    expect(history).toHaveTextContent("Plan rejected");
+    expect(history).toHaveTextContent("Add migration evidence.");
+    expect(within(history).queryByRole("button")).toBeNull();
   });
 });
 

@@ -154,6 +154,7 @@ describe("session conversation routes", () => {
       getProjectDisplayName: () => PROJECT_NAME,
       getSession: async () => makeSession([conversation]),
       createConversation: async () => conversation,
+      deleteConversation: async () => {},
       changeConversationProfile: async () => {
         throw new Error("not exercised here");
       },

@@ -209,6 +209,7 @@ describe("R9.1 — per-lane parked questions across a cohort", () => {
         };
       },
     });
+    built.harness.repository.deliver = publisher.deliver;
 
     built.gate = createUserInputGateService({
       getActive: async () => builtHarness().repository.read(),

@@ -187,7 +187,12 @@ describe("self-committed lane work evidence chain (R13, R20.2, R21.2)", () => {
           : null,
       gitObjectExists: async (ref) => ref.objectId === SELF_SHA,
       workflowEventExists: async (ref, expectedExecution) => {
-        const record = workflowEvents.findRecordById(ref.eventId);
+        const record = workflowEvents.findRecordById(
+          PROJECT_PATH,
+          SESSION_NAME,
+          expectedExecution.workflowExecutionId ?? "",
+          ref.eventId,
+        );
         return (
           record !== null &&
           record.executionId === expectedExecution.workflowExecutionId &&
@@ -212,6 +217,7 @@ describe("self-committed lane work evidence chain (R13, R20.2, R21.2)", () => {
       workflowEvents,
       evidenceService,
       writeQueue: createWriteQueue(),
+      resolveProjectPath: async () => PROJECT_PATH,
       validatedTreeHash: async (_execution, commitSha, relevantPaths) => {
         expect(commitSha).toBe(SELF_SHA);
         expect(relevantPaths).toEqual(["src/lib/specs"]);

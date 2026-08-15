@@ -1,7 +1,7 @@
 import {
+  abandonGraphWorkflowExecutionForSession,
   abortGraphWorkflowExecutionForSession,
   locateGraphWorkflowExecution,
-  releaseGraphWorkflowExecutionForSession,
 } from "@/lib/workflow-graph/execution-route-handlers";
 import type { SpecWorkflowCleanupPort } from "./execution-service";
 
@@ -15,10 +15,9 @@ import type { SpecWorkflowCleanupPort } from "./execution-service";
  * disagreeing about what counts as a completed cleanup phase.
  *
  * Every adapter reports honestly whether its act took effect. A seam that
- * did nothing — because the pinned run no longer owns the session's slot, or
- * because the lifecycle contract refused the status — returns `ok: false` with
- * the reason, and the coordinator parks rather than writing a phase-completed
- * audit event over a no-op.
+ * did nothing — because the pinned run no longer holds the session's execution
+ * lease — returns `ok: false` with the reason, and the coordinator parks rather
+ * than writing a phase-completed audit event over a no-op.
  */
 export function createProductionSpecWorkflowCleanupPort(): SpecWorkflowCleanupPort {
   return {
@@ -32,16 +31,12 @@ export function createProductionSpecWorkflowCleanupPort(): SpecWorkflowCleanupPo
           }
         : { ok: true };
     },
-    async release(target) {
-      const released = await releaseGraphWorkflowExecutionForSession(target);
-      if (released.released) return { ok: true };
-      return {
-        ok: false,
-        reason:
-          released.reason === "not_active"
-            ? `execution ${target.workflowExecutionId} no longer owns this session's execution slot`
-            : `the lifecycle contract refuses to release a ${released.status} execution`,
-      };
+    async abandon(target) {
+      const outcome = await abandonGraphWorkflowExecutionForSession(target);
+      // The act's own refusal reason, forwarded verbatim: the coordinator parks
+      // on it rather than writing a phase-completed audit over a run the
+      // audited seam declined to end.
+      return outcome.ok ? { ok: true } : { ok: false, reason: outcome.reason };
     },
   };
 }

@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import {
   markUnreadOnFinish,
   markReadOnUserTurnStart,
+  markWorkflowResultUnread,
   type MarkUnreadOnFinishDeps,
 } from "./mark-unread";
 import type { ConversationState, ConversationRole } from "./schemas";
@@ -177,6 +178,73 @@ describe("markUnreadOnFinish", () => {
       /conversation not found/,
     );
     expect(publishedEvents).toHaveLength(0);
+  });
+});
+
+describe("markWorkflowResultUnread", () => {
+  it("marks only the origin unread without changing either conversation queue or agent notices", async () => {
+    await seedConversation({
+      unread: false,
+      pendingAgentNotices: ["origin notice"],
+      pendingQueue: [
+        {
+          id: "origin-message",
+          content: [{ type: "text", text: "origin queued" }],
+          status: "pending",
+          enqueuedAt: "2026-01-01T00:02:00Z",
+          updatedAt: "2026-01-01T00:02:00Z",
+          deliveryStartedAt: null,
+          deliveredAt: null,
+          cancelledAt: null,
+          failedAt: null,
+          deliveryAttemptId: null,
+          attemptCount: 0,
+          error: null,
+          metadata: null,
+        },
+      ],
+    });
+    await fixture.seedConversation(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeConversation({
+        id: "conv-sibling",
+        unread: false,
+        pendingAgentNotices: ["sibling notice"],
+        pendingQueue: [],
+      }),
+    );
+    const { deps, publishedEvents } = makeDeps();
+
+    await markWorkflowResultUnread(makeCtx(null), deps);
+
+    const origin = await fixture.deps.getConversation(
+      PROJECT_PATH,
+      SESSION_NAME,
+      CONVERSATION_ID,
+    );
+    const sibling = await fixture.deps.getConversation(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "conv-sibling",
+    );
+    expect(origin).toMatchObject({
+      unread: true,
+      pendingAgentNotices: ["origin notice"],
+      pendingQueue: [{ id: "origin-message", status: "pending" }],
+    });
+    expect(sibling).toMatchObject({
+      unread: false,
+      pendingAgentNotices: ["sibling notice"],
+      pendingQueue: [],
+    });
+    expect(publishedEvents).toEqual([
+      expect.objectContaining({
+        type: "conversation-unread",
+        conversationId: CONVERSATION_ID,
+        unread: true,
+      }),
+    ]);
   });
 });
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import "@/components/workflow-graph/workflow-graph.css";
@@ -15,7 +15,6 @@ import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
 import { Button } from "@/components/ui/Button";
 import type { ExecutionMobilePanel } from "../SessionWorkflowPage";
-import ArchivedExecutionsList from "./ArchivedExecutionsList";
 import ExecutionStatusBar, {
   type ExecutionControlAction,
 } from "./ExecutionStatusBar";
@@ -30,24 +29,40 @@ import { resolveViewingTask } from "./view-task-resolver";
 import { deriveUserInputStandings } from "@/hooks/use-user-input-gate";
 import ParkedQuestionPanel from "./ParkedQuestionPanel";
 import { useValidationCommandOptions } from "@/lib/validation/queries";
+import type { GraphWorkflowBoundaryResultProjection } from "@/lib/workflow-graph/execution-result-projection";
+import ConfirmDialog from "@/components/ConfirmDialog";
+import {
+  awaitsDefinitionApproval,
+  holdsExecutionLease,
+} from "@/lib/workflow-graph/lifecycle-classifier";
+import WorkflowApprovalHistory from "./WorkflowApprovalHistory";
+
+export type WorkflowActionCapability = "current" | "read-only";
+
+function formatResultOutputValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  const serialized = JSON.stringify(value);
+  return serialized ?? "—";
+}
 
 interface GraphWorkflowPanelProps {
   projectName: string;
   sessionName: string;
   execution: GraphWorkflowExecution | null;
   events: GraphWorkflowExecutionEvent[];
-  /**
-   * The session's finished runs, newest first. Rendered in the no-active-run
-   * state: after a schema cutover empties the active slot, this list is the
-   * only place an operator can see that their in-flight run was ended and why.
-   */
-  archivedExecutions: GraphWorkflowExecutionHistoryItem[];
+  /** @deprecated History is rendered by the page-level selectable rail. */
+  archivedExecutions?: GraphWorkflowExecutionHistoryItem[];
   layout: GraphWorkflowVisualLayout | null;
+  /** Page-owned authority: History is inspectable but has no mutation surface. */
+  actionCapability?: WorkflowActionCapability;
+  /** Durable boundary projection for a selected historical execution. */
+  result?: GraphWorkflowBoundaryResultProjection | null;
   onPause(): void;
   onResume(conflictGuidance?: ConflictDecisionInput[]): void;
   onAbort(): void;
-  onClear(): void;
+  onAbandon(): void;
   onApproveDefinition(): void;
+  onRejectDefinition(): void;
   onAddTask(contextId: string, title: string, instructions: string): void;
   onUpdateTask(
     taskId: string,
@@ -70,6 +85,7 @@ interface GraphWorkflowPanelProps {
   isPausingExecution: boolean;
   isResumingExecution: boolean;
   isApprovingDefinition: boolean;
+  isRejectingDefinition: boolean;
   definitionApprovalError: string | null;
   configEditConflict: boolean;
   configEditError: string | null;
@@ -79,6 +95,8 @@ interface GraphWorkflowPanelProps {
   isMobile: boolean;
   mobilePanel: ExecutionMobilePanel;
   autoSwitchPanel: (panel: ExecutionMobilePanel) => void;
+  /** Current context-level approval decision, already bound to its mutation. */
+  humanApprovalPanel?: ReactNode;
 }
 
 export default function GraphWorkflowPanel({
@@ -86,13 +104,15 @@ export default function GraphWorkflowPanel({
   sessionName,
   execution,
   events,
-  archivedExecutions,
   layout,
+  actionCapability = "current",
+  result = null,
   onPause,
   onResume,
   onAbort,
-  onClear,
+  onAbandon,
   onApproveDefinition,
+  onRejectDefinition,
   onAddTask,
   onUpdateTask,
   onRemoveTask,
@@ -105,6 +125,7 @@ export default function GraphWorkflowPanel({
   isPausingExecution,
   isResumingExecution,
   isApprovingDefinition,
+  isRejectingDefinition,
   definitionApprovalError,
   configEditConflict,
   configEditError,
@@ -114,7 +135,9 @@ export default function GraphWorkflowPanel({
   isMobile,
   mobilePanel,
   autoSwitchPanel,
+  humanApprovalPanel,
 }: GraphWorkflowPanelProps) {
+  const actionsAvailable = actionCapability === "current";
   const [selectedContextId, setSelectedContextId] = useState<string | null>(
     null,
   );
@@ -124,6 +147,12 @@ export default function GraphWorkflowPanel({
     contextTitle: string;
     label: string;
   } | null>(null);
+  const [
+    confirmingDefinitionRejectExecutionId,
+    setConfirmingDefinitionRejectExecutionId,
+  ] = useState<string | null>(null);
+  const [confirmingAbandonExecutionId, setConfirmingAbandonExecutionId] =
+    useState<string | null>(null);
 
   const handleSelectContext = useCallback(
     (contextId: string | null) => {
@@ -228,7 +257,7 @@ export default function GraphWorkflowPanel({
     selectedContextId,
   );
   const userInputPanels =
-    userInputStandings.length > 0
+    actionsAvailable && userInputStandings.length > 0
       ? userInputStandings.map((standing) => (
           <ParkedQuestionPanel
             key={standing.laneKey}
@@ -247,9 +276,17 @@ export default function GraphWorkflowPanel({
       ? resolveViewingTask(execution, viewingTaskId)
       : null;
   const isAwaitingDefinitionApproval =
-    execution?.status === "pending" &&
-    execution.definitionApproval !== null &&
-    execution.definitionApproval.approvedAt === null;
+    execution !== null &&
+    awaitsDefinitionApproval(execution.status, execution.definitionApproval);
+  const canDecideDefinitionApproval =
+    actionsAvailable &&
+    isAwaitingDefinitionApproval &&
+    execution !== null &&
+    holdsExecutionLease(
+      execution.status,
+      execution.haltReason,
+      execution.abandonment,
+    );
 
   if (!execution) {
     return (
@@ -257,7 +294,6 @@ export default function GraphWorkflowPanel({
         <span className="text-[0.82rem] font-medium">
           No graph workflow execution has started for this session.
         </span>
-        <ArchivedExecutionsList executions={archivedExecutions} />
       </div>
     );
   }
@@ -279,13 +315,16 @@ export default function GraphWorkflowPanel({
         <ExecutionStatusBar
           execution={execution}
           events={events}
-          onEditSchema={handleEditOutputSchema}
+          {...(actionsAvailable
+            ? { onEditSchema: handleEditOutputSchema }
+            : {})}
           onPause={onPause}
           onResume={onResume}
           onAbort={onAbort}
-          onClear={onClear}
+          onAbandon={() => setConfirmingAbandonExecutionId(execution.id)}
           isMutating={isMutating}
           pendingAction={pendingAction}
+          allowActions={actionsAvailable}
         />
         {isAwaitingDefinitionApproval && (
           <section
@@ -308,16 +347,67 @@ export default function GraphWorkflowPanel({
                 </p>
               )}
             </div>
-            <Button
-              size="sm"
-              variant="success"
-              touch
-              loading={isApprovingDefinition}
-              disabled={isMutating}
-              onClick={onApproveDefinition}
-            >
-              Approve definition &amp; start
-            </Button>
+            {canDecideDefinitionApproval && (
+              <div className="flex items-center gap-sm">
+                <Button
+                  size="sm"
+                  variant="success"
+                  touch
+                  loading={isApprovingDefinition}
+                  disabled={isMutating}
+                  onClick={onApproveDefinition}
+                >
+                  Approve definition &amp; start
+                </Button>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  touch
+                  loading={isRejectingDefinition}
+                  disabled={isMutating}
+                  onClick={() =>
+                    setConfirmingDefinitionRejectExecutionId(execution.id)
+                  }
+                >
+                  Reject definition
+                </Button>
+              </div>
+            )}
+          </section>
+        )}
+        {actionsAvailable ? humanApprovalPanel : null}
+        {!actionsAvailable && (
+          <WorkflowApprovalHistory execution={execution} events={events} />
+        )}
+        {result !== null && (
+          <section
+            aria-label="Execution result"
+            className="flex shrink-0 flex-wrap items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim bg-bg-surface px-md py-sm font-mono text-[0.7rem] text-text-secondary"
+          >
+            <span className="font-semibold text-text-primary">
+              {result.boundaryKind} result
+            </span>
+            <span>{result.status}</span>
+            {result.outputs.kind === "declared_outputs" ? (
+              Object.entries(result.outputs.byContext).flatMap(
+                ([contextId, outputs]) =>
+                  Object.entries(outputs).map(([outputName, value]) => (
+                    <span
+                      key={`${contextId}:${outputName}`}
+                      className="inline-flex min-w-0 items-baseline gap-xs"
+                    >
+                      <span>
+                        {contextId}.{outputName}
+                      </span>
+                      <span className="break-all text-text-primary">
+                        {formatResultOutputValue(value)}
+                      </span>
+                    </span>
+                  )),
+              )
+            ) : (
+              <span>No declared structured result</span>
+            )}
           </section>
         )}
         <div className="flex min-h-0 flex-1 max-768:flex-col">
@@ -327,6 +417,7 @@ export default function GraphWorkflowPanel({
                 execution={execution}
                 layout={mergedLayout}
                 onSelectContext={handleSelectContext}
+                preserveLayout={!actionsAvailable}
               />
               <ExecutionInspectorPanel
                 execution={execution}
@@ -336,6 +427,7 @@ export default function GraphWorkflowPanel({
                     projectName={projectName}
                     sessionName={sessionName}
                     execution={execution}
+                    {...(!actionsAvailable ? { events } : {})}
                   />
                 }
                 selectedContextId={selectedContextId}
@@ -367,6 +459,7 @@ export default function GraphWorkflowPanel({
                 onOpenAdvisoryOrigin={handleOpenAdvisoryOrigin}
                 contextTabRequest={contextTabRequest}
                 commandOptions={commandOptions}
+                readOnly={!actionsAvailable}
               />
               {mobilePanel === "log" && (
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg-void max-768:[.app[data-page=workflow][data-mobile-panel=graph]_&]:hidden max-768:[.app[data-page=workflow][data-mobile-panel=inspector]_&]:hidden">
@@ -425,6 +518,7 @@ export default function GraphWorkflowPanel({
                   execution={execution}
                   layout={mergedLayout}
                   onSelectContext={handleSelectContext}
+                  preserveLayout={!actionsAvailable}
                 />
               )}
               <ExecutionInspectorPanel
@@ -435,6 +529,7 @@ export default function GraphWorkflowPanel({
                     projectName={projectName}
                     sessionName={sessionName}
                     execution={execution}
+                    {...(!actionsAvailable ? { events } : {})}
                   />
                 }
                 selectedContextId={selectedContextId}
@@ -466,11 +561,41 @@ export default function GraphWorkflowPanel({
                 onOpenAdvisoryOrigin={handleOpenAdvisoryOrigin}
                 contextTabRequest={contextTabRequest}
                 commandOptions={commandOptions}
+                readOnly={!actionsAvailable}
               />
             </>
           )}
         </div>
       </div>
+      {actionsAvailable &&
+        confirmingDefinitionRejectExecutionId === execution.id && (
+          <ConfirmDialog
+            open
+            title="Reject workflow definition?"
+            message="Reject this parked definition and move the execution to History."
+            confirmLabel="Reject definition"
+            danger
+            onConfirm={() => {
+              setConfirmingDefinitionRejectExecutionId(null);
+              onRejectDefinition();
+            }}
+            onCancel={() => setConfirmingDefinitionRejectExecutionId(null)}
+          />
+        )}
+      {actionsAvailable && confirmingAbandonExecutionId === execution.id && (
+        <ConfirmDialog
+          open
+          title="Abandon halted execution?"
+          message="End this resumably halted execution's lease and move it to History."
+          confirmLabel="Abandon execution"
+          danger
+          onConfirm={() => {
+            setConfirmingAbandonExecutionId(null);
+            onAbandon();
+          }}
+          onCancel={() => setConfirmingAbandonExecutionId(null)}
+        />
+      )}
     </ReactFlowProvider>
   );
 }

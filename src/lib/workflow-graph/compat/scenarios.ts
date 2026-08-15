@@ -6,6 +6,7 @@ import {
   migrateRawDefinitionPlacement,
   migrateRawExecutionPlacement,
 } from "@/lib/workflow-graph/placement-migration";
+import { floorRawExecutionOrigin } from "@/lib/workflow-graph/execution-origin";
 import type { CompatibilityScenario } from "./engine-harness";
 import {
   compatibilityRecordingSchema,
@@ -84,6 +85,11 @@ export function inflateDefinitionFixture(scenarioName: string): unknown {
 export function inflateExecutionFixture(scenarioName: string): unknown {
   const raw = readExecutionFixture(scenarioName);
   migrateRawExecutionPlacement(raw);
+  // Same rule, same reason as placement above: a captured fixture predates
+  // `origin` entirely, and the stored-load boundary floors it from the seed
+  // fields rather than the fixture being edited to claim provenance it never
+  // recorded.
+  floorRawExecutionOrigin(raw);
   return raw;
 }
 

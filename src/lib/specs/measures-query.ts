@@ -179,9 +179,18 @@ export function createMeasuresQuery(deps: MeasuresQueryDeps): MeasuresQuery {
         }
 
         for (const execution of deps.delivery.findExecutionsBySpecId(spec.id)) {
-          if (execution.workflow_execution_id === null) continue;
+          if (
+            execution.workflow_execution_id === null ||
+            execution.session_name === null
+          ) {
+            continue;
+          }
           const commitRecords = deps.workflowEvents
-            .findRecordsByExecution(execution.workflow_execution_id)
+            .findRecordsByExecution(
+              projectPath,
+              execution.session_name,
+              execution.workflow_execution_id,
+            )
             .filter(
               (record) => record.event.type === "graph-workflow-lane-commit",
             );

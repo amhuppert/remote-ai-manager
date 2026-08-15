@@ -1,5 +1,7 @@
 import os from "node:os";
 import path from "node:path";
+import nodePath from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAgentProfileLibraryService } from "@/lib/agent-profiles/library-service";
@@ -26,9 +28,24 @@ import type {
   WorkflowScope,
 } from "@/lib/workflow-graph/storage";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import { WorkflowDefinitionApprovalRequiredError } from "@/lib/workflow-graph/workflow-manager";
 import type { SessionState } from "@/lib/sessions/schemas";
+import {
+  conversationStateSchema,
+  type ConversationState,
+} from "@/lib/conversations/schemas";
 import type { GlobalConfig } from "@/lib/config/schemas";
+import {
+  CONVERSATION_CAPABILITY_ENV_VAR,
+  CONVERSATION_CAPABILITY_HEADER,
+  mintConversationCapability,
+  verifyConversationCapability,
+} from "@/lib/agent-gateway/conversation-capability";
+import {
+  LANE_CAPABILITY_ENV_VAR,
+  LANE_CAPABILITY_HEADER,
+  mintLaneCapability,
+  verifyLaneCapability,
+} from "@/lib/agent-gateway/lane-capability";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowDefinition,
@@ -67,6 +84,25 @@ function summary(
   };
 }
 
+/** The ordinary session conversation `cctl` runs in. */
+const CLI_CONVERSATION_ID = "conv-cli";
+const LANE_CONVERSATION_ID = "conv-lane";
+const CAPABILITY_SECRET = "server-only-capability-key";
+const CLI_CONVERSATION: ConversationState = conversationStateSchema.parse({
+  id: CLI_CONVERSATION_ID,
+  scope: "session",
+  transcriptPath: null,
+  status: "idle",
+  promptCount: 1,
+  createdAt: "2026-03-27T12:00:00.000Z",
+  lastActivityAt: "2026-03-27T12:00:00.000Z",
+  agentBackend: "claude",
+});
+const LANE_CONVERSATION: ConversationState = conversationStateSchema.parse({
+  ...CLI_CONVERSATION,
+  id: LANE_CONVERSATION_ID,
+});
+
 function makeSession(): SessionState {
   return {
     sessionName: "sess",
@@ -76,7 +112,7 @@ function makeSession(): SessionState {
     lastActivityAt: "2026-03-27T12:00:00.000Z",
     archived: false,
     finished: false,
-    conversations: [],
+    conversations: [CLI_CONVERSATION, LANE_CONVERSATION],
     source: "cc",
     creationMode: "normal",
     tddEnabled: true,
@@ -144,8 +180,11 @@ function makeExecutionDeps(
   return {
     resolveProjectPath: async () => PROJECT_PATH,
     getSession: async () => makeSession(),
+    readRepoConfig: async () => null,
+    readConfig: async () => VALIDATION_GLOBAL_CONFIG,
     normalizeExecutionAfterRestart: async () => null,
     startExecution: notUsed,
+    runExecution: notUsed,
     pauseExecution: notUsed,
     resumeExecution: notUsed,
     abortExecution: notUsed,
@@ -158,6 +197,20 @@ function makeExecutionDeps(
     drainAndHalt: notUsed,
     recordApprovalDecision: notUsed,
     listArchivedExecutions: async () => [],
+    // Drive the production signature verifiers over the exact headers cctl
+    // sends. A verifier that returns a fixture principal without reading the
+    // request would let the CLI silently drop the capability again.
+    auth: { validateOptionalToken: async () => ({ kind: "valid" as const }) },
+    verifyConversationCapability: async (request) =>
+      verifyConversationCapability(
+        request.headers.get(CONVERSATION_CAPABILITY_HEADER),
+        CAPABILITY_SECRET,
+      ),
+    verifyLaneCapability: async (request) =>
+      verifyLaneCapability(
+        request.headers.get(LANE_CAPABILITY_HEADER),
+        CAPABILITY_SECRET,
+      ),
     ...overrides,
   };
 }
@@ -165,6 +218,8 @@ function makeExecutionDeps(
 interface RouteHostOverrides {
   /** Thrown by the start route, to drive a real start-failure response. */
   startError?: Error;
+  /** Launch the fixture execution parked awaiting definition approval. */
+  parkAwaitingApproval?: boolean;
   /** The async assignment-reference checker the validate route runs. */
   assignmentReferences?: AssignmentReferenceChecker;
   /**
@@ -173,6 +228,7 @@ interface RouteHostOverrides {
    * service so accept-time validation actually runs.
    */
   definitions?: Partial<WorkflowDefinitionRouteDeps>;
+  executionDeps?: Partial<GraphWorkflowExecutionRouteDeps>;
 }
 
 function routeHost(
@@ -180,7 +236,12 @@ function routeHost(
   files: Record<string, string> = {},
   overrides: RouteHostOverrides = {},
 ): CliHost {
-  const { startError, assignmentReferences } = overrides;
+  const {
+    startError,
+    parkAwaitingApproval,
+    assignmentReferences,
+    executionDeps,
+  } = overrides;
   const definitionHandlers = createWorkflowDefinitionRouteHandlers({
     resolveProjectPath: async () => PROJECT_PATH,
     readConfig: async () => VALIDATION_GLOBAL_CONFIG,
@@ -234,8 +295,12 @@ function routeHost(
       startExecution: async () => {
         if (startError) throw startError;
         if (!execution) throw new Error("no execution fixture");
-        return execution;
+        return {
+          execution,
+          awaitingDefinitionApproval: parkAwaitingApproval === true,
+        };
       },
+      ...executionDeps,
     }),
   );
   const liveOutlineHandlers = createGraphWorkflowLiveOutlineRouteHandlers({
@@ -316,8 +381,36 @@ function routeHost(
       if (resource === "sessions") {
         const session = decodeURIComponent(segments[4] ?? "");
         const action = segments[6]; // graph-workflow[/execution|/validate]
+        if (action === "run") {
+          return executionHandlers.RUN(request, {
+            params: Promise.resolve({ name, session }),
+          });
+        }
         if (action === "execution") {
           return executionHandlers.EXECUTION(request, {
+            params: Promise.resolve({ name, session }),
+          });
+        }
+        if (action === "executions" && segments[8] === "result") {
+          return executionHandlers.EXECUTION_RESULT(request, {
+            params: Promise.resolve({
+              name,
+              session,
+              executionId: decodeURIComponent(segments[7] ?? ""),
+            }),
+          });
+        }
+        if (action === "executions") {
+          return executionHandlers.EXECUTION_BY_ID(request, {
+            params: Promise.resolve({
+              name,
+              session,
+              executionId: decodeURIComponent(segments[7] ?? ""),
+            }),
+          });
+        }
+        if (action === "abandon") {
+          return executionHandlers.ABANDON(request, {
             params: Promise.resolve({ name, session }),
           });
         }
@@ -328,6 +421,11 @@ function routeHost(
         }
         if (action === "live-outline") {
           return liveOutlineHandlers.GET(request, {
+            params: Promise.resolve({ name, session }),
+          });
+        }
+        if (action === "pause") {
+          return executionHandlers.PAUSE(request, {
             params: Promise.resolve({ name, session }),
           });
         }
@@ -357,6 +455,28 @@ const env: CliEnv = {
   CC_API_TOKEN: "t",
   CC_PROJECT: "cc",
   CC_SESSION: "sess",
+  CC_CONVERSATION_ID: CLI_CONVERSATION_ID,
+  [CONVERSATION_CAPABILITY_ENV_VAR]: mintConversationCapability(
+    { sessionName: "sess", conversationId: CLI_CONVERSATION_ID },
+    CAPABILITY_SECRET,
+    1_760_000_000_000,
+  ),
+};
+
+const laneEnv: CliEnv = {
+  ...env,
+  CC_CONVERSATION_ID: LANE_CONVERSATION_ID,
+  [CONVERSATION_CAPABILITY_ENV_VAR]: undefined,
+  [LANE_CAPABILITY_ENV_VAR]: mintLaneCapability(
+    {
+      laneKind: "implementer",
+      executionId: "execution-active",
+      contextId: "context-plan",
+      conversationId: LANE_CONVERSATION_ID,
+    },
+    CAPABILITY_SECRET,
+    1_760_000_000_000,
+  ),
 };
 
 describe("cctl workflow against the real workflow route handlers", () => {
@@ -446,6 +566,57 @@ describe("cctl workflow against the real workflow route handlers", () => {
     expect(result.stdout.toLowerCase()).toContain("no active graph workflow");
   });
 
+  it("reads the same durable projection by explicit id from Current or History without capability authority", async () => {
+    const execution = createWorkflowExecution({
+      id: "execution-by-id",
+      status: "completed",
+      completedAt: "2026-08-14T12:00:00.000Z",
+    });
+    const capabilityFreeEnv = {
+      ...env,
+      [CONVERSATION_CAPABILITY_ENV_VAR]: undefined,
+    };
+    const invocation = [
+      "workflow",
+      "status",
+      execution.id,
+      "--project",
+      "another-project",
+      "--session",
+      "archived-session",
+      "--json",
+    ];
+
+    for (const location of ["Current", "History"]) {
+      const result = await runCli(
+        invocation,
+        capabilityFreeEnv,
+        routeHost(
+          null,
+          {},
+          {
+            executionDeps: {
+              getExecutionById: async (
+                _projectPath,
+                sessionName,
+                executionId,
+              ) => {
+                expect(sessionName, location).toBe("archived-session");
+                expect(executionId, location).toBe(execution.id);
+                return execution;
+              },
+            },
+          },
+        ),
+      );
+
+      expect(result.exitCode, location).toBe(0);
+      expect(JSON.parse(result.stdout).execution, location).toEqual(
+        JSON.parse(JSON.stringify(execution)),
+      );
+    }
+  });
+
   it("start parses summarizeExecution and prints the run id + hint", async () => {
     const execution = createWorkflowExecution({
       id: "execution-active",
@@ -466,20 +637,294 @@ describe("cctl workflow against the real workflow route handlers", () => {
     ).toBe(true);
   });
 
+  it("forwards a lane capability so the real start route refuses nesting", async () => {
+    const result = await runCli(
+      ["workflow", "start", "wf-1", "--json"],
+      laneEnv,
+      routeHost(null),
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "workflow_nesting_refused",
+    });
+  });
+
+  it("runs a one-off plan through the real route and preserves the launch receipt without a definition id", async () => {
+    const planPath = "/tmp/one-off-plan.json";
+    const inputsPath = "/tmp/one-off-inputs.json";
+    const base = createWorkflowExecution({
+      id: "execution-one-off",
+      status: "running",
+    });
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      origin: { kind: "one_off", planName: "One-off audit" },
+      ownerConversationId: CLI_CONVERSATION_ID,
+    };
+    const plan = {
+      name: "One-off audit",
+      description: "Inspect the current session",
+      definition: createWorkflowDefinition(),
+      layout: createWorkflowLayout(),
+    };
+    const result = await runCli(
+      ["workflow", "run", "--file", planPath, "--inputs", inputsPath, "--json"],
+      env,
+      routeHost(
+        execution,
+        {
+          [planPath]: JSON.stringify(plan),
+          [inputsPath]: JSON.stringify({ target: "staging" }),
+        },
+        {
+          executionDeps: {
+            runExecution: async (input) => {
+              expect(input.plan.name).toBe("One-off audit");
+              expect(input.inputs).toEqual({ target: "staging" });
+              expect(input.ownerConversationId).toBe(CLI_CONVERSATION_ID);
+              return { execution, awaitingDefinitionApproval: false };
+            },
+          },
+        },
+      ),
+    );
+
+    expect(result.exitCode).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope).toMatchObject({
+      ok: true,
+      executionId: "execution-one-off",
+      status: "running",
+      origin: { kind: "one_off", planName: "One-off audit" },
+      originConversationId: CLI_CONVERSATION_ID,
+    });
+    expect(envelope.deepLink).toContain("execution=execution-one-off");
+    expect(result.stdout).not.toContain("definitionId");
+  });
+
+  it("forwards a lane capability so the real run route returns the shared blocker-free nesting refusal", async () => {
+    const planPath = "/tmp/nested-plan.json";
+    const plan = {
+      name: "Nested run",
+      definition: createWorkflowDefinition(),
+      layout: createWorkflowLayout(),
+    };
+    const result = await runCli(
+      ["workflow", "run", "--file", planPath, "--json"],
+      laneEnv,
+      routeHost(null, { [planPath]: JSON.stringify(plan) }),
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "workflow_nesting_refused",
+      details: { remedy: expect.stringContaining("conversation") },
+    });
+  });
+
+  it("reattaches by durable cursor through a reconstructed route host after the first wait times out", async () => {
+    const execution = createWorkflowExecution({
+      id: "execution-restart-wait",
+      status: "completed",
+      completedAt: "2026-08-14T12:02:00.000Z",
+    });
+    const boundary = {
+      cursor: 42,
+      occurredAt: "2026-08-14T12:02:00.000Z",
+      executionId: execution.id,
+      boundaryKind: "completion" as const,
+      status: "completed" as const,
+      contextId: null,
+      pendingActions: [],
+      outputs: { kind: "no_declared_structured_result" as const },
+      name: "Restart-safe run",
+      origin: execution.origin,
+      originConversationId: execution.ownerConversationId,
+      startedAt: execution.startedAt,
+      completedAt: execution.completedAt,
+      haltReason: execution.haltReason,
+      abandonment: execution.abandonment,
+      documents: execution.sharedDocuments,
+      deepLink:
+        "/projects/cc/sessions/sess/workflow?execution=execution-restart-wait",
+    };
+
+    const timedOut = await runCli(
+      [
+        "workflow",
+        "wait",
+        execution.id,
+        "--cursor",
+        "41",
+        "--timeout",
+        "1ms",
+        "--json",
+      ],
+      env,
+      routeHost(
+        execution,
+        {},
+        {
+          executionDeps: {
+            getExecutionById: async () => execution,
+            getBoundaryResultAfter: async () => null,
+          },
+        },
+      ),
+    );
+    expect(timedOut.exitCode).toBe(1);
+
+    // A new route host stands in for the restarted server process. The cursor
+    // is the durable hand-off; no in-memory waiter survives between the calls.
+    const reattached = await runCli(
+      [
+        "workflow",
+        "wait",
+        execution.id,
+        "--cursor",
+        "41",
+        "--timeout",
+        "1s",
+        "--json",
+      ],
+      env,
+      routeHost(
+        execution,
+        {},
+        {
+          executionDeps: {
+            getExecutionById: async () => execution,
+            getBoundaryResultAfter: async (
+              _projectPath,
+              _sessionName,
+              _executionId,
+              cursor,
+            ) => {
+              expect(cursor).toBe(41);
+              return boundary;
+            },
+          },
+        },
+      ),
+    );
+
+    expect(reattached.exitCode).toBe(0);
+    expect(JSON.parse(reattached.stdout)).toEqual({
+      ok: true,
+      result: boundary,
+    });
+  });
+
+  it("forwards a lane capability so the current lane can pause its own run", async () => {
+    const base = createWorkflowExecution({
+      id: "execution-active",
+      status: "running",
+    });
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      ownerConversationId: CLI_CONVERSATION_ID,
+      taskStates: {
+        ...base.taskStates,
+        "task-plan-1": {
+          ...base.taskStates["task-plan-1"]!,
+          status: "running",
+          lastConversationId: LANE_CONVERSATION_ID,
+        },
+      },
+    };
+    let pauseCount = 0;
+    const result = await runCli(
+      ["workflow", "live", "pause"],
+      laneEnv,
+      routeHost(
+        execution,
+        {},
+        {
+          executionDeps: {
+            pauseExecution: async () => {
+              pauseCount += 1;
+              return { ...execution, status: "paused" };
+            },
+          },
+        },
+      ),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(pauseCount).toBe(1);
+  });
+
+  it("abandons an explicitly addressed resumable halt through the signed production route", async () => {
+    const baseExecution = createWorkflowExecution({
+      id: "execution-abandon",
+      status: "halted",
+      haltReason: {
+        type: "max_iterations",
+        contextId: "context-plan",
+        iterationCount: 7,
+        summary: null,
+      },
+    });
+    const execution: GraphWorkflowExecution = {
+      ...baseExecution,
+      ownerConversationId: CLI_CONVERSATION_ID,
+    };
+    const abandonedExecution: GraphWorkflowExecution = {
+      ...execution,
+      abandonment: {
+        abandonedAt: "2026-08-14T12:30:00.000Z",
+        reason: "superseded",
+        actor: {
+          kind: "conversation",
+          conversationId: CLI_CONVERSATION_ID,
+        },
+      },
+    };
+    const result = await runCli(
+      ["workflow", "abandon", execution.id, "--reason", "superseded", "--json"],
+      env,
+      routeHost(
+        execution,
+        {},
+        {
+          executionDeps: {
+            abandonExecution: async (input) => {
+              expect(input).toMatchObject({
+                executionId: execution.id,
+                reason: "superseded",
+                actor: {
+                  kind: "conversation",
+                  conversationId: CLI_CONVERSATION_ID,
+                },
+              });
+              return { ok: true, execution: abandonedExecution };
+            },
+          },
+        },
+      ),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      abandoned: true,
+      execution: {
+        executionId: execution.id,
+        status: "halted",
+        archived: true,
+      },
+    });
+  });
+
   it("start treats the real approval-required route response as a successfully parked execution", async () => {
     const result = await runCli(
       ["workflow", "start", "wf-1", "--json"],
       env,
       routeHost(
-        null,
+        createWorkflowExecution({ id: "execution-review", status: "pending" }),
         {},
-        {
-          startError: new WorkflowDefinitionApprovalRequiredError(
-            "execution-review",
-            "definition-review",
-            1,
-          ),
-        },
+        { parkAwaitingApproval: true },
       ),
     );
 
@@ -1678,5 +2123,82 @@ describe("cctl workflow live get — D4 read surfaces (R13.2)", () => {
     expect(result.stdout).not.toContain("loops:");
     expect(result.stdout).not.toContain("expansions:");
     expect(result.stdout).not.toContain("skip=");
+  });
+});
+
+describe("the generic clear/release pair is gone, not aliased", () => {
+  /**
+   * D7 decision D5 deletes CLEAR and `workflow live release` outright. Under the
+   * lease, completed/aborted/non-resumably-halted runs release automatically and
+   * abandon covers the resumable-halt case with a mandatory audit — so the pair's
+   * one remaining job no longer exists. A surviving alias would be a second
+   * mutation path on a launched execution with no audit contract, which is
+   * exactly what the one-explicit-act rule forbids.
+   *
+   * Source-level rather than behavioural because "this verb does not exist" is
+   * not something an invocation can prove: an unknown subcommand and a deleted
+   * one fail identically.
+   */
+  const REPO_ROOT = nodePath.resolve(__dirname, "../../..");
+
+  function read(relativePath: string): string {
+    return readFileSync(nodePath.join(REPO_ROOT, relativePath), "utf-8");
+  }
+
+  const ABSENT_ROUTE_FILES = [
+    "src/app/api/projects/[name]/sessions/[session]/graph-workflow/release/route.ts",
+    "src/app/api/projects/[name]/sessions/[session]/graph-workflow/clear/route.ts",
+  ];
+
+  for (const routeFile of ABSENT_ROUTE_FILES) {
+    it(`${routeFile} no longer exists`, () => {
+      expect(existsSync(nodePath.join(REPO_ROOT, routeFile))).toBe(false);
+    });
+  }
+
+  it("no surviving surface offers a release verb as a remedy", () => {
+    // Help text and refusal remedies alike: a deleted verb named as the way out
+    // of a refusal is an impossible recovery, which is worse than no remedy at
+    // all — the operator follows it and gets an unknown-command error.
+    for (const source of [
+      "src/cli/commands/workflow.ts",
+      "src/cli/commands/workflow.help.ts",
+      "src/cli/commands/spec/spec.help.ts",
+      "src/lib/specs/execution-service.ts",
+      "src/lib/specs/abandon-coordinator.ts",
+      "src/lib/specs/workflow-cleanup-port.ts",
+      "src/lib/workflow-graph/execution-route-handlers.ts",
+    ]) {
+      expect(
+        read(source),
+        `${source} names a deleted release verb`,
+      ).not.toMatch(/workflow live release|live release/);
+    }
+  });
+
+  it("the route handlers export no clear or release act", () => {
+    const source = read("src/lib/workflow-graph/execution-route-handlers.ts");
+    expect(source).not.toContain("clearGraphWorkflowExecution");
+    expect(source).not.toContain("releaseGraphWorkflowExecution");
+    expect(source).not.toContain("releaseGraphWorkflowExecutionForSession");
+  });
+
+  it("the browser exposes no clear mutation", () => {
+    expect(read("src/lib/workflows/mutations.ts")).not.toContain(
+      "useClearGraphWorkflowMutation",
+    );
+  });
+
+  it("spec abandonment keeps no release_slot phase or release remedy", () => {
+    for (const source of [
+      "src/lib/specs/abandon-coordinator.ts",
+      "src/lib/specs/schemas.ts",
+      "src/lib/specs/execution-service.ts",
+      "src/lib/specs/export.ts",
+      "src/lib/specs/workflow-cleanup-port.ts",
+      "src/lib/state-store/state-db.ts",
+    ]) {
+      expect(read(source)).not.toContain("release_slot");
+    }
   });
 });

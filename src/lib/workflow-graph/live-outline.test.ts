@@ -246,6 +246,12 @@ function buildExecution(
 
   return graphWorkflowExecutionSchema.parse({
     id: "exec-7",
+    origin: {
+      kind: "template",
+      definitionId: "wf-1",
+      definitionRevision: 12,
+      tier: "project",
+    },
     seedDefinitionId: "wf-1",
     seedDefinitionRevision: 12,
     liveRevision: 4,

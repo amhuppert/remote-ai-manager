@@ -117,6 +117,7 @@ function createTestServices(
     getConversation: state.getConversation,
     getSessionConversations: state.getSessionConversations,
     setConversationPendingPromptText: state.setConversationPendingPromptText,
+    stopConversationActor: async () => {},
     configDir: TEST_DIR,
     getContinuityAdapter: (backend) =>
       backend === "codex" ? codexContinuity.adapter : claudeContinuity.adapter,
@@ -487,6 +488,53 @@ describe("setConversationArchived", () => {
         true,
       ),
     ).rejects.toThrow('Session "test" not found');
+  });
+});
+
+describe("deleteConversation", () => {
+  it("removes only the addressed idle conversation and its transcript", async () => {
+    const deletedId = crypto.randomUUID();
+    const survivorId = crypto.randomUUID();
+    const transcriptPath = path.join(TEST_DIR, "deleted.jsonl");
+    await writeSourceTranscript(transcriptPath, [
+      userEntry("delete me", "2024-01-01T00:00:00.000Z"),
+    ]);
+    const { state, conversations } = createTestServices();
+    await seedSession(state, {
+      conversations: [
+        makeConvo({
+          id: deletedId,
+          status: "awaiting",
+          transcriptPath,
+        }),
+        makeConvo({ id: survivorId }),
+      ],
+      source: "cc" as const,
+    });
+
+    await conversations.deleteConversation("/proj", "test", deletedId);
+
+    const session = await state.getSession("/proj", "test");
+    expect(
+      session!.conversations.map((conversation) => conversation.id),
+    ).toEqual([survivorId]);
+    expect(existsSync(transcriptPath)).toBe(false);
+  });
+
+  it("refuses to delete a running conversation", async () => {
+    const conversationId = crypto.randomUUID();
+    const { state, conversations } = createTestServices();
+    await seedSession(state, {
+      conversations: [makeConvo({ id: conversationId, status: "running" })],
+      source: "cc" as const,
+    });
+
+    await expect(
+      conversations.deleteConversation("/proj", "test", conversationId),
+    ).rejects.toThrow("must be idle before deletion");
+
+    const session = await state.getSession("/proj", "test");
+    expect(session!.conversations).toHaveLength(1);
   });
 });
 

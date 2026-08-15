@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { emitOrDeferRepositoryLog } from "@/lib/state-store/deferred-repo-logging";
 import { createLogger } from "@/lib/logging";
 import {
   graphWorkflowExecutionSchema,
@@ -99,9 +100,14 @@ function logAndThrowValidationFailure(
   identifier: string,
   issues: unknown,
 ): never {
-  logger.error(
-    "state-store.graph-workflow-archived-executions.schema_validation_failure",
-    { identifier, issues },
+  // `insert` runs inside the lease reservation's immediate transaction when a
+  // lease-free incumbent is normalized, so this branch is reachable while
+  // SQLite's write lock is held.
+  emitOrDeferRepositoryLog(() =>
+    logger.error(
+      "state-store.graph-workflow-archived-executions.schema_validation_failure",
+      { identifier, issues },
+    ),
   );
   throw new PersistenceError({
     kind: "validation",
@@ -178,9 +184,11 @@ function decodeArchivedBlob(executionId: string, raw: string): DecodeResult {
     };
   }
   if (upgraded !== parsed) {
-    logger.info(
-      "state-store.graph-workflow-archived-executions.legacy_decode",
-      { executionId },
+    emitOrDeferRepositoryLog(() =>
+      logger.info(
+        "state-store.graph-workflow-archived-executions.legacy_decode",
+        { executionId },
+      ),
     );
   }
   return { ok: true, value: decoded.value };
@@ -210,9 +218,11 @@ function timed<T>(
     if (identifier.executionId !== undefined) {
       payload.executionId = identifier.executionId;
     }
-    logger.info(
-      `state-store.graph-workflow-archived-executions.${op}.timing`,
-      payload,
+    emitOrDeferRepositoryLog(() =>
+      logger.info(
+        `state-store.graph-workflow-archived-executions.${op}.timing`,
+        payload,
+      ),
     );
   }
 }
@@ -350,9 +360,18 @@ export function createGraphWorkflowArchivedExecutionsRepo(
             typeof (row as { execution_json?: unknown }).execution_json !==
               "string"
           ) {
-            logger.warn(
-              "state-store.graph-workflow-archived-executions.list_row_skipped",
-              { projectPath, sessionName, reason: "invalid_row_shape" },
+            // Deferral-aware like the rest of this repository. `listBySession`
+            // has no serialized-section caller today, so this is uniformity
+            // rather than a live fix — but the repository's other writer DOES
+            // run inside the reservation transaction, and a future history
+            // projection pulled in beside it would otherwise reintroduce
+            // synchronous log I/O under SQLite's write lock. Outside a capture
+            // this emits immediately.
+            emitOrDeferRepositoryLog(() =>
+              logger.warn(
+                "state-store.graph-workflow-archived-executions.list_row_skipped",
+                { projectPath, sessionName, reason: "invalid_row_shape" },
+              ),
             );
             continue;
           }
@@ -360,15 +379,17 @@ export function createGraphWorkflowArchivedExecutionsRepo(
             row as { execution_id: string; execution_json: string };
           const decoded = decodeArchivedBlob(executionId, executionJson);
           if (!decoded.ok) {
-            logger.warn(
-              "state-store.graph-workflow-archived-executions.list_row_skipped",
-              {
-                projectPath,
-                sessionName,
-                executionId,
-                reason: "undecodable",
-                issues: decoded.issues,
-              },
+            emitOrDeferRepositoryLog(() =>
+              logger.warn(
+                "state-store.graph-workflow-archived-executions.list_row_skipped",
+                {
+                  projectPath,
+                  sessionName,
+                  executionId,
+                  reason: "undecodable",
+                  issues: decoded.issues,
+                },
+              ),
             );
             continue;
           }

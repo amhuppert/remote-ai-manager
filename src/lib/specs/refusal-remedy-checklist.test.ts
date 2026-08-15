@@ -166,26 +166,28 @@ describe("native-SDD refusals-name-remedy checklist", () => {
     );
 
     const abortBlocked = nextAbandonCleanupStep({
-      phase: "release_slot",
-      linkedWorkflow: {
-        kind: "active",
-        workflowExecutionId: "workflow-execution-1",
-        status: "running",
-      },
-    });
-    const releaseBlocked = nextAbandonCleanupStep({
       phase: "finalize",
       linkedWorkflow: {
         kind: "active",
         workflowExecutionId: "workflow-execution-1",
-        status: "aborted",
+        status: "running",
+        leaseHeld: true,
+      },
+    });
+    const abandonBlocked = nextAbandonCleanupStep({
+      phase: "finalize",
+      linkedWorkflow: {
+        kind: "active",
+        workflowExecutionId: "workflow-execution-1",
+        status: "halted",
+        leaseHeld: true,
       },
     });
     if (abortBlocked.act.kind !== "blocked") {
-      throw new Error("live release cleanup did not refuse");
+      throw new Error("lease-holding finalization did not refuse");
     }
-    if (releaseBlocked.act.kind !== "blocked") {
-      throw new Error("slot-owning finalization did not refuse");
+    if (abandonBlocked.act.kind !== "blocked") {
+      throw new Error("halted lease-holding finalization did not refuse");
     }
 
     const draftCapture = prelaunchRedirectRefusal(
@@ -211,7 +213,7 @@ describe("native-SDD refusals-name-remedy checklist", () => {
         session_name: "session-1",
         delivered_at: null,
         abandoned_reason: "blocked",
-        cleanup_phase: "release_slot",
+        cleanup_phase: "finalize",
         linked_workflow_execution_id: "workflow-execution-1",
         cleanup_last_error: "slot still owned",
         cleanup_last_error_at: CREATED_AT,
@@ -293,21 +295,18 @@ describe("native-SDD refusals-name-remedy checklist", () => {
         targetTokens: ["attempt-parked", "candidate-current"],
       },
       {
-        id: "partial-abandon-release",
+        id: "partial-abandon-lease-held",
         receipts: [
           {
             instruction: abortBlocked.act.remedy,
             detail: abortBlocked.act.reason,
           },
           {
-            instruction: releaseBlocked.act.remedy,
-            detail: releaseBlocked.act.reason,
+            instruction: abandonBlocked.act.remedy,
+            detail: abandonBlocked.act.reason,
           },
         ],
-        remedyTokens: [
-          "cctl workflow live abort",
-          "cctl workflow live release",
-        ],
+        remedyTokens: ["cctl workflow live abort", "cctl workflow abandon"],
         targetTokens: ["workflow-execution-1"],
       },
       {
@@ -352,7 +351,7 @@ describe("native-SDD refusals-name-remedy checklist", () => {
       "sign-off-live-sibling-recheck",
       "dismiss-refusals",
       "premature-start",
-      "partial-abandon-release",
+      "partial-abandon-lease-held",
       "parked-candidate-hash-change",
       "capture-redirects",
       "locked-edit-refusal",

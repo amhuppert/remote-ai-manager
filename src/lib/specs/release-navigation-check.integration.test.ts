@@ -25,6 +25,8 @@ import {
   proposeSpineRevision,
   runSpineWorkflowToEvidence,
   startLegacySpineExecution,
+  SPINE_PROJECT_PATH,
+  SPINE_SESSION_NAME,
   SPINE_WORKFLOW_EXECUTION_ID,
   type MergeScenario,
   type SpecSpineWorld,
@@ -204,7 +206,11 @@ describe("historical evergreen release-evidence navigation check (kiro 19.3): ca
     expect(approvedSnapshot.revision.state).toBe("approved");
     const laneCommitShas = new Set(
       world.repos.workflowEvents
-        .findByExecution(SPINE_WORKFLOW_EXECUTION_ID)
+        .findByExecution(
+          SPINE_PROJECT_PATH,
+          SPINE_SESSION_NAME,
+          SPINE_WORKFLOW_EXECUTION_ID,
+        )
         .flatMap((record) =>
           record.event.type === "graph-workflow-lane-commit"
             ? [record.event.sha]

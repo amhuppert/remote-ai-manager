@@ -565,24 +565,15 @@ describe("useApproveGraphWorkflowDefinitionMutation", () => {
       { wrapper: wrapperFor(client) },
     );
 
-    await result.current.mutateAsync({
-      executionId: "exec-parked",
-      definitionId: "def-parked",
-      definitionRevision: 7,
-    });
+    await result.current.mutateAsync({ executionId: "exec-parked" });
 
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(
       "/api/projects/proj-1/sessions/sess-1/graph-workflow/approve-definition",
     );
     expect(init.method).toBe("POST");
-    expect(init.body).toBe(
-      JSON.stringify({
-        executionId: "exec-parked",
-        definitionId: "def-parked",
-        definitionRevision: 7,
-      }),
-    );
+    // Execution-addressed: no definition identity anywhere in the act.
+    expect(init.body).toBe(JSON.stringify({ executionId: "exec-parked" }));
     await waitFor(() => {
       expect(client.getQueryState(executionKey)?.isInvalidated).toBe(true);
     });
@@ -612,11 +603,7 @@ describe("useApproveGraphWorkflowDefinitionMutation", () => {
     );
 
     const error = await result.current
-      .mutateAsync({
-        executionId: "exec-parked",
-        definitionId: "def-parked",
-        definitionRevision: 7,
-      })
+      .mutateAsync({ executionId: "exec-parked" })
       .catch((caught) => caught);
 
     expect(error).toBeInstanceOf(ApiCallError);

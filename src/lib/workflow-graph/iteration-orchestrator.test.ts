@@ -87,6 +87,8 @@ interface InMemoryExecutionRepository {
     ) => MutateActiveReturn | Promise<MutateActiveReturn>,
   ): Promise<GraphWorkflowExecution>;
   findLatestContextValidationEvent(
+    projectPath: string,
+    sessionName: string,
     executionId: string,
     contextId: string,
   ): Promise<GraphWorkflowExecutionEvent | null>;
@@ -161,6 +163,10 @@ function createRepository(
 ): InMemoryExecutionRepository & {
   read(): GraphWorkflowExecution;
   appendedEvents: GraphWorkflowExecutionEvent[];
+  commits: Array<{
+    execution: GraphWorkflowExecution;
+    events: GraphWorkflowExecutionEvent[];
+  }>;
   /**
    * Post-commit delivery hook, mirroring the repository-level mutation seam
    * that broadcasts a reducer's derived events after the write commits. Tests
@@ -172,10 +178,18 @@ function createRepository(
   let activeExecution = initialExecution;
   let lock: Promise<void> = Promise.resolve();
   const appendedEvents: GraphWorkflowExecutionEvent[] = [];
+  const commits: Array<{
+    execution: GraphWorkflowExecution;
+    events: GraphWorkflowExecutionEvent[];
+  }> = [];
 
   const repository: InMemoryExecutionRepository & {
     read(): GraphWorkflowExecution;
     appendedEvents: GraphWorkflowExecutionEvent[];
+    commits: Array<{
+      execution: GraphWorkflowExecution;
+      events: GraphWorkflowExecutionEvent[];
+    }>;
     deliver: (delivery: GraphWorkflowEventDelivery) => void;
   } = {
     async getActive() {
@@ -193,6 +207,10 @@ function createRepository(
         if (isResultWithEvents(result)) {
           activeExecution = result.execution;
           appendedEvents.push(...result.events);
+          commits.push({
+            execution: structuredClone(result.execution),
+            events: structuredClone(result.events),
+          });
           // Mirror the production seam: commit the rows, then perform delivery
           // post-commit through the injected publisher so a sibling publisher's
           // broadcast/push fires here (the reducer returned inert data).
@@ -202,13 +220,22 @@ function createRepository(
           });
         } else {
           activeExecution = result;
+          commits.push({
+            execution: structuredClone(result),
+            events: [],
+          });
         }
         return activeExecution;
       } finally {
         release();
       }
     },
-    async findLatestContextValidationEvent(_executionId, contextId) {
+    async findLatestContextValidationEvent(
+      _projectPath,
+      _sessionName,
+      _executionId,
+      contextId,
+    ) {
       for (let i = appendedEvents.length - 1; i >= 0; i -= 1) {
         const entry = appendedEvents[i]!;
         const event = entry.event;
@@ -226,6 +253,7 @@ function createRepository(
       return activeExecution;
     },
     appendedEvents,
+    commits,
     deliver: () => {},
   };
   return repository;
@@ -6302,6 +6330,21 @@ describe("human approval gate at finalization", () => {
         (entry) => entry.event.type === "graph-workflow-approval-pending",
       ),
     ).toBe(true);
+
+    const approvalCommits = repository.commits.filter(
+      (commit) =>
+        commit.execution.contextStates["context-plan"]?.status ===
+          "awaiting_approval" &&
+        commit.execution.contextStates["context-plan"]?.pendingApproval !==
+          null,
+    );
+    expect(approvalCommits).toHaveLength(1);
+    expect(approvalCommits[0]?.events.map((entry) => entry.event.type)).toEqual(
+      expect.arrayContaining([
+        "graph-workflow-approval-pending",
+        "graph-workflow-boundary",
+      ]),
+    );
   });
 
   it("parks an enveloped member on the owned-subset candidate it froze", async () => {
@@ -6716,6 +6759,19 @@ describe("awaiting-user-input park after an implementer turn", () => {
 
     // The parked context is not scheduled to continue.
     expect(persisted.activeContextIds).not.toContain("context-plan");
+
+    const parkCommit = repository.commits.find(
+      (commit) =>
+        commit.execution.contextStates["context-plan"]?.pendingUserInputs[
+          "implementer"
+        ]?.questionBatchId === "batch-1",
+    );
+    expect(parkCommit?.events.map((entry) => entry.event.type)).toEqual(
+      expect.arrayContaining([
+        "graph-workflow-user-input-pending",
+        "graph-workflow-boundary",
+      ]),
+    );
   });
 
   it("parks after the asking turn without dispatching a follow-up (ask-ended turn never reaches the follow-up loop)", async () => {

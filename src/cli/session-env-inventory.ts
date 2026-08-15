@@ -129,7 +129,7 @@ export const CLI_SESSION_ENV_INVENTORY: Readonly<
   workflow: {
     support: "session-only",
     reason:
-      "Group default. Graph workflow execution, approvals, and lane operations at project scope are explicitly out of scope (spec non-goal); the definition-authoring verbs below opt back in.",
+      "Group default. One-off run, wait, Current-or-History status addressing, abandon, approvals, and lane operations all require an explicit session route; the definition-authoring verbs below opt back in at project scope.",
   },
   "workflow create": {
     support: "project-supported",

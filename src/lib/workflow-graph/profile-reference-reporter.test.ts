@@ -39,8 +39,10 @@ import { createWorkflowCharterService } from "./charter/service";
 import { createWorkflowProfileReferenceReporter } from "./profile-reference-reporter";
 import { createWorkflowStorageService, type WorkflowScope } from "./storage";
 import {
+  createInMemoryLeaseReservation,
   createWorkflowDefinition,
   createWorkflowDefinitionRecord,
+  makeLaunchDocument,
   makeValidatorAssignment,
 } from "./test-fixtures";
 
@@ -321,6 +323,8 @@ describe("agent profile deletion preview (R15.1)", () => {
 function launchRepository() {
   const sessions = new Map<string, SessionState>();
   return createGraphWorkflowExecutionRepository({
+    // No git worktree in this harness; the real exclusion would shell out.
+    ensureCcArtifactsExcluded: async () => {},
     async getSession(projectPath, sessionName) {
       const key = `${projectPath}:${sessionName}`;
       let session = sessions.get(key);
@@ -333,18 +337,38 @@ function launchRepository() {
       }
       return session;
     },
-    async getActiveGraphWorkflowExecution() {
-      return null;
+    async getActiveGraphWorkflowExecution(projectPath, sessionName) {
+      return (
+        sessions.get(`${projectPath}:${sessionName}`)?.graphWorkflowExecution ??
+        null
+      );
     },
     async mutateActiveGraphWorkflowExecution(
-      _projectPath,
-      _sessionName,
+      projectPath,
+      sessionName,
       _label,
       mutate,
     ) {
-      const { execution, events, pushes } = await mutate(null);
+      const key = `${projectPath}:${sessionName}`;
+      const current = sessions.get(key);
+      if (current === undefined) throw new Error(`No session ${key}`);
+      const { execution, events, pushes } = await mutate(
+        current.graphWorkflowExecution,
+      );
+      current.graphWorkflowExecution = execution;
       return { execution, delivery: { events, pushes: pushes ?? [] } };
     },
+    reserveActiveGraphWorkflowExecution: createInMemoryLeaseReservation({
+      readActive: (projectPath, sessionName) =>
+        sessions.get(`${projectPath}:${sessionName}`)?.graphWorkflowExecution ??
+        null,
+      installActive: (projectPath, sessionName, execution) => {
+        const key = `${projectPath}:${sessionName}`;
+        const current = sessions.get(key);
+        if (current === undefined) throw new Error(`No session ${key}`);
+        current.graphWorkflowExecution = execution;
+      },
+    }),
     async archiveActiveGraphWorkflowExecution() {
       return { archived: false as const, reason: "no_active" as const };
     },
@@ -372,12 +396,16 @@ function launchRepository() {
 function launch(definition: WorkflowSemanticDefinition, executionId: string) {
   return launchRepository().create(PROJECT_A, "session-1", {
     definition,
-    definitionId: "wf-1",
-    definitionRevision: 1,
+    source: {
+      kind: "template",
+      definitionId: "wf-1",
+      definitionRevision: 1,
+      tier: "project",
+    },
+    launchDocument: makeLaunchDocument(definition),
     executionId,
     startedAt: "2026-08-04T00:00:00.000Z",
     inputs: {},
-    launchedTier: "project",
     ownerConversationId: null,
   });
 }

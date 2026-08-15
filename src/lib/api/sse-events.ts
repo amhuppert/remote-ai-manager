@@ -8,6 +8,7 @@ import type {
   ConversationProfileChangedEvent,
   ConversationRenamedEvent,
   ConversationArchivedEvent,
+  ConversationDeletedEvent,
   ConversationUnreadEvent,
   AskQuestionEvent,
   MessageQueuedEvent,
@@ -23,6 +24,7 @@ import type {
   GraphWorkflowApprovalPendingEvent,
   GraphWorkflowApprovalResolvedEvent,
   GraphWorkflowBatchScheduledEvent,
+  GraphWorkflowBoundaryEvent,
   GraphWorkflowCharterRegisteredEvent,
   GraphWorkflowCharterUpdatedEvent,
   GraphWorkflowCircuitBreakerEvent,
@@ -42,6 +44,7 @@ import type {
   GraphWorkflowPlanRepairEvent,
   GraphWorkflowExecutionAmendedEvent,
   GraphWorkflowExecutionReleasedEvent,
+  GraphWorkflowResultRecordedEvent,
   GraphWorkflowMergeStatusEvent,
   GraphWorkflowPendingHaltReasonEvent,
   GraphWorkflowSharedDocumentsUpdatedEvent,
@@ -211,6 +214,7 @@ export type SSEEvent =
   | ConversationCreatedEvent
   | ConversationRenamedEvent
   | ConversationArchivedEvent
+  | ConversationDeletedEvent
   | ConversationUnreadEvent
   | ConversationProfileChangedEvent
   | ConversationBackgroundActivityEvent
@@ -235,6 +239,8 @@ export type SSEEvent =
   | GraphWorkflowPendingHaltReasonEvent
   | GraphWorkflowMergeStatusEvent
   | GraphWorkflowBatchScheduledEvent
+  | GraphWorkflowBoundaryEvent
+  | GraphWorkflowResultRecordedEvent
   | GraphWorkflowLaneStatusEvent
   | GraphWorkflowLaneCreatedEvent
   | GraphWorkflowLaneConcurrentAdmissionEvent

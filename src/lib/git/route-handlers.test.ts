@@ -36,6 +36,9 @@ function makeJob(overrides: Partial<BackgroundJob> = {}): BackgroundJob {
     resolutionContext: "intent notes",
     executionId: "workflow-execution-1",
     finalPublish: true,
+    // Every merge-family dispatch stamps this, so a job a re-entry route reads
+    // back carries it too.
+    finalizeSessionOnPublish: true,
     candidateValidation: {
       validationRef: "validation-1",
       validatedSha: "validated-sha",
@@ -308,32 +311,189 @@ describe("commitSession", () => {
 });
 
 describe("mergeSession", () => {
-  it("refuses to merge while a graph workflow still owns unfinished work", async () => {
+  /**
+   * Session delivery follows the lease (R13). The route's advisory check is the
+   * first of two — the publish actor repeats it under the project lock — so what
+   * it must get right is exactly which runs block and what act clears them.
+   *
+   * The blockers below are the runs that still hold the session's lease; each
+   * one names the canonical remedy for its own state, because a refusal that
+   * tells an operator to "complete" a halted run names an act that state does
+   * not admit.
+   */
+  const RESUMABLE_HALT = {
+    type: "circuit_breaker",
+    contextId: "context-implement",
+    condition: "retry_exhaustion",
+    summary: null,
+  } as const;
+  const NON_RESUMABLE_HALT = {
+    type: "recovery_error",
+    message: "unrecoverable",
+  } as const;
+
+  /**
+   * Exactly the record the gate reads, taken from the dependency signature —
+   * every lease-relevant field is spelled out on every row. A partial fixture
+   * would let `abandonment: undefined` read as "abandoned" and quietly turn a
+   * blocking case green.
+   */
+  type DeliveryRecord = NonNullable<
+    Awaited<ReturnType<GitRouteDeps["getActiveGraphWorkflowExecution"]>>
+  >;
+
+  function activeRecord(
+    overrides: Partial<DeliveryRecord> & Pick<DeliveryRecord, "status">,
+  ): DeliveryRecord {
+    return {
+      id: "execution-1",
+      haltReason: null,
+      abandonment: null,
+      definitionApproval: null,
+      ...overrides,
+    };
+  }
+
+  const blockers = [
+    {
+      label: "running",
+      execution: activeRecord({ status: "running" }),
+      remedy: "inspect_or_pause",
+      sentence: "Complete or abort it before merging this session.",
+    },
+    {
+      label: "resumably halted",
+      execution: activeRecord({
+        status: "halted",
+        haltReason: RESUMABLE_HALT,
+      }),
+      remedy: "resume_or_abandon",
+      sentence: "Resume or abandon it before merging this session.",
+    },
+  ] as const;
+
+  for (const blocker of blockers) {
+    it(`refuses the merge while a ${blocker.label} execution holds the lease, naming its remedy`, async () => {
+      const dispatchMergeJob = vi
+        .fn()
+        .mockReturnValue({ ok: true, value: { jobId: "job-2" } });
+      const deps = makeDeps({
+        dispatchMergeJob,
+        getActiveGraphWorkflowExecution: vi
+          .fn()
+          .mockResolvedValue(blocker.execution),
+      });
+      const handlers = createGitRouteHandlers(deps);
+
+      const res = await handlers.mergeSession(
+        postRequest({ autoResolve: true }),
+        routeContext(sessionParams),
+      );
+
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({
+        error: `Graph workflow execution execution-1 is ${blocker.execution.status}. ${blocker.sentence}`,
+        code: "GRAPH_WORKFLOW_ACTIVE",
+        details: {
+          executionId: "execution-1",
+          status: blocker.execution.status,
+          remedy: blocker.remedy,
+        },
+      });
+      expect(dispatchMergeJob).not.toHaveBeenCalled();
+    });
+  }
+
+  /**
+   * History never blocks delivery (R13.2), including the halts a status-only
+   * gate refused forever with no act available to clear them.
+   */
+  const historical = [
+    { label: "completed", execution: activeRecord({ status: "completed" }) },
+    { label: "aborted", execution: activeRecord({ status: "aborted" }) },
+    {
+      label: "non-resumably halted",
+      execution: activeRecord({
+        status: "halted",
+        haltReason: NON_RESUMABLE_HALT,
+      }),
+    },
+    {
+      label: "abandoned resumable halt",
+      execution: activeRecord({
+        status: "halted",
+        haltReason: RESUMABLE_HALT,
+        abandonment: {
+          abandonedAt: "2026-01-02T00:00:00Z",
+          actor: { kind: "human" },
+          reason: "superseded",
+        },
+      }),
+    },
+  ] as const;
+
+  for (const run of historical) {
+    it(`admits the merge once the ${run.label} execution has released the lease`, async () => {
+      const dispatchMergeJob = vi
+        .fn()
+        .mockReturnValue({ ok: true, value: { jobId: "job-2" } });
+      const handlers = createGitRouteHandlers(
+        makeDeps({
+          dispatchMergeJob,
+          getActiveGraphWorkflowExecution: vi
+            .fn()
+            .mockResolvedValue(run.execution),
+        }),
+      );
+
+      const res = await handlers.mergeSession(
+        postRequest({ autoResolve: true }),
+        routeContext(sessionParams),
+      );
+
+      expect(res.status).toBe(202);
+      expect(dispatchMergeJob).toHaveBeenCalled();
+    });
+  }
+
+  it("admits the merge after the blocking halted run is abandoned", async () => {
+    // R13.1 end to end: the same run, before and after the abandon act.
+    const halted = activeRecord({
+      status: "halted",
+      haltReason: RESUMABLE_HALT,
+    });
     const dispatchMergeJob = vi
       .fn()
       .mockReturnValue({ ok: true, value: { jobId: "job-2" } });
-    const deps = makeDeps({
-      dispatchMergeJob,
-      getActiveGraphWorkflowExecution: vi.fn().mockResolvedValue({
-        id: "execution-1",
-        status: "running",
-      }),
-    });
-    const handlers = createGitRouteHandlers(deps);
+    const getActiveGraphWorkflowExecution = vi
+      .fn()
+      .mockResolvedValueOnce(halted)
+      .mockResolvedValueOnce({
+        ...halted,
+        abandonment: {
+          abandonedAt: "2026-01-02T00:00:00Z",
+          actor: { kind: "human" },
+          reason: "superseded",
+        },
+      });
+    const handlers = createGitRouteHandlers(
+      makeDeps({ dispatchMergeJob, getActiveGraphWorkflowExecution }),
+    );
 
-    const res = await handlers.mergeSession(
+    const refused = await handlers.mergeSession(
       postRequest({ autoResolve: true }),
       routeContext(sessionParams),
     );
-
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({
-      error:
-        "Graph workflow execution execution-1 is running. Complete or abort it before merging this session.",
-      code: "GRAPH_WORKFLOW_ACTIVE",
-      details: { executionId: "execution-1", status: "running" },
-    });
+    expect(refused.status).toBe(409);
+    expect((await refused.json()).details.executionId).toBe("execution-1");
     expect(dispatchMergeJob).not.toHaveBeenCalled();
+
+    const admitted = await handlers.mergeSession(
+      postRequest({ autoResolve: true }),
+      routeContext(sessionParams),
+    );
+    expect(admitted.status).toBe(202);
+    expect(dispatchMergeJob).toHaveBeenCalledTimes(1);
   });
 
   it("400s on an invalid body", async () => {
@@ -472,6 +632,7 @@ describe("resolveSessionConflicts", () => {
       resolutionContext: "intent notes",
       executionId: "workflow-execution-1",
       finalPublish: true,
+      finalizeSessionOnPublish: true,
       candidateValidation: {
         validationRef: "validation-1",
         validatedSha: "validated-sha",
@@ -480,6 +641,66 @@ describe("resolveSessionConflicts", () => {
         outcome: "pass",
       },
     });
+  });
+
+  /**
+   * Re-entry continues the SAME merge, so whether its publish finalizes the
+   * session is the prior job's fact, not the route's assumption. A graph lane
+   * merge retried here is still the workflow's own work: treating it as
+   * session-finalizing would false-block the engine's next launch and point the
+   * session delivery gate at the workflow's own Current run.
+   */
+  it("carries a graph lane merge's non-finalizing fact into the retry", async () => {
+    const dispatchResolveConflictsJob = vi
+      .fn()
+      .mockReturnValue({ ok: true, value: { jobId: "job-3" } });
+    const handlers = createGitRouteHandlers(
+      makeDeps({
+        dispatchResolveConflictsJob,
+        getJob: vi.fn().mockReturnValue(
+          makeJob({
+            status: "conflicts",
+            finalizeSessionOnPublish: false,
+          }),
+        ),
+      }),
+    );
+
+    const res = await handlers.resolveSessionConflicts(
+      postRequest({ decisions: [] }),
+      routeContext(sessionParams),
+    );
+
+    expect(res.status).toBe(202);
+    expect(dispatchResolveConflictsJob).toHaveBeenCalledWith(
+      expect.objectContaining({ finalizeSessionOnPublish: false }),
+    );
+  });
+
+  it("leaves a user-driven merge's retry session-finalizing", async () => {
+    const dispatchResolveConflictsJob = vi
+      .fn()
+      .mockReturnValue({ ok: true, value: { jobId: "job-3" } });
+    const handlers = createGitRouteHandlers(
+      makeDeps({
+        dispatchResolveConflictsJob,
+        getJob: vi.fn().mockReturnValue(
+          makeJob({
+            status: "conflicts",
+            finalizeSessionOnPublish: true,
+          }),
+        ),
+      }),
+    );
+
+    await handlers.resolveSessionConflicts(
+      postRequest({ decisions: [] }),
+      routeContext(sessionParams),
+    );
+
+    expect(dispatchResolveConflictsJob).toHaveBeenCalledWith(
+      expect.objectContaining({ finalizeSessionOnPublish: true }),
+    );
   });
 });
 
@@ -603,7 +824,33 @@ describe("landSession", () => {
           commandIdentity: "./validate.sh",
           outcome: "pass",
         },
+        finalizeSessionOnPublish: true,
       }),
+    );
+  });
+
+  /** Landing a graph-owned parked candidate is still the workflow's own work. */
+  it("carries a graph lane merge's non-finalizing fact into the land job", async () => {
+    const dispatchMergeJob = vi
+      .fn()
+      .mockReturnValue({ ok: true, value: { jobId: "job-4" } });
+    const handlers = createGitRouteHandlers(
+      makeDeps({
+        dispatchMergeJob,
+        getJob: vi
+          .fn()
+          .mockReturnValue(makeJob({ finalizeSessionOnPublish: false })),
+      }),
+    );
+
+    const res = await handlers.landSession(
+      new Request("http://cc.test"),
+      routeContext(sessionParams),
+    );
+
+    expect(res.status).toBe(202);
+    expect(dispatchMergeJob).toHaveBeenCalledWith(
+      expect.objectContaining({ finalizeSessionOnPublish: false }),
     );
   });
 });

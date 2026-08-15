@@ -76,8 +76,17 @@ function makeGraphWorkflowExecution(
 ): GraphWorkflowExecution {
   return {
     id: "exec-1",
+    origin: {
+      kind: "template",
+      definitionId: "def-abc",
+      definitionRevision: 3,
+      tier: "project",
+    },
     seedDefinitionId: "def-abc",
     seedDefinitionRevision: 3,
+    launchDocument: null,
+    liveSessionReadOnlyPinned: false,
+    abandonment: null,
     liveRevision: 1,
     executionStateRevision: 0,
     structuralRevision: 0,
@@ -94,6 +103,7 @@ function makeGraphWorkflowExecution(
     launchedTier: "project",
     ownerConversationId: null,
     definitionApproval: null,
+    definitionApprovalClaim: null,
     workingDefinition: {
       schemaVersion: 1,
       laneMergeValidation: {

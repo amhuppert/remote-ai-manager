@@ -109,8 +109,17 @@ function buildLegacyExecution(
 function buildCleanExecution(): GraphWorkflowExecution {
   return {
     id: "exec-clean-1",
+    origin: {
+      kind: "template",
+      definitionId: "seed-1",
+      definitionRevision: 1,
+      tier: "project",
+    },
     seedDefinitionId: "seed-1",
     seedDefinitionRevision: 1,
+    launchDocument: null,
+    liveSessionReadOnlyPinned: false,
+    abandonment: null,
     liveRevision: 1,
     executionStateRevision: 0,
     structuralRevision: 0,
@@ -127,6 +136,7 @@ function buildCleanExecution(): GraphWorkflowExecution {
     launchedTier: "project",
     ownerConversationId: null,
     definitionApproval: null,
+    definitionApprovalClaim: null,
     workingDefinition: {
       schemaVersion: 1,
       laneMergeValidation: {
@@ -246,8 +256,9 @@ describe("graph-workflow-executions-repo legacy migration on read", () => {
     expect(migrationEvents).toHaveLength(0);
   });
 
-  it("(b) legacy record is migrated, re-persisted to disk, and structured event is emitted", () => {
+  it("(b) legacy record is upgraded for the reader, left on disk, and reported as an unpersisted upgrade", () => {
     rawInsertExecution(buildLegacyExecution());
+    const before = readStoredExecution();
 
     const execution = repo.getActive(PROJECT_PATH, SESSION_NAME);
     expect(execution).not.toBeNull();
@@ -262,6 +273,49 @@ describe("graph-workflow-executions-repo legacy migration on read", () => {
     expect(ctxA?.branchName).toBe("csm/feature");
     expect(execution.contextStates["ctx-b"]?.status).toBe("completed");
 
+    // A read is a read. The upgrade is a pure function of the stored bytes, so
+    // every reader sees the same record either way — while persisting it here
+    // would make the launch path's advisory read a WRITE, which is what D7's
+    // reservation ordering (and a refused launch's zero-write guarantee)
+    // forbids.
+    expect(readStoredExecution()).toEqual(before);
+
+    const migrationEvents = capturedLogs.filter(
+      (e) => e.message === "graph-workflow.parallel.legacy_migrated",
+    );
+    expect(migrationEvents).toHaveLength(1);
+    const data = migrationEvents[0]?.data as
+      | {
+          executionId?: string;
+          repairedFields?: string[];
+          persisted?: boolean;
+        }
+      | undefined;
+    expect(data?.executionId).toBe("exec-legacy-1");
+    expect(data?.persisted).toBe(false);
+    expect(data?.repairedFields).toEqual(
+      expect.arrayContaining([
+        "activeContextId",
+        "status",
+        "activeContextIds",
+        "contextStates.running",
+      ]),
+    );
+  });
+
+  it("(b2) the next ordinary write persists the upgraded shape", () => {
+    rawInsertExecution(buildLegacyExecution());
+    const upgraded = repo.getActive(PROJECT_PATH, SESSION_NAME);
+    expect(upgraded).not.toBeNull();
+    if (!upgraded) return;
+
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      upgraded,
+      "2026-05-01T00:00:00Z",
+    );
+
     const onDisk = readStoredExecution();
     expect(onDisk).not.toBeNull();
     if (!onDisk) return;
@@ -274,23 +328,6 @@ describe("graph-workflow-executions-repo legacy migration on read", () => {
     expect(onDiskCtxA.status).toBe("ready");
     expect(onDiskCtxA.worktreePath).toBe("/wt/sub");
     expect(onDiskCtxA.branchName).toBe("csm/feature");
-
-    const migrationEvents = capturedLogs.filter(
-      (e) => e.message === "graph-workflow.parallel.legacy_migrated",
-    );
-    expect(migrationEvents).toHaveLength(1);
-    const data = migrationEvents[0]?.data as
-      | { executionId?: string; repairedFields?: string[] }
-      | undefined;
-    expect(data?.executionId).toBe("exec-legacy-1");
-    expect(data?.repairedFields).toEqual(
-      expect.arrayContaining([
-        "activeContextId",
-        "status",
-        "activeContextIds",
-        "contextStates.running",
-      ]),
-    );
   });
 
   it("(c) malformed record (post-migration parse fails) throws (fail-loud) and preserves the original on disk", () => {
@@ -394,7 +431,7 @@ describe("graph-workflow-executions-repo legacy migration on read", () => {
     expect(data?.repairedFields).toContain("activeContextId");
   });
 
-  it("flat laneStates record (pre-promotion shape) is reshaped to nested keying and re-persisted", () => {
+  it("flat laneStates record (pre-promotion shape) is reshaped to nested keying for the reader", () => {
     const flatLanes = {
       id: "exec-flat-lanes-1",
       seedDefinitionId: "seed-1",
@@ -474,11 +511,16 @@ describe("graph-workflow-executions-repo legacy migration on read", () => {
       },
     });
 
+    // Reshaped for the reader, not on disk: the row keeps its stored bytes
+    // until an ordinary write replaces them.
     const onDisk = readStoredExecution();
     expect(onDisk).not.toBeNull();
     if (!onDisk) return;
     const onDiskLanes = onDisk.laneStates as Record<string, unknown>;
-    expect(Object.keys(onDiskLanes)).toEqual(["execution-loop-fan-out-fan-in"]);
+    expect(Object.keys(onDiskLanes)).toEqual([
+      "context_validator",
+      "implementer",
+    ]);
 
     const migrationEvents = capturedLogs.filter(
       (e) => e.message === "graph-workflow.parallel.legacy_migrated",
@@ -488,5 +530,133 @@ describe("graph-workflow-executions-repo legacy migration on read", () => {
       | { repairedFields?: string[] }
       | undefined;
     expect(data?.repairedFields).toContain("laneStates");
+  });
+
+  /**
+   * The admission read is the one read that must not write, and must not
+   * reinterpret what it reads.
+   *
+   * The lease CAS classifies tenure from the row it reads inside its
+   * transaction. Read-repair there is doubly wrong: it makes a REFUSED launch
+   * mutate the incumbent it just refused for (R5.2 requires a refusal to leave
+   * no persisted record of any kind), and — because the legacy upgrade forced
+   * every non-paused record to `paused` — it fabricated tenure for a settled
+   * run, so a completed or aborted legacy incumbent refused the launch instead
+   * of being normalized into History (R3.1, R3.3).
+   */
+  describe("getActiveAuthoritative — the admission read", () => {
+    it.each([
+      {
+        label: "completed",
+        status: "completed" as const,
+        overrides: {
+          status: "completed" as const,
+          completedAt: "2026-04-04T01:00:00.000Z",
+        },
+      },
+      {
+        label: "aborted",
+        status: "aborted" as const,
+        overrides: {
+          status: "aborted" as const,
+          completedAt: "2026-04-04T01:00:00.000Z",
+        },
+      },
+      {
+        // Tenure, not a terminal-status list, is what makes a stored status
+        // authoritative: a non-resumable halt has ended just as surely, and
+        // rewriting it to `paused` hands the session's lease back to a run that
+        // can never continue.
+        label: "non-resumably halted",
+        status: "halted" as const,
+        overrides: {
+          status: "halted" as const,
+          haltReason: { type: "recovery_error", message: "unrecoverable" },
+        },
+      },
+      {
+        label: "abandoned resumable halt",
+        status: "halted" as const,
+        overrides: {
+          status: "halted" as const,
+          haltReason: {
+            type: "execution_loop_failed",
+            contextId: null,
+            cause: "unknown",
+            message: "halted",
+          },
+          abandonment: {
+            abandonedAt: "2026-04-04T02:00:00.000Z",
+            actor: { kind: "human" },
+            reason: "superseded",
+          },
+        },
+      },
+    ])(
+      "reports a legacy $label row with its stored status, not a fabricated pause",
+      ({ status, overrides }) => {
+        rawInsertExecution(
+          buildLegacyExecution({ id: "exec-legacy-settled", ...overrides }),
+        );
+
+        const execution = repo.getActiveAuthoritative(
+          PROJECT_PATH,
+          SESSION_NAME,
+        );
+
+        expect(execution?.status).toBe(status);
+      },
+    );
+
+    it.each([
+      { label: "running", overrides: { status: "running" as const } },
+      {
+        label: "resumably halted",
+        overrides: {
+          status: "halted" as const,
+          haltReason: {
+            type: "execution_loop_failed",
+            contextId: null,
+            cause: "unknown",
+            message: "halted",
+          },
+        },
+      },
+    ])(
+      "still recovers a lease-HOLDING legacy $label row to paused",
+      ({ overrides }) => {
+        // The other half of the same rule. Pausing is a recovery act, and a run
+        // whose tenure continues is exactly the one that needs recovering: its
+        // loop cannot still be live after the process that owned it is gone.
+        rawInsertExecution(
+          buildLegacyExecution({ id: "exec-legacy-live", ...overrides }),
+        );
+
+        expect(
+          repo.getActiveAuthoritative(PROJECT_PATH, SESSION_NAME)?.status,
+        ).toBe("paused");
+      },
+    );
+
+    it("persists nothing, so a refused launch leaves the incumbent byte-identical", () => {
+      rawInsertExecution(buildLegacyExecution());
+      const before = readStoredExecution();
+      capturedLogs.length = 0;
+
+      const execution = repo.getActiveAuthoritative(PROJECT_PATH, SESSION_NAME);
+
+      expect(execution).not.toBeNull();
+      expect(readStoredExecution()).toEqual(before);
+      // The upgrade is still REPORTED — an unexplained legacy row would be
+      // worse observability than the write it replaced — and the line says so.
+      const migrationEvents = capturedLogs.filter(
+        (e) => e.message === "graph-workflow.parallel.legacy_migrated",
+      );
+      expect(migrationEvents).toHaveLength(1);
+      expect(
+        (migrationEvents[0]?.data as { persisted?: boolean } | undefined)
+          ?.persisted,
+      ).toBe(false);
+    });
   });
 });

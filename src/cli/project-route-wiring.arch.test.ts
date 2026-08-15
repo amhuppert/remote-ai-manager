@@ -88,6 +88,13 @@ const projectEnv: CliEnv = {
   CC_CONVERSATION_ID: "conv-1",
 };
 
+/** One-off execution routes are addressed from a SESSION conversation. */
+const sessionEnv: CliEnv = {
+  ...projectEnv,
+  CC_CONVERSATION_SCOPE: "session",
+  CC_SESSION: "sess",
+};
+
 interface RecordedRequest {
   path: string;
   method: string;
@@ -319,6 +326,91 @@ describe("every project-supported cctl command reaches a real Next.js route", ()
           typeof moduleNamespace[method] === "function"
             ? method
             : `${path} exports no ${method} (has: ${Object.keys(moduleNamespace).join(", ")})`,
+        ).toBe(method);
+      }
+    });
+  }
+});
+
+describe("one-off execution commands reach real session route modules", () => {
+  const invocationCases = [
+    {
+      name: "workflow run",
+      argv: [
+        "workflow",
+        "run",
+        "--file",
+        "/tmp/plan.json",
+        "--session",
+        "sess",
+      ],
+      body: {
+        receipt: {
+          executionId: "exec-7",
+          status: "running",
+          origin: { kind: "one_off", planName: "One off" },
+          originConversationId: "conv-1",
+          deepLink: "/projects/cc/sessions/sess/workflow?execution=exec-7",
+          startedAt: "2026-08-14T12:00:00.000Z",
+        },
+      },
+    },
+    {
+      name: "workflow wait",
+      argv: [
+        "workflow",
+        "wait",
+        "exec-7",
+        "--session",
+        "sess",
+        "--timeout",
+        "1ms",
+      ],
+      body: { result: null },
+    },
+    {
+      name: "workflow status by id",
+      argv: ["workflow", "status", "exec-7", "--session", "sess"],
+      body: { execution: null },
+    },
+    {
+      name: "workflow abandon",
+      argv: [
+        "workflow",
+        "abandon",
+        "exec-7",
+        "--reason",
+        "superseded",
+        "--session",
+        "sess",
+      ],
+      body: {
+        abandoned: true,
+        execution: {
+          executionId: "exec-7",
+          status: "halted",
+          origin: { kind: "one_off", planName: "One off" },
+          archived: true,
+        },
+      },
+    },
+  ] as const;
+
+  for (const testCase of invocationCases) {
+    it(`${testCase.name} builds a path with the exported HTTP method`, async () => {
+      const host = makeHost(testCase.body);
+      await runCli([...testCase.argv], sessionEnv, host);
+
+      expect(host.requests.length).toBeGreaterThan(0);
+      for (const { path, method } of host.requests) {
+        const route = findRoute(path);
+        expect(route === null ? `NO ROUTE for ${path}` : path).toBe(path);
+        if (route === null) continue;
+        const moduleNamespace = await route.importModule();
+        expect(
+          typeof moduleNamespace[method] === "function"
+            ? method
+            : `${path} exports no ${method}`,
         ).toBe(method);
       }
     });

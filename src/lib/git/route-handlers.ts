@@ -59,10 +59,21 @@ export interface GitRouteDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<SessionState | null>;
+  /**
+   * The delivery gate reads tenure, not status, so the halt reason and
+   * abandonment travel with it: a status alone cannot separate a resumable halt
+   * (still holding the lease) from a non-resumable or abandoned one, which holds
+   * nothing and must not block the merge. `definitionApproval` rides along
+   * because the refusal names the canonical remedy, and a run parked awaiting a
+   * definition decision is cleared by approving it, not by completing it.
+   */
   getActiveGraphWorkflowExecution(
     projectPath: string,
     sessionName: string,
-  ): Promise<Pick<GraphWorkflowExecution, "id" | "status"> | null>;
+  ): Promise<Pick<
+    GraphWorkflowExecution,
+    "id" | "status" | "haltReason" | "abandonment" | "definitionApproval"
+  > | null>;
   computeDiff(worktreePath: string): Promise<SessionDiff>;
   getCommitLog(
     worktreePath: string,
@@ -103,6 +114,8 @@ export interface GitRouteDeps {
     resolutionContext?: string;
     executionId?: string;
     finalPublish?: boolean;
+    /** Carried forward from the job a re-entry resumes; see the land handler. */
+    finalizeSessionOnPublish?: boolean;
     candidateValidation?: BackgroundJob["candidateValidation"];
   }): MergeDispatchResult;
   dispatchResolveConflictsJob(params: {
@@ -118,6 +131,8 @@ export interface GitRouteDeps {
     resolutionContext?: string;
     executionId?: string;
     finalPublish?: boolean;
+    /** Carried forward from the conflicted job this retry resumes. */
+    finalizeSessionOnPublish?: boolean;
     candidateValidation?: BackgroundJob["candidateValidation"];
   }): MergeDispatchResult;
   getJob(projectPath: string, sessionName: string): BackgroundJob | undefined;
@@ -434,6 +449,7 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
         sessionName,
         executionId: deliveryDecision.executionId,
         workflowStatus: deliveryDecision.status,
+        remedy: deliveryDecision.remedy,
       });
       return NextResponse.json(
         {
@@ -442,6 +458,10 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
           details: {
             executionId: deliveryDecision.executionId,
             status: deliveryDecision.status,
+            // The act that clears the block, machine-readable beside the
+            // sentence: this refusal is advisory and the publish actor repeats
+            // it under the lock, so both refusals name one remedy.
+            remedy: deliveryDecision.remedy,
           },
         } satisfies ApiError,
         { status: 409 },
@@ -518,6 +538,12 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       resolutionContext: priorJob?.resolutionContext,
       executionId: priorJob?.executionId,
       finalPublish: priorJob?.finalPublish,
+      // Whether the publish finishes the session is the RESUMED merge's fact,
+      // not this route's assumption: a conflicted graph lane merge retried here
+      // is still the workflow's own work, and calling it session-finalizing
+      // would both false-block the engine's next launch and point the session
+      // delivery gate at the workflow's own Current run.
+      finalizeSessionOnPublish: priorJob?.finalizeSessionOnPublish,
       candidateValidation: priorJob?.candidateValidation,
     });
 
@@ -587,6 +613,9 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       resolutionContext: job.resolutionContext,
       executionId: job.executionId,
       finalPublish: job.finalPublish,
+      // Landing continues the parked merge, so it inherits that merge's own
+      // finalization fact rather than assuming the session ends here.
+      finalizeSessionOnPublish: job.finalizeSessionOnPublish,
       candidateValidation: job.candidateValidation,
     });
 

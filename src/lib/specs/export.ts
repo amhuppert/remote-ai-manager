@@ -2,10 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 import type { SeededWorkflowDocument } from "@/lib/workflow-graph/shared-documents";
-import {
-  explicitArchiveEligibility,
-  isTerminalStatus,
-} from "@/lib/workflow-graph/lifecycle-classifier";
+import { isTerminalStatus } from "@/lib/workflow-graph/lifecycle-classifier";
 import type {
   Spec,
   SpecApprovalRow,
@@ -536,13 +533,13 @@ export function verifyExportState(state: SpecExportState): IntegrityReport {
 }
 
 /**
- * Whether the pinned run still holds the session's execution slot. `active` is
- * the slot-ownership answer whatever the status: an `aborted` run that failed
- * to auto-release still owns the session, which is the residue the abandon
- * coordinator's `release_slot` phase exists to clear.
+ * Whether the pinned run still holds the session's execution lease. Not the
+ * row's position: a terminal record left in the active row holds nothing and
+ * is normalized into History by the next launch, so reporting it as owning
+ * the session would be a finding with no act behind it.
  */
 function ownsExecutionSlot(linked: LinkedWorkflowObservation): boolean {
-  return linked.kind === "active";
+  return linked.kind === "active" && linked.leaseHeld;
 }
 
 /** The placed run, or null when nothing was launched or nothing remains. */
@@ -564,12 +561,10 @@ function linkedWorkflowId(linked: LinkedWorkflowObservation): string | null {
  * on its own (design §10).
  *
  * The `abandoning` finding is deliberately NOT gated on the linked run: the
- * three cleanup phases leave three different residues — `abort_workflow` can
- * leave the run live and slot-owning, `release_slot` leaves it terminal but
- * possibly still slot-owning, and `finalize` leaves it terminal AND slot-free
- * while the spec execution is still stuck. Gating on liveness would report the
- * first two and silently drop the third, which is the one no other surface
- * shows.
+ * two cleanup phases leave different residues — `abort_workflow` can leave the
+ * run still holding the lease, and `finalize` leaves it lease-free while the
+ * spec execution is still stuck. Gating on liveness would report the first and
+ * silently drop the second, which is the one no other surface shows.
  */
 function executionLifecycleFindings(
   state: SpecExportState,
@@ -599,29 +594,29 @@ function executionLifecycleFindings(
       continue;
     }
     if (execution.state !== "abandoned") continue;
-    // Only a run still IN the slot is an orphan with an exit. An archived run
-    // holds nothing, and both live verbs address the session's active slot —
-    // reporting an archived run (a paused one is legitimately archivable, so
-    // this shape is reachable) would be a finding nothing could ever clear.
-    if (linkedWorkflow.kind !== "active") continue;
+    // Only a run that still HOLDS the lease is an orphan with an exit. A
+    // lease-free record — archived, or terminal but not yet normalized —
+    // blocks nothing and is relocated by the next launch, so reporting it
+    // would be a finding no act could ever clear.
+    if (linkedWorkflow.kind !== "active" || !linkedWorkflow.leaseHeld) continue;
     const { workflowExecutionId, status } = linkedWorkflow;
     // Terminality is the lifecycle contract's answer, never a local one.
     const live = !isTerminalStatus(status);
     // No coordinator re-entry exists from `abandoned`, so re-running abandon
     // would report success over the orphan instead of clearing it. The exit is
-    // workflow-side — and WHICH verb is the contract's answer too: a status the
-    // release route refuses has to be aborted first, and abort auto-releases,
-    // so naming a guarded release after it would print a command that 409s once
-    // the slot is already free. The unguarded release stays named because
-    // auto-release is best-effort and can leave the slot owned.
+    // workflow-side, and WHICH verb follows from the blocker's own state: a
+    // halted run holds the lease because its halt is resumable, and abandon is
+    // the one act that ends that tenure while preserving the halt reason;
+    // anything else still holding it is ended by abort, which releases on its
+    // own.
     findings.push({
       ...common,
       code: "abandoned_execution_workflow_unreleased",
-      detail: `Spec execution ${execution.id} is abandoned, but graph workflow execution ${workflowExecutionId} is ${live ? "still live" : "still holding this session's execution slot"} (${status})`,
+      detail: `Spec execution ${execution.id} is abandoned, but graph workflow execution ${workflowExecutionId} is ${live ? "still live" : "still holding this session's execution lease"} (${status})`,
       remedy:
-        explicitArchiveEligibility(status) === "refused"
-          ? `Abort it with 'cctl workflow live abort --reason <reason>' — that auto-releases the slot — then confirm with 'cctl workflow live release --reason <reason>'`
-          : `Hand the slot back with 'cctl workflow live release --reason <reason> --execution ${workflowExecutionId}'`,
+        status === "halted"
+          ? `Abandon it with 'cctl workflow abandon --reason <reason> --execution ${workflowExecutionId}'`
+          : `Abort it with 'cctl workflow live abort --reason <reason>' — that releases the lease`,
     });
   }
   return findings;

@@ -13,7 +13,13 @@ import {
   type LandingEvidenceProber,
 } from "@/lib/workflow-graph/landing-evidence";
 import { StaleLoopFenceError } from "@/lib/workflow-graph/loop-fence";
-import { replacementPolicy } from "@/lib/workflow-graph/lifecycle-classifier";
+import {
+  awaitsDefinitionApproval,
+  evaluateLeaseAdmission,
+  holdsExecutionLease,
+  type LeaseAdmissionDecision,
+} from "@/lib/workflow-graph/lifecycle-classifier";
+import { buildGraphWorkflowExecutionDeepLink } from "@/lib/workflow-graph/execution-deep-link";
 import { releaseLoopPassSlotsForContexts } from "@/lib/workflow-graph/loop-budgets";
 import {
   classifyContextSchedulability,
@@ -66,13 +72,18 @@ import {
   transitionContextStatus,
 } from "@/lib/workflow-graph/context-transitions";
 import { readWorktreeDirtyPaths } from "@/lib/git/worktree";
+import { getFinalizingSessionMergeJob } from "@/lib/jobs/queue";
 import {
   validateLaunchInputs,
   type LaunchInputError,
 } from "@/lib/workflow-graph/start-input-service";
 import type { MutateActiveResult } from "@/lib/workflow-graph/execution-repository";
 import type { TemplateTier } from "@/lib/workflow-graph/template-library-service";
-import { computeUsedBackends } from "@/lib/workflow-graph/resolve-config";
+import {
+  computeUsedBackends,
+  resolveWorkflowDefinition,
+} from "@/lib/workflow-graph/resolve-config";
+import { isWholeRunLiveSessionReadOnly } from "@/lib/workflow-graph/live-session-read-only";
 import { stopExecutionLaneDevServers as defaultStopExecutionLaneDevServers } from "@/lib/workflow-graph/dev-server-lane-cleanup";
 import {
   createPreflightPrerequisiteService,
@@ -88,8 +99,12 @@ import {
 import { sendConversationEvent } from "@/lib/workflows/conversation/manager";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type {
+  GraphWorkflowAbandonment,
+  GraphWorkflowDefinitionApprovalClaim,
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
+  GraphWorkflowLaunchDocument,
+  GraphWorkflowLeaseBlocker,
 } from "@/lib/workflow-graph/schemas";
 import type {
   ContextPlacement,
@@ -103,44 +118,46 @@ import {
   type GraphExecutionContract,
 } from "@/lib/workflow-graph/execution-contract-port";
 import {
+  describeLaunchSource,
+  type GraphWorkflowLaunchSource,
+} from "./execution-origin";
+import type { WorkflowDefinitionDraft } from "./storage";
+// The seed is a DATA contract, imported rather than restated: a local copy of
+// its shape is how a launch field (an origin, a bound input) ends up recorded on
+// one path and silently dropped on another.
+import {
+  MutationRefusedError,
+  mutateActiveOrRefuse,
+  type GraphWorkflowExecutionSeed,
+} from "./execution-repository";
+import {
   contextIdsResumingInfraHalt,
   isValidationRoundOpen,
   resetValidationRoundAttempts,
 } from "@/lib/workflow-graph/validation-round";
-interface GraphWorkflowExecutionSeed {
-  definition: WorkflowSemanticDefinition;
-  definitionId: string;
-  definitionRevision: number;
-  executionId: string;
-  startedAt: string;
-  inputs: Record<string, string>;
-  // The tier the template was launched from. Rides the definition tier onto the
-  // execution as an additive audit annotation, parallel to `inputs`/boundInputs.
-  launchedTier: TemplateTier;
-  // The conversation the start seam captured server-side, or null for a launch
-  // with no conversation identity. Required rather than optional so a new start
-  // path has to decide rather than silently drop the owner.
-  ownerConversationId: string | null;
-  // Pre-rendered documents the launching tier seeds into the run before its
-  // first iteration. Empty for a launch that seeds nothing.
-  seededDocuments: readonly SeededWorkflowDocument[];
-}
-
 interface GraphWorkflowExecutionRepository {
   getActive(
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowExecution | null>;
+  /**
+   * `fence` is evaluated inside the reserving transaction and declines by
+   * throwing: it is how a launch checks an admission fact that lives outside
+   * the row (the session-finalizing merge) without the check going stale in the
+   * asynchronous distance between reading it and taking the lease.
+   */
   create(
     projectPath: string,
     sessionName: string,
     seed: GraphWorkflowExecutionSeed,
+    fence?: () => void,
   ): Promise<GraphWorkflowExecution>;
   archiveActive(
     projectPath: string,
     sessionName: string,
     audit?: { reason: string; actor: string | null },
     guard?: (execution: GraphWorkflowExecution) => boolean,
+    stamp?: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
   ): Promise<GraphWorkflowArchiveOutcome>;
   mutateActive(
     projectPath: string,
@@ -155,6 +172,17 @@ interface GraphWorkflowExecutionRepository {
     executionId: string,
     contextId: string,
   ): Promise<number>;
+  /**
+   * Settle any artifact debt the launch's reserving transaction recorded,
+   * rewriting the charter and seeded documents from durable state. Null when
+   * the run owes nothing, which is every run whose launch completed normally.
+   * Optional so a fixture that never seeds artifacts can omit it.
+   */
+  ensureArtifactsMaterialized?(input: {
+    projectPath: string;
+    sessionName: string;
+    executionId: string;
+  }): Promise<GraphWorkflowExecution | null>;
 }
 
 export interface GraphWorkflowStartInput {
@@ -190,29 +218,194 @@ export interface GraphWorkflowStartInput {
   seededDocuments?: readonly SeededWorkflowDocument[];
 }
 
+/** Everything an inline (`workflow run`) launch supplies (D7 R1). */
+export interface GraphWorkflowRunInput {
+  projectPath: string;
+  sessionName: string;
+  /**
+   * The authored plan, ALREADY through the accept-time gate at the route
+   * boundary (schema, structural, placement, reference, command-selector). The
+   * manager never re-parses a raw body, and never persists this document as a
+   * template.
+   */
+  plan: WorkflowDefinitionDraft;
+  /**
+   * Raw supplied launch values, from the inputs document — a channel distinct
+   * from `plan`, so a plan file can never smuggle a binding and an inputs file
+   * can never redefine the graph.
+   */
+  inputs?: Record<string, unknown>;
+  /** As {@link GraphWorkflowStartInput.ownerConversationId}. */
+  ownerConversationId?: string | null;
+  /** As {@link GraphWorkflowStartInput.seededDocuments}. */
+  seededDocuments?: readonly SeededWorkflowDocument[];
+}
+
+/**
+ * How a launch names the definition content it will run — the ONE difference
+ * between `workflow start` and `workflow run`. Explicitly discriminated rather
+ * than inferred from which fields happen to be set, so every downstream branch
+ * reads an origin the caller stated (D7 decision D2).
+ */
+export type WorkflowLaunchSourceRequest =
+  | {
+      kind: "template";
+      definitionId: string;
+      expectedRevision?: number;
+      tier?: TemplateTier;
+    }
+  | { kind: "one_off"; plan: WorkflowDefinitionDraft };
+
+/**
+ * What a resolved launch source yields: provenance, the definition content the
+ * gauntlet runs on, and the authored document the run is snapshotted from.
+ */
+export interface ResolvedLaunchSource {
+  source: GraphWorkflowLaunchSource;
+  definition: WorkflowSemanticDefinition;
+  launchDocument: GraphWorkflowLaunchDocument;
+}
+
+/** The shared gauntlet's input: a source plus everything origin-blind. */
+export interface GraphWorkflowLaunchInput {
+  projectPath: string;
+  sessionName: string;
+  source: WorkflowLaunchSourceRequest;
+  parameters?: Record<string, unknown>;
+  ownerConversationId?: string | null;
+  seededDocuments?: readonly SeededWorkflowDocument[];
+}
+
+/**
+ * What an ACCEPTED launch returns. Both dispositions are successes: a run that
+ * began, and a run parked awaiting definition approval which is durable and
+ * holds the session's lease (D7 R14). Carrying the park in the outcome rather
+ * than raising it is what lets both transports answer 202 with a receipt
+ * instead of decoding a refusal.
+ */
+export interface GraphWorkflowLaunchOutcome {
+  execution: GraphWorkflowExecution;
+  awaitingDefinitionApproval: boolean;
+}
+
 /**
  * Raised by the shared start path when a pre-seed guard rejects the launch. The
  * `guard` discriminator lets the thin HTTP/MCP surface reconstruct the exact
- * 409 response (the active-execution message, or the structured
+ * 409 response (the lease-held payload built from `blocker`, or the structured
  * `uncommitted_changes` payload built from `dirtyPaths`) without re-deriving it
  * from a message string.
+ *
+ * `blocker` is the one structured launch-refusal payload (D7 decision D6). It
+ * is present on every `active_execution` refusal — one-off and template alike,
+ * advisory pre-check and authoritative reservation alike — because the surface
+ * that renders the refusal must never have to re-read the incumbent to say
+ * which run is holding the session.
  */
+export type WorkflowStartGuard =
+  | "active_execution"
+  | "uncommitted_changes"
+  // The symmetric half of the session delivery gate (R13): the session is
+  // already being finalized by a merge, so seeding a run into it would install
+  // live work in a session that is about to be marked finished.
+  | "session_finalizing";
+
 export class WorkflowStartGuardError extends Error {
-  readonly guard: "active_execution" | "uncommitted_changes";
+  readonly guard: WorkflowStartGuard;
   readonly dirtyPaths?: DirtyPath[];
+  readonly blocker?: GraphWorkflowLeaseBlocker;
+  /**
+   * The blocking merge on a `session_finalizing` refusal. Carried on the error
+   * because the reservation fence raises it from inside the write queue, where
+   * nothing may log: the launch logs the refusal from these facts once the
+   * critical section is behind it.
+   */
+  readonly finalizingMerge?: SessionFinalizingMerge;
 
   constructor(
-    guard: "active_execution" | "uncommitted_changes",
+    guard: WorkflowStartGuard,
     message: string,
-    dirtyPaths?: DirtyPath[],
+    details?: {
+      dirtyPaths?: DirtyPath[];
+      blocker?: GraphWorkflowLeaseBlocker;
+      finalizingMerge?: SessionFinalizingMerge;
+    },
   ) {
     super(message);
     this.name = "WorkflowStartGuardError";
     this.guard = guard;
-    if (dirtyPaths !== undefined) {
-      this.dirtyPaths = dirtyPaths;
+    if (details?.dirtyPaths !== undefined) {
+      this.dirtyPaths = details.dirtyPaths;
+    }
+    if (details?.blocker !== undefined) {
+      this.blocker = details.blocker;
+    }
+    if (details?.finalizingMerge !== undefined) {
+      this.finalizingMerge = details.finalizingMerge;
     }
   }
+}
+
+/**
+ * Turn a lease refusal into the raised guard error. Both start-guard call sites
+ * — the manager's advisory pre-check and the repository's reservation — build
+ * the refusal HERE, so the message, the code, and the blocker facts cannot
+ * drift between the two paths that can refuse the same launch.
+ */
+export function leaseHeldStartGuardError(input: {
+  projectPath: string;
+  sessionName: string;
+  refusal: Extract<LeaseAdmissionDecision, { kind: "refuse" }>;
+}): WorkflowStartGuardError {
+  const { incumbent, remedy } = input.refusal;
+  return new WorkflowStartGuardError(
+    "active_execution",
+    `Session "${input.sessionName}" already has an active graph workflow execution`,
+    {
+      blocker: {
+        ...incumbent,
+        remedy,
+        deepLink: buildGraphWorkflowExecutionDeepLink({
+          projectName: path.basename(input.projectPath),
+          sessionName: input.sessionName,
+          executionId: incumbent.executionId,
+        }),
+      },
+    },
+  );
+}
+
+/** The merge a `session_finalizing` refusal names. */
+export interface SessionFinalizingMerge {
+  jobId: string;
+  branchName: string;
+}
+
+/**
+ * The production reader behind the session-finalizing launch guard. Narrowed to
+ * the two facts the refusal names, so the manager never holds a whole job.
+ */
+function defaultReadSessionFinalizingMerge(
+  projectPath: string,
+  sessionName: string,
+): SessionFinalizingMerge | null {
+  const job = getFinalizingSessionMergeJob(projectPath, sessionName);
+  return job === null ? null : { jobId: job.jobId, branchName: job.branchName };
+}
+
+/**
+ * Turn a session-finalizing merge into the raised guard error. Like the lease
+ * refusal above, both call sites — the advisory pre-check and the reservation
+ * fence — build it HERE, so the two refusals for one race cannot word
+ * themselves differently.
+ */
+function sessionFinalizingStartGuardError(
+  merge: SessionFinalizingMerge,
+): WorkflowStartGuardError {
+  return new WorkflowStartGuardError(
+    "session_finalizing",
+    `Cannot start the workflow while ${merge.branchName} is being merged and this session finished. Wait for the merge to finish, or discard it, and try again.`,
+    { finalizingMerge: merge },
+  );
 }
 
 /**
@@ -255,17 +448,180 @@ export type RecordDefinitionApprovalResult =
         | "no_active_execution"
         | "not_awaiting_approval"
         | "already_decided"
-        | "definition_mismatch"
-        | "definition_revision_mismatch"
-        | "execution_mismatch";
+        | "execution_mismatch"
+        // Finalization without a reservation the gate then admitted. The
+        // reservation is the approval saga's arbiter, so a finalize that never
+        // held one is a caller skipping the admission it exists to sequence.
+        | "not_reserved"
+        // The park is reserved by a different act. This caller's reservation
+        // was reclaimed as stranded and replaced while it was away, so the
+        // decision belongs to that holder now.
+        | "claim_superseded";
     };
+
+/**
+ * Why reserving a definition decision was declined. The same questions
+ * approval asks, plus the one the reservation itself answers: somebody else is
+ * already deciding this park.
+ */
+export type ClaimDefinitionApprovalResult =
+  | {
+      ok: true;
+      execution: GraphWorkflowExecution;
+      /**
+       * The reservation's identity, and the only credential its remaining moves
+       * are accepted on. Held by the act, never re-read from the row: a caller
+       * that reads back "whatever is reserved now" would act on a stranger's
+       * reservation.
+       */
+      claimId: string;
+    }
+  | {
+      ok: false;
+      reason:
+        | "no_active_execution"
+        | "not_awaiting_approval"
+        | "already_decided"
+        | "execution_mismatch"
+        | "decision_in_flight";
+    };
+
+export interface ClaimDefinitionApprovalInput {
+  projectPath: string;
+  sessionName: string;
+  /** The parked run the caller read. Never "whatever holds the lease now". */
+  expectedExecutionId?: string;
+}
+
+export interface ReleaseDefinitionApprovalClaimInput {
+  projectPath: string;
+  sessionName: string;
+  /** The run whose reservation this caller holds. */
+  expectedExecutionId: string;
+  /** The reservation this caller made, as returned when it was granted. */
+  claimId: string;
+}
+
+/**
+ * Releasing is only ever a reservation holder undoing its own act, so its
+ * refusals are diagnostics rather than decisions: whatever the reason, the
+ * park is not left reserved by a caller that has gone away.
+ * `claim_superseded` is the one that matters: the park is reserved, but by
+ * somebody else, and freeing it would break that holder's saga rather than
+ * this one's.
+ */
+export type ReleaseDefinitionApprovalClaimResult =
+  | { ok: true; execution: GraphWorkflowExecution }
+  | {
+      ok: false;
+      reason:
+        | "no_active_execution"
+        | "execution_mismatch"
+        | "not_reserved"
+        | "claim_superseded";
+    };
+
+/**
+ * Why a definition rejection was declined. The same three questions approval
+ * asks, minus `already_decided`: a decided park is no longer awaiting one
+ * (D7 decision D17). `decision_in_flight` is the reservation's: a rejection
+ * landing under an in-flight approval would strand that act's admission.
+ */
+export type RejectDefinitionResult =
+  | { ok: true; execution: GraphWorkflowExecution }
+  | { ok: false; reason: "no_active_execution" }
+  | { ok: false; reason: "execution_mismatch"; activeExecutionId: string }
+  | { ok: false; reason: "not_awaiting_approval"; status: GraphWorkflowStatus }
+  | { ok: false; reason: "decision_in_flight" };
+
+export interface RejectDefinitionInput {
+  projectPath: string;
+  sessionName: string;
+  /** The parked run the human reviewed. Never "whatever holds the lease now". */
+  executionId: string;
+}
+
+/**
+ * Why an abandon was declined. `not_lease_holding_halt` is deliberately one
+ * reason rather than three: a running run, a non-resumable halt, and a run
+ * already abandoned all fail the SAME question — does this record still hold
+ * the lease as a halt — and splitting it would invite a caller to re-derive
+ * tenure from the status it carries.
+ */
+export type AbandonExecutionResult =
+  | { ok: true; execution: GraphWorkflowExecution }
+  | { ok: false; reason: "no_active_execution" }
+  | { ok: false; reason: "execution_mismatch"; activeExecutionId: string }
+  | {
+      ok: false;
+      reason: "not_lease_holding_halt";
+      status: GraphWorkflowStatus;
+      abandoned: boolean;
+    };
+
+export interface AbandonExecutionInput {
+  projectPath: string;
+  sessionName: string;
+  /** The run the caller means. Never "whatever holds the lease right now". */
+  executionId: string;
+  reason: string;
+  actor: GraphWorkflowAbandonment["actor"];
+}
+
+/** How the released audit row names who abandoned the run. */
+export function abandonmentActorAuditLabel(
+  actor: GraphWorkflowAbandonment["actor"],
+): string {
+  return actor.kind === "human"
+    ? "human"
+    : `conversation:${actor.conversationId}`;
+}
+
+/**
+ * Read a refused abandon back out of the archive outcome.
+ *
+ * The archive's guard cannot carry a reason out of the transaction, but it
+ * hands back the row it actually saw — so the refusal is classified from that
+ * row rather than from a second read that could see a different one.
+ */
+function declineAbandon(
+  requestedExecutionId: string,
+  outcome: Extract<GraphWorkflowArchiveOutcome, { archived: false }>,
+): Exclude<AbandonExecutionResult, { ok: true }> {
+  if (outcome.reason === "no_active") {
+    return { ok: false, reason: "no_active_execution" };
+  }
+  return outcome.execution.id === requestedExecutionId
+    ? {
+        ok: false,
+        reason: "not_lease_holding_halt",
+        status: outcome.execution.status,
+        abandoned: outcome.execution.abandonment !== null,
+      }
+    : {
+        ok: false,
+        reason: "execution_mismatch",
+        activeExecutionId: outcome.execution.id,
+      };
+}
 
 export interface RecordDefinitionApprovalInput {
   projectPath: string;
   sessionName: string;
+  /**
+   * The run the caller means. The only identity the act carries: a one-off
+   * launch has no saved-definition id to co-guard with, and a template park's
+   * definition identity is already pinned by the immutable snapshot the
+   * execution holds (D7 decision D17).
+   */
   expectedExecutionId?: string;
-  expectedDefinitionId?: string;
-  expectedDefinitionRevision?: number;
+  /**
+   * The reservation this act made and the admission consumer accepted.
+   * Required, because finalizing is the second half of one saga: a caller that
+   * cannot name a reservation it still holds is a caller starting a run the
+   * consumer was never asked about.
+   */
+  claimId: string;
 }
 
 /**
@@ -333,6 +689,14 @@ export interface GraphWorkflowResumeOptions {
   /** Per-file operator guidance attached to every failed join reset by this
    *  resume; consumed by the next conflict-resolution attempt. */
   conflictGuidance?: ConflictDecisionInput[];
+  /**
+   * Resume only if this execution still holds the session's lease. Resume is
+   * session-addressed, so a caller that decided to resume from a snapshot it
+   * read earlier — plan repair, across an abandon-plus-relaunch — would
+   * otherwise resume whichever successor took the slot. Checked inside the
+   * serialized reducer, which is the only place the answer cannot go stale.
+   */
+  expectedExecutionId?: string;
 }
 
 export type GraphWorkflowLifecycleAction =
@@ -403,6 +767,19 @@ export interface GraphWorkflowManagerDeps {
    * guard. Defaults to the real `git status --porcelain` reader.
    */
   readSessionWorktreeDirtyPaths?(worktreePath: string): Promise<DirtyPath[]>;
+  /**
+   * The session's in-flight merge that will also finalize the session, or null.
+   * Backs the launch guard that mirrors the delivery gate (R13). Defaults to the
+   * real background-job registry reader.
+   *
+   * Consulted TWICE per launch — advisorily up front, then again inside the
+   * reserving transaction — so it must be synchronous and cheap: the second
+   * call runs on the write queue.
+   */
+  readSessionFinalizingMerge?(
+    projectPath: string,
+    sessionName: string,
+  ): SessionFinalizingMerge | null;
   /**
    * Deterministic pre-flight prerequisite gate. The shared start path invokes
    * it after the dirty-worktree guard + tier resolve and before start-input
@@ -530,6 +907,57 @@ export interface DrainAndHaltInput {
 }
 
 const logger = createLogger("graph-workflow-manager");
+
+/**
+ * How long a definition-approval reservation may sit before a sweep may
+ * conclude its holder is gone.
+ *
+ * Sized against what it must NOT interrupt: the admission call a live holder is
+ * inside lasts milliseconds (a local transaction plus a notification), while
+ * the only thing that legitimately strands a reservation is a process that died
+ * holding it. Two minutes is far past the former and irrelevant to the latter,
+ * which is why an approximate age is the right instrument here.
+ */
+const DEFINITION_APPROVAL_CLAIM_STRANDED_MS = 2 * 60 * 1000;
+
+/**
+ * Whether a reservation has aged past the point where a live holder is a
+ * plausible explanation. An unparseable timestamp reads as stranded: a
+ * reservation nobody can date is one nobody can be waiting behind.
+ */
+function isDefinitionApprovalClaimStranded(
+  claim: GraphWorkflowDefinitionApprovalClaim,
+  now: string,
+): boolean {
+  const claimedAt = Date.parse(claim.claimedAt);
+  const at = Date.parse(now);
+  if (Number.isNaN(claimedAt)) return true;
+  if (Number.isNaN(at)) return false;
+  return at - claimedAt >= DEFINITION_APPROVAL_CLAIM_STRANDED_MS;
+}
+
+/**
+ * The reservation of a decision whose holder is no longer plausibly live, or
+ * `null` when the park has no such debt.
+ *
+ * The answer is only ever "which act was interrupted", never "you may take this
+ * reservation away". Nothing frees a reservation but its holder, because a
+ * reservation is taken BEFORE the admission consumer is called and may
+ * therefore already have that consumer's durable records behind it. An
+ * interrupted decision is FINISHED by whoever holds the admission seam — this
+ * is how they find one.
+ */
+export function interruptedDefinitionDecision(
+  execution: GraphWorkflowExecution,
+  now: string,
+): { claimId: string } | null {
+  const claim = execution.definitionApprovalClaim;
+  if (claim === null) return null;
+  if (!awaitsDefinitionApproval(execution.status, execution.definitionApproval))
+    return null;
+  if (!isDefinitionApprovalClaimStranded(claim, now)) return null;
+  return { claimId: claim.claimId };
+}
 
 function describeLaunchInputError(error: LaunchInputError): string {
   switch (error.kind) {
@@ -774,7 +1202,15 @@ function interruptRunningTasks(execution: GraphWorkflowExecution): boolean {
   return foundRunning;
 }
 
-function transitionToNonRunningState(
+/**
+ * THE execution-level transition into a non-running state (D4: execution status
+ * is hand-rolled here rather than in the context-status owner). Exported so
+ * every path that ends or parks a run — including the repository's
+ * materialization-failure halt — moves through this one rule set: running tasks
+ * are interrupted, the active context is marked ready, a running run's
+ * `loopEpoch` is retired, and the lifecycle snapshot is rebuilt.
+ */
+export function transitionToNonRunningState(
   execution: GraphWorkflowExecution,
   status: Extract<GraphWorkflowStatus, "paused" | "halted" | "aborted">,
   completedAt: string | null,
@@ -789,6 +1225,11 @@ function transitionToNonRunningState(
   nextExecution.status = status;
   nextExecution.completedAt = completedAt;
   nextExecution.haltReason = haltReason;
+  // A run that has left the park has no decision left to make, so a reservation
+  // on it is debt rather than state. Cutting off a live holder is the caller's
+  // question, not this one's: the two acts that can transition a still-parked
+  // run — abort and rejection — refuse while a decision is genuinely in flight.
+  nextExecution.definitionApprovalClaim = null;
   nextExecution.machineSnapshot = buildLifecycleSnapshot(nextExecution, {
     lifecycleStatus: status,
     recoveryMode: hadRunningTasks ? "interrupted_task" : "none",
@@ -884,12 +1325,19 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     projectPath: string,
     sessionName: string,
   ): void {
+    // Attribution comes from the recorded origin, never from the seed
+    // projection: on a one-off row those fields are deliberate filler naming a
+    // definition that does not exist (D7 decision D2).
+    const attribution = describeLaunchSource(
+      execution.origin.kind === "template"
+        ? { ...execution.origin }
+        : { kind: "one_off", planName: execution.origin.planName },
+    );
     const execLogger = createExecutionLogger(execution.id);
     registerExecutionLogger(execLogger);
     execLogger.writeManifest(execution);
     execLogger.lifecycle("execution.started", {
-      definitionId: execution.seedDefinitionId,
-      definitionRevision: execution.seedDefinitionRevision,
+      ...attribution,
       projectPath,
       sessionName,
       contextCount: execution.workingDefinition.executionContexts.length,
@@ -897,18 +1345,201 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     });
     logger.info("graph-workflow.execution.started", {
       executionId: execution.id,
-      definitionId: execution.seedDefinitionId,
-      definitionRevision: execution.seedDefinitionRevision,
-      tier: execution.launchedTier,
+      ...attribution,
     });
   }
 
-  async function start(
-    input: GraphWorkflowStartInput,
+  /**
+   * Resolve a launch request into the definition content it will run and the
+   * provenance it will persist.
+   *
+   * The template arm is the ONLY place a launch reads saved-definition storage;
+   * the one-off arm resolves to the document the caller already submitted, so
+   * an inline launch provably cannot reach the template library, the builder,
+   * or the launcher list (R1.1). Everything after this point is origin-blind.
+   */
+  async function resolveLaunchSource(
+    request: WorkflowLaunchSourceRequest,
+    context: { projectPath: string; sessionName: string },
+  ): Promise<ResolvedLaunchSource> {
+    if (request.kind === "one_off") {
+      return {
+        source: { kind: "one_off", planName: request.plan.name },
+        definition: request.plan.definition,
+        launchDocument: {
+          name: request.plan.name,
+          description: request.plan.description,
+          definition: request.plan.definition,
+          layout: request.plan.layout,
+        },
+      };
+    }
+
+    const tier: TemplateTier = request.tier ?? "project";
+    const definition = await deps.loadDefinition(
+      context.projectPath,
+      request.definitionId,
+      tier,
+    );
+    if (!definition) {
+      throw new WorkflowDefinitionNotFoundError(request.definitionId, tier);
+    }
+    if (
+      request.expectedRevision !== undefined &&
+      definition.revision !== request.expectedRevision
+    ) {
+      logger.warn("graph-workflow.start.definition_revision_mismatch", {
+        projectPath: context.projectPath,
+        sessionName: context.sessionName,
+        definitionId: request.definitionId,
+        expectedDefinitionRevision: request.expectedRevision,
+        actualDefinitionRevision: definition.revision,
+      });
+      throw new WorkflowDefinitionRevisionMismatchError(
+        request.definitionId,
+        request.expectedRevision,
+        definition.revision,
+      );
+    }
+
+    return {
+      source: {
+        kind: "template",
+        definitionId: definition.id,
+        definitionRevision: definition.revision,
+        tier,
+      },
+      definition: definition.definition,
+      // Copied, not referenced: the run must still render its own graph and
+      // layout after the template is edited or deleted (R12.3).
+      launchDocument: {
+        name: definition.name,
+        description: definition.description,
+        definition: definition.definition,
+        layout: definition.layout,
+      },
+    };
+  }
+
+  /**
+   * The dirty-worktree exemption's eligibility probe (R8, decision D10).
+   *
+   * Reached ONLY when the worktree is already known to be dirty, which is what
+   * keeps today's guard order intact: an ordinary clean launch resolves nothing
+   * extra, and a dirty refusal still outranks the missing-definition 404 behind
+   * it. The probe answers with the resolved source it had to build, so an
+   * admitted plan is resolved once for both the exemption and the launch.
+   *
+   * Every failure mode collapses to "not exempt": a definition that is gone, a
+   * revision that moved, a config read that failed, a cascade that threw. The
+   * ordinary dirty guard stays fail-OPEN on its own probe (a broken `git
+   * status` must not wedge a legitimate start), but an exemption is a proof
+   * obligation — an unprovable one is refused.
+   */
+  async function probeDirtyWorktreeExemption(
+    input: GraphWorkflowLaunchInput,
+  ): Promise<ResolvedLaunchSource | null> {
+    try {
+      const resolved = await resolveLaunchSource(input.source, {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+      });
+      const global = await (deps.readGlobalConfig ?? readConfig)();
+      // The predicate reads cascade-resolved config (script commands,
+      // collaboration), so the cascade has to run before it can be asked.
+      // Substitution is deliberately not run first: it rewrites content and
+      // charter text, never the operational config this proof quantifies over.
+      const cascade = resolveWorkflowDefinition(global, resolved.definition);
+      return isWholeRunLiveSessionReadOnly(cascade) ? resolved : null;
+    } catch (error) {
+      logger.info("graph-workflow.start.dirty_exemption_unprovable", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        originKind: input.source.kind,
+        error: getErrorMessage(error),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Reserve the lease with the session-finalizing question re-asked INSIDE the
+   * reserving transaction (R13).
+   *
+   * The advisory answer at the top of the gauntlet is stale by the time this
+   * runs: source resolution, the prerequisite preflight and input validation
+   * all await in between, and a merge that registers anywhere in that window
+   * then reads a free lease under its own project lock. Both would be admitted,
+   * leaving a Current run in a session the merge is about to finish.
+   *
+   * The fence is synchronous and the merge's registration is synchronous, so on
+   * one event loop the two possible orders are exhaustive: either the lease
+   * commits before the merge registers — and the merge's in-lock lease read
+   * sees it — or the merge is registered before the fence reads the registry,
+   * and this refuses. A refusal is write-free: it declines before the
+   * transaction's first write, so no row, no normalization and no artifact
+   * record survives it.
+   */
+  async function reserveWithSessionFinalizingFence(
+    input: GraphWorkflowLaunchInput,
+    readFinalizingMerge: (
+      projectPath: string,
+      sessionName: string,
+    ) => SessionFinalizingMerge | null,
+    seed: GraphWorkflowExecutionSeed,
   ): Promise<GraphWorkflowExecution> {
+    try {
+      return await deps.executionRepository.create(
+        input.projectPath,
+        input.sessionName,
+        seed,
+        () => {
+          const merge = readFinalizingMerge(
+            input.projectPath,
+            input.sessionName,
+          );
+          if (merge === null) return;
+          throw sessionFinalizingStartGuardError(merge);
+        },
+      );
+    } catch (error) {
+      // The fence itself cannot log — it runs on the write queue, where
+      // `createLogger` would append to disk while every other writer waits.
+      if (
+        error instanceof WorkflowStartGuardError &&
+        error.finalizingMerge !== undefined
+      ) {
+        logger.info("graph-workflow.start.blocked_session_finalizing", {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          jobId: error.finalizingMerge.jobId,
+          branchName: error.finalizingMerge.branchName,
+          checkpoint: "reservation",
+        });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * THE launch gauntlet, ridden by every origin (D7 decision D1).
+   *
+   * `workflow start` and `workflow run` differ in exactly one step — how the
+   * definition content is resolved — and that step is `resolveLaunchSource`
+   * above. Lease admission, the dirty-worktree guard, the execution contract,
+   * the prerequisite preflight, input validation, seeding (substitution,
+   * structural re-validation, reference checks, the global → workflow →
+   * per-context cascade, assignment snapshots, the selector freeze), the
+   * approval park, and the pending → running transition all happen HERE, once,
+   * so validation parity between the two verbs is structural rather than
+   * aspirational.
+   */
+  async function launch(
+    input: GraphWorkflowLaunchInput,
+  ): Promise<GraphWorkflowLaunchOutcome> {
     // Guard order is behavior-preserving and load-bearing: active-execution
-    // first, then the dirty-worktree guard, both BEFORE loadDefinition. The
-    // dirty 409 must still win over a 404 when both apply (the HTTP handler
+    // first, then the dirty-worktree guard, both BEFORE the source is resolved.
+    // The dirty 409 must still win over a 404 when both apply (the HTTP handler
     // historically checked dirty before resolving the definition), and the
     // active-execution guard precedes everything so an already-running workflow
     // reports the more specific message.
@@ -916,79 +1547,97 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       input.projectPath,
       input.sessionName,
     );
-    if (existing) {
-      // Replaceability is the lifecycle contract's call, not a list restated
-      // here — and the only replacement it permits is the audited archive, so
-      // there is no branch in which the incumbent is silently dropped.
-      if (replacementPolicy(existing.status) === "audited-archive") {
-        await deps.executionRepository.archiveActive(
-          input.projectPath,
-          input.sessionName,
-        );
-      } else {
-        throw new WorkflowStartGuardError(
-          "active_execution",
-          `Session "${input.sessionName}" already has an active graph workflow execution`,
-        );
-      }
+    // ADVISORY half of the two-phase guard: it refuses early, before the long
+    // async gauntlet, and mutates nothing — the read above upgrades a
+    // legacy-shaped row for this caller without writing it back, so a launch
+    // that stops here has touched no store at all (R5.2). The authoritative
+    // decision — same `evaluateLeaseAdmission`, so the two can only agree —
+    // runs inside the repository's serialized reservation, which also performs
+    // the normalization a lease-free incumbent needs. Refusing here therefore
+    // leaves the incumbent byte-identical whatever it is (R3.4).
+    const admission = evaluateLeaseAdmission(existing);
+    if (admission.kind === "refuse") {
+      throw leaseHeldStartGuardError({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        refusal: admission,
+      });
+    }
+
+    // The symmetric half of the delivery gate (R13), ADVISORY half. The merge
+    // refuses while a run holds the lease; this refuses while the session is
+    // being finalized. Without it the two admit each other in the window
+    // between the merge route's advisory lease check and the publish under the
+    // project lock: the route sees no lease, the launch sees no merge, and the
+    // session gets a fresh run seeded into it as it is marked finished. It runs
+    // here so a refusal pays for nothing below — a lease-held incumbent reports
+    // the more specific refusal above, which is why that check runs first — and
+    // the AUTHORITATIVE half re-asks inside the reserving transaction, because
+    // everything between here and there is asynchronous.
+    const readFinalizingMerge =
+      deps.readSessionFinalizingMerge ?? defaultReadSessionFinalizingMerge;
+    const finalizingMerge = readFinalizingMerge(
+      input.projectPath,
+      input.sessionName,
+    );
+    if (finalizingMerge !== null) {
+      logger.info("graph-workflow.start.blocked_session_finalizing", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        jobId: finalizingMerge.jobId,
+        branchName: finalizingMerge.branchName,
+        checkpoint: "advisory",
+      });
+      throw sessionFinalizingStartGuardError(finalizingMerge);
     }
 
     // Lanes fork from the committed session branch, so any uncommitted change in
     // the session worktree (e.g. a freshly-written, never-committed Kiro spec —
-    // which is untracked) would be missing from every lane. Refuse the start.
+    // which is untracked) would be missing from every lane. Refuse the start,
+    // UNLESS the resolved run provably forks no lane at all (R8).
     const dirtyPaths = await readSessionDirtyPaths(
       input.projectPath,
       input.sessionName,
     );
+    // Carried out of the guard so an exempted launch reuses the resolution the
+    // eligibility probe already paid for.
+    let exemptedSource: ResolvedLaunchSource | null = null;
     if (dirtyPaths.length > 0) {
-      logger.info("graph-workflow.start.blocked_uncommitted_changes", {
+      exemptedSource = await probeDirtyWorktreeExemption(input);
+      if (exemptedSource === null) {
+        logger.info("graph-workflow.start.blocked_uncommitted_changes", {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          dirtyCount: dirtyPaths.length,
+        });
+        throw new WorkflowStartGuardError(
+          "uncommitted_changes",
+          `Cannot start the workflow while the session worktree has ${dirtyPaths.length} uncommitted change(s). Workflow lanes are created from the committed branch, so uncommitted files would be missing. Commit your changes and try again.`,
+          { dirtyPaths },
+        );
+      }
+      logger.info("graph-workflow.start.dirty_worktree_exempted", {
         projectPath: input.projectPath,
         sessionName: input.sessionName,
+        originKind: input.source.kind,
         dirtyCount: dirtyPaths.length,
       });
-      throw new WorkflowStartGuardError(
-        "uncommitted_changes",
-        `Cannot start the workflow while the session worktree has ${dirtyPaths.length} uncommitted change(s). Workflow lanes are created from the committed branch, so uncommitted files would be missing. Commit your changes and try again.`,
-        dirtyPaths,
-      );
     }
 
-    const tier: TemplateTier = input.tier ?? "project";
-    const definition = await deps.loadDefinition(
-      input.projectPath,
-      input.definitionId,
-      tier,
-    );
-    if (!definition) {
-      throw new WorkflowDefinitionNotFoundError(input.definitionId, tier);
-    }
-    if (
-      input.expectedDefinitionRevision !== undefined &&
-      definition.revision !== input.expectedDefinitionRevision
-    ) {
-      logger.warn("graph-workflow.start.definition_revision_mismatch", {
+    const { source, definition, launchDocument } =
+      exemptedSource ??
+      (await resolveLaunchSource(input.source, {
         projectPath: input.projectPath,
         sessionName: input.sessionName,
-        definitionId: input.definitionId,
-        expectedDefinitionRevision: input.expectedDefinitionRevision,
-        actualDefinitionRevision: definition.revision,
-      });
-      throw new WorkflowDefinitionRevisionMismatchError(
-        input.definitionId,
-        input.expectedDefinitionRevision,
-        definition.revision,
-      );
-    }
+      }));
+    const attribution = describeLaunchSource(source);
 
-    const contractDecision = executionContract.validateDefinition(
-      definition.definition,
-    );
+    const contractDecision = executionContract.validateDefinition(definition);
     if (!contractDecision.ok) {
       logger.warn("graph-workflow.start.execution_contract_rejected", {
         projectPath: input.projectPath,
         sessionName: input.sessionName,
-        definitionId: input.definitionId,
-        tier,
+        ...attribution,
         code: contractDecision.code,
         issueCount: contractDecision.issues.length,
       });
@@ -1013,9 +1662,9 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       // resolution the run uses (per-context → workflow → global). It scopes
       // backend-dependent (skill) prerequisites to the backend(s) that actually
       // run the launch, never a single assumed launch backend (R5.2a, R5.4b).
-      const usedBackends = computeUsedBackends(global, definition.definition);
+      const usedBackends = computeUsedBackends(global, definition);
       const preflight = await preflightService.evaluate({
-        definition: definition.definition,
+        definition,
         worktreePath: session.worktreePath,
         usedBackends,
       });
@@ -1023,8 +1672,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         logger.info("graph-workflow.start.blocked_prerequisites_unmet", {
           projectPath: input.projectPath,
           sessionName: input.sessionName,
-          definitionId: input.definitionId,
-          tier,
+          ...attribution,
           missingCount: preflight.missing.length,
         });
         throw new WorkflowPrerequisitesUnmetError(
@@ -1035,14 +1683,14 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     }
 
     const validation = validateLaunchInputs({
-      parameters: definition.definition.parameters,
+      parameters: definition.parameters,
       supplied: input.parameters,
     });
     if (!validation.ok) {
       logger.info("graph-workflow.start.input_rejected", {
         projectPath: input.projectPath,
         sessionName: input.sessionName,
-        definitionId: input.definitionId,
+        ...attribution,
         rejectionKind: validation.error.kind,
         parameterName: validation.error.name,
       });
@@ -1053,39 +1701,46 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     }
     const boundInputs = validation.boundInputs;
 
-    const pendingExecution = await deps.executionRepository.create(
-      input.projectPath,
-      input.sessionName,
+    const pendingExecution = await reserveWithSessionFinalizingFence(
+      input,
+      readFinalizingMerge,
       {
-        definition: definition.definition,
-        definitionId: definition.id,
-        definitionRevision: definition.revision,
+        definition,
+        source,
+        launchDocument,
         executionId: getExecutionId(deps),
         startedAt: getNow(deps),
         inputs: boundInputs,
-        launchedTier: tier,
         ownerConversationId: input.ownerConversationId ?? null,
         seededDocuments: input.seededDocuments ?? [],
+        // Only an admitted dirty launch carries the pin, and it carries it for
+        // the execution's whole lifetime: the live-edit frontier re-asserts the
+        // property against every later structural mutation (R8.3).
+        liveSessionReadOnlyPinned: exemptedSource !== null,
       },
     );
 
+    // An authored `approvalRequired` is an ACCEPTED launch that has not begun
+    // (D7 R14): the pending execution is durable and holds the session's lease,
+    // so the outcome carries the park rather than raising it. Nothing below this
+    // line runs for a parked run — the loop starts only once a human decides.
     if (
-      pendingExecution.definitionApproval !== null &&
-      pendingExecution.definitionApproval.approvedAt === null
+      awaitsDefinitionApproval(
+        pendingExecution.status,
+        pendingExecution.definitionApproval,
+      )
     ) {
       logger.info("graph-workflow.definition_approval.pending", {
         executionId: pendingExecution.id,
-        definitionId: pendingExecution.seedDefinitionId,
-        definitionRevision: pendingExecution.seedDefinitionRevision,
+        ...attribution,
         projectPath: input.projectPath,
         sessionName: input.sessionName,
-        requestedAt: pendingExecution.definitionApproval.requestedAt,
+        requestedAt: pendingExecution.definitionApproval?.requestedAt ?? null,
       });
-      throw new WorkflowDefinitionApprovalRequiredError(
-        pendingExecution.id,
-        pendingExecution.seedDefinitionId,
-        pendingExecution.seedDefinitionRevision,
-      );
+      return {
+        execution: pendingExecution,
+        awaitingDefinitionApproval: true,
+      };
     }
 
     const nextExecution = await deps.executionRepository.mutateActive(
@@ -1104,7 +1759,197 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
 
     recordExecutionStarted(nextExecution, input.projectPath, input.sessionName);
 
-    return nextExecution;
+    return { execution: nextExecution, awaitingDefinitionApproval: false };
+  }
+
+  /**
+   * Launch a SAVED definition (`workflow start`). A thin adapter: it names the
+   * template source and hands the rest to the shared gauntlet.
+   */
+  async function start(
+    input: GraphWorkflowStartInput,
+  ): Promise<GraphWorkflowLaunchOutcome> {
+    return launch({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      source: {
+        kind: "template",
+        definitionId: input.definitionId,
+        ...(input.expectedDefinitionRevision !== undefined
+          ? { expectedRevision: input.expectedDefinitionRevision }
+          : {}),
+        ...(input.tier !== undefined ? { tier: input.tier } : {}),
+      },
+      ...(input.parameters !== undefined
+        ? { parameters: input.parameters }
+        : {}),
+      ...(input.ownerConversationId !== undefined
+        ? { ownerConversationId: input.ownerConversationId }
+        : {}),
+      ...(input.seededDocuments !== undefined
+        ? { seededDocuments: input.seededDocuments }
+        : {}),
+    });
+  }
+
+  /**
+   * Launch an INLINE plan (`workflow run`). The plan has already passed the
+   * accept-time gate at the route boundary; from here it is indistinguishable
+   * from a template launch except for its recorded origin, which is exactly
+   * R2's parity claim.
+   */
+  async function run(
+    input: GraphWorkflowRunInput,
+  ): Promise<GraphWorkflowLaunchOutcome> {
+    return launch({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      source: { kind: "one_off", plan: input.plan },
+      ...(input.inputs !== undefined ? { parameters: input.inputs } : {}),
+      ...(input.ownerConversationId !== undefined
+        ? { ownerConversationId: input.ownerConversationId }
+        : {}),
+      ...(input.seededDocuments !== undefined
+        ? { seededDocuments: input.seededDocuments }
+        : {}),
+    });
+  }
+
+  /**
+   * Reserve the park's pending decision for one act, WITHOUT deciding it.
+   *
+   * The first of the approval saga's two commits (D7 decision D17). It writes
+   * only the reservation: the run stays `pending`, its approval record stays
+   * undecided, and nothing materializes — so a caller that goes on to be
+   * refused by the admission gate has an act it can fully undo, and a caller
+   * that loses this race never reaches the gate at all. Every refusal branch
+   * throws rather than returning the row: a reducer that hands back what it was
+   * given still commits, still advances the staging fence, and still publishes
+   * an update for a run this caller did not touch.
+   */
+  async function claimDefinitionApproval(
+    input: ClaimDefinitionApprovalInput,
+  ): Promise<ClaimDefinitionApprovalResult> {
+    const now = getNow(deps);
+    const claimId = randomUUID();
+    const declined: {
+      reason:
+        | Exclude<ClaimDefinitionApprovalResult, { ok: true }>["reason"]
+        | null;
+    } = { reason: null };
+    const nextExecution = await mutateActiveOrRefuse(() =>
+      deps.executionRepository.mutateActive(
+        input.projectPath,
+        input.sessionName,
+        (execution) => {
+          if (
+            input.expectedExecutionId !== undefined &&
+            execution.id !== input.expectedExecutionId
+          ) {
+            declined.reason = "execution_mismatch";
+            throw new MutationRefusedError("claim_definition_approval");
+          }
+          // Ordered so the row's own state outranks a reservation left on it:
+          // a run that has left the park answers "not awaiting approval" even
+          // if an abort walked away from a reservation nobody can use anymore.
+          if (execution.definitionApproval === null) {
+            declined.reason = "not_awaiting_approval";
+            throw new MutationRefusedError("claim_definition_approval");
+          }
+          if (execution.definitionApproval.approvedAt !== null) {
+            declined.reason = "already_decided";
+            throw new MutationRefusedError("claim_definition_approval");
+          }
+          if (execution.status !== "pending") {
+            declined.reason = "not_awaiting_approval";
+            throw new MutationRefusedError("claim_definition_approval");
+          }
+          if (execution.definitionApprovalClaim !== null) {
+            declined.reason = "decision_in_flight";
+            throw new MutationRefusedError("claim_definition_approval");
+          }
+          execution.definitionApprovalClaim = { claimId, claimedAt: now };
+          return execution;
+        },
+      ),
+    );
+
+    if (declined.reason !== null || nextExecution === null) {
+      const reason = declined.reason ?? "no_active_execution";
+      logger.warn("graph-workflow.definition_approval.claim_refused", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        expectedExecutionId: input.expectedExecutionId,
+        reason,
+      });
+      return { ok: false, reason };
+    }
+
+    logger.info("graph-workflow.definition_approval.claimed", {
+      executionId: nextExecution.id,
+      origin: nextExecution.origin.kind,
+      claimId,
+      claimedAt: now,
+    });
+    return { ok: true, execution: nextExecution, claimId };
+  }
+
+  /**
+   * Hand the park's decision back, undecided — the compensation for a
+   * reservation whose admission was refused. The park returns to exactly the
+   * state the reviewer found it in, which is what makes the gate's "fix this,
+   * then approve again" remedy true.
+   */
+  async function releaseDefinitionApprovalClaim(
+    input: ReleaseDefinitionApprovalClaimInput,
+  ): Promise<ReleaseDefinitionApprovalClaimResult> {
+    const declined: {
+      reason:
+        | Exclude<ReleaseDefinitionApprovalClaimResult, { ok: true }>["reason"]
+        | null;
+    } = { reason: null };
+    const nextExecution = await mutateActiveOrRefuse(() =>
+      deps.executionRepository.mutateActive(
+        input.projectPath,
+        input.sessionName,
+        (execution) => {
+          if (execution.id !== input.expectedExecutionId) {
+            declined.reason = "execution_mismatch";
+            throw new MutationRefusedError("release_definition_approval_claim");
+          }
+          if (execution.definitionApprovalClaim === null) {
+            declined.reason = "not_reserved";
+            throw new MutationRefusedError("release_definition_approval_claim");
+          }
+          // Bound to the holder, not to "a reservation exists": a sweep can
+          // reclaim a stranded reservation and hand the park to a new act while
+          // this one is still running, and freeing THAT act's reservation would
+          // reopen the park underneath its live admission.
+          if (execution.definitionApprovalClaim.claimId !== input.claimId) {
+            declined.reason = "claim_superseded";
+            throw new MutationRefusedError("release_definition_approval_claim");
+          }
+          execution.definitionApprovalClaim = null;
+          return execution;
+        },
+      ),
+    );
+
+    if (declined.reason !== null || nextExecution === null) {
+      const reason = declined.reason ?? "no_active_execution";
+      logger.warn("graph-workflow.definition_approval.claim_release_refused", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        expectedExecutionId: input.expectedExecutionId,
+        reason,
+      });
+      return { ok: false, reason };
+    }
+
+    logger.info("graph-workflow.definition_approval.claim_released", {
+      executionId: nextExecution.id,
+    });
+    return { ok: true, execution: nextExecution };
   }
 
   async function recordDefinitionApproval(
@@ -1137,40 +1982,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       return { ok: false, reason: "execution_mismatch" };
     }
 
-    if (
-      input.expectedDefinitionId !== undefined &&
-      active.seedDefinitionId !== input.expectedDefinitionId
-    ) {
-      logger.warn("graph-workflow.definition_approval.guard_failed", {
-        executionId: active.id,
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        reason: "definition_mismatch",
-        expectedDefinitionId: input.expectedDefinitionId,
-        activeDefinitionId: active.seedDefinitionId,
-      });
-      return { ok: false, reason: "definition_mismatch" };
-    }
-
-    if (
-      input.expectedDefinitionRevision !== undefined &&
-      active.seedDefinitionRevision !== input.expectedDefinitionRevision
-    ) {
-      logger.warn("graph-workflow.definition_approval.guard_failed", {
-        executionId: active.id,
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        reason: "definition_revision_mismatch",
-        expectedDefinitionRevision: input.expectedDefinitionRevision,
-        activeDefinitionRevision: active.seedDefinitionRevision,
-      });
-      return { ok: false, reason: "definition_revision_mismatch" };
-    }
-
-    if (
-      active.definitionApproval?.approvedAt === null &&
-      active.status === "pending"
-    ) {
+    if (awaitsDefinitionApproval(active.status, active.definitionApproval)) {
       const contractDecision = executionContract.validateDefinition(
         active.workingDefinition,
       );
@@ -1189,77 +2001,105 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       assertGraphExecutionContractAccepted(contractDecision);
     }
 
-    let guardFailure:
-      | "not_awaiting_approval"
-      | "already_decided"
-      | "definition_mismatch"
-      | "definition_revision_mismatch"
-      | "execution_mismatch"
-      | null = null;
-    const nextExecution = await deps.executionRepository.mutateActive(
-      input.projectPath,
-      input.sessionName,
-      (execution) => {
-        if (
-          input.expectedExecutionId !== undefined &&
-          execution.id !== input.expectedExecutionId
-        ) {
-          guardFailure = "execution_mismatch";
-          return execution;
-        }
-        if (
-          input.expectedDefinitionId !== undefined &&
-          execution.seedDefinitionId !== input.expectedDefinitionId
-        ) {
-          guardFailure = "definition_mismatch";
-          return execution;
-        }
-        if (
-          input.expectedDefinitionRevision !== undefined &&
-          execution.seedDefinitionRevision !== input.expectedDefinitionRevision
-        ) {
-          guardFailure = "definition_revision_mismatch";
-          return execution;
-        }
-        const approval = execution.definitionApproval;
-        if (approval === null) {
-          guardFailure = "not_awaiting_approval";
-          return execution;
-        }
-        if (approval.approvedAt !== null) {
-          guardFailure = "already_decided";
-          return execution;
-        }
-        if (execution.status !== "pending") {
-          guardFailure = "not_awaiting_approval";
-          return execution;
-        }
+    // Holder rather than a bare `let`: TS flow analysis does not see the
+    // closure assignment, so a local would narrow to `never` at the read below.
+    const declined: {
+      reason:
+        | "not_awaiting_approval"
+        | "already_decided"
+        | "execution_mismatch"
+        | "not_reserved"
+        | "claim_superseded"
+        | null;
+    } = { reason: null };
+    const nextExecution = await mutateActiveOrRefuse(() =>
+      deps.executionRepository.mutateActive(
+        input.projectPath,
+        input.sessionName,
+        (execution) => {
+          // The AUTHORITATIVE guard: the read above is advisory, and the row
+          // can turn over — or another approval can decide it — in between.
+          // Every branch here refuses the write outright, because a reducer
+          // that hands back the row it was given still commits, still advances
+          // the staging fence, and still publishes an update for a run this
+          // caller just declined to act on.
+          if (
+            input.expectedExecutionId !== undefined &&
+            execution.id !== input.expectedExecutionId
+          ) {
+            declined.reason = "execution_mismatch";
+            throw new MutationRefusedError("record_definition_approval");
+          }
+          const approval = execution.definitionApproval;
+          if (approval === null) {
+            declined.reason = "not_awaiting_approval";
+            throw new MutationRefusedError("record_definition_approval");
+          }
+          if (approval.approvedAt !== null) {
+            declined.reason = "already_decided";
+            throw new MutationRefusedError("record_definition_approval");
+          }
+          if (execution.status !== "pending") {
+            declined.reason = "not_awaiting_approval";
+            throw new MutationRefusedError("record_definition_approval");
+          }
+          // Finalization is the reservation holder's second commit, never a
+          // first move: an approval that starts a run the admission consumer
+          // was never asked about is exactly the unadmitted start the gate
+          // exists to prevent.
+          if (execution.definitionApprovalClaim === null) {
+            declined.reason = "not_reserved";
+            throw new MutationRefusedError("record_definition_approval");
+          }
+          // The reservation must still be THIS act's. A sweep can reclaim a
+          // stranded reservation and grant it to another act, and finalizing
+          // on the strength of that act's reservation would start the run on an
+          // admission this caller no longer has any claim to.
+          if (execution.definitionApprovalClaim.claimId !== input.claimId) {
+            declined.reason = "claim_superseded";
+            throw new MutationRefusedError("record_definition_approval");
+          }
 
-        approval.approvedAt = getNow(deps);
-        execution.status = "running";
-        execution.machineSnapshot = buildLifecycleSnapshot(execution, {
-          lifecycleStatus: "running",
-          recoveryMode: "none",
-          hasLiveIteration: false,
-        });
-        return execution;
-      },
+          approval.approvedAt = getNow(deps);
+          // Consumed by the act it belonged to: the decision is made, so
+          // nothing is in flight for the next act to wait behind.
+          execution.definitionApprovalClaim = null;
+          execution.status = "running";
+          execution.machineSnapshot = buildLifecycleSnapshot(execution, {
+            lifecycleStatus: "running",
+            recoveryMode: "none",
+            hasLiveIteration: false,
+          });
+          return execution;
+        },
+      ),
     );
 
-    if (guardFailure !== null) {
+    const guardFailure = declined.reason;
+    if (guardFailure !== null || nextExecution === null) {
       logger.warn("graph-workflow.definition_approval.guard_failed", {
-        executionId: nextExecution.id,
+        executionId: active.id,
         projectPath: input.projectPath,
         sessionName: input.sessionName,
         reason: guardFailure,
         expectedExecutionId: input.expectedExecutionId,
-        expectedDefinitionId: input.expectedDefinitionId,
-        expectedDefinitionRevision: input.expectedDefinitionRevision,
-        activeDefinitionId: nextExecution.seedDefinitionId,
-        activeDefinitionRevision: nextExecution.seedDefinitionRevision,
       });
-      return { ok: false, reason: guardFailure };
+      return { ok: false, reason: guardFailure ?? "not_awaiting_approval" };
     }
+
+    // The third kickoff, and the WINNER's alone: an approval-gated launch sits
+    // `pending` across an arbitrary wait, so a crash right after its reserving
+    // commit surfaces here — the approval is what first hands the run to the
+    // loop, and it must not do so over a worktree missing the run's sources.
+    // Taken after the commit, like `resume`: a loser that repaired from its
+    // stale snapshot would have written files for a decision that never
+    // happened, and the repository re-halts the identified run if the repair
+    // itself fails.
+    await repairPendingArtifacts(
+      input.projectPath,
+      input.sessionName,
+      nextExecution.id,
+    );
 
     logger.info("graph-workflow.definition_approval.recorded", {
       executionId: nextExecution.id,
@@ -1330,6 +2170,27 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
             ["pending", "running", "paused", "halted"],
             "Completed or aborted graph workflow executions cannot be aborted",
           );
+          // A park with a decision in flight is momentarily not abortable. The
+          // holder may be at its admission gate right now; ending the run
+          // underneath it would strand that consumer's durable admission on a
+          // run this abort killed, and leave the admitted act unable to
+          // finalize. Age is deliberately not an exception here: an interrupted
+          // decision may already have written downstream, so it is finished by
+          // the settlement the route layer runs first, never abandoned.
+          if (
+            execution.definitionApprovalClaim !== null &&
+            awaitsDefinitionApproval(
+              execution.status,
+              execution.definitionApproval,
+            )
+          ) {
+            throw new GraphWorkflowTransitionConflictError(
+              "abort",
+              execution.status,
+              ["running", "paused", "halted"],
+              "A definition approval decision is in flight; abort once it settles",
+            );
+          }
           conversationIdsToAbort = collectCancellableConversationIds(execution);
           return transitionToNonRunningState(execution, "aborted", now, {
             type: "aborted",
@@ -1462,12 +2323,44 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       projectPath,
       sessionName,
       (execution) => {
+        if (
+          options?.expectedExecutionId !== undefined &&
+          execution.id !== options.expectedExecutionId
+        ) {
+          throw new GraphWorkflowTransitionConflictError(
+            "resume",
+            execution.status,
+            ["paused", "halted"],
+            `Graph workflow execution ${options.expectedExecutionId} no longer holds this session's execution lease; ${execution.id} does.`,
+          );
+        }
         assertLifecycleTransitionAllowed(
           execution,
           "resume",
           ["paused", "halted"],
           "Only paused or halted graph workflow executions can be resumed",
         );
+        // Status alone cannot answer this (D7 decision D3): a non-resumably
+        // halted run and an abandoned one are both `halted`, and neither may be
+        // resumed — the lease they no longer hold is what says so. Without this
+        // the status gate would resume a run the editability classifier already
+        // refuses to edit, and would resurrect a record that History owns.
+        if (
+          !holdsExecutionLease(
+            execution.status,
+            execution.haltReason,
+            execution.abandonment,
+          )
+        ) {
+          throw new GraphWorkflowTransitionConflictError(
+            "resume",
+            execution.status,
+            ["paused", "halted"],
+            execution.abandonment !== null
+              ? `Graph workflow execution ${execution.id} was abandoned and belongs to History; launch a new run instead.`
+              : `Graph workflow execution ${execution.id} halted for a reason that cannot be resumed; launch a new run instead.`,
+          );
+        }
 
         previousStatus = execution.status;
         // Captured before the clear below: the resume event echoes which halt
@@ -1612,6 +2505,21 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       );
     }
 
+    // After the transition is ALLOWED (a refused resume must repair nothing)
+    // and before the caller drives the loop: resume is the manual retry for a
+    // run that may have halted precisely because its artifacts never reached
+    // disk, and returning agents to a worktree missing the charter and seeded
+    // documents they are pointed at would repeat the failure. A repair failure
+    // re-halts the located run and throws, which leaves it reviewable rather
+    // than silently unrepaired.
+    //
+    // Fenced on the run this call committed, never on whoever holds the row by
+    // the time it lands (D7 decision D5): the transition is serialized but the
+    // repair is a filesystem effect taken after it, so an abandon-plus-relaunch
+    // in that window would otherwise write the resumed run's sources into the
+    // successor's worktree.
+    await repairPendingArtifacts(projectPath, sessionName, nextExecution.id);
+
     // Re-register execution logger on resume
     const execLogger = createExecutionLogger(nextExecution.id);
     registerExecutionLogger(execLogger);
@@ -1659,9 +2567,74 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     return nextExecution;
   }
 
+  /**
+   * Settle the artifact debt of whichever execution currently holds the row.
+   *
+   * Every path that (re)starts driving a run passes through here, because the
+   * launch's `.cc` writes are the one part of a start that is NOT covered by
+   * the reserving transaction: a crash in between leaves a durable execution
+   * whose charter and seeded documents were never written. The repository owns
+   * both the durable record of what is owed and the idempotent repair; this is
+   * only the kickoff that asks.
+   *
+   * `expectedExecutionId` narrows "whoever holds the row" to one run, for the
+   * callers that mean a particular execution rather than the session: writing a
+   * run's sources into the worktree is a filesystem effect, and a caller whose
+   * run has already been abandoned and replaced must not take it on the
+   * successor.
+   */
+  async function repairPendingArtifacts(
+    projectPath: string,
+    sessionName: string,
+    expectedExecutionId?: string,
+  ): Promise<void> {
+    const ensure = deps.executionRepository.ensureArtifactsMaterialized;
+    if (ensure === undefined) return;
+    const execution = await deps.executionRepository.getActive(
+      projectPath,
+      sessionName,
+    );
+    if (execution === null) return;
+    if (
+      expectedExecutionId !== undefined &&
+      execution.id !== expectedExecutionId
+    ) {
+      logger.info("graph-workflow.execution.artifact_repair_fenced", {
+        projectPath,
+        sessionName,
+        expectedExecutionId,
+        activeExecutionId: execution.id,
+      });
+      return;
+    }
+    const repaired = await ensure({
+      projectPath,
+      sessionName,
+      executionId: execution.id,
+    });
+    if (repaired === null) return;
+    logger.info("graph-workflow.execution.artifacts_repaired", {
+      projectPath,
+      sessionName,
+      executionId: execution.id,
+    });
+  }
+
+  /**
+   * `options.expectedExecutionId` fences the whole call on one run.
+   *
+   * Normalization addresses the SESSION's active row, which is right for the
+   * restart sweep that means "whatever is here". A caller that means one
+   * particular execution — plan repair normalizing the run it just repaired
+   * before resuming it — has to say so: an abandon-plus-relaunch in that window
+   * would otherwise let it repair the successor's artifacts and rewrite the
+   * successor's running state, which the fenced resume behind it then refuses
+   * far too late.
+   */
   async function normalizeAfterRestart(
     projectPath: string,
     sessionName: string,
+    options?: { expectedExecutionId?: string },
   ): Promise<GraphWorkflowExecution | null> {
     const execution = await deps.executionRepository.getActive(
       projectPath,
@@ -1670,6 +2643,39 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     if (!execution) {
       return null;
     }
+    const expectedExecutionId = options?.expectedExecutionId;
+    if (
+      expectedExecutionId !== undefined &&
+      execution.id !== expectedExecutionId
+    ) {
+      logger.info("graph-workflow.normalize.fenced", {
+        projectPath,
+        sessionName,
+        expectedExecutionId,
+        activeExecutionId: execution.id,
+      });
+      return null;
+    }
+
+    // Settled before any status branch, because restart is the only kickoff an
+    // ordinary launch ever gets. A launch commits its row as `pending` and
+    // writes its `.cc` artifacts after that transaction, so the crash this
+    // function exists for strands a run whose charter and seeded documents were
+    // never written — and nothing else comes back for it: `resume` refuses a
+    // pending run, and approval-gated repair only covers launches that stop for
+    // a definition approval. The debt belongs to whoever holds the row, not to
+    // one lifecycle state, and settling it is a no-op for a run that owes
+    // nothing (the repository has no record to act on).
+    await repairPendingArtifacts(projectPath, sessionName, expectedExecutionId);
+
+    // A stranded definition-approval reservation is deliberately NOT swept
+    // here. A reservation is taken before the admission consumer is called, so
+    // one that outlives its holder may already have that consumer's durable
+    // records behind it; freeing it would let a later act end the run and
+    // strand those records — the interrupted act would have written and lost.
+    // An interrupted decision is finished rather than discarded, which only the
+    // act that owns the admission seam can do (see
+    // `interruptedDefinitionDecision` and the route layer's settlement).
 
     if (execution.status !== "running") {
       return execution;
@@ -1692,67 +2698,95 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
 
     const normalizedJoinIds: string[] = [];
     const reconciledIntentContextIds: string[] = [];
-    const normalizedExecution = await deps.executionRepository.mutateActive(
-      projectPath,
-      sessionName,
-      (current) => {
-        if (current.status !== "running") {
-          return current;
-        }
+    const normalized = await mutateActiveOrRefuse(() =>
+      deps.executionRepository.mutateActive(
+        projectPath,
+        sessionName,
+        (current) => {
+          // The authoritative identity and status check. Both refuse rather than
+          // return the row: the probe above is I/O taken outside the queue, so
+          // the row can turn over or settle itself in between, and a returned row
+          // commits — normalizing a successor's running state is exactly the
+          // write a fenced caller asked not to make.
+          if (
+            expectedExecutionId !== undefined &&
+            current.id !== expectedExecutionId
+          ) {
+            throw new MutationRefusedError("normalize_after_restart");
+          }
+          if (current.status !== "running") {
+            throw new MutationRefusedError("normalize_after_restart");
+          }
 
-        const timestamp = getNow(deps);
-        const resetRunningJoins = (execution: GraphWorkflowExecution): void => {
-          normalizedJoinIds.push(
-            ...resetRunningJoinsToPending(execution, timestamp),
+          const timestamp = getNow(deps);
+          const resetRunningJoins = (
+            execution: GraphWorkflowExecution,
+          ): void => {
+            normalizedJoinIds.push(
+              ...resetRunningJoinsToPending(execution, timestamp),
+            );
+          };
+
+          // A crash between a landing and its intent's settlement leaves the
+          // intent `pending` over work that is already committed — or over a
+          // fan-in merge that failed. Both are decided here from state that
+          // outlived the process (decision D8): the join's own record, and the
+          // branch evidence probed above. The resumed loop classifies from that
+          // durable evidence instead of re-deriving it.
+          reconciledIntentContextIds.push(
+            ...reconcileLandingIntents(current, {
+              now: timestamp,
+              branchEvidence,
+            }),
           );
-        };
 
-        // A crash between a landing and its intent's settlement leaves the
-        // intent `pending` over work that is already committed — or over a
-        // fan-in merge that failed. Both are decided here from state that
-        // outlived the process (decision D8): the join's own record, and the
-        // branch evidence probed above. The resumed loop classifies from that
-        // durable evidence instead of re-deriving it.
-        reconciledIntentContextIds.push(
-          ...reconcileLandingIntents(current, {
-            now: timestamp,
-            branchEvidence,
-          }),
-        );
+          if (current.pendingHaltReason !== null) {
+            const haltReason = current.pendingHaltReason;
+            const transitioned = transitionToNonRunningState(
+              current,
+              "halted",
+              timestamp,
+              haltReason,
+            );
+            transitioned.pendingHaltReason = null;
+            resetRunningJoins(transitioned);
+            transitioned.machineSnapshot = buildLifecycleSnapshot(
+              transitioned,
+              {
+                lifecycleStatus: "halted",
+                recoveryMode: "restart_drain_resumed",
+                hasLiveIteration: false,
+              },
+            );
+            return transitioned;
+          }
 
-        if (current.pendingHaltReason !== null) {
-          const haltReason = current.pendingHaltReason;
-          const transitioned = transitionToNonRunningState(
+          const nextExecution = transitionToNonRunningState(
             current,
-            "halted",
-            timestamp,
-            haltReason,
+            "paused",
+            null,
+            null,
           );
-          transitioned.pendingHaltReason = null;
-          resetRunningJoins(transitioned);
-          transitioned.machineSnapshot = buildLifecycleSnapshot(transitioned, {
-            lifecycleStatus: "halted",
-            recoveryMode: "restart_drain_resumed",
-            hasLiveIteration: false,
-          });
-          return transitioned;
-        }
-
-        const nextExecution = transitionToNonRunningState(
-          current,
-          "paused",
-          null,
-          null,
-        );
-        resetRunningJoins(nextExecution);
-        nextExecution.machineSnapshot = buildLifecycleSnapshot(nextExecution, {
-          lifecycleStatus: "paused",
-          recoveryMode: "restart_normalized",
-          hasLiveIteration: false,
-        });
-        return nextExecution;
-      },
+          resetRunningJoins(nextExecution);
+          nextExecution.machineSnapshot = buildLifecycleSnapshot(
+            nextExecution,
+            {
+              lifecycleStatus: "paused",
+              recoveryMode: "restart_normalized",
+              hasLiveIteration: false,
+            },
+          );
+          return nextExecution;
+        },
+      ),
     );
+
+    // Refused: the run settled itself or the row turned over while the landing
+    // probe ran. The caller gets the run as it was read, unnormalized.
+    if (normalized === null) {
+      return expectedExecutionId !== undefined ? null : execution;
+    }
+    const normalizedExecution = normalized;
 
     if (reconciledIntentContextIds.length > 0) {
       logger.info("graph-workflow.restart.landing_intents_reconciled", {
@@ -3492,6 +4526,191 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     return nextExecution;
   }
 
+  /**
+   * The explicit, audited end of a resumable halt's tenure (D7 decision D5).
+   *
+   * Admitted for exactly one incumbent: the identified run that still HOLDS the
+   * lease as a halt. Everything else already belongs to History — a
+   * non-resumable halt and an already-abandoned run are both `halted`, and
+   * neither owns anything to release — so the predicate, not the status, is the
+   * test. Status and halt reason are deliberately preserved: the run's final
+   * engine state is a fact, and the abandonment record is what releases the
+   * lease and derives the Abandoned disposition.
+   *
+   * ONE transaction writes the audit, appends the released boundary event, and
+   * relocates the record into History. Stamping the abandonment in a write of
+   * its own would release the lease before the boundary was recorded: a crash
+   * in between leaves an abandoned run with no boundary event, and a concurrent
+   * launch can normalize the now lease-free row into History as
+   * `normalized_on_admission` before the relocation this act still owes — after
+   * which nothing distinguishes the abandonment from an unattended legacy row,
+   * yet the caller was told the act succeeded.
+   */
+  async function abandon(
+    input: AbandonExecutionInput,
+  ): Promise<AbandonExecutionResult> {
+    const abandonment: GraphWorkflowAbandonment = {
+      abandonedAt: getNow(deps),
+      actor: input.actor,
+      reason: input.reason,
+    };
+    const outcome = await deps.executionRepository.archiveActive(
+      input.projectPath,
+      input.sessionName,
+      { reason: "abandoned", actor: abandonmentActorAuditLabel(input.actor) },
+      // Evaluated inside the archive's critical section against the row as it
+      // is there: a concurrent resume or slot turnover between this call and
+      // the transaction would otherwise be abandoned in the incumbent's place.
+      (execution) =>
+        execution.id === input.executionId &&
+        execution.status === "halted" &&
+        holdsExecutionLease(
+          execution.status,
+          execution.haltReason,
+          execution.abandonment,
+        ),
+      (execution) => ({ ...execution, abandonment }),
+    );
+
+    if (!outcome.archived) {
+      const refusal = declineAbandon(input.executionId, outcome);
+      logger.warn("graph-workflow.execution.abandon_refused", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        executionId: input.executionId,
+        reason: refusal.reason,
+      });
+      return refusal;
+    }
+
+    getExecutionLogger(outcome.execution.id)?.lifecycle("execution.abandoned", {
+      actor: input.actor.kind,
+      reason: input.reason,
+    });
+    logger.info("graph-workflow.execution.abandoned", {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      executionId: outcome.execution.id,
+      actor: input.actor.kind,
+      haltReasonType: outcome.execution.haltReason?.type ?? null,
+    });
+    return { ok: true, execution: outcome.execution };
+  }
+
+  /**
+   * The human's other decision at the definition gate (D7 decision D17): end
+   * the parked run instead of admitting it. Addressed by execution identity
+   * alone, exactly like the approval it sits beside.
+   *
+   * The rejection is stamped on the RECORD (`aborted` with cause
+   * `definition_rejected`) rather than only on the release audit, because
+   * History renders from self-contained execution records — a marker that lived
+   * only in the event ledger would leave the archived run indistinguishable
+   * from an operator's abort.
+   *
+   * Relocating the record into History is the caller's audited archive act, for
+   * the same reason abandon leaves it there: that step also releases resources
+   * the manager does not own.
+   */
+  async function rejectDefinition(
+    input: RejectDefinitionInput,
+  ): Promise<RejectDefinitionResult> {
+    const active = await deps.executionRepository.getActive(
+      input.projectPath,
+      input.sessionName,
+    );
+    if (active === null) {
+      return { ok: false, reason: "no_active_execution" };
+    }
+
+    // Holder object rather than a bare `let`: TS flow analysis does not see the
+    // closure assignment, so a local would narrow to `never` at the read below.
+    const declined: {
+      refusal: Exclude<RejectDefinitionResult, { ok: true }> | null;
+    } = { refusal: null };
+    const now = getNow(deps);
+    const nextExecution = await mutateActiveOrRefuse(() =>
+      deps.executionRepository.mutateActive(
+        input.projectPath,
+        input.sessionName,
+        (execution) => {
+          // Re-applied inside the serialized section against the row as it is
+          // now: a concurrent approval or launch between the read above and
+          // this write would otherwise be rejected in the parked run's place.
+          // Both branches REFUSE rather than return the row: a returned row is
+          // a committed write, so a loser would end its race by writing to the
+          // incumbent it refused to reject.
+          if (execution.id !== input.executionId) {
+            declined.refusal = {
+              ok: false,
+              reason: "execution_mismatch",
+              activeExecutionId: execution.id,
+            };
+            throw new MutationRefusedError("reject_definition");
+          }
+          if (
+            !awaitsDefinitionApproval(
+              execution.status,
+              execution.definitionApproval,
+            )
+          ) {
+            declined.refusal = {
+              ok: false,
+              reason: "not_awaiting_approval",
+              status: execution.status,
+            };
+            throw new MutationRefusedError("reject_definition");
+          }
+          // An approval act is mid-saga on this same park: it has reserved the
+          // decision and may already be talking to the admission consumer.
+          // Ending the run underneath it would strand that consumer's durable
+          // admission on a run this rejection aborted — so the reservation
+          // stands whatever its age, and an interrupted one is finished by the
+          // route layer's settlement before a rejection is even attempted.
+          if (execution.definitionApprovalClaim !== null) {
+            declined.refusal = { ok: false, reason: "decision_in_flight" };
+            throw new MutationRefusedError("reject_definition");
+          }
+          return transitionToNonRunningState(execution, "aborted", now, {
+            type: "aborted",
+            cause: "definition_rejected",
+            summary: "A human rejected the definition at the approval gate.",
+          });
+        },
+      ),
+    );
+
+    // A refused reducer wrote nothing and returned nothing, so the two are one
+    // branch: `declined.refusal` carries which question the row failed.
+    if (declined.refusal !== null || nextExecution === null) {
+      const refusal: Exclude<RejectDefinitionResult, { ok: true }> =
+        declined.refusal ?? {
+          ok: false,
+          reason: "not_awaiting_approval",
+          status: active.status,
+        };
+      logger.warn("graph-workflow.definition_rejection.refused", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        executionId: input.executionId,
+        reason: refusal.reason,
+      });
+      return refusal;
+    }
+
+    const execLogger = getExecutionLogger(nextExecution.id);
+    execLogger?.lifecycle("execution.aborted", { actor: "operator" });
+    execLogger?.writeManifest(nextExecution);
+    unregisterExecutionLogger(nextExecution.id);
+    logger.info("graph-workflow.definition_rejection.recorded", {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      executionId: nextExecution.id,
+      originKind: nextExecution.origin.kind,
+    });
+    return { ok: true, execution: nextExecution };
+  }
+
   async function mutateActive(
     projectPath: string,
     sessionName: string,
@@ -3511,9 +4730,14 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
 
   return {
     start,
+    run,
+    claimDefinitionApproval,
+    releaseDefinitionApprovalClaim,
     recordDefinitionApproval,
+    rejectDefinition,
     send,
     resume,
+    abandon,
     normalizeAfterRestart,
     scheduleNextContext,
     scheduleEligibleContexts,

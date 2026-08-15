@@ -21,11 +21,16 @@ import type {
 } from "@/lib/workflow-graph/storage";
 import type { GraphExecutionLifecycleContext } from "@/lib/workflow-graph/execution-lifecycle-port";
 import type { SeededWorkflowDocument } from "@/lib/workflow-graph/shared-documents";
+import type {
+  GraphWorkflowAbandonment,
+  GraphWorkflowExecutionOrigin,
+} from "@/lib/workflow-graph/schemas";
 import { buildPinnedSpecDocument } from "./export";
 import {
   INITIAL_ABANDON_CLEANUP_PHASE,
   abandonFinalizationAllowed,
   nextAbandonCleanupStep,
+  type AbandonCleanupAct,
   type LinkedWorkflowObservation,
 } from "./abandon-coordinator";
 import {
@@ -166,15 +171,16 @@ export interface ExecutionServiceDeps {
   runInImmediateTransaction<T>(fn: () => T): T;
   /**
    * The execution-start gate's review and workflow ports, injected at
-   * composition. `hasPendingDefinitionApproval` probes whether the session's
-   * workflow execution is actually parked awaiting definition approval;
+   * composition. `findPendingDefinitionApproval` reports the session's parked
+   * run and the origin it recorded, so this domain can establish that the park
+   * is the one its execution compiled before deciding it;
    * `ensurePendingDefinitionApproval` launches the prepared definition through
    * the production workflow seam when the Studio approval is the first launch
-   * act;
-   * `grantApproval` records the human execution-start approval (spec approval
-   * + gate admission + durable event); `approveWorkflowDefinition` approves
-   * the session's pending compiled definition and starts the run through the
-   * graph-workflow seam. The review port serializes through the shared write
+   * act; `approveWorkflowDefinition` decides the session's pending compiled
+   * definition and starts the run through the graph-workflow seam, which is
+   * also where this domain's own human execution-start approval is recorded —
+   * from inside the graph's reservation, through the lifecycle port, rather
+   * than ahead of it. The review port serializes through the shared write
    * queue, so it must never be called while this service already holds it.
    */
   executionStartGate?: ExecutionStartGatePort;
@@ -262,15 +268,14 @@ export interface SpecWorkflowCleanupTarget {
 }
 
 /**
- * Where the pinned run stands. `active` means it is still the session's live
- * row and owns the slot whatever its status; `archived` means it has been
- * moved out and owns nothing. The distinction is what separates "aborted but
- * still holding the slot" from "released".
+ * Where the pinned run stands. `leaseHeld` is the live-work answer: an
+ * `aborted` record still physically in the active row holds nothing, while a
+ * resumably halted one is work the coordinator must not step over.
  */
 export type SpecWorkflowCleanupObservation =
   | { kind: "missing" }
   | { kind: "archived"; status: GraphWorkflowStatus }
-  | { kind: "active"; status: GraphWorkflowStatus };
+  | { kind: "active"; status: GraphWorkflowStatus; leaseHeld: boolean };
 
 /**
  * Whether the named act actually took effect. `ok: false` is the honest answer
@@ -289,13 +294,25 @@ export interface SpecWorkflowCleanupPort {
   observe(
     target: SpecWorkflowCleanupTarget,
   ): Promise<SpecWorkflowCleanupObservation>;
-  /** Abort the pinned run through the production workflow abort seam. */
+  /**
+   * Abort the pinned run through the production workflow abort seam. `aborted`
+   * releases the lease automatically, so no separate release step exists to
+   * leave half-done.
+   */
   abort(
     target: SpecWorkflowCleanupTarget & { reason: string },
   ): Promise<SpecWorkflowCleanupOutcome>;
-  /** The explicit audited archive act that releases the session's slot. */
-  release(
-    target: SpecWorkflowCleanupTarget & { reason: string },
+  /**
+   * End a resumably halted run through the audited abandon act instead. Abort
+   * would answer the lease just as well, and that is precisely the mistake:
+   * it rewrites the run's final engine state to `aborted`, while abandon
+   * preserves the halt reason and records who ended the tenure and why (R4).
+   */
+  abandon(
+    target: SpecWorkflowCleanupTarget & {
+      reason: string;
+      actor: GraphWorkflowAbandonment["actor"];
+    },
   ): Promise<SpecWorkflowCleanupOutcome>;
 }
 
@@ -314,6 +331,38 @@ export interface DefinitionGateRefusal {
   code: string;
   unmetConditions: string[];
   instruction: string;
+}
+
+/** A run parked awaiting definition approval, as this domain finds it. */
+export interface PendingDefinitionApproval {
+  executionId: string;
+  /** What the parked run records about where it came from. */
+  origin: GraphWorkflowExecutionOrigin;
+}
+
+/**
+ * Whether a park found by session is the run this spec execution is waiting to
+ * start.
+ *
+ * The session's lease says only that SOME run holds it. Approving execution A
+ * while unrelated run B holds the park would start B and leave A unapproved, so
+ * the two are correlated the same way the lifecycle callbacks correlate an
+ * admission: by the link once one exists, and otherwise by the compiled
+ * definition the execution pins against the origin the park recorded. A one-off
+ * park pins no definition and therefore never belongs to a spec execution.
+ */
+export function parkBelongsToExecution(
+  park: PendingDefinitionApproval,
+  execution: SpecExecutionRow,
+): boolean {
+  if (execution.workflow_execution_id !== null) {
+    return execution.workflow_execution_id === park.executionId;
+  }
+  if (park.origin.kind !== "template") return false;
+  return (
+    park.origin.definitionId === execution.workflow_definition_id &&
+    park.origin.definitionRevision === execution.workflow_definition_revision
+  );
 }
 
 export interface ExecutionStartGatePort {
@@ -344,12 +393,20 @@ export interface ExecutionStartGatePort {
   }): Promise<
     { ok: true; workflowExecutionId: string } | { ok: false; reason: string }
   >;
-  hasPendingDefinitionApproval(input: {
+  /**
+   * The session's parked execution, or null when it has none.
+   *
+   * The park is FOUND by session — the session holds one lease — but it is not
+   * thereby this execution's park: any run can hold that lease, including an
+   * unrelated one-off. So the probe reports the run's recorded origin alongside
+   * its id, and the caller establishes that the park is the one it means before
+   * deciding it (see {@link parkBelongsToExecution}). The origin is what the
+   * park already recorded, never an identity the act supplies (D7 R14.2).
+   */
+  findPendingDefinitionApproval(input: {
     projectName: string;
     sessionName: string;
-    definitionId: string;
-    definitionRevision: number;
-  }): Promise<string | null>;
+  }): Promise<PendingDefinitionApproval | null>;
   ensurePendingDefinitionApproval(input: {
     projectName: string;
     sessionName: string;
@@ -370,24 +427,21 @@ export interface ExecutionStartGatePort {
      */
     seededDocuments: readonly SeededWorkflowDocument[];
   }): Promise<
-    { ok: true; workflowExecutionId: string } | { ok: false; reason: string }
+    | { ok: true; park: PendingDefinitionApproval }
+    | { ok: false; reason: string }
   >;
-  grantApproval(input: {
-    specId: string;
-    revisionId: string;
-    executionId: string;
-    actor: ActorProvenance;
-    approver: string;
-  }): Promise<
-    | { ok: true; value: { id: string } }
-    | { ok: false; refusal: TransitionRefusal }
-  >;
+  /**
+   * Decide the parked definition. This is the only seam the Studio act writes
+   * through, and it is a saga on the far side: reserve the graph's decision,
+   * report the approval through the lifecycle port (where this domain records
+   * the human grant), then finalize. There is deliberately no grant seam
+   * here — a durable approval recorded before that reservation would survive
+   * an act the graph went on to refuse.
+   */
   approveWorkflowDefinition(input: {
     projectName: string;
     sessionName: string;
     workflowExecutionId: string;
-    definitionId: string;
-    definitionRevision: number;
   }): Promise<
     | { ok: true }
     | {
@@ -397,9 +451,14 @@ export interface ExecutionStartGatePort {
           | "no_active_execution"
           | "not_awaiting_approval"
           | "already_decided"
-          | "definition_mismatch"
-          | "definition_revision_mismatch"
-          | "execution_mismatch";
+          | "execution_mismatch"
+          // The workflow side's approval is a reservation-then-finalize saga,
+          // so it can also decline because another decision holds the park or
+          // because its own reservation was lost — reclaimed as stranded, and
+          // possibly already granted to somebody else — mid-act.
+          | "decision_in_flight"
+          | "not_reserved"
+          | "claim_superseded";
       }
     | { ok: false; reason: "gate_refused"; refusal: DefinitionGateRefusal }
   >;
@@ -456,21 +515,24 @@ export interface ExecutionLifecycleCallbacks {
   markRunning(
     context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
-    definitionId?: string,
-    definitionRevision?: number,
+    origin?: GraphWorkflowExecutionOrigin,
   ): Promise<void>;
   markDelivered(workflowExecutionId: string, mergeHash: string): Promise<void>;
   awaitingDefinitionApproval(
     context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
-    definitionId: string,
-    definitionRevision: number,
+    origin: GraphWorkflowExecutionOrigin,
   ): Promise<void>;
+  /**
+   * A refusal MUST be write-free: the graph answers one by handing its
+   * reservation back, which reopens the park to a rejection or an abort. Once
+   * anything durable has been committed the only sound answer is to throw, so
+   * the reservation is kept and the saga is finished forward instead.
+   */
   admitDefinitionApproval(
     context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
-    definitionId: string,
-    definitionRevision: number,
+    origin: GraphWorkflowExecutionOrigin,
   ): Promise<{ ok: true } | ({ ok: false } & DefinitionGateRefusal)>;
   /**
    * An aborted workflow can never deliver the immutable pin, so the linked
@@ -528,7 +590,6 @@ export interface ApproveExecutionStartInput {
   specId: string;
   executionId: string;
   actor: ActorProvenance;
-  approver: string;
   projectName: string;
 }
 
@@ -693,12 +754,23 @@ export function createExecutionService(
 export function createExecutionLifecycleCallbacks(
   deps: ExecutionLifecycleDeps,
 ): ExecutionLifecycleCallbacks {
+  /**
+   * Correlate a reported workflow execution with the spec execution that
+   * pinned it. The definition tier is derived HERE, from the reported origin,
+   * because correlating by a definition revision is a template-only affordance:
+   * a run authored inline has no stored definition to look up, so it is
+   * correlated by the workflow execution id it was linked with — or by nothing
+   * at all, which is the correct answer for a run this domain never prepared.
+   */
   function findExecutionForWorkflow(
     context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
-    definitionId: string | undefined,
-    definitionRevision: number | undefined,
+    origin: GraphWorkflowExecutionOrigin | undefined,
   ): SpecExecutionRow | null {
+    const definitionId =
+      origin?.kind === "template" ? origin.definitionId : undefined;
+    const definitionRevision =
+      origin?.kind === "template" ? origin.definitionRevision : undefined;
     const linked =
       deps.deliveryRepo.findExecutionByWorkflowExecutionIdInSession(
         context.projectPath,
@@ -757,17 +829,11 @@ export function createExecutionLifecycleCallbacks(
   }
 
   return {
-    async markRunning(
-      context,
-      workflowExecutionId,
-      definitionId,
-      definitionRevision,
-    ) {
+    async markRunning(context, workflowExecutionId, origin) {
       const execution = findExecutionForWorkflow(
         context,
         workflowExecutionId,
-        definitionId,
-        definitionRevision,
+        origin,
       );
       if (execution === null) return;
       if (execution !== null && execution.workflow_execution_id === null) {
@@ -798,17 +864,11 @@ export function createExecutionLifecycleCallbacks(
      * request — the point where a human grant has real waiting work to
      * unblock (R10.9).
      */
-    async awaitingDefinitionApproval(
-      context,
-      workflowExecutionId,
-      definitionId,
-      definitionRevision,
-    ) {
+    async awaitingDefinitionApproval(context, workflowExecutionId, origin) {
       const awaiting = findExecutionForWorkflow(
         context,
         workflowExecutionId,
-        definitionId,
-        definitionRevision,
+        origin,
       );
       if (awaiting === null) return;
       if (awaiting.workflow_execution_id === null) {
@@ -838,18 +898,20 @@ export function createExecutionLifecycleCallbacks(
      * notification grant) before the workflow side records its approval, or
      * refuse machine-readably so the run cannot start unadmitted (R10.2,
      * R11.2). Definitions this domain did not prepare admit by default.
+     *
+     * Every REFUSAL is taken before the first durable write, because the graph
+     * answers a refusal by releasing its reservation and reopening the park:
+     * a refusal reported after this domain had written would leave those
+     * records on a run the next rejection can end. So the grant — which refuses
+     * write-free — goes first, and the backstop link (normally already made at
+     * park time) follows it. A link that then fails THROWS rather than refusing,
+     * because the human grant behind it is already durable.
      */
-    async admitDefinitionApproval(
-      context,
-      workflowExecutionId,
-      definitionId,
-      definitionRevision,
-    ) {
+    async admitDefinitionApproval(context, workflowExecutionId, origin) {
       const execution = findExecutionForWorkflow(
         context,
         workflowExecutionId,
-        definitionId,
-        definitionRevision,
+        origin,
       );
       if (execution === null) return { ok: true };
       if (execution.state === "abandoned" || execution.state === "delivered") {
@@ -864,14 +926,6 @@ export function createExecutionLifecycleCallbacks(
             execution.spec_id,
           ),
         };
-      }
-      if (execution.workflow_execution_id === null) {
-        const linked = await linkWorkflowExecution(
-          deps,
-          execution.id,
-          workflowExecutionId,
-        );
-        if (!linked.ok) return definitionGateRefusal(linked.refusal);
       }
       const gate = deps.lifecycleGate;
       if (gate === undefined) {
@@ -892,6 +946,16 @@ export function createExecutionLifecycleCallbacks(
         approver: "operator",
       });
       if (!grant.ok) return definitionGateRefusal(grant.refusal);
+      if (execution.workflow_execution_id === null) {
+        const linked = await linkWorkflowExecution(
+          deps,
+          execution.id,
+          workflowExecutionId,
+        );
+        if (!linked.ok) {
+          throw new Error(linked.refusal.unmetConditions.join(" "));
+        }
+      }
       return { ok: true };
     },
     async executionAborted(workflowExecutionId) {
@@ -1022,13 +1086,11 @@ async function approveExecutionStart(
     );
   }
 
-  let workflowExecutionId = await gate.hasPendingDefinitionApproval({
+  let park = await gate.findPendingDefinitionApproval({
     projectName: input.projectName,
     sessionName: execution.session_name,
-    definitionId: execution.workflow_definition_id,
-    definitionRevision: execution.workflow_definition_revision,
   });
-  if (workflowExecutionId === null) {
+  if (park === null) {
     const seededDocuments = await resolvePinnedSpecDocuments(deps, execution);
     if (seededDocuments === null) {
       return lifecycleRefused(
@@ -1070,24 +1132,45 @@ async function approveExecutionStart(
         "Resolve the workflow start condition, then approve execution start again.",
       );
     }
-    workflowExecutionId = ensured.workflowExecutionId;
+    park = ensured.park;
   }
 
-  const grant = await gate.grantApproval({
-    specId: input.specId,
-    revisionId: execution.revision_id,
-    executionId: execution.id,
-    actor: input.actor,
-    approver: input.approver,
-  });
-  if (!grant.ok) return { ok: false, refusal: grant.refusal };
+  // The session's lease is held by SOME run; this act only means the one this
+  // execution compiled. Approving whatever holds the park would start an
+  // unrelated run — a one-off admits by default, having no linked spec
+  // execution to refuse for it — and leave this execution unapproved behind it.
+  if (!parkBelongsToExecution(park, execution)) {
+    logger.warn("specs.execution.start-park-not-correlated", {
+      specId: input.specId,
+      specExecutionId: execution.id,
+      sessionName: execution.session_name,
+      parkedWorkflowExecutionId: park.executionId,
+      parkedOrigin: park.origin.kind,
+      workflowDefinitionId: execution.workflow_definition_id,
+      workflowDefinitionRevision: execution.workflow_definition_revision,
+    });
+    return lifecycleRefused(
+      "gate_blocked",
+      [
+        "Another workflow run holds this session and is awaiting its own definition approval.",
+      ],
+      "Resolve the run holding the session, then approve execution start again.",
+    );
+  }
+  const workflowExecutionId = park.executionId;
 
+  // The ONE act, for this surface too. The human grant this Studio action
+  // records is a durable side effect, so it may not precede the graph's
+  // decision on the park: an act the graph refuses would leave an
+  // execution-start admission behind for a run that never started
+  // (`reserve-before-side-effects`). The workflow-side act reserves the
+  // decision first and only then reports the approval through the lifecycle
+  // port, which is where this domain records the grant — so the grant lands
+  // inside the reservation, or not at all.
   const approved = await gate.approveWorkflowDefinition({
     projectName: input.projectName,
     sessionName: execution.session_name,
     workflowExecutionId,
-    definitionId: execution.workflow_definition_id,
-    definitionRevision: execution.workflow_definition_revision,
   });
   if (!approved.ok && approved.reason !== "already_decided") {
     if (approved.reason === "unavailable") {
@@ -1105,12 +1188,19 @@ async function approveExecutionStart(
         approved.refusal.instruction,
       );
     }
+    if (approved.reason === "decision_in_flight") {
+      return lifecycleRefused(
+        "gate_blocked",
+        ["Another approval decision is in flight for this workflow run."],
+        "Wait for the decision in flight to settle, then approve again.",
+      );
+    }
     return lifecycleRefused(
       "gate_blocked",
       [
         "The workflow execution stopped awaiting definition approval before the grant completed.",
       ],
-      "Start the compiled workflow from the session — the human approval stays recorded — then approve again.",
+      "Start the compiled workflow from the session, then approve again — nothing was recorded.",
     );
   }
 
@@ -1119,7 +1209,7 @@ async function approveExecutionStart(
   logger.info("specs.execution.start-approved", {
     specId: input.specId,
     specExecutionId: execution.id,
-    approvalId: grant.value.id,
+    workflowExecutionId,
     workflowApproval: approved.ok ? "approved" : "already_decided",
     state: updated.state,
   });
@@ -1622,8 +1712,8 @@ async function runAbandonCoordinator(
       current,
       input,
       reason,
-      `No graph-workflow cleanup port is wired into this composition, so execution ${target.workflowExecutionId} cannot be released here.`,
-      "Abort and release it with 'cctl workflow live abort --reason <reason>' and 'cctl workflow live release --reason <reason>', then retry this command.",
+      `No graph-workflow cleanup port is wired into this composition, so execution ${target.workflowExecutionId} cannot be ended here.`,
+      "End it yourself — 'cctl workflow live abort --reason <reason>' for a live run, 'cctl workflow abandon --reason <reason>' for a halted one — then retry this command.",
     );
   }
 
@@ -1675,24 +1765,31 @@ async function runAbandonCoordinator(
     }
 
     if (act.kind !== "skip") {
-      // `target` is non-null on every path that reaches an abort/release act:
-      // both are produced only from an `active` observation, which requires a
-      // pinned workflow.
+      // `target` is non-null on every path that reaches an end-the-run act: it
+      // is produced only from an `active` observation, which requires a pinned
+      // workflow.
       if (target === null || deps.workflowCleanup === undefined) {
         throw new Error(
           `Abandon coordinator produced ${act.kind} with no cleanup target`,
         );
       }
-      const remedy =
-        act.kind === "abort_workflow"
-          ? "Abort it with 'cctl workflow live abort --reason <reason>', then retry this command."
-          : "Release the slot with 'cctl workflow live release --reason <reason>', then retry this command.";
+      const cleanup = deps.workflowCleanup;
+      const abandoning = act.kind === "abandon_workflow";
+      // The remedy names the act that applies to THIS blocker, which is the
+      // same act the coordinator just tried: a halted lease holder is ended by
+      // abandon, everything else by abort.
+      const remedy = abandoning
+        ? "Abandon it with 'cctl workflow abandon --reason <reason>', then retry this command."
+        : "Abort it with 'cctl workflow live abort --reason <reason>', then retry this command.";
       let outcome: SpecWorkflowCleanupOutcome;
       try {
-        outcome =
-          act.kind === "abort_workflow"
-            ? await deps.workflowCleanup.abort({ ...target, reason })
-            : await deps.workflowCleanup.release({ ...target, reason });
+        outcome = abandoning
+          ? await cleanup.abandon({
+              ...target,
+              reason,
+              actor: graphAbandonmentActor(input.actor),
+            })
+          : await cleanup.abort({ ...target, reason });
       } catch (error) {
         return await recordCleanupFault(
           deps,
@@ -1704,8 +1801,8 @@ async function runAbandonCoordinator(
         );
       }
       // A port that did nothing must NOT be recorded as a completed phase:
-      // writing `..._aborted` / `..._slot_released` over a no-op is exactly the
-      // false receipt this coordinator exists to prevent. Parking here instead
+      // writing `..._aborted` over a no-op is exactly the false receipt this
+      // coordinator exists to prevent. Parking here instead
       // lets the retry re-observe — a run that really did settle is then seen
       // as archived/missing and skips forward.
       if (!outcome.ok) {
@@ -1722,18 +1819,47 @@ async function runAbandonCoordinator(
 
     current = await commitCleanupPhase(deps, current, input, reason, {
       nextPhase: step.nextPhase,
-      kind:
-        act.kind === "abort_workflow"
-          ? "execution_cleanup_workflow_aborted"
-          : act.kind === "release_slot"
-            ? "execution_cleanup_slot_released"
-            : "execution_cleanup_skipped",
+      kind: cleanupPhaseEventKind(act.kind),
       payload:
         act.kind === "skip"
           ? { phase, note: act.note }
           : { phase, workflowExecutionId: act.workflowExecutionId },
     });
   }
+}
+
+/**
+ * Which act the cleanup audit records. Distinct kinds because the acts are
+ * distinct: an abandoned run keeps its halt reason and carries an abandonment
+ * record, and a receipt that called that an abort would misdescribe the very
+ * History row it points at.
+ */
+function cleanupPhaseEventKind(actKind: AbandonCleanupAct["kind"]): string {
+  switch (actKind) {
+    case "abort_workflow":
+      return "execution_cleanup_workflow_aborted";
+    case "abandon_workflow":
+      return "execution_cleanup_workflow_abandoned";
+    default:
+      return "execution_cleanup_skipped";
+  }
+}
+
+/**
+ * Translate the spec-side actor into the graph audit's two-valued vocabulary.
+ *
+ * An agent's conversation carries through as the verified principal it is. A
+ * system-initiated reconciliation attributes to `human` for the same reason the
+ * abandon route does when a caller presents no agent credentials: the act is
+ * the server proceeding on the operator's behalf, and inventing a third
+ * principal in the audit would name someone who did not decide anything.
+ */
+function graphAbandonmentActor(
+  actor: ActorProvenance | { kind: "system" },
+): GraphWorkflowAbandonment["actor"] {
+  return actor.kind === "agent"
+    ? { kind: "conversation", conversationId: actor.conversationId }
+    : { kind: "human" };
 }
 
 /**

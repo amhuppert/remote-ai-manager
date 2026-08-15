@@ -35,11 +35,13 @@ import type {
 } from "@/lib/workflow-graph/schemas";
 import type {
   ResolvedWorkflowSemanticDefinition,
-  WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
-import type { MutateActiveResult } from "./execution-repository";
+import type {
+  GraphWorkflowExecutionSeed,
+  MutateActiveResult,
+} from "./execution-repository";
 import {
   createGraphWorkflowExecutionLoop as createProductionGraphWorkflowExecutionLoop,
   _resetActiveLoopsForTesting,
@@ -75,14 +77,7 @@ interface InMemoryExecutionRepository {
   create(
     projectPath: string,
     sessionName: string,
-    seed: {
-      definition: WorkflowDefinitionRecord["definition"];
-      definitionId: string;
-      definitionRevision: number;
-      executionId: string;
-      startedAt: string;
-      inputs: Record<string, string>;
-    },
+    seed: GraphWorkflowExecutionSeed,
   ): Promise<GraphWorkflowExecution>;
   archiveActive(
     projectPath: string,
@@ -381,6 +376,15 @@ function createInitialExecution(
     id: "exec-1",
     seedDefinitionId: "def-1",
     seedDefinitionRevision: 1,
+    origin: {
+      kind: "template",
+      definitionId: "def-1",
+      definitionRevision: 1,
+      tier: "project",
+    },
+    launchDocument: null,
+    liveSessionReadOnlyPinned: false,
+    abandonment: null,
     liveRevision: 1,
     executionStateRevision: 0,
     structuralRevision: 0,
@@ -397,6 +401,7 @@ function createInitialExecution(
     launchedTier: "project",
     ownerConversationId: null,
     definitionApproval: null,
+    definitionApprovalClaim: null,
     workingDefinition: {
       ...definition,
       laneMergeValidation: DEFAULT_LANE_MERGE_VALIDATION_CONFIG,

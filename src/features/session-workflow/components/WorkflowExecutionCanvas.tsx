@@ -34,12 +34,15 @@ interface WorkflowExecutionCanvasProps {
   execution: GraphWorkflowExecution;
   layout: GraphWorkflowVisualLayout;
   onSelectContext: (contextId: string | null) => void;
+  /** History renders the authored launch layout exactly as it was recorded. */
+  preserveLayout?: boolean;
 }
 
 export default function WorkflowExecutionCanvas({
   execution,
   layout,
   onSelectContext,
+  preserveLayout = false,
 }: WorkflowExecutionCanvasProps) {
   const [effectiveLayout, setEffectiveLayout] =
     useState<GraphWorkflowVisualLayout>(layout);
@@ -93,10 +96,12 @@ export default function WorkflowExecutionCanvas({
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
       >
-        <AutoLayout
-          definition={execution.workingDefinition}
-          onLayout={setEffectiveLayout}
-        />
+        {!preserveLayout && (
+          <AutoLayout
+            definition={execution.workingDefinition}
+            onLayout={setEffectiveLayout}
+          />
+        )}
         <Background
           variant={BackgroundVariant.Dots}
           color="rgba(255,255,255,0.15)"

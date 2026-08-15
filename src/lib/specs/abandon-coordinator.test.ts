@@ -13,8 +13,20 @@ import type { LinkedWorkflowObservation } from "./abandon-coordinator";
 
 const WORKFLOW_ID = "wf-exec-1";
 
-function active(status: GraphWorkflowStatus): LinkedWorkflowObservation {
-  return { kind: "active", workflowExecutionId: WORKFLOW_ID, status };
+/**
+ * The default is lease-HELD because that is the only observation with an act
+ * behind it: a lease-free record in the active row is History already.
+ */
+function active(
+  status: GraphWorkflowStatus,
+  leaseHeld = true,
+): LinkedWorkflowObservation {
+  return {
+    kind: "active",
+    workflowExecutionId: WORKFLOW_ID,
+    status,
+    leaseHeld,
+  };
 }
 
 function archived(status: GraphWorkflowStatus): LinkedWorkflowObservation {
@@ -30,17 +42,23 @@ const NEVER_LAUNCHED: LinkedWorkflowObservation = { kind: "never_launched" };
 const ALL_OBSERVATIONS: LinkedWorkflowObservation[] = [
   NEVER_LAUNCHED,
   MISSING,
-  ...graphWorkflowStatusSchema.options.map(active),
-  ...graphWorkflowStatusSchema.options.map(archived),
+  // Both tenures per status: the invariants below must hold whether or not the
+  // record in the active row still holds the lease.
+  ...graphWorkflowStatusSchema.options.map((status) => active(status, true)),
+  ...graphWorkflowStatusSchema.options.map((status) => active(status, false)),
+  ...graphWorkflowStatusSchema.options.map((status) => archived(status)),
 ];
 
 describe("spec abandon cleanup phase vocabulary", () => {
-  it("is exactly the three ordered phases the coordinator persists", () => {
+  it("is exactly the two ordered phases the coordinator persists", () => {
+    // `release_slot` is gone with the act it called: `aborted` releases the
+    // lease on its own, so the phase had nothing left to do and no verb to do
+    // it with.
     expect([...SPEC_EXECUTION_CLEANUP_PHASES]).toEqual([
       "abort_workflow",
-      "release_slot",
       "finalize",
     ]);
+    expect([...SPEC_EXECUTION_CLEANUP_PHASES]).not.toContain("release_slot");
     expect([...specExecutionCleanupPhaseSchema.options]).toEqual([
       ...SPEC_EXECUTION_CLEANUP_PHASES,
     ]);
@@ -49,7 +67,7 @@ describe("spec abandon cleanup phase vocabulary", () => {
 });
 
 describe("nextAbandonCleanupStep — phase abort_workflow", () => {
-  it("aborts a live linked workflow before anything else", () => {
+  it("aborts a lease-holding linked workflow that has not halted", () => {
     for (const status of ["pending", "running", "paused"] as const) {
       const step = nextAbandonCleanupStep({
         phase: "abort_workflow",
@@ -57,9 +75,26 @@ describe("nextAbandonCleanupStep — phase abort_workflow", () => {
       });
       expect(step).toEqual({
         act: { kind: "abort_workflow", workflowExecutionId: WORKFLOW_ID },
-        nextPhase: "release_slot",
+        nextPhase: "finalize",
       });
     }
+  });
+
+  it("abandons a lease-holding halt instead of aborting it", () => {
+    // A halt that still holds the lease is by definition resumable, and R4
+    // makes abandon the ONE act that ends that tenure. Aborting it would drive
+    // the run to `aborted`, discarding the halt reason the audited abandon
+    // preserves — the same act the finalize refusal already names as the
+    // remedy, so cleanup must not reach for a different one.
+    const step = nextAbandonCleanupStep({
+      phase: "abort_workflow",
+      linkedWorkflow: active("halted"),
+    });
+
+    expect(step).toEqual({
+      act: { kind: "abandon_workflow", workflowExecutionId: WORKFLOW_ID },
+      nextPhase: "finalize",
+    });
   });
 
   it("skips forward with an audit note when there is nothing to abort", () => {
@@ -69,69 +104,14 @@ describe("nextAbandonCleanupStep — phase abort_workflow", () => {
     }> = [
       { observation: NEVER_LAUNCHED, note: /ever launched/i },
       { observation: MISSING, note: /no longer exists/i },
-      { observation: active("halted"), note: /already terminal/i },
-      { observation: active("completed"), note: /already terminal/i },
-      { observation: active("aborted"), note: /already terminal/i },
+      { observation: active("halted", false), note: /no longer holds/i },
+      { observation: active("completed", false), note: /no longer holds/i },
+      { observation: active("aborted", false), note: /no longer holds/i },
       { observation: archived("aborted"), note: /already archived/i },
     ];
     for (const { observation, note } of cases) {
       const step = nextAbandonCleanupStep({
         phase: "abort_workflow",
-        linkedWorkflow: observation,
-      });
-      expect(step.nextPhase).toBe("release_slot");
-      expect(step.act.kind).toBe("skip");
-      if (step.act.kind !== "skip") throw new Error("unreachable");
-      expect(step.act.note).toMatch(note);
-    }
-  });
-});
-
-describe("nextAbandonCleanupStep — phase release_slot", () => {
-  it("releases a slot the lifecycle contract says is explicitly archivable", () => {
-    for (const status of [
-      "paused",
-      "halted",
-      "completed",
-      "aborted",
-    ] as const) {
-      const step = nextAbandonCleanupStep({
-        phase: "release_slot",
-        linkedWorkflow: active(status),
-      });
-      expect(step).toEqual({
-        act: { kind: "release_slot", workflowExecutionId: WORKFLOW_ID },
-        nextPhase: "finalize",
-      });
-    }
-  });
-
-  it("refuses — never skips — while the run is live, and names the abort verb", () => {
-    for (const status of ["pending", "running"] as const) {
-      const step = nextAbandonCleanupStep({
-        phase: "release_slot",
-        linkedWorkflow: active(status),
-      });
-      expect(step.nextPhase).toBe("release_slot");
-      expect(step.act.kind).toBe("blocked");
-      if (step.act.kind !== "blocked") throw new Error("unreachable");
-      expect(step.act.reason).toContain(WORKFLOW_ID);
-      expect(step.act.remedy).toContain("cctl workflow live abort");
-    }
-  });
-
-  it("skips forward with an audit note when no slot is owned", () => {
-    const cases: Array<{
-      observation: LinkedWorkflowObservation;
-      note: RegExp;
-    }> = [
-      { observation: NEVER_LAUNCHED, note: /ever launched/i },
-      { observation: MISSING, note: /no longer exists/i },
-      { observation: archived("completed"), note: /already archived/i },
-    ];
-    for (const { observation, note } of cases) {
-      const step = nextAbandonCleanupStep({
-        phase: "release_slot",
         linkedWorkflow: observation,
       });
       expect(step.nextPhase).toBe("finalize");
@@ -143,12 +123,15 @@ describe("nextAbandonCleanupStep — phase release_slot", () => {
 });
 
 describe("nextAbandonCleanupStep — phase finalize", () => {
-  it("finalizes once nothing is linked, missing, or archived", () => {
+  it("finalizes once nothing holds the lease", () => {
     for (const observation of [
       NEVER_LAUNCHED,
       MISSING,
       archived("aborted"),
       archived("halted"),
+      // Terminal but not yet normalized out of the active row: History owns it
+      // and the next launch relocates it, so it blocks nothing.
+      active("aborted", false),
     ]) {
       expect(
         nextAbandonCleanupStep({
@@ -159,7 +142,7 @@ describe("nextAbandonCleanupStep — phase finalize", () => {
     }
   });
 
-  it("refuses to finalize while the execution still holds the slot, naming the release verb", () => {
+  it("refuses to finalize while the execution still holds the lease, naming the act that ends it", () => {
     for (const status of graphWorkflowStatusSchema.options) {
       const step = nextAbandonCleanupStep({
         phase: "finalize",
@@ -168,11 +151,15 @@ describe("nextAbandonCleanupStep — phase finalize", () => {
       expect(step.act.kind).toBe("blocked");
       if (step.act.kind !== "blocked") throw new Error("unreachable");
       expect(step.act.reason).toContain(WORKFLOW_ID);
+      // A halted lease holder is ended by abandon, which preserves the halt
+      // reason; everything else by abort, which releases on its own. Neither
+      // remedy names a release verb, because none exists.
       expect(step.act.remedy).toMatch(
-        status === "pending" || status === "running"
-          ? /cctl workflow live abort/
-          : /cctl workflow live release/,
+        status === "halted"
+          ? /cctl workflow abandon/
+          : /cctl workflow live abort/,
       );
+      expect(step.act.remedy).not.toContain("live release");
       expect(step.nextPhase).toBe("finalize");
     }
   });
