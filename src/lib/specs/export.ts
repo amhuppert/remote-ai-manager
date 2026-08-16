@@ -1,8 +1,10 @@
 import { isDeepStrictEqual } from "node:util";
 
-import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
-import type { SeededWorkflowDocument } from "@/lib/workflow-graph/shared-documents";
-import { isTerminalStatus } from "@/lib/workflow-graph/lifecycle-classifier";
+import {
+  isTerminalStatus,
+  type GraphWorkflowStatus,
+  type SeededWorkflowDocument,
+} from "@/lib/workflow-graph/spec-bridge";
 import type {
   Spec,
   SpecApprovalRow,

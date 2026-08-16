@@ -18,6 +18,10 @@ import {
 } from "@/lib/workflows/queries";
 import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
 import { Badge } from "@/components/ui/Badge";
+import {
+  originFallbackName,
+  originKindLabel,
+} from "@/lib/workflow-graph/execution-origin";
 
 export interface WorkflowReceiptCardRow extends TranscriptExtensionRowData {
   kind: "workflow-receipt-card";
@@ -226,10 +230,7 @@ export default function WorkflowReceiptCard({
   const execution = executionQuery.data ?? null;
   const status = execution?.status ?? receipt.status;
   const name =
-    execution?.launchDocument?.name ??
-    (receipt.origin.kind === "one_off"
-      ? receipt.origin.planName
-      : receipt.origin.definitionId);
+    execution?.launchDocument?.name ?? originFallbackName(receipt.origin);
   const description = execution?.launchDocument?.description ?? null;
   const href = `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/workflow?execution=${encodeURIComponent(receipt.executionId)}`;
 
@@ -248,9 +249,7 @@ export default function WorkflowReceiptCard({
         </StatusChip>
       </span>
       <span className="flex flex-wrap items-center gap-sm font-mono text-[0.7rem] text-text-tertiary">
-        <Badge tier="count">
-          {receipt.origin.kind === "one_off" ? "One-off" : "Template"}
-        </Badge>
+        <Badge tier="count">{originKindLabel(receipt.origin)}</Badge>
         <span>{receipt.executionId}</span>
         {resultQuery.data !== null && resultQuery.data !== undefined && (
           <span>{resultQuery.data.boundaryKind} result recorded</span>

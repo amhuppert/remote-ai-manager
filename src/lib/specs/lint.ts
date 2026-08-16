@@ -5,22 +5,12 @@ import type {
   SpecQuestionStatus,
 } from "./schemas";
 import {
-  contractTaskGroups,
-  contractedGroupsHavePath,
-  type ContractedTaskGroup,
-  type GroupContraction,
-} from "./group-contraction";
-import {
   elementReferences,
   type ReferenceSourceElement,
   type SpecReferenceRelation,
 } from "./element-references";
 
-export type LintSeverity =
-  | "blocks_propose"
-  | "blocks_claim"
-  | "blocks_signoff"
-  | "advisory";
+export type LintSeverity = "blocks_propose" | "blocks_signoff" | "advisory";
 
 export interface LintFinding {
   ruleId: string;
@@ -64,15 +54,6 @@ export interface AssumptionRecord {
   disposition: SpecAssumptionDisposition;
 }
 
-export interface EvidenceRecord {
-  evidenceId: string;
-  criterionElementId: string;
-}
-
-export interface PendingTaskClaim {
-  taskElementId: string;
-}
-
 export interface TaskScope {
   tracedRequirementElementIds: string[];
   tracedDecisionElementIds: string[];
@@ -92,8 +73,6 @@ export interface SpecRecords {
   approvedElements?: ApprovedElementRecord[];
   questions?: QuestionRecord[];
   assumptions?: AssumptionRecord[];
-  evidence?: EvidenceRecord[];
-  pendingTaskClaims?: PendingTaskClaim[];
   materializedTasks?: MaterializedTaskRecord[];
 }
 
@@ -110,23 +89,11 @@ export const EVERGREEN_LINT_RULES = [
   { ruleId: "9.5.dependency-cycle", severity: "blocks_propose" },
   { ruleId: "9.5.removed-task-dependency", severity: "blocks_propose" },
   { ruleId: "9.6.dangling-handle", severity: "blocks_propose" },
-  { ruleId: "9.7.claim-without-evidence", severity: "blocks_claim" },
   { ruleId: "9.8.rejected-cited-assumption", severity: "blocks_signoff" },
   { ruleId: "9.9.approval-freshness", severity: "advisory" },
   { ruleId: "9.9.cited-element-change", severity: "advisory" },
   { ruleId: "9.9.open-question", severity: "advisory" },
   { ruleId: "9.9.materialized-task-change", severity: "advisory" },
-  { ruleId: "9.11.lane-group-cycle", severity: "blocks_propose" },
-  {
-    ruleId: "9.11.lane-group-execution-lane-mismatch",
-    severity: "blocks_propose",
-  },
-  { ruleId: "9.12.serialized-plan", severity: "advisory" },
-  { ruleId: "9.12.overloaded-task", severity: "advisory" },
-  {
-    ruleId: "9.12.conflicting-parallel-surfaces",
-    severity: "advisory",
-  },
   {
     ruleId: "9.13.design-stage-without-design-content",
     severity: "advisory",
@@ -135,9 +102,6 @@ export const EVERGREEN_LINT_RULES = [
 
 export type EvergreenLintRuleId =
   (typeof EVERGREEN_LINT_RULES)[number]["ruleId"];
-
-export const GRAPH_SHAPE_MINIMUM_TASKS = 3;
-export const OVERLOADED_TASK_CRITERION_SHARE = 0.5;
 
 const ruleOrder = new Map<string, number>(
   EVERGREEN_LINT_RULES.map(({ ruleId }, index) => [ruleId, index]),
@@ -310,236 +274,6 @@ function dependencyCycleFindings(tasks: RevisionElement[]): LintFinding[] {
   return findings;
 }
 
-function graphShapeFindings(
-  tasks: RevisionElement[],
-  criteria: RevisionElement[],
-): LintFinding[] {
-  const findings: LintFinding[] = [];
-  const tasksById = new Map(tasks.map((task) => [task.id, task]));
-  const contraction = contractTaskGroups(
-    tasks.map((task) => {
-      if (task.payload.kind !== "task") {
-        throw new Error(`Cannot contract non-task element ${task.id}.`);
-      }
-      return {
-        id: task.id,
-        handle: task.handle,
-        laneGroup: task.payload.laneGroup,
-        dependsOnTaskIds: task.payload.dependsOnTaskElementIds,
-      };
-    }),
-  );
-  const groupsById = new Map(
-    contraction.groups.map((group) => [group.id, group]),
-  );
-
-  findings.push(...laneGroupExecutionLaneFindings(contraction, tasksById));
-
-  if (contraction.groupCycle !== undefined) {
-    const cyclicGroups = contraction.groupCycle
-      .map((groupId) => groupsById.get(groupId))
-      .filter((group): group is ContractedTaskGroup => group !== undefined);
-    const cycleUsesLaneGrouping = cyclicGroups.some(
-      (group) => group.laneGroup !== undefined,
-    );
-    if (!cycleUsesLaneGrouping) {
-      return graphShapeAdvisoryFindings(findings, tasks, criteria, contraction);
-    }
-    const anchor = cyclicGroups[0];
-    const anchorTask =
-      anchor === undefined
-        ? undefined
-        : tasksById.get(anchor.memberTaskIds[0] ?? "");
-    findings.push(
-      finding(
-        "9.11.lane-group-cycle",
-        anchorTask?.handle ?? tasks[0]?.handle ?? "unknown",
-        `Lane-group cycle: ${cyclicGroups
-          .map((group) => groupDisplayName(group, tasksById))
-          .join(" → ")}.`,
-      ),
-    );
-  }
-
-  return graphShapeAdvisoryFindings(findings, tasks, criteria, contraction);
-}
-
-/**
- * Contraction and lane sharing compose only as a validation rule (R12).
- *
- * A `laneGroup`'s members become ONE execution context, and a context sits on
- * exactly one lane, so members declaring different `executionLane` values — or
- * only some of them declaring one — describe a placement no compilation can
- * honour. Refusing it here, before propose, is what keeps the compiler from
- * having to guess which member's intent wins.
- *
- * Ungrouped tasks are untouched: distinct contexts sharing a lane is the whole
- * point of the field, not a conflict.
- */
-function laneGroupExecutionLaneFindings(
-  contraction: GroupContraction,
-  tasksById: ReadonlyMap<string, RevisionElement>,
-): LintFinding[] {
-  const findings: LintFinding[] = [];
-  for (const group of contraction.groups) {
-    if (group.laneGroup === undefined) continue;
-    const members = group.memberTaskIds.flatMap((taskId) => {
-      const task = tasksById.get(taskId);
-      if (task === undefined || task.payload.kind !== "task") return [];
-      return [{ handle: task.handle, lane: task.payload.executionLane }];
-    });
-    if (new Set(members.map(({ lane }) => lane)).size <= 1) continue;
-    findings.push({
-      ruleId: "9.11.lane-group-execution-lane-mismatch",
-      severity: "blocks_propose",
-      elementHandle: members[0]?.handle ?? group.id,
-      message: `Lane group ${group.laneGroup} mixes execution lanes: ${members
-        .map(({ handle, lane }) => `${handle} → ${lane ?? "none"}`)
-        .join(
-          ", ",
-        )}. Members contracted into one context must all declare the same executionLane or all omit it.`,
-    });
-  }
-  return findings;
-}
-
-function graphShapeAdvisoryFindings(
-  findings: LintFinding[],
-  tasks: RevisionElement[],
-  criteria: RevisionElement[],
-  contraction: GroupContraction,
-): LintFinding[] {
-  if (tasks.length < GRAPH_SHAPE_MINIMUM_TASKS) return findings;
-
-  if (
-    contraction.groupCycle === undefined &&
-    contraction.intraGroupCycleTaskIds === undefined &&
-    contractedGraphIsSerialized(contraction)
-  ) {
-    findings.push(
-      finding(
-        "9.12.serialized-plan",
-        tasks[0]?.handle ?? "unknown",
-        `The ${tasks.length}-task plan contracts to ${contraction.groups.length} ${contraction.groups.length === 1 ? "context" : "contexts"} with no parallel execution path.`,
-      ),
-    );
-  }
-
-  const criterionIds = new Set(criteria.map((criterion) => criterion.id));
-  for (const task of tasks) {
-    if (task.payload.kind !== "task" || criteria.length === 0) continue;
-    const coveredCount = new Set(
-      task.payload.coveredCriterionElementIds.filter((criterionId) =>
-        criterionIds.has(criterionId),
-      ),
-    ).size;
-    if (coveredCount / criteria.length <= OVERLOADED_TASK_CRITERION_SHARE) {
-      continue;
-    }
-    findings.push(
-      finding(
-        "9.12.overloaded-task",
-        task.handle,
-        `${task.handle} covers ${coveredCount} of ${criteria.length} criteria, more than half of the draft.`,
-      ),
-    );
-  }
-
-  if (contraction.groupCycle !== undefined) return findings;
-  for (let leftIndex = 0; leftIndex < tasks.length; leftIndex += 1) {
-    const left = tasks[leftIndex];
-    if (left?.payload.kind !== "task") continue;
-    const leftGroupId = contraction.taskGroupIds.get(left.id);
-    if (leftGroupId === undefined) continue;
-    for (
-      let rightIndex = leftIndex + 1;
-      rightIndex < tasks.length;
-      rightIndex += 1
-    ) {
-      const right = tasks[rightIndex];
-      if (right?.payload.kind !== "task") continue;
-      const rightGroupId = contraction.taskGroupIds.get(right.id);
-      if (
-        rightGroupId === undefined ||
-        leftGroupId === rightGroupId ||
-        contractedGroupsHavePath(contraction, leftGroupId, rightGroupId) ||
-        contractedGroupsHavePath(contraction, rightGroupId, leftGroupId)
-      ) {
-        continue;
-      }
-      const overlap = firstTouchedPathOverlap(
-        left.payload.touchedPaths ?? [],
-        right.payload.touchedPaths ?? [],
-      );
-      if (overlap === undefined) continue;
-      findings.push(
-        finding(
-          "9.12.conflicting-parallel-surfaces",
-          left.handle,
-          `Independent tasks ${left.handle} and ${right.handle} declare overlapping touched paths ${overlap[0]} and ${overlap[1]}.`,
-        ),
-      );
-    }
-  }
-
-  return findings;
-}
-
-function groupDisplayName(
-  group: ContractedTaskGroup,
-  tasksById: ReadonlyMap<string, RevisionElement>,
-): string {
-  if (group.laneGroup !== undefined) return group.laneGroup;
-  const task = tasksById.get(group.memberTaskIds[0] ?? "");
-  return task?.handle ?? group.id;
-}
-
-function contractedGraphIsSerialized(contraction: GroupContraction): boolean {
-  for (
-    let leftIndex = 0;
-    leftIndex < contraction.groups.length;
-    leftIndex += 1
-  ) {
-    const left = contraction.groups[leftIndex];
-    if (left === undefined) continue;
-    for (
-      let rightIndex = leftIndex + 1;
-      rightIndex < contraction.groups.length;
-      rightIndex += 1
-    ) {
-      const right = contraction.groups[rightIndex];
-      if (right === undefined) continue;
-      if (
-        !contractedGroupsHavePath(contraction, left.id, right.id) &&
-        !contractedGroupsHavePath(contraction, right.id, left.id)
-      ) {
-        return false;
-      }
-    }
-  }
-  return true;
-}
-
-function firstTouchedPathOverlap(
-  leftPaths: readonly string[],
-  rightPaths: readonly string[],
-): [string, string] | undefined {
-  const leftSorted = [...new Set(leftPaths)].sort(compareText);
-  const rightSorted = [...new Set(rightPaths)].sort(compareText);
-  for (const left of leftSorted) {
-    for (const right of rightSorted) {
-      if (
-        left === right ||
-        left.startsWith(`${right}/`) ||
-        right.startsWith(`${left}/`)
-      ) {
-        return [left, right];
-      }
-    }
-  }
-  return undefined;
-}
-
 function danglingTypedReferenceFinding(
   sourceElement: RevisionElement,
   targetId: string,
@@ -690,7 +424,6 @@ export function lint(
   }
 
   findings.push(...dependencyCycleFindings(tasks));
-  findings.push(...graphShapeFindings(tasks, criteria));
 
   const knownElementsById = new Map(
     (records.knownElements ?? []).map((element) => [
@@ -758,31 +491,6 @@ export function lint(
       if (referenceFinding) {
         findings.push(referenceFinding);
       }
-    }
-  }
-
-  const evidenceCriterionIds = new Set(
-    (records.evidence ?? []).map((evidence) => evidence.criterionElementId),
-  );
-  for (const claim of records.pendingTaskClaims ?? []) {
-    const taskElement = tasksById.get(claim.taskElementId);
-    if (!taskElement) {
-      continue;
-    }
-    for (const criterionId of taskScope(taskElement)
-      ?.coveredCriterionElementIds ?? []) {
-      if (evidenceCriterionIds.has(criterionId)) {
-        continue;
-      }
-      const criterionElement = elementsById.get(criterionId);
-      const criterionHandle = criterionElement?.handle ?? criterionId;
-      findings.push(
-        finding(
-          "9.7.claim-without-evidence",
-          criterionHandle,
-          `${taskElement.handle} cannot be claimed complete because ${criterionHandle} has no evidence.`,
-        ),
-      );
     }
   }
 

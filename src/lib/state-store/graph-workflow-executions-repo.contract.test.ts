@@ -28,7 +28,9 @@ import type {
 import { laneStateKey } from "@/lib/workflow-graph/lane-identity";
 import {
   buildOneOffSeedCompatibilityFields,
+  buildSpecDeliverySeedCompatibilityFields,
   ONE_OFF_SEED_DEFINITION_ID_PREFIX,
+  SPEC_DELIVERY_SEED_DEFINITION_ID_PREFIX,
 } from "@/lib/workflow-graph/execution-origin";
 import { executionLeaseAndResultDeliveries } from "./migrations/0024-execution-lease-and-result-deliveries";
 import { resolveExpansionProvenance } from "@/lib/workflow-graph/expansion-receipts";
@@ -161,6 +163,19 @@ describe("graph-workflow-executions split symmetry", () => {
 });
 
 describe("graph-workflow-executions-repo durability contract", () => {
+  it("findByExecutionId reads an active execution without session coordinates", () => {
+    const execution = maximalExecution();
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      execution,
+      "2026-03-01T00:00:00Z",
+    );
+
+    expect(repo.findByExecutionId(execution.id)).toEqual(execution);
+    expect(repo.findByExecutionId("missing")).toBeNull();
+  });
+
   it("round-trips every persisted execution key path through setActive -> getActive", async () => {
     const fixture = createPersistenceFixture();
     try {
@@ -1567,6 +1582,75 @@ describe("graph-workflow-executions-repo one-off origin persistence", () => {
     } finally {
       upgraded.close();
     }
+  });
+});
+
+describe("graph-workflow-executions-repo spec-delivery origin persistence", () => {
+  const preD7ProjectionSchema = z.object({
+    execution_id: z.string().min(1),
+    seed_definition_id: z.string().min(1),
+    seed_definition_revision: z.number().int().min(1),
+    started_at: z.string().min(1),
+    status: z.string().min(1),
+  });
+
+  function specDeliveryExecution(): GraphWorkflowExecution {
+    const base = maximalExecution();
+    return graphWorkflowExecutionSchema.parse({
+      ...base,
+      origin: {
+        kind: "spec_delivery",
+        specSlug: "conversation-compaction",
+        candidateId: "cand-42",
+      },
+      ...buildSpecDeliverySeedCompatibilityFields(base.id),
+    });
+  }
+
+  it("keeps a spec-delivery row readable through the pre-D7 required-field shape", () => {
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      specDeliveryExecution(),
+      "2026-03-01T00:00:00Z",
+    );
+
+    const row = db
+      .prepare(
+        `SELECT execution_id, seed_definition_id, seed_definition_revision,
+                started_at, status
+           FROM graph_workflow_executions
+          WHERE project_path = ? AND session_name = ?`,
+      )
+      .get(PROJECT_PATH, SESSION_NAME);
+    expect(preD7ProjectionSchema.safeParse(row).success).toBe(true);
+    expect(
+      (row as { seed_definition_id: string }).seed_definition_id,
+    ).toContain(SPEC_DELIVERY_SEED_DEFINITION_ID_PREFIX);
+  });
+
+  it("reloads a spec-delivery run by its origin, never by the seed sentinel", () => {
+    const execution = specDeliveryExecution();
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      execution,
+      "2026-03-01T00:00:00Z",
+    );
+
+    const reloaded = createGraphWorkflowExecutionsRepo(db).getActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(reloaded?.origin).toEqual({
+      kind: "spec_delivery",
+      specSlug: "conversation-compaction",
+      candidateId: "cand-42",
+    });
+    expect(reloaded?.launchDocument).toEqual(execution.launchDocument);
+    // The filler survives untouched, so an older build still parses the row.
+    expect(reloaded?.seedDefinitionId).toBe(execution.seedDefinitionId);
+    expect(reloaded?.seedDefinitionRevision).toBe(1);
   });
 });
 

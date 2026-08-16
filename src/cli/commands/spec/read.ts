@@ -18,6 +18,7 @@ import {
   deliveryPlanViewSchema,
   type DeliveryPlanView,
 } from "@/lib/specs/delivery-plan-views";
+import { graphWorkflowLaunchLabel } from "@/lib/workflow-graph/launch-presentation";
 import {
   LINT_SEVERITY_LABEL,
   draftHealth,
@@ -97,7 +98,7 @@ const SPEC_SHOW_OUT_PATH_BUDGET_BYTES = 4 * 1024;
 
 /**
  * The execution states `projectSpecPhase` collapses into `phase: executing`.
- * Reporting them individually is what lets a reader tell a parked definition
+ * Reporting them individually is what lets a reader tell a parked graph
  * review from a running lane.
  */
 type ActiveExecution = SpecStatusExecution & {
@@ -193,7 +194,7 @@ type ExecutionLaneState =
   | "running"
   | "merge_pending"
   | "halted"
-  | "awaiting_definition_approval"
+  | "awaiting_workflow_approval"
   | "not_launched";
 
 interface ExecutionProgress {
@@ -206,8 +207,8 @@ interface ExecutionProgress {
  * The one owner of what a run's position means, so the text and `--json`
  * renderings cannot disagree. The spec-execution state decides: a run in
  * `definition_review` is parked whether or not a workflow execution is linked,
- * because linking is exactly what happens when the compiled definition parks
- * awaiting a human under a Gate execution_start dial.
+ * because linking is exactly what happens when its admitted one-off launch is
+ * attached to the graph workflow run.
  */
 function describeExecution(execution: ActiveExecution): ExecutionProgress {
   const lane = execution.workflowExecutionId;
@@ -240,13 +241,16 @@ function describeExecution(execution: ActiveExecution): ExecutionProgress {
     return {
       laneState: "not_launched",
       actsNext: "agent",
-      detail: `no workflow lane launched (definition ${execution.workflowDefinitionId}); next: cctl workflow start ${execution.workflowDefinitionId}`,
+      detail:
+        execution.workflowSeedSource === null
+          ? "no immutable workflow source is recorded; this retired execution cannot be started"
+          : "the admitted one-off launch is awaiting restart recovery before its workflow lane is attached",
     };
   }
   return {
-    laneState: "awaiting_definition_approval",
+    laneState: "awaiting_workflow_approval",
     actsNext: "human",
-    detail: `parked awaiting human approval of the compiled definition (workflow lane ${lane} is not running); next: a human approves it in Spec Studio`,
+    detail: `parked awaiting human approval of workflow lane ${lane}; approve it from the workflow surface`,
   };
 }
 
@@ -270,9 +274,9 @@ const LANE_STATE_CLAUSES: ReadonlyArray<{
       `${count} workflow lane${count === 1 ? "" : "s"} halted awaiting attention`,
   },
   {
-    laneState: "awaiting_definition_approval",
+    laneState: "awaiting_workflow_approval",
     clause: (count) =>
-      `${count} execution${count === 1 ? "" : "s"} parked awaiting human approval of the compiled definition`,
+      `${count} execution${count === 1 ? "" : "s"} parked awaiting human approval of their workflow lane`,
   },
   {
     laneState: "not_launched",
@@ -282,7 +286,7 @@ const LANE_STATE_CLAUSES: ReadonlyArray<{
 ];
 
 /**
- * `phase: executing` covers both a run parked at definition review and a live
+ * `phase: executing` covers both a run parked at graph review and a live
  * lane. Unqualified it reads as "work is running", which is the wrong
  * conclusion for every parked execution.
  */
@@ -372,7 +376,7 @@ function unresolvedCoverageLines(elementIds: readonly string[]): string[] {
 }
 
 /**
- * Depended-on task ids the current revision does not carry. The compiler can
+ * Depended-on task ids the current revision does not carry. The legacy resolver can
  * order nothing against them, so they are named apart from the dependencies
  * that resolve rather than printed as if they were handles.
  */
@@ -496,9 +500,12 @@ function statusText(
       `  ${task.handle}: ${task.title}`,
       `    dependencies: ${task.dependsOn.join(", ") || "none"}`,
       ...unresolvedDependencyLines(task.unresolvedDependsOnTaskElementIds),
-      `    lane group: ${task.laneGroup ?? "one task per lane"}`,
-      `    execution lane: ${task.executionLane ?? "single-member lane"}`,
-      `    touched surfaces: ${task.touchedPaths.join(", ") || "not declared"}`,
+      // Authored intent the delivery-plan author reads while placing the
+      // graph, so an absent value is "not declared" — no default is derived
+      // from it any more.
+      `    intended lane group: ${task.laneGroup ?? "not declared"}`,
+      `    intended execution lane: ${task.executionLane ?? "not declared"}`,
+      `    intended touched paths: ${task.touchedPaths.join(", ") || "not declared"}`,
       `    criterion coverage: ${task.criterionCoverage.join(", ") || "none"}`,
       ...unresolvedCoverageLines(task.unresolvedCriterionElementIds),
     ]),
@@ -744,7 +751,7 @@ function showOutlineText(outline: SpecShowOutlineView): string {
   );
   const tasks = outline.tasks.map(
     (task) =>
-      `${task.handle}\ttask\tstatus=${task.status.status} evidence=${task.status.claimEvidenceCount}\t${task.summary}`,
+      `${task.handle}\ttask\tstatus=${task.status.status}\t${task.summary}`,
   );
   const disclosure = Object.entries(outline.disclosure).flatMap(
     ([collection, value]) =>
@@ -1211,7 +1218,7 @@ export async function runSpecStatus(
       return {
         id: execution.id,
         state: execution.state,
-        workflowDefinitionId: execution.workflowDefinitionId,
+        workflowSeedSource: execution.workflowSeedSource,
         workflowExecutionId: execution.workflowExecutionId,
         workflowStatus: execution.workflowStatus,
         laneState: progress.laneState,
@@ -1949,10 +1956,10 @@ export async function runSpecExport(
 }
 
 /**
- * The delivery-plan attempt's compiled shape. Two stages, two different
- * promises: `draft` compiles what is editable right now (never approvable),
- * `proposed` reads the frozen candidate byte for byte — its
- * `compiledDefinitionHash` is what an approval binds to and what a launch runs.
+ * The delivery-plan attempt has two stages with distinct promises: `draft`
+ * reads what is editable right now (never approvable), while `proposed` reads
+ * the frozen candidate byte for byte — its
+ * `candidateHash` is what an approval binds to and what a launch verifies.
  */
 async function runDeliveryPlanPreview(
   slug: string,
@@ -1965,7 +1972,7 @@ async function runDeliveryPlanPreview(
   const json = flags.json;
   if (stage !== "draft" && stage !== "proposed") {
     return usageFailure(
-      `spec plan preview --stage takes draft or proposed, not ${JSON.stringify(stage)} — \`draft\` compiles the editable document, \`proposed\` reads the frozen candidate`,
+      `spec plan preview --stage takes draft or proposed, not ${JSON.stringify(stage)} — \`draft\` reads the editable document, \`proposed\` reads the frozen candidate`,
       json,
     );
   }
@@ -2005,7 +2012,7 @@ async function runDeliveryPlanPreview(
     command: "plan preview",
     slug,
     stage: preview.stage,
-    contextCount: preview.definition.executionContexts.length,
+    hasLaunch: preview.launch !== null,
     approvable: preview.approvable,
   });
   return {
@@ -2044,7 +2051,7 @@ export async function runSpecPlanPreview(
             retiredFlags.length === 1 ? "is" : "are"
           } retired`;
     return usageFailure(
-      `spec plan preview: ${retiredDetail}; evergreen Plan compiler inference is no longer an active preview path. Seed legacy content with \`cctl spec plan open ${slug.value} --seed-from last\`, then inspect the delivery-plan attempt with \`cctl spec plan preview ${slug.value} --stage draft\`.`,
+      `spec plan preview: ${retiredDetail}. Read authored content with \`cctl spec plan preview ${slug.value} --stage draft\`, or read the finalized candidate with \`cctl spec plan preview ${slug.value} --stage proposed\`.`,
       json,
     );
   }
@@ -2394,13 +2401,13 @@ function planStatusText(view: DeliveryPlanView): string {
     `${attempt.specSlug}  plan attempt ${attempt.id}  status: ${attempt.status}`,
     `pinned revision: ${attempt.pinnedRevisionId}  draft revision: ${attempt.draftRevision}`,
     `delta basis: ${attempt.deltaBasisExecutionId ?? "none — nothing has delivered yet"}`,
-    ...(attempt.planHash === null
+    ...(attempt.candidateHash === null
       ? []
-      : [`live proposal: ${attempt.planHash}`]),
+      : [`live proposal: ${attempt.candidateId} at ${attempt.candidateHash}`]),
     ...(view.approval === null
       ? []
       : [
-          `approved: snapshot ${view.approval.snapshotId} at ${view.approval.planHash}`,
+          `approved: snapshot ${view.approval.snapshotId}, candidate ${view.approval.candidateId} at ${view.approval.candidateHash}`,
         ]),
     ...planHealthLines(view),
     ...boundedSection(
@@ -2419,56 +2426,32 @@ function planStatusText(view: DeliveryPlanView): string {
       `  ${row.handle} [${row.disposition}]: ${row.resolution}`,
     ]),
     ...boundedSection("proposal snapshots", view.snapshots, (snapshot) => [
-      `  ${snapshot.draftRevision}: ${snapshot.planHash} at ${snapshot.proposedAt}`,
+      `  ${snapshot.draftRevision}: ${snapshot.candidateId} at ${snapshot.candidateHash} (${snapshot.proposedAt})`,
     ]),
     ...planNextActLines(view),
   ];
   return `${lines.join("\n")}\n`;
 }
 
-/**
- * The wiring a context owns, under the same cap its parent section obeys. A
- * bounded outer section whose rows are each unbounded is not bounded: one
- * context owning hundreds of capabilities would flood the whole read.
- */
-function nestedWiringLines(entries: readonly string[]): string[] {
-  if (entries.length === 0) return [];
-  const shown = entries.slice(0, STATUS_SECTION_LIMIT);
-  const omitted = entries.length - shown.length;
-  return [
-    `    wiring: ${entries.length} total, ${shown.length} shown, ${omitted} omitted`,
-    ...shown.map((entry) => `      ${entry}`),
-  ];
-}
-
 function planGetText(view: DeliveryPlanView): string {
   const { document } = view;
-  const wiringByContext = new Map(
-    view.wiringByContext.map((entry) => [entry.contextId, entry.entries]),
-  );
+  const launchLabel = graphWorkflowLaunchLabel(document.launch);
   const lines = [
     `${view.attempt.specSlug}  plan attempt ${view.attempt.id} (${view.attempt.status}, draft revision ${view.attempt.draftRevision})`,
-    ...boundedSection("dispositions", document.dispositions, (entry) => [
-      `  ${entry.criterionElementId}: ${entry.disposition}${
-        entry.deliveredByExecutionId === null
-          ? ""
-          : ` (by ${entry.deliveredByExecutionId})`
-      }`,
-    ]),
-    ...boundedSection("contexts", document.contexts, (context) => [
-      `  ${context.contextId} [${context.contextType}]: ${context.title}`,
-      `    owns: ${context.criterionElementIds.join(", ") || "no criterion"}`,
-      `    contract: ${context.acceptanceContract.length} line(s)`,
-      ...nestedWiringLines(wiringByContext.get(context.contextId) ?? []),
-    ]),
-    ...boundedSection("tasks", document.tasks, (task) => [
-      `  [${task.order}] ${task.taskId} in ${task.contextId}: ${task.title}`,
-    ]),
-    ...boundedSection("edges", document.edges, (edge) => [
-      `  ${edge.edgeId}: ${edge.fromContextId} -> ${edge.toContextId}`,
-    ]),
-    ...boundedSection("wiring", document.wiring, (entry) => [
-      `  ${entry.capabilityId}: owned by ${entry.owner.contextId} (${entry.owner.kind})`,
+    `graph launch: ${launchLabel}`,
+    ...boundedSection(
+      "binding dispositions",
+      document.binding.dispositions,
+      (entry) => [
+        `  ${entry.criterionElementId}: ${entry.disposition}${
+          entry.deliveredByExecutionId === null
+            ? ""
+            : ` (by ${entry.deliveredByExecutionId})`
+        }`,
+      ],
+    ),
+    ...boundedSection("binding claims", document.binding.claims, (claim) => [
+      `  ${claim.contextId}: ${claim.criterionElementIds.join(", ") || "no criterion"}`,
     ]),
     // The rendering is bounded by design; the whole document is one --json read
     // away, and saying so is what keeps a truncated section from reading as the
@@ -2493,8 +2476,8 @@ export async function runSpecPlanGet(
     command: "plan get",
     slug: read.value.slug,
     attemptId: view.attempt.id,
-    contextCount: view.document.contexts.length,
-    taskCount: view.document.tasks.length,
+    hasLaunch: view.document.launch !== null,
+    bindingClaimCount: view.document.binding.claims.length,
   });
   return {
     exitCode: EXIT_OK,

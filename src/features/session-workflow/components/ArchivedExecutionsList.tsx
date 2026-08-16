@@ -9,6 +9,10 @@ import type {
   GraphWorkflowExecutionHistoryItem,
 } from "@/lib/workflow-graph/schemas";
 import {
+  originFallbackName,
+  originKindLabel,
+} from "@/lib/workflow-graph/execution-origin";
+import {
   useGraphWorkflowExecutionByIdQuery,
   useGraphWorkflowExecutionResultQuery,
 } from "@/lib/workflows/queries";
@@ -45,9 +49,7 @@ function formatExecutionTime(value: string): string {
 function executionName(execution: GraphWorkflowExecution | null): string {
   if (execution === null) return "Workflow execution";
   if (execution.launchDocument !== null) return execution.launchDocument.name;
-  return execution.origin.kind === "one_off"
-    ? execution.origin.planName
-    : execution.origin.definitionId;
+  return originFallbackName(execution.origin);
 }
 
 function ExecutionRailRow({
@@ -123,7 +125,7 @@ function ExecutionRailRow({
         </span>
         <span className="flex w-full flex-wrap items-center gap-xs text-[0.7rem] text-text-tertiary">
           <Badge tier="count">
-            {origin?.kind === "template" ? "Template" : "One-off"}
+            {origin === null ? "One-off" : originKindLabel(origin)}
           </Badge>
           {origin?.kind === "template" && (
             <span>rev {origin.definitionRevision}</span>

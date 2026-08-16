@@ -10,6 +10,7 @@ import {
   specApprovalChangedEventSchema,
   specAttentionChangedEventSchema,
   specChangedEventSchema,
+  specDeliveryPlanChangedEventSchema,
   specEvidenceChangedEventSchema,
   specExecutionChangedEventSchema,
   specRevisionChangedEventSchema,
@@ -84,7 +85,8 @@ describe("SSEEvent union — strict spec events", () => {
       | typeof specApprovalChangedEventSchema
       | typeof specExecutionChangedEventSchema
       | typeof specEvidenceChangedEventSchema
-      | typeof specAttentionChangedEventSchema;
+      | typeof specAttentionChangedEventSchema
+      | typeof specDeliveryPlanChangedEventSchema;
     event: SpecSseEvent;
   }> = [
     {
@@ -146,6 +148,17 @@ describe("SSEEvent union — strict spec events", () => {
         ...common,
         attentionId: "attention-1",
         active: true,
+      },
+    },
+    {
+      schema: specDeliveryPlanChangedEventSchema,
+      event: {
+        type: "spec-delivery-plan-changed",
+        kind: "reaffirmed",
+        ...common,
+        attemptId: "attempt-1",
+        draftRevision: 3,
+        candidateId: null,
       },
     },
   ];

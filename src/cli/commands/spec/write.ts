@@ -21,6 +21,7 @@ import {
 } from "@/lib/specs/handles";
 import { LINT_SEVERITY_LABEL, draftHealth } from "@/lib/specs/draft-health";
 import { postLaunchPathActs } from "@/lib/specs/delivery-plan";
+import { workflowDefinitionMutationSchema } from "@/lib/workflow-graph/definition-schemas";
 import {
   deliveryPlanEditRequestSchema,
   deliveryPlanMutationViewSchema,
@@ -28,6 +29,7 @@ import {
   deliveryPlanPreviewViewSchema,
   type DeliveryPlanMutationView,
 } from "@/lib/specs/delivery-plan-views";
+import { graphWorkflowLaunchLabel } from "@/lib/workflow-graph/launch-presentation";
 import { approvalRequestReceiptSchema } from "@/lib/specs/review-service";
 import { projectSpecComment } from "@/lib/specs/comment-projection";
 import {
@@ -41,7 +43,6 @@ import {
   specRevisionSchema,
   specRevisionSupersessionSchema,
   specSchema,
-  specTaskClaimRowSchema,
   taskElementPayloadSchema,
 } from "@/lib/specs/schemas";
 import {
@@ -215,8 +216,13 @@ const deliveryPlanCandidateSchema = z
   .object({
     attemptId: z.string().min(1),
     candidateId: z.string().min(1),
-    planHash: z.string().min(1),
-    compiledDefinitionHash: z.string().min(1),
+    candidateHash: z.string().min(1),
+  })
+  .strict();
+const launchedDeliveryPlanSchema = deliveryPlanCandidateSchema
+  .extend({
+    workflowExecutionId: z.string().min(1),
+    resolvedDefinitionHash: z.string().min(1),
   })
   .strict();
 const parkedDeliveryPlanSchema = deliveryPlanCandidateSchema
@@ -227,8 +233,8 @@ const startResponseSchema = z.union([
   z
     .object({
       execution: specStartedExecutionViewSchema,
-      definition: z.object({ id: z.string().min(1) }).passthrough(),
-      deliveryPlan: deliveryPlanCandidateSchema,
+      launch: workflowDefinitionMutationSchema,
+      deliveryPlan: launchedDeliveryPlanSchema,
     })
     .strict(),
   z.object({ parked: parkedDeliveryPlanSchema }).strict(),
@@ -333,7 +339,6 @@ const writeElementLookupSchema = z
       .passthrough(),
   })
   .passthrough();
-const taskClaimResponseSchema = specTaskClaimRowSchema.passthrough();
 
 type CommandResult<T> =
   | { ok: true; value: T }
@@ -894,11 +899,11 @@ const GRAMMAR_PROBE_SLUG = "spec";
 
 function parseQualifiedTarget(
   input: string | undefined,
-  expectedKind: "question" | "task",
+  expectedKind: "question",
   command: string,
   json: boolean,
 ): CommandResult<{ slug: string; handle: string }> {
-  const example = expectedKind === "task" ? "T7" : "Q2";
+  const example = "Q2";
   if (input === undefined) {
     return {
       ok: false,
@@ -2473,85 +2478,6 @@ export async function runSpecAssume(
   );
 }
 
-export async function runSpecTaskComplete(
-  rest: string[],
-  flags: GlobalFlags,
-  values: Record<string, string>,
-  lists: Record<string, string[]>,
-  env: CliEnv,
-  host: CliHost,
-): Promise<CliResult> {
-  const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec task complete"), json);
-  if (denied) return denied;
-  const extra = noExtraPositionals(rest, 1, "task complete", json);
-  if (extra) return extra;
-  const target = parseQualifiedTarget(rest[0], "task", "task complete", json);
-  if (!target.ok) return target.result;
-  const executionId = values["execution"];
-  if (executionId === undefined) {
-    return usageFailure(
-      "spec task complete requires --execution <execution-id>",
-      json,
-    );
-  }
-  const resolved = await resolveProjectConversationContext(flags, env, host);
-  if (!resolved.ok) return resolved.result;
-  const task = await requestTyped(
-    host,
-    resolved.context,
-    env,
-    {
-      method: "GET",
-      path: `${specBasePath(resolved.context, target.value.slug)}/elements/${encodePathSegment(target.value.handle)}`,
-      schema: writeElementLookupSchema,
-      command: "task complete",
-    },
-    json,
-  );
-  if (!task.ok) return task.result;
-  const response = await requestTyped(
-    host,
-    resolved.context,
-    env,
-    {
-      method: "POST",
-      path: actionPath(
-        resolved.context,
-        target.value.slug,
-        "claim-task-complete",
-      ),
-      body: {
-        taskElementId: task.value.element.element.id,
-        executionId,
-        evidenceIds: lists["evidence"] ?? [],
-      },
-      schema: taskClaimResponseSchema,
-      command: "task complete",
-    },
-    json,
-  );
-  if (!response.ok) return response.result;
-  const claim = response.value;
-  return mutationResult(
-    json,
-    {
-      changed: `claimed ${target.value.handle} complete`,
-      state: `claim ${claim.status}`,
-      tokens: {
-        claim: claim.id,
-        task: `${target.value.slug}/${target.value.handle}`,
-        execution: claim.execution_id ?? executionId,
-      },
-      actsNext: "agent",
-      blocked: null,
-      next: `cctl spec status ${target.value.slug} — reports the run's remaining tasks and coverage`,
-    },
-    "claim",
-    claim,
-  );
-}
-
 export async function runSpecRequestApproval(
   rest: string[],
   flags: GlobalFlags,
@@ -2675,9 +2601,16 @@ export async function runSpecStart(
       exitCode: EXIT_USAGE,
       message:
         "spec start --file is retired: the approved delivery plan is the execution graph.",
-      instruction: `Nothing was started. Import legacy planning with \`cctl spec plan open ${slug.value} --seed-from last\`, then propose and sign off that candidate before starting.`,
+      instruction: `Nothing was started. Open an authored delivery attempt with \`cctl spec plan open ${slug.value}\`, then propose and sign off that candidate before starting.`,
       json,
     });
+  }
+  let parameters: Record<string, unknown> | undefined;
+  const inputsPath = values["inputs"];
+  if (inputsPath !== undefined) {
+    const inputs = await readJsonObjectFile(host, inputsPath, "inputs", json);
+    if (!inputs.ok) return inputs.result;
+    parameters = inputs.value;
   }
   // `spec start` is the one session-only spec verb: the approved candidate is
   // launched into, and its merge is pinned to, that concrete session.
@@ -2705,6 +2638,7 @@ export async function runSpecStart(
       body: {
         revisionId: revisionId.value,
         sessionName: resolved.context.session,
+        ...(parameters === undefined ? {} : { parameters }),
         ...(park ? { park: true } : {}),
       },
       schema: startResponseSchema,
@@ -2718,13 +2652,12 @@ export async function runSpecStart(
     return mutationResult(
       json,
       {
-        changed: `parked plan attempt ${parked.attemptId} for prelaunch review — candidate ${parked.candidateId} (compiled ${parked.compiledDefinitionHash})`,
+        changed: `parked plan attempt ${parked.attemptId} for prelaunch review — candidate ${parked.candidateId} at ${parked.candidateHash}`,
         state:
           "attempt parked, no workflow execution created and no session slot taken",
         tokens: {
           planAttempt: parked.attemptId,
-          planHash: parked.planHash,
-          compiledDefinitionHash: parked.compiledDefinitionHash,
+          candidateHash: parked.candidateHash,
         },
         actsNext: parked.nextAct.actor,
         blocked:
@@ -2740,16 +2673,20 @@ export async function runSpecStart(
     );
   }
   const { deliveryPlan, execution } = response.value;
+  const workflowLaunch = graphWorkflowLaunchLabel(response.value.launch);
   return mutationResult(
     json,
     {
       changed: `launched execution ${execution.id} from plan attempt ${deliveryPlan.attemptId} — the approved candidate ${deliveryPlan.candidateId} ran unchanged`,
-      state: `execution ${execution.state}, workflow definition ${response.value.definition.id} at compiled hash ${deliveryPlan.compiledDefinitionHash}`,
+      state: `execution ${execution.state}, one-off workflow launch ${workflowLaunch} at candidate hash ${deliveryPlan.candidateHash}`,
       tokens: {
         execution: execution.id,
-        workflowDefinition: response.value.definition.id,
+        workflowExecution: deliveryPlan.workflowExecutionId,
+        workflowLaunch,
         planAttempt: deliveryPlan.attemptId,
-        compiledDefinitionHash: deliveryPlan.compiledDefinitionHash,
+        candidate: deliveryPlan.candidateId,
+        candidateHash: deliveryPlan.candidateHash,
+        resolvedDefinitionHash: deliveryPlan.resolvedDefinitionHash,
       },
       actsNext: "agent",
       blocked: null,
@@ -2758,7 +2695,7 @@ export async function runSpecStart(
     "execution",
     response.value,
     {
-      workflowDefinitionId: response.value.definition.id,
+      workflowLaunch,
       workflowLaunched: true,
       executionState: execution.state,
     },
@@ -2780,12 +2717,13 @@ export async function runSpecCapture(
   const slug = validateSlug(rest[0], "capture", json);
   if (!slug.ok) return slug.result;
   // `--execution` is optional: the spec's live attempt already knows the run
-  // it launched, and naming one matters only for a legacy compiled run.
+  // it launched, so naming one only addresses a run the caller reached by
+  // execution id rather than by slug.
   const executionId = values["execution"];
   const filePath = values["file"];
   if (filePath === undefined) {
     return usageFailure(
-      "spec capture requires --file <task.json> (add --execution <execution-id> only for a legacy run with no delivery plan attempt)",
+      "spec capture requires --file <task.json> (add --execution <execution-id> to address a specific run)",
       json,
     );
   }
@@ -2836,15 +2774,13 @@ export async function runSpecCapture(
   if (!response.ok) return response.result;
   const captured = response.value;
   const { discovery, replacement } = captured;
-  // The three post-launch paths, side by side and bounded to three, so a
-  // receipt never leaves the operator to guess which exits exist (design §11).
   const paths = postLaunchPathActs({
     slug: slug.value,
     executionId: discovery.executionId,
   });
-  const nonBlockingGuidance = `The run keeps its pinned scope — no capture form mutates it. The three post-launch paths are: ${paths.join(
+  const nonBlockingGuidance = `The run keeps its pinned scope — no capture form mutates it. The post-launch paths are: ${paths.join(
     "; ",
-  )}. Only the third, \`cctl workflow live amend\`, adds this work to the CURRENT run: it is the dedicated audited amendment, and nothing else may change a launched definition.`;
+  )}.`;
   if (replacement === null) {
     return mutationResult(
       json,
@@ -2880,10 +2816,10 @@ export async function runSpecCapture(
       actsNext: "agent",
       blocked: null,
       next: `cctl spec plan get ${slug.value}`,
-      // The other two paths are named rather than re-offered: the run they
+      // The other path is named rather than re-offered: the run it
       // address is retired, so re-listing them as live options would send the
       // operator at an execution that no longer exists.
-      instruction: `This took the second of the three post-launch paths — ${paths[1]}. The other two — ${paths[0]} and ${paths[2]} — addressed execution ${replacement.abandonedExecutionId}, which is now retired, so neither remains available for it. Do not continue the retired run's work: review attempt ${replacement.replacementAttemptId}, edit it with \`cctl spec plan edit ${slug.value} --file <plan.json>\`, then propose and sign it off to launch the replacement.`,
+      instruction: `This took the second post-launch path — ${paths[1]}. The other path — ${paths[0]} — addressed execution ${replacement.abandonedExecutionId}, which is now retired, so it is no longer available for it. Do not continue the retired run's work: review attempt ${replacement.replacementAttemptId}, edit it with \`cctl spec plan edit ${slug.value} --file <plan.json>\`, then propose and sign it off to launch the replacement.`,
     },
     "captured",
     captured,
@@ -2993,10 +2929,7 @@ export async function runSpecAbandon(
       {
         changed: `abandoned execution ${abandoned.id}`,
         state: `execution ${abandoned.state}, reason recorded`,
-        tokens: {
-          execution: abandoned.id,
-          workflowDefinition: abandoned.workflow_definition_id,
-        },
+        tokens: { execution: abandoned.id },
         actsNext: "agent",
         blocked: null,
         next: `cctl spec status ${slug.value} — the spec keeps its content; only this run was retired`,
@@ -3078,10 +3011,12 @@ function planMutationResult(
           }),
       tokens: {
         planAttempt: attempt.id,
-        ...(attempt.planHash === null ? {} : { planHash: attempt.planHash }),
-        ...(attempt.compiledDefinitionHash === null
+        ...(attempt.candidateId === null
           ? {}
-          : { compiledDefinitionHash: attempt.compiledDefinitionHash }),
+          : { candidateId: attempt.candidateId }),
+        ...(attempt.candidateHash === null
+          ? {}
+          : { candidateHash: attempt.candidateHash }),
       },
       actsNext: view.nextAct.actor,
       blocked:
@@ -3109,8 +3044,7 @@ function planReceiptDetail(
   const unresolved = view.unresolved.slice(0, PLAN_RECEIPT_ROWS);
   const omitted = view.unresolved.length - unresolved.length;
   return [
-    ...legacyImportDetail(view.legacyImport),
-    ...(view.attempt.compiledDefinitionHash === null
+    ...(view.attempt.candidateHash === null
       ? []
       : [
           `cctl spec plan preview ${slug} --stage proposed reads the stored candidate exactly as a launch will run it`,
@@ -3118,7 +3052,7 @@ function planReceiptDetail(
     ...(view.invalidatedApproval === null
       ? []
       : [
-          `the approval of snapshot ${view.invalidatedApproval.snapshotId} (${view.invalidatedApproval.planHash}) no longer stands; a re-propose needs a new one`,
+          `the approval of snapshot ${view.invalidatedApproval.snapshotId} (${view.invalidatedApproval.candidateHash}) no longer stands; a re-propose needs a new one`,
         ]),
     ...prelaunchDetail(slug, view.prelaunch),
     ...(view.unresolved.length === 0
@@ -3134,7 +3068,7 @@ function planReceiptDetail(
 }
 
 /**
- * What a parked attempt is holding. The two compiled hashes are printed side
+ * What a parked attempt is holding. The two candidate hashes are printed side
  * by side once tuning has moved the candidate, because the text receipt is the
  * inventory a CLI caller actually reads — carrying them only in the JSON view
  * would leave the re-approval unexplained on the default surface.
@@ -3146,42 +3080,18 @@ function prelaunchDetail(
   if (prelaunch === null) return [];
   if (!prelaunch.candidateChanged) {
     return [
-      `parked for prelaunch review at compiled hash ${prelaunch.parkedCompiledDefinitionHash}`,
+      `parked for prelaunch review at candidate ${prelaunch.parkedCandidateId} (${prelaunch.parkedCandidateHash})`,
     ];
   }
   return [
-    `parked for prelaunch review at compiled hash ${prelaunch.parkedCompiledDefinitionHash}`,
-    `tuning moved the candidate to ${prelaunch.currentCompiledDefinitionHash ?? "no frozen candidate"}, so the parked approval no longer covers it`,
+    `parked for prelaunch review at candidate ${prelaunch.parkedCandidateId} (${prelaunch.parkedCandidateHash})`,
+    `tuning moved the candidate to ${prelaunch.currentCandidateId ?? "no frozen candidate"} (${prelaunch.currentCandidateHash ?? "no frozen hash"}), so the parked approval no longer covers it`,
     `sign the new candidate off with \`cctl spec plan sign-off ${slug}\` before \`cctl spec start ${slug}\``,
   ];
 }
 
 /** How many unresolved rows a receipt names before pointing at the status verb. */
 const PLAN_RECEIPT_ROWS = 5;
-
-/**
- * What a seeded open lifted out of a legacy compiled plan. Every split entry is
- * named rather than capped: an unowned criterion already refuses propose, and a
- * receipt that hid one would send the author to a blocking finding with no
- * explanation of where it came from.
- */
-function legacyImportDetail(
-  legacyImport: DeliveryPlanMutationView["legacyImport"],
-): string[] {
-  if (legacyImport === null) return [];
-  return [
-    `imported the legacy plan of execution ${legacyImport.sourceExecutionId} (revision ${legacyImport.sourceRevisionId}): ${legacyImport.contextCount} context${legacyImport.contextCount === 1 ? "" : "s"}, ${legacyImport.taskCount} task${legacyImport.taskCount === 1 ? "" : "s"}`,
-    ...legacyImport.notes.map((note) => `  ${note}`),
-    ...(legacyImport.requiresHumanSplit.length === 0
-      ? []
-      : [
-          `${legacyImport.requiresHumanSplit.length} criterion${legacyImport.requiresHumanSplit.length === 1 ? "" : "a"} spanned more than one context and no context owns them:`,
-          ...legacyImport.requiresHumanSplit.map(
-            (entry) => `  ${entry.handle}: ${entry.resolution}`,
-          ),
-        ]),
-  ];
-}
 
 async function postPlanAction(
   host: CliHost,
@@ -3247,9 +3157,7 @@ export async function runSpecPlanOpen(
   return planMutationResult(
     json,
     slug.value,
-    seedFrom === "last"
-      ? `opened plan attempt ${view.attempt.id}, seeded from the last delivery: every one of the ${view.document.dispositions.length} criteria on ${view.attempt.pinnedRevisionId} carries exactly one disposition`
-      : `opened an empty plan attempt ${view.attempt.id} against ${view.attempt.pinnedRevisionId}`,
+    `opened an empty graph-launch attempt ${view.attempt.id} against ${view.attempt.pinnedRevisionId}`,
     view,
   );
 }
@@ -3352,13 +3260,13 @@ export async function runSpecPlanPropose(
   );
   if (!response.ok) return response.result;
   const view = response.value;
-  // One act freezes both: the snapshot an approval is granted against and the
-  // compiled candidate that approval binds to. Naming the compiled hash here
-  // is what lets a reader check that a launch ran the bytes they approved.
+  // One act freezes the snapshot and canonical candidate bytes an approval
+  // binds to. Naming the candidate hash lets a reader verify that launch used
+  // the same bytes.
   return planMutationResult(
     json,
     slug.value,
-    `froze plan snapshot ${view.attempt.proposedSnapshotId ?? "(none)"} at ${view.attempt.planHash ?? "(no hash)"} and compiled candidate ${view.attempt.compiledDefinitionHash ?? "(no hash)"}`,
+    `froze plan snapshot ${view.attempt.proposedSnapshotId ?? "(none)"} as candidate ${view.attempt.candidateId ?? "(none)"} at ${view.attempt.candidateHash ?? "(no hash)"}`,
     view,
     {
       recovery: `cctl spec plan reopen ${slug.value} --reason <why> — returns the attempt to draft and invalidates any approval of this snapshot`,
@@ -3414,7 +3322,7 @@ export async function runSpecPlanReopen(
  * The one default approval. It names the candidate identity rather than "the
  * current proposal" so a re-propose landing between the read and the sign-off
  * refuses instead of quietly approving different bytes (`exact-approval`); the
- * three ids come straight off `spec plan preview --stage proposed`.
+ * both identity fields come straight off `spec plan preview --stage proposed`.
  */
 export async function runSpecPlanSignOff(
   rest: string[],
@@ -3438,31 +3346,23 @@ export async function runSpecPlanSignOff(
   // case and still binds, because the read and the write are one command.
   const stated = {
     candidateId: values["candidate"],
-    planHash: values["plan-hash"],
-    compiledDefinitionHash: values["compiled-hash"],
+    candidateHash: values["candidate-hash"],
   };
   let candidate: {
     candidateId: string;
-    planHash: string;
-    compiledDefinitionHash: string;
+    candidateHash: string;
   };
-  if (
-    stated.candidateId !== undefined &&
-    stated.planHash !== undefined &&
-    stated.compiledDefinitionHash !== undefined
-  ) {
+  if (stated.candidateId !== undefined && stated.candidateHash !== undefined) {
     candidate = {
       candidateId: stated.candidateId,
-      planHash: stated.planHash,
-      compiledDefinitionHash: stated.compiledDefinitionHash,
+      candidateHash: stated.candidateHash,
     };
   } else if (
     stated.candidateId !== undefined ||
-    stated.planHash !== undefined ||
-    stated.compiledDefinitionHash !== undefined
+    stated.candidateHash !== undefined
   ) {
     return usageFailure(
-      "spec plan sign-off takes all three of --candidate, --plan-hash, and --compiled-hash together, or none of them: a partial identity would bind an approval to bytes nobody named. Run `cctl spec plan preview <slug> --stage proposed` to read all three.",
+      "spec plan sign-off takes --candidate and --candidate-hash together, or neither: a partial identity would bind an approval to bytes nobody named. Run `cctl spec plan preview <slug> --stage proposed` to read both.",
       json,
     );
   } else {
@@ -3486,10 +3386,16 @@ export async function runSpecPlanSignOff(
         json,
       );
     }
+    const candidateHash = preview.value.candidateHash;
+    if (candidateHash === null) {
+      return usageFailure(
+        `spec plan sign-off: ${slug.value} has no frozen candidate hash. Run \`cctl spec plan propose ${slug.value}\` first.`,
+        json,
+      );
+    }
     candidate = {
       candidateId,
-      planHash: preview.value.planHash,
-      compiledDefinitionHash: preview.value.compiledDefinitionHash,
+      candidateHash,
     };
   }
 
@@ -3510,8 +3416,8 @@ export async function runSpecPlanSignOff(
     json,
     slug.value,
     admission === null || admission.basis === "human_approval"
-      ? `signed off candidate ${candidate.candidateId} (compiled ${candidate.compiledDefinitionHash}) and admitted the execution_start gate`
-      : `signed off candidate ${candidate.candidateId} (compiled ${candidate.compiledDefinitionHash}); the execution_start dial is ${admission.dial}, so admission ${admission.admissionId} was recorded on a ${admission.basis} basis`,
+      ? `signed off candidate ${candidate.candidateId} at ${candidate.candidateHash} and admitted the execution_start gate`
+      : `signed off candidate ${candidate.candidateId} at ${candidate.candidateHash}; the execution_start dial is ${admission.dial}, so admission ${admission.admissionId} was recorded on a ${admission.basis} basis`,
     view,
     {
       recovery: `cctl spec plan reopen ${slug.value} --reason <why> — returns the attempt to draft and invalidates this approval`,

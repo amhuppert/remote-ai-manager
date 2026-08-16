@@ -34,6 +34,37 @@ export type RouteRuntimeDefinition =
   | CascadeWorkflowSemanticDefinition
   | ResolvedWorkflowSemanticDefinition;
 
+function projectDefinitionLoops(
+  definition: RouteRuntimeDefinition,
+  loopStates: GraphWorkflowExecution["loopStates"],
+): RouteProjectionLoop[] {
+  const loopGroups = definition.loopGroups ?? [];
+  const loops: RouteProjectionLoop[] = [];
+  for (const group of loopGroups) {
+    if (!("template" in group)) continue;
+    const state = loopStates[group.id];
+    loops.push({
+      id: group.id,
+      exitContextId: group.exitContextId,
+      bodyContextIds: group.template.contexts.map((context) => context.id),
+      activationContextId: loopInstanceId(
+        group.id,
+        FIRST_LOOP_PASS,
+        group.entryContextId,
+      ),
+      activation: state?.activation ?? "unstarted",
+      concludingExitContextId: state?.concludingExitContextId ?? null,
+    });
+  }
+  return loops;
+}
+
+export function projectResolvedDefinitionLoops(
+  definition: ResolvedWorkflowSemanticDefinition,
+): RouteProjectionLoop[] {
+  return projectDefinitionLoops(definition, {});
+}
+
 /**
  * The declared loop groups as the projection reads them (D4 R9): the logical
  * exit whose external edges the loop holds, the body it repeats, its activation,
@@ -52,25 +83,7 @@ export function projectExecutionLoops(
   execution: GraphWorkflowExecution,
   definition: RouteRuntimeDefinition = execution.workingDefinition,
 ): RouteProjectionLoop[] {
-  const loopGroups = definition.loopGroups ?? [];
-  const loops: RouteProjectionLoop[] = [];
-  for (const group of loopGroups) {
-    if (!("template" in group)) continue;
-    const state = execution.loopStates[group.id];
-    loops.push({
-      id: group.id,
-      exitContextId: group.exitContextId,
-      bodyContextIds: group.template.contexts.map((context) => context.id),
-      activationContextId: loopInstanceId(
-        group.id,
-        FIRST_LOOP_PASS,
-        group.entryContextId,
-      ),
-      activation: state?.activation ?? "unstarted",
-      concludingExitContextId: state?.concludingExitContextId ?? null,
-    });
-  }
-  return loops;
+  return projectDefinitionLoops(definition, execution.loopStates);
 }
 
 /**

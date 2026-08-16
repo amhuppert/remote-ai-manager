@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useState } from "react";
 
-import { TrashIcon } from "@/components/icons";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,23 +21,8 @@ import {
   FormInput,
   FormLabel,
 } from "@/components/ui/FormField";
-import { IconButton } from "@/components/ui/IconButton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/Select";
 import { StatusChip } from "@/components/ui/StatusChip";
-import { WithTooltip } from "@/components/ui/WithTooltip";
 import type { TaskElementPayload } from "@/lib/specs/schemas";
-import type { GraphWorkflowExecutionAmendedEvent } from "@/lib/workflow-graph/event-schemas";
-import type {
-  WorkflowAmendmentOperation,
-  WorkflowExecutionAmendmentRequest,
-  WorkflowExecutionAmendmentResponse,
-} from "@/lib/workflow-graph/execution-amendment";
 
 export interface CaptureDiscoveredWorkRequest {
   executionId?: string;
@@ -60,8 +44,6 @@ export interface CaptureScopeAmendmentReceipt {
   } | null;
 }
 
-export type WorkflowAmendmentReceipt = WorkflowExecutionAmendmentResponse;
-
 export interface PostLaunchFailure {
   message: string;
   instruction: string | null;
@@ -72,20 +54,14 @@ export interface PostLaunchCapturePathsProps {
   slug: string;
   executionId: string | null;
   state: "running" | "unlaunched";
-  canRequestAmendment: boolean;
   capturePending: boolean;
   captureOutcomePath: "discovery" | "replan" | null;
   captureReceipt: CaptureScopeAmendmentReceipt | null;
   captureFailure: PostLaunchFailure | null;
-  amendmentPending: boolean;
-  amendmentReceipt: WorkflowAmendmentReceipt | null;
-  amendmentEvent: GraphWorkflowExecutionAmendedEvent | null;
-  amendmentFailure: PostLaunchFailure | null;
   onCapture(
     path: "discovery" | "replan",
     request: CaptureDiscoveredWorkRequest,
   ): void;
-  onAmend(request: WorkflowExecutionAmendmentRequest): void;
 }
 
 const taskSeed = {
@@ -391,429 +367,16 @@ function ReplanCard({
   );
 }
 
-type AdditionType = WorkflowAmendmentOperation["type"];
-
-function operationLabel(operation: WorkflowAmendmentOperation): string {
-  switch (operation.type) {
-    case "add-context":
-      return `context ${operation.id}`;
-    case "add-task":
-      return `task ${operation.id} → ${operation.contextId}`;
-    case "add-edge":
-      return `edge ${operation.id}: ${operation.sourceContextId} → ${operation.targetContextId}`;
-  }
-}
-
-function QueuedOperations({
-  operations,
-  onRemove,
-}: {
-  operations: readonly WorkflowAmendmentOperation[];
-  onRemove(index: number): void;
-}) {
-  if (operations.length === 0) {
-    return (
-      <p className="mt-sm mb-0 font-mono text-[0.66rem] text-text-tertiary">
-        No additions queued.
-      </p>
-    );
-  }
-  return (
-    <ol className="mt-sm mb-0 grid list-none gap-xs p-0">
-      {operations.map((operation, index) => (
-        <li
-          key={`${operation.type}:${operation.id}:${index}`}
-          className="flex min-w-0 items-center gap-xs rounded-md border border-solid border-border-dim bg-bg-base px-sm py-xs"
-        >
-          <span className="min-w-0 flex-1 font-mono text-[0.64rem] [overflow-wrap:anywhere] text-text-primary">
-            {operationLabel(operation)}
-          </span>
-          <WithTooltip label="Remove addition">
-            <IconButton
-              variant="ghost"
-              tone="danger"
-              aria-label={`Remove ${operationLabel(operation)}`}
-              onClick={() => onRemove(index)}
-            >
-              <TrashIcon size={14} />
-            </IconButton>
-          </WithTooltip>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-function AmendmentReceipt({
-  receipt,
-  event,
-}: {
-  receipt: WorkflowAmendmentReceipt | null;
-  event: GraphWorkflowExecutionAmendedEvent | null;
-}) {
-  const oldHash =
-    event?.previousWorkingDefinitionHash ??
-    receipt?.previousWorkingDefinitionHash ??
-    null;
-  const newHash =
-    event?.workingDefinitionHash ?? receipt?.workingDefinitionHash ?? null;
-  if (oldHash === null) return null;
-  const contextIds = event?.addedContextIds ?? receipt?.addedContextIds ?? [];
-  const taskIds = event?.addedTaskIds ?? receipt?.addedTaskIds ?? [];
-  const edgeIds = event?.addedEdgeIds ?? receipt?.addedEdgeIds ?? [];
-  return (
-    <div className="mt-md rounded-md border border-solid border-[var(--cc-green-border)] bg-green-glow p-sm">
-      <p className="m-0 font-mono text-[0.68rem] font-bold text-green">
-        {event === null ? "Amendment applied" : "Durable amendment event"}
-      </p>
-      {event !== null && (
-        <p className="mt-xs mb-0 font-mono text-[0.64rem] leading-relaxed text-text-primary">
-          {event.actor} · {event.reason} · live revision {event.liveRevision}
-        </p>
-      )}
-      <p className="mt-xs mb-0 font-mono text-[0.64rem] leading-relaxed [overflow-wrap:anywhere] text-text-primary">
-        additions · contexts {contextIds.join(", ") || "—"} · tasks{" "}
-        {taskIds.join(", ") || "—"}
-        {" · "}edges {edgeIds.join(", ") || "—"}
-      </p>
-      <dl className="mt-xs mb-0 grid gap-xs font-mono text-[0.62rem] [overflow-wrap:anywhere]">
-        <div>
-          <dt className="text-text-tertiary">OLD WORKING-DEFINITION HASH</dt>
-          <dd className="m-0 text-text-primary">{oldHash}</dd>
-        </div>
-        <div>
-          <dt className="text-text-tertiary">NEW WORKING-DEFINITION HASH</dt>
-          <dd className="m-0 text-text-primary">{newHash ?? "—"}</dd>
-        </div>
-      </dl>
-    </div>
-  );
-}
-
-function AmendCard({
-  canRequest,
-  pending,
-  receipt,
-  event,
-  failure,
-  onAmend,
-}: {
-  canRequest: boolean;
-  pending: boolean;
-  receipt: WorkflowAmendmentReceipt | null;
-  event: GraphWorkflowExecutionAmendedEvent | null;
-  failure: PostLaunchFailure | null;
-  onAmend(request: WorkflowExecutionAmendmentRequest): void;
-}) {
-  const [reason, setReason] = useState("");
-  const [additionType, setAdditionType] = useState<AdditionType>("add-task");
-  const [operations, setOperations] = useState<WorkflowAmendmentOperation[]>(
-    [],
-  );
-  const [contextId, setContextId] = useState("");
-  const [contextTitle, setContextTitle] = useState("");
-  const [acceptanceCriteria, setAcceptanceCriteria] = useState("");
-  const [contextDescription, setContextDescription] = useState("");
-  const [taskId, setTaskId] = useState("");
-  const [taskContextId, setTaskContextId] = useState("");
-  const [taskTitle, setTaskTitle] = useState("");
-  const [taskInstructions, setTaskInstructions] = useState("");
-  const [edgeId, setEdgeId] = useState("");
-  const [sourceContextId, setSourceContextId] = useState("");
-  const [targetContextId, setTargetContextId] = useState("");
-
-  const additionReady =
-    additionType === "add-context"
-      ? contextId.trim().length > 0 &&
-        contextTitle.trim().length > 0 &&
-        acceptanceCriteria.trim().length > 0
-      : additionType === "add-task"
-        ? taskId.trim().length > 0 &&
-          taskContextId.trim().length > 0 &&
-          taskTitle.trim().length > 0 &&
-          taskInstructions.trim().length > 0
-        : edgeId.trim().length > 0 &&
-          sourceContextId.trim().length > 0 &&
-          targetContextId.trim().length > 0;
-
-  function queueOperation(): void {
-    if (!additionReady) return;
-    if (additionType === "add-context") {
-      setOperations((current) => [
-        ...current,
-        {
-          type: "add-context",
-          id: contextId.trim(),
-          title: contextTitle.trim(),
-          acceptanceCriteria: acceptanceCriteria.trim(),
-          ...(contextDescription.trim().length === 0
-            ? {}
-            : { description: contextDescription.trim() }),
-        },
-      ]);
-      setContextId("");
-      setContextTitle("");
-      setAcceptanceCriteria("");
-      setContextDescription("");
-      return;
-    }
-    if (additionType === "add-task") {
-      setOperations((current) => [
-        ...current,
-        {
-          type: "add-task",
-          id: taskId.trim(),
-          contextId: taskContextId.trim(),
-          title: taskTitle.trim(),
-          instructions: taskInstructions.trim(),
-        },
-      ]);
-      setTaskId("");
-      setTaskContextId("");
-      setTaskTitle("");
-      setTaskInstructions("");
-      return;
-    }
-    setOperations((current) => [
-      ...current,
-      {
-        type: "add-edge",
-        id: edgeId.trim(),
-        sourceContextId: sourceContextId.trim(),
-        targetContextId: targetContextId.trim(),
-      },
-    ]);
-    setEdgeId("");
-    setSourceContextId("");
-    setTargetContextId("");
-  }
-
-  function applyAmendment(): void {
-    onAmend({ reason: reason.trim(), operations });
-  }
-
-  return (
-    <section aria-label="Amend current run" className={cardClass}>
-      <CardHeading index="03" title="Amend current run" tone="cyan">
-        Add contexts, tasks, or edges to the working definition under its pinned
-        mutability policy.
-      </CardHeading>
-      <FormGroup layoutClassName="mb-sm">
-        <FormLabel htmlFor="post-launch-amend-reason">Rationale</FormLabel>
-        <FormInput
-          id="post-launch-amend-reason"
-          aria-label="Amendment rationale"
-          value={reason}
-          onChange={(event) => setReason(event.currentTarget.value)}
-          placeholder="Required durable rationale"
-          autoComplete="off"
-        />
-      </FormGroup>
-      <FormGroup layoutClassName="mb-sm">
-        <FormLabel>Addition type</FormLabel>
-        <Select
-          value={additionType}
-          onValueChange={(value) => setAdditionType(value as AdditionType)}
-        >
-          <SelectTrigger aria-label="Addition type" layoutClassName="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="add-context">Context</SelectItem>
-            <SelectItem value="add-task">Task</SelectItem>
-            <SelectItem value="add-edge">Edge</SelectItem>
-          </SelectContent>
-        </Select>
-      </FormGroup>
-
-      {additionType === "add-context" && (
-        <div>
-          <FormGroup layoutClassName="mb-sm">
-            <FormLabel htmlFor="post-launch-context-id">Context id</FormLabel>
-            <FormInput
-              id="post-launch-context-id"
-              value={contextId}
-              onChange={(event) => setContextId(event.currentTarget.value)}
-            />
-          </FormGroup>
-          <FormGroup layoutClassName="mb-sm">
-            <FormLabel htmlFor="post-launch-context-title">
-              Context title
-            </FormLabel>
-            <FormInput
-              id="post-launch-context-title"
-              value={contextTitle}
-              onChange={(event) => setContextTitle(event.currentTarget.value)}
-            />
-          </FormGroup>
-          <FormGroup layoutClassName="mb-sm">
-            <FormLabel htmlFor="post-launch-context-criteria">
-              Acceptance criteria
-            </FormLabel>
-            <FormInput
-              id="post-launch-context-criteria"
-              value={acceptanceCriteria}
-              onChange={(event) =>
-                setAcceptanceCriteria(event.currentTarget.value)
-              }
-            />
-          </FormGroup>
-          <FormGroup layoutClassName="mb-sm">
-            <FormLabel htmlFor="post-launch-context-description">
-              Description
-            </FormLabel>
-            <FormInput
-              id="post-launch-context-description"
-              value={contextDescription}
-              onChange={(event) =>
-                setContextDescription(event.currentTarget.value)
-              }
-            />
-          </FormGroup>
-        </div>
-      )}
-      {additionType === "add-task" && (
-        <div>
-          <FormGroup layoutClassName="mb-sm">
-            <FormLabel htmlFor="post-launch-task-id">Task id</FormLabel>
-            <FormInput
-              id="post-launch-task-id"
-              value={taskId}
-              onChange={(event) => setTaskId(event.currentTarget.value)}
-            />
-          </FormGroup>
-          <FormGroup layoutClassName="mb-sm">
-            <FormLabel htmlFor="post-launch-task-context-id">
-              Target context id
-            </FormLabel>
-            <FormInput
-              id="post-launch-task-context-id"
-              value={taskContextId}
-              onChange={(event) => setTaskContextId(event.currentTarget.value)}
-            />
-          </FormGroup>
-          <FormGroup layoutClassName="mb-sm">
-            <FormLabel htmlFor="post-launch-task-title">Task title</FormLabel>
-            <FormInput
-              id="post-launch-task-title"
-              value={taskTitle}
-              onChange={(event) => setTaskTitle(event.currentTarget.value)}
-            />
-          </FormGroup>
-          <FormGroup layoutClassName="mb-sm">
-            <FormLabel htmlFor="post-launch-task-instructions">
-              Task instructions
-            </FormLabel>
-            <FormInput
-              id="post-launch-task-instructions"
-              value={taskInstructions}
-              onChange={(event) =>
-                setTaskInstructions(event.currentTarget.value)
-              }
-            />
-          </FormGroup>
-        </div>
-      )}
-      {additionType === "add-edge" && (
-        <div>
-          <FormGroup layoutClassName="mb-sm">
-            <FormLabel htmlFor="post-launch-edge-id">Edge id</FormLabel>
-            <FormInput
-              id="post-launch-edge-id"
-              value={edgeId}
-              onChange={(event) => setEdgeId(event.currentTarget.value)}
-            />
-          </FormGroup>
-          <FormGroup layoutClassName="mb-sm">
-            <FormLabel htmlFor="post-launch-edge-source">
-              Source context id
-            </FormLabel>
-            <FormInput
-              id="post-launch-edge-source"
-              value={sourceContextId}
-              onChange={(event) =>
-                setSourceContextId(event.currentTarget.value)
-              }
-            />
-          </FormGroup>
-          <FormGroup layoutClassName="mb-sm">
-            <FormLabel htmlFor="post-launch-edge-target">
-              Target context id
-            </FormLabel>
-            <FormInput
-              id="post-launch-edge-target"
-              value={targetContextId}
-              onChange={(event) =>
-                setTargetContextId(event.currentTarget.value)
-              }
-            />
-          </FormGroup>
-        </div>
-      )}
-
-      <Button
-        size="sm"
-        touch
-        disabled={!additionReady}
-        onClick={queueOperation}
-      >
-        Queue{" "}
-        {additionType === "add-context"
-          ? "context"
-          : additionType === "add-task"
-            ? "task"
-            : "edge"}{" "}
-        addition
-      </Button>
-      <QueuedOperations
-        operations={operations}
-        onRemove={(index) =>
-          setOperations((current) =>
-            current.filter((_, candidate) => candidate !== index),
-          )
-        }
-      />
-      {!canRequest && (
-        <FormHint>
-          Launch the plan in a session before requesting a current-run
-          amendment.
-        </FormHint>
-      )}
-      <Button
-        size="sm"
-        variant="primary"
-        touch
-        layoutClassName="mt-md self-start"
-        loading={pending}
-        disabled={
-          !canRequest || reason.trim().length === 0 || operations.length === 0
-        }
-        onClick={applyAmendment}
-      >
-        Apply amendment
-      </Button>
-      <AmendmentReceipt receipt={receipt} event={event} />
-      {failure !== null && <FailureNotice failure={failure} />}
-    </section>
-  );
-}
-
 export default function PostLaunchCapturePaths({
   projectName,
   slug,
   executionId,
   state,
-  canRequestAmendment,
   capturePending,
   captureOutcomePath,
   captureReceipt,
   captureFailure,
-  amendmentPending,
-  amendmentReceipt,
-  amendmentEvent,
-  amendmentFailure,
   onCapture,
-  onAmend,
 }: PostLaunchCapturePathsProps): React.JSX.Element {
   const planHref = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(slug)}?view=plan`;
   const discoveryReceipt =
@@ -828,7 +391,7 @@ export default function PostLaunchCapturePaths({
   return (
     <section
       aria-label="Post-launch capture"
-      data-layout="three-paths"
+      data-layout="capture-paths"
       className="mt-md rounded-lg border border-solid border-border-subtle bg-bg-base p-md"
     >
       <header className="mb-md flex flex-wrap items-end justify-between gap-sm">
@@ -846,7 +409,7 @@ export default function PostLaunchCapturePaths({
             : "Unlaunched attempt"}
         </StatusChip>
       </header>
-      <div className="grid grid-cols-3 items-start gap-md max-960:grid-cols-1">
+      <div className="grid grid-cols-2 items-start gap-md max-960:grid-cols-1">
         <DiscoveryCard
           executionId={executionId}
           state={state}
@@ -864,14 +427,6 @@ export default function PostLaunchCapturePaths({
           receipt={replanReceipt}
           failure={captureOutcomePath === "replan" ? captureFailure : null}
           onCapture={(request) => onCapture("replan", request)}
-        />
-        <AmendCard
-          canRequest={canRequestAmendment}
-          pending={amendmentPending}
-          receipt={amendmentReceipt}
-          event={amendmentEvent}
-          failure={amendmentFailure}
-          onAmend={onAmend}
         />
       </div>
     </section>

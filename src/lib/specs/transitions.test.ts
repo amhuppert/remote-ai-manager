@@ -20,7 +20,6 @@ import {
   approvalUnmetConditions,
   approveElement,
   changePolicy,
-  claimTaskComplete,
   consultedAuthoringGates,
   evaluateDeliveryGate,
   grantWaiver,
@@ -237,26 +236,6 @@ function startContext(
     plan,
     activeExecution: false,
     ...overrides,
-  };
-}
-
-function claimContext(
-  policy: SpecGatePolicy,
-  hasEvidence = true,
-): Parameters<typeof claimTaskComplete>[0] {
-  return {
-    policy,
-    draft: {
-      specHandle: "native-sdd",
-      authoringStage: "plan",
-      elements: lintElements(),
-    },
-    records: {
-      pendingTaskClaims: [{ taskElementId: "task-1" }],
-      evidence: hasEvidence
-        ? [{ evidenceId: "evidence-1", criterionElementId: "criterion-1" }]
-        : [],
-    },
   };
 }
 
@@ -1024,24 +1003,6 @@ describe("transition predicates", () => {
     });
   });
 
-  describe("claimTaskComplete", () => {
-    it("returns blocks-claim lint findings", () => {
-      expect(
-        claimTaskComplete(claimContext(contractPolicy, false)),
-      ).toMatchObject({
-        ok: false,
-        refusal: {
-          code: "lint_blocked",
-          findings: [
-            { ruleId: "9.7.claim-without-evidence", severity: "blocks_claim" },
-          ],
-          instruction:
-            "Cite ingested evidence for every covered criterion and claim again.",
-        },
-      });
-    });
-  });
-
   describe("grantWaiver", () => {
     it("refuses an agent and an empty reason", () => {
       expect(
@@ -1289,7 +1250,6 @@ describe("transition predicates", () => {
         ).toBe(false);
 
         if (policy.preset === "exploratory") {
-          expect(claimTaskComplete(claimContext(policy)).ok).toBe(false);
           expect(evaluateDeliveryGate(deliveryContext(policy)).ok).toBe(false);
         }
       }

@@ -1045,6 +1045,32 @@ describe("projectLiveOutline — charter selector (doc 07)", () => {
     expect(result.charter.charterHash.length).toBeGreaterThan(0);
   });
 
+  it("renders global and context-scoped invariants in the live charter document", () => {
+    const base = buildExecution({ status: "paused" });
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      charter: {
+        ...base.charter,
+        invariants: [
+          { id: "global", statement: "Applies everywhere." },
+          {
+            id: "implementation-only",
+            statement: "Applies only to implementation work.",
+            appliesTo: { contextIds: ["impl"] },
+          },
+        ],
+      },
+    };
+
+    const result = projectLiveOutline(execution, { kind: "charter" });
+
+    if (!result.ok || result.section !== "charter") {
+      throw new Error("expected charter section");
+    }
+    expect(result.charter.markdown).toContain("global)");
+    expect(result.charter.markdown).toContain("applies to: impl");
+  });
+
   it("counts amendments in the outline header", () => {
     const pristine = projectLiveOutline(buildExecution(), { kind: "outline" });
     expect(pristine.ok).toBe(true);

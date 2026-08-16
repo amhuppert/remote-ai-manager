@@ -13,10 +13,16 @@ import {
   type WorkflowDefinitionSummary,
 } from "@/lib/workflow-graph/storage";
 import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
-import { createValidationCommandPreflight } from "@/lib/validation/preflight";
-import { validateWorkflowPlan } from "./plan-validation";
+import { admitAuthoredWorkflowLaunch } from "@/lib/workflow-graph/authored-launch-admission";
+import {
+  type AssignmentReferenceChecker,
+  WORKFLOW_ASSIGNMENT_REFERENCE_INVALID_CODE,
+} from "@/lib/workflow-graph/assignment-references";
 import { runDefinitionEditRequest } from "./definition-edit-handler";
-import { assignmentReferenceRefusal } from "./assignment-reference-refusal";
+import {
+  assignmentReferenceRefusal,
+  assignmentReferenceRefusalBody,
+} from "./assignment-reference-refusal";
 
 const logger = createLogger("workflow-graph");
 
@@ -48,6 +54,7 @@ export interface WorkflowDefinitionRouteDeps {
     draft: WorkflowDefinitionDraft,
   ): Promise<unknown>;
   deleteDefinition(projectPath: string, workflowId: string): Promise<boolean>;
+  assignmentReferences?: AssignmentReferenceChecker;
 }
 
 const defaultStorage = createWorkflowStorageService();
@@ -68,9 +75,25 @@ const defaultDeps: WorkflowDefinitionRouteDeps = {
     defaultStorage.delete({ kind: "project", projectPath }, workflowId),
 };
 
+function admissionRefusalResponse(validation: {
+  issues: ReadonlyArray<{ path: string; message: string }>;
+  code?: string;
+}): Response {
+  const body =
+    validation.code === WORKFLOW_ASSIGNMENT_REFERENCE_INVALID_CODE
+      ? assignmentReferenceRefusalBody(validation.issues)
+      : {
+          error: "Workflow plan is invalid",
+          ...(validation.code ? { code: validation.code } : {}),
+          issues: validation.issues,
+        };
+  return NextResponse.json(body, { status: 400 });
+}
+
 export function createWorkflowDefinitionRouteHandlers(
   deps: WorkflowDefinitionRouteDeps = defaultDeps,
 ) {
+  const assignmentReferences = deps.assignmentReferences;
   async function LIST(
     _request: Request,
     context: RouteContext,
@@ -109,11 +132,13 @@ export function createWorkflowDefinitionRouteHandlers(
       deps.readRepoConfig(projectPath),
       deps.readConfig(),
     ]);
-    const validation = validateWorkflowPlan(rawBody, {
-      validationCommandPreflight: createValidationCommandPreflight(
-        repoConfig?.validation,
-        globalConfig.validation,
-      ),
+    const validation = await admitAuthoredWorkflowLaunch(rawBody, {
+      caller: "project-create",
+      documentScope: { kind: "project", projectPath },
+      projectValidation: repoConfig?.validation ?? null,
+      globalValidation: globalConfig.validation,
+      workflowDefaults: globalConfig.workflowDefaults,
+      assignmentReferences,
     });
     if (!validation.ok) {
       logger.warn("workflow-graph.definition-create.rejected", {
@@ -121,18 +146,11 @@ export function createWorkflowDefinitionRouteHandlers(
         issueCount: validation.issues.length,
         code: validation.code ?? "invalid_plan",
       });
-      return NextResponse.json(
-        {
-          error: "Workflow plan is invalid",
-          ...(validation.code ? { code: validation.code } : {}),
-          issues: validation.issues,
-        },
-        { status: 400 },
-      );
+      return admissionRefusalResponse(validation);
     }
 
     try {
-      const item = await deps.createDefinition(projectPath, validation.draft);
+      const item = await deps.createDefinition(projectPath, validation.launch);
       return NextResponse.json({ item }, { status: 201 });
     } catch (error) {
       const refusal = assignmentReferenceRefusal(error);
@@ -190,11 +208,13 @@ export function createWorkflowDefinitionRouteHandlers(
       deps.readRepoConfig(projectPath),
       deps.readConfig(),
     ]);
-    const validation = validateWorkflowPlan(rawBody, {
-      validationCommandPreflight: createValidationCommandPreflight(
-        repoConfig?.validation,
-        globalConfig.validation,
-      ),
+    const validation = await admitAuthoredWorkflowLaunch(rawBody, {
+      caller: "project-replace",
+      documentScope: { kind: "project", projectPath },
+      projectValidation: repoConfig?.validation ?? null,
+      globalValidation: globalConfig.validation,
+      workflowDefaults: globalConfig.workflowDefaults,
+      assignmentReferences,
     });
     if (!validation.ok) {
       logger.warn("workflow-graph.definition-replace.rejected", {
@@ -203,21 +223,14 @@ export function createWorkflowDefinitionRouteHandlers(
         issueCount: validation.issues.length,
         code: validation.code ?? "invalid_plan",
       });
-      return NextResponse.json(
-        {
-          error: "Workflow plan is invalid",
-          ...(validation.code ? { code: validation.code } : {}),
-          issues: validation.issues,
-        },
-        { status: 400 },
-      );
+      return admissionRefusalResponse(validation);
     }
 
     try {
       const item = await deps.updateDefinition(
         projectPath,
         workflowId,
-        validation.draft,
+        validation.launch,
       );
       return NextResponse.json({ item });
     } catch (error) {
@@ -246,15 +259,19 @@ export function createWorkflowDefinitionRouteHandlers(
       rawBody,
       notFoundError: "Workflow not found",
       loadRecord: () => deps.getDefinition(projectPath, workflowId),
-      loadValidationCommandPreflight: async () => {
+      admitLaunch: async (launch) => {
         const [repoConfig, globalConfig] = await Promise.all([
           deps.readRepoConfig(projectPath),
           deps.readConfig(),
         ]);
-        return createValidationCommandPreflight(
-          repoConfig?.validation,
-          globalConfig.validation,
-        );
+        return admitAuthoredWorkflowLaunch(launch, {
+          caller: "project-edit",
+          documentScope: { kind: "project", projectPath },
+          projectValidation: repoConfig?.validation ?? null,
+          globalValidation: globalConfig.validation,
+          workflowDefaults: globalConfig.workflowDefaults,
+          assignmentReferences,
+        });
       },
       persist: (draft) => deps.updateDefinition(projectPath, workflowId, draft),
     });

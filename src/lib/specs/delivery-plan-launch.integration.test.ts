@@ -5,233 +5,32 @@ import {
   setPublicationBroadcastForTesting,
 } from "@/lib/events/publication";
 import { _resetForTesting as resetJobQueue } from "@/lib/jobs/queue";
-import type { SessionState } from "@/lib/sessions/schemas";
-import { createProductionValidationCallerResolver } from "@/lib/validation/singleton";
-import { deliveryPlanCompiledHash } from "./delivery-plan-materializer";
 import { resetGraphExecutionLifecycleCallbacksForTesting } from "@/lib/workflow-graph/execution-lifecycle-port";
+import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtures";
+import { workingDefinitionHash } from "@/lib/workflow-graph/working-definition-hash";
+import type { ParameterDeclaration } from "@/lib/workflow-graph/definition-schemas";
 import { _resetDeliveryGateEvaluatorForTesting } from "@/lib/workflows/merge/delivery-gate-port";
 
 import {
-  deliveryPlanDocumentSchema,
+  canonicalDeliveryPlanEnvelopeBytes,
+  type DeliveryPlanCandidateRecord,
   type DeliveryPlanDocument,
 } from "./delivery-plan";
-import {
-  deliveryPlanMutationViewSchema,
-  deliveryPlanPreviewViewSchema,
-  deliveryPlanViewSchema,
-  type DeliveryPlanMutationView,
-  type DeliveryPlanPreviewView,
-} from "./delivery-plan-views";
+import { finalizeDeliveryPlanLaunch } from "./delivery-plan-finalization";
+import { deliveryPlanCandidateHash } from "./delivery-plan-hash";
+
 import {
   approveAndSignOffSpine,
   authorSpineDraft,
   createSpecSpineWorld,
   proposeSpineRevision,
   SPINE_CONVERSATION_ID,
-  SPINE_PROJECT_NAME,
-  SPINE_PROJECT_PATH,
   SPINE_SESSION_NAME,
   type AuthoredSpineSpec,
   type SpecSpineWorld,
 } from "./spine-test-fixture";
 
-/**
- * The single-act launch, end to end through the production spec routes: plan
- * open → propose → human sign-off → `spec start`.
- *
- * Everything here traverses `specActionPOST` with a transport actor, because
- * the approval and the launch are exactly the acts `evidence-legality` says a
- * direct service call cannot stand in for — a fixture that called
- * `deliveryPlan.signOff` would prove the service works while leaving the route,
- * the human attribution, and the owner threading untested.
- */
-
 const SLUG = "spec-spine";
-
-interface PlannedSpine {
-  authored: AuthoredSpineSpec;
-  attemptId: string;
-  candidate: {
-    candidateId: string;
-    planHash: string;
-    compiledDefinitionHash: string;
-  };
-}
-
-function spineSession(): SessionState {
-  return {
-    sessionName: SPINE_SESSION_NAME,
-    worktreePath: `${SPINE_PROJECT_PATH}/.worktrees/${SPINE_SESSION_NAME}`,
-    branchName: "cc/spec-spine",
-    createdAt: "2026-08-08T10:00:00.000Z",
-    lastActivityAt: "2026-08-08T10:00:00.000Z",
-    archived: false,
-    finished: false,
-    conversations: [],
-    source: "cc",
-    creationMode: "normal",
-    tddEnabled: true,
-    targetBranch: "main",
-    parentSessionName: null,
-    graphWorkflowExecution: null,
-    referenceDocuments: [],
-  };
-}
-
-/**
- * The production caller resolver over this world's live execution store. The
- * owner identity it reads has to be PRODUCED by the launch under test — a
- * seeded `ownerConversationId` would only prove the resolver reads a field.
- */
-function callerResolver(world: SpecSpineWorld) {
-  return createProductionValidationCallerResolver({
-    getSession: async (projectPath, sessionName) =>
-      projectPath === SPINE_PROJECT_PATH && sessionName === SPINE_SESSION_NAME
-        ? spineSession()
-        : null,
-    getActiveGraphWorkflowExecution: async () =>
-      world.readActiveWorkflowExecution(),
-    readRepoValidation: async () => null,
-  });
-}
-
-async function planAction(
-  world: SpecSpineWorld,
-  action: string,
-  body: unknown,
-  transport: "agent" | "human",
-): Promise<DeliveryPlanMutationView> {
-  const response = await world.postAction(SLUG, action, body, transport);
-  const payload: unknown = await response.json();
-  expect(response.status, JSON.stringify(payload)).toBe(200);
-  return deliveryPlanMutationViewSchema.parse(payload);
-}
-
-async function proposedPreview(
-  world: SpecSpineWorld,
-): Promise<DeliveryPlanPreviewView> {
-  const request = new Request(
-    `http://cc.test/api/specs/${SPINE_PROJECT_NAME}/${SLUG}/plan/preview?stage=proposed`,
-  );
-  const response = await world.writeHandlers.specPlanPreviewGET(request, {
-    params: Promise.resolve({ name: SPINE_PROJECT_NAME, slug: SLUG }),
-  });
-  const payload: unknown = await response.json();
-  expect(response.status, JSON.stringify(payload)).toBe(200);
-  return deliveryPlanPreviewViewSchema.parse(payload);
-}
-
-/** A lint-clean plan over the spine's two criteria, in one delivery context. */
-function proposableDocument(
-  seeded: DeliveryPlanDocument,
-  authored: AuthoredSpineSpec,
-): DeliveryPlanDocument {
-  return deliveryPlanDocumentSchema.parse({
-    ...seeded,
-    dispositions: [
-      {
-        criterionElementId: authored.criterionOneId,
-        disposition: "selected",
-        deliveredByExecutionId: null,
-        reaffirmation: null,
-        note: null,
-      },
-      {
-        criterionElementId: authored.criterionTwoId,
-        disposition: "selected",
-        deliveredByExecutionId: null,
-        reaffirmation: null,
-        note: null,
-      },
-    ],
-    contexts: [
-      {
-        contextId: "ctx-deliver",
-        title: "Deliver the spine",
-        contextType: "delivery",
-        criterionElementIds: [authored.criterionOneId, authored.criterionTwoId],
-        acceptanceContract: [
-          "Both spine criteria are observable in production.",
-        ],
-        proofPlan: [],
-      },
-    ],
-    tasks: [
-      {
-        taskId: "task-deliver",
-        contextId: "ctx-deliver",
-        title: "Deliver both criteria",
-        instructions: "Implement the spine feature and prove both criteria.",
-        order: 0,
-        contributesToCriterionElementIds: [authored.criterionOneId],
-      },
-    ],
-    edges: [],
-    wiring: [],
-    policyOverrides: [],
-    touchedSurfaces: ["src/lib/specs/"],
-    governance: {
-      mission: "Deliver the spine feature from its approved plan.",
-      charterInvariants: [
-        {
-          id: "exact-approval",
-          statement: "The launched definition is the approved candidate.",
-        },
-      ],
-      sourcesOfTruth: [
-        {
-          rank: 1,
-          id: "final-design",
-          label: "Final agreed design",
-          type: "document",
-          locator: "command-center#47 attachment f7b542c4",
-          description: "Section 5 owns the single-act launch.",
-          appliesTo: null,
-          accessPolicy: "external-readonly",
-        },
-      ],
-      validationCommandNames: ["typecheck"],
-    },
-  });
-}
-
-async function planTo(
-  world: SpecSpineWorld,
-  dial: "gate" | "notify" | "off" = "gate",
-): Promise<PlannedSpine> {
-  const authored = await authorSpineDraft(world, SLUG, dial);
-  await proposeSpineRevision(world, SLUG, authored);
-  await approveAndSignOffSpine(world, SLUG, authored);
-
-  const opened = await planAction(
-    world,
-    "plan-open",
-    { seedFromLast: false },
-    "agent",
-  );
-  await planAction(
-    world,
-    "plan-edit",
-    {
-      expectedDraftRevision: opened.attempt.draftRevision,
-      document: proposableDocument(opened.document, authored),
-    },
-    "agent",
-  );
-  const proposed = await planAction(world, "plan-propose", {}, "agent");
-  const preview = await proposedPreview(world);
-  const candidateId = preview.candidateId;
-  if (candidateId === null) throw new Error("the proposal stored no candidate");
-  return {
-    authored,
-    attemptId: proposed.attempt.id,
-    candidate: {
-      candidateId,
-      planHash: preview.planHash,
-      compiledDefinitionHash: preview.compiledDefinitionHash,
-    },
-  };
-}
 
 function graphWorkflowExecutionRowCount(world: SpecSpineWorld): number {
   const row = world.db
@@ -257,7 +56,114 @@ async function startExecution(
   );
 }
 
-describe("delivery-plan sign-off and single-act launch", () => {
+function seedApprovedCandidate(
+  world: SpecSpineWorld,
+  authored: AuthoredSpineSpec,
+  options: {
+    parameters?: ParameterDeclaration[];
+  } = {},
+): { attemptId: string; candidateId: string; candidateHash: string } {
+  const attemptId = "attempt-direct-start";
+  const candidateId = "candidate-direct-start";
+  const snapshotId = "snapshot-direct-start";
+  const actor = {
+    kind: "agent" as const,
+    conversationId: "conversation-direct-start",
+  };
+  const workflow = createWorkflowDefinitionRecord();
+  const definition = {
+    ...workflow.definition,
+    parameters: options.parameters ?? workflow.definition.parameters,
+  };
+  const document: DeliveryPlanDocument = {
+    schemaVersion: 2,
+    launch: {
+      name: "Direct spec launch",
+      description: "Launch the signed candidate without a saved definition.",
+      definition,
+      layout: {
+        ...workflow.layout,
+        viewport: { x: 19, y: -7, zoom: 1.25 },
+      },
+    },
+    binding: {
+      dispositions: [authored.criterionOneId, authored.criterionTwoId].map(
+        (criterionElementId) => ({
+          criterionElementId,
+          disposition: "in_scope" as const,
+          deliveredByExecutionId: null,
+        }),
+      ),
+      claims: [
+        {
+          contextId: "context-implement",
+          criterionElementIds: [
+            authored.criterionOneId,
+            authored.criterionTwoId,
+          ],
+        },
+      ],
+    },
+  };
+  const candidate: DeliveryPlanCandidateRecord = {
+    protocol: "native-sdd-delivery-candidate/v2",
+    schemaVersion: 2,
+    specId: authored.specId,
+    attemptId,
+    candidateId,
+    pinnedRevisionId: authored.draftRevisionId,
+    draftRevision: 1,
+    document: {
+      schemaVersion: 2,
+      launch: finalizeDeliveryPlanLaunch({
+        specId: authored.specId,
+        specSlug: SLUG,
+        attemptId,
+        candidateId,
+        launch: document.launch,
+      }),
+      binding: document.binding,
+    },
+  };
+  const candidateHash = deliveryPlanCandidateHash(candidate);
+
+  world.repos.deliveryPlans.open({
+    attempt: {
+      id: attemptId,
+      spec_id: authored.specId,
+      pinned_revision_id: authored.draftRevisionId,
+      delta_basis_execution_id: null,
+      status: "draft",
+      draft_revision: 1,
+      content_json: canonicalDeliveryPlanEnvelopeBytes(document),
+      proposed_snapshot_id: null,
+      approval_json: null,
+      prelaunch_json: null,
+      launched_execution_id: null,
+      created_at: world.now(),
+      updated_at: world.now(),
+    },
+    occurredAt: world.now(),
+    actor,
+  });
+  world.repos.deliveryPlans.propose({
+    attemptId,
+    expectedDraftRevision: 1,
+    snapshotId,
+    candidate: { record: candidate, candidateHash },
+    proposedAt: world.now(),
+    actor,
+  });
+  world.repos.deliveryPlans.recordTransition({
+    attemptId,
+    transition: { kind: "approve", candidateId, candidateHash },
+    occurredAt: world.now(),
+    actor: { kind: "human" },
+  });
+  return { attemptId, candidateId, candidateHash };
+}
+
+describe("delivery-plan start boundary", () => {
   let world: SpecSpineWorld;
 
   beforeEach(() => {
@@ -296,9 +202,7 @@ describe("delivery-plan sign-off and single-act launch", () => {
       instruction?: string;
     };
     expect(payload.code).toBe("validation");
-    expect(payload.instruction).toContain(
-      `cctl spec plan open ${SLUG} --seed-from last`,
-    );
+    expect(payload.instruction).toContain(`cctl spec plan open ${SLUG}`);
     expect(graphWorkflowExecutionRowCount(world)).toBe(0);
   });
 
@@ -315,390 +219,283 @@ describe("delivery-plan sign-off and single-act launch", () => {
       instruction?: string;
     };
     expect(payload.code).toBe("not_found");
-    expect(payload.instruction).toContain(
-      `cctl spec plan open ${SLUG} --seed-from last`,
-    );
+    expect(payload.instruction).toContain(`cctl spec plan open ${SLUG}`);
     expect(graphWorkflowExecutionRowCount(world)).toBe(0);
   });
 
-  it("binds the approval and its admission to the candidate identity, through the human route", async () => {
-    const planned = await planTo(world);
+  it("launches the exact signed one-off candidate and commits its typed binding without a saved definition", async () => {
+    const authored = await authorSpineDraft(world, SLUG, "gate");
+    await proposeSpineRevision(world, SLUG, authored);
+    await approveAndSignOffSpine(world, SLUG, authored);
+    const candidate = seedApprovedCandidate(world, authored);
 
-    const signed = await planAction(
-      world,
-      "plan-sign-off",
-      planned.candidate,
-      "human",
-    );
-
-    expect(signed.attempt.status).toBe("approved");
-    expect(signed.approval).toMatchObject({
-      ...planned.candidate,
-      approvedBy: { kind: "human" },
-    });
-    expect(signed.executionStartAdmission).toMatchObject({
-      dial: "gate",
-      basis: "human_approval",
-    });
-    const admissions = world.repos.review.findGateAdmissionsBySpecId(
-      planned.authored.specId,
-    );
-    const executionStart = admissions.filter(
-      (row) => row.gate === "execution_start",
-    );
-    expect(executionStart).toHaveLength(1);
-    expect(executionStart[0]).toMatchObject({
-      basis: "human_approval",
-      execution_id: null,
-    });
-    // The audit record binds the same identity the approval does.
-    const transition = world.repos.events
-      .findBySpecId(planned.authored.specId)
-      .filter((event) => event.event_type === "spec-delivery-plan-transitioned")
-      .map(
-        (event) => JSON.parse(event.payload_json) as { transition?: unknown },
-      )
-      .at(-1);
-    expect(transition?.transition).toMatchObject({
-      kind: "approve",
-      ...planned.candidate,
-    });
-  });
-
-  it("refuses a sign-off that substitutes the compiled hash while holding the plan hash", async () => {
-    const planned = await planTo(world);
-
-    const response = await world.postAction(
-      SLUG,
-      "plan-sign-off",
-      {
-        candidateId: planned.candidate.candidateId,
-        planHash: planned.candidate.planHash,
-        compiledDefinitionHash: `sha256:${"e".repeat(64)}`,
-      },
-      "human",
-    );
-
-    expect(response.status).toBe(409);
+    const response = await startExecution(world, {}, authored);
     const payload = (await response.json()) as {
-      code?: string;
-      instruction?: string;
+      execution?: { id: string; workflowExecutionId: string | null };
+      deliveryPlan?: {
+        attemptId: string;
+        candidateId: string;
+        candidateHash: string;
+        workflowExecutionId: string;
+        resolvedDefinitionHash: string;
+      };
     };
-    expect(payload.code).toBe("integrity_mismatch");
-    expect(payload.instruction).toContain("cctl spec plan propose");
-    expect(payload.instruction).toContain(
-      planned.candidate.compiledDefinitionHash,
-    );
-    // Nothing was written: the attempt is still an unapproved proposal.
-    const attempt = world.db
-      .prepare(
-        "SELECT status, approval_json FROM spec_delivery_plan_attempts WHERE id = ?",
-      )
-      .get(planned.attemptId) as {
-      status: string;
-      approval_json: string | null;
-    };
-    expect(attempt).toMatchObject({ status: "proposed", approval_json: null });
-  });
 
-  it("refuses an agent sign-off while the execution_start dial is gate", async () => {
-    const planned = await planTo(world);
-
-    const response = await world.postAction(
-      SLUG,
-      "plan-sign-off",
-      planned.candidate,
-      "agent",
-    );
-
-    expect(response.status).toBe(403);
-    const payload = (await response.json()) as { code?: string };
-    expect(payload.code).toBe("human_act_required");
-    expect(
-      world.repos.review
-        .findGateAdmissionsBySpecId(planned.authored.specId)
-        .filter((row) => row.gate === "execution_start"),
-    ).toHaveLength(0);
-  });
-
-  it("launches the approved candidate unchanged, owner-threaded, with no execution row before launch", async () => {
-    const planned = await planTo(world);
-    await planAction(world, "plan-sign-off", planned.candidate, "human");
-
-    // Before launch: no graph-workflow execution exists at all, and every
-    // session conversation resolves normally because nothing owns the slot.
-    expect(graphWorkflowExecutionRowCount(world)).toBe(0);
-    expect(world.readActiveWorkflowExecution()).toBeNull();
-    const resolver = callerResolver(world);
-    const beforeLaunch = await resolver.resolveCaller({
-      projectPath: SPINE_PROJECT_PATH,
-      sessionName: SPINE_SESSION_NAME,
-      conversationId: "conversation-unrelated",
-    });
-    expect(beforeLaunch.kind).toBe("session");
-
-    const response = await startExecution(world, {}, planned.authored);
-    const payload = (await response.json()) as {
-      execution?: { id: string };
-      definition?: { id: string; definition: unknown };
-      deliveryPlan?: { compiledDefinitionHash: string; attemptId: string };
-    };
     expect(response.status, JSON.stringify(payload)).toBe(200);
-
-    // exact-approval: the definition the launch persisted hashes to exactly
-    // the candidate the human approved.
-    const stored = world.definitions.findById(payload.definition?.id ?? "");
-    if (stored === null) throw new Error("the launch persisted no definition");
-    expect(deliveryPlanCompiledHash(stored.definition)).toBe(
-      planned.candidate.compiledDefinitionHash,
+    expect(payload.execution, JSON.stringify(payload)).toBeDefined();
+    expect(world.readActiveWorkflowExecution()).not.toBeNull();
+    const execution = world.repos.delivery.findExecutionById(
+      payload.execution!.id,
     );
-    expect(payload.deliveryPlan?.compiledDefinitionHash).toBe(
-      planned.candidate.compiledDefinitionHash,
-    );
-
-    // The launch created the workflow execution, and it carries the
-    // authenticated conversation that ran `spec start`.
-    const active = world.readActiveWorkflowExecution();
-    expect(active?.ownerConversationId).toBe(SPINE_CONVERSATION_ID);
-    const afterLaunch = await resolver.resolveCaller({
-      projectPath: SPINE_PROJECT_PATH,
-      sessionName: SPINE_SESSION_NAME,
-      conversationId: SPINE_CONVERSATION_ID,
-    });
-    expect(afterLaunch.kind).toBe("session");
-    const strangerAfterLaunch = await resolver.resolveCaller({
-      projectPath: SPINE_PROJECT_PATH,
-      sessionName: SPINE_SESSION_NAME,
-      conversationId: "conversation-unrelated",
-    });
-    expect(strangerAfterLaunch.kind).toBe("ambiguous");
-
-    // The plan records the run it became, durably.
-    const attempt = world.db
-      .prepare(
-        "SELECT status, launched_execution_id FROM spec_delivery_plan_attempts WHERE id = ?",
-      )
-      .get(planned.attemptId) as {
-      status: string;
-      launched_execution_id: string | null;
-    };
-    expect(attempt).toMatchObject({
-      status: "launched",
-      launched_execution_id: payload.execution?.id,
-    });
-  });
-
-  it("refuses a premature start naming the next act in the open/propose/sign-off chain", async () => {
-    const planned = await planTo(world);
-
-    const response = await startExecution(world, {}, planned.authored);
-
-    expect(response.status).toBe(409);
-    const payload = (await response.json()) as {
-      code?: string;
-      instruction?: string;
-    };
-    expect(payload.code).toBe("gate_blocked");
-    expect(payload.instruction).toContain("cctl spec plan sign-off");
-    expect(payload.instruction).toContain(
-      planned.candidate.compiledDefinitionHash,
-    );
-    expect(graphWorkflowExecutionRowCount(world)).toBe(0);
-  });
-
-  it("records a policy-basis admission and no human approval under a notify dial", async () => {
-    const planned = await planTo(world, "notify");
-
-    const signed = await planAction(
-      world,
-      "plan-sign-off",
-      planned.candidate,
-      "agent",
-    );
-
-    expect(signed.executionStartAdmission).toMatchObject({
-      dial: "notify",
-      basis: "notify_policy",
-      approvalId: null,
+    expect(execution).toMatchObject({
+      revision_id: authored.draftRevisionId,
+      workflow_definition_id: null,
+      workflow_definition_revision: null,
+      workflow_execution_binding_json: null,
+      workflow_execution_id: payload.execution!.workflowExecutionId,
+      state: "running",
     });
     expect(
-      world.reviewNotifications.policyAdmitted.filter(
-        (notice) => notice.gate === "execution_start",
-      ),
-    ).toHaveLength(1);
-    // No second gate: the same act that admitted the dial launches.
-    const response = await startExecution(world, {}, planned.authored);
-    expect(response.status).toBe(200);
+      world.repos.executionBindings.requireByWorkflowExecutionId(
+        payload.execution!.workflowExecutionId!,
+        {
+          specExecutionId: payload.execution!.id,
+          candidateId: candidate.candidateId,
+          candidateHash: candidate.candidateHash,
+          pinnedRevisionId: authored.draftRevisionId,
+        },
+      ).binding,
+    ).toMatchObject({
+      schemaVersion: 2,
+      dispositions: [
+        { criterionElementId: authored.criterionOneId },
+        { criterionElementId: authored.criterionTwoId },
+      ],
+      claims: [{ contextId: "context-implement" }],
+    });
+    expect(
+      world.repos.deliveryPlans.findAttemptById(candidate.attemptId),
+    ).toMatchObject({
+      status: "launched",
+      launched_execution_id: payload.execution!.id,
+    });
+    const active = world.readActiveWorkflowExecution();
+    expect(active?.origin).toEqual({
+      kind: "spec_delivery",
+      specSlug: SLUG,
+      candidateId: candidate.candidateId,
+    });
+    expect(active?.launchDocument).toMatchObject({
+      layout: { viewport: { x: 19, y: -7, zoom: 1.25 } },
+    });
+    const resolvedHash = workingDefinitionHash(active!.workingDefinition);
+    expect(resolvedHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(active?.ownerConversationId).toBe(SPINE_CONVERSATION_ID);
+    expect(payload.deliveryPlan).toEqual({
+      ...candidate,
+      workflowExecutionId: payload.execution!.workflowExecutionId,
+      resolvedDefinitionHash: resolvedHash,
+    });
+    expect(await world.definitions.list()).toEqual([]);
   });
-});
 
-describe("delivery-plan prelaunch park", () => {
-  let world: SpecSpineWorld;
+  it("forwards required, defaulted, enum, and text inputs to ordinary graph validation", async () => {
+    const authored = await authorSpineDraft(world, SLUG, "gate");
+    await proposeSpineRevision(world, SLUG, authored);
+    await approveAndSignOffSpine(world, SLUG, authored);
+    seedApprovedCandidate(world, authored, {
+      parameters: [
+        {
+          type: "string",
+          name: "ticket",
+          label: "Ticket",
+          required: true,
+        },
+        {
+          type: "string",
+          name: "owner",
+          label: "Owner",
+          required: false,
+          default: "graph-default",
+        },
+        {
+          type: "enum",
+          name: "mode",
+          label: "Mode",
+          required: true,
+          options: ["careful", "fast"],
+        },
+        {
+          type: "text",
+          name: "brief",
+          label: "Brief",
+          required: true,
+        },
+      ],
+    });
+    const parameters = {
+      ticket: "command-center#66",
+      mode: "careful",
+      brief: "Preserve this text exactly.\nIncluding its newline.",
+    };
 
-  beforeEach(() => {
-    setPublicationBroadcastForTesting(() => ({ delivered: true }));
-    world = createSpecSpineWorld();
-    world.registerMergeComposition();
+    const response = await startExecution(world, { parameters }, authored);
+
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(world.readActiveWorkflowExecution()?.boundInputs).toEqual({
+      ...parameters,
+      owner: "graph-default",
+    });
   });
 
-  afterEach(() => {
-    _resetPublicationForTesting();
-    resetJobQueue();
-    resetGraphExecutionLifecycleCallbacksForTesting();
-    _resetDeliveryGateEvaluatorForTesting();
-  });
+  it.each([
+    ["missing required", {}, 'Required parameter "ticket" was not supplied'],
+    [
+      "invalid enum",
+      { ticket: "66", mode: "reckless", brief: "detail" },
+      'Parameter "mode" is invalid',
+    ],
+    [
+      "invalid text",
+      { ticket: "66", mode: "careful", brief: 42 },
+      'Parameter "brief" is invalid',
+    ],
+    [
+      "extra input",
+      { ticket: "66", mode: "careful", brief: "detail", extra: "no" },
+      'Unknown parameter "extra"',
+    ],
+  ])(
+    "returns the ordinary graph refusal for %s",
+    async (_label, parameters, message) => {
+      const authored = await authorSpineDraft(world, SLUG, "gate");
+      await proposeSpineRevision(world, SLUG, authored);
+      await approveAndSignOffSpine(world, SLUG, authored);
+      seedApprovedCandidate(world, authored, {
+        parameters: [
+          {
+            type: "string",
+            name: "ticket",
+            label: "Ticket",
+            required: true,
+          },
+          {
+            type: "enum",
+            name: "mode",
+            label: "Mode",
+            required: true,
+            options: ["careful", "fast"],
+          },
+          {
+            type: "text",
+            name: "brief",
+            label: "Brief",
+            required: true,
+          },
+        ],
+      });
 
-  it("rejects a retired scope document instead of silently parking it", async () => {
-    const planned = await planTo(world);
+      const response = await startExecution(world, { parameters }, authored);
+      const payload = (await response.json()) as {
+        code?: string;
+        unmetConditions?: string[];
+      };
+
+      expect(response.status).toBe(400);
+      expect(payload.code).toBe("validation");
+      expect(payload.unmetConditions?.join(" ")).toContain(message);
+      expect(graphWorkflowExecutionRowCount(world)).toBe(0);
+    },
+  );
+
+  it("rejects a non-object route input payload before launch", async () => {
+    const authored = await authorSpineDraft(world, SLUG, "gate");
+    await proposeSpineRevision(world, SLUG, authored);
+    await approveAndSignOffSpine(world, SLUG, authored);
+    seedApprovedCandidate(world, authored);
 
     const response = await startExecution(
       world,
-      {
-        park: true,
-        scope: {
-          selectedTaskIds: ["legacy-task"],
-          selectedCriterionIds: [],
-          exclusionDispositions: [],
-        },
-      },
-      planned.authored,
+      { parameters: ["not", "an", "object"] },
+      authored,
     );
 
     expect(response.status).toBe(400);
-    const payload = (await response.json()) as { instruction?: string };
-    expect(payload.instruction).toContain(
-      `cctl spec plan open ${SLUG} --seed-from last`,
-    );
     expect(graphWorkflowExecutionRowCount(world)).toBe(0);
   });
 
-  it("parks durably without creating an execution or taking the session slot", async () => {
-    const planned = await planTo(world);
-    await planAction(world, "plan-sign-off", planned.candidate, "human");
+  it("rechecks session readiness when another graph occupies the session after sign-off", async () => {
+    const authored = await authorSpineDraft(world, SLUG, "gate");
+    await proposeSpineRevision(world, SLUG, authored);
+    await approveAndSignOffSpine(world, SLUG, authored);
+    const candidate = seedApprovedCandidate(world, authored);
+    const saved = createWorkflowDefinitionRecord();
+    await world.definitions.create({
+      name: saved.name,
+      description: saved.description,
+      definition: saved.definition,
+      layout: saved.layout,
+    });
+    const occupied = await world.postWorkflowRoute("START", {
+      definitionId: "workflow-definition-1",
+    });
+    expect(occupied.status).toBe(202);
 
-    const response = await startExecution(
-      world,
-      { park: true },
-      planned.authored,
-    );
+    const response = await startExecution(world, {}, authored);
     const payload = (await response.json()) as {
-      parked?: {
-        attemptId: string;
-        compiledDefinitionHash: string;
-        nextAct: { actor: string; command: string };
-      };
+      code?: string;
+      unmetConditions?: string[];
     };
-    expect(response.status, JSON.stringify(payload)).toBe(200);
-    expect(payload.parked?.compiledDefinitionHash).toBe(
-      planned.candidate.compiledDefinitionHash,
-    );
-    expect(payload.parked?.nextAct).toMatchObject({
-      actor: "agent",
-      command: `cctl spec start ${SLUG}`,
-    });
-
-    // Durable: the prelaunch record survives a reload through the repository.
-    const row = world.db
-      .prepare(
-        "SELECT status, prelaunch_json FROM spec_delivery_plan_attempts WHERE id = ?",
-      )
-      .get(planned.attemptId) as {
-      status: string;
-      prelaunch_json: string | null;
-    };
-    expect(row.status).toBe("parked");
-    expect(JSON.parse(row.prelaunch_json ?? "null")).toMatchObject({
-      candidate: planned.candidate,
-      approvedAtPark: true,
-    });
-
-    // Slot-free: nothing occupies the session's active execution.
-    expect(graphWorkflowExecutionRowCount(world)).toBe(0);
-    expect(world.readActiveWorkflowExecution()).toBeNull();
-    const resolved = await callerResolver(world).resolveCaller({
-      projectPath: SPINE_PROJECT_PATH,
-      sessionName: SPINE_SESSION_NAME,
-      conversationId: "conversation-unrelated",
-    });
-    expect(resolved.kind).toBe("session");
-  });
-
-  it("owes the sign-off, not a start, when an unapproved proposal is parked", async () => {
-    const planned = await planTo(world);
-
-    // Parking deliberately accepts an unapproved proposal: prelaunch review is
-    // where the missing approval gets decided.
-    const response = await startExecution(
-      world,
-      { park: true },
-      planned.authored,
-    );
-    expect(response.status).toBe(200);
-    const payload = (await response.json()) as {
-      parked?: { nextAct?: { actor: string; command: string } };
-    };
-    expect(payload.parked?.nextAct).toMatchObject({
-      actor: "human",
-      command: `cctl spec plan sign-off ${SLUG}`,
-    });
-
-    const read = await world.writeHandlers.specPlanGET(
-      new Request(
-        `http://cc.test/api/specs/${SPINE_PROJECT_NAME}/${SLUG}/plan`,
-      ),
-      { params: Promise.resolve({ name: SPINE_PROJECT_NAME, slug: SLUG }) },
-    );
-    const view = deliveryPlanViewSchema.parse(await read.json());
-    expect(view.attempt.status).toBe("parked");
-    // Pointing this attempt at `spec start` would walk the caller straight
-    // into the premature-start refusal.
-    expect(view.nextAct).toMatchObject({
-      actor: "human",
-      command: `cctl spec plan sign-off ${SLUG}`,
-    });
-
-    const premature = await startExecution(world, {}, planned.authored);
-    expect(premature.status).toBe(409);
-  });
-
-  it("refuses to launch a parked attempt tuned after approval, naming both hashes", async () => {
-    const planned = await planTo(world);
-    await planAction(world, "plan-sign-off", planned.candidate, "human");
-    await startExecution(world, { park: true }, planned.authored);
-
-    await planAction(
-      world,
-      "plan-reopen",
-      { reason: "the closeout context is missing" },
-      "agent",
-    );
-    const reopened = await planAction(world, "plan-propose", {}, "agent");
-    const tuned = await proposedPreview(world);
-    expect(tuned.compiledDefinitionHash).not.toBe(
-      planned.candidate.compiledDefinitionHash,
-    );
-
-    const response = await startExecution(world, {}, planned.authored);
 
     expect(response.status).toBe(409);
-    const payload = (await response.json()) as {
-      unmetConditions?: string[];
-      instruction?: string;
-    };
-    const refusal = [
-      ...(payload.unmetConditions ?? []),
-      payload.instruction ?? "",
-    ].join("\n");
-    expect(refusal).toContain(planned.candidate.compiledDefinitionHash);
-    expect(refusal).toContain(tuned.compiledDefinitionHash);
-    expect(refusal).toContain("cctl spec plan sign-off");
-    expect(graphWorkflowExecutionRowCount(world)).toBe(0);
-
-    // The receipt inventory carries the same two hashes side by side.
-    expect(reopened.prelaunch).toMatchObject({
-      parkedCompiledDefinitionHash: planned.candidate.compiledDefinitionHash,
-      currentCompiledDefinitionHash: tuned.compiledDefinitionHash,
-      candidateChanged: true,
+    expect(payload.code).toBe("workflow_unavailable");
+    expect(payload.unmetConditions?.join(" ")).toContain(
+      "already has an active graph workflow execution",
+    );
+    expect(
+      world.repos.deliveryPlans.findAttemptById(candidate.attemptId),
+    ).toMatchObject({
+      status: "approved",
+      launched_execution_id: null,
     });
+    expect(
+      world.repos.delivery.findActiveExecutionBySpecId(authored.specId),
+    ).toBeNull();
+    expect(world.readActiveWorkflowExecution()?.origin).toMatchObject({
+      kind: "template",
+      definitionId: "workflow-definition-1",
+    });
+  });
+
+  it("fails closed when approved candidate bytes name a different spec", async () => {
+    const authored = await authorSpineDraft(world, SLUG, "gate");
+    await proposeSpineRevision(world, SLUG, authored);
+    await approveAndSignOffSpine(world, SLUG, authored);
+    const candidate = seedApprovedCandidate(world, authored);
+    const snapshot = world.repos.deliveryPlans.findSnapshotsByAttemptId(
+      candidate.attemptId,
+    )[0]!;
+    const mismatched = JSON.parse(snapshot.content_json) as {
+      specId: string;
+    };
+    mismatched.specId = "spec-from-another-attempt";
+    world.db
+      .prepare(
+        "UPDATE spec_delivery_plan_snapshots SET content_json = ? WHERE id = ?",
+      )
+      .run(JSON.stringify(mismatched), snapshot.id);
+
+    const response = await startExecution(world, {}, authored);
+    const payload = (await response.json()) as {
+      code?: string;
+      unmetConditions?: string[];
+    };
+
+    expect(response.status).toBe(409);
+    expect(payload.code).toBe("integrity_mismatch");
+    expect(payload.unmetConditions?.join(" ")).toContain(
+      "spec-from-another-attempt",
+    );
+    expect(graphWorkflowExecutionRowCount(world)).toBe(0);
   });
 });

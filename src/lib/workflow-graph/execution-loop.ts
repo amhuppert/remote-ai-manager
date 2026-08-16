@@ -81,6 +81,10 @@ import {
 } from "@/lib/workflow-graph/loop-settlement";
 import { buildDefaultLiveEditDeps } from "@/lib/workflow-graph/live-edit-apply";
 import type { LiveEditDeps } from "@/lib/workflow-graph/runtime-edits";
+import {
+  createRegisteredGraphExecutionContract,
+  type GraphExecutionContract,
+} from "@/lib/workflow-graph/execution-contract-port";
 import { getEligibleContextIds } from "@/lib/workflow-graph/validation";
 import { SESSION_LANE_ID } from "@/lib/workflow-graph/lane-identity";
 import {
@@ -241,6 +245,7 @@ export interface GraphWorkflowExecutionLoopDeps {
    * route uses, so an unrolled pass is seeded exactly as a live-added one.
    */
   buildLiveEditDeps?(projectPath: string): Promise<LiveEditDeps>;
+  executionContract?: GraphExecutionContract;
   getSession(
     projectPath: string,
     sessionName: string,
@@ -860,6 +865,8 @@ export function createGraphWorkflowExecutionLoop(
     deps.resyncSharedIndex ??
     ((worktreePath: string) => resyncSharedIndexToHead(worktreePath));
   const buildLiveEditDeps = deps.buildLiveEditDeps ?? buildDefaultLiveEditDeps;
+  const executionContract =
+    deps.executionContract ?? createRegisteredGraphExecutionContract();
   const approvalGateService =
     deps.approvalGateService ??
     createApprovalGateService({
@@ -1198,10 +1205,14 @@ export function createGraphWorkflowExecutionLoop(
     ): Promise<void> {
       const liveEditDeps = await buildLiveEditDeps(input.projectPath);
       for (let attempt = 0; attempt < 2; attempt += 1) {
+        const preparedLiveEditDeps: LiveEditDeps = {
+          ...liveEditDeps,
+          executionContract: executionContract.loadLiveEdit(execution),
+        };
         const prepared = prepareLoopPassMaterialization(
           execution,
           request,
-          liveEditDeps,
+          preparedLiveEditDeps,
         );
         if (!prepared.ok) {
           logger.error("graph-workflow.loop.materialize_rejected", {

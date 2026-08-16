@@ -51,6 +51,24 @@ describe("registerSpecSseReactions", () => {
     });
   });
 
+  it("refreshes plan review and preview when another client changes a delivery plan", () => {
+    const { fake, invalidate } = setup();
+
+    fake.emit("spec-delivery-plan-changed", {
+      type: "spec-delivery-plan-changed",
+      projectPath: "/repos/demo",
+      specId: "spec-1",
+      specSlug: "native-sdd",
+      occurredAt: "2026-08-15T00:00:00Z",
+      kind: "reaffirmed",
+      attemptId: "attempt-1",
+      draftRevision: 3,
+      candidateId: null,
+    });
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: specKeys.all });
+  });
+
   it("drops malformed spec events without invalidating queries", () => {
     const { fake, invalidate } = setup();
 

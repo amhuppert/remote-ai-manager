@@ -11,9 +11,10 @@
  * in SKILL.md is rendered from the registry, and CI (`--check`) fails when the
  * committed block drifts from what the registry would produce.
  *
- * Scope: this generates ONLY the command-reference index (every command path +
- * summary + usage). The skill's rich per-group prose sections stay hand-authored
- * — the registry has no equivalent, and prose is where domain guidance lives.
+ * Scope: this generates ONLY the command-reference index (every portable command
+ * path + summary + usage). Retired runtime compatibility nodes opt out in their
+ * registry entry. The skill's rich per-group prose sections stay hand-authored —
+ * the registry has no equivalent, and prose is where domain guidance lives.
  *
  * Usage:
  *   bun scripts/cc-cli-skill-reference.ts          # rewrite the block in place
@@ -42,12 +43,15 @@ export const END_MARKER = "<!-- END GENERATED COMMAND REFERENCE -->";
  * the markers). Pure — takes entries, returns the block text — so the format is
  * unit-tested against crafted entry sets without touching disk.
  *
- * Grouped by top-level command in registry order; each entry is one bullet
+ * Grouped by top-level command in registry order; each portable entry is one bullet
  * `` `cctl <path>` — <summary> `` followed by its usage shapes as inline code.
  * A trailing newline is included so the block sits cleanly between its markers.
  */
 export function renderCommandReference(entries: CommandHelpEntry[]): string {
-  const level1 = entries.filter((entry) => entry.path.length === 1);
+  const portableEntries = entries.filter(
+    (entry) => entry.includeInGeneratedReference !== false,
+  );
+  const level1 = portableEntries.filter((entry) => entry.path.length === 1);
   const lines: string[] = [
     "### Command reference",
     "",
@@ -58,7 +62,7 @@ export function renderCommandReference(entries: CommandHelpEntry[]): string {
   ];
 
   for (const top of level1) {
-    const family = entries
+    const family = portableEntries
       .filter((entry) => entry.path[0] === top.path[0])
       .sort((a, b) => a.path.length - b.path.length);
     for (const entry of family) {

@@ -48,6 +48,7 @@ import {
   buildFollowUpPrompt,
   type LatestContextValidationFailureFeedback,
 } from "./iteration-prompt";
+import { resolveScopedCharterForContext } from "./charter/invariant-scope";
 import { contextOwesOutput, resolveUpstreamInputs } from "./context-outputs";
 import { resolveLoopHistory } from "./loop-history";
 import {
@@ -137,6 +138,11 @@ import {
   laneStateKey,
 } from "@/lib/workflow-graph/lane-identity";
 import { answeredPendingUserInputs } from "@/lib/workflow-graph/pending-user-input";
+import {
+  createRegisteredGraphExecutionContract,
+  type GraphExecutionContract,
+} from "./execution-contract-port";
+import { composeGraphRolePrompt } from "./prompt-composer";
 
 interface GraphWorkflowIterationExecutionRepository {
   getActive(
@@ -351,6 +357,7 @@ export interface GraphWorkflowIterationOrchestratorDeps {
   runAgentIteration(
     input: GraphWorkflowRunAgentIterationInput,
   ): Promise<GraphWorkflowAgentIterationResult>;
+  executionContract?: GraphExecutionContract;
   signalHalt?(
     input: GraphWorkflowSignalHaltInput,
   ): Promise<GraphWorkflowExecution>;
@@ -938,6 +945,8 @@ function logBackgroundWaitLifecycle(params: {
 export function createGraphWorkflowIterationOrchestrator(
   deps: GraphWorkflowIterationOrchestratorDeps,
 ) {
+  const executionContract =
+    deps.executionContract ?? createRegisteredGraphExecutionContract();
   const validationService =
     deps.validationService ?? createGraphWorkflowValidationService();
   const eventPublisher =
@@ -3978,6 +3987,41 @@ export function createGraphWorkflowIterationOrchestrator(
         shouldContinueInContext = remainingTaskCount > 0;
         iterationNumber = finalizedContextState.iterationCount;
 
+        // Another writer has already taken this context back for a FRESH
+        // iteration — retryable-error recovery and pause-to-edit both return it
+        // to a schedulable status. Neither halts the run, so the mid-flight
+        // guard above cannot see it: recovery deliberately clears `haltReason`
+        // and leaves `execution.status` on "running". This iteration no longer
+        // owns the context, so every outcome it would write is stale — and
+        // `completed` is worse than stale, because the transition table refuses
+        // `ready` -> `completed` and the throw escapes the write queue as an
+        // `execution_loop_failed` halt, turning a recoverable error into a dead
+        // run. Leave the context wherever the new owner put it, and report no
+        // continuation so this iteration's caller stops rather than racing the
+        // re-dispatch.
+        if (
+          finalizedContextState.status === "ready" ||
+          finalizedContextState.status === "pending"
+        ) {
+          execLogger?.iteration(
+            input.contextId,
+            "iteration.finalize_withheld_context_rescheduled",
+            { conversationId, status: finalizedContextState.status },
+          );
+          logger.info("graph-workflow.iteration.finalize_withheld", {
+            executionId: finalizedExecution.id,
+            contextId: input.contextId,
+            reason: "context_rescheduled",
+            status: finalizedContextState.status,
+          });
+          shouldContinueInContext = false;
+          finalizedExecution.machineSnapshot = buildLifecycleSnapshot(
+            finalizedExecution,
+            { hasLiveIteration: false },
+          );
+          return finalizedExecution;
+        }
+
         // A context only reaches the no-remaining-tasks branch after every
         // enabled validator passed (failures reopen tasks), so the gate
         // decision reduces to the resolved per-context config.
@@ -4458,6 +4502,13 @@ export function createGraphWorkflowIterationOrchestrator(
       seededExecution,
       input.contextId,
     );
+    const scopedCharter = seededContext.charter
+      ? resolveScopedCharterForContext({
+          execution: seededExecution,
+          contextId: input.contextId,
+          charter: seededContext.charter,
+        })
+      : undefined;
     // Pre-seed iteration count. A parked iteration must not consume an
     // iteration (Req 3.3, design 3.3 "bypasses seed/failure branches"), so the
     // park short-circuit rolls the seed increment back to this value.
@@ -4753,7 +4804,7 @@ export function createGraphWorkflowIterationOrchestrator(
         }),
       });
 
-      const initialPrompt =
+      const basePrompt =
         promptMode === "follow_up"
           ? buildFollowUpPrompt({
               remainingTasks: initialTasks,
@@ -4763,7 +4814,7 @@ export function createGraphWorkflowIterationOrchestrator(
               latestContextValidationFailure,
               collaborationContinuations,
               allowAgentCollaboration,
-              charter: context.charter,
+              charter: scopedCharter,
               charterAmendments: seededExecution.charterAmendments,
               resumeUserInput: resumeUserInputPrompt,
               askUserQuestionsEnabled: context.askUserQuestions.enabled,
@@ -4774,7 +4825,7 @@ export function createGraphWorkflowIterationOrchestrator(
               taskStates: seededExecution.taskStates,
               sharedDocuments: seededExecution.sharedDocuments,
               allowAgentTaskAdd: context.mutability.allowAgentTaskAdd,
-              charter: context.charter,
+              charter: scopedCharter,
               charterAmendments: seededExecution.charterAmendments,
               askUserQuestionsEnabled: context.askUserQuestions.enabled,
               allowAgentCollaboration,
@@ -4798,6 +4849,13 @@ export function createGraphWorkflowIterationOrchestrator(
               // only channel for same-pass body contexts.
               loopHistory: resolveLoopHistory(seededExecution, input.contextId),
             });
+      const initialPrompt = await composeGraphRolePrompt({
+        execution: seededExecution,
+        executionContract,
+        prompt: basePrompt,
+        role: "implementer",
+        contextId: input.contextId,
+      });
 
       // Log the prompt sent to the agent
       const iterationNum = seededContextState.iterationCount;
@@ -5068,7 +5126,7 @@ export function createGraphWorkflowIterationOrchestrator(
           break;
         }
 
-        const followUpPrompt = buildFollowUpPrompt({
+        const baseFollowUpPrompt = buildFollowUpPrompt({
           remainingTasks: remaining,
           taskStates: midExecution.taskStates,
           attemptNumber: attempt,
@@ -5083,9 +5141,16 @@ export function createGraphWorkflowIterationOrchestrator(
             ),
           collaborationContinuations: [],
           allowAgentCollaboration,
-          charter: context.charter,
+          charter: scopedCharter,
           charterAmendments: midExecution.charterAmendments,
           askUserQuestionsEnabled: context.askUserQuestions.enabled,
+        });
+        const followUpPrompt = await composeGraphRolePrompt({
+          execution: midExecution,
+          executionContract,
+          prompt: baseFollowUpPrompt,
+          role: "implementer",
+          contextId: input.contextId,
         });
         execLogger?.writePrompt(
           input.contextId,

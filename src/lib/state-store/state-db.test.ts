@@ -14,6 +14,7 @@ import path from "node:path";
 import os from "node:os";
 import {
   KNOWN_SCHEMA_VERSION,
+  SPEC_EXECUTIONS_SCHEMA_DDL,
   _createTestDb,
   _createTestDbAtPath,
   _resetForTesting,
@@ -78,6 +79,173 @@ describe("state-db pragmas", () => {
 });
 
 describe("state-db schema initialization", () => {
+  it("rebuilds legacy spec launch storage without a saved-definition projection", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "cc-direct-launch-"));
+    const dbPath = path.join(tempDir, "command-center.db");
+    const legacy = new Database(dbPath);
+    legacy.exec(`
+      CREATE TABLE spec_executions (
+        id TEXT PRIMARY KEY,
+        spec_id TEXT NOT NULL,
+        revision_id TEXT NOT NULL,
+        scope_json TEXT NOT NULL,
+        state TEXT NOT NULL,
+        cleanup_phase TEXT,
+        linked_workflow_execution_id TEXT,
+        cleanup_last_error TEXT,
+        cleanup_last_error_at TEXT,
+        execution_start_dial TEXT,
+        workflow_definition_id TEXT NOT NULL,
+        workflow_definition_revision INTEGER,
+        workflow_execution_id TEXT,
+        session_name TEXT,
+        delivered_at TEXT,
+        abandoned_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE spec_delivery_plan_candidates (
+        id TEXT PRIMARY KEY,
+        attempt_id TEXT NOT NULL,
+        snapshot_id TEXT NOT NULL UNIQUE,
+        compiled_definition_hash TEXT NOT NULL,
+        launch_json TEXT NOT NULL,
+        binding_json TEXT NOT NULL,
+        materialized_at TEXT NOT NULL
+      );
+      CREATE TABLE spec_delivery_plan_snapshots (
+        id TEXT PRIMARY KEY,
+        attempt_id TEXT NOT NULL,
+        draft_revision INTEGER NOT NULL,
+        plan_hash TEXT NOT NULL,
+        content_json TEXT NOT NULL,
+        pinned_revision_id TEXT NOT NULL,
+        proposed_at TEXT NOT NULL,
+        proposed_by_json TEXT NOT NULL
+      );
+    `);
+    legacy.close();
+
+    const db = _createTestDbAtPath(dbPath);
+    try {
+      const executionColumns = db.pragma(
+        "table_info(spec_executions)",
+      ) as Array<{
+        name: string;
+        notnull: number;
+      }>;
+      expect(
+        executionColumns.find(
+          (column) => column.name === "workflow_definition_id",
+        ),
+      ).toMatchObject({ notnull: 0 });
+      expect(
+        executionColumns.find(
+          (column) => column.name === "workflow_seed_source_json",
+        ),
+      ).toBeDefined();
+
+      // The compiled candidate was a second artifact an approval could have
+      // meant. Version 2 signs the snapshot bytes themselves, so the table and
+      // the plan hash beside it are gone rather than merely unread.
+      const tables = (
+        db
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+          .all() as Array<{ name: string }>
+      ).map((row) => row.name);
+      expect(tables).not.toContain("spec_delivery_plan_candidates");
+
+      const snapshotColumns = db.pragma(
+        "table_info(spec_delivery_plan_snapshots)",
+      ) as Array<{ name: string; notnull: number }>;
+      expect(snapshotColumns.map((column) => column.name)).not.toContain(
+        "plan_hash",
+      );
+      expect(
+        snapshotColumns.find((column) => column.name === "candidate_hash"),
+      ).toMatchObject({ notnull: 1 });
+    } finally {
+      db.close();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves child links while rebuilding legacy spec executions", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "cc-direct-launch-fk-"));
+    const dbPath = path.join(tempDir, "command-center.db");
+    const seeded = _createTestDbAtPath(dbPath);
+    seeded.exec(`
+      INSERT INTO projects (root_path) VALUES ('/repos/direct-launch-fk');
+      INSERT INTO specs (
+        id, project_path, slug, name, gate_policy_json, created_at, updated_at
+      ) VALUES (
+        'spec-direct-launch-fk', '/repos/direct-launch-fk', 'direct-launch-fk',
+        'Direct launch FK', '{"preset":"balanced"}',
+        '2026-08-15T12:00:00.000Z', '2026-08-15T12:00:00.000Z'
+      );
+      INSERT INTO spec_revisions (
+        id, spec_id, number, state, authoring_stage, created_at
+      ) VALUES (
+        'revision-direct-launch-fk', 'spec-direct-launch-fk', 1, 'approved',
+        'plan', '2026-08-15T12:00:00.000Z'
+      );
+      INSERT INTO spec_executions (
+        id, spec_id, revision_id, scope_json, state, workflow_definition_id,
+        created_at, updated_at
+      ) VALUES (
+        'execution-direct-launch-fk', 'spec-direct-launch-fk',
+        'revision-direct-launch-fk', '{}', 'running', 'definition-legacy',
+        '2026-08-15T12:00:00.000Z', '2026-08-15T12:00:00.000Z'
+      );
+      INSERT INTO spec_gate_admissions (
+        id, spec_id, gate, basis, revision_id, execution_id, actor_json,
+        created_at
+      ) VALUES (
+        'admission-direct-launch-fk', 'spec-direct-launch-fk',
+        'execution_start', 'off_policy', 'revision-direct-launch-fk',
+        'execution-direct-launch-fk', '{}', '2026-08-15T12:00:00.000Z'
+      );
+    `);
+    seeded.close();
+
+    const legacy = new Database(dbPath);
+    legacy.pragma("foreign_keys = OFF");
+    legacy.pragma("legacy_alter_table = ON");
+    legacy.exec(`
+      DROP INDEX IF EXISTS idx_spec_executions_spec_state;
+      DROP INDEX IF EXISTS uq_spec_executions_workflow_execution;
+      ALTER TABLE spec_executions RENAME TO spec_executions_current;
+    `);
+    legacy.exec(
+      SPEC_EXECUTIONS_SCHEMA_DDL.replace(
+        "workflow_definition_id TEXT,",
+        "workflow_definition_id TEXT NOT NULL,",
+      ),
+    );
+    legacy.exec(`
+      INSERT INTO spec_executions SELECT * FROM spec_executions_current;
+      DROP TABLE spec_executions_current;
+    `);
+    legacy.close();
+
+    const migrated = _createTestDbAtPath(dbPath);
+    try {
+      expect(
+        migrated
+          .prepare("SELECT execution_id FROM spec_gate_admissions WHERE id = ?")
+          .get("admission-direct-launch-fk"),
+      ).toEqual({ execution_id: "execution-direct-launch-fk" });
+      expect(
+        migrated.pragma("foreign_key_check") as Array<Record<string, unknown>>,
+      ).toEqual([]);
+      expect(migrated.pragma("foreign_keys", { simple: true })).toBe(1);
+      expect(migrated.pragma("legacy_alter_table", { simple: true })).toBe(0);
+    } finally {
+      migrated.close();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("creates every required table", () => {
     const db = _createTestDb({ inMemory: true });
     try {
@@ -803,8 +971,8 @@ describe("state-db forward-only schema_migrations conflict policy", () => {
 });
 
 describe("state-db breaking-cutover versions", () => {
-  it("this build understands schema version 7 (the engine-seeded shared-document kind, after the spec-execution abandoning widening at 6, the graph-workflow lane-placement cutover at 5, the validation-status widening at 4, the workflow agent-assignment cutover at 3, evidence-kind narrowing at 2, and the AgentSessionRef cutover at 1)", () => {
-    expect(KNOWN_SCHEMA_VERSION).toBe(8);
+  it("this build understands schema version 9 after the native-SDD v2 cutover", () => {
+    expect(KNOWN_SCHEMA_VERSION).toBe(9);
   });
 
   it("opens a DB stamped at this build's version but refuses one stamped above it (an older build's DB advanced past this)", () => {

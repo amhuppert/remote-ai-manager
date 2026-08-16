@@ -236,13 +236,13 @@ export async function runCli(
   }
   const result = await dispatchCli(parsed, env, host);
 
-  // Soft location nudge for `--file` payloads, applied centrally so every
-  // payload command (workflow/charter/decisions/agent/ask) gets it without
+  // Soft location nudge for file-backed payloads, applied centrally so every
+  // payload command (workflow/spec/charter/decisions/agent/ask) gets it without
   // threading the advisory through each success return. Only on a successful
   // run — a failed invocation's payload location is moot.
-  const fileFlag = parsed.values["file"];
-  if (result.exitCode === EXIT_OK && fileFlag !== undefined) {
-    const advisory = ccTempPayloadAdvisory(fileFlag);
+  const payloadPath = parsed.values["file"] ?? parsed.values["inputs"];
+  if (result.exitCode === EXIT_OK && payloadPath !== undefined) {
+    const advisory = ccTempPayloadAdvisory(payloadPath);
     if (advisory !== undefined) {
       return { ...result, stderr: `${result.stderr}${advisory}` };
     }

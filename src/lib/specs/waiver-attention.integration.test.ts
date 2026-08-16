@@ -92,18 +92,10 @@ describe("waiver request/grant attention pipeline (runtime wiring)", () => {
     let waiverSequence = 0;
     service = createEvidenceService({
       repo: deliveryRepo,
-      ingestExecutionEvidence: async () => undefined,
       recordMutation: recorder.recordMutation,
       runInImmediateTransaction: recorder.runInImmediateTransaction,
       nextId: (kind) => `${kind}-${++waiverSequence}`,
       now: () => NOW,
-      getApprovedCriterion: async () => null,
-      gitObjectExists: async () => false,
-      workflowEventExists: async () => false,
-      mergeValidationFactExists: async () => false,
-
-      isEvidenceFresh: async () => false,
-      routeStrategyInadequacy: async () => undefined,
       // Mirrors the production route in service-factory: mint the attention
       // id, resolve identity, and open the durable Needs You request.
       async routeWaiverRequestToHuman(input) {
@@ -139,7 +131,6 @@ describe("waiver request/grant attention pipeline (runtime wiring)", () => {
           criterionElementId,
         );
       },
-      getTaskClaimContext: async () => null,
       async getCriterionVersion(revisionId, criterionElementId) {
         const snapshot = await specs.getRevisionSnapshot(revisionId);
         const criterion = snapshot?.elements.find(

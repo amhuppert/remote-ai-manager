@@ -46,6 +46,10 @@ import {
   runPinnedMutation,
   type WorkflowMutationGuardDeps,
 } from "./mutation-guard";
+import {
+  createRegisteredGraphExecutionContract,
+  type GraphExecutionContract,
+} from "./execution-contract-port";
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -82,6 +86,7 @@ export interface GraphWorkflowRuntimeEditRouteDeps {
     ) => MutateActiveResult | GraphWorkflowExecution,
   ): Promise<GraphWorkflowExecution>;
   buildLiveEditDeps(projectPath: string): Promise<LiveEditDeps>;
+  executionContract?: GraphExecutionContract;
   prepareAssignmentSnapshots(
     projectPath: string,
     operations: readonly WorkflowLiveEditOperation[],
@@ -118,6 +123,7 @@ const defaultDeps: GraphWorkflowRuntimeEditRouteDeps = {
   getActiveExecution: getActiveGraphWorkflowExecution,
   mutateActive: executionRepository.mutateActive,
   buildLiveEditDeps: buildDefaultLiveEditDeps,
+  executionContract: createRegisteredGraphExecutionContract(),
   prepareAssignmentSnapshots: buildDefaultAssignmentSnapshotPreparation,
   publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
   publishCharterUpdated: eventPublisher.publishCharterUpdated,

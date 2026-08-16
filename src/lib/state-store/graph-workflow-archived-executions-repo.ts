@@ -55,6 +55,8 @@ export interface GraphWorkflowArchivedExecutionsRepo {
     sessionName: string,
     executionId: string,
   ): GraphWorkflowExecution | null;
+  /** Read an archived execution by its globally unique execution id. */
+  findByExecutionId(executionId: string): GraphWorkflowExecution | null;
   /**
    * Every decodable archived execution for a session, newest first.
    *
@@ -263,6 +265,13 @@ export function createGraphWorkflowArchivedExecutionsRepo(
       WHERE project_path = ? AND session_name = ?
       ORDER BY archived_at DESC, execution_id DESC`,
   );
+  const findByExecutionIdStmt = db.prepare(
+    `SELECT execution_json
+       FROM graph_workflow_archived_executions
+      WHERE execution_id = ?
+      ORDER BY archived_at DESC
+      LIMIT 1`,
+  );
   const findStatusStmt = db.prepare(
     `SELECT status
        FROM graph_workflow_archived_executions
@@ -343,6 +352,32 @@ export function createGraphWorkflowArchivedExecutionsRepo(
           return logAndThrowValidationFailure(executionId, decoded.issues);
         },
       );
+    },
+    findByExecutionId(executionId) {
+      return timed("findByExecutionId", { executionId }, () => {
+        const row: unknown = findByExecutionIdStmt.get(executionId);
+        if (row === undefined) return null;
+        if (
+          typeof row !== "object" ||
+          row === null ||
+          typeof (row as { execution_json?: unknown }).execution_json !==
+            "string"
+        ) {
+          return logAndThrowValidationFailure(executionId, [
+            {
+              code: "invalid_row_shape",
+              path: [],
+              message: "unexpected row shape",
+            },
+          ]);
+        }
+        const decoded = decodeArchivedBlob(
+          executionId,
+          (row as { execution_json: string }).execution_json,
+        );
+        if (decoded.ok) return decoded.value;
+        return logAndThrowValidationFailure(executionId, decoded.issues);
+      });
     },
     listBySession(projectPath, sessionName) {
       return timed("listBySession", { projectPath, sessionName }, () => {

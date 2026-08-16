@@ -342,6 +342,103 @@ describe("workflow definition route handlers", () => {
     expect(updateDefinition).not.toHaveBeenCalled();
   });
 
+  it("retains the unknown-command code for a saved-definition edit", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    readRepoConfig.mockResolvedValue(OVERSIZED_REPO_CONFIG);
+    readConfig.mockResolvedValue({
+      ...MOCK_CONFIG,
+      validation: { concurrencyLimit: 4, defaultTimeoutMs: 600_000 },
+    });
+    getDefinition.mockResolvedValue(
+      createWorkflowDefinitionRecord({ revision: 3 }),
+    );
+
+    const response = await handlers.EDIT(
+      makeRequest("/api/projects/repo/workflows/workflow-1/edit", "PATCH", {
+        baseRevision: 3,
+        operations: [
+          {
+            type: "update-workflow-config",
+            scriptValidator: { commands: ["missing"] },
+          },
+          {
+            type: "update-context",
+            contextId: "context-implement",
+            agentValidation: {
+              implementer: { mode: "all", except: ["test"] },
+            },
+          },
+        ],
+      }),
+      makeContext({ name: "repo", workflowId: "workflow-1" }),
+    );
+
+    expect(response.status).toBe(400);
+    const responseBody = (await response.json()) as {
+      code?: string;
+      issues: Array<{ path: string; message: string }>;
+    };
+    expect(responseBody.code).toBe("invalid_edit");
+    expect(responseBody.issues).toContainEqual(
+      expect.objectContaining({
+        path: "workflowConfig.scriptValidator.commands.0",
+        message: expect.stringMatching(
+          /^unknown-validation-command — Unknown validation command "missing"/,
+        ),
+      }),
+    );
+    expect(updateDefinition).not.toHaveBeenCalled();
+  });
+
+  it("keeps each saved-definition edit command issue labeled by its own code", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    readRepoConfig.mockResolvedValue(OVERSIZED_REPO_CONFIG);
+    readConfig.mockResolvedValue({
+      ...MOCK_CONFIG,
+      validation: { concurrencyLimit: 4, defaultTimeoutMs: 600_000 },
+    });
+    getDefinition.mockResolvedValue(
+      createWorkflowDefinitionRecord({ revision: 3 }),
+    );
+
+    const response = await handlers.EDIT(
+      makeRequest("/api/projects/repo/workflows/workflow-1/edit", "PATCH", {
+        baseRevision: 3,
+        operations: [
+          {
+            type: "update-workflow-config",
+            scriptValidator: { commands: ["missing", "test"] },
+          },
+        ],
+      }),
+      makeContext({ name: "repo", workflowId: "workflow-1" }),
+    );
+
+    expect(response.status).toBe(400);
+    const responseBody = (await response.json()) as {
+      code?: string;
+      issues: Array<{ path: string; message: string }>;
+    };
+    expect(responseBody.code).toBe("validation_cost_exceeds_limit");
+    expect(responseBody.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "workflowConfig.scriptValidator.commands.0",
+          message: expect.stringMatching(
+            /^unknown-validation-command — Unknown validation command "missing"/,
+          ),
+        }),
+        expect.objectContaining({
+          path: "workflowConfig.scriptValidator.commands.1",
+          message: expect.stringMatching(
+            /^validation_cost_exceeds_limit — Validation command "test" has configured cost 5/,
+          ),
+        }),
+      ]),
+    );
+    expect(updateDefinition).not.toHaveBeenCalled();
+  });
+
   it("accepts a POST with workflowConfig: {} and minimal contexts", async () => {
     resolveProjectPath.mockResolvedValue("/repo");
     createDefinition.mockResolvedValue(createWorkflowDefinitionRecord());

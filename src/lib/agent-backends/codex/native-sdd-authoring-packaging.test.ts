@@ -24,17 +24,16 @@ const GENERATED_REFERENCE_COMMAND = "cctl spec schema guidance";
 const READ_ENVELOPE_REFERENCE_COMMAND = "cctl spec schema read-envelopes";
 const EXPECTED_SECTIONS = [
   "Reading specs without flooding context",
-  "One-context-provable criteria",
-  "Typed integration/closeout ownership",
-  "Placement: shared lanes and disjoint ownership",
-  "Ranked sources of truth a lane can read",
+  "Direct-authored delivery launch",
+  "Stable-source claims and dynamic accountability",
+  "Finalized proposal, sign-off, and one-off start",
+  "Ordinary live edit, capture, and replacement",
   "Removal and reintroduction symmetry",
   "Withdraw-proposal vs dismiss-superseded",
   "Element-id/handle/version semantics",
   "Importing a spec authored outside CC",
   "Consistency sweep and `propose --notes` protocol",
   "Finding classes and bounded terminal rounds",
-  "Three capture paths",
   "Notify only from success receipts",
 ] as const;
 const STEERING_SEARCH_TERMS = [
@@ -128,13 +127,26 @@ describe("native-sdd-authoring managed skill", () => {
       (match) => match[1],
     );
     expect(sections).toEqual(EXPECTED_SECTIONS);
-    for (const section of EXPECTED_SECTIONS) {
+    expect(
+      sectionBody(loadedSkill, "Reading specs without flooding context"),
+    ).toContain(READ_ENVELOPE_REFERENCE_COMMAND);
+    for (const section of EXPECTED_SECTIONS.filter(
+      (section) => section !== "Reading specs without flooding context",
+    )) {
       expect(sectionBody(loadedSkill, section)).toContain(
-        section === "Reading specs without flooding context"
-          ? READ_ENVELOPE_REFERENCE_COMMAND
-          : GENERATED_REFERENCE_COMMAND,
+        GENERATED_REFERENCE_COMMAND,
       );
     }
+    expect(loadedSkill).toContain("cctl spec start <slug> --inputs");
+    expect(loadedSkill).toContain("cctl workflow live edit");
+    expect(loadedSkill).toMatch(/destructive cutover/i);
+    expect(loadedSkill).toContain("legacy-retirement boundary");
+    expect(loadedSkill).toContain(
+      "parallel reader, compatibility branch, or alternate plan dialect",
+    );
+    expect(loadedSkill).not.toMatch(
+      /compiler|materializer|context pack|proofPlan|workflow live amend/i,
+    );
   });
 
   it("keeps the deterministic steering match set converted to thin pointers", async () => {
@@ -213,7 +225,7 @@ describe("native-sdd-authoring managed skill", () => {
     const capture = await helpText(["spec", "capture"]);
     expect(capture).toContain("cctl spec plan open");
     expect(capture).toContain("spec abandon");
-    expect(capture).toContain("cctl workflow live amend");
+    expect(capture).toContain("cctl spec plan open");
 
     const planOpen = await helpText(["spec", "plan", "open"]);
     expect(planOpen).toContain("spec plan edit");

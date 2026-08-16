@@ -745,8 +745,8 @@ export function encodePathSegment(value: string): string {
 }
 
 /**
- * A soft stderr advisory for a `--file` payload path a lane commit could sweep
- * into the branch. `--file` payloads (plan / questions / doc / charter … JSON)
+ * A soft stderr advisory for a payload path a lane commit could sweep into the
+ * branch. File-backed payloads (plan / inputs / questions / doc / charter JSON)
  * are throwaway scratch — the CLI reads them once and never needs them again —
  * but a graph-workflow lane commits its whole worktree with `git add -A` at
  * land time, so a payload left at the worktree root lands in the diff the
@@ -764,16 +764,17 @@ export function ccTempPayloadAdvisory(filePath: string): string | undefined {
   if (filePath === "-" || path.isAbsolute(filePath)) return undefined;
   const segments = path.normalize(filePath).split(path.sep);
   if (segments.includes(".cc")) return undefined;
-  return `note: "${filePath}" is outside .cc/ — author cctl --file payloads under .cc/temp/ so a lane commit ('git add -A') doesn't sweep them into the branch\n`;
+  return `note: "${filePath}" is outside .cc/ — author cctl payload files under .cc/temp/ so a lane commit ('git add -A') doesn't sweep them into the branch\n`;
 }
 
 /**
- * Read a JSON-object file for a `--file` command. Every failure — unreadable,
+ * Read a JSON-object file for a file-backed command. Every failure — unreadable,
  * malformed JSON, or a non-object root — is a local usage error (exit 2) before
  * any request is made, so the offending file is named without a round-trip.
  * `label` names the file kind in the message (e.g. "plan", "charter"). The soft
  * "author it under .cc/temp/" location nudge is applied centrally in `runCli`
- * (keyed on `--file`), not here — see {@link ccTempPayloadAdvisory}.
+ * (keyed on the command's payload flag), not here — see
+ * {@link ccTempPayloadAdvisory}.
  */
 export async function readJsonObjectFile(
   host: CliHost,

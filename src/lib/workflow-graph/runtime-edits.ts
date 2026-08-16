@@ -28,6 +28,7 @@ import type {
 import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import {
   GraphWorkflowValidationError,
+  validateCharterInvariantScopes,
   validateResolvedWorkflow,
   validateWorkflowDefinition,
 } from "./validation";
@@ -67,7 +68,8 @@ import {
 } from "./lane-lifecycle";
 import { mintEdgeId } from "./edge-identity";
 import { resolvedContextConfig } from "./generated-child-config";
-import { findCriteriaWithoutMustRunCoverage } from "./criterion-coverage";
+import { collectStableAccountabilityContextIds } from "./authored-accountability";
+import { locateAuthoredAccountabilityCoverageCore } from "./authored-accountability-coverage-core";
 import { bumpRouteControlRevisions } from "./route-control-revision";
 import type { DefinitionEditTaskPosition } from "@/lib/workflows/edit-schemas";
 import {
@@ -88,12 +90,13 @@ import {
 } from "@/lib/validation/preflight";
 import { expandCommandSelector } from "./resolve-config";
 import { computeCharterHash } from "./charter/render";
+import { collectLogicalAuthoredContextIds } from "./charter/invariant-scope";
 import {
   workflowCharterSchema,
   type CharterAmendment,
 } from "@/lib/workflows/charter-schemas";
 import { CHARTER_CONTENT_EDIT_FIELDS } from "@/lib/workflows/edit-schemas";
-import type { GraphExecutionContract } from "./execution-contract-port";
+import type { LoadedGraphExecutionLiveEditContract } from "./execution-contract-port";
 import type { PlaceableAssignment } from "./live-edit-preparation";
 
 export interface AgentAddedTask {
@@ -239,6 +242,7 @@ export function createGraphWorkflowRuntimeEditService(
     execution: GraphWorkflowExecution,
     contextId: string,
     task: AgentAddedTask,
+    executionContract: LoadedGraphExecutionLiveEditContract,
   ): AgentTaskAddResult {
     if (execution.status !== "running") {
       throw new Error(
@@ -294,7 +298,7 @@ export function createGraphWorkflowRuntimeEditService(
           },
         ],
       },
-      laneAgentLiveEditDeps(resolvedDeps),
+      laneAgentLiveEditDeps(resolvedDeps, executionContract),
       { laneAgentContextId: contextId },
     );
     if (!result.ok) {
@@ -388,14 +392,15 @@ export interface LiveEditDeps {
   snapshotFor(assignment: PlaceableAssignment): AgentProfileSnapshot;
   /** ISO timestamp source for `amend-charter` amendment-log entries. */
   now(): string;
-  executionContract?: GraphExecutionContract;
+  /** Persisted authority preloaded by the entry point before this pure core runs. */
+  executionContract?: LoadedGraphExecutionLiveEditContract;
 }
 
 export type LiveEditRejectionCode =
   | "frozen"
   | "requires_pause"
   | "region_locked"
-  | "spec_grouping_frozen"
+  | "contract_refused"
   | typeof VALIDATION_COST_EXCEEDS_LIMIT_CODE
   | "invalid_edit";
 
@@ -469,6 +474,7 @@ export interface LiveEditOptions {
  */
 function laneAgentLiveEditDeps(
   deps: GraphWorkflowRuntimeEditServiceDeps,
+  executionContract: LoadedGraphExecutionLiveEditContract,
 ): LiveEditDeps {
   return {
     createTaskId: deps.createTaskId,
@@ -490,6 +496,7 @@ function laneAgentLiveEditDeps(
     now() {
       throw new Error("lane-agent add_task does not amend the charter");
     },
+    executionContract,
   };
 }
 
@@ -803,12 +810,13 @@ function runLiveEditOps(
 
   for (let index = 0; index < request.operations.length; index += 1) {
     const operation = request.operations[index]!;
-    const locked = additiveAmendment
-      ? null
-      : findLockedRegionTouch(
-          next.workingDefinition,
-          liveEditTouchedPaths(next, operation),
-        );
+    const locked =
+      operation.type === "amend-charter"
+        ? null
+        : findLockedRegionTouch(
+            next.workingDefinition,
+            liveEditTouchedPaths(next, operation),
+          );
     if (locked) {
       return {
         ok: false,
@@ -821,17 +829,17 @@ function runLiveEditOps(
         instruction: `${regionLockedInstruction(locked)} This refusal applies to active execution "${next.id}".`,
       };
     }
-    const contractDecision = deps.executionContract?.validateLiveEdit(
+    const contractDecision = deps.executionContract?.validateOperation(
       next,
       operation,
     );
     if (contractDecision !== undefined && !contractDecision.ok) {
+      // The registered contract's refusal is a conflict with the execution's
+      // own state, whatever the contract is. The graph reports it under one
+      // code rather than recognizing any particular contract's vocabulary.
       return {
         ok: false,
-        code:
-          contractDecision.code === "spec_grouping_frozen"
-            ? "spec_grouping_frozen"
-            : "invalid_edit",
+        code: "contract_refused",
         issues: contractDecision.issues.map((issue) => ({
           ...issue,
           operationIndex: issue.operationIndex ?? index,
@@ -2025,6 +2033,13 @@ function applyAmendCharter(
       })),
     };
   }
+
+  const scopeRejection = rejectUnknownCharterInvariantScopes(
+    next,
+    parsed.data,
+    index,
+  );
+  if (scopeRejection) return scopeRejection;
 
   next.charter = parsed.data;
   for (const context of next.workingDefinition.executionContexts) {
@@ -3312,10 +3327,32 @@ function applyRemoveContext(
       edge.sourceContextId !== op.contextId &&
       edge.targetContextId !== op.contextId,
   );
+  const scopeRejection = rejectUnknownCharterInvariantScopes(
+    next,
+    next.charter,
+    index,
+  );
+  if (scopeRejection) return scopeRejection;
   delete next.contextStates[op.contextId];
 
   ctx.affectedContextIds.add(op.contextId);
   return null;
+}
+
+function rejectUnknownCharterInvariantScopes(
+  execution: GraphWorkflowExecution,
+  charter: GraphWorkflowExecution["charter"],
+  operationIndex: number,
+): LiveEditRejection | null {
+  const issues = validateCharterInvariantScopes(
+    charter,
+    collectLogicalAuthoredContextIds(execution),
+  );
+  if (issues.length === 0) return null;
+  return {
+    code: "invalid_edit",
+    issues: issues.map((issue) => ({ ...issue, operationIndex })),
+  };
 }
 
 function applyAddEdge(
@@ -3633,7 +3670,7 @@ function checkLiveEditFrontier(
     return { code: "invalid_edit", issues: mapIssues };
   }
 
-  const coverageIssues = checkCriterionMustRunCoverage(original, next, ctx);
+  const coverageIssues = checkAuthoredAccountabilityCoverage(next, ctx);
   if (coverageIssues.length > 0) {
     return { code: "invalid_edit", issues: coverageIssues };
   }
@@ -3690,17 +3727,11 @@ function checkLiveSessionReadOnlyPin(
 }
 
 /**
- * Frontier check #5 — criterion protection (R5.2, decision D11). Skipping a
- * context must never implicitly waive a linked spec acceptance criterion, so
- * every mutation that rides this seam — live edit, expansion, loop unrolling —
- * is refused when it would leave a linked criterion with no covering context
- * that runs on every path. Removing the covering context and putting a guard on
- * an ANCESTOR edge are the same loss, which is why the question is asked of the
- * projection's transitive must-run set rather than of the batch's ops.
- *
- * Only spec-linked executions are locked: the criterion→context map comes from
- * the registered execution contract, which derives nothing for an unlinked
- * definition.
+ * Frontier check #5 — authored accountability protection. Every mutation that
+ * rides this seam is refused when an execution-bound group would lose all of
+ * its stable, must-run claimants. The graph owns stability, route projection,
+ * loops, and expansion semantics; the binding contributes only opaque group
+ * keys and authored claimant ids.
  *
  * The verdict is a property of the POST-BATCH graph, never of what the batch
  * changed: an execution that already carries a gap does not license further
@@ -3708,45 +3739,51 @@ function checkLiveSessionReadOnlyPin(
  * the skippable context still nominally covering it — is refused too. The only
  * accepted edit on such an execution is one that restores coverage.
  */
-function checkCriterionMustRunCoverage(
-  original: GraphWorkflowExecution,
+function checkAuthoredAccountabilityCoverage(
   next: GraphWorkflowExecution,
   ctx: LiveEditOpContext,
 ): WorkflowGraphValidationError[] {
   const contract = ctx.deps.executionContract;
-  if (contract === undefined) return [];
-
-  const before = contract.deriveCriterionContextCoverage(
-    original.workingDefinition,
-  );
-  const after = contract.deriveCriterionContextCoverage(next.workingDefinition);
-
-  // The criteria the LINK carries, not the criteria the result still mentions:
-  // a batch that drops the last covering task must read as coverage lost, not as
-  // a criterion that stopped existing.
-  const linkedCoverage: Record<string, readonly string[]> = {};
-  for (const criterionId of Object.keys(before)) {
-    linkedCoverage[criterionId] = [];
+  if (
+    contract === undefined ||
+    contract.accountabilityCoverageGroups.length === 0
+  ) {
+    return [];
   }
-  Object.assign(linkedCoverage, after);
+  if (next.origin.kind !== "spec_delivery" || next.launchDocument === null) {
+    return [
+      liveEditIssue(
+        "accountability-coverage-source-missing",
+        "Execution-bound accountability coverage requires an immutable spec-delivery authored launch",
+      ),
+    ];
+  }
 
-  return findCriteriaWithoutMustRunCoverage({
-    ...next.workingDefinition,
-    coverageByCriterionId: linkedCoverage,
-  }).map((gap) =>
-    liveEditIssue(
-      "criterion-must-run-coverage-lost",
-      `Acceptance criterion "${gap.criterionId}" would be left without a context that runs on every path${
-        gap.coveringContextIds.length === 0
-          ? ""
-          : ` (covered only by ${gap.coveringContextIds.join(", ")})`
-      }`,
-      undefined,
-      gap.coveringContextIds[0] === undefined
-        ? {}
-        : { contextId: gap.coveringContextIds[0] },
-    ),
-  );
+  return locateAuthoredAccountabilityCoverageCore({
+    source: {
+      kind: "working",
+      definition: next.workingDefinition,
+      admittedStableSourceIds: collectStableAccountabilityContextIds(
+        next.launchDocument.definition,
+      ),
+    },
+    groups: contract.accountabilityCoverageGroups,
+  })
+    .filter((group) => !group.covered)
+    .map((gap) =>
+      liveEditIssue(
+        "criterion-must-run-coverage-lost",
+        `Accountability binding "${gap.bindingKey}" would be left without a stable claimant context that runs on every path${
+          gap.stableExistingClaimantContextIds.length === 0
+            ? ""
+            : ` (covered only by ${gap.stableExistingClaimantContextIds.join(", ")})`
+        }`,
+        undefined,
+        gap.claimantContextIds[0] === undefined
+          ? {}
+          : { contextId: gap.claimantContextIds[0] },
+      ),
+    );
 }
 
 /** Sorted incoming source-context ids per target — the protected dependency set. */

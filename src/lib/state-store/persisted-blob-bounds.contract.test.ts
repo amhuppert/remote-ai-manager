@@ -3,6 +3,7 @@ import { z } from "zod";
 import { compactionEnvelopeSchema } from "@/lib/context-artifacts/schemas";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import { deliveryPlanDocumentSchema } from "@/lib/specs/delivery-plan";
+import { specExecutionBindingSnapshotV2Schema } from "@/lib/specs/execution-binding";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import {
   graphWorkflowExecutionSchema,
@@ -406,7 +407,22 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
   {
     label: "spec_delivery_plan_attempts content_json",
     schema: deliveryPlanDocumentSchema,
-    discharges: {},
+    discharges: {
+      "binding.dispositions":
+        "bounded: the complete canonical delivery-plan envelope is limited to DELIVERY_PLAN_ENVELOPE_MAX_BYTES before persistence.",
+      "binding.claims":
+        "bounded: the complete canonical delivery-plan envelope is limited to DELIVERY_PLAN_ENVELOPE_MAX_BYTES before persistence.",
+      "binding.claims[].criterionElementIds":
+        "bounded: the complete canonical delivery-plan envelope is limited to DELIVERY_PLAN_ENVELOPE_MAX_BYTES before persistence.",
+      "launch.**":
+        "bounded: one agent-authored graph launch admitted through the shared graph-admission service and stored immutably with its delivery-plan attempt; it is replaced wholesale only while drafting, never appended to.",
+      "launch.definition.executionContexts[].outputSchema.**":
+        "tracked: opaque author-declared JSON Schema document inside the one immutable admitted launch, validated at graph admission against the supported subset.",
+      "launch.definition.edges[].when.schema.**":
+        "tracked: opaque author-declared edge guard inside the one immutable admitted launch, validated at graph admission.",
+      "launch.definition.loopGroups[].until.schema.**":
+        "tracked: opaque author-declared loop predicate inside the one immutable admitted launch, validated at graph admission.",
+    },
   },
   {
     label: "graph_workflow_result_deliveries payload_json",
@@ -424,6 +440,18 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
     discharges: {
       documents:
         "bounded: one launch's authored seed set, written once by the reserving transaction and never appended to — no running execution adds a document here. The row is deleted the moment materialization succeeds, so it is transient rather than a growing record. In graph_workflow_pending_artifacts.documents_json.",
+    },
+  },
+  {
+    label: "spec_execution_bindings binding_json",
+    schema: specExecutionBindingSnapshotV2Schema,
+    discharges: {
+      dispositions:
+        "bounded: copied once from a finalized candidate whose complete canonical envelope is limited to DELIVERY_PLAN_ENVELOPE_MAX_BYTES, then protected by the immutable binding-row trigger.",
+      claims:
+        "bounded: copied once from the same size-limited finalized candidate and never appended to after execution creation.",
+      "claims[].criterionElementIds":
+        "bounded: copied once from the same size-limited finalized candidate and never appended to after execution creation.",
     },
   },
 ];
@@ -504,16 +532,18 @@ describe("persisted blob bounds gate", () => {
    * Authored placement is the newest collection in this blob and the one whose
    * size an author controls directly, so its cap is pinned by path here.
    */
-  describe("spec_delivery_plan_attempts placement collections", () => {
+  describe("spec_delivery_plan_attempts graph-owned placement collections", () => {
     const census = describeCollections(deliveryPlanDocumentSchema);
 
-    it("caps the owned-path set an authored placement may declare", () => {
+    it("caps the graph-owned path set an authored placement may declare", () => {
       const ownedPaths = census.filter(
-        (node) => node.path === "contexts[].placement.ownedPaths",
+        (node) =>
+          node.path ===
+          "launch.definition.executionContexts[].placement.ownedPaths",
       );
       expect(
         ownedPaths.map((node) => node.kind),
-        `placement ownedPaths is absent from the census: ${census
+        `graph-owned placement paths are absent from the census: ${census
           .map((node) => node.path)
           .join(", ")}`,
       ).toEqual(["array"]);

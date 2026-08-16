@@ -1,0 +1,682 @@
+import { describe, expect, it, vi } from "vitest";
+import type {
+  GlobalConfig,
+  PerRepoConfig,
+  WorkflowDefaults,
+} from "@/lib/config/schemas";
+import type { AgentAuth } from "@/lib/agent-gateway/token";
+import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/storage";
+import {
+  createWorkflowDefinitionRecord,
+  makeImplementerAssignment,
+} from "@/lib/workflow-graph/test-fixtures";
+import type {
+  AssignmentDocumentScope,
+  AssignmentReferenceChecker,
+} from "./assignment-references";
+import { admitAuthoredWorkflowLaunch } from "./authored-launch-admission";
+import { createGraphWorkflowValidateHandlers } from "./validate-route-handlers";
+import { createTemplateLibraryRouteHandlers } from "./template-library-route-handlers";
+import { createWorkflowDefinitionRouteHandlers } from "@/lib/workflows/definition-route-handlers";
+import {
+  MAXIMAL_AUTHORED_LAUNCH_ACCOUNTABILITY_GROUPS,
+  createMaximalAuthoredWorkflowLaunchFixture,
+} from "./testing/maximal-authored-launch";
+
+const admissionLogger = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+}));
+
+vi.mock("@/lib/logging", () => ({
+  createLogger: () => admissionLogger,
+  withTracing: <T>(handler: T): T => handler,
+}));
+
+const maximalLaunch = createMaximalAuthoredWorkflowLaunchFixture;
+
+function references(
+  expectedScope: AssignmentDocumentScope,
+  defaultsIssues: ReadonlyArray<{ path: string; message: string }> = [],
+): AssignmentReferenceChecker {
+  return {
+    async checkDefinition(definition, scope) {
+      const profile = definition.workflowConfig.implementer?.profile;
+      if (
+        profile?.id === "missing" ||
+        (scope.kind === "global" && profile?.tier === "project")
+      ) {
+        return [
+          {
+            path: "definition.workflowConfig.implementer.profile",
+            message:
+              "Definition profile is unavailable in this document scope.",
+          },
+        ];
+      }
+      if (scope.kind === expectedScope.kind) return [];
+      return [
+        {
+          path: "definition",
+          message: "Document scope did not reach profile resolution.",
+        },
+      ];
+    },
+    async checkWorkflowDefaults() {
+      return [...defaultsIssues];
+    },
+  };
+}
+
+describe("admitAuthoredWorkflowLaunch", () => {
+  it("normalizes the maximal full-dialect launch and preserves its warning", async () => {
+    const scope = { kind: "project", projectPath: "/repo" } as const;
+    const launch = maximalLaunch();
+    const original = structuredClone(launch);
+
+    const result = await admitAuthoredWorkflowLaunch(launch, {
+      caller: "project-validate",
+      documentScope: scope,
+      projectValidation: repoValidation,
+      globalValidation: globalConfig.validation,
+      workflowDefaults: undefined,
+      assignmentReferences: references(scope),
+      accountabilityGroups: MAXIMAL_AUTHORED_LAUNCH_ACCOUNTABILITY_GROUPS,
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) return;
+    expect(result.launch).toEqual(launch);
+    expect(launch).toEqual(original);
+    expect(Object.keys(result).sort()).toEqual([
+      "accountabilityGroupAnalysis",
+      "launch",
+      "ok",
+      "stableAccountabilityContextIds",
+      "warnings",
+    ]);
+    expect(result.stableAccountabilityContextIds).toEqual([
+      "context-spawner",
+      "context-alternate",
+      "context-audit",
+      "context-fallback",
+      "context-integrate",
+    ]);
+    expect(result.accountabilityGroupAnalysis).toEqual([
+      expect.objectContaining({
+        bindingKey: "stable-spawner",
+        covered: true,
+      }),
+      expect.objectContaining({
+        bindingKey: "post-loop-integration",
+        covered: true,
+      }),
+      expect.objectContaining({
+        bindingKey: "loop-template-is-not-claimable",
+        covered: false,
+      }),
+    ]);
+    expect(result.warnings).toEqual([
+      expect.objectContaining({
+        path: "definition.executionContexts[0].outputSchema.properties.verdict.enum",
+        message: expect.stringContaining("defer"),
+      }),
+    ]);
+  });
+
+  it("observes profile and default-reference changes on each request", async () => {
+    const scope = { kind: "project", projectPath: "/repo" } as const;
+    let defaultsAreInvalid = false;
+    const assignmentReferences: AssignmentReferenceChecker = {
+      async checkDefinition() {
+        return [];
+      },
+      async checkWorkflowDefaults() {
+        return defaultsAreInvalid
+          ? [
+              {
+                path: "workflowDefaults.implementer.profile",
+                message: "The default profile was deleted.",
+              },
+            ]
+          : [];
+      },
+    };
+    const deps = {
+      caller: "project-validate" as const,
+      documentScope: scope,
+      projectValidation: repoValidation,
+      globalValidation: globalConfig.validation,
+      workflowDefaults: {} as Partial<WorkflowDefaults>,
+      assignmentReferences,
+    };
+
+    await expect(
+      admitAuthoredWorkflowLaunch(maximalLaunch(), deps),
+    ).resolves.toMatchObject({
+      ok: true,
+    });
+    defaultsAreInvalid = true;
+    await expect(
+      admitAuthoredWorkflowLaunch(maximalLaunch(), deps),
+    ).resolves.toMatchObject({
+      ok: false,
+      issues: [
+        expect.objectContaining({
+          path: "workflowDefaults.implementer.profile",
+        }),
+      ],
+    });
+  });
+
+  it("logs graph warnings when profile resolution rejects an otherwise valid launch", async () => {
+    const scope = { kind: "project", projectPath: "/repo" } as const;
+    const launch = maximalLaunch();
+    launch.definition.workflowConfig.implementer = makeImplementerAssignment(
+      { backend: "claude", model: "opus", reasoningEffort: "high" },
+      { profile: { tier: "project", id: "missing" } },
+    );
+    admissionLogger.warn.mockClear();
+
+    await expect(
+      admitAuthoredWorkflowLaunch(launch, {
+        caller: "project-validate",
+        documentScope: scope,
+        projectValidation: repoValidation,
+        globalValidation: globalConfig.validation,
+        workflowDefaults: undefined,
+        assignmentReferences: references(scope),
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      code: "workflow_assignment_reference_invalid",
+    });
+    expect(admissionLogger.warn).toHaveBeenCalledWith(
+      "workflow-graph.authored-launch-admission.rejected",
+      expect.objectContaining({
+        issueCount: 1,
+        warningCount: 1,
+      }),
+    );
+  });
+
+  it("refuses an unregistered caller at the admission boundary", async () => {
+    const scope = { kind: "project", projectPath: "/repo" } as const;
+    await expect(
+      admitAuthoredWorkflowLaunch(maximalLaunch(), {
+        caller: "unregistered-mutation" as never,
+        documentScope: scope,
+        projectValidation: repoValidation,
+        globalValidation: globalConfig.validation,
+        workflowDefaults: undefined,
+        assignmentReferences: references(scope),
+      }),
+    ).rejects.toThrow("Unregistered authored-launch admission caller");
+  });
+
+  it.each([
+    {
+      label: "project definition reference failure",
+      scope: { kind: "project", projectPath: "/repo" } as const,
+      defaultIssues: [],
+      mutate: (launch: WorkflowDefinitionDraft) => {
+        launch.definition.workflowConfig.implementer =
+          makeImplementerAssignment(
+            { backend: "claude", model: "opus", reasoningEffort: "high" },
+            { profile: { tier: "project", id: "missing" } },
+          );
+      },
+      expectedPath: "definition.workflowConfig.implementer.profile",
+    },
+    {
+      label: "global template scope failure",
+      scope: { kind: "global" } as const,
+      defaultIssues: [],
+      mutate: (launch: WorkflowDefinitionDraft) => {
+        launch.definition.workflowConfig.implementer =
+          makeImplementerAssignment(
+            { backend: "claude", model: "opus", reasoningEffort: "high" },
+            { profile: { tier: "project", id: "not-global" } },
+          );
+      },
+      expectedPath: "definition.workflowConfig.implementer.profile",
+    },
+    {
+      label: "inherited global default reference failure",
+      scope: { kind: "project", projectPath: "/repo" } as const,
+      defaultIssues: [
+        {
+          path: "workflowDefaults.contextValidator.assignments.0.profile",
+          message: "Default profile is missing.",
+        },
+      ],
+      mutate: (_launch: WorkflowDefinitionDraft) => undefined,
+      expectedPath: "workflowDefaults.contextValidator.assignments.0.profile",
+    },
+  ])(
+    "returns located issues for $label",
+    async ({ scope, defaultIssues, mutate, expectedPath }) => {
+      const launch = maximalLaunch();
+      mutate(launch);
+
+      const result = await admitAuthoredWorkflowLaunch(launch, {
+        caller:
+          scope.kind === "global"
+            ? "global-template-create"
+            : "project-validate",
+        documentScope: scope,
+        ...(scope.kind === "global"
+          ? {}
+          : { projectValidation: repoValidation }),
+        globalValidation: globalConfig.validation,
+        workflowDefaults: {} as Partial<WorkflowDefaults>,
+        assignmentReferences: references(scope, defaultIssues),
+      });
+
+      expect(result).toMatchObject({ ok: false });
+      if (result.ok) return;
+      expect(result.issues).toContainEqual(
+        expect.objectContaining({ path: expectedPath }),
+      );
+    },
+  );
+});
+
+const repoValidation = {
+  commands: {
+    lint: {
+      command: { full: "scripts/validate/lint.sh" },
+      cost: 1,
+      pathArgs: "forbid",
+    },
+    format: {
+      command: { full: "scripts/validate/format.sh" },
+      cost: 1,
+      pathArgs: "forbid",
+    },
+  },
+  preMerge: ["lint"],
+  laneMerge: ["lint"],
+} satisfies NonNullable<PerRepoConfig["validation"]>;
+
+const globalConfig = {
+  validation: { concurrencyLimit: 8, defaultTimeoutMs: 600_000 },
+} as GlobalConfig;
+
+function request(url: string, method: string, body?: unknown): Request {
+  return new Request(`http://localhost${url}`, {
+    method,
+    headers:
+      body === undefined ? undefined : { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+const auth: AgentAuth = {
+  async requireToken() {
+    return null;
+  },
+  async validateOptionalToken() {
+    return { kind: "valid" };
+  },
+};
+
+describe("ordinary authored-launch callers", () => {
+  it("uses one normalized launch and warnings across validate, project mutations, and global template mutations", async () => {
+    const projectScope = { kind: "project", projectPath: "/repo" } as const;
+    const globalScope = { kind: "global" } as const;
+    const launch = maximalLaunch();
+    const expectedProject = await admitAuthoredWorkflowLaunch(launch, {
+      caller: "project-validate",
+      documentScope: projectScope,
+      projectValidation: repoValidation,
+      globalValidation: globalConfig.validation,
+      workflowDefaults: undefined,
+      assignmentReferences: references(projectScope),
+    });
+    expect(expectedProject.ok).toBe(true);
+    if (!expectedProject.ok) return;
+    const expectedGlobal = await admitAuthoredWorkflowLaunch(launch, {
+      caller: "global-template-validate",
+      documentScope: globalScope,
+      projectValidation: repoValidation,
+      globalValidation: globalConfig.validation,
+      workflowDefaults: undefined,
+      assignmentReferences: references(globalScope),
+    });
+    expect(expectedGlobal).toEqual(expectedProject);
+    if (!expectedGlobal.ok) return;
+
+    const created: WorkflowDefinitionDraft[] = [];
+    const updated: WorkflowDefinitionDraft[] = [];
+    const stored = createWorkflowDefinitionRecord({
+      id: "project-workflow",
+      revision: 3,
+      ...expectedProject.launch,
+    });
+    const projectHandlers = createWorkflowDefinitionRouteHandlers({
+      resolveProjectPath: async () => "/repo",
+      readConfig: async () => globalConfig,
+      readRepoConfig: async () => ({ validation: repoValidation }),
+      listDefinitions: async () => [],
+      getDefinition: async () => stored,
+      createDefinition: async (_projectPath, draft) => {
+        created.push(draft);
+        return { ...stored, ...draft };
+      },
+      updateDefinition: async (_projectPath, _workflowId, draft) => {
+        updated.push(draft);
+        return { ...stored, ...draft, revision: stored.revision + 1 };
+      },
+      deleteDefinition: async () => true,
+      assignmentReferences: references(projectScope),
+    });
+    const validateHandlers = createGraphWorkflowValidateHandlers({
+      auth,
+      resolveProjectPath: async () => "/repo",
+      getSession: async () => ({ sessionName: "session" }),
+      readRepoConfig: async () => ({ validation: repoValidation }),
+      readConfig: async () => globalConfig,
+      assignmentReferences: references(projectScope),
+    });
+    const globalValidateHandlers = createGraphWorkflowValidateHandlers({
+      auth,
+      resolveProjectPath: async () => "/repo",
+      getSession: async () => ({ sessionName: "session" }),
+      readRepoConfig: async () => ({ validation: repoValidation }),
+      readConfig: async () => globalConfig,
+      assignmentReferences: references(globalScope),
+    });
+
+    const validateResponse = await validateHandlers.POST(
+      request(
+        "/api/projects/repo/sessions/session/graph-workflow/validate",
+        "POST",
+        launch,
+      ),
+      { params: Promise.resolve({ name: "repo", session: "session" }) },
+    );
+    expect(await validateResponse.json()).toEqual({
+      ok: true,
+      warnings: expectedProject.warnings,
+    });
+    const globalValidateResponse = await globalValidateHandlers.POST(
+      request(
+        "/api/projects/repo/sessions/session/graph-workflow/validate?tier=global",
+        "POST",
+        launch,
+      ),
+      { params: Promise.resolve({ name: "repo", session: "session" }) },
+    );
+    expect(await globalValidateResponse.json()).toEqual({
+      ok: true,
+      warnings: expectedGlobal.warnings,
+    });
+
+    await projectHandlers.CREATE(
+      request("/api/projects/repo/workflows", "POST", launch),
+      { params: Promise.resolve({ name: "repo" }) },
+    );
+    await projectHandlers.UPDATE(
+      request("/api/projects/repo/workflows/project-workflow", "PUT", launch),
+      {
+        params: Promise.resolve({
+          name: "repo",
+          workflowId: "project-workflow",
+        }),
+      },
+    );
+    expect(created).toEqual([expectedProject.launch]);
+    expect(updated).toEqual([expectedProject.launch]);
+
+    await projectHandlers.EDIT(
+      request("/api/projects/repo/workflows/project-workflow", "PATCH", {
+        baseRevision: 3,
+        operations: [
+          { type: "update-workflow", name: "Edited maximal fixture" },
+        ],
+      }),
+      {
+        params: Promise.resolve({
+          name: "repo",
+          workflowId: "project-workflow",
+        }),
+      },
+    );
+    expect(updated[1]).toMatchObject({
+      ...expectedProject.launch,
+      name: "Edited maximal fixture",
+    });
+
+    const globalCreated: WorkflowDefinitionDraft[] = [];
+    const globalUpdated: WorkflowDefinitionDraft[] = [];
+    const globalStored = createWorkflowDefinitionRecord({
+      id: "global-template",
+      revision: 3,
+      ...expectedProject.launch,
+    });
+    const templateHandlers = createTemplateLibraryRouteHandlers({
+      resolveProjectPath: async () => "/repo",
+      readConfig: async () => globalConfig,
+      list: async () => [],
+      listGlobal: async () => [],
+      createGlobal: async (draft) => {
+        globalCreated.push(draft);
+        return { ...globalStored, ...draft };
+      },
+      getGlobal: async () => globalStored,
+      updateGlobal: async (_workflowId, draft) => {
+        globalUpdated.push(draft);
+        return {
+          ...globalStored,
+          ...draft,
+          revision: globalStored.revision + 1,
+        };
+      },
+      deleteGlobal: async () => true,
+      assignmentReferences: references(globalScope),
+    });
+
+    await templateHandlers.CREATE(
+      request("/api/workflow-templates", "POST", launch),
+      { params: Promise.resolve({}) },
+    );
+    await templateHandlers.UPDATE(
+      request("/api/workflow-templates/global-template", "PUT", launch),
+      { params: Promise.resolve({ workflowId: "global-template" }) },
+    );
+    expect(globalCreated).toEqual([expectedGlobal.launch]);
+    expect(globalUpdated).toEqual([expectedGlobal.launch]);
+
+    await templateHandlers.EDIT(
+      request("/api/workflow-templates/global-template", "PATCH", {
+        baseRevision: 3,
+        operations: [
+          { type: "update-workflow", name: "Edited global fixture" },
+        ],
+      }),
+      { params: Promise.resolve({ workflowId: "global-template" }) },
+    );
+    expect(globalUpdated[1]).toMatchObject({
+      ...expectedProject.launch,
+      name: "Edited global fixture",
+    });
+  });
+
+  it("returns the same located assignment-reference refusal through every ordinary caller", async () => {
+    const projectScope = { kind: "project", projectPath: "/repo" } as const;
+    const globalScope = { kind: "global" } as const;
+    const issue = {
+      path: "definition.workflowConfig.implementer.profile",
+      message: "Definition profile is unavailable in this document scope.",
+    };
+    const expectedValidateRefusal = {
+      error: "Workflow plan is invalid",
+      issues: [issue],
+    };
+    const expectedPersistenceRefusal = {
+      error: "Workflow assignment references are invalid",
+      code: "workflow_assignment_reference_invalid",
+      issues: [issue],
+    };
+    const projectLaunch = maximalLaunch();
+    projectLaunch.definition.workflowConfig.implementer =
+      makeImplementerAssignment(
+        { backend: "claude", model: "opus", reasoningEffort: "high" },
+        { profile: { tier: "project", id: "missing" } },
+      );
+    const globalLaunch = maximalLaunch();
+    globalLaunch.definition.workflowConfig.implementer =
+      makeImplementerAssignment(
+        { backend: "claude", model: "opus", reasoningEffort: "high" },
+        { profile: { tier: "builtin", id: "missing" } },
+      );
+    const validRecord = createWorkflowDefinitionRecord({
+      id: "persisted",
+      revision: 3,
+      ...maximalLaunch(),
+    });
+    const projectPersist = {
+      create: [] as WorkflowDefinitionDraft[],
+      update: [] as WorkflowDefinitionDraft[],
+    };
+    const projectHandlers = createWorkflowDefinitionRouteHandlers({
+      resolveProjectPath: async () => "/repo",
+      readConfig: async () => globalConfig,
+      readRepoConfig: async () => ({ validation: repoValidation }),
+      listDefinitions: async () => [],
+      getDefinition: async () => validRecord,
+      createDefinition: async (_projectPath, draft) => {
+        projectPersist.create.push(draft);
+        return { ...validRecord, ...draft };
+      },
+      updateDefinition: async (_projectPath, _workflowId, draft) => {
+        projectPersist.update.push(draft);
+        return { ...validRecord, ...draft };
+      },
+      deleteDefinition: async () => true,
+      assignmentReferences: references(projectScope),
+    });
+    const validateHandlers = createGraphWorkflowValidateHandlers({
+      auth,
+      resolveProjectPath: async () => "/repo",
+      getSession: async () => ({ sessionName: "session" }),
+      readRepoConfig: async () => ({ validation: repoValidation }),
+      readConfig: async () => globalConfig,
+      assignmentReferences: references(projectScope),
+    });
+    const globalValidateHandlers = createGraphWorkflowValidateHandlers({
+      auth,
+      resolveProjectPath: async () => "/repo",
+      getSession: async () => ({ sessionName: "session" }),
+      readRepoConfig: async () => ({ validation: repoValidation }),
+      readConfig: async () => globalConfig,
+      assignmentReferences: references(globalScope),
+    });
+    const globalPersist = {
+      create: [] as WorkflowDefinitionDraft[],
+      update: [] as WorkflowDefinitionDraft[],
+    };
+    const templateHandlers = createTemplateLibraryRouteHandlers({
+      resolveProjectPath: async () => "/repo",
+      readConfig: async () => globalConfig,
+      list: async () => [],
+      listGlobal: async () => [],
+      createGlobal: async (draft) => {
+        globalPersist.create.push(draft);
+        return { ...validRecord, ...draft };
+      },
+      getGlobal: async () => validRecord,
+      updateGlobal: async (_workflowId, draft) => {
+        globalPersist.update.push(draft);
+        return { ...validRecord, ...draft };
+      },
+      deleteGlobal: async () => true,
+      assignmentReferences: references(globalScope),
+    });
+
+    const responses = await Promise.all([
+      validateHandlers.POST(
+        request(
+          "/api/projects/repo/sessions/session/graph-workflow/validate",
+          "POST",
+          projectLaunch,
+        ),
+        { params: Promise.resolve({ name: "repo", session: "session" }) },
+      ),
+      globalValidateHandlers.POST(
+        request(
+          "/api/projects/repo/sessions/session/graph-workflow/validate?tier=global",
+          "POST",
+          globalLaunch,
+        ),
+        { params: Promise.resolve({ name: "repo", session: "session" }) },
+      ),
+      projectHandlers.CREATE(
+        request("/api/projects/repo/workflows", "POST", projectLaunch),
+        { params: Promise.resolve({ name: "repo" }) },
+      ),
+      projectHandlers.UPDATE(
+        request("/api/projects/repo/workflows/persisted", "PUT", projectLaunch),
+        { params: Promise.resolve({ name: "repo", workflowId: "persisted" }) },
+      ),
+      projectHandlers.EDIT(
+        request("/api/projects/repo/workflows/persisted", "PATCH", {
+          baseRevision: 3,
+          operations: [
+            {
+              type: "update-workflow-config",
+              implementer: makeImplementerAssignment(
+                { backend: "claude", model: "opus", reasoningEffort: "high" },
+                { profile: { tier: "project", id: "missing" } },
+              ),
+            },
+          ],
+        }),
+        { params: Promise.resolve({ name: "repo", workflowId: "persisted" }) },
+      ),
+      templateHandlers.CREATE(
+        request("/api/workflow-templates", "POST", globalLaunch),
+        { params: Promise.resolve({}) },
+      ),
+      templateHandlers.UPDATE(
+        request("/api/workflow-templates/persisted", "PUT", globalLaunch),
+        { params: Promise.resolve({ workflowId: "persisted" }) },
+      ),
+      templateHandlers.EDIT(
+        request("/api/workflow-templates/persisted", "PATCH", {
+          baseRevision: 3,
+          operations: [
+            {
+              type: "update-workflow-config",
+              implementer: makeImplementerAssignment(
+                { backend: "claude", model: "opus", reasoningEffort: "high" },
+                { profile: { tier: "builtin", id: "missing" } },
+              ),
+            },
+          ],
+        }),
+        { params: Promise.resolve({ workflowId: "persisted" }) },
+      ),
+    ]);
+
+    const [
+      projectValidateResponse,
+      globalValidateResponse,
+      ...persistenceResponses
+    ] = responses;
+    for (const response of [projectValidateResponse, globalValidateResponse]) {
+      expect(response?.status).toBe(400);
+      await expect(response?.json()).resolves.toEqual(expectedValidateRefusal);
+    }
+    for (const response of persistenceResponses) {
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual(
+        expectedPersistenceRefusal,
+      );
+    }
+    expect(projectPersist).toEqual({ create: [], update: [] });
+    expect(globalPersist).toEqual({ create: [], update: [] });
+  });
+});

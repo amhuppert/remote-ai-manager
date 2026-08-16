@@ -150,6 +150,8 @@ export const getGraphWorkflowPendingArtifacts =
   defaultStore.getGraphWorkflowPendingArtifacts;
 export const listActiveGraphWorkflowExecutions =
   defaultStore.listActiveGraphWorkflowExecutions;
+export const findGraphWorkflowExecutionById =
+  defaultStore.findGraphWorkflowExecutionById;
 export const listArchivedGraphWorkflowExecutions =
   defaultStore.listArchivedGraphWorkflowExecutions;
 export const createReferenceDocument = defaultStore.createReferenceDocument;

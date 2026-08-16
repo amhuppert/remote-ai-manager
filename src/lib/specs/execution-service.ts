@@ -1,30 +1,20 @@
-import { createHash } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
 import { createLogger } from "@/lib/logging";
-import { getErrorMessage } from "@/lib/shared/errors";
 import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import type { SpecDeliveryPlanRepo } from "@/lib/state-store/spec-delivery-plan-repo";
 import type { SpecEventsRepo } from "@/lib/state-store/spec-events-repo";
+import type { SpecExecutionBindingRepo } from "@/lib/state-store/spec-execution-binding-repo";
 import type { SpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import type { SpecsRepo } from "@/lib/state-store/specs-repo";
 import type { WriteQueue } from "@/lib/state-store/write-queue";
-import type {
-  GraphWorkflowStatus,
-  GraphWorkflowVisualLayout,
-  WorkflowDefinitionRecord,
-} from "@/lib/workflow-graph/definition-schemas";
-import type {
-  WorkflowDefinitionDraft,
-  WorkflowDefinitionSummary,
-  WorkflowScope,
-} from "@/lib/workflow-graph/storage";
+import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/definition-schemas";
 import type { GraphExecutionLifecycleContext } from "@/lib/workflow-graph/execution-lifecycle-port";
-import type { SeededWorkflowDocument } from "@/lib/workflow-graph/shared-documents";
 import type {
   GraphWorkflowAbandonment,
   GraphWorkflowExecutionOrigin,
-} from "@/lib/workflow-graph/schemas";
+  GraphWorkflowStatus,
+  SeededWorkflowDocument,
+} from "@/lib/workflow-graph/spec-bridge";
 import { buildPinnedSpecDocument } from "./export";
 import {
   INITIAL_ABANDON_CLEANUP_PHASE,
@@ -35,15 +25,15 @@ import {
 } from "./abandon-coordinator";
 import {
   liveDeliveryPlanAttempt,
-  type DeliveryPlanCandidateIdentity,
+  type FinalizedDeliveryPlanCandidateIdentity,
 } from "./delivery-plan";
-import { deliveryPlanCompiledHash } from "./delivery-plan-materializer";
 import type {
   DeliveryPlanLaunchCandidate,
   DeliveryPlanLaunchResolution,
   ParkDeliveryPlanServiceInput,
   PlanResult,
 } from "./delivery-plan-service";
+import { deliveryPlanCandidateHashFromBytes } from "./delivery-plan-hash";
 import type { DeliveryPlanNextAct } from "./delivery-plan-views";
 import {
   danglingReferenceRefusal,
@@ -55,6 +45,13 @@ import type {
   PreparedSpecEventPublication,
   SpecEventsPublisher,
 } from "./events";
+import {
+  prepareSpecExecutionStartAttachment,
+  type SpecExecutionStartAttachment,
+} from "./execution-start-attachment";
+import { specExecutionBindingSnapshotV2Schema } from "./execution-binding";
+import { buildSpecExecutionClaimsDocument } from "./execution-claims-document";
+import { buildSpecOwnershipProjection } from "./spec-ownership-projection";
 import type { SpecMeasureEventPayload } from "./measures";
 import { resolveDial } from "./policy";
 import {
@@ -63,7 +60,6 @@ import {
   type SpecPolicyAdmissionNotifier,
 } from "./policy-admissions";
 import {
-  refusalCodeSchema,
   specGateDialSchema,
   type ActorProvenance,
   type Refusal,
@@ -75,62 +71,15 @@ import {
   type SpecRevisionSnapshot,
   type SpecWorkflowLaneStatus,
 } from "./schemas";
-import { executionScopeSchema, type ExecutionScope } from "./scope-validation";
+import { executionScopeSchema } from "./scope-validation";
 import type { TransitionRefusal } from "./transitions";
 
 const logger = createLogger("specs.execution-service");
 
-export interface ExecutionWorkflowDefinitions {
-  findByOrigin(sourceUri: string): Promise<WorkflowDefinitionRecord | null>;
-  create(draft: WorkflowDefinitionDraft): Promise<WorkflowDefinitionRecord>;
-  update(
-    workflowId: string,
-    draft: WorkflowDefinitionDraft,
-  ): Promise<WorkflowDefinitionRecord>;
-}
-
-export interface WorkflowDefinitionStoragePort {
-  list(scope: WorkflowScope): Promise<WorkflowDefinitionSummary[]>;
-  get(
-    scope: WorkflowScope,
-    workflowId: string,
-  ): Promise<WorkflowDefinitionRecord | null>;
-  create(
-    scope: WorkflowScope,
-    draft: WorkflowDefinitionDraft,
-  ): Promise<WorkflowDefinitionRecord>;
-  update(
-    scope: WorkflowScope,
-    workflowId: string,
-    draft: WorkflowDefinitionDraft,
-  ): Promise<WorkflowDefinitionRecord>;
-}
-
-export function bindExecutionWorkflowDefinitions(
-  storage: WorkflowDefinitionStoragePort,
-  scope: WorkflowScope,
-): ExecutionWorkflowDefinitions {
-  return {
-    async findByOrigin(sourceUri) {
-      const summaries = await storage.list(scope);
-      for (const summary of summaries) {
-        const record = await storage.get(scope, summary.id);
-        if (record?.definition.origin?.sourceUri === sourceUri) return record;
-      }
-      return null;
-    },
-    create(draft) {
-      return storage.create(scope, draft);
-    },
-    update(workflowId, draft) {
-      return storage.update(scope, workflowId, draft);
-    },
-  };
-}
-
 export interface ExecutionServiceDeps {
   specsRepo: SpecsRepo;
   deliveryRepo: SpecDeliveryRepo;
+  bindingRepo: SpecExecutionBindingRepo;
   linksRepo: SpecLinksRepo;
   eventsRepo: SpecEventsRepo;
   /**
@@ -143,7 +92,6 @@ export interface ExecutionServiceDeps {
     "insertGateAdmission" | "findGateAdmissionsByRevision"
   >;
   events: SpecEventsPublisher;
-  workflowDefinitions: ExecutionWorkflowDefinitions;
   writeQueue: WriteQueue;
   nextId(
     kind:
@@ -155,7 +103,6 @@ export interface ExecutionServiceDeps {
       | "discovery",
   ): string;
   now(): string;
-  ingestExecutionEvidence(executionId: string): Promise<unknown>;
   /**
    * Whether the named session resolves in this project. Launch and merge are
    * both session-scoped, so the pin is validated before it is persisted.
@@ -169,20 +116,7 @@ export interface ExecutionServiceDeps {
     deliveryGatePassed: boolean;
   } | null>;
   runInImmediateTransaction<T>(fn: () => T): T;
-  /**
-   * The execution-start gate's review and workflow ports, injected at
-   * composition. `findPendingDefinitionApproval` reports the session's parked
-   * run and the origin it recorded, so this domain can establish that the park
-   * is the one its execution compiled before deciding it;
-   * `ensurePendingDefinitionApproval` launches the prepared definition through
-   * the production workflow seam when the Studio approval is the first launch
-   * act; `approveWorkflowDefinition` decides the session's pending compiled
-   * definition and starts the run through the graph-workflow seam, which is
-   * also where this domain's own human execution-start approval is recorded —
-   * from inside the graph's reservation, through the lifecycle port, rather
-   * than ahead of it. The review port serializes through the shared write
-   * queue, so it must never be called while this service already holds it.
-   */
+  /** The production one-off graph-launch seam, injected at composition. */
   executionStartGate?: ExecutionStartGatePort;
   /** Post-hoc review notices for Notify-dial policy admissions (R11.2). */
   policyNotifier?: SpecPolicyAdmissionNotifier;
@@ -225,7 +159,7 @@ export interface ExecutionServiceDeps {
    */
   plansRepo: Pick<
     SpecDeliveryPlanRepo,
-    "findAttemptsBySpecId" | "recordDiscovery"
+    "findAttemptsBySpecId" | "recordDiscovery" | "recordTransition"
   >;
 }
 
@@ -235,6 +169,12 @@ export interface ExecutionServiceDeps {
  * placed by the one seed that knows how (design §11).
  */
 export interface SpecDeliveryPlanCapturePort {
+  abandonLaunchedAttempt(input: {
+    spec: Spec;
+    executionId: string;
+    reason: string;
+    actor: ActorProvenance;
+  }): Promise<PlanResult<{ attemptId: string }>>;
   openSeededReplacement(input: {
     spec: Spec;
     actor: ActorProvenance;
@@ -252,12 +192,6 @@ export interface SpecDeliveryPlanLaunchPort {
   park(
     input: ParkDeliveryPlanServiceInput,
   ): Promise<PlanResult<{ nextAct: DeliveryPlanNextAct }>>;
-  recordLaunch(input: {
-    spec: Spec;
-    executionId: string;
-    candidate: DeliveryPlanCandidateIdentity;
-    actor: ActorProvenance;
-  }): Promise<PlanResult<unknown>>;
 }
 
 /** The pinned cleanup target — never re-resolved from the session's slot. */
@@ -367,22 +301,23 @@ export function parkBelongsToExecution(
 
 export interface ExecutionStartGatePort {
   /**
-   * Launch a definition the human already approved, through the production
-   * start+kickoff seam. Distinct from `ensurePendingDefinitionApproval`, which
-   * exists to PARK a run at definition review: a delivery-plan candidate
-   * carries `approvalRequired: false` because the plan sign-off already
-   * admitted `execution_start`, so it must start rather than park (design §5).
+   * Launch a signed candidate's graph through the production spec-delivery
+   * start+kickoff seam.
    *
    * `ownerConversationId` is the authenticated conversation that ran
    * `spec start`, resolved server-side by the caller and threaded to the
    * persisted execution so validation can resolve it before any lane exists.
    */
-  launchApprovedDefinition(input: {
+  launchApprovedLaunch(input: {
     projectName: string;
     sessionName: string;
-    definitionId: string;
-    definitionRevision: number;
+    /** The signed candidate's finalized launch document. */
+    plan: WorkflowDefinitionDraft;
+    specSlug: string;
+    candidateId: string;
     ownerConversationId: string | null;
+    parameters?: Record<string, unknown>;
+    transactionAttachment(context: { executionId: string }): void;
     /**
      * The pinned spec revision, rendered by the spec layer and handed to the
      * workflow engine as opaque bytes to seed into every lane worktree. The
@@ -391,76 +326,12 @@ export interface ExecutionStartGatePort {
      */
     seededDocuments: readonly SeededWorkflowDocument[];
   }): Promise<
-    { ok: true; workflowExecutionId: string } | { ok: false; reason: string }
-  >;
-  /**
-   * The session's parked execution, or null when it has none.
-   *
-   * The park is FOUND by session — the session holds one lease — but it is not
-   * thereby this execution's park: any run can hold that lease, including an
-   * unrelated one-off. So the probe reports the run's recorded origin alongside
-   * its id, and the caller establishes that the park is the one it means before
-   * deciding it (see {@link parkBelongsToExecution}). The origin is what the
-   * park already recorded, never an identity the act supplies (D7 R14.2).
-   */
-  findPendingDefinitionApproval(input: {
-    projectName: string;
-    sessionName: string;
-  }): Promise<PendingDefinitionApproval | null>;
-  ensurePendingDefinitionApproval(input: {
-    projectName: string;
-    sessionName: string;
-    definitionId: string;
-    definitionRevision: number;
-    /**
-     * Owner conversation for the launched run. Required (not optional) so this
-     * seam has to state what it captured: today's Studio grant is human-only
-     * and therefore has no conversation identity, which is an honest `null`
-     * rather than a forgotten field. An unowned run keeps validation
-     * fail-closed until it has lanes.
-     */
-    ownerConversationId: string | null;
-    /**
-     * The pinned spec revision, same shape and same purpose as on
-     * {@link ExecutionStartGatePort.launchApprovedDefinition}. Carried here too
-     * so a run's seeded documents never depend on which launch path fired.
-     */
-    seededDocuments: readonly SeededWorkflowDocument[];
-  }): Promise<
-    | { ok: true; park: PendingDefinitionApproval }
-    | { ok: false; reason: string }
-  >;
-  /**
-   * Decide the parked definition. This is the only seam the Studio act writes
-   * through, and it is a saga on the far side: reserve the graph's decision,
-   * report the approval through the lifecycle port (where this domain records
-   * the human grant), then finalize. There is deliberately no grant seam
-   * here — a durable approval recorded before that reservation would survive
-   * an act the graph went on to refuse.
-   */
-  approveWorkflowDefinition(input: {
-    projectName: string;
-    sessionName: string;
-    workflowExecutionId: string;
-  }): Promise<
-    | { ok: true }
     | {
-        ok: false;
-        reason:
-          | "unavailable"
-          | "no_active_execution"
-          | "not_awaiting_approval"
-          | "already_decided"
-          | "execution_mismatch"
-          // The workflow side's approval is a reservation-then-finalize saga,
-          // so it can also decline because another decision holds the park or
-          // because its own reservation was lost — reclaimed as stranded, and
-          // possibly already granted to somebody else — mid-act.
-          | "decision_in_flight"
-          | "not_reserved"
-          | "claim_superseded";
+        ok: true;
+        workflowExecutionId: string;
+        resolvedDefinitionHash: string;
       }
-    | { ok: false; reason: "gate_refused"; refusal: DefinitionGateRefusal }
+    | { ok: false; reason: string; code?: "validation" }
   >;
 }
 
@@ -494,6 +365,7 @@ export type ExecutionLifecycleDeps = Pick<
   ExecutionServiceDeps,
   | "specsRepo"
   | "deliveryRepo"
+  | "bindingRepo"
   | "linksRepo"
   | "eventsRepo"
   | "reviewRepo"
@@ -501,7 +373,6 @@ export type ExecutionLifecycleDeps = Pick<
   | "writeQueue"
   | "nextId"
   | "now"
-  | "ingestExecutionEvidence"
   | "getPublishedMerge"
   | "runInImmediateTransaction"
   | "policyNotifier"
@@ -515,7 +386,7 @@ export interface ExecutionLifecycleCallbacks {
   markRunning(
     context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
-    origin?: GraphWorkflowExecutionOrigin,
+    origin: GraphWorkflowExecutionOrigin,
   ): Promise<void>;
   markDelivered(workflowExecutionId: string, mergeHash: string): Promise<void>;
   awaitingDefinitionApproval(
@@ -549,6 +420,7 @@ export interface StartSpecExecutionInput {
   sessionName: string | null;
   /** The project this launch runs in, for the workflow start seam. */
   projectName?: string;
+  parameters?: Record<string, unknown>;
   /**
    * Hold a proposed or approved candidate for spec-side prelaunch review
    * instead of launching it. No workflow execution is created and no session
@@ -561,7 +433,7 @@ export type StartSpecExecutionResult =
   | {
       ok: true;
       execution: SpecExecutionRow;
-      definition: WorkflowDefinitionRecord;
+      launch: WorkflowDefinitionDraft;
       /** The pinned revision's number, so the receipt needs no second read. */
       revisionNumber: number;
       /**
@@ -571,8 +443,9 @@ export type StartSpecExecutionResult =
       deliveryPlan: {
         attemptId: string;
         candidateId: string;
-        planHash: string;
-        compiledDefinitionHash: string;
+        candidateHash: string;
+        workflowExecutionId: string;
+        resolvedDefinitionHash: string;
       };
     }
   | { ok: false; refusal: TransitionRefusal };
@@ -581,16 +454,8 @@ export type StartSpecExecutionResult =
 export interface ParkedDeliveryPlanResult {
   attemptId: string;
   candidateId: string;
-  planHash: string;
-  compiledDefinitionHash: string;
+  candidateHash: string;
   nextAct: DeliveryPlanNextAct;
-}
-
-export interface ApproveExecutionStartInput {
-  specId: string;
-  executionId: string;
-  actor: ActorProvenance;
-  projectName: string;
 }
 
 export interface ExecutionService {
@@ -604,9 +469,6 @@ export interface ExecutionService {
   parkDeliveryPlan(
     input: StartSpecExecutionInput,
   ): Promise<LifecycleResult<ParkedDeliveryPlanResult>>;
-  approveExecutionStart(
-    input: ApproveExecutionStartInput,
-  ): Promise<LifecycleResult<SpecExecutionRow>>;
   linkWorkflowExecution(
     specExecutionId: string,
     workflowExecutionId: string,
@@ -672,8 +534,8 @@ export interface CaptureScopeAmendmentInput {
   specId: string;
   /**
    * The run to capture against. Optional because the spec's live attempt
-   * already knows which execution it launched; naming one matters only for a
-   * legacy compiled run, which has no attempt behind it.
+   * already knows which execution it launched; naming one addresses a run
+   * whose spec the caller cannot name by slug.
    */
   executionId?: string;
   actor: ActorProvenance;
@@ -724,9 +586,6 @@ export function createExecutionService(
         async () => parkWithinQueue(deps, cloneStartInput(input)),
       );
     },
-    async approveExecutionStart(input) {
-      return approveExecutionStart(deps, input);
-    },
     linkWorkflowExecution(specExecutionId, workflowExecutionId) {
       return linkWorkflowExecution(deps, specExecutionId, workflowExecutionId);
     },
@@ -751,81 +610,102 @@ export function createExecutionService(
   };
 }
 
+/**
+ * The readers the binding-authority decision is allowed to consult. It names
+ * no execution lookup keyed on the workflow execution id, because that lookup
+ * is exactly how a run without a binding used to be adopted: the row alone
+ * cannot say which candidate it was launched from.
+ */
+export interface BoundSpecExecutionReaders {
+  bindingRepo: Pick<
+    SpecExecutionBindingRepo,
+    "findByWorkflowExecutionId" | "requireByWorkflowExecutionId"
+  >;
+  deliveryRepo: Pick<SpecDeliveryRepo, "findExecutionById">;
+}
+
+/**
+ * The spec execution a graph run is bound to, or null when it is not a
+ * native-SDD run. The typed binding is the only authority: no binding, no
+ * spec-bound behavior. A binding that names an execution which disagrees with
+ * it is corruption, not a legacy shape, so it throws rather than degrading.
+ */
+export function resolveBoundSpecExecution(
+  readers: BoundSpecExecutionReaders,
+  workflowExecutionId: string,
+): SpecExecutionRow | null {
+  const unresolvedBinding =
+    readers.bindingRepo.findByWorkflowExecutionId(workflowExecutionId);
+  if (unresolvedBinding === null) return null;
+
+  const linkedBinding =
+    readers.bindingRepo.requireByWorkflowExecutionId(workflowExecutionId);
+  const execution = readers.deliveryRepo.findExecutionById(
+    linkedBinding.specExecutionId,
+  );
+  if (
+    execution === null ||
+    execution.workflow_execution_id !== workflowExecutionId ||
+    execution.revision_id !== linkedBinding.binding.pinnedRevisionId
+  ) {
+    throw new Error(
+      `Workflow execution ${workflowExecutionId} has a stale native-SDD execution link`,
+    );
+  }
+  return execution;
+}
+
 export function createExecutionLifecycleCallbacks(
   deps: ExecutionLifecycleDeps,
 ): ExecutionLifecycleCallbacks {
-  /**
-   * Correlate a reported workflow execution with the spec execution that
-   * pinned it. The definition tier is derived HERE, from the reported origin,
-   * because correlating by a definition revision is a template-only affordance:
-   * a run authored inline has no stored definition to look up, so it is
-   * correlated by the workflow execution id it was linked with — or by nothing
-   * at all, which is the correct answer for a run this domain never prepared.
-   */
+  function findLinkedExecution(
+    workflowExecutionId: string,
+  ): SpecExecutionRow | null {
+    return resolveBoundSpecExecution(deps, workflowExecutionId);
+  }
+
   function findExecutionForWorkflow(
     context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
-    origin: GraphWorkflowExecutionOrigin | undefined,
+    origin: GraphWorkflowExecutionOrigin,
   ): SpecExecutionRow | null {
-    const definitionId =
-      origin?.kind === "template" ? origin.definitionId : undefined;
-    const definitionRevision =
-      origin?.kind === "template" ? origin.definitionRevision : undefined;
-    const linked =
-      deps.deliveryRepo.findExecutionByWorkflowExecutionIdInSession(
-        context.projectPath,
-        context.sessionName,
-        workflowExecutionId,
-      );
-    if (linked !== null) {
-      const definitionMatches =
-        definitionId === undefined ||
-        linked.workflow_definition_id === definitionId;
-      const revisionMatches =
-        definitionRevision === undefined ||
-        linked.workflow_definition_revision === null ||
-        linked.workflow_definition_revision === definitionRevision;
-      if (definitionMatches && revisionMatches) {
-        if (
-          definitionRevision !== undefined &&
-          linked.workflow_definition_revision === null
-        ) {
-          logger.warn(
-            "specs.execution.workflow-correlation-linked-without-revision",
-            {
-              projectPath: context.projectPath,
-              sessionName: context.sessionName,
-              workflowExecutionId,
-              specExecutionId: linked.id,
-              reportedDefinitionId: definitionId,
-              reportedDefinitionRevision: definitionRevision,
-              pinnedDefinitionId: linked.workflow_definition_id,
-            },
-          );
-        }
-        return linked;
-      }
-      logger.warn("specs.execution.workflow-correlation-refused", {
-        projectPath: context.projectPath,
-        sessionName: context.sessionName,
-        workflowExecutionId,
-        specExecutionId: linked.id,
-        reportedDefinitionId: definitionId,
-        reportedDefinitionRevision: definitionRevision,
-        pinnedDefinitionId: linked.workflow_definition_id,
-        pinnedDefinitionRevision: linked.workflow_definition_revision,
-      });
-      return null;
-    }
-    if (definitionId === undefined || definitionRevision === undefined) {
-      return null;
-    }
-    return deps.deliveryRepo.findExecutionAwaitingWorkflowByDefinitionIdInSession(
-      context.projectPath,
-      context.sessionName,
-      definitionId,
-      definitionRevision,
+    // Every native-SDD run is a spec delivery launched from a signed
+    // candidate. Any other origin cannot name a spec execution, so it is not
+    // correlated at all rather than resolved through a second path.
+    if (origin.kind !== "spec_delivery") return null;
+
+    const unresolvedBinding =
+      deps.bindingRepo.findByWorkflowExecutionId(workflowExecutionId);
+    if (unresolvedBinding === null) return null;
+    const linkedBinding = deps.bindingRepo.requireByWorkflowExecutionId(
+      workflowExecutionId,
+      { candidateId: origin.candidateId },
     );
+    const execution = deps.deliveryRepo.findExecutionById(
+      linkedBinding.specExecutionId,
+    );
+    const spec =
+      execution === null
+        ? null
+        : deps.specsRepo.findByIdInTransaction(execution.spec_id);
+    if (
+      execution !== null &&
+      spec !== null &&
+      execution.workflow_execution_id === workflowExecutionId &&
+      execution.revision_id === linkedBinding.binding.pinnedRevisionId &&
+      execution.session_name === context.sessionName &&
+      spec.projectPath === context.projectPath
+    ) {
+      return execution;
+    }
+    logger.warn("specs.execution.typed-workflow-correlation-refused", {
+      projectPath: context.projectPath,
+      sessionName: context.sessionName,
+      workflowExecutionId,
+      specExecutionId: linkedBinding.specExecutionId,
+      candidateId: linkedBinding.binding.candidateId,
+    });
+    return null;
   }
 
   return {
@@ -850,19 +730,15 @@ export function createExecutionLifecycleCallbacks(
       if (!result.ok) throw new Error(result.refusal.unmetConditions.join(" "));
     },
     async markDelivered(workflowExecutionId, mergeHash) {
-      const execution =
-        deps.deliveryRepo.findExecutionByWorkflowExecutionId(
-          workflowExecutionId,
-        );
+      const execution = findLinkedExecution(workflowExecutionId);
       if (execution === null) return;
       const result = await markDelivered(deps, execution.id, mergeHash);
       if (!result.ok) throw new Error(result.refusal.unmetConditions.join(" "));
     },
     /**
-     * A compiled definition parked awaiting approval: link the awaiting spec
-     * execution to its workflow execution and open the durable Needs You
-     * request — the point where a human grant has real waiting work to
-     * unblock (R10.9).
+     * A graph run parked awaiting approval links its immutable spec execution
+     * and opens the durable Needs You request — the point where a human grant
+     * has real waiting work to unblock (R10.9).
      */
     async awaitingDefinitionApproval(context, workflowExecutionId, origin) {
       const awaiting = findExecutionForWorkflow(
@@ -933,7 +809,7 @@ export function createExecutionLifecycleCallbacks(
           ok: false,
           code: "gate_blocked",
           unmetConditions: [
-            "The spec execution-start gate is not wired into this composition.",
+            "The spec execution-start gate is unavailable in this composition.",
           ],
           instruction: "Approve execution start from Spec Studio instead.",
         };
@@ -959,10 +835,7 @@ export function createExecutionLifecycleCallbacks(
       return { ok: true };
     },
     async executionAborted(workflowExecutionId) {
-      const execution =
-        deps.deliveryRepo.findExecutionByWorkflowExecutionId(
-          workflowExecutionId,
-        );
+      const execution = findLinkedExecution(workflowExecutionId);
       if (
         execution === null ||
         execution.state === "abandoned" ||
@@ -1001,219 +874,6 @@ function definitionGateRefusal(
     unmetConditions: [...refusal.unmetConditions],
     instruction: refusal.instruction,
   };
-}
-
-/**
- * Rebuild the pinned-spec document from an execution row's own pin, for the
- * launch paths that resolve the snapshot after the launch was prepared. `null`
- * means the pin cannot be read — the caller must refuse rather than launch a
- * run whose plan cites a source of truth no lane will have.
- */
-async function resolvePinnedSpecDocuments(
-  deps: ExecutionServiceDeps,
-  execution: SpecExecutionRow,
-): Promise<readonly SeededWorkflowDocument[] | null> {
-  const spec = await deps.specsRepo.findById(execution.spec_id);
-  if (spec === null) return null;
-  const pinned = await deps.specsRepo.getRevisionSnapshot(
-    execution.revision_id,
-  );
-  if (pinned === null) return null;
-  return [buildPinnedSpecDocument(spec, pinned)];
-}
-
-/**
- * The human execution-start grant launches the prepared definition when the
- * Studio action is the first workflow-side act, records the human-only gate
- * approval, then approves the parked definition through the graph-workflow
- * seam. Launching before the grant preserves the invariant that an admission
- * is written only when a concrete workflow execution is waiting to consume it.
- */
-async function approveExecutionStart(
-  deps: ExecutionServiceDeps,
-  input: ApproveExecutionStartInput,
-): Promise<LifecycleResult<SpecExecutionRow>> {
-  if (input.actor.kind !== "human") {
-    return lifecycleRefused(
-      "human_act_required",
-      ["Execution-start approval is a human-only act."],
-      "Approve the execution start from Spec Studio.",
-    );
-  }
-  const gate = deps.executionStartGate;
-  if (gate === undefined) {
-    throw new Error(
-      "The execution-start gate port is not wired into this composition",
-    );
-  }
-  const execution = deps.deliveryRepo.findExecutionById(input.executionId);
-  if (execution === null) return lifecycleNotFound(input.executionId);
-  if (execution.spec_id !== input.specId) {
-    return lifecycleRefused(
-      "validation",
-      ["The execution does not belong to this spec."],
-      "Approve the execution from its own spec's Studio page.",
-    );
-  }
-  if (execution.state === "abandoned" || execution.state === "delivered") {
-    return lifecycleRefused(
-      "gate_blocked",
-      [`A ${execution.state} execution cannot be start-approved.`],
-      await seededDeliveryPlanInstruction(deps, execution.spec_id),
-    );
-  }
-  if (execution.session_name === null) {
-    return lifecycleRefused(
-      "gate_blocked",
-      ["The execution is not pinned to a session."],
-      "Start the compiled workflow from a session before approving execution start.",
-    );
-  }
-  if (execution.workflow_definition_revision === null) {
-    logger.warn("specs.execution.start-definition-revision-missing", {
-      specId: input.specId,
-      specExecutionId: execution.id,
-      workflowDefinitionId: execution.workflow_definition_id,
-    });
-    return lifecycleRefused(
-      "gate_blocked",
-      ["The execution predates immutable workflow-definition revision pins."],
-      await seededDeliveryPlanInstruction(
-        deps,
-        execution.spec_id,
-        execution.id,
-      ),
-    );
-  }
-
-  let park = await gate.findPendingDefinitionApproval({
-    projectName: input.projectName,
-    sessionName: execution.session_name,
-  });
-  if (park === null) {
-    const seededDocuments = await resolvePinnedSpecDocuments(deps, execution);
-    if (seededDocuments === null) {
-      return lifecycleRefused(
-        "gate_blocked",
-        [
-          `The execution pins revision ${execution.revision_id}, which cannot be read, so the pinned spec cannot be seeded into its lanes.`,
-        ],
-        await seededDeliveryPlanInstruction(
-          deps,
-          execution.spec_id,
-          execution.id,
-        ),
-      );
-    }
-    const ensured = await gate.ensurePendingDefinitionApproval({
-      projectName: input.projectName,
-      sessionName: execution.session_name,
-      definitionId: execution.workflow_definition_id,
-      definitionRevision: execution.workflow_definition_revision,
-      // Human-only act (every agent actor is refused above), and a human
-      // approver has no conversation identity — so this launch is genuinely
-      // unowned. Stated explicitly rather than omitted so the null is a
-      // decision the seam records, not a field someone forgot.
-      ownerConversationId: null,
-      seededDocuments,
-    });
-    if (!ensured.ok) {
-      logger.warn("specs.execution.start-launch-refused", {
-        specId: input.specId,
-        specExecutionId: execution.id,
-        workflowDefinitionId: execution.workflow_definition_id,
-        workflowDefinitionRevision: execution.workflow_definition_revision,
-        sessionName: execution.session_name,
-        reason: ensured.reason,
-      });
-      return lifecycleRefused(
-        "gate_blocked",
-        [ensured.reason],
-        "Resolve the workflow start condition, then approve execution start again.",
-      );
-    }
-    park = ensured.park;
-  }
-
-  // The session's lease is held by SOME run; this act only means the one this
-  // execution compiled. Approving whatever holds the park would start an
-  // unrelated run — a one-off admits by default, having no linked spec
-  // execution to refuse for it — and leave this execution unapproved behind it.
-  if (!parkBelongsToExecution(park, execution)) {
-    logger.warn("specs.execution.start-park-not-correlated", {
-      specId: input.specId,
-      specExecutionId: execution.id,
-      sessionName: execution.session_name,
-      parkedWorkflowExecutionId: park.executionId,
-      parkedOrigin: park.origin.kind,
-      workflowDefinitionId: execution.workflow_definition_id,
-      workflowDefinitionRevision: execution.workflow_definition_revision,
-    });
-    return lifecycleRefused(
-      "gate_blocked",
-      [
-        "Another workflow run holds this session and is awaiting its own definition approval.",
-      ],
-      "Resolve the run holding the session, then approve execution start again.",
-    );
-  }
-  const workflowExecutionId = park.executionId;
-
-  // The ONE act, for this surface too. The human grant this Studio action
-  // records is a durable side effect, so it may not precede the graph's
-  // decision on the park: an act the graph refuses would leave an
-  // execution-start admission behind for a run that never started
-  // (`reserve-before-side-effects`). The workflow-side act reserves the
-  // decision first and only then reports the approval through the lifecycle
-  // port, which is where this domain records the grant — so the grant lands
-  // inside the reservation, or not at all.
-  const approved = await gate.approveWorkflowDefinition({
-    projectName: input.projectName,
-    sessionName: execution.session_name,
-    workflowExecutionId,
-  });
-  if (!approved.ok && approved.reason !== "already_decided") {
-    if (approved.reason === "unavailable") {
-      return lifecycleRefused(
-        "gate_blocked",
-        ["Workflow definition approval is not available on this server."],
-        "Retry once the graph-workflow definition gate is available.",
-      );
-    }
-    if (approved.reason === "gate_refused") {
-      const parsedCode = refusalCodeSchema.safeParse(approved.refusal.code);
-      return lifecycleRefused(
-        parsedCode.success ? parsedCode.data : "gate_blocked",
-        [...approved.refusal.unmetConditions],
-        approved.refusal.instruction,
-      );
-    }
-    if (approved.reason === "decision_in_flight") {
-      return lifecycleRefused(
-        "gate_blocked",
-        ["Another approval decision is in flight for this workflow run."],
-        "Wait for the decision in flight to settle, then approve again.",
-      );
-    }
-    return lifecycleRefused(
-      "gate_blocked",
-      [
-        "The workflow execution stopped awaiting definition approval before the grant completed.",
-      ],
-      "Start the compiled workflow from the session, then approve again — nothing was recorded.",
-    );
-  }
-
-  const updated =
-    deps.deliveryRepo.findExecutionById(execution.id) ?? execution;
-  logger.info("specs.execution.start-approved", {
-    specId: input.specId,
-    specExecutionId: execution.id,
-    workflowExecutionId,
-    workflowApproval: approved.ok ? "approved" : "already_decided",
-    state: updated.state,
-  });
-  return { ok: true, value: updated };
 }
 
 async function linkWorkflowExecution(
@@ -1256,10 +916,7 @@ async function linkWorkflowExecution(
           object_ref_json: JSON.stringify({ workflowExecutionId }),
           direction: "outbound",
           category: "source",
-          snapshot_json: JSON.stringify({
-            specExecutionId,
-            workflowDefinitionId: current.workflow_definition_id,
-          }),
+          snapshot_json: JSON.stringify({ specExecutionId }),
           element_ids_json: null,
           actor_json: systemActorJson(),
           created_at: updated.updated_at,
@@ -1328,7 +985,7 @@ async function markRunning(
 }
 
 /**
- * A definition-review -> running transition admitted without a human gate is
+ * A workflow-review -> running transition admitted without a human gate is
  * still an admitted execution-start transition: under the Notify/Off dials
  * the admission lands with a policy basis plus its typed gate event so
  * `spec_gate_admissions` and the event log are a complete record of why
@@ -1348,8 +1005,6 @@ function recordPolicyStartAdmission(
   if (execution.execution_start_dial === null) {
     logger.warn("specs.execution.start-policy-unavailable", {
       specExecutionId: execution.id,
-      workflowDefinitionId: execution.workflow_definition_id,
-      workflowDefinitionRevision: execution.workflow_definition_revision,
     });
     return;
   }
@@ -1430,8 +1085,6 @@ async function markDelivered(
       "Repair the pinned revision or scope before recording delivery.",
     );
   }
-  await deps.ingestExecutionEvidence(specExecutionId);
-
   const delivered = await deps.writeQueue.withWriteQueue(
     `spec-execution-delivered[${specExecutionId}]`,
     async () => {
@@ -1509,23 +1162,6 @@ async function markDelivered(
       return result;
     },
   );
-  if (delivered.ok) {
-    // The pre-flip ingest above ran while both the spec execution and (on the
-    // publish path) the graph workflow were still running, so a followerless
-    // final validation stayed deferred. Now that Delivered is durable the
-    // stamp is decidable — no sealing commit can ever follow a published
-    // merge — so fold once more; the append-once ingest key makes a replay
-    // free. A failure here must not un-deliver: ingest re-runs at every
-    // later claim/gate/status touchpoint.
-    try {
-      await deps.ingestExecutionEvidence(specExecutionId);
-    } catch (error) {
-      logger.warn("specs.execution.delivered-evidence-ingest-failed", {
-        specExecutionId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
   return delivered;
 }
 
@@ -1644,17 +1280,6 @@ async function reconcileStatus(
     const running = await markRunning(deps, workflowExecutionId);
     if (!running.ok) return running;
     if (running.value !== null) current = running.value;
-  }
-  if (
-    workflowStatus === "completed" &&
-    publishedMerge?.deliveryGatePassed !== true
-  ) {
-    await deps.ingestExecutionEvidence(specExecutionId);
-    logger.info("specs.execution.evidence-reconciled", {
-      specExecutionId,
-      workflowExecutionId,
-      workflowStatus,
-    });
   }
   if (publishedMerge?.deliveryGatePassed === true) {
     return withLane(
@@ -2376,19 +2001,36 @@ async function captureScopeAmendment(
         },
       };
     }
-    const opened = await deps.deliveryPlanCapture?.openSeededReplacement({
-      spec,
-      actor: input.actor,
-    });
-    if (opened === undefined) {
+    const capturePort = deps.deliveryPlanCapture;
+    if (capturePort === undefined) {
       return lifecycleRefused(
         "gate_blocked",
         [
-          `Execution ${execution.id} was abandoned, but no delivery-plan port is wired into this composition, so no replacement plan could be opened.`,
+          `Execution ${execution.id} was abandoned, but this composition cannot open its replacement plan.`,
         ],
         `The discovery is durable. Open the replacement yourself with \`cctl spec plan open ${spec.slug} --seed-from last\` — the seed places it.`,
       );
     }
+    const retiredAttempt = await capturePort.abandonLaunchedAttempt({
+      spec,
+      executionId: execution.id,
+      reason: blockingReason,
+      actor: input.actor,
+    });
+    if (!retiredAttempt.ok) {
+      return {
+        ok: false,
+        refusal: {
+          code: retiredAttempt.refusal.code,
+          unmetConditions: [...retiredAttempt.refusal.unmetConditions],
+          instruction: retiredAttempt.refusal.instruction,
+        },
+      };
+    }
+    const opened = await capturePort.openSeededReplacement({
+      spec,
+      actor: input.actor,
+    });
     if (!opened.ok) {
       return {
         ok: false,
@@ -2429,20 +2071,21 @@ async function captureScopeAmendment(
 
 /**
  * What a launch still owes once the write queue is released. The spec-side
- * records are already committed; only the workflow start remains, and it must
- * happen outside the queue because the lifecycle port re-enters it to link and
- * mark the execution running.
+ * writes are prepared but uncommitted; the workflow start invokes the generic
+ * attachment inside the graph execution insertion transaction.
  */
 interface PreparedDeliveryPlanLaunch {
   spec: Spec;
-  execution: SpecExecutionRow;
-  definition: WorkflowDefinitionRecord;
+  attachment: SpecExecutionStartAttachment;
+  launch: WorkflowDefinitionDraft;
   revisionNumber: number;
   attemptId: string;
-  candidate: DeliveryPlanCandidateIdentity;
+  candidate: FinalizedDeliveryPlanCandidateIdentity;
   sessionName: string;
   projectName: string;
+  actor: ActorProvenance;
   ownerConversationId: string | null;
+  parameters?: Record<string, unknown>;
   /**
    * Built from the PINNED snapshot inside the queue, where the pin is already
    * resolved, so what a lane reads cannot drift with live spec state between
@@ -2522,9 +2165,9 @@ function unavailableDeliveryPlanPortRefusal(
   return {
     code: "workflow_unavailable",
     unmetConditions: [
-      "The delivery-plan launch service is not wired into this composition.",
+      "The shared graph launch boundary is unavailable in this composition.",
     ],
-    instruction: `Nothing was ${act}. Open and inspect the candidate with \`cctl spec plan open ${slug} --seed-from last\`, then retry in a Command Center composition that supports delivery-plan launch.`,
+    instruction: `Nothing was ${act}. Read the signed candidate with \`cctl spec plan status ${slug}\`, then retry in a Command Center composition that supports one-off graph start.`,
   };
 }
 
@@ -2586,8 +2229,7 @@ async function parkWithinQueue(
     value: {
       attemptId: target.attemptId,
       candidateId: target.candidate.candidateId,
-      planHash: target.candidate.planHash,
-      compiledDefinitionHash: target.candidate.compiledDefinitionHash,
+      candidateHash: target.candidate.candidateHash,
       nextAct: parked.value.nextAct,
     },
   };
@@ -2665,168 +2307,62 @@ async function startFromDeliveryPlan(
     });
   }
 
-  const definitionValue = launch.definition;
-  const originSourceUri = definitionValue.origin?.sourceUri ?? null;
-  if (originSourceUri === null) {
-    throw new Error(
-      `Approved candidate ${launch.candidate.candidateId} carries no origin source uri`,
-    );
-  }
-  const definitionDraft = workflowDraft(
-    spec.name,
-    pinned.revision.number,
-    definitionValue,
-  );
-  const orphan = await deps.workflowDefinitions.findByOrigin(originSourceUri);
-  const definition =
-    orphan === null
-      ? await deps.workflowDefinitions.create(definitionDraft)
-      : isDeepStrictEqual(orphan.definition, definitionValue)
-        ? orphan
-        : await deps.workflowDefinitions.update(orphan.id, definitionDraft);
+  const definitionDraft = launch.launch;
+  const origin: GraphWorkflowExecutionOrigin = {
+    kind: "spec_delivery",
+    specSlug: spec.slug,
+    candidateId: launch.candidate.candidateId,
+  };
 
-  // The exactness contract, checked rather than assumed: what the storage
-  // round-trip produced has to still hash to the bytes the human approved
-  // (`exact-approval`). A refusal here means the definition store altered the
-  // candidate, which no launch may paper over.
-  const persistedHash = deliveryPlanCompiledHash(definition.definition);
-  if (persistedHash !== launch.candidate.compiledDefinitionHash) {
+  const persistedHash = deliveryPlanCandidateHashFromBytes(
+    launch.candidateBytes,
+  );
+  if (persistedHash !== launch.candidate.candidateHash) {
     return done({
       ok: false,
       refusal: {
         code: "integrity_mismatch",
         unmetConditions: [
-          `The stored workflow definition hashes to ${persistedHash}, but the approved candidate is ${launch.candidate.compiledDefinitionHash}.`,
+          `The stored candidate bytes hash to ${persistedHash}, but the approved candidate identity is ${launch.candidate.candidateHash}.`,
         ],
         instruction: `Nothing was started. Re-read the approved candidate with \`cctl spec plan preview ${spec.slug} --stage proposed\`, then re-run \`cctl spec plan propose ${spec.slug}\` and sign the fresh candidate off.`,
       },
     });
   }
 
-  const prepared: PreparedSpecEventPublication[] = [];
   const createdAt = deps.now();
-  const execution: SpecExecutionRow = deps.runInImmediateTransaction(() => {
-    const row: SpecExecutionRow = {
-      id: deps.nextId("execution"),
-      spec_id: spec.id,
-      revision_id: launch.pinnedRevisionId,
-      scope_json: JSON.stringify(launch.scope),
-      // Transient: the run has no approval left to wait for, and the
-      // registered lifecycle port flips it to `running` the moment the
-      // workflow reports its start.
-      state: "definition_review",
-      execution_start_dial: specGateDialSchema.parse(
+  const binding = specExecutionBindingSnapshotV2Schema.parse({
+    schemaVersion: 2,
+    candidateId: launch.candidate.candidateId,
+    candidateHash: launch.candidate.candidateHash,
+    pinnedRevisionId: launch.pinnedRevisionId,
+    dispositions: launch.binding.dispositions,
+    claims: launch.binding.claims,
+  });
+  const attachment = prepareSpecExecutionStartAttachment(
+    {
+      deliveryRepo: deps.deliveryRepo,
+      bindingRepo: deps.bindingRepo,
+      linksRepo: deps.linksRepo,
+      plansRepo: deps.plansRepo,
+      events: deps.events,
+      nextLinkId: () => deps.nextId("link"),
+    },
+    {
+      spec,
+      specExecutionId: deps.nextId("execution"),
+      attemptId: launch.attemptId,
+      sessionName: input.sessionName,
+      executionStartDial: specGateDialSchema.parse(
         resolveDial(spec.gatePolicy, "execution_start"),
       ),
-      workflow_definition_id: definition.id,
-      workflow_definition_revision: definition.revision,
-      workflow_execution_id: null,
-      session_name: input.sessionName,
-      delivered_at: null,
-      abandoned_reason: null,
-      cleanup_phase: null,
-      linked_workflow_execution_id: null,
-      cleanup_last_error: null,
-      cleanup_last_error_at: null,
-      created_at: createdAt,
-      updated_at: createdAt,
-    };
-    deps.deliveryRepo.insertExecution(row);
-    for (const entry of launch.dispositions) {
-      deps.deliveryRepo.saveCriterionDisposition({
-        execution_id: row.id,
-        criterion_element_id: entry.criterionElementId,
-        disposition: entry.disposition,
-        waiver_id: null,
-        delivered_by_execution_id: entry.deliveredByExecutionId,
-        created_at: createdAt,
-        updated_at: createdAt,
-      });
-    }
-    deps.linksRepo.insertLink({
-      id: deps.nextId("link"),
-      spec_id: spec.id,
-      object_kind: "workflow_execution",
-      object_ref_json: JSON.stringify({
-        workflowDefinitionId: definition.id,
-        workflowDefinitionRevision: definition.revision,
-        workflowExecutionId: null,
-      }),
-      direction: "outbound",
-      category: "source",
-      snapshot_json: JSON.stringify({
-        revisionId: launch.pinnedRevisionId,
-        deliveryPlanAttemptId: launch.attemptId,
-        planHash: launch.candidate.planHash,
-        compiledDefinitionHash: launch.candidate.compiledDefinitionHash,
-      }),
-      element_ids_json: JSON.stringify(launch.scope.selectedCriterionIds),
-      actor_json: JSON.stringify(input.actor),
-      created_at: createdAt,
-    });
-    prepared.push(
-      deps.events.appendInTransaction({
-        actor: input.actor,
-        durableEventType: "spec-execution-changed",
-        durablePayload: {
-          kind: "execution_started",
-          executionId: row.id,
-          revisionId: launch.pinnedRevisionId,
-          workflowDefinitionId: definition.id,
-          workflowDefinitionRevision: definition.revision,
-          deliveryPlanAttemptId: launch.attemptId,
-          candidateId: launch.candidate.candidateId,
-          planHash: launch.candidate.planHash,
-          compiledDefinitionHash: launch.candidate.compiledDefinitionHash,
-        },
-        sseEvent: {
-          type: "spec-execution-changed",
-          kind: "execution_started",
-          projectPath: spec.projectPath,
-          specId: spec.id,
-          specSlug: spec.slug,
-          occurredAt: createdAt,
-          revisionId: launch.pinnedRevisionId,
-          executionId: row.id,
-        },
-      }),
-    );
-    return row;
-  });
-  publishPrepared(deps, prepared);
-
-  const recorded = await planPort.recordLaunch({
-    spec,
-    executionId: execution.id,
-    candidate: launch.candidate,
-    actor: input.actor,
-  });
-  if (!recorded.ok) {
-    // The execution row is already committed, and plan mutations do not share
-    // this write queue — so a reopen landing while the definition was being
-    // persisted rejects the candidate here, after the row exists. Leaving it
-    // would strand an ACTIVE execution that blocks every retry, so it is
-    // retired audibly rather than abandoned in place (`audited-transitions`).
-    const rolledBack = rollBackUnlaunchedExecution(
-      deps,
-      spec,
-      execution,
-      input.actor,
-      `The approved candidate was rejected at launch: ${recorded.refusal.unmetConditions.join(" ")}`,
-    );
-    const refusal = asTransitionRefusal(recorded.refusal);
-    return done({
-      ok: false,
-      refusal: {
-        ...refusal,
-        unmetConditions: [
-          ...refusal.unmetConditions,
-          `Execution ${execution.id} was created for this launch and has been ${rolledBack ? "retired" : "left in place"}; no workflow ran.`,
-        ],
-        instruction: `${refusal.instruction} Nothing is running${rolledBack ? "" : `; abandon execution ${execution.id} with \`cctl spec abandon ${spec.slug} --execution ${execution.id}\` before retrying`}.`,
-      },
-    });
-  }
+      scope: launch.scope,
+      origin,
+      binding,
+      actor: input.actor,
+      createdAt,
+    },
+  );
 
   // Everything spec-side is committed; the workflow start is handed back to
   // the caller so it runs with the write queue released.
@@ -2834,82 +2370,36 @@ async function startFromDeliveryPlan(
     kind: "launch",
     pending: {
       spec,
-      execution,
-      definition,
+      attachment,
+      launch: definitionDraft,
       revisionNumber: pinned.revision.number,
       attemptId: launch.attemptId,
       candidate: launch.candidate,
       sessionName: input.sessionName,
       projectName: input.projectName ?? "",
+      actor: input.actor,
       // The authenticated conversation that ran `spec start`. It is threaded
       // to the persisted execution so validation resolves the launching
       // planner before any lane exists (lifecycle contract, design §10).
       ownerConversationId:
         input.actor.kind === "agent" ? input.actor.conversationId : null,
-      seededDocuments: [buildPinnedSpecDocument(spec, pinned)],
+      ...(input.parameters === undefined
+        ? {}
+        : { parameters: input.parameters }),
+      seededDocuments: [
+        buildPinnedSpecDocument(spec, pinned),
+        buildSpecExecutionClaimsDocument(
+          buildSpecOwnershipProjection(binding, pinned),
+        ),
+      ],
     },
   };
 }
 
 /**
- * Retire a spec execution that was created for a launch which then refused,
- * before any workflow existed to run it. Nothing external needs reaping — the
- * graph-workflow execution is created only after this point — so the row is
- * finalized straight to `abandoned` with its reason and audit event in one
- * transaction rather than entering the cleanup coordinator, which exists for
- * runs that DID launch. Returns false when the retirement itself fails, so the
- * refusal can name the manual remedy instead of claiming a rollback happened.
- */
-function rollBackUnlaunchedExecution(
-  deps: ExecutionServiceDeps,
-  spec: Spec,
-  execution: SpecExecutionRow,
-  actor: ActorProvenance,
-  reason: string,
-): boolean {
-  const prepared: PreparedSpecEventPublication[] = [];
-  try {
-    deps.runInImmediateTransaction(() => {
-      const row = deps.deliveryRepo.saveExecutionCleanupState({
-        executionId: execution.id,
-        state: "abandoned",
-        cleanupPhase: null,
-        linkedWorkflowExecutionId: null,
-        cleanupLastError: null,
-        cleanupLastErrorAt: null,
-        abandonedReason: reason,
-        updatedAt: deps.now(),
-      });
-      prepared.push(
-        appendExecutionEvent(
-          deps,
-          row,
-          "execution_abandoned",
-          { reason, rolledBackBeforeLaunch: true },
-          actor,
-        ),
-      );
-    });
-  } catch (error) {
-    logger.error("specs.execution.launch-rollback-failed", {
-      specId: spec.id,
-      specExecutionId: execution.id,
-      error: getErrorMessage(error),
-    });
-    return false;
-  }
-  publishPrepared(deps, prepared);
-  logger.info("specs.execution.launch-rolled-back", {
-    specId: spec.id,
-    specExecutionId: execution.id,
-  });
-  return true;
-}
-
-/**
- * The launch itself, outside the write queue. The workflow start reports back
- * through the registered lifecycle port, which links the spec execution and
- * marks it running through that same queue — doing this inside it deadlocks.
+ * The launch itself, outside the write queue. Its transaction attachment binds
+ * the spec execution before the graph execution commits; lifecycle reporting
+ * then marks the bound execution running through the same queue.
  */
 async function completeDeliveryPlanLaunch(
   deps: ExecutionServiceDeps,
@@ -2922,97 +2412,72 @@ async function completeDeliveryPlanLaunch(
       refusal: {
         code: "workflow_unavailable",
         unmetConditions: [
-          "This composition has no workflow start seam wired, so the approved candidate cannot be launched.",
+          "This composition has no shared graph start boundary, so the approved candidate cannot be launched.",
         ],
-        instruction: `Execution ${pending.execution.id} exists but nothing is running. Launch the compiled definition with \`cctl workflow start ${pending.definition.id}\`, or abandon the run with \`cctl spec abandon ${pending.spec.slug} --execution ${pending.execution.id}\`.`,
+        instruction: `Nothing was written. Retry \`cctl spec start ${pending.spec.slug}\` after configuring the shared graph start boundary.`,
       },
     };
   }
-  const launched = await gate.launchApprovedDefinition({
+  const launched = await gate.launchApprovedLaunch({
     projectName: pending.projectName,
     sessionName: pending.sessionName,
-    definitionId: pending.definition.id,
-    definitionRevision: pending.definition.revision,
+    plan: pending.launch,
+    specSlug: pending.spec.slug,
+    candidateId: pending.candidate.candidateId,
     ownerConversationId: pending.ownerConversationId,
+    ...(pending.parameters === undefined
+      ? {}
+      : { parameters: pending.parameters }),
     seededDocuments: pending.seededDocuments,
+    transactionAttachment: pending.attachment.attach,
   });
   if (!launched.ok) {
+    const code = launched.code ?? "workflow_unavailable";
     return {
       ok: false,
       refusal: {
-        code: "workflow_unavailable",
+        code,
         unmetConditions: [
           `The approved candidate did not start: ${launched.reason}`,
         ],
-        instruction: `Execution ${pending.execution.id} exists but nothing is running. Retry with \`cctl workflow start ${pending.definition.id}\`, or abandon the run with \`cctl spec abandon ${pending.spec.slug} --execution ${pending.execution.id}\`.`,
+        instruction:
+          code === "validation"
+            ? `Nothing was written. Correct the graph launch inputs, then retry \`cctl spec start ${pending.spec.slug}\` with the amended --inputs file.`
+            : `Nothing was written. Retry \`cctl spec start ${pending.spec.slug}\` after correcting the launch refusal.`,
       },
     };
+  }
+
+  publishPrepared(deps, pending.attachment.publications);
+  const execution = deps.deliveryRepo.findExecutionById(
+    pending.attachment.specExecutionId,
+  );
+  if (execution === null) {
+    throw new Error(
+      `Workflow execution ${launched.workflowExecutionId} committed without spec execution ${pending.attachment.specExecutionId}`,
+    );
   }
 
   logger.info("specs.execution.delivery-plan-launched", {
     specId: pending.spec.id,
-    executionId: pending.execution.id,
+    executionId: execution.id,
     attemptId: pending.attemptId,
-    workflowDefinitionId: pending.definition.id,
+    candidateId: pending.candidate.candidateId,
     workflowExecutionId: launched.workflowExecutionId,
-    compiledDefinitionHash: pending.candidate.compiledDefinitionHash,
+    candidateHash: pending.candidate.candidateHash,
   });
   return {
     ok: true,
-    execution:
-      deps.deliveryRepo.findExecutionById(pending.execution.id) ??
-      pending.execution,
-    definition: pending.definition,
+    execution,
+    launch: pending.launch,
     revisionNumber: pending.revisionNumber,
     deliveryPlan: {
       attemptId: pending.attemptId,
       candidateId: pending.candidate.candidateId,
-      planHash: pending.candidate.planHash,
-      compiledDefinitionHash: pending.candidate.compiledDefinitionHash,
+      candidateHash: pending.candidate.candidateHash,
+      workflowExecutionId: launched.workflowExecutionId,
+      resolvedDefinitionHash: launched.resolvedDefinitionHash,
     },
-  };
-}
-
-/**
- * A scope's canonical identity, order-insensitive so two scopes selecting the
- * same work hash alike. Retained for the read-only legacy preview and its
- * captured compatibility contracts; active launch has no scope-file hash.
- */
-export function hashExecutionScope(scope: ExecutionScope): string {
-  const canonical = {
-    selectedTaskIds: [...scope.selectedTaskIds].sort(),
-    selectedCriterionIds: [...scope.selectedCriterionIds].sort(),
-    exclusionDispositions: [...scope.exclusionDispositions]
-      .map((entry) => ({ ...entry }))
-      .sort(
-        (left, right) =>
-          left.criterionId.localeCompare(right.criterionId) ||
-          left.disposition.localeCompare(right.disposition),
-      ),
-  };
-  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
-}
-
-function workflowDraft(
-  specName: string,
-  revisionNumber: number,
-  definition: WorkflowDefinitionRecord["definition"],
-): WorkflowDefinitionDraft {
-  const layout: GraphWorkflowVisualLayout = {
-    workflowId: "compiled-spec-definition",
-    contextPositions: Object.fromEntries(
-      definition.executionContexts.map((context, index) => [
-        context.id,
-        { x: index * 360, y: 0 },
-      ]),
-    ),
-    viewport: { x: 0, y: 0, zoom: 1 },
-  };
-  return {
-    name: `${specName} revision ${revisionNumber}`,
-    description: `Compiled execution plan for ${specName} revision ${revisionNumber}.`,
-    definition,
-    layout,
   };
 }
 

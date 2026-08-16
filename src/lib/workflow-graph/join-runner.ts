@@ -431,18 +431,6 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
                       resolutionContext,
                       validationMode,
                       workflowExecutionId: execution.id,
-                      // Final-publish joins land lanes on the session branch — still
-                      // inside the execution's own workspace. The join carries the
-                      // execution's provenance so the delivery gate enforces the proof
-                      // floor here, but delivery itself (finalPublish → Delivered)
-                      // belongs solely to the gated merge that lands on the project's
-                      // delivery target.
-                      ...(currentJoin.kind === "final_publish"
-                        ? {
-                            executionId: execution.id,
-                            finalPublish: false,
-                          }
-                        : {}),
                     });
 
                   const first = await runMerge();

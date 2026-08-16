@@ -9,12 +9,12 @@ import {
 import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/storage";
 import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 import { workflowDefinitionEditRequestSchema } from "@/lib/workflows/edit-schemas";
-import { collectValidationCommandIssues } from "@/lib/workflow-graph/command-selector-validation";
 import {
-  VALIDATION_COST_EXCEEDS_LIMIT_CODE,
-  type ValidationCommandPreflight,
-} from "@/lib/validation/preflight";
-import { assignmentReferenceRefusal } from "@/lib/workflows/assignment-reference-refusal";
+  assignmentReferenceRefusal,
+  assignmentReferenceRefusalBody,
+} from "@/lib/workflows/assignment-reference-refusal";
+import type { AuthoredWorkflowLaunchAdmissionResult } from "@/lib/workflow-graph/authored-launch-admission";
+import { WORKFLOW_ASSIGNMENT_REFERENCE_INVALID_CODE } from "@/lib/workflow-graph/assignment-references";
 
 const logger = createLogger("workflow-graph");
 
@@ -25,13 +25,35 @@ const persistedItemSchema = z.object({
   revision: z.number(),
 });
 
+function formatAdmissionIssueForEdit(
+  issue: { path: string; message: string },
+  commandIssues:
+    | ReadonlyArray<{ path: string; message: string; code: string }>
+    | undefined,
+): { path: string; message: string } {
+  const code = commandIssues?.find(
+    (commandIssue) =>
+      commandIssue.path === issue.path &&
+      commandIssue.message === issue.message,
+  )?.code;
+  return {
+    ...issue,
+    path: issue.path.startsWith("definition.")
+      ? issue.path.slice("definition.".length)
+      : issue.path,
+    message: code === undefined ? issue.message : `${code} — ${issue.message}`,
+  };
+}
+
 export interface DefinitionEditRequestParams {
   /** The raw (unparsed) request body. */
   rawBody: unknown;
   /** 404 message for this tier ("Workflow not found" / "Template not found"). */
   notFoundError: string;
   loadRecord(): Promise<WorkflowDefinitionRecord | null>;
-  loadValidationCommandPreflight?(): Promise<ValidationCommandPreflight>;
+  admitLaunch?(
+    launch: WorkflowDefinitionDraft,
+  ): Promise<AuthoredWorkflowLaunchAdmissionResult>;
   persist(draft: WorkflowDefinitionDraft): Promise<unknown>;
 }
 
@@ -109,32 +131,42 @@ export async function runDefinitionEditRequest(
     );
   }
 
-  if (params.loadValidationCommandPreflight) {
-    const preflight = await params.loadValidationCommandPreflight();
-    const commandIssues = collectValidationCommandIssues(
-      applied.record.definition,
-      preflight,
-    );
-    if (commandIssues.length > 0) {
-      const hasOversizedCommand = commandIssues.some(
-        (issue) => issue.code === VALIDATION_COST_EXCEEDS_LIMIT_CODE,
-      );
+  const candidateLaunch: WorkflowDefinitionDraft = {
+    name: applied.record.name,
+    description: applied.record.description,
+    definition: applied.record.definition,
+    layout: applied.record.layout,
+  };
+  let admittedLaunch = candidateLaunch;
+  if (params.admitLaunch) {
+    const admission = await params.admitLaunch(candidateLaunch);
+    if (!admission.ok) {
       logger.warn("workflow-graph.definition-edit.rejected", {
         workflowId: record.id,
         operationCount: parsed.data.operations.length,
-        codes: commandIssues.map((issue) => issue.code),
+        issueCount: admission.issues.length,
+        code: admission.code ?? "invalid_edit",
       });
+      if (admission.code === WORKFLOW_ASSIGNMENT_REFERENCE_INVALID_CODE) {
+        return NextResponse.json(
+          assignmentReferenceRefusalBody(admission.issues),
+          { status: 400 },
+        );
+      }
       return NextResponse.json(
         {
           error: "Workflow edit is invalid",
-          code: hasOversizedCommand
-            ? VALIDATION_COST_EXCEEDS_LIMIT_CODE
-            : "invalid_edit",
-          issues: commandIssues.map(formatDefinitionEditIssue),
+          ...(admission.code
+            ? { code: admission.code }
+            : { code: "invalid_edit" }),
+          issues: admission.issues.map((issue) =>
+            formatAdmissionIssueForEdit(issue, admission.commandIssues),
+          ),
         },
         { status: 400 },
       );
     }
+    admittedLaunch = admission.launch;
   }
 
   const operationCount = parsed.data.operations.length;
@@ -155,17 +187,10 @@ export async function runDefinitionEditRequest(
     });
   }
 
-  // Assignment REFERENCES are resolved at accept time, not by the pure edit
-  // application above — the ops layer has no library and no project scope. So
-  // a batch that stages a dangling reference passes every check up to here and
-  // is refused by persistence, which is the first place that can know.
   let persisted: unknown;
   try {
     persisted = await params.persist({
-      name: applied.record.name,
-      description: applied.record.description,
-      definition: applied.record.definition,
-      layout: applied.record.layout,
+      ...admittedLaunch,
     });
   } catch (error) {
     const refusal = assignmentReferenceRefusal(error);

@@ -606,6 +606,7 @@ export function createStateStore(deps: StateStoreDeps = {}) {
       accessors.listPendingGraphWorkflowResultEffects,
     listActiveGraphWorkflowExecutions:
       accessors.listActiveGraphWorkflowExecutions,
+    findGraphWorkflowExecutionById: accessors.findGraphWorkflowExecutionById,
     listArchivedGraphWorkflowExecutions:
       accessors.listArchivedGraphWorkflowExecutions,
     createSessionRow: setters.createSessionRow,

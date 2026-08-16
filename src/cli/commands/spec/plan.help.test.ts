@@ -35,6 +35,34 @@ async function helpText(path: string[]): Promise<string> {
  * gate refuses for reasons the CLI never mentioned.
  */
 describe("cctl spec plan help", () => {
+  it("teaches the direct envelope without retired plan-dialect vocabulary", async () => {
+    for (const path of [
+      ["spec", "plan"],
+      ["spec", "plan", "open"],
+      ["spec", "plan", "edit"],
+      ["spec", "plan", "propose"],
+      ["spec", "plan", "reopen"],
+      ["spec", "plan", "sign-off"],
+      ["spec", "plan", "get"],
+      ["spec", "plan", "status"],
+      ["spec", "plan", "preview"],
+    ]) {
+      const text = await helpText(path);
+
+      for (const retiredTerm of [
+        /\bcompiler\b/i,
+        /\bmaterializer\b/i,
+        /\bcontext[ -]pack\b/i,
+        /\bproofplan\b/i,
+        /\bwiring\b/i,
+      ]) {
+        expect(text, `${path.join(" ")}: contains ${retiredTerm}`).not.toMatch(
+          retiredTerm,
+        );
+      }
+    }
+  });
+
   it("teaches the total-disposition law wherever the plan is described", async () => {
     for (const path of [
       ["spec", "plan"],
@@ -96,7 +124,7 @@ describe("cctl spec plan help", () => {
 
     expect(text).toContain("capture");
     expect(text).toContain("abandon");
-    expect(text).toContain("cctl workflow live amend");
+    expect(text).toContain("two post-launch paths");
   });
 
   it("states the ten-item section cap on both read verbs", async () => {

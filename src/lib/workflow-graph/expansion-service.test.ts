@@ -875,40 +875,36 @@ describe("graph expansion — inherited core refusals", () => {
   /**
    * The service composes its batch through `applyLiveExecutionEdits`' shared
    * core rather than writing to the repository, so every gate that core runs
-   * applies to expansion too. The execution contract is the one an expansion
-   * entry point can silently LOSE — the lane-agent `add_task` wrapper
-   * deliberately builds deps without one — so this pins that expansion's deps
-   * carry it through to the frontier.
+   * applies to expansion too. The entry point preloads the execution contract
+   * before the pure reducer sees the batch.
    */
   it("is refused when the registered execution contract rejects the batch", async () => {
     const harness = makeHarness(runningExecution());
     const before = structuredClone(harness.current());
     const service = createGraphWorkflowExpansionService({
       ...harness.deps,
-      buildLiveEditDeps: () =>
-        Promise.resolve({
-          ...LIVE_EDIT_DEPS,
-          executionContract: {
-            validateDefinition: () => ({ ok: true as const }),
-            validateLiveEdit: () => ({
-              ok: false as const,
-              code: "spec_grouping_frozen",
-              issues: [
-                {
-                  code: "spec-grouping-frozen",
-                  message: "task grouping is frozen for this spec execution",
-                },
-              ],
-              instruction: "re-plan the spec instead",
-            }),
-            validateTaskCompletion: () => ({ ok: true as const }),
-            deriveContextAcceptanceCriteria: () => ({
-              ok: true as const,
-              acceptanceCriteriaByContextId: {},
-            }),
-            deriveCriterionContextCoverage: () => ({}),
-          },
+      executionContract: {
+        validateDefinition: () => ({ ok: true as const }),
+        loadLiveEdit: () => ({
+          validateOperation: () => ({
+            ok: false as const,
+            code: "contract_refused",
+            issues: [
+              {
+                code: "contract-refused",
+                message: "the registered contract rejected this operation",
+              },
+            ],
+            instruction: "satisfy the contract instead",
+          }),
+          accountabilityCoverageGroups: [],
         }),
+        validateTaskCompletion: () => ({ ok: true as const }),
+        deriveContextAcceptanceCriteria: () => ({
+          ok: true as const,
+          acceptanceCriteriaByContextId: {},
+        }),
+      },
     });
 
     const outcome = await service.expand({
@@ -923,7 +919,7 @@ describe("graph expansion — inherited core refusals", () => {
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
     expect(outcome.issues.map((issue) => issue.code)).toContain(
-      "spec-grouping-frozen",
+      "contract-refused",
     );
     expect(harness.current().workingDefinition).toEqual(
       before.workingDefinition,

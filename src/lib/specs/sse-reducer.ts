@@ -22,6 +22,7 @@ export type SpecCacheFacet =
   | "approval"
   | "attention"
   | "content"
+  | "deliveryPlan"
   | "evidence"
   | "execution"
   | "lint"
@@ -41,6 +42,7 @@ const facetsByEventType = {
   "spec-execution-changed": ["attention", "execution", "summary"],
   "spec-evidence-changed": ["evidence", "execution", "summary"],
   "spec-attention-changed": ["attention", "summary"],
+  "spec-delivery-plan-changed": ["deliveryPlan", "summary"],
 } as const satisfies Record<SpecSseEvent["type"], readonly SpecCacheFacet[]>;
 
 export function reduceSpecSseEvent(

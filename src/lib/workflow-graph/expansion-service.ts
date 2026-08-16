@@ -88,6 +88,10 @@ import type {
   GraphWorkflowExpansionAcceptanceReceipt,
   GraphWorkflowExpansionRefusalReceipt,
 } from "./schemas";
+import {
+  createRegisteredGraphExecutionContract,
+  type GraphExecutionContract,
+} from "./execution-contract-port";
 
 const logger = createLogger("graph-workflow-expansion");
 
@@ -768,6 +772,7 @@ export interface GraphWorkflowExpansionServiceDeps {
     ) => MutateActiveResult | GraphWorkflowExecution,
   ): Promise<GraphWorkflowExecution>;
   buildLiveEditDeps(projectPath: string): Promise<LiveEditDeps>;
+  executionContract?: GraphExecutionContract;
   /** Resolve every assignment introduced by the compiled batch before mutation. */
   prepareAssignmentSnapshots?(
     projectPath: string,
@@ -927,6 +932,9 @@ function recheckVolatileEnvelope(
 export function createGraphWorkflowExpansionService(
   deps: GraphWorkflowExpansionServiceDeps,
 ) {
+  const executionContract =
+    deps.executionContract ?? createRegisteredGraphExecutionContract();
+
   function refusalDelivery(
     input: GraphExpansionInput,
     refusalCode: string,
@@ -1096,6 +1104,7 @@ export function createGraphWorkflowExpansionService(
       if (!execution || execution.id !== input.executionId) {
         return { ok: false, kind: "no_active_execution", issues: [] };
       }
+      const loadedExecutionContract = executionContract.loadLiveEdit(execution);
 
       // The lane binding is envelope, not transport: a capability whose
       // conversation is no longer this context's implementer is refused here
@@ -1211,6 +1220,7 @@ export function createGraphWorkflowExpansionService(
       }
       const preparedLiveEditDeps: LiveEditDeps = {
         ...liveEditDeps,
+        executionContract: loadedExecutionContract,
         snapshotFor: (assignment) => {
           const inherited =
             assignmentPlan.inheritedSnapshotByAssignment.get(assignment);

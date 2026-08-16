@@ -111,8 +111,7 @@ function approvedPlanReview(): DeliveryPlanReviewView {
     approval: {
       snapshotId: "snapshot-2",
       candidateId: "candidate-2",
-      planHash: "sha256:plan-2",
-      compiledDefinitionHash: "sha256:compiled-2",
+      candidateHash: "sha256:candidate-2",
       approvedAt: SPEC_CONTROLS_FIXTURE_NOW,
       approvedBy: { kind: "human" },
     },
@@ -156,7 +155,7 @@ function runningDetail(): SpecDetailView {
       tasks: [
         {
           elementId: "task-1",
-          status: { status: "completed", claimEvidenceIds: [] },
+          status: { status: "completed" },
         },
       ],
     },

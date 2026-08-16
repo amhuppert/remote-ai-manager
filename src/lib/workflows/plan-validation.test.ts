@@ -243,6 +243,108 @@ describe("validateWorkflowPlan", () => {
     }
   });
 
+  it("rejects an invariant scope that names an unknown authored context at its exact location", () => {
+    const definition = createWorkflowDefinition({
+      charter: {
+        ...createWorkflowDefinition().charter,
+        invariants: [
+          {
+            id: "targeted-implementation",
+            statement:
+              "Only the implementation context changes production code.",
+            appliesTo: { contextIds: ["context-missing"] },
+          },
+        ],
+      },
+    });
+
+    const result = validateWorkflowPlan(makePlan(definition));
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues).toContainEqual({
+      path: "definition.charter.invariants.0.appliesTo.contextIds.0",
+      message: expect.stringContaining("context-missing"),
+    });
+  });
+
+  it("accepts and preserves scopes for authored contexts and loop body templates", () => {
+    const base = createWorkflowDefinition();
+    const [seed, loopBody, publish] = base.executionContexts;
+    if (!seed || !loopBody || !publish) {
+      throw new Error(
+        "fixture must declare seed, loop body, and publish contexts",
+      );
+    }
+    const definition = {
+      ...base,
+      charter: {
+        ...base.charter,
+        invariants: [
+          {
+            id: "scoped-work",
+            statement: "The scoped contexts own this work.",
+            appliesTo: { contextIds: ["seed", "loop-body"] },
+          },
+        ],
+      },
+      executionContexts: [
+        { ...seed, id: "seed" },
+        {
+          ...loopBody,
+          id: "loop-body",
+          outputSchema: {
+            type: "object",
+            properties: { verdict: { const: "done" } },
+            required: ["verdict"],
+          },
+        },
+        { ...publish, id: "publish" },
+      ],
+      tasks: [
+        { ...base.tasks[0]!, contextId: "seed" },
+        { ...base.tasks[1]!, contextId: "loop-body" },
+        { ...base.tasks[2]!, contextId: "publish" },
+      ],
+      edges: [
+        {
+          id: "edge-seed-loop",
+          sourceContextId: "seed",
+          targetContextId: "loop-body",
+        },
+        {
+          id: "edge-loop-publish",
+          sourceContextId: "loop-body",
+          targetContextId: "publish",
+        },
+      ],
+      loopGroups: [
+        {
+          id: "refine",
+          bodyContextIds: ["loop-body"],
+          entryContextId: "loop-body",
+          exitContextId: "loop-body",
+          until: {
+            schema: {
+              type: "object",
+              properties: { verdict: { const: "done" } },
+              required: ["verdict"],
+            },
+          },
+          maxPasses: 3,
+        },
+      ],
+    };
+
+    const result = validateWorkflowPlan(makePlan(definition));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.draft.definition.charter.invariants?.[0]?.appliesTo).toEqual({
+      contextIds: ["seed", "loop-body"],
+    });
+  });
+
   it("reports a Zod field error with its JSON path", () => {
     const definition = createWorkflowDefinition();
     // A type error the Zod schema rejects (title must be a string).

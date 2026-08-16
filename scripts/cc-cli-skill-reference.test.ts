@@ -51,6 +51,20 @@ describe("renderCommandReference", () => {
     expect(askIdx).toBeLessThan(devIdx);
     expect(devIdx).toBeLessThan(devListIdx);
   });
+
+  it("omits retired commands from the portable reference", () => {
+    const retired: CommandHelpEntry = {
+      ...entry(["spec", "task"], "retired task history", ["cctl spec task"]),
+      includeInGeneratedReference: false,
+    };
+
+    const block = renderCommandReference([
+      entry(["spec"], "spec work", ["cctl spec"]),
+      retired,
+    ]);
+
+    expect(block).not.toContain("cctl spec task");
+  });
 });
 
 describe("spliceReference / extractReference", () => {
@@ -101,5 +115,12 @@ describe("committed SKILL.md stays in sync with the registry (the CI check)", ()
       current,
       "cc-cli SKILL.md command reference is stale — run `bun scripts/cc-cli-skill-reference.ts`",
     ).toBe(expected);
+    expect(current).toContain(
+      "cctl spec start <slug> [--inputs .cc/temp/inputs.json] [--park]",
+    );
+    expect(current).toContain(
+      "cctl spec plan preview <slug> --stage draft|proposed",
+    );
+    expect(current).not.toMatch(/cctl spec task|materialized graph/i);
   });
 });

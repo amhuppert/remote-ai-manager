@@ -210,10 +210,6 @@ function createServices() {
       changePolicy: vi.fn(),
     },
     evidence: {
-      attachEvidence: vi.fn(),
-      recordProofVerdict: vi.fn(),
-      claimTaskComplete: vi.fn(),
-      reopenTaskClaim: vi.fn(),
       requestWaiver: vi.fn(),
       grantWaiver: vi.fn(),
       markWaiverStaleForCriterionChange: vi.fn(),
@@ -221,10 +217,6 @@ function createServices() {
     },
     execution: {
       start: vi.fn(),
-      approveExecutionStart: vi.fn(async () => ({
-        ok: true as const,
-        value: { id: "execution-1", state: "running" },
-      })),
       linkWorkflowExecution: vi.fn(),
       markRunning: vi.fn(),
       markDelivered: vi.fn(),
@@ -241,7 +233,6 @@ function createServices() {
       getSpecLinkedTickets: vi.fn(),
       getTicketReadThrough: vi.fn(),
     },
-    ingestEvidenceBestEffort: vi.fn(),
     verify: vi.fn(async () => ({
       ok: false,
       checkedRevisionIds: ["revision-1"],
@@ -277,7 +268,6 @@ describe("spec write route handlers", () => {
       "approve-remaining-and-sign-off",
       "bulk-approve",
       "grant-gate-approval",
-      "approve-execution-start",
       "grant-waiver",
       "change-policy",
       "dispose-assumption",
@@ -753,15 +743,16 @@ describe("spec write route handlers", () => {
         created_at: "2026-07-18T00:00:00.000Z",
         updated_at: "2026-07-18T00:00:00.000Z",
       },
-      definition: createWorkflowDefinitionRecord({
+      launch: createWorkflowDefinitionRecord({
         id: "workflow-definition-1",
       }),
       revisionNumber: 4,
       deliveryPlan: {
         attemptId: "attempt-approved",
         candidateId: "candidate-approved",
-        planHash: "sha256:plan",
-        compiledDefinitionHash: "sha256:definition",
+        candidateHash: "sha256:candidate",
+        workflowExecutionId: "workflow-execution-9",
+        resolvedDefinitionHash: `sha256:${"d".repeat(64)}`,
       },
     });
     const handlers = createSpecWriteRouteHandlers(createDeps(services));
@@ -770,6 +761,11 @@ describe("spec write route handlers", () => {
       postRequest({
         revisionId: "revision-1",
         sessionName: "feature-session",
+        parameters: {
+          required: "ticket-66",
+          mode: "careful",
+          brief: "Preserve this text exactly.\nIncluding its newline.",
+        },
       }),
       routeContext("start-execution"),
     );
@@ -783,7 +779,6 @@ describe("spec write route handlers", () => {
         revisionId: "revision-1",
         revisionNumber: 4,
         state: "definition_review",
-        workflowDefinitionId: "workflow-definition-1",
         workflowExecutionId: null,
         scope: {
           selectedTaskIds: ["task-1"],
@@ -792,51 +787,26 @@ describe("spec write route handlers", () => {
         },
         sessionName: "feature-session",
       },
-      definition: { id: "workflow-definition-1" },
+      launch: { id: "workflow-definition-1" },
       deliveryPlan: {
         attemptId: "attempt-approved",
         candidateId: "candidate-approved",
-        planHash: "sha256:plan",
-        compiledDefinitionHash: "sha256:definition",
+        candidateHash: "sha256:candidate",
+        workflowExecutionId: "workflow-execution-9",
+        resolvedDefinitionHash: `sha256:${"d".repeat(64)}`,
       },
     });
+    expect(services.execution.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parameters: {
+          required: "ticket-66",
+          mode: "careful",
+          brief: "Preserve this text exactly.\nIncluding its newline.",
+        },
+      }),
+    );
     expect(body.execution).not.toHaveProperty("scope_json");
     expect(body.execution).not.toHaveProperty("spec_id");
-  });
-
-  it("approves execution start from human transport only, threading the project route name", async () => {
-    const services = createServices();
-    const handlers = createSpecWriteRouteHandlers(createDeps(services));
-    const body = { executionId: "execution-1" };
-
-    const agentResponse = await handlers.specActionPOST(
-      postRequest(body, {
-        authorization: "Bearer valid",
-        "x-cc-conversation-id": "conversation-agent",
-      }),
-      routeContext("approve-execution-start"),
-    );
-    expect(agentResponse.status).toBe(403);
-    await expect(agentResponse.json()).resolves.toMatchObject({
-      code: "human_act_required",
-    });
-    expect(services.execution.approveExecutionStart).not.toHaveBeenCalled();
-
-    const humanResponse = await handlers.specActionPOST(
-      postRequest(body),
-      routeContext("approve-execution-start"),
-    );
-    expect(humanResponse.status).toBe(200);
-    await expect(humanResponse.json()).resolves.toEqual({
-      id: "execution-1",
-      state: "running",
-    });
-    expect(services.execution.approveExecutionStart).toHaveBeenCalledWith({
-      specId: spec.id,
-      executionId: "execution-1",
-      projectName: "demo",
-      actor: { kind: "human" },
-    });
   });
 
   it("abandons a whole spec from human transport only, keeping abandon-execution agent-reachable", async () => {

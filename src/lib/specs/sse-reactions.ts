@@ -4,12 +4,13 @@ import {
   specApprovalChangedEventSchema,
   specAttentionChangedEventSchema,
   specChangedEventSchema,
+  specDeliveryPlanChangedEventSchema,
   specEvidenceChangedEventSchema,
   specExecutionChangedEventSchema,
   specRevisionChangedEventSchema,
 } from "@/lib/api/sse-events";
 import { conversationKeys } from "@/lib/conversations/query-keys";
-import { graphWorkflowTaskStatusEventSchema } from "@/lib/workflow-graph/event-schemas";
+import { graphWorkflowTaskStatusEventSchema } from "@/lib/workflow-graph/spec-bridge";
 import { specKeys } from "./query-keys";
 import { applySpecSseEvent } from "./sse-reducer";
 
@@ -77,6 +78,14 @@ export function registerSpecSseReactions(
     es,
     "spec-attention-changed",
     specAttentionChangedEventSchema,
+    (event) => {
+      reactToSpecEvent(deps.queryClient, event);
+    },
+  );
+  addSseListener(
+    es,
+    "spec-delivery-plan-changed",
+    specDeliveryPlanChangedEventSchema,
     (event) => {
       reactToSpecEvent(deps.queryClient, event);
     },

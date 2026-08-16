@@ -232,6 +232,7 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
       getSession: fixture.store.getSession,
       startExecution: (startInput) => manager.start(startInput),
       runExecution: (runInput) => manager.run(runInput),
+      launchSpecDeliveryExecution: (input) => manager.launchSpecDelivery(input),
       // The loop never runs, so the started execution holds the slot with zero
       // lane conversations — exactly the state that stranded planners.
       kickOffExecutionLoop: async () => {},

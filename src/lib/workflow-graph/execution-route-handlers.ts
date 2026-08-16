@@ -858,6 +858,23 @@ export interface GraphWorkflowExecutionRouteDeps {
     ownerConversationId?: string | null;
   }): Promise<GraphWorkflowLaunchOutcome>;
   /**
+   * The native-SDD spec-delivery launch, riding the SAME manager gauntlet with
+   * a `spec_delivery` source. It receives the signed candidate's launch
+   * document (admitted at proposal, TOCTOU-rechecked by the gauntlet) plus the
+   * spec bridge's atomic attachment. In-process only — no HTTP transport.
+   */
+  launchSpecDeliveryExecution(input: {
+    projectPath: string;
+    sessionName: string;
+    plan: WorkflowDefinitionDraft;
+    specSlug: string;
+    candidateId: string;
+    inputs?: Record<string, unknown>;
+    ownerConversationId?: string | null;
+    seededDocuments?: readonly SeededWorkflowDocument[];
+    transactionAttachment?: (input: { executionId: string }) => void;
+  }): Promise<GraphWorkflowLaunchOutcome>;
+  /**
    * `CommandCenter.json` and the global config, read per RUN request so the
    * inline plan is preflighted against the command registry and capacity the
    * launch will actually use — the same reads `workflow validate` and
@@ -1099,6 +1116,8 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
     workflowManager.normalizeAfterRestart(projectPath, sessionName),
   startExecution: (input) => workflowManager.start(input),
   runExecution: (input) => workflowManager.run(input),
+  launchSpecDeliveryExecution: (input) =>
+    workflowManager.launchSpecDelivery(input),
   readRepoConfig: defaultReadRepoConfig,
   readConfig,
   markRunning: createRegisteredGraphExecutionLifecycleCallbacks().markRunning,
@@ -2346,6 +2365,90 @@ export function createGraphWorkflowExecutionRouteHandlers(
     // parked run back through its own pending-approval query and the MCP tool
     // reports the review, neither of which can proceed with a run that has not
     // begun. The HTTP transports keep the park as an accepted receipt.
+    if (outcome.awaitingDefinitionApproval) {
+      const parked = new WorkflowDefinitionApprovalRequiredError(
+        outcome.execution.id,
+        outcome.execution.seedDefinitionId,
+        outcome.execution.seedDefinitionRevision,
+      );
+      await reportAwaitingDefinitionApproval(
+        { projectPath: input.projectPath, sessionName: input.sessionName },
+        outcome.execution,
+      );
+      throw parked;
+    }
+    const execution = outcome.execution;
+
+    await markExecutionRunning(
+      { projectPath: input.projectPath, sessionName: input.sessionName },
+      execution,
+    );
+
+    void Promise.resolve()
+      .then(() =>
+        kickOffAndAutoRelease({
+          projectPath: input.projectPath,
+          projectName: input.projectName,
+          sessionName: input.sessionName,
+          execution,
+        }),
+      )
+      .catch(async (error) => {
+        logger.warn("graph-workflow.execution_loop_start_failed", {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          error: getErrorMessage(error),
+        });
+        await reportExecutionLoopFailure({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          expectedExecutionId: execution.id,
+          error,
+          phase: "start",
+        });
+      });
+
+    return execution;
+  }
+
+  /**
+   * The spec-delivery sibling of `launch`: same running-execution contract,
+   * different source. Sign-off already served as the human definition approval
+   * (the finalized candidate carries `approvalRequired: false`), so a park here
+   * is a caller error surfaced as the same raised approval, not a state to
+   * wait on.
+   */
+  async function launchSpecDelivery(input: {
+    projectPath: string;
+    projectName: string;
+    sessionName: string;
+    plan: WorkflowDefinitionDraft;
+    specSlug: string;
+    candidateId: string;
+    inputs?: Record<string, unknown>;
+    ownerConversationId?: string | null;
+    seededDocuments?: readonly SeededWorkflowDocument[];
+    transactionAttachment?: (input: { executionId: string }) => void;
+  }): Promise<GraphWorkflowExecution> {
+    const outcome = await deps.launchSpecDeliveryExecution({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      plan: input.plan,
+      specSlug: input.specSlug,
+      candidateId: input.candidateId,
+      ...(input.inputs !== undefined ? { inputs: input.inputs } : {}),
+      ...(input.ownerConversationId !== undefined &&
+      input.ownerConversationId !== null
+        ? { ownerConversationId: input.ownerConversationId }
+        : {}),
+      ...(input.seededDocuments !== undefined
+        ? { seededDocuments: input.seededDocuments }
+        : {}),
+      ...(input.transactionAttachment !== undefined
+        ? { transactionAttachment: input.transactionAttachment }
+        : {}),
+    });
+
     if (outcome.awaitingDefinitionApproval) {
       const parked = new WorkflowDefinitionApprovalRequiredError(
         outcome.execution.id,
@@ -3866,6 +3969,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
     START,
     RUN,
     launch,
+    launchSpecDelivery,
     STATUS,
     EXECUTION,
     EXECUTION_BY_ID,
@@ -3911,6 +4015,34 @@ export async function launchGraphWorkflowExecution(
   deps: GraphWorkflowExecutionRouteDeps = defaultDeps,
 ): Promise<GraphWorkflowExecution> {
   return createGraphWorkflowExecutionRouteHandlers(deps).launch(input);
+}
+
+/**
+ * In-process seam for the native-SDD launch bridge: launches a signed
+ * candidate's authored document as a `spec_delivery` run through the shared
+ * gauntlet, committing the bridge's spec rows atomically with the reservation.
+ */
+export async function launchSpecDeliveryGraphWorkflowExecution(
+  input: {
+    projectPath: string;
+    projectName: string;
+    sessionName: string;
+    plan: WorkflowDefinitionDraft;
+    specSlug: string;
+    candidateId: string;
+    inputs?: Record<string, unknown>;
+    /** Owner conversation resolved by the calling seam; `null` when it has none. */
+    ownerConversationId?: string | null;
+    /** Pre-rendered documents the launching tier seeds into every lane. */
+    seededDocuments?: readonly SeededWorkflowDocument[];
+    /** Spec rows committed atomically with the execution's reservation. */
+    transactionAttachment?: (input: { executionId: string }) => void;
+  },
+  deps: GraphWorkflowExecutionRouteDeps = defaultDeps,
+): Promise<GraphWorkflowExecution> {
+  return createGraphWorkflowExecutionRouteHandlers(deps).launchSpecDelivery(
+    input,
+  );
 }
 
 const defaultGraphWorkflowExecutionHandlers =

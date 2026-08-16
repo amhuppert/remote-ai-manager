@@ -106,8 +106,14 @@ const DB_FILE_NAME = "command-center.db";
  * `0027-workflow-result-notifications` publishes the barrier, rebuilds the
  * notification CHECK and columns, and stamps the version before writers can
  * persist the new source.
+ *
+ * Version 9 is the native-SDD version-2 cutover: migration
+ * `0030-native-sdd-v2-cutover` removes every legacy delivery-plan artifact and
+ * legacy-linked graph execution before direct-authored attempt activation.
+ * Older builds retain the retired plan/compiler runtime and could recreate
+ * artifacts for which the version-2 build deliberately has no reader.
  */
-export const KNOWN_SCHEMA_VERSION = 8;
+export const KNOWN_SCHEMA_VERSION = 9;
 
 /**
  * Marker id for the one-time legacy graph-workflow purge. Tracked in the
@@ -304,10 +310,12 @@ export const SPEC_EXECUTIONS_SCHEMA_DDL = `
     execution_start_dial   TEXT CHECK (execution_start_dial IN (
       'gate', 'notify', 'off'
     )),
-    workflow_definition_id TEXT NOT NULL,
+    workflow_definition_id TEXT,
     workflow_definition_revision INTEGER CHECK (
       workflow_definition_revision > 0
     ),
+    workflow_seed_source_json TEXT,
+    workflow_execution_binding_json TEXT,
     workflow_execution_id  TEXT,
     session_name           TEXT,
     delivered_at           TEXT,
@@ -323,6 +331,59 @@ export const SPEC_EXECUTIONS_SCHEMA_DDL = `
   CREATE UNIQUE INDEX IF NOT EXISTS uq_spec_executions_workflow_execution
     ON spec_executions (workflow_execution_id)
     WHERE workflow_execution_id IS NOT NULL;
+`;
+
+/**
+ * The version-2 spec↔graph link and frozen binding. The workflow execution id
+ * remains durable after the graph row is archived, so this row deliberately
+ * references the spec execution only; the unique workflow id is the typed
+ * authority used by graph-facing adapters.
+ */
+export const SPEC_EXECUTION_BINDINGS_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS spec_execution_bindings (
+    spec_execution_id      TEXT PRIMARY KEY,
+    workflow_execution_id  TEXT NOT NULL UNIQUE,
+    binding_json           TEXT NOT NULL,
+    created_at             TEXT NOT NULL,
+    FOREIGN KEY (spec_execution_id) REFERENCES spec_executions(id)
+      ON DELETE CASCADE
+  );
+
+  CREATE TRIGGER IF NOT EXISTS spec_execution_bindings_immutable
+  BEFORE UPDATE ON spec_execution_bindings
+  BEGIN
+    SELECT RAISE(ABORT, 'spec execution bindings are immutable');
+  END;
+`;
+
+export const SPEC_DELIVERY_VERDICTS_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS spec_delivery_verdicts (
+    id                      TEXT PRIMARY KEY,
+    spec_execution_id       TEXT NOT NULL,
+    workflow_execution_id   TEXT NOT NULL,
+    candidate_id            TEXT NOT NULL,
+    candidate_hash          TEXT NOT NULL,
+    criterion_element_id    TEXT NOT NULL,
+    satisfying_context_id   TEXT NOT NULL,
+    verdict_at              TEXT NOT NULL,
+    FOREIGN KEY (spec_execution_id) REFERENCES spec_executions(id)
+      ON DELETE CASCADE,
+    FOREIGN KEY (criterion_element_id) REFERENCES spec_elements(id),
+    UNIQUE (
+      workflow_execution_id,
+      candidate_id,
+      candidate_hash,
+      criterion_element_id,
+      satisfying_context_id
+    )
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_delivery_verdicts_execution
+    ON spec_delivery_verdicts (workflow_execution_id, verdict_at);
+  CREATE INDEX IF NOT EXISTS idx_spec_delivery_verdicts_spec_execution
+    ON spec_delivery_verdicts (spec_execution_id, verdict_at);
+  CREATE INDEX IF NOT EXISTS idx_spec_delivery_verdicts_criterion
+    ON spec_delivery_verdicts (criterion_element_id, verdict_at);
 `;
 
 /**
@@ -478,6 +539,8 @@ const SPEC_SCHEMA_DDL = `
 
   ${SPEC_EXECUTIONS_SCHEMA_DDL}
 
+  ${SPEC_EXECUTION_BINDINGS_SCHEMA_DDL}
+
   CREATE TABLE IF NOT EXISTS spec_approvals (
     id            TEXT PRIMARY KEY,
     spec_id       TEXT NOT NULL,
@@ -620,6 +683,8 @@ const SPEC_SCHEMA_DDL = `
     ON spec_proof_verdicts (criterion_element_id, revision_id, verdict_at);
   CREATE INDEX IF NOT EXISTS idx_spec_proof_verdicts_execution
     ON spec_proof_verdicts (execution_id, verdict_at);
+
+  ${SPEC_DELIVERY_VERDICTS_SCHEMA_DDL}
 
   CREATE TABLE IF NOT EXISTS spec_waivers (
     id                    TEXT PRIMARY KEY,
@@ -772,8 +837,9 @@ export const SPEC_DELIVERY_PLAN_SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS spec_delivery_plan_snapshots (
     id                  TEXT PRIMARY KEY,
     attempt_id          TEXT NOT NULL,
+    candidate_id        TEXT NOT NULL,
+    candidate_hash      TEXT NOT NULL,
     draft_revision      INTEGER NOT NULL CHECK (draft_revision > 0),
-    plan_hash           TEXT NOT NULL,
     content_json        TEXT NOT NULL,
     pinned_revision_id  TEXT NOT NULL,
     proposed_at         TEXT NOT NULL,
@@ -785,22 +851,6 @@ export const SPEC_DELIVERY_PLAN_SCHEMA_DDL = `
 
   CREATE INDEX IF NOT EXISTS idx_spec_delivery_plan_snapshots_attempt
     ON spec_delivery_plan_snapshots (attempt_id, draft_revision DESC);
-
-  CREATE TABLE IF NOT EXISTS spec_delivery_plan_candidates (
-    id                        TEXT PRIMARY KEY,
-    attempt_id                TEXT NOT NULL,
-    snapshot_id               TEXT NOT NULL UNIQUE,
-    compiled_definition_hash  TEXT NOT NULL,
-    definition_json           TEXT NOT NULL,
-    materialized_at           TEXT NOT NULL,
-    FOREIGN KEY (attempt_id) REFERENCES spec_delivery_plan_attempts(id)
-      ON DELETE CASCADE,
-    FOREIGN KEY (snapshot_id) REFERENCES spec_delivery_plan_snapshots(id)
-      ON DELETE CASCADE
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_delivery_plan_candidates_attempt
-    ON spec_delivery_plan_candidates (attempt_id);
 
   CREATE TABLE IF NOT EXISTS spec_delivery_plan_comments (
     id           TEXT PRIMARY KEY,
@@ -952,6 +1002,8 @@ const SPEC_SCHEMA_DDL_DUPLICATE = `
     ON spec_element_versions (revision_id, position);
 
   ${SPEC_EXECUTIONS_SCHEMA_DDL}
+
+  ${SPEC_EXECUTION_BINDINGS_SCHEMA_DDL}
 
   CREATE TABLE IF NOT EXISTS spec_approvals (
     id            TEXT PRIMARY KEY,
@@ -1970,6 +2022,20 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
   },
   { table: "conversations", column: "pending_agent_notices", type: "TEXT" },
   { table: "job_records", column: "owner_pid", type: "INTEGER" },
+  // Nullable here on purpose even though the floor declares them NOT NULL: an
+  // older database reaches `migrateSpecDirectLaunchStorage` through this
+  // back-fill, and that rebuild needs both columns to exist before it can
+  // separate finalized snapshots from pre-version-2 ones it must discard.
+  {
+    table: "spec_delivery_plan_snapshots",
+    column: "candidate_id",
+    type: "TEXT",
+  },
+  {
+    table: "spec_delivery_plan_snapshots",
+    column: "candidate_hash",
+    type: "TEXT",
+  },
   { table: "job_records", column: "execution_id", type: "TEXT" },
   {
     table: "job_records",
@@ -2036,6 +2102,16 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     table: "spec_executions",
     column: "workflow_definition_revision",
     type: "INTEGER CHECK (workflow_definition_revision > 0)",
+  },
+  {
+    table: "spec_executions",
+    column: "workflow_seed_source_json",
+    type: "TEXT",
+  },
+  {
+    table: "spec_executions",
+    column: "workflow_execution_binding_json",
+    type: "TEXT",
   },
   // Abandon-coordinator cleanup state (design §10). Additive and nullable: a
   // legacy row has no cleanup in flight, so null is the meaningful value and
@@ -2355,6 +2431,194 @@ export function migrateNotificationsTableForWorkflowResults(db: Db): void {
   migrateNotificationsTable(db, true);
 }
 
+function migrateGraphWorkflowExecutionsSeedProjection(db: Db): void {
+  const columns = getTableColumns(db, "graph_workflow_executions");
+  const hasRequiredSavedDefinitionProjection = columns.some(
+    (column) =>
+      (column.name === "seed_definition_id" ||
+        column.name === "seed_definition_revision") &&
+      column.notnull === 1,
+  );
+  if (!hasRequiredSavedDefinitionProjection) return;
+
+  db.exec(`
+    DROP INDEX IF EXISTS idx_graph_workflow_executions_status;
+    ALTER TABLE graph_workflow_executions
+      RENAME TO graph_workflow_executions_legacy_seed_projection;
+
+    CREATE TABLE graph_workflow_executions (
+      project_path              TEXT NOT NULL,
+      session_name              TEXT NOT NULL,
+      execution_id              TEXT NOT NULL,
+      seed_definition_id        TEXT,
+      seed_definition_revision  INTEGER,
+      started_at                TEXT NOT NULL,
+      status                    TEXT NOT NULL,
+      completed_at              TEXT,
+      definition_json           TEXT NOT NULL,
+      runtime_json              TEXT NOT NULL,
+      updated_at                TEXT NOT NULL,
+      PRIMARY KEY (project_path, session_name),
+      FOREIGN KEY (project_path, session_name)
+        REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
+    );
+
+    INSERT INTO graph_workflow_executions (
+      project_path, session_name, execution_id, seed_definition_id,
+      seed_definition_revision, started_at, status, completed_at,
+      definition_json, runtime_json, updated_at
+    ) SELECT
+      project_path, session_name, execution_id, seed_definition_id,
+      seed_definition_revision, started_at, status, completed_at,
+      definition_json, runtime_json, updated_at
+    FROM graph_workflow_executions_legacy_seed_projection;
+
+    DROP TABLE graph_workflow_executions_legacy_seed_projection;
+
+    CREATE INDEX idx_graph_workflow_executions_status
+      ON graph_workflow_executions(project_path, session_name, status);
+  `);
+  logger.info("state-store.graph_workflow_execution_seed_projection_relaxed");
+}
+
+function specDirectLaunchExecutionNeedsRebuild(db: Db): boolean {
+  const executionColumns = getTableColumns(db, "spec_executions");
+  return executionColumns.some(
+    (column) =>
+      column.name === "workflow_definition_id" && column.notnull === 1,
+  );
+}
+
+function migrateSpecDirectLaunchStorage(db: Db): void {
+  const executionNeedsRebuild = specDirectLaunchExecutionNeedsRebuild(db);
+  if (executionNeedsRebuild) {
+    const before = (
+      db.prepare("SELECT COUNT(*) AS count FROM spec_executions").get() as {
+        count: number;
+      }
+    ).count;
+    db.exec(`
+      DROP TRIGGER IF EXISTS spec_execution_bindings_immutable;
+      DROP TABLE IF EXISTS spec_execution_bindings;
+      DROP INDEX IF EXISTS idx_spec_executions_spec_state;
+      DROP INDEX IF EXISTS uq_spec_executions_workflow_execution;
+      ALTER TABLE spec_executions
+        RENAME TO spec_executions_legacy_direct_launch;
+    `);
+    db.exec(SPEC_EXECUTIONS_SCHEMA_DDL);
+    db.exec(`
+      INSERT INTO spec_executions (
+        id, spec_id, revision_id, scope_json, state, cleanup_phase,
+        linked_workflow_execution_id, cleanup_last_error,
+        cleanup_last_error_at, execution_start_dial,
+        workflow_definition_id, workflow_definition_revision,
+        workflow_seed_source_json, workflow_execution_binding_json,
+        workflow_execution_id, session_name,
+        delivered_at, abandoned_reason, created_at, updated_at
+      ) SELECT
+        id, spec_id, revision_id, scope_json, state, cleanup_phase,
+        linked_workflow_execution_id, cleanup_last_error,
+        cleanup_last_error_at, execution_start_dial,
+        workflow_definition_id, workflow_definition_revision,
+        workflow_seed_source_json, workflow_execution_binding_json,
+        workflow_execution_id, session_name,
+        delivered_at, abandoned_reason, created_at, updated_at
+      FROM spec_executions_legacy_direct_launch;
+    `);
+    const after = (
+      db.prepare("SELECT COUNT(*) AS count FROM spec_executions").get() as {
+        count: number;
+      }
+    ).count;
+    if (after !== before) {
+      throw new Error(
+        `Direct-launch storage rebuild copied ${after} of ${before} spec_executions rows; refusing to drop the original`,
+      );
+    }
+    db.exec("DROP TABLE spec_executions_legacy_direct_launch;");
+    db.exec(SPEC_EXECUTION_BINDINGS_SCHEMA_DDL);
+  }
+
+  const snapshotColumns = getTableColumns(db, "spec_delivery_plan_snapshots");
+  const snapshotNeedsRebuild = snapshotColumns.some(
+    (column) =>
+      column.name === "plan_hash" ||
+      ((column.name === "candidate_id" || column.name === "candidate_hash") &&
+        column.notnull === 0),
+  );
+  const legacyCandidateTable = db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'spec_delivery_plan_candidates'",
+    )
+    .get();
+  if (!snapshotNeedsRebuild && legacyCandidateTable === undefined) {
+    if (executionNeedsRebuild) {
+      logger.info("state-store.spec_direct_launch_storage_rebuilt", {
+        executionsRebuilt: true,
+        snapshotsRebuilt: false,
+        discardedSnapshots: 0,
+      });
+    }
+    return;
+  }
+
+  // A snapshot without a finalized candidate identity is a pre-version-2
+  // proposal. Version 2 has no reader for it, so the rebuild discards the
+  // snapshot and returns its attempt to draft rather than leaving an approval
+  // pointing at bytes nothing can parse.
+  const discardedSnapshots = snapshotNeedsRebuild
+    ? (db
+        .prepare(
+          `SELECT COUNT(*) AS count
+             FROM spec_delivery_plan_snapshots
+            WHERE candidate_id IS NULL OR candidate_hash IS NULL`,
+        )
+        .get() as { count: number })
+    : { count: 0 };
+  db.exec("DROP INDEX IF EXISTS idx_spec_delivery_plan_candidates_attempt;");
+  db.exec("DROP TABLE IF EXISTS spec_delivery_plan_candidates;");
+  if (snapshotNeedsRebuild) {
+    db.exec(`
+      UPDATE spec_delivery_plan_attempts
+         SET status = 'draft',
+             proposed_snapshot_id = NULL,
+             approval_json = NULL,
+             prelaunch_json = NULL,
+             updated_at = datetime('now')
+       WHERE id IN (
+         SELECT attempt_id
+           FROM spec_delivery_plan_snapshots
+          WHERE candidate_id IS NULL OR candidate_hash IS NULL
+       )
+         AND status IN ('proposed', 'approved', 'parked');
+
+      DELETE FROM spec_delivery_plan_snapshots
+       WHERE candidate_id IS NULL OR candidate_hash IS NULL;
+
+      DROP INDEX IF EXISTS idx_spec_delivery_plan_snapshots_attempt;
+      ALTER TABLE spec_delivery_plan_snapshots
+        RENAME TO spec_delivery_plan_snapshots_legacy_direct_launch;
+    `);
+    db.exec(SPEC_DELIVERY_PLAN_SCHEMA_DDL);
+    db.exec(`
+      INSERT INTO spec_delivery_plan_snapshots (
+        id, attempt_id, candidate_id, candidate_hash, draft_revision,
+        content_json, pinned_revision_id, proposed_at, proposed_by_json
+      ) SELECT
+        id, attempt_id, candidate_id, candidate_hash, draft_revision,
+        content_json, pinned_revision_id, proposed_at, proposed_by_json
+      FROM spec_delivery_plan_snapshots_legacy_direct_launch;
+
+      DROP TABLE spec_delivery_plan_snapshots_legacy_direct_launch;
+    `);
+  }
+  logger.info("state-store.spec_direct_launch_storage_rebuilt", {
+    executionsRebuilt: executionNeedsRebuild,
+    snapshotsRebuilt: snapshotNeedsRebuild,
+    discardedSnapshots: discardedSnapshots.count,
+  });
+}
+
 /**
  * One-time global purge of pre-charter graph-workflow records. The Workflow
  * Charter feature makes a charter required on every workflow definition and
@@ -2589,7 +2853,12 @@ function initializeSchema(db: Db, dbPath: string): void {
   db.exec(SCHEMA_DDL);
   migrateNotificationsTable(db);
   db.exec(NOTIFICATIONS_INDEX_DDL);
+  // The seed-projection relaxation rebuilds graph_workflow_executions without
+  // the additive columns, so it must run before ensureAdditiveColumns restores
+  // them; the direct-launch rebuild runs after, against the settled shape.
+  migrateGraphWorkflowExecutionsSeedProjection(db);
   ensureAdditiveColumns(db);
+  migrateSpecDirectLaunchStorage(db);
 }
 
 function openStateDb(dbPath: string): Db {
@@ -2601,11 +2870,34 @@ function openStateDb(dbPath: string): Db {
     enforceCurrentSchemaCompatibility(db, dbPath, KNOWN_SCHEMA_VERSION);
     applyConnectionPragmas(db);
     stateDbBeforeLockedInitializationHook?.();
+    const executionNeedsDirectLaunchRebuild =
+      specDirectLaunchExecutionNeedsRebuild(db);
+    const foreignKeysEnabled =
+      db.pragma("foreign_keys", { simple: true }) === 1;
+    const legacyAlterTableEnabled =
+      db.pragma("legacy_alter_table", { simple: true }) === 1;
+
+    // `spec_executions` is a foreign-key parent. SQLite would otherwise
+    // rewrite every child reference to the temporary legacy table during the
+    // rename, then refuse or cascade those rows when that table is dropped.
+    // These connection pragmas are no-ops inside a transaction, so apply them
+    // around the locked initialization window and restore the caller's state.
+    if (executionNeedsDirectLaunchRebuild) {
+      if (foreignKeysEnabled) db.pragma("foreign_keys = OFF");
+      if (!legacyAlterTableEnabled) db.pragma("legacy_alter_table = ON");
+    }
     // Hold the write lock from the second version check through schema setup,
     // so a concurrently starting newer build cannot advance the compatibility
     // version between the gate and this build's DDL/data migrations.
     const initialize = db.transaction(() => initializeSchema(db, dbPath));
-    initialize.immediate();
+    try {
+      initialize.immediate();
+    } finally {
+      if (executionNeedsDirectLaunchRebuild) {
+        if (!legacyAlterTableEnabled) db.pragma("legacy_alter_table = OFF");
+        if (foreignKeysEnabled) db.pragma("foreign_keys = ON");
+      }
+    }
     // `journal_mode` changes persistent database state and SQLite does not
     // permit changing it inside a transaction. Apply it only after the locked
     // compatibility recheck and schema initialization succeed.

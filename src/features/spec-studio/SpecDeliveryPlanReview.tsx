@@ -1,125 +1,42 @@
 "use client";
 
-import { useState } from "react";
+import "@/components/workflow-graph/workflow-graph.css";
+
 import { useQueryClient } from "@tanstack/react-query";
-import { z } from "zod";
 
 import { Button } from "@/components/ui/Button";
-import { FormError, FormInput, FormLabel } from "@/components/ui/FormField";
-import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
-import { createClientLogger } from "@/lib/logging/client-logger";
-import type { DeliveryPlanContextType } from "@/lib/specs/delivery-plan";
-import type { DeliveryPlanReviewView } from "@/lib/specs/delivery-plan-review";
+import { StatusChip } from "@/components/ui/StatusChip";
+import WorkflowDefinitionCanvas from "@/components/workflow-graph/WorkflowDefinitionCanvas";
+import WorkflowFinalizedLaunchMetadata from "@/components/workflow-graph/WorkflowFinalizedLaunchMetadata";
+import { graphWorkflowLaunchName } from "@/lib/workflow-graph/launch-presentation";
+import {
+  deliveryPlanReviewViewSchema,
+  type DeliveryPlanReviewView,
+} from "@/lib/specs/delivery-plan-review";
 import { useSpecActionMutation } from "@/lib/specs/mutations";
 import { specKeys } from "@/lib/specs/query-keys";
-import type { DeliveryPlanAttemptStatus } from "@/lib/specs/schemas";
 import {
   useSpecPlanDiffQuery,
+  useSpecPlanPreviewQuery,
   useSpecPlanReviewQuery,
 } from "@/lib/specs/queries";
-import { specStartedExecutionViewSchema } from "@/lib/specs/view-schemas";
-import { workflowDefinitionRecordSchema } from "@/lib/workflow-graph/definition-schemas";
+import type {
+  DeliveryPlanPreviewStage,
+  DeliveryPlanPreviewView,
+} from "@/lib/specs/delivery-plan-views";
 
-import {
-  DeliveryPlanCandidatePanel,
-  DeliveryPlanDispositionsTable,
-} from "./SpecDeliveryPlanDispositions";
 import SpecDeliveryPlanApproval from "./SpecDeliveryPlanApproval";
 import SpecDeliveryPlanComments from "./SpecDeliveryPlanComments";
-import SpecDeliveryPlanDiff from "./SpecDeliveryPlanDiff";
-import { ReaffirmControl } from "./SpecDeliveryPlanReaffirm";
-import {
-  deliveryPlanGraph,
-  type DeliveryPlanGraphNode,
-} from "./delivery-plan-graph";
-
-/**
- * The delivery-plan attempt as a reviewer reads it: what shape this execution
- * will take, which criteria each context owns, and — distinctly — whether the
- * shape is still moving. Every fact here comes from the server's review
- * projection; the surface lays it out and classifies nothing.
- */
-
-const logger = createClientLogger("spec-studio-delivery-plan");
-
-const deliveryPlanLaunchResponseSchema = z
-  .object({
-    execution: specStartedExecutionViewSchema,
-    definition: workflowDefinitionRecordSchema,
-    deliveryPlan: z
-      .object({
-        attemptId: z.string().min(1),
-        candidateId: z.string().min(1),
-        planHash: z.string().min(1),
-        compiledDefinitionHash: z.string().min(1),
-      })
-      .strict(),
-  })
-  .strict();
-
-/**
- * The three states the design separates, plus the three an attempt can also be
- * in. They are rendered distinctly because they answer different questions: a
- * draft shows what WOULD compile, a proposal shows the frozen bytes an
- * approval would bind, and an approval shows the bytes a launch will run.
- */
-const ATTEMPT_STATE: Record<
-  DeliveryPlanAttemptStatus,
-  { label: string; tone: StatusChipTone; summary: string }
-> = {
-  draft: {
-    label: "Open draft",
-    tone: "cyan",
-    summary:
-      "Draft preview. The shape below compiles from the document as it stands and is not frozen — editing the plan changes it.",
-  },
-  proposed: {
-    label: "Proposed",
-    tone: "amber",
-    summary:
-      "Frozen candidate. These are the exact bytes a sign-off would approve; reopening the attempt is what makes them editable again.",
-  },
-  approved: {
-    label: "Approved",
-    tone: "green",
-    summary:
-      "Approved candidate. A launch runs exactly this definition; no later edit can reach it without a new proposal and a new approval.",
-  },
-  parked: {
-    label: "Parked",
-    tone: "amber",
-    summary:
-      "Held for prelaunch review. No workflow execution exists yet, so nothing here holds a graph slot.",
-  },
-  launched: {
-    label: "Launched",
-    tone: "violet",
-    summary:
-      "Launched. The execution below is running the approved candidate as it was compiled.",
-  },
-  abandoned: {
-    label: "Abandoned",
-    tone: "neutral",
-    summary: "Abandoned. This attempt is history; nothing will launch from it.",
-  },
-};
-
-const CONTEXT_TYPE_TONE: Record<DeliveryPlanContextType, StatusChipTone> = {
-  delivery: "cyan",
-  integration: "violet",
-  closeout: "amber",
-};
 
 function AttemptHeader({
   review,
 }: {
   review: DeliveryPlanReviewView;
 }): React.JSX.Element {
-  const state = ATTEMPT_STATE[review.attempt.status];
   return (
-    <header data-attempt-state={review.attempt.status}>
+    <header>
       <div className="flex flex-wrap items-baseline gap-xs">
-        <StatusChip tone={state.tone}>{state.label}</StatusChip>
+        <StatusChip tone="cyan">{review.attempt.status}</StatusChip>
         <span className="font-mono text-[0.7rem] text-text-tertiary">
           attempt {review.attempt.id} · draft revision{" "}
           {review.attempt.draftRevision} · pinned revision{" "}
@@ -127,452 +44,460 @@ function AttemptHeader({
         </span>
       </div>
       <p className="mt-xs mb-0 font-mono text-[0.72rem] leading-relaxed text-text-secondary">
-        {state.summary}
-      </p>
-      <p className="mt-xs mb-0 font-mono text-[0.72rem] leading-relaxed text-text-tertiary">
-        Next: {review.nextAct.reason} <code>{review.nextAct.command}</code> (
-        {review.nextAct.actor})
+        Next: {review.nextAct.reason} <code>{review.nextAct.command}</code>
       </p>
     </header>
   );
 }
 
-function DeliveryPlanLaunchControl({
-  projectName,
+function BindingTable({
   review,
 }: {
-  projectName: string;
   review: DeliveryPlanReviewView;
-}): React.JSX.Element | null {
-  const [sessionName, setSessionName] = useState("");
-  const queryClient = useQueryClient();
-  const { attempt, approval } = review;
-  const launch = useSpecActionMutation<
-    { revisionId: string; sessionName: string },
-    z.infer<typeof deliveryPlanLaunchResponseSchema>
-  >(
-    projectName,
-    attempt.specSlug,
-    "start-execution",
-    deliveryPlanLaunchResponseSchema,
-  );
-  const approvedCandidate =
-    approval !== null &&
-    attempt.candidateId !== null &&
-    attempt.planHash !== null &&
-    attempt.compiledDefinitionHash !== null &&
-    approval.candidateId === attempt.candidateId &&
-    approval.planHash === attempt.planHash &&
-    approval.compiledDefinitionHash === attempt.compiledDefinitionHash &&
-    (attempt.status === "approved" || attempt.status === "parked");
-
-  if (!approvedCandidate) return null;
-
-  const normalizedSessionName = sessionName.trim();
-  const receipt = launch.data?.deliveryPlan ?? null;
-  const receiptMatchesApproval =
-    receipt === null ||
-    (receipt.attemptId === attempt.id &&
-      receipt.candidateId === approval.candidateId &&
-      receipt.planHash === approval.planHash &&
-      receipt.compiledDefinitionHash === approval.compiledDefinitionHash);
-
+}): React.JSX.Element {
   return (
-    <section
-      aria-label="Plan launch"
-      className="rounded-md border border-solid border-[var(--cc-green-border)] bg-green-glow p-md"
-    >
-      <h4 className="m-0 font-display text-[0.85rem] font-extrabold text-text-primary">
-        Launch approved candidate
+    <section aria-label="Immutable delivery binding">
+      <h4 className="mt-0 mb-xs font-display text-[0.85rem] font-extrabold text-text-primary">
+        Immutable delivery binding
       </h4>
-      <p className="mt-xs mb-sm font-mono text-[0.7rem] leading-relaxed text-text-secondary">
-        Start candidate <code>{approval.candidateId}</code> with compiled
-        definition <code>{approval.compiledDefinitionHash}</code>. The delivery
-        plan already owns the graph and delivery scope.
-      </p>
-      <div className="flex flex-wrap items-end gap-sm">
-        <div className="w-[260px] max-w-full">
-          <FormLabel htmlFor="delivery-plan-session-name">
-            Session name
-          </FormLabel>
-          <FormInput
-            id="delivery-plan-session-name"
-            value={sessionName}
-            onChange={(event) => setSessionName(event.currentTarget.value)}
-            placeholder="Required session name"
-          />
-        </div>
-        <Button
-          type="button"
-          variant="primary"
-          size="sm"
-          loading={launch.isPending}
-          disabled={normalizedSessionName.length === 0}
-          onClick={() => {
-            if (normalizedSessionName.length === 0) return;
-            logger.info("spec_studio.delivery_plan.launch_requested", {
-              specSlug: attempt.specSlug,
-              attemptId: attempt.id,
-              candidateId: approval.candidateId,
-              compiledDefinitionHash: approval.compiledDefinitionHash,
-            });
-            launch.mutate(
-              {
-                revisionId: attempt.pinnedRevisionId,
-                sessionName: normalizedSessionName,
-              },
-              {
-                onSuccess: (result) => {
-                  const identityMatchesApproval =
-                    result.deliveryPlan.attemptId === attempt.id &&
-                    result.deliveryPlan.candidateId === approval.candidateId &&
-                    result.deliveryPlan.planHash === approval.planHash &&
-                    result.deliveryPlan.compiledDefinitionHash ===
-                      approval.compiledDefinitionHash;
-                  logger.info("spec_studio.delivery_plan.launch_completed", {
-                    specSlug: attempt.specSlug,
-                    attemptId: result.deliveryPlan.attemptId,
-                    candidateId: result.deliveryPlan.candidateId,
-                    compiledDefinitionHash:
-                      result.deliveryPlan.compiledDefinitionHash,
-                    executionId: result.execution.id,
-                  });
-                  if (!identityMatchesApproval) {
-                    logger.error(
-                      "spec_studio.delivery_plan.launch_receipt_mismatch",
-                      {
-                        specSlug: attempt.specSlug,
-                        approvedAttemptId: attempt.id,
-                        receivedAttemptId: result.deliveryPlan.attemptId,
-                        approvedCandidateId: approval.candidateId,
-                        receivedCandidateId: result.deliveryPlan.candidateId,
-                        approvedCompiledDefinitionHash:
-                          approval.compiledDefinitionHash,
-                        receivedCompiledDefinitionHash:
-                          result.deliveryPlan.compiledDefinitionHash,
-                        executionId: result.execution.id,
-                      },
-                    );
-                  }
-                  void queryClient.invalidateQueries({
-                    queryKey: specKeys.planReview(
-                      projectName,
-                      attempt.specSlug,
-                    ),
-                  });
-                },
-                onError: (error) => {
-                  logger.warn("spec_studio.delivery_plan.launch_failed", {
-                    specSlug: attempt.specSlug,
-                    attemptId: attempt.id,
-                    candidateId: approval.candidateId,
-                    error: error.message,
-                  });
-                },
-              },
-            );
-          }}
-        >
-          Start execution
-        </Button>
-      </div>
-      {launch.isError && (
-        <FormError role="alert">{launch.error.message}</FormError>
-      )}
-      {launch.data !== undefined && receipt !== null && (
-        <p
-          role="status"
-          className={`mt-sm mb-0 font-mono text-[0.7rem] ${receiptMatchesApproval ? "text-green" : "text-red"}`}
-        >
-          {receiptMatchesApproval
-            ? `Started execution ${launch.data.execution.id} from candidate ${receipt.candidateId} · ${receipt.compiledDefinitionHash}.`
-            : `Execution ${launch.data.execution.id} started, but its candidate receipt does not match the approved identity shown here.`}
-        </p>
-      )}
-    </section>
-  );
-}
-
-function GraphNodeCard({
-  node,
-}: {
-  node: DeliveryPlanGraphNode;
-}): React.JSX.Element {
-  return (
-    <li
-      data-context-id={node.contextId}
-      className="flex min-w-[200px] flex-col gap-[4px] rounded-md border border-solid border-border-subtle bg-bg-raised p-sm"
-    >
-      <div className="flex flex-wrap items-baseline gap-xs">
-        <StatusChip tone={CONTEXT_TYPE_TONE[node.contextType]}>
-          {node.contextType}
-        </StatusChip>
-        <span className="font-mono text-[0.7rem] text-text-tertiary">
-          {node.contextId}
-        </span>
-      </div>
-      <span className="font-display text-[0.8rem] font-extrabold text-text-primary">
-        {node.title}
-      </span>
-      <span className="font-mono text-[0.68rem] text-text-tertiary">
-        {node.ownedCriterionCount} owned criteria · {node.taskCount} tasks
-      </span>
-      {node.dependsOnContextIds.length > 0 && (
-        <span className="font-mono text-[0.68rem] text-text-tertiary">
-          after {node.dependsOnContextIds.join(", ")}
-        </span>
-      )}
-    </li>
-  );
-}
-
-function ContextGraph({
-  review,
-}: {
-  review: DeliveryPlanReviewView;
-}): React.JSX.Element {
-  const graph = deliveryPlanGraph(review.document);
-  if (graph.ranks.length === 0) {
-    return (
-      <p className="m-0 font-mono text-[0.72rem] text-text-tertiary">
-        This plan declares no contexts yet.
-      </p>
-    );
-  }
-  return (
-    <section aria-label="Context graph">
-      <ol className="m-0 flex list-none gap-md overflow-x-auto p-0">
-        {graph.ranks.map((rank, index) => (
-          <li key={index} className="flex flex-col gap-xs">
-            <span className="font-mono text-[0.65rem] tracking-wide text-text-tertiary uppercase">
-              Wave {index + 1}
+      <ul className="m-0 list-none p-0">
+        {review.criteria.map((criterion) => (
+          <li
+            key={criterion.criterionElementId}
+            className="flex flex-wrap items-baseline gap-xs border-x-0 border-t-0 border-b border-solid border-border-subtle py-xs"
+          >
+            <code className="font-mono text-[0.68rem] text-text-primary">
+              {criterion.handle}
+            </code>
+            <StatusChip tone="neutral">
+              {criterion.disposition ?? "undisposed"}
+            </StatusChip>
+            <span className="font-mono text-[0.68rem] text-text-tertiary">
+              accountability:{" "}
+              {criterion.accountabilitySourceIds.join(", ") || "none"}
             </span>
-            <ul className="m-0 flex list-none flex-col gap-sm p-0">
-              {rank.map((node) => (
-                <GraphNodeCard key={node.contextId} node={node} />
-              ))}
-            </ul>
           </li>
         ))}
-      </ol>
-      <h4 className="mt-md mb-xs font-display text-[0.78rem] font-extrabold text-text-primary">
-        Dependency edges
-      </h4>
-      {graph.edges.length === 0 ? (
-        <p className="m-0 font-mono text-[0.7rem] text-text-tertiary">
-          No context depends on another; every context can start immediately.
-        </p>
-      ) : (
-        <ul className="m-0 list-none p-0">
-          {graph.edges.map((edge) => (
-            <li
-              key={edge.edgeId}
-              className="py-[2px] font-mono text-[0.7rem] text-text-tertiary"
-            >
-              {edge.fromContextId} → {edge.toContextId}
-            </li>
-          ))}
-        </ul>
-      )}
-      {graph.cyclicContextIds.length > 0 && (
-        <p className="mt-xs mb-0 font-mono text-[0.7rem] text-red">
-          These contexts sit on a dependency cycle and cannot be ordered:{" "}
-          {graph.cyclicContextIds.join(", ")}. Remove one of the edges between
-          them before proposing.
-        </p>
-      )}
-      {graph.danglingEdges.length > 0 && (
-        <p className="mt-xs mb-0 font-mono text-[0.7rem] text-red">
-          These edges name a context this plan does not define:{" "}
-          {graph.danglingEdges
-            .map((edge) => `${edge.fromContextId} → ${edge.toContextId}`)
-            .join(", ")}
-          . Add the context or drop the edge before proposing.
-        </p>
-      )}
-    </section>
-  );
-}
-
-function ContextCards({
-  review,
-}: {
-  review: DeliveryPlanReviewView;
-}): React.JSX.Element {
-  const criteriaById = new Map(
-    review.criteria.map((criterion) => [
-      criterion.criterionElementId,
-      criterion,
-    ]),
-  );
-  const wiringByContext = new Map(
-    review.wiringByContext.map((entry) => [entry.contextId, entry.entries]),
-  );
-  return (
-    <section aria-label="Contexts">
-      <ul className="m-0 flex list-none flex-col gap-md p-0">
-        {review.document.contexts.map((context) => {
-          const tasks = review.document.tasks
-            .filter((task) => task.contextId === context.contextId)
-            .sort((left, right) => left.order - right.order);
-          const wiring = wiringByContext.get(context.contextId) ?? [];
-          return (
-            <li
-              key={context.contextId}
-              data-context-card={context.contextId}
-              className="rounded-md border border-solid border-border-subtle bg-bg-raised p-md"
-            >
-              <div className="flex flex-wrap items-baseline gap-xs">
-                <StatusChip tone={CONTEXT_TYPE_TONE[context.contextType]}>
-                  {context.contextType}
-                </StatusChip>
-                <h4 className="m-0 font-display text-[0.9rem] font-extrabold text-text-primary">
-                  {context.title}
-                </h4>
-                <span className="font-mono text-[0.68rem] text-text-tertiary">
-                  {context.contextId}
-                </span>
-              </div>
-
-              <h5 className="mt-md mb-xs font-mono text-[0.65rem] tracking-wide text-text-tertiary uppercase">
-                Owned criteria ({context.criterionElementIds.length})
-              </h5>
-              {context.criterionElementIds.length === 0 ? (
-                <p className="m-0 font-mono text-[0.7rem] text-text-tertiary">
-                  This {context.contextType} context owns no criterion; its
-                  acceptance contract is the whole of what it is held to.
-                </p>
-              ) : (
-                <ul className="m-0 list-none p-0">
-                  {context.criterionElementIds.map((criterionElementId) => {
-                    const criterion = criteriaById.get(criterionElementId);
-                    return (
-                      <li
-                        key={criterionElementId}
-                        className="flex flex-wrap items-baseline gap-xs py-[2px]"
-                      >
-                        <StatusChip tone="neutral">
-                          {criterion?.handle ?? criterionElementId}
-                        </StatusChip>
-                        <span className="font-mono text-[0.7rem] leading-relaxed text-text-secondary">
-                          {criterion?.text ??
-                            `The pinned revision carries no criterion ${criterionElementId}.`}
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-
-              <h5 className="mt-md mb-xs font-mono text-[0.65rem] tracking-wide text-text-tertiary uppercase">
-                Acceptance contract
-              </h5>
-              <ol className="m-0 pl-md">
-                {context.acceptanceContract.map((line, index) => (
-                  <li
-                    key={index}
-                    className="py-[2px] font-mono text-[0.7rem] leading-relaxed text-text-secondary"
-                  >
-                    {line}
-                  </li>
-                ))}
-              </ol>
-
-              <h5 className="mt-md mb-xs font-mono text-[0.65rem] tracking-wide text-text-tertiary uppercase">
-                Tasks ({tasks.length})
-              </h5>
-              <ol className="m-0 pl-md">
-                {tasks.map((task) => (
-                  <li key={task.taskId} className="py-[2px]">
-                    <span className="font-mono text-[0.72rem] font-semibold text-text-primary">
-                      {task.title}
-                    </span>{" "}
-                    <span className="font-mono text-[0.68rem] text-text-tertiary">
-                      {task.taskId}
-                    </span>
-                  </li>
-                ))}
-              </ol>
-
-              {wiring.length > 0 && (
-                <>
-                  <h5 className="mt-md mb-xs font-mono text-[0.65rem] tracking-wide text-text-tertiary uppercase">
-                    Production wiring
-                  </h5>
-                  <ul className="m-0 list-none p-0">
-                    {wiring.map((entry) => (
-                      <li
-                        key={entry}
-                        className="py-[2px] font-mono text-[0.7rem] text-text-tertiary"
-                      >
-                        {entry}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-            </li>
-          );
-        })}
       </ul>
     </section>
   );
 }
 
-/**
- * The diff between the two most recent proposals. Two snapshots is the whole
- * question a reviewer has after a reopen — what changed since the version I
- * last read — so the surface answers it without asking them to pick ids.
- */
-function LatestSnapshotDiff({
+function LifecycleState({
+  review,
+}: {
+  review: DeliveryPlanReviewView;
+}): React.JSX.Element {
+  return (
+    <section aria-label="Plan lifecycle state">
+      <h4 className="mt-0 mb-xs font-display text-[0.85rem] font-extrabold text-text-primary">
+        Lifecycle state
+      </h4>
+      <div className="flex flex-wrap items-center gap-xs">
+        <StatusChip tone="cyan">{review.attempt.status}</StatusChip>
+        <span className="font-mono text-[0.68rem] text-text-tertiary">
+          {review.health.blocking} blocking finding
+          {review.health.blocking === 1 ? "" : "s"}
+        </span>
+      </div>
+      <p className="mt-xs mb-0 font-mono text-[0.7rem] leading-relaxed text-text-secondary">
+        {review.nextAct.reason}
+      </p>
+    </section>
+  );
+}
+
+function CandidateChangeSummary({
   projectName,
   review,
 }: {
   projectName: string;
   review: DeliveryPlanReviewView;
-}): React.JSX.Element | null {
-  const ordered = [...review.snapshots].sort(
-    (left, right) => left.draftRevision - right.draftRevision,
+}): React.JSX.Element {
+  const currentSnapshotIndex = review.snapshots.findIndex(
+    (snapshot) => snapshot.id === review.attempt.proposedSnapshotId,
   );
-  const from = ordered.at(-2) ?? null;
-  const to = ordered.at(-1) ?? null;
-  const query = useSpecPlanDiffQuery(
+  const currentSnapshot =
+    currentSnapshotIndex >= 0
+      ? review.snapshots[currentSnapshotIndex]
+      : undefined;
+  const previousSnapshot =
+    currentSnapshotIndex > 0
+      ? review.snapshots[currentSnapshotIndex - 1]
+      : undefined;
+  const diff = useSpecPlanDiffQuery(
     projectName,
     review.attempt.specSlug,
-    from?.id ?? null,
-    to?.id ?? null,
+    previousSnapshot?.id ?? null,
+    currentSnapshot?.id ?? null,
   );
 
-  if (from === null || to === null) {
-    return (
-      <p className="m-0 font-mono text-[0.7rem] text-text-tertiary">
-        This attempt has frozen fewer than two proposals, so there is nothing to
-        compare yet.
-      </p>
-    );
-  }
-  if (query.isPending) {
-    return (
-      <p className="m-0 font-mono text-[0.7rem] text-text-tertiary">
-        Comparing the last two proposals…
-      </p>
-    );
-  }
-  if (query.isError || query.data === undefined) {
-    return (
-      <p className="m-0 font-mono text-[0.7rem] text-red">
-        {query.error instanceof Error
-          ? query.error.message
-          : "The snapshot diff could not be read."}
-      </p>
-    );
-  }
   return (
-    <SpecDeliveryPlanDiff
-      diff={query.data.diff}
-      fromLabel={`draft revision ${query.data.from.draftRevision}`}
-      toLabel={`draft revision ${query.data.to.draftRevision}`}
-    />
+    <section aria-label="Candidate change summary">
+      <h4 className="mt-0 mb-xs font-display text-[0.85rem] font-extrabold text-text-primary">
+        Candidate change summary
+      </h4>
+      {previousSnapshot === undefined || currentSnapshot === undefined ? (
+        <p className="m-0 font-mono text-[0.7rem] leading-relaxed text-text-tertiary">
+          No earlier finalized candidate is available for comparison.
+        </p>
+      ) : diff.isPending ? (
+        <p
+          role="status"
+          className="m-0 font-mono text-[0.7rem] leading-relaxed text-text-tertiary"
+        >
+          Comparing immutable candidates…
+        </p>
+      ) : diff.isError || diff.data === undefined ? (
+        <p className="m-0 font-mono text-[0.7rem] leading-relaxed text-amber">
+          {diff.error instanceof Error
+            ? diff.error.message
+            : "The immutable candidate comparison could not be read."}
+        </p>
+      ) : (
+        <div className="flex flex-wrap items-center gap-xs">
+          <StatusChip tone={diff.data.diff.launchChanged ? "amber" : "neutral"}>
+            Launch {diff.data.diff.launchChanged ? "changed" : "unchanged"}
+          </StatusChip>
+          <StatusChip
+            tone={diff.data.diff.bindingChanged ? "amber" : "neutral"}
+          >
+            Binding {diff.data.diff.bindingChanged ? "changed" : "unchanged"}
+          </StatusChip>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function BindingOutcomes({
+  projectName,
+  review,
+}: {
+  projectName: string;
+  review: DeliveryPlanReviewView;
+}): React.JSX.Element {
+  const expectedDraftRevision = review.attempt.draftRevision;
+  const waived = review.criteria.filter(
+    (criterion) => criterion.disposition === "waived",
+  );
+  const externalDelivery = review.criteria.filter(
+    (criterion) => criterion.disposition === "delivered_elsewhere",
+  );
+  const pendingReaffirmation = review.criteria.filter(
+    (criterion) => criterion.disposition === "pending_reaffirmation",
+  );
+  const reaffirmed = review.criteria.filter(
+    (criterion) => criterion.disposition === "reaffirmed",
+  );
+  // The act carries the draft revision this panel rendered, so a draft that
+  // moved between the read and the click is refused rather than reaffirmed.
+  const reaffirm = useSpecActionMutation<
+    { criterionElementId: string; expectedDraftRevision: number },
+    DeliveryPlanReviewView
+  >(
+    projectName,
+    review.attempt.specSlug,
+    "plan-reaffirm",
+    deliveryPlanReviewViewSchema,
+  );
+
+  return (
+    <>
+      <section aria-label="Waivers">
+        <h4 className="mt-0 mb-xs font-display text-[0.85rem] font-extrabold text-text-primary">
+          Waivers
+        </h4>
+        <p className="m-0 font-mono text-[0.7rem] leading-relaxed text-text-secondary">
+          {waived.length === 0
+            ? "No criteria are waived in this binding."
+            : `Waived criteria: ${waived.map((criterion) => criterion.handle).join(", ")}.`}
+        </p>
+      </section>
+      <section aria-label="External delivery">
+        <h4 className="mt-0 mb-xs font-display text-[0.85rem] font-extrabold text-text-primary">
+          External delivery
+        </h4>
+        {externalDelivery.length === 0 ? (
+          <p className="m-0 font-mono text-[0.7rem] leading-relaxed text-text-secondary">
+            No criteria rely on an external delivery.
+          </p>
+        ) : (
+          <ul className="m-0 list-none p-0 font-mono text-[0.7rem] leading-relaxed text-text-secondary">
+            {externalDelivery.map((criterion) => (
+              <li key={criterion.criterionElementId}>
+                {criterion.handle} is attributed to{" "}
+                {criterion.deliveredByExecutionId}.
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <section aria-label="Pending reaffirmation">
+        <h4 className="mt-0 mb-xs font-display text-[0.85rem] font-extrabold text-text-primary">
+          Pending reaffirmation
+        </h4>
+        {pendingReaffirmation.length === 0 ? (
+          <p className="m-0 font-mono text-[0.7rem] leading-relaxed text-text-secondary">
+            No human reaffirmation is pending.
+          </p>
+        ) : (
+          <ul className="m-0 flex list-none flex-col gap-xs p-0 font-mono text-[0.7rem] leading-relaxed text-text-secondary">
+            {pendingReaffirmation.map((criterion) => {
+              const isPending =
+                reaffirm.isPending &&
+                reaffirm.variables?.criterionElementId ===
+                  criterion.criterionElementId;
+              return (
+                <li
+                  key={criterion.criterionElementId}
+                  className="flex flex-wrap items-center gap-xs"
+                >
+                  <span>
+                    {criterion.handle} must reaffirm{" "}
+                    {criterion.deliveredByExecutionId}.
+                  </span>
+                  <Button
+                    type="button"
+                    variant="default"
+                    size="sm"
+                    loading={isPending}
+                    disabled={reaffirm.isPending}
+                    onClick={() =>
+                      reaffirm.mutate({
+                        criterionElementId: criterion.criterionElementId,
+                        expectedDraftRevision,
+                      })
+                    }
+                  >
+                    Reaffirm {criterion.handle}
+                  </Button>
+                  {isPending && (
+                    <span role="status">Reaffirming {criterion.handle}…</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {reaffirm.isError && (
+          <p className="mt-xs mb-0 font-mono text-[0.7rem] leading-relaxed text-red">
+            {reaffirm.error instanceof Error
+              ? reaffirm.error.message
+              : "The criterion could not be reaffirmed."}
+          </p>
+        )}
+      </section>
+      <section aria-label="Reaffirmed delivery">
+        <h4 className="mt-0 mb-xs font-display text-[0.85rem] font-extrabold text-text-primary">
+          Reaffirmed delivery
+        </h4>
+        {reaffirmed.length === 0 ? (
+          <p className="m-0 font-mono text-[0.7rem] leading-relaxed text-text-secondary">
+            No external delivery has been reaffirmed in this draft.
+          </p>
+        ) : (
+          <ul className="m-0 list-none p-0 font-mono text-[0.7rem] leading-relaxed text-text-secondary">
+            {reaffirmed.map((criterion) => (
+              <li key={criterion.criterionElementId}>
+                {criterion.handle} reaffirms {criterion.deliveredByExecutionId}.
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </>
+  );
+}
+
+function PreviewStage({
+  preview,
+}: {
+  preview: DeliveryPlanPreviewView;
+}): React.JSX.Element {
+  if (preview.stage === "draft") {
+    return (
+      <section aria-label="Authored draft">
+        <h4 className="mt-0 mb-xs font-display text-[0.85rem] font-extrabold text-text-primary">
+          Authored draft
+        </h4>
+        <p className="m-0 font-mono text-[0.7rem] leading-relaxed text-text-secondary">
+          Server finalization has not occurred. This launch has no candidate id
+          or candidate hash.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section aria-label="Finalized candidate">
+      <h4 className="mt-0 mb-xs font-display text-[0.85rem] font-extrabold text-text-primary">
+        Finalized candidate
+      </h4>
+      <dl className="m-0 grid gap-xs font-mono text-[0.7rem] text-text-secondary">
+        <div>
+          <dt className="text-text-tertiary">candidate</dt>
+          <dd className="m-0 break-all text-text-primary">
+            {preview.candidateId}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-text-tertiary">hash</dt>
+          <dd className="m-0 break-all text-text-primary">
+            {preview.candidateHash}
+          </dd>
+        </div>
+      </dl>
+      <WorkflowFinalizedLaunchMetadata launch={preview.launch} />
+    </section>
+  );
+}
+
+function previewStageFor(
+  review: DeliveryPlanReviewView | null | undefined,
+): DeliveryPlanPreviewStage | null {
+  if (review === null || review === undefined) return null;
+  return review.attempt.status === "draft" ||
+    review.attempt.status === "abandoned"
+    ? "draft"
+    : "proposed";
+}
+
+/**
+ * The two reads this surface composes must describe the same attempt state:
+ * the graph and the finalized metadata come from the preview, while the
+ * dispositions, comments, and lifecycle come from the review. A re-propose or
+ * an edit landing between them would put a graph on screen that a sign-off is
+ * not approving, so the mismatch is named rather than rendered.
+ */
+export function previewIdentityMismatch(
+  review: DeliveryPlanReviewView,
+  preview: DeliveryPlanPreviewView,
+): string | null {
+  if (preview.attemptId !== review.attempt.id) {
+    return `The launch preview describes attempt ${preview.attemptId}, but the plan under review is attempt ${review.attempt.id}.`;
+  }
+  if (preview.draftRevision !== review.attempt.draftRevision) {
+    return `The launch preview is at draft revision ${preview.draftRevision}, but the plan under review is at draft revision ${review.attempt.draftRevision}.`;
+  }
+  if (
+    preview.candidateId !== review.attempt.candidateId ||
+    preview.candidateHash !== review.attempt.candidateHash
+  ) {
+    return `The launch preview shows candidate ${preview.candidateId ?? "none"} at ${preview.candidateHash ?? "no hash"}, but the plan under review carries candidate ${review.attempt.candidateId ?? "none"} at ${review.attempt.candidateHash ?? "no hash"}.`;
+  }
+  return null;
+}
+
+function PlanConflict({
+  projectName,
+  slug,
+  title,
+  message,
+}: {
+  projectName: string;
+  slug: string;
+  title: string;
+  message: string;
+}): React.JSX.Element {
+  const queryClient = useQueryClient();
+  return (
+    <section
+      aria-label="Delivery plan conflict"
+      className="rounded-md border border-solid border-amber bg-bg-raised p-md"
+    >
+      <h4 className="mt-0 mb-xs font-display text-[0.85rem] font-extrabold text-text-primary">
+        {title}
+      </h4>
+      <p className="mt-0 mb-sm font-mono text-[0.7rem] leading-relaxed text-amber">
+        {message}
+      </p>
+      <p className="mt-0 mb-sm font-mono text-[0.7rem] leading-relaxed text-text-secondary">
+        Nothing was changed. Re-read the plan, then act on what you see.
+      </p>
+      <Button
+        type="button"
+        variant="default"
+        size="sm"
+        onClick={() => {
+          void queryClient.invalidateQueries({
+            queryKey: specKeys.detail(projectName, slug),
+          });
+        }}
+      >
+        Re-read the delivery plan
+      </Button>
+    </section>
+  );
+}
+
+export function SpecDeliveryPlanReviewContent({
+  projectName,
+  review,
+  preview,
+}: {
+  projectName: string;
+  review: DeliveryPlanReviewView;
+  preview: DeliveryPlanPreviewView;
+}): React.JSX.Element {
+  const mismatch = previewIdentityMismatch(review, preview);
+  if (mismatch !== null) {
+    return (
+      <div className="flex flex-col gap-lg">
+        <AttemptHeader review={review} />
+        <PlanConflict
+          projectName={projectName}
+          slug={review.attempt.specSlug}
+          title="This plan moved while you were reading it"
+          message={mismatch}
+        />
+      </div>
+    );
+  }
+
+  // Sign-off binds the identity this surface displayed, read off the same
+  // preview the graph and finalized metadata came from.
+  const candidate =
+    preview.candidateId === null || preview.candidateHash === null
+      ? null
+      : {
+          candidateId: preview.candidateId,
+          candidateHash: preview.candidateHash,
+        };
+
+  return (
+    <div className="flex flex-col gap-lg">
+      <AttemptHeader review={review} />
+      <div className="grid grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)] gap-lg max-1180:grid-cols-1">
+        <section
+          aria-label="Graph launch"
+          className="flex min-w-0 flex-col gap-sm"
+        >
+          <div>
+            <h4 className="mt-0 mb-xs font-display text-[0.85rem] font-extrabold text-text-primary">
+              Graph launch
+            </h4>
+            <p className="m-0 font-mono text-[0.7rem] text-text-secondary">
+              {graphWorkflowLaunchName(preview.launch)}
+            </p>
+          </div>
+          <WorkflowDefinitionCanvas launch={preview.launch} />
+        </section>
+        <aside className="flex min-w-0 flex-col gap-lg">
+          <PreviewStage preview={preview} />
+          <LifecycleState review={review} />
+          <CandidateChangeSummary projectName={projectName} review={review} />
+          <SpecDeliveryPlanApproval
+            projectName={projectName}
+            review={review}
+            candidate={candidate}
+          />
+          <BindingTable review={review} />
+          <BindingOutcomes projectName={projectName} review={review} />
+          <SpecDeliveryPlanComments projectName={projectName} review={review} />
+        </aside>
+      </div>
+    </div>
   );
 }
 
@@ -584,15 +509,22 @@ export default function SpecDeliveryPlanReview({
   slug: string;
 }): React.JSX.Element {
   const query = useSpecPlanReviewQuery(projectName, slug);
-
-  if (query.isPending) {
+  // The preview is read for the draft revision the review reported, so the
+  // server refuses a preview of bytes this surface is not showing and a moved
+  // draft re-reads instead of resolving from cache.
+  const previewQuery = useSpecPlanPreviewQuery(
+    projectName,
+    slug,
+    previewStageFor(query.data),
+    query.data?.attempt.draftRevision ?? null,
+  );
+  if (query.isPending)
     return (
       <p className="m-0 font-mono text-[0.72rem] text-text-tertiary">
         Reading the delivery plan…
       </p>
     );
-  }
-  if (query.isError || query.data === undefined) {
+  if (query.isError || query.data === undefined)
     return (
       <p className="m-0 font-mono text-[0.72rem] text-amber">
         {query.error instanceof Error
@@ -600,52 +532,41 @@ export default function SpecDeliveryPlanReview({
           : "The delivery plan could not be read."}
       </p>
     );
-  }
-  if (query.data === null) {
+  if (query.data === null)
     return (
       <p className="m-0 font-mono text-[0.72rem] text-amber">
         This spec has no delivery plan attempt. Open one with cctl spec plan
         open {slug}.
       </p>
     );
+  if (previewQuery.isPending)
+    return (
+      <p className="m-0 font-mono text-[0.72rem] text-text-tertiary">
+        Reading the launch preview…
+      </p>
+    );
+  // The preview is read for a stated draft revision, so its refusal is the
+  // server's own stale-read conflict. It gets the re-read act rather than a
+  // dead-end message.
+  if (previewQuery.isError || previewQuery.data === undefined) {
+    return (
+      <PlanConflict
+        projectName={projectName}
+        slug={slug}
+        title="The launch preview could not be read"
+        message={
+          previewQuery.error instanceof Error
+            ? previewQuery.error.message
+            : "The launch preview could not be read."
+        }
+      />
+    );
   }
-
-  const review = query.data;
   return (
-    <div className="flex flex-col gap-lg">
-      <AttemptHeader review={review} />
-      <DeliveryPlanCandidatePanel review={review} />
-      <SpecDeliveryPlanApproval projectName={projectName} review={review} />
-      <DeliveryPlanLaunchControl projectName={projectName} review={review} />
-      <ContextGraph review={review} />
-      <ContextCards review={review} />
-      <div>
-        <h4 className="mt-0 mb-xs font-display text-[0.85rem] font-extrabold text-text-primary">
-          Dispositions
-        </h4>
-        <DeliveryPlanDispositionsTable
-          criteria={review.criteria}
-          renderRowAction={(criterion) => (
-            <ReaffirmControl
-              projectName={projectName}
-              slug={slug}
-              criterion={criterion}
-            />
-          )}
-        />
-      </div>
-      <div>
-        <h4 className="mt-0 mb-xs font-display text-[0.85rem] font-extrabold text-text-primary">
-          Comments
-        </h4>
-        <SpecDeliveryPlanComments projectName={projectName} review={review} />
-      </div>
-      <div>
-        <h4 className="mt-0 mb-xs font-display text-[0.85rem] font-extrabold text-text-primary">
-          Since the previous proposal
-        </h4>
-        <LatestSnapshotDiff projectName={projectName} review={review} />
-      </div>
-    </div>
+    <SpecDeliveryPlanReviewContent
+      projectName={projectName}
+      review={query.data}
+      preview={previewQuery.data}
+    />
   );
 }

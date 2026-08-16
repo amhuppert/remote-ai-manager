@@ -1,4 +1,1 @@
-export {
-  specPlanPreviewPOST as POST,
-  specPlanAttemptPreviewGET as GET,
-} from "@/lib/specs/route-handlers";
+export { specPlanAttemptPreviewGET as GET } from "@/lib/specs/route-handlers";

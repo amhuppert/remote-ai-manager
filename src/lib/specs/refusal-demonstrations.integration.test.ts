@@ -696,7 +696,7 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
     expect(interventionRows(world, authored.specId)).toEqual([]);
   });
 
-  it("rejects the retired execution scope through route and CLI with the importer remedy", async () => {
+  it("rejects the retired execution scope through route and CLI with the direct-plan remedy", async () => {
     const authored = await authorSpineDraft(world, SLUG);
     await proposeSpineRevision(world, SLUG, authored);
     const scope = {
@@ -726,9 +726,8 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
     expect(refusal.unmetConditions).toEqual([
       "Execution scope documents are retired; the approved delivery plan is the execution graph.",
     ]);
-    expect(refusal.instruction).toContain(
-      `cctl spec plan open ${SLUG} --seed-from last`,
-    );
+    expect(refusal.instruction).toContain(`cctl spec plan open ${SLUG}`);
+    expect(refusal.instruction).not.toMatch(/legacy planning|--seed-from/i);
 
     // CLI rejects locally, before reading the retired file or contacting the
     // route, and returns the same migration act.
@@ -740,10 +739,11 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
     expect(cliResult.exitCode).toBe(2);
     expect(JSON.parse(cliResult.stdout)).toMatchObject({
       ok: false,
-      instruction: expect.stringContaining(
-        `cctl spec plan open ${SLUG} --seed-from last`,
-      ),
+      instruction: expect.stringContaining(`cctl spec plan open ${SLUG}`),
     });
+    expect(JSON.parse(cliResult.stdout).instruction).not.toMatch(
+      /legacy planning|--seed-from/i,
+    );
 
     // Both transport guards reject before the execution service is entered,
     // so neither can manufacture a durable transition event.
@@ -753,124 +753,6 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
     // The refusal blocked the transition: no execution row exists.
     expect(
       world.repos.delivery.findExecutionsBySpecId(authored.specId),
-    ).toHaveLength(0);
-  });
-
-  it("refuses task completion claims without acceptable evidence through route and CLI, landing intervention rows", async () => {
-    const authored = await authorSpineDraft(world, SLUG);
-    await proposeSpineRevision(world, SLUG, authored);
-    await approveAndSignOffSpine(world, SLUG, authored);
-    const started = await startSpineExecution(world, SLUG, authored);
-
-    // Route surface: a claim citing no evidence is refused (6.6).
-    const emptyClaim = await world.postAction(
-      SLUG,
-      "claim-task-complete",
-      {
-        taskElementId: authored.taskOneId,
-        executionId: started.specExecutionId,
-        evidenceIds: [],
-      },
-      "agent",
-    );
-    expect(emptyClaim.status).toBe(409);
-    const emptyRefusal = (await emptyClaim.json()) as {
-      code: string;
-      findings?: Array<{
-        ruleId: string;
-        severity: string;
-        elementHandle: string;
-        message: string;
-      }>;
-      instruction: string;
-    };
-    expect(emptyRefusal.code).toBe("lint_blocked");
-    expect(emptyRefusal.instruction).toContain("evidence");
-    expect(emptyRefusal.findings).toEqual([
-      {
-        ruleId: "9.7.claim-without-evidence",
-        severity: "blocks_claim",
-        elementHandle: "R1.1",
-        message: "T1 cannot be claimed complete because R1.1 has no evidence.",
-      },
-    ]);
-
-    // Route surface: a claim citing evidence the server cannot resolve is
-    // refused as unresolvable (9.7).
-    const unresolvableClaim = await world.postAction(
-      SLUG,
-      "claim-task-complete",
-      {
-        taskElementId: authored.taskOneId,
-        executionId: started.specExecutionId,
-        evidenceIds: ["evidence-that-does-not-exist"],
-      },
-      "agent",
-    );
-    expect(unresolvableClaim.status).toBe(409);
-    const unresolvableRefusal = (await unresolvableClaim.json()) as {
-      code: string;
-    };
-    expect(unresolvableRefusal.code).toBe("unresolvable_evidence");
-
-    // CLI surface: `cctl spec task complete` sends the empty evidence list to
-    // the server (no local block) and surfaces the refusal as exit 1 carrying
-    // the machine-readable code and the server's instruction (21.3).
-    const cliResult = await runCli(
-      [
-        "spec",
-        "task",
-        "complete",
-        `${SLUG}/T1`,
-        "--execution",
-        started.specExecutionId,
-        "--json",
-      ],
-      cliEnv,
-      bridgeHost(world),
-    );
-    expect(cliResult.exitCode).toBe(1);
-    expect(JSON.parse(cliResult.stdout)).toMatchObject({
-      ok: false,
-      code: "lint_blocked",
-      details: {
-        findings: [
-          {
-            ruleId: "9.7.claim-without-evidence",
-            severity: "blocks_claim",
-            elementHandle: "R1.1",
-            message:
-              "T1 cannot be claimed complete because R1.1 has no evidence.",
-          },
-        ],
-      },
-      instruction:
-        "Cite ingested evidence ids for the task's covered criteria — the server ingests commit and validation evidence from workflow events — and claim again.",
-    });
-
-    // Durable event log: all three refused claims are intervention rows with
-    // agent provenance.
-    const interventions = interventionRows(world, authored.specId);
-    expect(interventions).toHaveLength(3);
-    expect(
-      interventions.map((intervention) => intervention.payload.code),
-    ).toEqual(["lint_blocked", "unresolvable_evidence", "lint_blocked"]);
-    for (const intervention of interventions) {
-      expect(intervention.actor).toEqual({
-        kind: "agent",
-        conversationId: SPINE_CONVERSATION_ID,
-      });
-      expect(intervention.payload).toMatchObject({
-        kind: "transition-refused",
-        surface: "task_claim",
-        taskElementId: authored.taskOneId,
-        executionId: started.specExecutionId,
-      });
-    }
-
-    // The refusals blocked the transition: no claim row exists.
-    expect(
-      world.repos.delivery.findTaskClaimsBySpecId(authored.specId),
     ).toHaveLength(0);
   });
 
@@ -953,12 +835,21 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
     expect(mergeResult.status).toBe("failed");
     expect(mergeResult.haltReason?.type).toBe("delivery_gate_failed");
     expect(mergeResult.haltReason?.instruction.length).toBeGreaterThan(0);
+    // Every selected criterion is unmet because no authored claimant reached a
+    // satisfied outcome, and the execution-keyed row is the integration check
+    // the direct gate reports beside them.
     const unmetOutcomes = mergeResult.haltReason?.unmet ?? [];
     expect(unmetOutcomes.map((outcome) => outcome.criterionId).sort()).toEqual(
-      [authored.criterionOneId, authored.criterionTwoId].sort(),
+      [
+        authored.criterionOneId,
+        authored.criterionTwoId,
+        started.specExecutionId,
+      ].sort(),
     );
     expect(
-      unmetOutcomes.every((outcome) => outcome.outcome === "proof_required"),
+      unmetOutcomes
+        .filter((outcome) => outcome.criterionId !== started.specExecutionId)
+        .every((outcome) => outcome.outcome === "pending"),
     ).toBe(true);
     expect(scenario.publishedCandidates).toEqual([]);
 
@@ -993,11 +884,14 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
       preparedSha: "prepared-candidate",
     });
     const recordedUnmet = gateIntervention?.payload.unmet as Array<{
+      criterionId: string;
       outcome: string;
     }>;
     expect(recordedUnmet.length).toBeGreaterThan(0);
     expect(
-      recordedUnmet.every((outcome) => outcome.outcome === "proof_required"),
+      recordedUnmet
+        .filter((outcome) => outcome.criterionId !== started.specExecutionId)
+        .every((outcome) => outcome.outcome === "pending"),
     ).toBe(true);
 
     // The refusal blocked the transition: the execution is still running.

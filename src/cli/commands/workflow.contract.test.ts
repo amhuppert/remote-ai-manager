@@ -185,6 +185,7 @@ function makeExecutionDeps(
     normalizeExecutionAfterRestart: async () => null,
     startExecution: notUsed,
     runExecution: notUsed,
+    launchSpecDeliveryExecution: notUsed,
     pauseExecution: notUsed,
     resumeExecution: notUsed,
     abortExecution: notUsed,

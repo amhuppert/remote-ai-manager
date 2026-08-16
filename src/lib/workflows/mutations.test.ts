@@ -4,7 +4,6 @@ import { renderHook, waitFor } from "@testing-library/react";
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
-  useAmendGraphWorkflowMutation,
   useApproveGraphWorkflowDefinitionMutation,
   usePauseGraphWorkflowMutation,
   useResetExecutionContextMutation,
@@ -13,10 +12,7 @@ import {
 } from "@/lib/workflows/mutations";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
-import {
-  graphWorkflowEventsKeys,
-  graphWorkflowExecutionKeys,
-} from "@/lib/workflows/query-keys";
+import { graphWorkflowExecutionKeys } from "@/lib/workflows/query-keys";
 import { ApiCallError } from "@/lib/api/errors";
 
 function wrapper({ children }: { children: React.ReactNode }) {
@@ -47,86 +43,6 @@ function jsonResponse(body: unknown, status = 200): Response {
     headers: { "Content-Type": "application/json" },
   });
 }
-
-describe("useAmendGraphWorkflowMutation", () => {
-  const fetchSpy = vi.fn<typeof fetch>();
-
-  beforeEach(() => {
-    fetchSpy.mockReset();
-    vi.stubGlobal("fetch", fetchSpy);
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it("posts the canonical additive request and refreshes execution, events, and session state", async () => {
-    const client = makeClient();
-    const executionKey = graphWorkflowExecutionKeys.detail("proj-1", "sess-1");
-    const eventsKey = graphWorkflowEventsKeys.list(
-      "proj-1",
-      "sess-1",
-      "workflow-exec-1",
-    );
-    const sessionKey = sessionKeys.detail("proj-1", "sess-1");
-    client.setQueryData(executionKey, { id: "workflow-exec-1" });
-    client.setQueryData(eventsKey, []);
-    client.setQueryData(sessionKey, { sessionName: "sess-1" });
-    fetchSpy.mockResolvedValue(
-      jsonResponse({
-        amended: 1,
-        liveRevision: 2,
-        policyBasis: "human_operator",
-        addedContextIds: [],
-        addedTaskIds: ["verify-added-path"],
-        addedEdgeIds: [],
-        previousWorkingDefinitionHash: "sha256:old",
-        workingDefinitionHash: "sha256:new",
-      }),
-    );
-    const request = {
-      reason: "Add live verification.",
-      operations: [
-        {
-          type: "add-task" as const,
-          id: "verify-added-path",
-          contextId: "capture-studio",
-          title: "Verify the added path",
-          instructions: "Exercise the production route.",
-        },
-      ],
-    };
-
-    const { result } = renderHook(
-      () =>
-        useAmendGraphWorkflowMutation("proj-1", "sess-1", "workflow-exec-1"),
-      { wrapper: wrapperFor(client) },
-    );
-
-    await expect(result.current.mutateAsync(request)).resolves.toMatchObject({
-      liveRevision: 2,
-      previousWorkingDefinitionHash: "sha256:old",
-      workingDefinitionHash: "sha256:new",
-    });
-
-    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe(
-      "/api/projects/proj-1/sessions/sess-1/graph-workflow/amend",
-    );
-    expect(init).toMatchObject({
-      method: "POST",
-      body: JSON.stringify(request),
-    });
-    expect(new Headers(init.headers).get("Content-Type")).toBe(
-      "application/json",
-    );
-    await waitFor(() => {
-      expect(client.getQueryState(executionKey)?.isInvalidated).toBe(true);
-      expect(client.getQueryState(eventsKey)?.isInvalidated).toBe(true);
-      expect(client.getQueryState(sessionKey)?.isInvalidated).toBe(true);
-    });
-  });
-});
 
 describe("useResetExecutionContextMutation", () => {
   const fetchSpy = vi.fn();

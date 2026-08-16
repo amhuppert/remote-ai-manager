@@ -268,6 +268,60 @@ describe("workflowCharterSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("preserves an invariant's strict authored-context scope", () => {
+    const result = workflowCharterSchema.safeParse({
+      ...makeMaximalCharter(),
+      invariants: [
+        {
+          ...makeInvariant(),
+          appliesTo: { contextIds: ["context-implement"] },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.invariants?.[0]?.appliesTo).toEqual({
+      contextIds: ["context-implement"],
+    });
+  });
+
+  it.each([
+    {
+      label: "an empty context id list",
+      appliesTo: { contextIds: [] },
+      path: ["invariants", 0, "appliesTo", "contextIds"],
+    },
+    {
+      label: "an empty context id",
+      appliesTo: { contextIds: [""] },
+      path: ["invariants", 0, "appliesTo", "contextIds", 0],
+    },
+    {
+      label: "a duplicate context id",
+      appliesTo: { contextIds: ["context-plan", "context-plan"] },
+      path: ["invariants", 0, "appliesTo", "contextIds", 1],
+    },
+    {
+      label: "an unknown scope property",
+      appliesTo: { contextIds: ["context-plan"], extra: true },
+      path: ["invariants", 0, "appliesTo"],
+    },
+  ])("rejects $label at its authored location", ({ appliesTo, path }) => {
+    const result = workflowCharterSchema.safeParse({
+      ...makeMaximalCharter(),
+      invariants: [{ ...makeInvariant(), appliesTo }],
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(
+      result.error.issues.some(
+        (issue) => JSON.stringify(issue.path) === JSON.stringify(path),
+      ),
+    ).toBe(true);
+  });
+
   it("accepts non-contiguous but unique ranks", () => {
     const result = workflowCharterSchema.safeParse({
       ...makeMaximalCharter(),

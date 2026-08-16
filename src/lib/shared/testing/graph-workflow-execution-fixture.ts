@@ -1,5 +1,24 @@
 import { makeTestCharter } from "./charter-fixture";
 
+function makeMaximalCharter(): ReturnType<typeof makeTestCharter> {
+  const charter = makeTestCharter();
+  const [firstInvariant, ...remainingInvariants] = charter.invariants ?? [];
+  if (firstInvariant === undefined) {
+    throw new Error("Maximal charter fixture requires an invariant");
+  }
+
+  return {
+    ...charter,
+    invariants: [
+      {
+        ...firstInvariant,
+        appliesTo: { contextIds: ["ctx-1"] },
+      },
+      ...remainingInvariants,
+    ],
+  };
+}
+
 /**
  * The one fully-populated resolved execution context the harness descends
  * into. Shared by the scheduled graph and by the loop body template below, so
@@ -160,7 +179,7 @@ function maximalResolvedContext(): Record<string, unknown> {
         commands: ["test"],
       },
     },
-    charter: makeTestCharter(),
+    charter: makeMaximalCharter(),
   };
 }
 
@@ -327,7 +346,7 @@ export function buildMaximalLaunchDocument(): Record<string, unknown> {
           commands: { mode: "only", commands: ["typecheck"] },
         },
       },
-      charter: makeTestCharter(),
+      charter: makeMaximalCharter(),
       parameters: [
         {
           type: "enum",
@@ -779,7 +798,7 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
               commands: ["test"],
             },
           },
-          charter: makeTestCharter(),
+          charter: makeMaximalCharter(),
         },
       ],
       tasks: [
@@ -876,7 +895,7 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
         },
       ],
     },
-    charter: makeTestCharter(),
+    charter: makeMaximalCharter(),
     status: "running",
     activeContextIds: ["ctx-1"],
     contextStates: {

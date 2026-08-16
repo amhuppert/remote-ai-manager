@@ -162,6 +162,7 @@ describe("graph workflow execution route handlers", () => {
     >();
   const startExecution = vi.fn();
   const runExecution = vi.fn();
+  const launchSpecDeliveryExecution = vi.fn();
   const pauseExecution = vi.fn();
   const resumeExecution = vi.fn();
   const abortExecution = vi.fn();
@@ -201,6 +202,7 @@ describe("graph workflow execution route handlers", () => {
     getSession,
     startExecution,
     runExecution,
+    launchSpecDeliveryExecution,
     pauseExecution,
     resumeExecution,
     abortExecution,
@@ -843,17 +845,17 @@ describe("graph workflow execution route handlers", () => {
           instruction: "Restore the declared task precedence.",
         };
       },
-      validateLiveEdit() {
-        return { ok: true };
+      loadLiveEdit() {
+        return {
+          validateOperation: () => ({ ok: true }),
+          accountabilityCoverageGroups: [],
+        };
       },
       validateTaskCompletion() {
         return { ok: true };
       },
       deriveContextAcceptanceCriteria() {
         return { ok: true, acceptanceCriteriaByContextId: {} };
-      },
-      deriveCriterionContextCoverage() {
-        return {};
       },
     });
 
@@ -3147,6 +3149,7 @@ describe("graph workflow resolve-approval route handler", () => {
       ),
       startExecution: unusedDep("startExecution"),
       runExecution: unusedDep("runExecution"),
+      launchSpecDeliveryExecution: unusedDep("launchSpecDeliveryExecution"),
       pauseExecution: unusedDep("pauseExecution"),
       resumeExecution: unusedDep("resumeExecution"),
       abortExecution: unusedDep("abortExecution"),
@@ -3437,6 +3440,7 @@ describe("graph workflow approval-snapshot route handler", () => {
       ),
       startExecution: unusedDep("startExecution"),
       runExecution: unusedDep("runExecution"),
+      launchSpecDeliveryExecution: unusedDep("launchSpecDeliveryExecution"),
       pauseExecution: unusedDep("pauseExecution"),
       resumeExecution: unusedDep("resumeExecution"),
       abortExecution: unusedDep("abortExecution"),
@@ -4038,6 +4042,7 @@ describe("launchGraphWorkflowExecution (production start+kickoff seam)", () => {
       normalizeExecutionAfterRestart: unused("normalizeExecutionAfterRestart"),
       startExecution: unused("startExecution"),
       runExecution: unused("runExecution"),
+      launchSpecDeliveryExecution: unused("launchSpecDeliveryExecution"),
       pauseExecution: unused("pauseExecution"),
       resumeExecution: unused("resumeExecution"),
       abortExecution: unused("abortExecution"),
@@ -4313,6 +4318,7 @@ describe("lifecycle contract: production slot auto-release", () => {
       ),
       startExecution: unusedDep("startExecution"),
       runExecution: unusedDep("runExecution"),
+      launchSpecDeliveryExecution: unusedDep("launchSpecDeliveryExecution"),
       pauseExecution: unusedDep("pauseExecution"),
       resumeExecution: unusedDep("resumeExecution"),
       abortExecution: (projectPath, sessionName) =>
@@ -4553,6 +4559,7 @@ describe("graph workflow execution by-id and result routes", () => {
       ),
       startExecution: unusedDep("startExecution"),
       runExecution: unusedDep("runExecution"),
+      launchSpecDeliveryExecution: unusedDep("launchSpecDeliveryExecution"),
       pauseExecution: unusedDep("pauseExecution"),
       resumeExecution: unusedDep("resumeExecution"),
       abortExecution: unusedDep("abortExecution"),
@@ -4749,6 +4756,7 @@ describe("graph workflow events route — paginated ledger mode (D4 R16.2)", () 
       ),
       startExecution: unusedDep("startExecution"),
       runExecution: unusedDep("runExecution"),
+      launchSpecDeliveryExecution: unusedDep("launchSpecDeliveryExecution"),
       pauseExecution: unusedDep("pauseExecution"),
       resumeExecution: unusedDep("resumeExecution"),
       abortExecution: unusedDep("abortExecution"),
@@ -4932,6 +4940,7 @@ describe("graph workflow RUN route — inline one-off launch", () => {
         "normalizeExecutionAfterRestart",
       ),
       startExecution: unusedDep("startExecution"),
+      launchSpecDeliveryExecution: unusedDep("launchSpecDeliveryExecution"),
       pauseExecution: unusedDep("pauseExecution"),
       resumeExecution: unusedDep("resumeExecution"),
       abortExecution: unusedDep("abortExecution"),
@@ -5728,6 +5737,7 @@ describe("graph workflow abandon route — the audited end of a resumable halt",
       ),
       startExecution: unusedDep("startExecution"),
       runExecution: unusedDep("runExecution"),
+      launchSpecDeliveryExecution: unusedDep("launchSpecDeliveryExecution"),
       pauseExecution: unusedDep("pauseExecution"),
       resumeExecution: unusedDep("resumeExecution"),
       abortExecution: unusedDep("abortExecution"),
@@ -6377,6 +6387,7 @@ describe("graph workflow definition rejection — the reviewed end of a parked l
       ),
       startExecution: unusedDep("startExecution"),
       runExecution: unusedDep("runExecution"),
+      launchSpecDeliveryExecution: unusedDep("launchSpecDeliveryExecution"),
       pauseExecution: unusedDep("pauseExecution"),
       resumeExecution: unusedDep("resumeExecution"),
       abortExecution: unusedDep("abortExecution"),
@@ -7175,6 +7186,11 @@ describe("graph workflow mutation principals", () => {
       abandonExecution,
       runExecution,
       startExecution,
+      launchSpecDeliveryExecution: async () => {
+        throw new Error(
+          "launchSpecDeliveryExecution should not run in a principal test",
+        );
+      },
       resumeExecution,
       resetExecutionContext,
       resetExecutionContextAssignment,
@@ -8092,6 +8108,7 @@ describe("graph workflow mutation turnover — end to end", () => {
       normalizeExecutionAfterRestart: unusedRouteDep,
       startExecution: unusedRouteDep,
       runExecution: unusedRouteDep,
+      launchSpecDeliveryExecution: unusedRouteDep,
       // The stale read that IS the race: the route authorizes the run the
       // caller launched, which settled a moment ago.
       getActiveExecution: async () => ({

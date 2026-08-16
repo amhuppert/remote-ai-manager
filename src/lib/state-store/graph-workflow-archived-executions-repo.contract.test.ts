@@ -44,7 +44,27 @@ import {
   validateJsonSchemaSubset,
   validateOutputSchemaDeclaration,
 } from "@/lib/workflows/primitives/output-schema-subset";
+
 type Db = InstanceType<typeof Database>;
+
+function makeMaximalCharter(): ReturnType<typeof makeTestCharter> {
+  const charter = makeTestCharter();
+  const [firstInvariant, ...remainingInvariants] = charter.invariants ?? [];
+  if (firstInvariant === undefined) {
+    throw new Error("Maximal charter fixture requires an invariant");
+  }
+
+  return {
+    ...charter,
+    invariants: [
+      {
+        ...firstInvariant,
+        appliesTo: { contextIds: ["ctx-1"] },
+      },
+      ...remainingInvariants,
+    ],
+  };
+}
 
 let db: Db;
 let repo: GraphWorkflowArchivedExecutionsRepo;
@@ -127,6 +147,14 @@ describe("graph-workflow-archived-executions-repo insert + read", () => {
     expect(
       repo.findByExecution(PROJECT_PATH, SESSION_NAME, "missing"),
     ).toBeNull();
+  });
+
+  it("findByExecutionId reads an archived execution without session coordinates", () => {
+    const execution = makeExecution({ id: "wf-global" });
+    repo.insert(makeRow({ executionId: execution.id, execution }));
+
+    expect(repo.findByExecutionId(execution.id)).toEqual(execution);
+    expect(repo.findByExecutionId("missing")).toBeNull();
   });
 
   it("findStatusByExecutionId reads the archived status without session context", () => {
@@ -575,7 +603,7 @@ function maximalResolvedContext(): Record<string, unknown> {
         commands: ["test"],
       },
     },
-    charter: makeTestCharter(),
+    charter: makeMaximalCharter(),
   };
 }
 
@@ -869,7 +897,7 @@ function buildMaximalExecution(): unknown {
               commands: ["test"],
             },
           },
-          charter: makeTestCharter(),
+          charter: makeMaximalCharter(),
         },
       ],
       tasks: [
@@ -960,7 +988,7 @@ function buildMaximalExecution(): unknown {
         },
       ],
     },
-    charter: makeTestCharter(),
+    charter: makeMaximalCharter(),
     status: "running",
     activeContextIds: ["ctx-1"],
     contextStates: {

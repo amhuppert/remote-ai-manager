@@ -1,13 +1,11 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fn, userEvent, within } from "storybook/test";
 
-import { specQueries, type SpecDetailView } from "@/lib/specs/queries";
+import type { SpecDetailView } from "@/lib/specs/queries";
 
 import {
   liveProposalsFixture,
   specControlsDetailFixture,
-  specPlanPreviewFixture,
 } from "./SpecControls.fixtures";
 import SpecReviewMode from "./SpecReviewMode";
 
@@ -326,40 +324,10 @@ function awaitingUnchangedDetailFixture(): SpecDetailView {
 
 const PROJECT_NAME = "command-center";
 
-/**
- * Review compiles a plan preview for the proposal it shows, and Storybook has
- * no server to compile it. Seeding the cache with the payload the route
- * returns is what keeps these stories showing the surface rather than a
- * preview failure — every story here reviews the same revision 2.
- */
-function storyQueryClient(): QueryClient {
-  const client = new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-        staleTime: Number.POSITIVE_INFINITY,
-        refetchOnWindowFocus: false,
-      },
-      mutations: { retry: false },
-    },
-  });
-  const revision = reviewDetailFixture().currentRevision?.revision;
-  if (revision !== undefined) {
-    client.setQueryData(
-      specQueries.planPreview(PROJECT_NAME, "native-sdd", revision.id).queryKey,
-      specPlanPreviewFixture(revision),
-    );
-  }
-  return client;
-}
-
-const previewSeededClient = storyQueryClient();
-
 const meta = {
   title: "Specs/Studio/ReviewMode",
   component: SpecReviewMode,
   parameters: { a11y: { test: "error" }, layout: "fullscreen" },
-  // The layout decorator stays first (innermost); the query provider wraps it.
   decorators: [
     (Story) => (
       <main className="h-screen overflow-y-auto bg-bg-void text-text-primary">
@@ -368,11 +336,6 @@ const meta = {
           <Story />
         </div>
       </main>
-    ),
-    (Story) => (
-      <QueryClientProvider client={previewSeededClient}>
-        <Story />
-      </QueryClientProvider>
     ),
   ],
   args: {
@@ -396,16 +359,6 @@ export const SemanticDeletion: Story = {
 
 export const FastPathCombined: Story = {
   args: { detail: fastPathReviewDetailFixture() },
-};
-
-/**
- * The compiled plan the reviewed revision would launch, on the same surface as
- * the change set that decides it.
- */
-export const CompiledPlanPreview: Story = {
-  play: async ({ canvasElement }) => {
-    within(canvasElement).getByTestId("plan-preview-panel").scrollIntoView();
-  },
 };
 
 export const RawDiff: Story = {

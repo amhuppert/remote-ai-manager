@@ -1,5 +1,19 @@
 import { NextResponse } from "next/server";
-import { WorkflowAssignmentReferenceError } from "@/lib/workflow-graph/assignment-references";
+import {
+  WORKFLOW_ASSIGNMENT_REFERENCE_INVALID_CODE,
+  WorkflowAssignmentReferenceError,
+} from "@/lib/workflow-graph/assignment-references";
+import type { WorkflowPlanIssue } from "@/lib/workflows/plan-validation";
+
+export function assignmentReferenceRefusalBody(
+  issues: readonly WorkflowPlanIssue[],
+) {
+  return {
+    error: "Workflow assignment references are invalid",
+    code: WORKFLOW_ASSIGNMENT_REFERENCE_INVALID_CODE,
+    issues,
+  };
+}
 
 /**
  * The one acceptance-time refusal for an unresolvable assignment reference.
@@ -17,14 +31,7 @@ import { WorkflowAssignmentReferenceError } from "@/lib/workflow-graph/assignmen
  */
 export function assignmentReferenceRefusal(error: unknown): Response | null {
   if (!(error instanceof WorkflowAssignmentReferenceError)) return null;
-  return NextResponse.json(
-    {
-      error: "Workflow assignment references are invalid",
-      // A machine code marks this a SEMANTIC refusal of a well-formed document,
-      // which is what separates it from a malformed-body 400 at the CLI.
-      code: error.code,
-      issues: error.issues,
-    },
-    { status: 400 },
-  );
+  return NextResponse.json(assignmentReferenceRefusalBody(error.issues), {
+    status: 400,
+  });
 }

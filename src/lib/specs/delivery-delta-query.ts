@@ -1,4 +1,5 @@
-import { isEarlierMergedDelivery } from "./delivery-gate";
+import { isEarlierMergedDelivery } from "./delivery-history";
+import type { LinkedSpecExecutionBindingV2 } from "./execution-binding";
 import {
   projectDeliveryDelta,
   type DeliveryDeltaProjection,
@@ -8,7 +9,7 @@ import type {
   Spec,
   SpecCriterionDispositionRow,
   SpecExecutionRow,
-  SpecProofVerdictRow,
+  SpecDeliveryVerdictRow,
   SpecRevisionSnapshot,
   SpecWaiverRow,
 } from "./schemas";
@@ -24,11 +25,13 @@ export interface DeliveryDeltaQueryDeps {
   findCriterionDispositionsByExecution(
     executionId: string,
   ): SpecCriterionDispositionRow[];
-  findProofVerdictsByCriterionRevision(
-    criterionElementId: string,
-    revisionId: string,
-  ): SpecProofVerdictRow[];
-  findWaiverById(waiverId: string): SpecWaiverRow | null;
+  findDeliveryVerdictsBySpecExecutionId(
+    executionId: string,
+  ): SpecDeliveryVerdictRow[];
+  findExecutionBindingBySpecExecutionId(
+    executionId: string,
+  ): LinkedSpecExecutionBindingV2 | null;
+  findWaiversByRevision(revisionId: string): SpecWaiverRow[];
 }
 
 export interface DeliveryDeltaQueryInput {
@@ -71,14 +74,6 @@ function lastDeliveredExecution(
         return created !== 0 ? created : right.id.localeCompare(left.id);
       })[0] ?? null
   );
-}
-
-function criterionElementIds(
-  snapshot: SpecRevisionSnapshot,
-): readonly string[] {
-  return snapshot.elements
-    .filter(({ version }) => version.payload.kind === "criterion")
-    .map(({ element }) => element.id);
 }
 
 /**
@@ -144,7 +139,8 @@ export async function loadDeliveryDelta(
         base: null,
         comparedExecution: null,
         dispositions: [],
-        proofVerdicts: [],
+        deliveryVerdicts: [],
+        executionBinding: null,
         waivers: [],
         priorDelivery: { isEarlierMergedDelivery: () => false },
       }),
@@ -161,14 +157,13 @@ export async function loadDeliveryDelta(
   }
 
   const dispositions = deps.findCriterionDispositionsByExecution(selected.id);
-  const proofVerdicts = criterionElementIds(base).flatMap((criterionId) =>
-    deps.findProofVerdictsByCriterionRevision(criterionId, base.revision.id),
+  const deliveryVerdicts = deps.findDeliveryVerdictsBySpecExecutionId(
+    selected.id,
   );
-  const waivers = dispositions.flatMap((disposition) => {
-    if (disposition.waiver_id === null) return [];
-    const waiver = deps.findWaiverById(disposition.waiver_id);
-    return waiver === null ? [] : [waiver];
-  });
+  const executionBinding = deps.findExecutionBindingBySpecExecutionId(
+    selected.id,
+  );
+  const waivers = deps.findWaiversByRevision(selected.revision_id);
 
   return {
     ok: true,
@@ -178,7 +173,8 @@ export async function loadDeliveryDelta(
       base,
       comparedExecution: selected,
       dispositions,
-      proofVerdicts,
+      deliveryVerdicts,
+      executionBinding,
       waivers,
       priorDelivery: earlierDeliveryProbe(deps, selected, executions),
     }),

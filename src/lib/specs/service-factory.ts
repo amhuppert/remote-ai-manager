@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { readConfig } from "@/lib/config/loader";
-import { defaultGitClient } from "@/lib/git/client";
 import { createJobsRepo } from "@/lib/jobs/repo";
 import { readRepoConfig } from "@/lib/projects/repo-config";
 import { createLogger } from "@/lib/logging";
@@ -11,7 +10,6 @@ import { createSpecApprovalNotifier } from "@/lib/notifications/spec-approvals";
 import { createProductionSpecReviewFeedbackNotifier } from "@/lib/notifications/spec-review-feedback";
 import { getProjectDisplayName } from "@/lib/projects/resolver";
 import { readConversationMessagesWithSeq } from "@/lib/prompt/transcript";
-import { getErrorMessage } from "@/lib/shared/errors";
 import { getSession } from "@/lib/state-store";
 import { createGraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
 import { createGraphWorkflowArchivedExecutionsRepo } from "@/lib/state-store/graph-workflow-archived-executions-repo";
@@ -19,6 +17,7 @@ import { createGraphWorkflowExecutionsRepo } from "@/lib/state-store/graph-workf
 import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecDeliveryPlanRepo } from "@/lib/state-store/spec-delivery-plan-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
+import { createSpecExecutionBindingRepo } from "@/lib/state-store/spec-execution-binding-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import { createSpecsRepo } from "@/lib/state-store/specs-repo";
@@ -29,43 +28,30 @@ import {
   getTicketService,
 } from "@/lib/tickets/service-factory";
 import type { TicketAttachment } from "@/lib/tickets/schemas";
-import {
-  approveGraphWorkflowDefinitionForSession,
-  launchGraphWorkflowExecution,
-  findSessionPendingWorkflowDefinitionApproval,
-} from "@/lib/workflow-graph/execution-route-handlers";
-import { workflowConfigOverrideSchema } from "@/lib/workflow-graph/definition-schemas";
-import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
-import { scopeForTier } from "@/lib/workflow-graph/template-library-service";
+import { admitAuthoredWorkflowLaunch } from "@/lib/workflow-graph/authored-launch-admission";
+import { launchSpecDeliveryGraphWorkflowExecution } from "@/lib/workflow-graph/execution-route-handlers";
+import { workingDefinitionHash } from "@/lib/workflow-graph/working-definition-hash";
+import { WorkflowStartInputError } from "@/lib/workflow-graph/spec-bridge";
 
 import { createAuthoringService } from "./authoring-service";
 import { createProductionSpecWorkflowCleanupPort } from "./workflow-cleanup-port";
-import { classifyEarlierMergedDelivery } from "./delivery-gate";
-import { loadDeliveryDelta } from "./delivery-delta-query";
-import { deliveryPlanMaterializationCriteria } from "./delivery-plan-materializer";
+import { loadDeliveryPlanSeedBasis } from "./delivery-plan-basis-query";
 import { createDeliveryPlanService } from "./delivery-plan-service";
-import { resolveLegacyDeliverySource } from "./legacy-plan-import";
-import { createEvidenceIngestService } from "./evidence-ingest";
 import {
   createEvidenceMutationRecorder,
   createEvidenceService,
-  type EvidenceService,
 } from "./evidence-service";
 import { createSpecEventsPublisher } from "./events";
 import { loadSpecExportState, verifyExportState } from "./export";
-import { createExecutionService } from "./execution-service";
-import { readSpecExecutionOriginMap } from "./execution-origin-map";
-import { evaluateEvidenceFreshness, type GitProbes } from "./freshness";
+import {
+  createExecutionService,
+  type ExecutionStartGatePort,
+} from "./execution-service";
 import { resolveCriterionBareHandle } from "./handles";
 import { createImportService } from "./import-service";
 import { createLinksService } from "./links-service";
-import { toLintSnapshot } from "./review-state";
 import { createReviewService } from "./review-service";
-import {
-  discoveredTaskSchema,
-  evidenceEvaluatedStateSchema,
-  type SpecExecutionRow,
-} from "./schemas";
+import type { SpecExecutionRow } from "./schemas";
 import type { SpecMutationServices } from "./route-handlers";
 
 const logger = createLogger("specs.service-factory");
@@ -82,6 +68,7 @@ export async function createProductionSpecRouteServices(
   const specs = createSpecsRepo(db, writeQueue);
   const reviewRepo = createSpecReviewRepo(db);
   const deliveryRepo = createSpecDeliveryRepo(db);
+  const bindingRepo = createSpecExecutionBindingRepo(db);
   const linksRepo = createSpecLinksRepo(db);
   const eventsRepo = createSpecEventsRepo(db);
   const deliveryPlanRepo = createSpecDeliveryPlanRepo(db, {
@@ -92,7 +79,6 @@ export async function createProductionSpecRouteServices(
   const archivedWorkflowExecutions =
     createGraphWorkflowArchivedExecutionsRepo(db);
   const jobsRepo = createJobsRepo(db);
-  const workflowStorage = createWorkflowStorageService();
   const events = createSpecEventsPublisher({
     appendInTransaction: eventsRepo.appendInTransaction,
   });
@@ -145,57 +131,6 @@ export async function createProductionSpecRouteServices(
     );
   };
 
-  const gitProbesForProject = (path: string) => createGitProbes(path);
-  const evidenceRef: { current?: EvidenceService } = {};
-  const ingest = createEvidenceIngestService({
-    repo: deliveryRepo,
-    workflowEvents,
-    evidenceService: {
-      attachEvidence(input) {
-        if (evidenceRef.current === undefined) {
-          throw new Error("Spec evidence service is not initialized");
-        }
-        return evidenceRef.current.attachEvidence(input);
-      },
-      recordProofVerdict(input) {
-        if (evidenceRef.current === undefined) {
-          throw new Error("Spec evidence service is not initialized");
-        }
-        return evidenceRef.current.recordProofVerdict(input);
-      },
-    },
-    writeQueue,
-    async resolveProjectPath(execution) {
-      return (await specs.findById(execution.spec_id))?.projectPath ?? null;
-    },
-    async validatedTreeHash(execution, commitSha, relevantPaths) {
-      const spec = await specs.findById(execution.spec_id);
-      if (spec === null) {
-        throw new Error(`Spec ${execution.spec_id} was not found`);
-      }
-      return gitProbesForProject(spec.projectPath).relevantTreeHash(
-        commitSha,
-        relevantPaths,
-      );
-    },
-    async loadOriginMap(workflowDefinitionId, execution) {
-      const spec = await specs.findById(execution.spec_id);
-      if (spec === null) return [];
-      const record = await workflowStorage.get(
-        scopeForTier("project", spec.projectPath),
-        workflowDefinitionId,
-      );
-      return record === null
-        ? []
-        : readSpecExecutionOriginMap(record.definition, (revisionId) =>
-            specs.getRevisionSnapshot(revisionId),
-          );
-    },
-    getWorkflowExecutionStatus,
-  });
-  const ingestExecutionEvidence = (executionId: string) =>
-    ingest.ingestAuthoritatively(executionId);
-
   const evidencePublication = createEvidenceMutationRecorder({
     eventsRepo,
     events,
@@ -206,7 +141,6 @@ export async function createProductionSpecRouteServices(
   });
   const evidence = createEvidenceService({
     repo: deliveryRepo,
-    ingestExecutionEvidence,
     recordMutation: evidencePublication.recordMutation,
     runInImmediateTransaction: evidencePublication.runInImmediateTransaction,
     waiverNotifier: notifier,
@@ -221,103 +155,6 @@ export async function createProductionSpecRouteServices(
     },
     nextId: () => randomUUID(),
     now: () => new Date().toISOString(),
-    async getApprovedCriterion(revisionId, criterionElementId) {
-      const snapshot = await specs.getRevisionSnapshot(revisionId);
-      if (snapshot?.revision.state !== "approved") return null;
-      const criterion = snapshot.elements.find(
-        ({ element, version }) =>
-          element.id === criterionElementId &&
-          version.payload.kind === "criterion",
-      );
-      return criterion?.version.payload.kind === "criterion"
-        ? {
-            specId: snapshot.revision.specId,
-            validationStrategy: criterion.version.payload.validationStrategy,
-          }
-        : null;
-    },
-    async gitObjectExists(ref, expectedExecution) {
-      const execution = deliveryRepo.findExecutionById(
-        expectedExecution.specExecutionId,
-      );
-      const spec =
-        execution === null ? null : await specs.findById(execution.spec_id);
-      if (spec === null) return false;
-      try {
-        await defaultGitClient.git(
-          ["cat-file", "-e", `${ref.objectId}^{object}`],
-          spec.projectPath,
-        );
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    async workflowEventExists(ref, expectedExecution) {
-      const execution = deliveryRepo.findExecutionById(
-        expectedExecution.specExecutionId,
-      );
-      if (
-        execution === null ||
-        execution.session_name === null ||
-        expectedExecution.workflowExecutionId === null
-      ) {
-        return false;
-      }
-      const record = workflowEvents.findRecordById(
-        projectPath,
-        execution.session_name,
-        expectedExecution.workflowExecutionId,
-        ref.eventId,
-      );
-      return (
-        record !== null &&
-        record.executionId === expectedExecution.workflowExecutionId &&
-        "contextId" in record.event &&
-        record.event.contextId === ref.contextId
-      );
-    },
-    async mergeValidationFactExists(ref, expectedExecution) {
-      const job = jobsRepo.getJobRecord(ref.mergeJobId);
-      return (
-        job?.executionId === expectedExecution.workflowExecutionId &&
-        job.candidateValidation?.validationRef === ref.validationRef
-      );
-    },
-    async isEvidenceFresh(evidenceRow) {
-      let rawState: unknown;
-      try {
-        rawState = JSON.parse(evidenceRow.evaluated_state_json);
-      } catch {
-        return false;
-      }
-      const state = evidenceEvaluatedStateSchema.safeParse(rawState);
-      if (!state.success || state.data.commitSha === undefined) return false;
-      const execution =
-        evidenceRow.execution_id === null
-          ? null
-          : deliveryRepo.findExecutionById(evidenceRow.execution_id);
-      const spec = await specs.findById(evidenceRow.spec_id);
-      if (execution === null || spec === null) return false;
-      const freshness = await evaluateEvidenceFreshness(
-        {
-          id: evidenceRow.id,
-          kind: evidenceRow.kind,
-          evaluatedState: state.data,
-          producingExecutionState: execution.state,
-        },
-        { commitSha: state.data.commitSha },
-        gitProbesForProject(spec.projectPath),
-      );
-      return freshness.status === "valid";
-    },
-    async routeStrategyInadequacy(input) {
-      logger.warn("specs.strategy_inadequacy.attention_requested", {
-        specId: input.specId,
-        revisionId: input.revisionId,
-        criterionElementId: input.criterionElementId,
-      });
-    },
     async routeWaiverRequestToHuman(input) {
       const attentionId = randomUUID();
       // The durable Needs You registry for the routed request is the spec
@@ -350,33 +187,6 @@ export async function createProductionSpecRouteServices(
       });
       return { attentionId };
     },
-    async getTaskClaimContext(executionId, taskElementId) {
-      const execution = deliveryRepo.findExecutionById(executionId);
-      if (execution === null) return null;
-      const [spec, snapshot] = await Promise.all([
-        specs.findById(execution.spec_id),
-        specs.getRevisionSnapshot(execution.revision_id),
-      ]);
-      const task = snapshot?.elements.find(
-        ({ element, version }) =>
-          element.id === taskElementId && version.payload.kind === "task",
-      );
-      if (
-        spec === null ||
-        snapshot === null ||
-        task?.version.payload.kind !== "task"
-      ) {
-        return null;
-      }
-      return {
-        specId: spec.id,
-        revisionId: execution.revision_id,
-        policy: spec.gatePolicy,
-        draft: toLintSnapshot(spec, snapshot),
-        coveredCriterionElementIds:
-          task.version.payload.coveredCriterionElementIds,
-      };
-    },
     async getCriterionVersion(revisionId, criterionElementId) {
       const snapshot = await specs.getRevisionSnapshot(revisionId);
       const criterion = snapshot?.elements.find(
@@ -407,43 +217,64 @@ export async function createProductionSpecRouteServices(
       );
     },
   });
-  evidenceRef.current = evidence;
+
+  const executionStartGate: ExecutionStartGatePort = {
+    async launchApprovedLaunch(input) {
+      try {
+        const launched = await launchSpecDeliveryGraphWorkflowExecution({
+          projectPath,
+          projectName: input.projectName,
+          sessionName: input.sessionName,
+          plan: input.plan,
+          specSlug: input.specSlug,
+          candidateId: input.candidateId,
+          ownerConversationId: input.ownerConversationId,
+          ...(input.parameters === undefined
+            ? {}
+            : { inputs: input.parameters }),
+          seededDocuments: input.seededDocuments,
+          transactionAttachment: input.transactionAttachment,
+        });
+        return {
+          ok: true as const,
+          workflowExecutionId: launched.id,
+          // The audit hash of the resolved runtime configuration at start
+          // (amended design D3): computed from the launched working
+          // definition, which is the effective-config snapshot the run runs.
+          resolvedDefinitionHash: workingDefinitionHash(
+            launched.workingDefinition,
+          ),
+        };
+      } catch (error) {
+        const code =
+          error instanceof WorkflowStartInputError ? "validation" : undefined;
+        logger.warn("specs.execution.spec-delivery-start-refused", {
+          projectPath,
+          sessionName: input.sessionName,
+          candidateId: input.candidateId,
+          ...(code === undefined ? {} : { code }),
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return {
+          ok: false as const,
+          reason: error instanceof Error ? error.message : String(error),
+          ...(code === undefined ? {} : { code }),
+        };
+      }
+    },
+  };
 
   const execution = createExecutionService({
     specsRepo: specs,
     deliveryRepo,
+    bindingRepo,
     linksRepo,
     eventsRepo,
     reviewRepo,
     events,
-    workflowDefinitions: {
-      async findByOrigin(sourceUri) {
-        const scope = scopeForTier("project", projectPath);
-        const summaries = await workflowStorage.list(scope);
-        for (const summary of summaries) {
-          const record = await workflowStorage.get(scope, summary.id);
-          if (record?.definition.origin?.sourceUri === sourceUri) return record;
-        }
-        return null;
-      },
-      create(draft) {
-        return workflowStorage.create(
-          scopeForTier("project", projectPath),
-          draft,
-        );
-      },
-      update(workflowId, draft) {
-        return workflowStorage.update(
-          scopeForTier("project", projectPath),
-          workflowId,
-          draft,
-        );
-      },
-    },
     writeQueue,
     nextId: () => randomUUID(),
     now: () => new Date().toISOString(),
-    ingestExecutionEvidence,
     async sessionExists(sessionName) {
       return (await getSession(projectPath, sessionName)) !== null;
     },
@@ -456,6 +287,7 @@ export async function createProductionSpecRouteServices(
     runInImmediateTransaction<T>(operation: () => T): T {
       return db.transaction(operation).immediate();
     },
+    executionStartGate: executionStartGate,
     policyNotifier: notifier,
     attentionNotifier: notifier,
     // The forward spec→workflow seams the abandon coordinator drives. Both
@@ -467,10 +299,12 @@ export async function createProductionSpecRouteServices(
     deliveryPlanLaunch: {
       resolveLaunch: (launchInput) => deliveryPlan.resolveLaunch(launchInput),
       park: (parkInput) => deliveryPlan.park(parkInput),
-      recordLaunch: (launchInput) => deliveryPlan.recordLaunch(launchInput),
     },
     plansRepo: deliveryPlanRepo,
     deliveryPlanCapture: {
+      abandonLaunchedAttempt(input) {
+        return deliveryPlan.abandonLaunch(input);
+      },
       async openSeededReplacement(replacementInput) {
         const opened = await deliveryPlan.open({
           spec: replacementInput.spec,
@@ -482,80 +316,13 @@ export async function createProductionSpecRouteServices(
           : opened;
       },
     },
-    executionStartGate: {
-      async launchApprovedDefinition(input) {
-        try {
-          const launched = await launchGraphWorkflowExecution({
-            projectPath,
-            projectName: input.projectName,
-            sessionName: input.sessionName,
-            definitionId: input.definitionId,
-            expectedDefinitionRevision: input.definitionRevision,
-            ownerConversationId: input.ownerConversationId,
-            seededDocuments: input.seededDocuments,
-          });
-          return { ok: true, workflowExecutionId: launched.id };
-        } catch (error) {
-          return { ok: false, reason: getErrorMessage(error) };
-        }
-      },
-      findPendingDefinitionApproval(input) {
-        return findSessionPendingWorkflowDefinitionApproval({
-          projectPath,
-          sessionName: input.sessionName,
-        });
-      },
-      async ensurePendingDefinitionApproval(input) {
-        let launchError: unknown = null;
-        try {
-          await launchGraphWorkflowExecution({
-            projectPath,
-            projectName: input.projectName,
-            sessionName: input.sessionName,
-            definitionId: input.definitionId,
-            expectedDefinitionRevision: input.definitionRevision,
-            ownerConversationId: input.ownerConversationId,
-            seededDocuments: input.seededDocuments,
-          });
-        } catch (error) {
-          launchError = error;
-        }
-        const park = await findSessionPendingWorkflowDefinitionApproval({
-          projectPath,
-          sessionName: input.sessionName,
-        });
-        if (park !== null) {
-          return { ok: true, park };
-        }
-
-        const reason =
-          launchError === null
-            ? "The compiled workflow did not park for definition approval."
-            : getErrorMessage(launchError);
-        logger.warn("specs.execution.workflow-start-not-pending", {
-          projectPath,
-          projectName: input.projectName,
-          sessionName: input.sessionName,
-          definitionId: input.definitionId,
-          reason,
-        });
-        return { ok: false, reason };
-      },
-      approveWorkflowDefinition(input) {
-        return approveGraphWorkflowDefinitionForSession({
-          projectPath,
-          projectName: input.projectName,
-          sessionName: input.sessionName,
-          workflowExecutionId: input.workflowExecutionId,
-        });
-      },
-    },
   });
 
   const links = createLinksService({
     specs,
     links: linksRepo,
     delivery: deliveryRepo,
+    executionBindings: bindingRepo,
     authoring,
     events,
     workflowEvents,
@@ -614,106 +381,41 @@ export async function createProductionSpecRouteServices(
     revisionSnapshot(revisionId) {
       return specs.getRevisionSnapshot(revisionId);
     },
-    deliveryDelta({ spec, pinned, sinceExecutionId }) {
-      return loadDeliveryDelta(
+    launchedExecutionState(executionId) {
+      return deliveryRepo.findExecutionById(executionId)?.state ?? null;
+    },
+    lastDeliveryBasis({ spec, pinnedRevision }) {
+      return loadDeliveryPlanSeedBasis(
         {
           getRevisionSnapshot: (revisionId) =>
             specs.getRevisionSnapshot(revisionId),
-          findExecutionsBySpecId:
-            deliveryRepo.findExecutionsBySpecId.bind(deliveryRepo),
-          findCriterionDispositionsByExecution:
-            deliveryRepo.findCriterionDispositionsByExecution.bind(
-              deliveryRepo,
-            ),
-          findProofVerdictsByCriterionRevision:
-            deliveryRepo.findProofVerdictsByCriterionRevision.bind(
-              deliveryRepo,
-            ),
-          findWaiverById: deliveryRepo.findWaiverById.bind(deliveryRepo),
+          findExecutionsBySpecId: (id) =>
+            deliveryRepo.findExecutionsBySpecId(id),
+          findCriterionDispositionsByExecution: (executionId) =>
+            deliveryRepo.findCriterionDispositionsByExecution(executionId),
+          findDeliveryVerdictsBySpecExecutionId: (executionId) =>
+            deliveryRepo.findDeliveryVerdictsBySpecExecutionId(executionId),
+          findExecutionBindingBySpecExecutionId: (executionId) =>
+            bindingRepo.findBySpecExecutionId(executionId),
+          findWaiversByRevision: (revisionId) =>
+            deliveryRepo.findWaiversByRevision(revisionId),
         },
-        {
-          spec,
-          currentApprovedSnapshot: pinned,
-          // Stated rather than defaulted: an existing attempt is graded
-          // against the delivery it froze, so a merge that lands afterwards
-          // never re-grades criteria the plan already judged.
-          ...(sinceExecutionId === null ? {} : { sinceExecutionId }),
-        },
+        { spec, pinnedRevision },
       );
     },
-    latestLegacyDeliverySource(specId) {
-      return resolveLegacyDeliverySource(
-        deliveryRepo.findExecutionsBySpecId(specId),
-        (revisionId) => specs.getRevisionSnapshot(revisionId),
-      );
-    },
-    async capturedDiscoveries({ specId }) {
-      // A discovery is its own durable row (design §11), so the next plan
-      // reads the record rather than reconstructing it from the event log.
-      return deliveryPlanRepo.findDiscoveriesBySpecId(specId).map((row) => {
-        const task = discoveredTaskSchema.parse(
-          JSON.parse(row.discovered_task_json),
-        );
-        return {
-          discoveryId: row.id,
-          title: task.title,
-          instructions: task.instructions,
-          coveredCriterionElementIds: task.coveredCriterionElementIds,
-        };
-      });
-    },
-    classifyDeliveredElsewhere({
-      claim,
-      criterionElementId,
-      deliveredByExecutionId,
-    }) {
-      return classifyEarlierMergedDelivery(
-        {
-          findExecutionById: deliveryRepo.findExecutionById.bind(deliveryRepo),
-          findCriterionDisposition:
-            deliveryRepo.findCriterionDisposition.bind(deliveryRepo),
-        },
-        // The attempt stands in for the execution it will become: "earlier" is
-        // measured against when the plan was opened, so an execution created
-        // after it cannot back one of its claims.
-        {
-          id: claim.id,
-          spec_id: claim.specId,
-          created_at: claim.createdAt,
-        },
-        {
-          criterion_element_id: criterionElementId,
-          delivered_by_execution_id: deliveredByExecutionId,
-        },
-      );
-    },
-    async compilationContext({ spec, pinnedRevisionId }) {
-      const snapshot = await specs.getRevisionSnapshot(pinnedRevisionId);
-      if (snapshot === null) return null;
+    async admitLaunch({ spec, launch, accountabilityGroups }) {
       const [repoConfig, globalConfig] = await Promise.all([
         readRepoConfig(spec.projectPath),
         readConfig(),
       ]);
-      return {
-        criteria: deliveryPlanMaterializationCriteria(snapshot),
-        registeredValidationCommandNames: Object.keys(
-          repoConfig?.validation?.commands ?? {},
-        ),
-        defaults: {
-          // Never. The plan sign-off IS the execution-start admission (design
-          // §5), so a candidate that also parked for workflow definition
-          // approval would be the hidden second human act between propose and
-          // launch that the single-act flow exists to remove. The
-          // `execution_start` dial still decides who may sign the plan off and
-          // on what basis — it just no longer reaches the compiled bytes.
-          approvalRequired: false,
-          // Resolved once and pinned. A later edit to the global workflow
-          // defaults cannot reach a candidate that was already materialized.
-          workflowConfig: workflowConfigOverrideSchema.parse(
-            globalConfig.workflowDefaults ?? {},
-          ),
-        },
-      };
+      return admitAuthoredWorkflowLaunch(launch, {
+        caller: "spec-proposal",
+        documentScope: { kind: "project", projectPath: spec.projectPath },
+        projectValidation: repoConfig?.validation ?? null,
+        globalValidation: globalConfig.validation,
+        workflowDefaults: globalConfig.workflowDefaults,
+        accountabilityGroups,
+      });
     },
     nextId: () => randomUUID(),
     now: () => new Date().toISOString(),
@@ -734,9 +436,6 @@ export async function createProductionSpecRouteServices(
     links,
     deliveryPlan,
     import: specImport,
-    ingestEvidenceBestEffort(executionId) {
-      return ingest.ingestBestEffort(executionId);
-    },
     async verify(specId) {
       return verifyExportState(
         await loadSpecExportState(
@@ -815,34 +514,4 @@ async function ticketAttachmentContent(
     case "related_ticket":
       return JSON.stringify(attachment.payload);
   }
-}
-
-function createGitProbes(projectPath: string): GitProbes {
-  return {
-    async isAncestor(ancestorSha, descendantSha) {
-      try {
-        await defaultGitClient.git(
-          ["merge-base", "--is-ancestor", ancestorSha, descendantSha],
-          projectPath,
-        );
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    async relevantTreeHash(commitSha, relevantPaths) {
-      if (relevantPaths.length === 0) {
-        const { stdout } = await defaultGitClient.git(
-          ["rev-parse", `${commitSha}^{tree}`],
-          projectPath,
-        );
-        return stdout.trim();
-      }
-      const { stdout } = await defaultGitClient.git(
-        ["ls-tree", "-r", "--full-tree", commitSha, "--", ...relevantPaths],
-        projectPath,
-      );
-      return createHash("sha256").update(stdout).digest("hex");
-    },
-  };
 }

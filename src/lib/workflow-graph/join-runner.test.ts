@@ -1080,7 +1080,10 @@ describe("join-runner", () => {
       "run",
       "run",
     ]);
-    expect(observed.map((call) => call.finalPublish)).toEqual([false, false]);
+    expect(observed.map((call) => call.finalPublish)).toEqual([
+      undefined,
+      undefined,
+    ]);
   });
 
   it("validates every source when the strategy is every-merge", async () => {
@@ -1160,7 +1163,7 @@ describe("join-runner", () => {
     ).toEqual([["lane-b"], ["lane-c"], ["lane-d"]]);
   });
 
-  it("gates every final-publish source without marking delivery at the session boundary", async () => {
+  it("keeps final-publish integration separate from project delivery gating", async () => {
     const execution = setupExecutionWithJoin(
       makeJoin({
         joinId: "join-final",
@@ -1220,8 +1223,8 @@ describe("join-runner", () => {
         finalPublish,
       })),
     ).toEqual([
-      { executionId: execution.id, finalPublish: false },
-      { executionId: execution.id, finalPublish: false },
+      { executionId: undefined, finalPublish: undefined },
+      { executionId: undefined, finalPublish: undefined },
     ]);
   });
 

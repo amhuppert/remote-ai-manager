@@ -132,11 +132,11 @@ export function specElementReaderDetailFixture(): SpecDetailView {
       tasks: [
         {
           elementId: "task-1",
-          status: { status: "completed", claimEvidenceIds: [] },
+          status: { status: "completed" },
         },
         {
           elementId: "task-2",
-          status: { status: "running", claimEvidenceIds: [] },
+          status: { status: "running" },
         },
       ],
     },

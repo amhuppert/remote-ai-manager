@@ -7,10 +7,10 @@ import {
 import type {
   SpecCriterionDisposition,
   SpecCriterionDispositionRow,
+  SpecDeliveryVerdictRow,
   SpecElementKind,
   SpecElementPayload,
   SpecExecutionRow,
-  SpecProofVerdictRow,
   SpecRevisionSnapshot,
   SpecWaiverRow,
 } from "./schemas";
@@ -218,20 +218,18 @@ function disposition(
 
 function verdict(
   criterionElementId: string,
-  revisionId: string,
-  overrides: Partial<SpecProofVerdictRow> = {},
-): SpecProofVerdictRow {
+  _revisionId: string,
+  overrides: Partial<SpecDeliveryVerdictRow> = {},
+): SpecDeliveryVerdictRow {
   return {
-    id: `verdict-${criterionElementId}`,
-    spec_id: SPEC_ID,
+    id: `delivery-verdict-${criterionElementId}`,
+    spec_execution_id: "exec-1",
+    workflow_execution_id: "wfx-1",
+    candidate_id: "candidate-1",
+    candidate_hash: `sha256:${"a".repeat(64)}`,
     criterion_element_id: criterionElementId,
-    revision_id: revisionId,
-    execution_id: "exec-1",
-    verdict_kind: "deterministic_validator",
-    evidence_ids_json: "[]",
+    satisfying_context_id: `context-${criterionElementId}`,
     verdict_at: TS,
-    stale_at: null,
-    stale_reason: null,
     ...overrides,
   };
 }
@@ -260,7 +258,20 @@ function input(overrides: Partial<DeliveryDeltaInput>): DeliveryDeltaInput {
     base: snapshotOf("rev-1", 1, []),
     comparedExecution: deliveredExecution("rev-1"),
     dispositions: [],
-    proofVerdicts: [],
+    deliveryVerdicts: [],
+    executionBinding: {
+      specExecutionId: "exec-1",
+      workflowExecutionId: "wfx-1",
+      binding: {
+        schemaVersion: 2,
+        candidateId: "candidate-1",
+        candidateHash: `sha256:${"a".repeat(64)}`,
+        pinnedRevisionId: "rev-1",
+        dispositions: [],
+        claims: [],
+      },
+      createdAt: TS,
+    },
     waivers: [],
     priorDelivery: { isEarlierMergedDelivery: () => false },
     ...overrides,
@@ -407,7 +418,7 @@ describe("projectDeliveryDelta criterion delivery classes", () => {
       base: snapshotOf("rev-1", 1, rows),
       current: snapshotOf("rev-2", 2, rows),
       dispositions: [disposition("crit-1", "in_scope")],
-      proofVerdicts: [verdict("crit-1", "rev-1")],
+      deliveryVerdicts: [verdict("crit-1", "rev-1")],
     });
 
     expect(criterionClassOf(projection, "crit-1")).toBe("delivered_and_fresh");
@@ -427,7 +438,7 @@ describe("projectDeliveryDelta criterion delivery classes", () => {
         criterionRow("crit-1", 1, "req-1", "Prove it twice", "crit-1-h2"),
       ]),
       dispositions: [disposition("crit-1", "in_scope")],
-      proofVerdicts: [verdict("crit-1", "rev-1")],
+      deliveryVerdicts: [verdict("crit-1", "rev-1")],
     });
 
     expect(criterionClassOf(projection, "crit-1")).toBe("hard_stale");
@@ -439,10 +450,26 @@ describe("projectDeliveryDelta criterion delivery classes", () => {
       base: snapshotOf("rev-1", 1, rows),
       current: snapshotOf("rev-2", 2, rows),
       dispositions: [disposition("crit-1", "in_scope")],
-      proofVerdicts: [],
+      deliveryVerdicts: [],
     });
 
     expect(criterionClassOf(projection, "crit-1")).toBe("never_delivered");
+  });
+
+  it("classifies a current Studio waiver accepted during an in-scope execution as waived", () => {
+    const rows = [
+      requirement,
+      criterionRow("crit-1", 1, "req-1", "Accepted risk"),
+    ];
+    const projection = criterionCase({
+      base: snapshotOf("rev-1", 1, rows),
+      current: snapshotOf("rev-2", 2, rows),
+      dispositions: [disposition("crit-1", "in_scope")],
+      deliveryVerdicts: [],
+      waivers: [waiver("crit-1", "rev-1")],
+    });
+
+    expect(criterionClassOf(projection, "crit-1")).toBe("waived");
   });
 
   it("classifies a criterion added after the compared revision as never-delivered", () => {
@@ -552,7 +579,7 @@ describe("projectDeliveryDelta criterion delivery classes", () => {
     expect(criterionClassOf(projection, "crit-2")).toBe("never_delivered");
   });
 
-  it("ignores a stale proof verdict and a verdict pinned to another revision", () => {
+  it("ignores verdicts from another spec execution or graph execution", () => {
     const rows = [
       requirement,
       criterionRow("crit-1", 1, "req-1", "Stale verdict"),
@@ -565,17 +592,51 @@ describe("projectDeliveryDelta criterion delivery classes", () => {
         disposition("crit-1", "in_scope"),
         disposition("crit-2", "in_scope"),
       ],
-      proofVerdicts: [
+      deliveryVerdicts: [
         verdict("crit-1", "rev-1", {
-          stale_at: TS,
-          stale_reason: "criterion changed",
+          spec_execution_id: "exec-prior",
         }),
-        verdict("crit-2", "rev-2"),
+        verdict("crit-2", "rev-2", {
+          workflow_execution_id: "wfx-prior",
+        }),
       ],
     });
 
     expect(criterionClassOf(projection, "crit-1")).toBe("never_delivered");
     expect(criterionClassOf(projection, "crit-2")).toBe("never_delivered");
+  });
+
+  it("ignores a verdict whose candidate identity differs from the frozen binding", () => {
+    const rows = [
+      requirement,
+      criterionRow("crit-1", 1, "req-1", "Bound candidate only"),
+    ];
+    const projection = criterionCase({
+      base: snapshotOf("rev-1", 1, rows),
+      current: snapshotOf("rev-2", 2, rows),
+      dispositions: [disposition("crit-1", "in_scope")],
+      deliveryVerdicts: [
+        verdict("crit-1", "rev-1", {
+          candidate_id: "candidate-other",
+          candidate_hash: `sha256:${"b".repeat(64)}`,
+        }),
+      ],
+      executionBinding: {
+        specExecutionId: "exec-1",
+        workflowExecutionId: "wfx-1",
+        binding: {
+          schemaVersion: 2,
+          candidateId: "candidate-1",
+          candidateHash: `sha256:${"a".repeat(64)}`,
+          pinnedRevisionId: "rev-1",
+          dispositions: [],
+          claims: [],
+        },
+        createdAt: TS,
+      },
+    } as Partial<DeliveryDeltaInput>);
+
+    expect(criterionClassOf(projection, "crit-1")).toBe("never_delivered");
   });
 
   it("reports every current criterion as never-delivered when no execution has delivered", () => {
@@ -618,7 +679,7 @@ describe("projectDeliveryDelta criterion delivery classes", () => {
         disposition("crit-1", "in_scope"),
         disposition("crit-2", "deferred"),
       ],
-      proofVerdicts: [verdict("crit-1", "rev-1")],
+      deliveryVerdicts: [verdict("crit-1", "rev-1")],
     });
 
     expect(projection.counts.criteria).toMatchObject({
@@ -720,7 +781,7 @@ describe("one delivered execution with subsequent amendments", () => {
           waiver_id: "waiver-crit-waived",
         }),
       ],
-      proofVerdicts: [
+      deliveryVerdicts: [
         verdict("crit-fresh", "rev-1"),
         verdict("crit-hard", "rev-1"),
         verdict("crit-soft", "rev-1"),
@@ -800,7 +861,7 @@ describe("criterion freshness grades", () => {
         base: snapshotOf("rev-1", 1, baseRows),
         current: snapshotOf("rev-2", 2, currentRows),
         dispositions: [disposition("crit-1", "in_scope")],
-        proofVerdicts: [verdict("crit-1", "rev-1")],
+        deliveryVerdicts: [verdict("crit-1", "rev-1")],
       }),
     );
     const criterion = projection.criteria.find(
@@ -971,7 +1032,7 @@ describe("delivered_elsewhere staleness advisory", () => {
         base: snapshotOf("rev-1", 1, [req, crit]),
         current: snapshotOf("rev-2", 2, currentRows),
         dispositions,
-        proofVerdicts: [verdict("crit-1", "rev-1")],
+        deliveryVerdicts: [verdict("crit-1", "rev-1")],
         priorDelivery: { isEarlierMergedDelivery: () => true },
       }),
     );

@@ -9,6 +9,7 @@ import type {
   GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
 } from "@/lib/workflow-graph/schemas";
+import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import {
   createGraphWorkflowExecutionEventPublisher,
   type GraphWorkflowEventDelivery,
@@ -644,6 +645,77 @@ describe("graph workflow iteration orchestrator", () => {
     });
   });
 
+  it("filters scoped charter invariants from the dispatched implementer prompt", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    const charter: WorkflowCharter = {
+      mission: "Apply invariants only to their declared graph contexts.",
+      invariants: [
+        { id: "global", statement: "Global-implementer-sentinel" },
+        {
+          id: "verify-only",
+          statement: "Out-of-scope-implementer-sentinel",
+          appliesTo: { contextIds: ["context-verify"] },
+        },
+      ],
+      sourcesOfTruth: [],
+    };
+    execution.charter = charter;
+    for (const context of execution.workingDefinition.executionContexts) {
+      context.charter = charter;
+    }
+
+    const repository = createRepository(execution);
+    const prompts: string[] = [];
+    const runAgentIteration = vi.fn(
+      async (input: GraphWorkflowRunAgentIterationInput) => {
+        prompts.push(input.prompt);
+        const next = structuredClone(repository.read());
+        for (const taskId of ["task-plan-1", "task-plan-2"]) {
+          next.taskStates[taskId] = {
+            ...next.taskStates[taskId]!,
+            status: "completed",
+            summary: "Done",
+            completedAt: "2026-03-27T16:02:00.000Z",
+          };
+        }
+        next.contextStates["context-plan"] = {
+          ...next.contextStates["context-plan"]!,
+          completedTaskCount: 2,
+        };
+        await repository.mutateActive("/repo", "session-1", () => next);
+        return {
+          conversationId: "conversation-1",
+          contextTokens: null,
+          contextWindowMax: null,
+          compacted: false,
+        };
+      },
+    );
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: async () => ({ id: "conversation-1" }),
+      createToolServer: () => ({ server: { id: "tool-server" } }),
+      runAgentIteration,
+      now: () => "2026-03-27T16:00:00.000Z",
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("Global-implementer-sentinel");
+    expect(prompts[0]).not.toContain("Out-of-scope-implementer-sentinel");
+  });
+
   it("materializes workflow documents into a worktree-isolation lane before the agent runs", async () => {
     const repository = createRepository(
       createExecutionWithPlanTasks({
@@ -892,6 +964,67 @@ describe("graph workflow iteration orchestrator", () => {
     expect(result.execution.contextStates["context-plan"]?.status).toBe(
       "completed",
     );
+  });
+
+  it("withholds the terminal transition when recovery already returned the context to ready", async () => {
+    // A retryable iteration error sends the context back to `ready` for a fresh
+    // iteration while leaving `execution.status` on "running" — so the
+    // mid-flight halt guard cannot fire. This iteration no longer owns the
+    // context, and writing `completed` over the recovery is the illegal
+    // `ready` -> `completed` transition that halts the whole execution.
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "completed",
+        "task-plan-2": "pending",
+      }),
+    );
+    const runAgentIteration = vi.fn(async () => {
+      const current = structuredClone(repository.read());
+      current.taskStates["task-plan-2"] = {
+        ...current.taskStates["task-plan-2"]!,
+        status: "completed",
+        summary: "Finished planning",
+        completedAt: "2026-03-27T16:22:00.000Z",
+      };
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: 2,
+        status: "ready",
+      };
+
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+        compacted: false,
+      };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-3" })),
+      createToolServer: vi.fn(() => ({ server: { id: "tool-server" } })),
+      runAgentIteration,
+      now() {
+        return "2026-03-27T16:20:00.000Z";
+      },
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(result.execution.contextStates["context-plan"]?.status).toBe(
+      "ready",
+    );
+    expect(result.shouldContinueInContext).toBe(false);
+    expect(repository.read().status).toBe("running");
   });
 
   it("threads the resolved askUserQuestions toggle into runAgentIteration (Req 8.1)", async () => {
@@ -1336,6 +1469,12 @@ describe("graph workflow iteration orchestrator", () => {
     );
     const createConversation = vi.fn(async () => ({ id: "conversation-5" }));
     const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const ownershipPrefix = [
+      "# Spec ownership (authoritative)",
+      "",
+      "Frozen ownership bytes for this execution.",
+      "",
+    ].join("\n");
     let callCount = 0;
     const runAgentIteration = vi.fn(async () => {
       callCount++;
@@ -1370,6 +1509,22 @@ describe("graph workflow iteration orchestrator", () => {
       createConversation,
       createToolServer,
       runAgentIteration,
+      executionContract: {
+        validateDefinition: () => ({ ok: true }),
+        loadLiveEdit: () => ({
+          validateOperation: () => ({ ok: true }),
+          accountabilityCoverageGroups: [],
+        }),
+        validateTaskCompletion: () => ({ ok: true }),
+        deriveContextAcceptanceCriteria: () => ({
+          ok: true,
+          acceptanceCriteriaByContextId: {},
+        }),
+        loadPromptProjection: async () => ({
+          heading: "Spec ownership",
+          body: "Frozen ownership bytes for this execution.",
+        }),
+      },
       now() {
         return "2026-03-27T16:40:00.000Z";
       },
@@ -1399,6 +1554,9 @@ describe("graph workflow iteration orchestrator", () => {
     const followUp1Prompt = calls[1]![0].prompt;
     expect(followUp1Prompt).not.toBe(initialPrompt);
     expect(followUp1Prompt).toContain("cctl workflow task complete");
+    expect(
+      calls.map(([call]) => call.prompt.startsWith(ownershipPrefix)),
+    ).toEqual([true, true, true]);
     // Task completed after follow-ups
     expect(result.execution.taskStates["task-plan-1"]).toMatchObject({
       status: "completed",

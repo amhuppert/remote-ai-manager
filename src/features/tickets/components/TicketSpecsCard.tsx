@@ -286,14 +286,12 @@ function formatTaskStatus(status: string): string {
 function taskStatusTone(status: string): StatusChipTone {
   switch (status) {
     case "completed":
-    case "claimed":
       return "green";
     case "running":
       return "cyan";
     case "failed":
       return "red";
     case "interrupted":
-    case "reopened":
       return "amber";
     default:
       return "neutral";

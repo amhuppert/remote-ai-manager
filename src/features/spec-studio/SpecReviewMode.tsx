@@ -79,7 +79,6 @@ import { cn } from "@/lib/ui/cn";
 import { strandedProposals, type ProposalSelection } from "./live-proposals";
 import { reanchorSpecThread, type SpecThreadAnchorState } from "./reanchor";
 import { useProposalSelection } from "./use-proposal-selection";
-import SpecPlanPreviewPanel from "./SpecPlanPreviewPanel";
 import SpecReadOnlyNotice from "./SpecReadOnlyNotice";
 
 const logger = createClientLogger("spec-studio-review");
@@ -345,17 +344,6 @@ export default function SpecReviewMode({
           detail={detail}
           projectName={projectName}
           onComplete={onComplete}
-        />
-        {/*
-          A stranded proposal is read-only, not unreadable: the plan it would
-          have compiled is what a reviewer weighs when deciding whether the
-          revision that forked past it carries the same work, and that decision
-          is the one dismissal records (#50).
-        */}
-        <SpecPlanPreviewPanel
-          projectName={projectName}
-          slug={detail.spec.slug}
-          revision={selection.selected.revision}
         />
       </div>
     );
@@ -739,20 +727,6 @@ export default function SpecReviewMode({
           <div className="h-xl" />
         </TabsContent>
       </TabsRoot>
-
-      {/*
-        The compiled plan sits on the same surface as the change set that
-        decides it, outside the diff tabs: what these edits compile to is not a
-        second way of reading the diff, and a reviewer must not have to leave
-        the semantic change list to see it. `currentRevision` is the selected
-        proposal's own revision, so one pick moves the cards and the preview
-        together.
-      */}
-      <SpecPlanPreviewPanel
-        projectName={projectName}
-        slug={detail.spec.slug}
-        revision={currentRevision}
-      />
 
       <ReviewQuestionsPanel detail={detail} detailPath={detailPath} />
 

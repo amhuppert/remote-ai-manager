@@ -11,7 +11,6 @@ vi.mock("@/lib/logging", () => ({
 
 import type Database from "better-sqlite3";
 
-import { emptyDeliveryPlanDocument } from "@/lib/specs/delivery-plan";
 import {
   specDeliveryPlanAttemptRowSchema,
   type SpecDeliveryPlanAttemptRow,
@@ -19,6 +18,7 @@ import {
 
 import {
   createDeliveryPlanTestRepos,
+  maximalPlanDocument,
   seedDeliveryPlanParents,
   EARLIER_EXECUTION_ID,
   PINNED_REVISION_ID,
@@ -58,7 +58,7 @@ function openAttempt(id: string): SpecDeliveryPlanAttemptRow {
       delta_basis_execution_id: EARLIER_EXECUTION_ID,
       status: "draft",
       draft_revision: 1,
-      content_json: JSON.stringify(emptyDeliveryPlanDocument()),
+      content_json: JSON.stringify(maximalPlanDocument()),
       proposed_snapshot_id: null,
       approval_json: null,
       prelaunch_json: null,
@@ -126,7 +126,7 @@ describe("delivery-plan comment persistence", () => {
     plans.saveDraft({
       attemptId: attempt.id,
       expectedDraftRevision: attempt.draft_revision,
-      document: emptyDeliveryPlanDocument(),
+      document: maximalPlanDocument(),
       updatedAt: "2026-08-08T09:15:00.000Z",
     });
 

@@ -6,8 +6,12 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
+import { createGraphWorkflowArchivedExecutionsRepo } from "@/lib/state-store/graph-workflow-archived-executions-repo";
+import { _createTestDb } from "@/lib/state-store/state-db";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
+import { pinnedSpecDocumentPath } from "@/lib/specs/delivery-plan";
+import { buildSpecExecutionClaimsDocument } from "@/lib/specs/execution-claims-document";
 
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
@@ -140,8 +144,9 @@ function setup(
 async function launch(
   repo: ReturnType<typeof createGraphWorkflowExecutionRepository>,
   documents: ReturnType<typeof seededDocument>[],
+  definition: WorkflowSemanticDefinition = createWorkflowDefinition(),
+  transactionAttachment?: (context: { executionId: string }) => void,
 ): Promise<GraphWorkflowExecution> {
-  const definition: WorkflowSemanticDefinition = createWorkflowDefinition();
   return repo.create(PROJECT_PATH, SESSION_NAME, {
     definition,
     source: {
@@ -156,6 +161,7 @@ async function launch(
     inputs: {},
     ownerConversationId: null,
     seededDocuments: documents,
+    transactionAttachment,
   });
 }
 
@@ -240,9 +246,17 @@ describe("engine-seeded shared documents", () => {
 
   it("fails the launch when a seeded document path escapes the worktree", async () => {
     const { repo, sessions } = setup();
+    let attachmentCalled = false;
 
     await expect(
-      launch(repo, [seededDocument({ relativePath: "../outside/spec.md" })]),
+      launch(
+        repo,
+        [seededDocument({ relativePath: "../outside/spec.md" })],
+        createWorkflowDefinition(),
+        () => {
+          attachmentCalled = true;
+        },
+      ),
     ).rejects.toThrow();
 
     // Path confinement is checked during REGISTRATION, which runs before the
@@ -251,6 +265,172 @@ describe("engine-seeded shared documents", () => {
     expect(
       sessions.get(`${PROJECT_PATH}:${SESSION_NAME}`)?.graphWorkflowExecution,
     ).toBeNull();
+    expect(attachmentCalled).toBe(false);
+  });
+
+  it("rejects colliding seeded paths before writing or persisting the run", async () => {
+    const { repo, sessions, sessionWorktree } = setup();
+
+    await expect(
+      launch(repo, [
+        seededDocument(),
+        { ...seededDocument(), contents: "# Conflicting ownership\n" },
+      ]),
+    ).rejects.toThrow(/collision/i);
+
+    expect(
+      sessions.get(`${PROJECT_PATH}:${SESSION_NAME}`)?.graphWorkflowExecution,
+    ).toBeNull();
+    await expect(
+      readFile(path.join(sessionWorktree, SPEC_DOC_PATH), "utf-8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("materializes byte-identical pinned spec and claims files across lanes and archived execution reads", async () => {
+    const { repo, store, sessions } = setup();
+    const candidateId = "candidate-loop-expanded";
+    const documents = [
+      {
+        relativePath: pinnedSpecDocumentPath("spec-bindings"),
+        contents: "# Pinned spec-bindings spec\n\nImmutable revision bytes.\n",
+        description: "The pinned spec revision this run implements.",
+        readWhen: "Read before implementing or validating the spec.",
+      },
+      buildSpecExecutionClaimsDocument({
+        candidateId,
+        heading: "Spec ownership",
+        body: [
+          `- Candidate: \`${candidateId}\``,
+          "- Pinned revision: `revision-loop-expanded`",
+          "",
+          "| Criterion id | Claimant context ids |",
+          "| --- | --- |",
+          "| `criterion-dynamic` | `context-spawner` |",
+        ].join("\n"),
+      }),
+    ];
+    const dynamicDefinition = createWorkflowDefinition();
+    dynamicDefinition.executionContexts[0]!.id = "context-spawner";
+    dynamicDefinition.executionContexts[0]!.mutability = {
+      allowAgentTaskAdd: true,
+      allowAgentContextAdd: true,
+    };
+    for (const task of dynamicDefinition.tasks) {
+      if (task.contextId === "context-plan") {
+        task.contextId = "context-spawner";
+      }
+    }
+    for (const edge of dynamicDefinition.edges) {
+      if (edge.sourceContextId === "context-plan") {
+        edge.sourceContextId = "context-spawner";
+      }
+    }
+    dynamicDefinition.executionContexts[2]!.outputSchema = {
+      type: "object",
+      properties: { approved: { type: "boolean" } },
+      required: ["approved"],
+    };
+    dynamicDefinition.loopGroups = [
+      {
+        id: "verify-loop",
+        title: "Verify expanded work",
+        bodyContextIds: ["context-implement", "context-verify"],
+        entryContextId: "context-implement",
+        exitContextId: "context-verify",
+        until: {
+          schema: {
+            type: "object",
+            properties: { approved: { const: true } },
+            required: ["approved"],
+          },
+        },
+        maxPasses: 2,
+      },
+    ];
+    expect(dynamicDefinition.loopGroups.length).toBeGreaterThan(0);
+    expect(
+      dynamicDefinition.executionContexts.some(
+        (context) => context.id === "context-spawner",
+      ),
+    ).toBe(true);
+    expect(
+      dynamicDefinition.executionContexts.find(
+        (context) => context.id === "context-spawner",
+      )?.mutability?.allowAgentContextAdd,
+    ).toBe(true);
+
+    const execution = await launch(repo, documents, dynamicDefinition);
+    expect(execution.sharedDocuments).toEqual(
+      expect.arrayContaining(
+        documents.map((document) =>
+          expect.objectContaining({
+            relativePath: document.relativePath,
+            kind: "seeded",
+          }),
+        ),
+      ),
+    );
+    expect(documents[0]!.relativePath).not.toBe(documents[1]!.relativePath);
+
+    const materializer = createWorkflowDocumentMaterializer({ store });
+    for (const lane of ["implementer", "validator"]) {
+      const laneWorktree = newTempDir(`cc-seed-${lane}-`);
+      await materializer.materialize({ execution, worktreePath: laneWorktree });
+      for (const document of documents) {
+        await expect(
+          readFile(path.join(laneWorktree, document.relativePath), "utf-8"),
+        ).resolves.toBe(document.contents);
+      }
+    }
+
+    const archiveDb = _createTestDb({ inMemory: true });
+    try {
+      archiveDb
+        .prepare("INSERT INTO projects (root_path) VALUES (?)")
+        .run(PROJECT_PATH);
+      archiveDb
+        .prepare(
+          `INSERT INTO sessions (
+             project_path, session_name, worktree_path, branch_name,
+             created_at, last_activity_at
+           ) VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          PROJECT_PATH,
+          SESSION_NAME,
+          "/tmp/archived-session",
+          "cc/archived-session",
+          "2026-08-15T00:00:00.000Z",
+          "2026-08-15T00:00:00.000Z",
+        );
+      const archives = createGraphWorkflowArchivedExecutionsRepo(archiveDb);
+      archives.insert({
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        executionId: execution.id,
+        archivedAt: "2026-08-15T01:00:00.000Z",
+        status: execution.status,
+        startedAt: execution.startedAt,
+        completedAt: execution.completedAt,
+        execution,
+      });
+      sessions.get(`${PROJECT_PATH}:${SESSION_NAME}`)!.graphWorkflowExecution =
+        null;
+      const archived = archives.findByExecutionId(execution.id);
+      expect(archived).not.toBeNull();
+      const archivedLane = newTempDir("cc-seed-archived-lane-");
+      await materializer.materialize({
+        execution: archived!,
+        worktreePath: archivedLane,
+      });
+      for (const document of documents) {
+        await expect(
+          readFile(path.join(archivedLane, document.relativePath), "utf-8"),
+        ).resolves.toBe(document.contents);
+      }
+    } finally {
+      archiveDb.close();
+    }
   });
 
   it("halts the reserved run when a seeded document cannot be written", async () => {

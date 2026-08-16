@@ -10,7 +10,7 @@ vi.mock("@/lib/logging", () => ({
 }));
 
 import Database from "better-sqlite3";
-import { deliveryPlanApprovalSchema } from "@/lib/specs/delivery-plan";
+import { z } from "zod";
 import {
   createPersistenceFixture,
   type PersistenceFixture,
@@ -23,6 +23,24 @@ import {
 import { deliveryPlanApprovalIdentity } from "./0019-delivery-plan-approval-identity";
 
 type Db = InstanceType<typeof Database>;
+
+/**
+ * The approval shape THIS migration produced, stated locally. Production no
+ * longer has a reader for it — the version-2 cutover replaced it with the
+ * finalized candidate identity — so the assertion must own the historical
+ * shape rather than import a schema that would drag the retired vocabulary
+ * back into the running app.
+ */
+const migratedApprovalIdentitySchema = z
+  .object({
+    candidateId: z.string().min(1),
+    planHash: z.string().min(1),
+    compiledDefinitionHash: z.string().min(1),
+    snapshotId: z.string().min(1),
+    approvedAt: z.string().min(1),
+    approvedBy: z.unknown(),
+  })
+  .strict();
 
 let rawDb: Db | null = null;
 let fixture: PersistenceFixture | null = null;
@@ -122,7 +140,7 @@ describe("0019-delivery-plan-approval-identity", () => {
     // Red without the migration: the read path parses strictly and a legacy
     // approval throws rather than naming the act that repairs it.
     expect(() =>
-      deliveryPlanApprovalSchema.parse(JSON.parse(LEGACY_APPROVAL)),
+      migratedApprovalIdentitySchema.parse(JSON.parse(LEGACY_APPROVAL)),
     ).toThrow();
 
     await runMigration(rawDb);
@@ -159,7 +177,9 @@ describe("0019-delivery-plan-approval-identity", () => {
     const row = attempt(rawDb, "attempt-current");
     expect(row.status).toBe("approved");
     expect(() =>
-      deliveryPlanApprovalSchema.parse(JSON.parse(row.approval_json ?? "null")),
+      migratedApprovalIdentitySchema.parse(
+        JSON.parse(row.approval_json ?? "null"),
+      ),
     ).not.toThrow();
     expect(attempt(rawDb, "attempt-draft")).toEqual({
       status: "draft",

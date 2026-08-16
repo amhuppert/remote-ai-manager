@@ -83,8 +83,10 @@ import {
 } from "@/lib/shared/testing/persistence-fixture";
 import { captureStoreInventory } from "@/lib/shared/testing/store-inventory";
 import { applyDefinitionEdits } from "./definition-edits";
-import { createSpecExecutionContract } from "@/lib/specs/execution-contract";
-import { GraphExecutionContractViolationError } from "./execution-contract-port";
+import {
+  GraphExecutionContractViolationError,
+  type GraphExecutionContract,
+} from "./execution-contract-port";
 import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
 
 interface InMemoryExecutionRepository {
@@ -358,41 +360,9 @@ function renameContextState(
   return { ...rest, [to]: { ...renamed, contextId: to } };
 }
 
-function invalidRegroupedSpecDefinition(approvalRequired = false) {
-  const base = createWorkflowDefinition({ approvalRequired });
-  const tasks = base.tasks.slice(0, 2).map((task, index) => ({
-    ...task,
-    metadata: {
-      specRevisionId: "revision-1",
-      specTaskElementId: `task-${index + 1}`,
-      specTaskHandle: `T${index + 1}`,
-      specDependsOnTaskElementIds: JSON.stringify(
-        index === 0 ? [] : ["task-1"],
-      ),
-      specCriterionElementIds: "[]",
-      specCriterionHandles: "[]",
-      specValidationStrategies: "{}",
-      specCriterionBriefs: "{}",
-    },
-  }));
+function regroupedDefinition(approvalRequired = false) {
   const record = createWorkflowDefinitionRecord({
-    definition: createWorkflowDefinition({
-      approvalRequired,
-      origin: {
-        sourceUri:
-          "spec-execution://spec-native-sdd/revisions/revision-1?scope=scope-1",
-      },
-      executionContexts: base.executionContexts.map((context) => ({
-        ...context,
-        origin: { sourceUri: "spec://native-sdd/revisions/revision-1" },
-      })),
-      tasks,
-      lockedRegions: tasks.map((task) => ({
-        paths: [`/tasks/${task.id}/metadata`],
-        sourceUri: "spec://native-sdd/revisions/revision-1",
-        reason: "Compiled task contract",
-      })),
-    }),
+    definition: createWorkflowDefinition({ approvalRequired }),
   });
   const edited = applyDefinitionEdits(record, [
     {
@@ -406,16 +376,41 @@ function invalidRegroupedSpecDefinition(approvalRequired = false) {
   return edited.record;
 }
 
+/**
+ * A registered contract that refuses every definition. The manager must honour
+ * a refusal whatever its reason: what is under test is that the seam is
+ * consulted before a seed and before an approval, not any one contract's rule.
+ */
+function refusingContract(): GraphExecutionContract {
+  return {
+    validateDefinition: () => ({
+      ok: false,
+      code: "contract_refused",
+      issues: [{ code: "contract-refused", message: "The contract refused." }],
+      instruction: "Repair the definition at its source.",
+    }),
+    loadLiveEdit: () => ({
+      validateOperation: () => ({ ok: true }),
+      accountabilityCoverageGroups: [],
+    }),
+    validateTaskCompletion: () => ({ ok: true }),
+    deriveContextAcceptanceCriteria: () => ({
+      ok: true,
+      acceptanceCriteriaByContextId: {},
+    }),
+  };
+}
+
 describe("graph workflow manager", () => {
-  it("rejects a spec dependency broken by move-task before execution seed", async () => {
-    const definition = invalidRegroupedSpecDefinition();
+  it("refuses to seed an execution the registered contract rejects", async () => {
+    const definition = regroupedDefinition();
     const repository = createRepository();
     const manager = createGraphWorkflowManager({
       executionRepository: repository,
       async loadDefinition() {
         return definition;
       },
-      executionContract: createSpecExecutionContract(),
+      executionContract: refusingContract(),
     });
 
     await expect(
@@ -425,13 +420,13 @@ describe("graph workflow manager", () => {
         definitionId: definition.id,
       }),
     ).rejects.toMatchObject({
-      code: "spec_dependency_embedding_invalid",
+      code: "contract_refused",
     } satisfies Partial<GraphExecutionContractViolationError>);
     expect(repository.createCalls).toHaveLength(0);
   });
 
-  it("revalidates spec dependency embedding before recording definition approval", async () => {
-    const definition = invalidRegroupedSpecDefinition(true);
+  it("revalidates against the registered contract before recording definition approval", async () => {
+    const definition = regroupedDefinition(true);
     const pending = createWorkflowExecution({
       status: "pending",
       definitionApproval: {
@@ -446,7 +441,7 @@ describe("graph workflow manager", () => {
       async loadDefinition() {
         return definition;
       },
-      executionContract: createSpecExecutionContract(),
+      executionContract: refusingContract(),
     });
 
     await expect(
@@ -456,7 +451,7 @@ describe("graph workflow manager", () => {
         claimId: "claim-unused",
       }),
     ).rejects.toMatchObject({
-      code: "spec_dependency_embedding_invalid",
+      code: "contract_refused",
     } satisfies Partial<GraphExecutionContractViolationError>);
     expect(repository.read()).toMatchObject({
       status: "pending",
@@ -1437,6 +1432,45 @@ describe("graph workflow manager", () => {
           (summary) => summary.id === row?.seedDefinitionId,
         ),
       ).toBe(false);
+    });
+
+    it("creates a spec-delivery execution carrying spec provenance, filler, and the authored launch document", async () => {
+      const loadCalls: string[] = [];
+      const manager = buildParityManager(loadCalls);
+      const plan = authoredPlan();
+      const before = await snapshotDefinitionStore();
+
+      const launched = await manager.launchSpecDelivery({
+        projectPath: PROJECT_PATH,
+        sessionName: INLINE_SESSION,
+        plan,
+        specSlug: "conversation-compaction",
+        candidateId: "cand-42",
+      });
+
+      // A spec delivery persists no template and resolves none (R1.1 parity).
+      expect(await snapshotDefinitionStore()).toEqual(before);
+      expect(loadCalls).toEqual([]);
+
+      const row = await fixture.store.getActiveGraphWorkflowExecution(
+        PROJECT_PATH,
+        INLINE_SESSION,
+      );
+      expect(row?.id).toBe(launched.execution.id);
+      expect(row?.origin).toEqual({
+        kind: "spec_delivery",
+        specSlug: "conversation-compaction",
+        candidateId: "cand-42",
+      });
+      expect(row?.seedDefinitionId).toBe(
+        `spec-delivery:${launched.execution.id}`,
+      );
+      expect(row?.launchDocument).toEqual({
+        name: plan.name,
+        description: plan.description,
+        definition: plan.definition,
+        layout: plan.layout,
+      });
     });
 
     /**

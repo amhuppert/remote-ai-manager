@@ -167,6 +167,50 @@ describe("runDefinitionEditRequest", () => {
     expect(persist).not.toHaveBeenCalled();
   });
 
+  it("rejects the entire batch when final launch admission fails", async () => {
+    const record = createWorkflowDefinitionRecord({ revision: 3 });
+    const { persist } = persistSpy(record);
+    const response = await runDefinitionEditRequest({
+      rawBody: {
+        baseRevision: 3,
+        operations: [
+          {
+            type: "update-workflow",
+            name: "Would otherwise persist",
+          },
+          {
+            type: "update-task",
+            taskId: "task-plan-1",
+            instructions: "Would otherwise persist too.",
+          },
+        ],
+      },
+      notFoundError: "Workflow not found",
+      loadRecord: async () => record,
+      admitLaunch: async () => ({
+        ok: false,
+        issues: [
+          {
+            path: "definition.workflowConfig.implementer.profile",
+            message: "The profile is unavailable.",
+          },
+        ],
+      }),
+      persist,
+    });
+
+    expect(response.status).toBe(400);
+    await expect(bodyOf(response)).resolves.toMatchObject({
+      code: "invalid_edit",
+      issues: [
+        expect.objectContaining({
+          path: "workflowConfig.implementer.profile",
+        }),
+      ],
+    });
+    expect(persist).not.toHaveBeenCalled();
+  });
+
   it("persists a valid edit and returns the applied count", async () => {
     const record = createWorkflowDefinitionRecord({ revision: 3 });
     const { persist, calls } = persistSpy(record);

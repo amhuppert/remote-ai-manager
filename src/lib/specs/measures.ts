@@ -6,7 +6,7 @@ import {
   type SpecEventType,
 } from "./schemas";
 
-export const MEASURE_DEFINITIONS_VERSION = "native-sdd-measures-v1";
+export const MEASURE_DEFINITIONS_VERSION = "native-sdd-measures-v2";
 
 export interface TaskClaimReopenedPayload {
   kind: "task-claim-reopened";
@@ -69,6 +69,18 @@ export interface ProofVerdictRecordedPayload {
   valid: boolean;
 }
 
+export interface DeliveryVerdictRecordedPayload {
+  kind: "delivery-verdict-recorded";
+  verdictId: string;
+  criterionId: string;
+  revisionId: string;
+  executionId: string;
+  workflowExecutionId: string;
+  candidateId: string;
+  candidateHash: string;
+  satisfyingContextId: string;
+}
+
 export type SpecMeasureEventPayload =
   | TaskClaimReopenedPayload
   | PostApprovalRevisionCreatedPayload
@@ -76,7 +88,8 @@ export type SpecMeasureEventPayload =
   | ApprovalStaledPayload
   | CriterionDeliveredInScopePayload
   | EvidenceAttachedPayload
-  | ProofVerdictRecordedPayload;
+  | ProofVerdictRecordedPayload
+  | DeliveryVerdictRecordedPayload;
 
 export const specMeasureEventPayloadSchema = z.discriminatedUnion("kind", [
   z
@@ -146,6 +159,19 @@ export const specMeasureEventPayloadSchema = z.discriminatedUnion("kind", [
       revisionId: z.string().min(1),
       evidenceIds: z.array(z.string().min(1)),
       valid: z.boolean(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("delivery-verdict-recorded"),
+      verdictId: z.string().min(1),
+      criterionId: z.string().min(1),
+      revisionId: z.string().min(1),
+      executionId: z.string().min(1),
+      workflowExecutionId: z.string().min(1),
+      candidateId: z.string().min(1),
+      candidateHash: z.string().min(1),
+      satisfyingContextId: z.string().min(1),
     })
     .strict(),
 ]);
@@ -227,9 +253,12 @@ export interface TaskNavigation {
   changedCode: ChangedCodeNavigation[];
 }
 
-export interface ValidProofNavigation {
+export interface DeliveryVerdictNavigation {
   verdictId: string;
-  evidenceIds: string[];
+  workflowExecutionId: string;
+  candidateId: string;
+  candidateHash: string;
+  satisfyingContextId: string;
 }
 
 export interface MergeResultNavigation {
@@ -243,8 +272,7 @@ export interface ReviewerNavigationChain {
   requirementId: string;
   approvedRevisionId: string | null;
   executionId: string;
-  tasks: TaskNavigation[];
-  validProof: ValidProofNavigation | null;
+  deliveryVerdict: DeliveryVerdictNavigation | null;
   mergeResult: MergeResultNavigation | null;
   complete: boolean;
 }
@@ -299,25 +327,13 @@ export const specMeasuresReportSchema = z
           requirementId: z.string().min(1),
           approvedRevisionId: z.string().min(1).nullable(),
           executionId: z.string().min(1),
-          tasks: z.array(
-            z
-              .object({
-                taskId: z.string().min(1),
-                changedCode: z.array(
-                  z
-                    .object({
-                      eventId: z.number().int().positive(),
-                      commitSha: z.string().min(1),
-                    })
-                    .strict(),
-                ),
-              })
-              .strict(),
-          ),
-          validProof: z
+          deliveryVerdict: z
             .object({
               verdictId: z.string().min(1),
-              evidenceIds: z.array(z.string().min(1)),
+              workflowExecutionId: z.string().min(1),
+              candidateId: z.string().min(1),
+              candidateHash: z.string().min(1),
+              satisfyingContextId: z.string().min(1),
             })
             .strict()
             .nullable(),
@@ -483,44 +499,22 @@ export function computeApprovalFriction(
 function traceabilityChainIsComplete(
   delivery: CriterionDeliveredInScopePayload,
   approvedRevisionIds: ReadonlySet<string>,
-  evidenceById: ReadonlyMap<string, EvidenceAttachedPayload>,
-  verdicts: readonly ProofVerdictRecordedPayload[],
-  taskCommits: ReadonlyMap<string, ReadonlySet<string>>,
+  verdicts: readonly DeliveryVerdictRecordedPayload[],
   mergedExecutionIds: ReadonlySet<string>,
 ): boolean {
   if (
     delivery.requirementId.length === 0 ||
-    delivery.taskIds.length === 0 ||
     !approvedRevisionIds.has(delivery.revisionId) ||
     !mergedExecutionIds.has(delivery.executionId)
   ) {
     return false;
   }
-
-  const hasChangedCode = delivery.taskIds.some(
-    (taskId) =>
-      (taskCommits.get(`${delivery.executionId}:${taskId}`)?.size ?? 0) > 0,
+  return verdicts.some(
+    (verdict) =>
+      verdict.executionId === delivery.executionId &&
+      verdict.criterionId === delivery.criterionId &&
+      verdict.revisionId === delivery.revisionId,
   );
-  if (!hasChangedCode) {
-    return false;
-  }
-
-  return verdicts.some((verdict) => {
-    if (
-      !verdict.valid ||
-      verdict.criterionId !== delivery.criterionId ||
-      verdict.revisionId !== delivery.revisionId
-    ) {
-      return false;
-    }
-    return verdict.evidenceIds.some((evidenceId) => {
-      const evidence = evidenceById.get(evidenceId);
-      return (
-        evidence?.criterionId === delivery.criterionId &&
-        evidence.revisionId === delivery.revisionId
-      );
-    });
-  });
 }
 
 export function buildReviewerNavigationChains(
@@ -532,8 +526,7 @@ export function buildReviewerNavigationChains(
     string,
     CriterionDeliveredInScopePayload
   >();
-  const evidenceById = new Map<string, EvidenceAttachedPayload>();
-  const verdicts: ProofVerdictRecordedPayload[] = [];
+  const verdicts: DeliveryVerdictRecordedPayload[] = [];
 
   for (const event of orderedSpecEvents(events)) {
     if (
@@ -548,16 +541,11 @@ export function buildReviewerNavigationChains(
       deliveriesByCriterionId.set(event.payload.criterionId, event.payload);
       continue;
     }
-    if (event.payload.kind === "evidence-attached") {
-      evidenceById.set(event.payload.evidenceId, event.payload);
-      continue;
-    }
-    if (event.payload.kind === "proof-verdict-recorded") {
+    if (event.payload.kind === "delivery-verdict-recorded") {
       verdicts.push(event.payload);
     }
   }
 
-  const taskCommits = new Map<string, ChangedCodeNavigation[]>();
   const merges = new Map<string, MergeResultNavigation>();
   const orderedWorkflowEvents = [...workflowEvents].sort(
     (left, right) =>
@@ -570,42 +558,28 @@ export function buildReviewerNavigationChains(
         mergeId: event.mergeId,
         mergeCommitSha: event.mergeCommitSha,
       });
-      continue;
     }
-    const key = `${event.executionId}:${event.taskId}`;
-    const changedCode = taskCommits.get(key) ?? [];
-    changedCode.push({ eventId: event.id, commitSha: event.commitSha });
-    taskCommits.set(key, changedCode);
   }
 
   return [...deliveriesByCriterionId.values()]
     .sort((left, right) => compareText(left.criterionId, right.criterionId))
     .map((delivery) => {
-      const tasks = [...new Set(delivery.taskIds)]
-        .sort(compareText)
-        .map((taskId) => ({
-          taskId,
-          changedCode:
-            taskCommits.get(`${delivery.executionId}:${taskId}`) ?? [],
-        }));
-      const validProof = verdicts
-        .filter(
-          (verdict) =>
-            verdict.valid &&
-            verdict.criterionId === delivery.criterionId &&
-            verdict.revisionId === delivery.revisionId,
-        )
-        .map((verdict) => ({
-          verdictId: verdict.verdictId,
-          evidenceIds: verdict.evidenceIds.filter((evidenceId) => {
-            const evidence = evidenceById.get(evidenceId);
-            return (
-              evidence?.criterionId === delivery.criterionId &&
-              evidence.revisionId === delivery.revisionId
-            );
-          }),
-        }))
-        .find((proof) => proof.evidenceIds.length > 0);
+      const verdict = verdicts.find(
+        (candidate) =>
+          candidate.executionId === delivery.executionId &&
+          candidate.criterionId === delivery.criterionId &&
+          candidate.revisionId === delivery.revisionId,
+      );
+      const deliveryVerdict =
+        verdict === undefined
+          ? null
+          : {
+              verdictId: verdict.verdictId,
+              workflowExecutionId: verdict.workflowExecutionId,
+              candidateId: verdict.candidateId,
+              candidateHash: verdict.candidateHash,
+              satisfyingContextId: verdict.satisfyingContextId,
+            };
       const approvedRevisionId = approvedRevisionIds.has(delivery.revisionId)
         ? delivery.revisionId
         : null;
@@ -615,14 +589,12 @@ export function buildReviewerNavigationChains(
         requirementId: delivery.requirementId,
         approvedRevisionId,
         executionId: delivery.executionId,
-        tasks,
-        validProof: validProof ?? null,
+        deliveryVerdict,
         mergeResult,
         complete:
           delivery.requirementId.length > 0 &&
           approvedRevisionId !== null &&
-          tasks.some((task) => task.changedCode.length > 0) &&
-          validProof !== undefined &&
+          deliveryVerdict !== null &&
           mergeResult !== null,
       };
     });
@@ -637,8 +609,7 @@ export function computeTraceabilityCompleteness(
     string,
     CriterionDeliveredInScopePayload
   >();
-  const evidenceById = new Map<string, EvidenceAttachedPayload>();
-  const verdicts: ProofVerdictRecordedPayload[] = [];
+  const verdicts: DeliveryVerdictRecordedPayload[] = [];
 
   for (const event of orderedSpecEvents(events)) {
     if (
@@ -649,24 +620,16 @@ export function computeTraceabilityCompleteness(
       approvedRevisionIds.add(event.payload.revisionId);
     } else if (event.payload.kind === "criterion-delivered-in-scope") {
       deliveriesByCriterionId.set(event.payload.criterionId, event.payload);
-    } else if (event.payload.kind === "evidence-attached") {
-      evidenceById.set(event.payload.evidenceId, event.payload);
-    } else if (event.payload.kind === "proof-verdict-recorded") {
+    } else if (event.payload.kind === "delivery-verdict-recorded") {
       verdicts.push(event.payload);
     }
   }
 
-  const taskCommits = new Map<string, Set<string>>();
   const mergedExecutionIds = new Set<string>();
   for (const event of workflowEvents) {
     if (event.eventType === "merge-completed") {
       mergedExecutionIds.add(event.executionId);
-      continue;
     }
-    const key = `${event.executionId}:${event.taskId}`;
-    const commits = taskCommits.get(key) ?? new Set<string>();
-    commits.add(event.commitSha);
-    taskCommits.set(key, commits);
   }
 
   const completeCriterionIds: string[] = [];
@@ -679,9 +642,7 @@ export function computeTraceabilityCompleteness(
       traceabilityChainIsComplete(
         delivery,
         approvedRevisionIds,
-        evidenceById,
         verdicts,
-        taskCommits,
         mergedExecutionIds,
       )
     ) {

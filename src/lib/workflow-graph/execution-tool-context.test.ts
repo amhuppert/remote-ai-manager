@@ -13,11 +13,15 @@ import {
   createGraphWorkflowExecutionToolContext,
   type GraphWorkflowExecutionToolContextDeps,
 } from "./execution-tool-context";
-import { createSpecExecutionContract } from "@/lib/specs/execution-contract";
+import { createCrossCandidateSpecExecutionBindingContract } from "@/lib/specs/execution-binding-test-fixture";
+import { SpecExecutionBindingMismatchError } from "@/lib/specs/execution-binding";
 import type { ExecutionTarget } from "./execution-target-resolver";
 import { createGraphWorkflowRuntimeEditService } from "./runtime-edits";
 import { createGraphWorkflowSharedDocumentRegistryService } from "./shared-documents";
-import { createWorkflowExecution } from "./test-fixtures";
+import {
+  createWorkflowDefinitionRecord,
+  createWorkflowExecution,
+} from "./test-fixtures";
 import type { GraphWorkflowCollaborationContextBlock } from "./lane-tool-service";
 import {
   assertLoopFence,
@@ -232,61 +236,37 @@ describe("GraphWorkflowExecutionToolContext", () => {
     ).toBe(1);
   });
 
-  it("refuses completion while a declared same-context spec predecessor is incomplete", async () => {
-    const base = withRunningContext(createWorkflowExecution(), [
+  it("refuses completion the registered contract rejects, leaving the task pending", async () => {
+    const execution = withRunningContext(createWorkflowExecution(), [
       "context-plan",
     ]);
-    const tasks = base.workingDefinition.tasks.map((task, index) => ({
-      ...task,
-      ...(index < 2
-        ? {
-            contextId: "context-plan",
-            order: index + 1,
-            metadata: {
-              specRevisionId: "revision-1",
-              specTaskElementId: `task-${index + 1}`,
-              specTaskHandle: `T${index + 1}`,
-              specDependsOnTaskElementIds: JSON.stringify(
-                index === 0 ? [] : ["task-1"],
-              ),
-              specCriterionElementIds: "[]",
-              specCriterionHandles: "[]",
-              specValidationStrategies: "{}",
-              specCriterionBriefs: "{}",
-            },
-          }
-        : {}),
-    }));
-    const execution: GraphWorkflowExecution = {
-      ...base,
-      workingDefinition: {
-        ...base.workingDefinition,
-        origin: {
-          sourceUri:
-            "spec-execution://spec-native-sdd/revisions/revision-1?scope=scope-1",
-        },
-        tasks,
-      },
-      taskStates: {
-        ...base.taskStates,
-        "task-implement-1": {
-          ...base.taskStates["task-implement-1"]!,
-          contextId: "context-plan",
-          order: 2,
-        },
-      },
-    };
     const { store, toolContext } = buildToolContext({
       initialExecution: execution,
-      executionContract: createSpecExecutionContract(),
+      executionContract: {
+        validateDefinition: () => ({ ok: true }),
+        loadLiveEdit: () => ({
+          validateOperation: () => ({ ok: true }),
+          accountabilityCoverageGroups: [],
+        }),
+        validateTaskCompletion: () => ({
+          ok: false,
+          code: "contract_refused",
+          issues: [
+            { code: "contract-refused", message: "The contract refused." },
+          ],
+          instruction: "Satisfy the contract before completing this task.",
+        }),
+        deriveContextAcceptanceCriteria: () => ({
+          ok: true,
+          acceptanceCriteriaByContextId: {},
+        }),
+      },
     });
 
     await expect(
-      toolContext.completeTask("task-implement-1", "out of order"),
-    ).rejects.toMatchObject({ code: "spec_predecessor_incomplete" });
-    expect(store.current.taskStates["task-implement-1"]?.status).toBe(
-      "pending",
-    );
+      toolContext.completeTask("task-plan-1", "out of order"),
+    ).rejects.toMatchObject({ code: "contract_refused" });
+    expect(store.current.taskStates["task-plan-1"]?.status).toBe("pending");
   });
 
   it("prefers the addressed task's lastConversationId when present", async () => {
@@ -529,6 +509,44 @@ describe("GraphWorkflowExecutionToolContext", () => {
       }),
     );
     expect(store.current.liveRevision).toBe(2);
+  });
+
+  it("refuses lane-agent addTask before the reducer when the typed binding points at another candidate", async () => {
+    const base = withRunningContext(createWorkflowExecution(), [
+      "context-plan",
+    ]);
+    const launch = createWorkflowDefinitionRecord();
+    const initial: GraphWorkflowExecution = {
+      ...base,
+      origin: {
+        kind: "spec_delivery",
+        specSlug: "spec-under-test",
+        candidateId: "candidate-other",
+      },
+      launchDocument: {
+        name: launch.name,
+        description: launch.description,
+        definition: launch.definition,
+        layout: launch.layout,
+      },
+    };
+    const { store, toolContext } = buildToolContext({
+      initialExecution: initial,
+      executionContract: createCrossCandidateSpecExecutionBindingContract(),
+    });
+
+    await expect(
+      toolContext.addTask({
+        title: "Must not be added",
+        instructions: "The binding is invalid.",
+      }),
+    ).rejects.toBeInstanceOf(SpecExecutionBindingMismatchError);
+
+    expect(store.current.liveRevision).toBe(1);
+    expect(
+      store.current.workingDefinition.tasks.map((task) => task.id),
+    ).not.toContain("task-agent-generated");
+    expect(store.appliedEvents).toEqual([]);
   });
 
   it("rejects addTask once the bound contextId leaves the active set", async () => {

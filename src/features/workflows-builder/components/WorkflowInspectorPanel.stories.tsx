@@ -88,6 +88,25 @@ export const WorkflowTab = {
   },
 } satisfies Story;
 
+export const WorkflowTabWithScopedInvariants = {
+  args: {
+    tab: "workflow",
+    selectedContextId: null,
+    definition: (() => {
+      const def = createWorkflowDefinition();
+      def.charter.invariants = [
+        { id: "global", statement: "Applies everywhere." },
+        {
+          id: "implementation-only",
+          statement: "Applies only to implementation work.",
+          appliesTo: { contextIds: ["context-implement", "context-verify"] },
+        },
+      ];
+      return def;
+    })(),
+  },
+} satisfies Story;
+
 export const WorkflowTabScriptValidatorEnabled = {
   args: {
     tab: "workflow",

@@ -14,6 +14,21 @@ export type LaunchInputError =
   | { kind: "invalid_value"; name: string; message: string }
   | { kind: "unknown_parameter"; name: string };
 
+/**
+ * Raised by the shared start path when start-input validation rejects the
+ * launch. Carries the structured `LaunchInputError` so the surface can map it to
+ * a 400 naming the offending parameter without re-parsing the message.
+ */
+export class WorkflowStartInputError extends Error {
+  constructor(
+    readonly inputError: LaunchInputError,
+    message: string,
+  ) {
+    super(message);
+    this.name = "WorkflowStartInputError";
+  }
+}
+
 export type LaunchInputResult =
   | { ok: true; boundInputs: Record<string, string> }
   | { ok: false; error: LaunchInputError };

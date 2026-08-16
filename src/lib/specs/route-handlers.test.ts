@@ -6,6 +6,7 @@ import type {
   SpecAssumptionRow,
   SpecCommentRow,
   SpecCriterionDispositionRow,
+  SpecDeliveryVerdictRow,
   SpecEvidenceRow,
   SpecExecutionRow,
   SpecGateAdmissionRow,
@@ -14,7 +15,6 @@ import type {
   SpecQuestionRow,
   SpecRevision,
   SpecRevisionSnapshot,
-  SpecTaskClaimRow,
   SpecWaiverRow,
 } from "./schemas";
 import { lint } from "./lint";
@@ -215,8 +215,17 @@ function execution(
     scope_json: JSON.stringify({ selectedTaskIds: ["task-1"] }),
     state: "delivered",
     execution_start_dial: "gate",
-    workflow_definition_id: "workflow-definition-1",
-    workflow_definition_revision: 1,
+    workflow_definition_id: null,
+    workflow_definition_revision: null,
+    workflow_seed_source_json: JSON.stringify({
+      kind: "spec_delivery",
+      specSlug: "native-sdd",
+      candidateId: "launch-1",
+    }),
+    workflow_execution_binding_json: JSON.stringify({
+      dispositions: [],
+      claims: [],
+    }),
     workflow_execution_id: "workflow-execution-1",
     session_name: "session-1",
     delivered_at: revision.createdAt,
@@ -265,16 +274,16 @@ function createDeps(overrides: Partial<SpecRouteDeps> = {}): SpecRouteDeps {
     findQuestionsBySpecId: () => [question],
     findAssumptionsBySpecId: () => [assumption],
     findExecutionsBySpecId: () => [] as SpecExecutionRow[],
-    findTaskClaimsBySpecId: () => [],
     findWorkflowEventsByExecution: () => [],
     reconcileExecution: async (_projectPath, candidate) => ({
       execution: candidate,
       workflowStatus: null,
     }),
-    ingestExecutionEvidenceBestEffort: async () => undefined,
     findCriterionDispositionsByExecution: () => [],
     findEvidenceByCriterionRevision: () => [],
     findProofVerdictsByCriterionRevision: () => [],
+    findDeliveryVerdictsBySpecExecutionId: () => [],
+    findExecutionBindingBySpecExecutionId: () => null,
     findWaiverForCriterionRevision: () => null,
     findWaiverById: () => null,
     findWaiversByRevision: () => [],
@@ -286,7 +295,7 @@ function createDeps(overrides: Partial<SpecRouteDeps> = {}): SpecRouteDeps {
       consistencyFindings: [],
     }),
     measureProject: async () => ({
-      definitionsVersion: "native-sdd-measures-v1",
+      definitionsVersion: "native-sdd-measures-v2",
       requirementCausedRework: {
         reopenedClaimCount: 0,
         postApprovalRevisionCount: 0,
@@ -447,7 +456,7 @@ describe("spec read route handlers", () => {
           elementId: "task-1",
           elementVersion: 1,
           summary: "Build read routes",
-          status: { status: "pending", claimEvidenceCount: 0 },
+          status: { status: "pending" },
         },
       ],
       disclosure: {
@@ -762,36 +771,6 @@ describe("spec read route handlers", () => {
       createDeps({
         getRevisionSnapshot: async (revisionId) =>
           revisionId === revision.id ? boundedSnapshot : null,
-        findTaskClaimsBySpecId: () => [
-          {
-            id: "claim-with-many-evidence-ids",
-            spec_id: spec.id,
-            execution_id: null,
-            task_element_id: "task-1",
-            evidence_ids_json: JSON.stringify(
-              Array.from(
-                { length: 2_000 },
-                (_, index) => `evidence-${index}-${"x".repeat(100)}`,
-              ),
-            ),
-            status: "accepted",
-            actor_json: JSON.stringify({
-              kind: "agent",
-              conversationId: "outline-size-test",
-            }),
-            claimed_at: revision.createdAt,
-          },
-          {
-            id: "unselected-malformed-claim",
-            spec_id: spec.id,
-            execution_id: null,
-            task_element_id: `task-${SPEC_OUTLINE_ROOT_LIMIT + 1}`,
-            evidence_ids_json: "not-json",
-            status: "accepted",
-            actor_json: JSON.stringify({ kind: "agent" }),
-            claimed_at: revision.createdAt,
-          },
-        ],
       }),
     );
 
@@ -812,11 +791,7 @@ describe("spec read route handlers", () => {
     expect(JSON.stringify(body)).not.toContain("0-unaddressable-requirement");
     expect(body.decisions).toHaveLength(SPEC_OUTLINE_ROOT_LIMIT);
     expect(body.tasks).toHaveLength(SPEC_OUTLINE_ROOT_LIMIT);
-    expect(body.tasks[0]?.status).toEqual({
-      status: "claimed",
-      claimEvidenceCount: 2_000,
-    });
-    expect(JSON.stringify(body)).not.toContain("evidence-1999-");
+    expect(body.tasks[0]?.status).toEqual({ status: "pending" });
     expect(body.disclosure).toMatchObject({
       requirements: {
         total: SPEC_OUTLINE_ROOT_LIMIT + 2,
@@ -1122,7 +1097,7 @@ describe("spec read route handlers", () => {
         tasks: [
           {
             elementId: "task-1",
-            status: { status: "pending", claimEvidenceIds: [] },
+            status: { status: "pending" },
           },
         ],
       },
@@ -1188,9 +1163,6 @@ describe("spec read route handlers", () => {
 
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body).toMatchObject({
-      executions: [{ definitionApprovalRequired: true }],
-    });
     const detail = specDetailViewSchema.parse(body);
     expect(detail.executions).toEqual([
       {
@@ -1198,12 +1170,14 @@ describe("spec read route handlers", () => {
         specId: spec.id,
         revisionId: revision.id,
         revisionNumber: revision.number,
-        // The fields that make a parked run diagnosable at all.
+        // The immutable source and lane link make a parked run diagnosable.
         state: "definition_review",
-        workflowDefinitionId: "workflow-definition-1",
-        workflowDefinitionRevision: 1,
+        workflowSeedSource: {
+          kind: "spec_delivery",
+          specSlug: "native-sdd",
+          candidateId: "launch-1",
+        },
         workflowExecutionId: null,
-        definitionApprovalRequired: true,
         scope: {
           selectedTaskIds: ["task-1"],
           selectedCriterionIds: [],
@@ -1250,7 +1224,7 @@ describe("spec read route handlers", () => {
     expect(detail.executions[0]?.state).toBe("delivered");
   });
 
-  it("projects per-criterion delivery proof state on each execution from the pinned revision", async () => {
+  it("projects per-criterion delivery outcomes without a modality checklist", async () => {
     const olderRevision: SpecRevision = {
       ...revision,
       id: "revision-0",
@@ -1328,6 +1302,7 @@ describe("spec read route handlers", () => {
       }),
       created_at: "2026-07-17T00:00:00.000Z",
       delivered_at: "2026-07-17T12:00:00.000Z",
+      workflow_execution_id: "workflow-execution-prior",
     });
     const runningExecution = execution({
       id: "execution-running",
@@ -1346,6 +1321,20 @@ describe("spec read route handlers", () => {
       }),
       created_at: "2026-07-18T00:00:00.000Z",
       delivered_at: null,
+      workflow_execution_id: "workflow-execution-running",
+    });
+    const deliveryVerdict = (
+      execution: SpecExecutionRow,
+      criterionElementId: string,
+    ): SpecDeliveryVerdictRow => ({
+      id: `delivery-verdict-${execution.id}-${criterionElementId}`,
+      spec_execution_id: execution.id,
+      workflow_execution_id: execution.workflow_execution_id!,
+      candidate_id: `candidate-${execution.id}`,
+      candidate_hash: `sha256:${"a".repeat(64)}`,
+      criterion_element_id: criterionElementId,
+      satisfying_context_id: `context-${criterionElementId}`,
+      verdict_at: revision.createdAt,
     });
     const verdict = (
       id: string,
@@ -1391,9 +1380,8 @@ describe("spec read route handlers", () => {
       waived_at: revision.createdAt,
       stale: 0,
     };
-    // Granted but never linked to the running execution's disposition: the
-    // gate refuses it (`evaluateCriterion` resolves waivers only through the
-    // disposition's waiver_id), so the projection must not count it either.
+    // Studio grants can be accepted during a run without rewriting its frozen
+    // in-scope disposition, so the projection resolves the current waiver.
     const grantOnlyWaiver: SpecWaiverRow = {
       id: "waiver-grant-only",
       spec_id: spec.id,
@@ -1487,6 +1475,42 @@ describe("spec read route handlers", () => {
           criterionId === "criterion-1" && revisionId === pinnedRevision.id
             ? [evidenceRow]
             : [],
+        findDeliveryVerdictsBySpecExecutionId: (executionId) => {
+          if (executionId === runningExecution.id) {
+            return [deliveryVerdict(runningExecution, "criterion-1")];
+          }
+          if (executionId === deliveredExecution.id) {
+            return [
+              deliveryVerdict(deliveredExecution, "criterion-6"),
+              deliveryVerdict(deliveredExecution, "criterion-7"),
+            ];
+          }
+          return [];
+        },
+        findExecutionBindingBySpecExecutionId: (executionId) => {
+          const linkedExecution = [deliveredExecution, runningExecution].find(
+            (candidate) => candidate.id === executionId,
+          );
+          if (
+            linkedExecution?.workflow_execution_id === null ||
+            linkedExecution === undefined
+          ) {
+            return null;
+          }
+          return {
+            specExecutionId: linkedExecution.id,
+            workflowExecutionId: linkedExecution.workflow_execution_id,
+            binding: {
+              schemaVersion: 2,
+              candidateId: `candidate-${linkedExecution.id}`,
+              candidateHash: `sha256:${"a".repeat(64)}`,
+              pinnedRevisionId: linkedExecution.revision_id,
+              dispositions: [],
+              claims: [],
+            },
+            createdAt: revision.createdAt,
+          };
+        },
         findWaiverForCriterionRevision: (criterionId, revisionId) => {
           if (criterionId === "criterion-5" && revisionId === olderRevision.id)
             return olderWaiver;
@@ -1513,38 +1537,41 @@ describe("spec read route handlers", () => {
     const detail = specDetailViewSchema.parse(await response.json());
     const byId = new Map(detail.executions.map((run) => [run.id, run]));
     expect(
+      detail.executions
+        .flatMap((run) => run.deliveryProjection)
+        .every((projection) => !("guidanceKinds" in projection)),
+    ).toBe(true);
+    expect(
       byId
         .get(runningExecution.id)
         ?.deliveryProjection.map(
-          ({ criterionElementId, handle, strategyKinds, proofState }) => [
+          ({ criterionElementId, handle, deliveryState, verdict }) => [
             criterionElementId,
             handle,
-            strategyKinds,
-            proofState,
+            deliveryState,
+            verdict?.satisfying_context_id ?? null,
           ],
         ),
     ).toEqual([
-      ["criterion-1", "R1.1", ["test_run"], "proof_recorded"],
-      // criterion-2 carries a granted-but-unlinked current waiver: the gate
-      // would refuse it, so the projection stays awaiting_proof, not waived.
-      ["criterion-2", "R1.2", ["test_run"], "awaiting_proof"],
-      ["criterion-3", "R1.3", ["test_run"], "awaiting_proof"],
-      ["criterion-4", "R1.4", ["test_run"], "awaiting_proof"],
-      ["criterion-7", "R1.7", ["test_run"], "delivered_elsewhere"],
+      ["criterion-1", "R1.1", "verdict_recorded", "context-criterion-1"],
+      ["criterion-2", "R1.2", "waived", null],
+      ["criterion-3", "R1.3", "awaiting_outcome", null],
+      ["criterion-4", "R1.4", "awaiting_outcome", null],
+      ["criterion-7", "R1.7", "delivered_elsewhere", null],
     ]);
     // Waiver precedence beats the delivered state; delivered in-scope criteria
-    // project as proven & merged.
+    // project as delivered.
     expect(
       byId
         .get(deliveredExecution.id)
-        ?.deliveryProjection.map(({ criterionElementId, proofState }) => [
+        ?.deliveryProjection.map(({ criterionElementId, deliveryState }) => [
           criterionElementId,
-          proofState,
+          deliveryState,
         ]),
     ).toEqual([
       ["criterion-5", "waived"],
-      ["criterion-6", "proven_merged"],
-      ["criterion-7", "proven_merged"],
+      ["criterion-6", "delivered"],
+      ["criterion-7", "delivered"],
     ]);
     // The older pinned revision's waiver is visible to Studio even though the
     // proof snapshot is the newer approved revision.
@@ -1584,12 +1611,80 @@ describe("spec read route handlers", () => {
     });
     expect(
       detail.executions[0]?.deliveryProjection.map(
-        ({ criterionElementId, proofState }) => [
+        ({ criterionElementId, deliveryState }) => [
           criterionElementId,
-          proofState,
+          deliveryState,
         ],
       ),
-    ).toEqual([["criterion-1", "awaiting_proof"]]);
+    ).toEqual([["criterion-1", "awaiting_outcome"]]);
+  });
+
+  it("does not project a Studio verdict from a different candidate", async () => {
+    const running = execution({
+      state: "running",
+      delivered_at: null,
+      scope_json: JSON.stringify({
+        selectedTaskIds: ["task-1"],
+        selectedCriterionIds: ["criterion-1"],
+        exclusionDispositions: [],
+      }),
+    });
+    const handlers = createSpecRouteHandlers(
+      createDeps({
+        findExecutionsBySpecId: () => [running],
+        findCriterionDispositionsByExecution: () => [
+          {
+            execution_id: running.id,
+            criterion_element_id: "criterion-1",
+            disposition: "in_scope",
+            waiver_id: null,
+            delivered_by_execution_id: null,
+            created_at: revision.createdAt,
+            updated_at: revision.createdAt,
+          },
+        ],
+        findDeliveryVerdictsBySpecExecutionId: () => [
+          {
+            id: "delivery-verdict-other-candidate",
+            spec_execution_id: running.id,
+            workflow_execution_id: running.workflow_execution_id!,
+            candidate_id: "candidate-other",
+            candidate_hash: `sha256:${"b".repeat(64)}`,
+            criterion_element_id: "criterion-1",
+            satisfying_context_id: "stable-claimant",
+            verdict_at: revision.createdAt,
+          },
+        ],
+        findExecutionBindingBySpecExecutionId: () => ({
+          specExecutionId: running.id,
+          workflowExecutionId: running.workflow_execution_id!,
+          binding: {
+            schemaVersion: 2,
+            candidateId: "candidate-current",
+            candidateHash: `sha256:${"a".repeat(64)}`,
+            pinnedRevisionId: running.revision_id,
+            dispositions: [],
+            claims: [],
+          },
+          createdAt: revision.createdAt,
+        }),
+      }),
+    );
+
+    const response = await handlers.getSpecGET(
+      new Request("http://cc.test/api/specs/demo/current-slug"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    expect(response.status).toBe(200);
+    const detail = specDetailViewSchema.parse(await response.json());
+    expect(detail.executions[0]?.deliveryProjection).toMatchObject([
+      {
+        criterionElementId: "criterion-1",
+        deliveryState: "awaiting_outcome",
+        verdict: null,
+      },
+    ]);
   });
 
   it("projects every live proposal with its supersession verdict and the snapshots its diff needs", async () => {
@@ -1804,6 +1899,48 @@ describe("spec read route handlers", () => {
       elementVersion: 1,
       position: 1,
     });
+  });
+
+  it("projects a v2-only delivered criterion as proven in the live outline", async () => {
+    const delivered = execution();
+    const deliveryVerdict: SpecDeliveryVerdictRow = {
+      id: "delivery-verdict-current",
+      spec_execution_id: delivered.id,
+      workflow_execution_id: delivered.workflow_execution_id!,
+      candidate_id: "candidate-current",
+      candidate_hash: `sha256:${"a".repeat(64)}`,
+      criterion_element_id: "criterion-1",
+      satisfying_context_id: "stable-claimant",
+      verdict_at: revision.createdAt,
+    };
+    const handlers = createSpecRouteHandlers(
+      createDeps({
+        findExecutionsBySpecId: () => [delivered],
+        findDeliveryVerdictsBySpecExecutionId: () => [deliveryVerdict],
+        findExecutionBindingBySpecExecutionId: () => ({
+          specExecutionId: delivered.id,
+          workflowExecutionId: delivered.workflow_execution_id!,
+          binding: {
+            schemaVersion: 2,
+            candidateId: deliveryVerdict.candidate_id,
+            candidateHash: deliveryVerdict.candidate_hash,
+            pinnedRevisionId: delivered.revision_id,
+            dispositions: [],
+            claims: [],
+          },
+          createdAt: revision.createdAt,
+        }),
+      }),
+    );
+
+    const response = await handlers.getSpecOutlineGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/outline"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = specShowOutlineViewSchema.parse(await response.json());
+    expect(body.requirements[0]?.criteria[0]?.status.proof).toBe("proven");
   });
 
   it("reports the latest approved revision so an execution can pin it", async () => {
@@ -2175,7 +2312,7 @@ describe("spec read route handlers", () => {
     });
   });
 
-  it("projects requirement proof and each task's accepted completion claim", async () => {
+  it("projects requirement proof and each task's graph work status", async () => {
     const verdict: SpecProofVerdictRow = {
       id: "verdict-detail",
       spec_id: spec.id,
@@ -2188,22 +2325,11 @@ describe("spec read route handlers", () => {
       stale_at: null,
       stale_reason: null,
     };
-    const claim: SpecTaskClaimRow = {
-      id: "claim-task-1",
-      spec_id: spec.id,
-      task_element_id: "task-1",
-      execution_id: "execution-1",
-      actor_json: JSON.stringify({ kind: "agent" }),
-      evidence_ids_json: JSON.stringify(["evidence-1"]),
-      claimed_at: revision.createdAt,
-      status: "accepted",
-    };
     const handlers = createSpecRouteHandlers(
       createDeps({
         findExecutionsBySpecId: () => [
           execution({ state: "running", delivered_at: null }),
         ],
-        findTaskClaimsBySpecId: () => [claim],
         findWorkflowEventsByExecution: () => [
           {
             occurredAt: revision.createdAt,
@@ -2239,15 +2365,7 @@ describe("spec read route handlers", () => {
             status: { proof: "proven" },
           },
         ],
-        tasks: [
-          {
-            elementId: "task-1",
-            status: {
-              status: "claimed",
-              claimEvidenceIds: ["evidence-1"],
-            },
-          },
-        ],
+        tasks: [{ elementId: "task-1", status: { status: "pending" } }],
       },
     });
   });
@@ -2972,11 +3090,37 @@ describe("spec read route handlers", () => {
       {
         id: "execution-stale",
         state: "running",
-        workflowDefinitionId: "workflow-definition-1",
+        workflowSeedSource: {
+          kind: "spec_delivery",
+          specSlug: "native-sdd",
+          candidateId: "launch-1",
+        },
         workflowExecutionId: "workflow-execution-reconciled",
         workflowStatus: "running",
       },
     ]);
+  });
+
+  it("does not project a saved-definition seed as a native SDD execution source", async () => {
+    const historic = execution({
+      workflow_seed_source_json: JSON.stringify({
+        kind: "saved-definition",
+        id: "workflow-definition-1",
+        revision: 1,
+        tier: "project",
+      }),
+    });
+    const handlers = createSpecRouteHandlers(
+      createDeps({ findExecutionsBySpecId: () => [historic] }),
+    );
+
+    const response = await handlers.getSpecStatusGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/status"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    const status = specStatusViewSchema.parse(await response.json());
+    expect(status.executions[0]?.workflowSeedSource).toBeNull();
   });
 
   it("reports pending approvals only for the current authoring-stage review", async () => {
@@ -3256,6 +3400,16 @@ describe("spec read route handlers", () => {
     const approvedSnapshot = { ...snapshot, revision: approvedRevision };
     const stored = execution({ state: "running", delivered_at: null });
     const reconciled = execution();
+    const deliveredVerdict: SpecDeliveryVerdictRow = {
+      id: "delivery-verdict-reconciled",
+      spec_execution_id: reconciled.id,
+      workflow_execution_id: reconciled.workflow_execution_id!,
+      candidate_id: "candidate-reconciled",
+      candidate_hash: `sha256:${"a".repeat(64)}`,
+      criterion_element_id: "criterion-1",
+      satisfying_context_id: "stable-claimant",
+      verdict_at: revision.createdAt,
+    };
     const reconcileExecution = vi.fn(async () => ({
       execution: reconciled,
       workflowStatus: null,
@@ -3277,6 +3431,20 @@ describe("spec read route handlers", () => {
             updated_at: revision.createdAt,
           },
         ],
+        findDeliveryVerdictsBySpecExecutionId: () => [deliveredVerdict],
+        findExecutionBindingBySpecExecutionId: () => ({
+          specExecutionId: reconciled.id,
+          workflowExecutionId: reconciled.workflow_execution_id!,
+          binding: {
+            schemaVersion: 2,
+            candidateId: deliveredVerdict.candidate_id,
+            candidateHash: deliveredVerdict.candidate_hash,
+            pinnedRevisionId: reconciled.revision_id,
+            dispositions: [],
+            claims: [],
+          },
+          createdAt: revision.createdAt,
+        }),
       }),
     );
 
@@ -3292,7 +3460,7 @@ describe("spec read route handlers", () => {
     expect(reconcileExecution).toHaveBeenCalledWith(PROJECT_PATH, stored);
   });
 
-  it("returns task plan approval and evidence after best-effort ingestion", async () => {
+  it("projects persisted evidence and verdicts onto an element read", async () => {
     const planApproval: SpecApprovalRow = {
       id: "approval-plan-1",
       spec_id: spec.id,
@@ -3328,16 +3496,11 @@ describe("spec read route handlers", () => {
       stale_at: null,
       stale_reason: null,
     };
-    const materialized: SpecEvidenceRow[] = [];
-    const ingestExecutionEvidenceBestEffort = vi.fn(async () => {
-      materialized.push(evidence);
-    });
     const handlers = createSpecRouteHandlers(
       createDeps({
         findApprovalsBySpecId: () => [planApproval],
         findExecutionsBySpecId: () => [execution()],
-        ingestExecutionEvidenceBestEffort,
-        findEvidenceByCriterionRevision: () => materialized,
+        findEvidenceByCriterionRevision: () => [evidence],
         findProofVerdictsByCriterionRevision: () => [verdict],
       }),
     );
@@ -3359,13 +3522,9 @@ describe("spec read route handlers", () => {
         },
       ],
     });
-    expect(ingestExecutionEvidenceBestEffort).toHaveBeenCalledWith(
-      PROJECT_PATH,
-      "execution-1",
-    );
   });
 
-  it("serializes same-revision evidence ingestion so a later execution cannot self-contend", async () => {
+  it("returns the latest execution's persisted evidence for a criterion", async () => {
     const earlierExecution = execution({
       id: "execution-earlier",
       state: "abandoned",
@@ -3397,33 +3556,10 @@ describe("spec read route handlers", () => {
       source_event_id: 42,
       created_at: revision.createdAt,
     };
-    const materialized: SpecEvidenceRow[] = [];
-    let concurrentIngestions = 0;
-    let maxConcurrentIngestions = 0;
-    const ingestExecutionEvidenceBestEffort = vi.fn(
-      async (_projectPath: string, executionId: string) => {
-        concurrentIngestions += 1;
-        maxConcurrentIngestions = Math.max(
-          maxConcurrentIngestions,
-          concurrentIngestions,
-        );
-        if (concurrentIngestions > 1) {
-          concurrentIngestions -= 1;
-          return;
-        }
-
-        await Promise.resolve();
-        if (executionId === laterExecution.id) {
-          materialized.push(laterEvidence);
-        }
-        concurrentIngestions -= 1;
-      },
-    );
     const handlers = createSpecRouteHandlers(
       createDeps({
         findExecutionsBySpecId: () => [earlierExecution, laterExecution],
-        ingestExecutionEvidenceBestEffort,
-        findEvidenceByCriterionRevision: () => materialized,
+        findEvidenceByCriterionRevision: () => [laterEvidence],
       }),
     );
 
@@ -3433,7 +3569,6 @@ describe("spec read route handlers", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(maxConcurrentIngestions).toBe(1);
     await expect(response.json()).resolves.toMatchObject({
       evidenceState: [
         {

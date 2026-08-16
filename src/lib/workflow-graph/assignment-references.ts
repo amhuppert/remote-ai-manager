@@ -51,6 +51,9 @@ export type AssignmentDocumentScope =
   | { kind: "project"; projectPath: string }
   | { kind: "global" };
 
+export const WORKFLOW_ASSIGNMENT_REFERENCE_INVALID_CODE =
+  "workflow_assignment_reference_invalid" as const;
+
 /**
  * One reference and where it was authored. `path` is the JSON location an
  * editor can jump to; `useSite` is the human phrasing the message carries so a
@@ -310,7 +313,7 @@ export function collectDefaultsReferenceSites(
  * thrown error rather than a returned result (storage accept, execution start).
  */
 export class WorkflowAssignmentReferenceError extends Error {
-  readonly code = "workflow_assignment_reference_invalid" as const;
+  readonly code = WORKFLOW_ASSIGNMENT_REFERENCE_INVALID_CODE;
 
   constructor(readonly issues: readonly WorkflowPlanIssue[]) {
     super(

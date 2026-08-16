@@ -16,7 +16,6 @@ import { FakeEventSource } from "@/lib/shared/testing/fake-event-source";
 import type { SpecApprovalRow } from "@/lib/specs/schemas";
 import { registerSpecSseReactions } from "@/lib/specs/sse-reactions";
 
-import { planPreviewResponseFixture } from "./SpecControls.fixtures";
 import SpecDetailPage from "./SpecDetailPage";
 import {
   _blockAnnotatableTextForTesting,
@@ -348,7 +347,7 @@ function detailPayload(
       tasks: [
         {
           elementId: "task-1",
-          status: { status: "pending" as const, claimEvidenceIds: [] },
+          status: { status: "pending" as const },
         },
       ],
     },
@@ -647,14 +646,6 @@ describe("Spec Studio detail routes", () => {
       archived: [],
       pinned: [],
     });
-    // Review compiles a plan preview for the proposal it shows, so a route
-    // that reaches Review reaches this too; without it the surface under test
-    // renders a preview failure instead of the surface production renders.
-    api.reply(
-      "POST",
-      "/api/specs/command-center/native-sdd/plan-preview",
-      (request) => ({ json: planPreviewResponseFixture(request.jsonBody) }),
-    );
   });
 
   afterEach(() => {

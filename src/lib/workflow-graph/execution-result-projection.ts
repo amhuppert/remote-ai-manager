@@ -10,6 +10,7 @@ import type {
   GraphWorkflowHaltReason,
 } from "@/lib/workflow-graph/schemas";
 import { buildGraphWorkflowExecutionDeepLink } from "@/lib/workflow-graph/execution-deep-link";
+import { originFallbackName } from "@/lib/workflow-graph/execution-origin";
 import type { GraphWorkflowResultOutputProjection } from "@/lib/workflow-graph/result-output-contract";
 
 export interface GraphWorkflowBoundaryResultProjection {
@@ -55,10 +56,7 @@ export function projectGraphWorkflowBoundaryResult(input: {
     pendingActions: event.pendingActions,
     outputs: event.outputProjection,
     name:
-      execution.launchDocument?.name ??
-      (execution.origin.kind === "one_off"
-        ? execution.origin.planName
-        : execution.origin.definitionId),
+      execution.launchDocument?.name ?? originFallbackName(execution.origin),
     origin: execution.origin,
     originConversationId: execution.ownerConversationId,
     startedAt: event.startedAt ?? execution.startedAt,

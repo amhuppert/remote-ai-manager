@@ -15,10 +15,6 @@ import {
   applyDefinitionEdits,
   formatDefinitionEditIssue,
 } from "./definition-edits";
-import { createSpecExecutionContract } from "@/lib/specs/execution-contract";
-
-const GROUP_ACCEPTANCE_CRITERIA =
-  "Validate the locked criterion briefs of every task currently assigned to this context. The effective contract is the union of those task briefs; regrouping must never drop or weaken one.";
 
 /** Parse ops through the shared schema so the tests exercise the real vocabulary. */
 function ops(...raw: unknown[]): DefinitionEditOperation[] {
@@ -35,64 +31,6 @@ function tasksOf(
 }
 
 describe("applyDefinitionEdits", () => {
-  it("rederives compiler context criteria after task membership changes", () => {
-    const base = createWorkflowDefinition();
-    const tasks = base.tasks.slice(0, 2).map((task, index) => ({
-      ...task,
-      metadata: {
-        specRevisionId: "revision-1",
-        specTaskElementId: `task-${index + 1}`,
-        specTaskHandle: `T${index + 1}`,
-        specDependsOnTaskElementIds: JSON.stringify(
-          index === 0 ? [] : ["task-1"],
-        ),
-        specCriterionElementIds: JSON.stringify([`criterion-${index + 1}`]),
-        specCriterionHandles: JSON.stringify([`R1.${index + 1}`]),
-        specValidationStrategies: "{}",
-        specCriterionBriefs: JSON.stringify({
-          [`criterion-${index + 1}`]: `Validate T${index + 1}.`,
-        }),
-      },
-    }));
-    const record = createWorkflowDefinitionRecord({
-      definition: createWorkflowDefinition({
-        origin: {
-          sourceUri:
-            "spec-execution://spec-native-sdd/revisions/revision-1?scope=scope-1",
-        },
-        executionContexts: base.executionContexts.map((context) => ({
-          ...context,
-          origin: { sourceUri: "spec://native-sdd/revisions/revision-1" },
-        })),
-        tasks,
-      }),
-    });
-
-    const result = applyDefinitionEdits(
-      record,
-      ops({
-        type: "move-task",
-        taskId: "task-implement-1",
-        contextId: "context-plan",
-        position: { at: "end" },
-      }),
-      createSpecExecutionContract(),
-    );
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(
-      result.record.definition.executionContexts.find(
-        (context) => context.id === "context-plan",
-      )?.acceptanceCriteria,
-    ).toBe(`${GROUP_ACCEPTANCE_CRITERIA}\n\nValidate T1.\nValidate T2.`);
-    expect(
-      result.record.definition.executionContexts.find(
-        (context) => context.id === "context-implement",
-      )?.acceptanceCriteria,
-    ).toBe(GROUP_ACCEPTANCE_CRITERIA);
-  });
-
   it("refuses a batch touching a locked path atomically with amend-at-source guidance", () => {
     const record = createWorkflowDefinitionRecord({
       definition: createWorkflowDefinition({
@@ -421,6 +359,41 @@ describe("applyDefinitionEdits", () => {
     ).toBeUndefined();
   });
 
+  it("refuses to remove a context while a charter invariant scopes work to it", () => {
+    const record = createWorkflowDefinitionRecord({
+      definition: createWorkflowDefinition({
+        charter: {
+          ...createWorkflowDefinition().charter,
+          invariants: [
+            {
+              id: "implementation-only",
+              statement: "Implementation scope must retain its target.",
+              appliesTo: { contextIds: ["context-implement"] },
+            },
+          ],
+        },
+      }),
+    });
+
+    const result = applyDefinitionEdits(
+      record,
+      ops({
+        type: "remove-context",
+        contextId: "context-implement",
+        deleteTasks: true,
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: "unknown-invariant-scope-context",
+        field: "charter.invariants.0.appliesTo.contextIds.0",
+      }),
+    );
+  });
+
   it("rejects a duplicate edge and removes an edge by pair", () => {
     const record = createWorkflowDefinitionRecord();
     const dup = applyDefinitionEdits(
@@ -568,7 +541,11 @@ describe("applyDefinitionEdits", () => {
       ops({
         type: "update-charter",
         invariants: [
-          { id: "inv-1", statement: "Every mutation goes through the repo" },
+          {
+            id: "inv-1",
+            statement: "Every mutation goes through the repo",
+            appliesTo: { contextIds: ["context-plan"] },
+          },
           { id: "inv-2", statement: "No back-compat shims without approval" },
         ],
       }),
@@ -576,7 +553,11 @@ describe("applyDefinitionEdits", () => {
     expect(set.ok).toBe(true);
     if (set.ok) {
       expect(set.record.definition.charter.invariants).toEqual([
-        { id: "inv-1", statement: "Every mutation goes through the repo" },
+        {
+          id: "inv-1",
+          statement: "Every mutation goes through the repo",
+          appliesTo: { contextIds: ["context-plan"] },
+        },
         { id: "inv-2", statement: "No back-compat shims without approval" },
       ]);
     }
@@ -589,6 +570,31 @@ describe("applyDefinitionEdits", () => {
     if (cleared.ok) {
       expect(cleared.record.definition.charter.invariants).toBeUndefined();
     }
+  });
+
+  it("refuses an update-charter scope that would dangle from authored contexts", () => {
+    const result = applyDefinitionEdits(
+      createWorkflowDefinitionRecord(),
+      ops({
+        type: "update-charter",
+        invariants: [
+          {
+            id: "scoped-invariant",
+            statement: "Only the selected context owns this change.",
+            appliesTo: { contextIds: ["removed-context"] },
+          },
+        ],
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: "unknown-invariant-scope-context",
+        field: "charter.invariants.0.appliesTo.contextIds.0",
+      }),
+    );
   });
 
   it("rejects duplicate charter invariant ids via update-charter", () => {

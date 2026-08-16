@@ -8,14 +8,12 @@ import type { LintFinding, LintSeverity } from "./lint";
  */
 export const LINT_SEVERITY_ORDER = [
   "blocks_propose",
-  "blocks_claim",
   "blocks_signoff",
   "advisory",
 ] as const satisfies readonly LintSeverity[];
 
 export const LINT_SEVERITY_LABEL: Record<LintSeverity, string> = {
   blocks_propose: "Blocks propose",
-  blocks_claim: "Blocks claim",
   blocks_signoff: "Blocks sign-off",
   advisory: "Advisory",
 };

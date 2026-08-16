@@ -2,6 +2,7 @@ import { listSessionConversationListItems } from "./lib/state-store";
 import { getStateDb } from "./lib/state-store/store";
 import { getDb } from "./lib/state-store/state-db";
 import { runMigrations } from "./lib/state-store/migrator";
+import { runNativeSddV2CutoverBeforeStateDbOpen } from "./lib/state-store/migrations/0030-native-sdd-v2-cutover";
 import { createContextArtifactsRepo } from "./lib/context-artifacts/repo";
 import { initializeNotifications } from "./lib/notifications/service";
 import { setConfigReader } from "./lib/push-notification/dispatcher";
@@ -77,8 +78,11 @@ export interface StartupDeps {
 const defaultStartupDeps: StartupDeps = {
   loadConversationRehydration: () =>
     import("./lib/workflows/conversation/rehydration"),
-  runStateMigrations: () =>
-    runMigrations({ db: getDb(), configDir: getConfigDirPath() }),
+  runStateMigrations: async () => {
+    const configDir = getConfigDirPath();
+    await runNativeSddV2CutoverBeforeStateDbOpen(configDir);
+    return runMigrations({ db: getDb(), configDir });
+  },
   registerSpecWorkflowComposition: registerProductionSpecWorkflowComposition,
   initNotificationDb: initializeNotifications,
   setConfigReader,

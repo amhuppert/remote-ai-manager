@@ -45,6 +45,31 @@ export function buildOneOffSeedCompatibilityFields(executionId: string): {
 }
 
 /**
+ * Namespace for the seed id a spec-delivery run writes. Distinct from the
+ * one-off prefix so a diagnostic reading raw rows can tell the two
+ * definition-less origins apart, while keeping the same guarantees: it matches
+ * no definition record, so seed-id comparisons never mistake it for a template.
+ */
+export const SPEC_DELIVERY_SEED_DEFINITION_ID_PREFIX = "spec-delivery:";
+
+/**
+ * The legacy-shaped definition-tier fields a spec-delivery execution persists
+ * alongside its `origin` — the same compatibility contract as
+ * {@link buildOneOffSeedCompatibilityFields}, under its own namespace.
+ */
+export function buildSpecDeliverySeedCompatibilityFields(executionId: string): {
+  seedDefinitionId: string;
+  seedDefinitionRevision: number;
+  launchedTier: "project";
+} {
+  return {
+    seedDefinitionId: `${SPEC_DELIVERY_SEED_DEFINITION_ID_PREFIX}${executionId}`,
+    seedDefinitionRevision: 1,
+    launchedTier: "project",
+  };
+}
+
+/**
  * Where a launch's definition content came from, as decided by the launch
  * source before any seeding runs. This is the ONE input the seed carries about
  * provenance: `origin` and the legacy-shaped seed projection are both derived
@@ -58,7 +83,8 @@ export type GraphWorkflowLaunchSource =
       definitionRevision: number;
       tier: "project" | "global";
     }
-  | { kind: "one_off"; planName: string };
+  | { kind: "one_off"; planName: string }
+  | { kind: "spec_delivery"; specSlug: string; candidateId: string };
 
 /** The definition-tier provenance fields one launch source resolves to. */
 export interface GraphWorkflowExecutionProvenance {
@@ -95,6 +121,16 @@ export function buildExecutionProvenance(
       launchedTier: source.tier,
     };
   }
+  if (source.kind === "spec_delivery") {
+    return {
+      origin: {
+        kind: "spec_delivery",
+        specSlug: source.specSlug,
+        candidateId: source.candidateId,
+      },
+      ...buildSpecDeliverySeedCompatibilityFields(executionId),
+    };
+  }
   return {
     origin: { kind: "one_off", planName: source.planName },
     ...buildOneOffSeedCompatibilityFields(executionId),
@@ -102,22 +138,31 @@ export function buildExecutionProvenance(
 }
 
 /**
- * The structured log fields that attribute a launch without leaking the one-off
- * filler: a template launch names its definition, a one-off names its plan.
- * Every launch-path log line spreads this instead of reading the seed
- * projection, which on a one-off row means nothing.
+ * The structured log fields that attribute a launch without leaking the
+ * definition-less filler: a template launch names its definition, a one-off
+ * names its plan, a spec delivery names its spec and candidate. Every
+ * launch-path log line spreads this instead of reading the seed projection,
+ * which on a definition-less row means nothing.
  */
 export function describeLaunchSource(
   source: GraphWorkflowLaunchSource,
 ): Record<string, string | number> {
-  return source.kind === "template"
-    ? {
-        origin: "template",
-        definitionId: source.definitionId,
-        definitionRevision: source.definitionRevision,
-        tier: source.tier,
-      }
-    : { origin: "one_off", planName: source.planName };
+  if (source.kind === "template") {
+    return {
+      origin: "template",
+      definitionId: source.definitionId,
+      definitionRevision: source.definitionRevision,
+      tier: source.tier,
+    };
+  }
+  if (source.kind === "spec_delivery") {
+    return {
+      origin: "spec_delivery",
+      specSlug: source.specSlug,
+      candidateId: source.candidateId,
+    };
+  }
+  return { origin: "one_off", planName: source.planName };
 }
 
 /**
@@ -145,6 +190,37 @@ export function isOneOffExecution(
   execution: Pick<GraphWorkflowExecution, "origin">,
 ): boolean {
   return execution.origin.kind === "one_off";
+}
+
+/**
+ * The human-facing name a run falls back to when it carries no launch
+ * document. Exhaustive over the union so a new origin kind fails to compile
+ * here rather than silently borrowing another kind's identity at each of the
+ * render sites that share this fallback.
+ */
+export function originFallbackName(
+  origin: GraphWorkflowExecutionOrigin,
+): string {
+  switch (origin.kind) {
+    case "template":
+      return origin.definitionId;
+    case "one_off":
+      return origin.planName;
+    case "spec_delivery":
+      return origin.specSlug;
+  }
+}
+
+/** The badge label an origin kind renders under; exhaustive for the same reason. */
+export function originKindLabel(origin: GraphWorkflowExecutionOrigin): string {
+  switch (origin.kind) {
+    case "template":
+      return "Template";
+    case "one_off":
+      return "One-off";
+    case "spec_delivery":
+      return "Spec delivery";
+  }
 }
 
 /**

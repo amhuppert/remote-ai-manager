@@ -289,7 +289,6 @@ const traceability: TraceabilityInput = {
         exclusionDispositions: [],
       },
       state: "running",
-      workflowDefinitionId: "workflow-definition-12",
       workflowExecutionId: "workflow-12",
       sessionName: "native-sdd-run",
       createdAt: NOW,

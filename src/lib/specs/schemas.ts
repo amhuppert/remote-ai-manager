@@ -161,23 +161,24 @@ export const touchedPathSchema = z
 export type TouchedPath = z.infer<typeof touchedPathSchema>;
 
 /**
- * The lane a task's compiled execution context runs on. Tasks declaring the
- * same lane share one worktree and one join; the field is what an author writes
- * to claim that sharing, and it is orthogonal to `laneGroup`, which contracts
- * tasks into one CONTEXT rather than placing contexts on one LANE.
+ * The lane an author intends a task's work to run on. It is spec content, not
+ * graph structure: nothing derives a lane from it. The delivery-plan author
+ * reads it while placing contexts in the authored launch, which is the only
+ * place lane placement is decided.
  *
- * The grammar is the lane-id grammar `laneIdViolation` owns in
- * `@/lib/workflow-graph/lane-identity`: the value becomes a compiled context's
- * placement lane, and from there a git branch name and a worktree path segment,
- * so the two must accept exactly the same names. It is mirrored here rather than
- * imported because this module is deliberately dependency-free apart from Zod —
- * importing it would drag the jobs, conversations, and agent-backend schema
- * graphs into every reader of a spec payload. `schemas.test.ts` pins the mirror
- * against the owning predicate so it cannot drift.
+ * The grammar is still the lane-id grammar `laneIdViolation` owns in
+ * `@/lib/workflow-graph/lane-identity`, because an intent that could never be
+ * spelled as a lane is worth refusing at the point it is written: a lane id
+ * becomes a git branch name and a worktree path segment, so the two must accept
+ * exactly the same names. It is mirrored here rather than imported because this
+ * module is deliberately dependency-free apart from Zod — importing it would
+ * drag the jobs, conversations, and agent-backend schema graphs into every
+ * reader of a spec payload. `schemas.test.ts` pins the mirror against the
+ * owning predicate so it cannot drift.
  *
  * Reserved lane identity (`session`, `__session__`) is NOT refused here: those
  * names are grammatical, and the refusal that knows what they mean lives at the
- * authored-placement choke point, where it can name the compiled context.
+ * authored-placement choke point in the graph.
  */
 export const executionLaneSchema = z
   .string()
@@ -432,6 +433,7 @@ export const specSseEventTypeSchema = z.enum([
   "spec-execution-changed",
   "spec-evidence-changed",
   "spec-attention-changed",
+  "spec-delivery-plan-changed",
 ]);
 export type SpecSseEventType = z.infer<typeof specSseEventTypeSchema>;
 
@@ -458,10 +460,8 @@ export type SpecInterventionEventType = z.infer<
 >;
 
 /**
- * Durable-only audit trail for `DeliveryPlanAttempt` transitions. Not part of
- * the SSE union: the attempt is a spec-side document with no live subscriber
- * yet, and the rows exist so every status move — including the reopen that
- * invalidates an approval — is reconstructable after the fact.
+ * Durable audit trail for `DeliveryPlanAttempt` transitions. The matching
+ * typed SSE event refreshes live plan review surfaces after these rows commit.
  */
 export const specDeliveryPlanEventTypeSchema = z.enum([
   "spec-delivery-plan-opened",
@@ -988,6 +988,20 @@ export const specProofVerdictRowSchema = z.object({
 });
 export type SpecProofVerdictRow = z.infer<typeof specProofVerdictRowSchema>;
 
+export const specDeliveryVerdictRowSchema = z.object({
+  id: idSchema,
+  spec_execution_id: idSchema,
+  workflow_execution_id: idSchema,
+  candidate_id: idSchema,
+  candidate_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  criterion_element_id: idSchema,
+  satisfying_context_id: idSchema,
+  verdict_at: timestampSchema,
+});
+export type SpecDeliveryVerdictRow = z.infer<
+  typeof specDeliveryVerdictRowSchema
+>;
+
 export const specWaiverRowSchema = z.object({
   id: idSchema,
   spec_id: idSchema,
@@ -1031,8 +1045,10 @@ export const specExecutionRowSchema = z.object({
   scope_json: jsonColumnSchema,
   state: specExecutionStateSchema,
   execution_start_dial: specGateDialSchema.nullable(),
-  workflow_definition_id: idSchema,
+  workflow_definition_id: nullableIdSchema,
   workflow_definition_revision: z.number().int().positive().nullable(),
+  workflow_seed_source_json: jsonColumnSchema.nullable().optional(),
+  workflow_execution_binding_json: jsonColumnSchema.nullable().optional(),
   workflow_execution_id: nullableIdSchema,
   session_name: z.string().nullable(),
   delivered_at: nullableTimestampSchema,
@@ -1128,12 +1144,20 @@ export type SpecDeliveryPlanAttemptRow = z.infer<
  * bumps the attempt's draft revision and clears its approval, and the prior
  * snapshots stay readable exactly as proposed.
  */
+/**
+ * The immutable proposal snapshot. `content_json` carries the canonical frozen
+ * candidate record itself — the finalized launch, binding, pinned revision and
+ * draft revision — so `candidate_hash` addresses exactly the bytes sign-off
+ * approves and start launches, with no second candidate artifact to drift
+ * against (`exact-approval`).
+ */
 export const specDeliveryPlanSnapshotRowSchema = z.object({
   id: idSchema,
   attempt_id: idSchema,
+  candidate_id: idSchema,
+  candidate_hash: z.string().min(1),
   /** The attempt draft revision this snapshot froze. */
   draft_revision: z.number().int().positive(),
-  plan_hash: z.string().min(1),
   content_json: jsonColumnSchema,
   pinned_revision_id: idSchema,
   proposed_at: timestampSchema,
@@ -1141,25 +1165,6 @@ export const specDeliveryPlanSnapshotRowSchema = z.object({
 });
 export type SpecDeliveryPlanSnapshotRow = z.infer<
   typeof specDeliveryPlanSnapshotRowSchema
->;
-
-/**
- * The compiled candidate a proposal materialized: the exact
- * `WorkflowSemanticDefinition` bytes a human approves and a launch runs. It is
- * immutable and one-to-one with its snapshot, so `compiled_definition_hash` can
- * be compared against a launched definition without re-deriving anything
- * (`exact-approval`).
- */
-export const specDeliveryPlanCandidateRowSchema = z.object({
-  id: idSchema,
-  attempt_id: idSchema,
-  snapshot_id: idSchema,
-  compiled_definition_hash: z.string().min(1),
-  definition_json: jsonColumnSchema,
-  materialized_at: timestampSchema,
-});
-export type SpecDeliveryPlanCandidateRow = z.infer<
-  typeof specDeliveryPlanCandidateRowSchema
 >;
 
 /**

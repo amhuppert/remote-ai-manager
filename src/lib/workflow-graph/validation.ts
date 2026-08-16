@@ -13,6 +13,7 @@ import type {
   WorkflowGraphValidationError,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
+import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import { validateEdgeGuards } from "./edge-guard-validation";
 import {
   isContextOutputCommittedToLane,
@@ -71,6 +72,28 @@ function resultFromErrors(
 
 function createContextIdSet(definition: ValidatableDefinition): Set<string> {
   return new Set(definition.executionContexts.map((context) => context.id));
+}
+
+export function validateCharterInvariantScopes(
+  charter: WorkflowCharter,
+  contextIds: Iterable<string>,
+): WorkflowGraphValidationError[] {
+  const authoredContextIds = new Set(contextIds);
+  const errors: WorkflowGraphValidationError[] = [];
+
+  (charter.invariants ?? []).forEach((invariant, invariantIndex) => {
+    invariant.appliesTo?.contextIds.forEach((contextId, contextIdIndex) => {
+      if (authoredContextIds.has(contextId)) return;
+      errors.push({
+        code: "unknown-invariant-scope-context",
+        message: `Invariant "${invariant.id}" scopes to unknown authored context "${contextId}"`,
+        contextId,
+        field: `charter.invariants.${invariantIndex}.appliesTo.contextIds.${contextIdIndex}`,
+      });
+    });
+  });
+
+  return errors;
 }
 
 function validateExplicitLaneBarrierCoverage(
@@ -339,6 +362,10 @@ export function validateAuthoredDefinition(
     ...validateParameterDeclarations(definition.parameters),
     ...lintParameterReferences(definition),
     ...validatePlacements(definition),
+    ...validateCharterInvariantScopes(
+      definition.charter,
+      definition.executionContexts.map((context) => context.id),
+    ),
     ...validateWorkflowDefinition(definition, deps).errors,
   ];
 

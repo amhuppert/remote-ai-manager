@@ -19,12 +19,6 @@ import {
   type GraphWorkflowRuntimeEditRouteDeps,
 } from "./runtime-edit-route-handlers";
 import {
-  createGraphWorkflowAmendRouteHandlers,
-  type GraphWorkflowAmendRouteDeps,
-} from "./amend-route-handlers";
-import { OWNER_CONVERSATION_HEADER } from "./execution-route-handlers";
-import { createSpecExecutionContract } from "@/lib/specs/execution-contract";
-import {
   CONVERSATION_CAPABILITY_HEADER,
   mintConversationCapability,
   verifyConversationCapability,
@@ -131,6 +125,7 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
   let fixture: PersistenceFixture;
   let broadcast: ReturnType<typeof vi.fn>;
   let handlers: ReturnType<typeof createGraphWorkflowRuntimeEditRouteHandlers>;
+  let routeDeps: GraphWorkflowRuntimeEditRouteDeps;
   let buildLiveEditDeps: ReturnType<typeof vi.fn>;
   let writeCharterDocument: ReturnType<typeof vi.fn>;
 
@@ -161,7 +156,7 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
     buildLiveEditDeps = vi.fn(async () => TEST_LIVE_EDIT_DEPS);
     writeCharterDocument = vi.fn(async () => {});
 
-    const deps: GraphWorkflowRuntimeEditRouteDeps = {
+    routeDeps = {
       resolveProjectPath: async (name) =>
         name === "repo" ? PROJECT_PATH : null,
       getSession: fixture.store.getSession,
@@ -173,7 +168,7 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
       publishCharterUpdated: publisher.publishCharterUpdated,
       writeCharterDocument,
     };
-    handlers = createGraphWorkflowRuntimeEditRouteHandlers(deps);
+    handlers = createGraphWorkflowRuntimeEditRouteHandlers(routeDeps);
   });
 
   afterEach(() => {
@@ -521,21 +516,33 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
     expect(Array.isArray(body.issues)).toBe(true);
   });
 
-  it("returns a machine-readable 409 when a launched spec execution is regrouped", async () => {
-    const base = createWorkflowExecution({ status: "paused" });
-    await seedExecution({
-      ...base,
-      workingDefinition: {
-        ...base.workingDefinition,
-        origin: {
-          sourceUri:
-            "spec-execution://spec-native-sdd/revisions/revision-1?scope=scope-1",
-        },
+  it("returns a machine-readable 409 when the registered contract refuses", async () => {
+    await seedExecution(createWorkflowExecution({ status: "paused" }));
+    handlers = createGraphWorkflowRuntimeEditRouteHandlers({
+      ...routeDeps,
+      executionContract: {
+        validateDefinition: () => ({ ok: true }),
+        loadLiveEdit: () => ({
+          validateOperation: () => ({
+            ok: false,
+            code: "contract_refused",
+            issues: [
+              {
+                code: "contract-refused",
+                message: "The contract refused this operation.",
+                taskId: "task-implement-1",
+              },
+            ],
+            instruction: "Start a new execution to use a different grouping.",
+          }),
+          accountabilityCoverageGroups: [],
+        }),
+        validateTaskCompletion: () => ({ ok: true }),
+        deriveContextAcceptanceCriteria: () => ({
+          ok: true,
+          acceptanceCriteriaByContextId: {},
+        }),
       },
-    });
-    buildLiveEditDeps.mockResolvedValue({
-      ...TEST_LIVE_EDIT_DEPS,
-      executionContract: createSpecExecutionContract(),
     });
 
     const response = await handlers.POST(
@@ -556,15 +563,14 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toMatchObject({
-      code: "spec_grouping_frozen",
+      code: "contract_refused",
       issues: [
         {
           path: "operations[0]",
-          message: expect.stringContaining("spec-grouping-frozen"),
+          message: expect.stringContaining("contract-refused"),
         },
       ],
-      instruction:
-        "Start a new spec execution to use a different task grouping.",
+      instruction: "Start a new execution to use a different grouping.",
     });
     expect((await reload())?.liveRevision).toBe(1);
   });
@@ -1281,240 +1287,5 @@ describe("graph workflow runtime edit route principals", () => {
     });
     expect(stack.mutateActive).not.toHaveBeenCalled();
     expect(stack.buildLiveEditDeps).not.toHaveBeenCalled();
-  });
-});
-
-describe("graph workflow amendment route principals", () => {
-  const CAPABILITY_SECRET = "server-only-capability-key";
-  const ORIGIN_CONV = "conv-origin";
-  const SIBLING_CONV = "conv-sibling";
-  const LANE_CONV = "conv-lane";
-  const RETIRED_LANE_CONV = "conv-retired-lane";
-
-  function ownedExecution(): GraphWorkflowExecution {
-    const base = createWorkflowExecution({
-      id: "execution-owned",
-      status: "running",
-    });
-    return {
-      ...base,
-      ownerConversationId: ORIGIN_CONV,
-      taskStates: {
-        ...base.taskStates,
-        "task-plan-1": {
-          ...base.taskStates["task-plan-1"]!,
-          status: "running",
-          lastConversationId: LANE_CONV,
-        },
-      },
-    };
-  }
-
-  function buildStack(
-    transport: "absent" | "valid",
-    conversationIds: readonly string[] = [
-      ORIGIN_CONV,
-      SIBLING_CONV,
-      LANE_CONV,
-      RETIRED_LANE_CONV,
-    ],
-    execution: GraphWorkflowExecution = ownedExecution(),
-    activeAtWriteTime?: GraphWorkflowExecution,
-  ) {
-    const applyMutation = vi.fn();
-    const mutateActive = vi.fn<GraphWorkflowAmendRouteDeps["mutateActive"]>(
-      async () => {
-        if (activeAtWriteTime !== undefined) {
-          assertExecutionPrincipalFence(
-            PROJECT_PATH,
-            SESSION_NAME,
-            activeAtWriteTime,
-          );
-        }
-        applyMutation();
-        return activeAtWriteTime ?? execution;
-      },
-    );
-    const fail = (): never => {
-      throw new Error("amendment machinery should not run in a guard test");
-    };
-    const prepareAssignmentSnapshots =
-      activeAtWriteTime === undefined
-        ? async () => fail()
-        : stubAssignmentSnapshotPreparation();
-    const deps: GraphWorkflowAmendRouteDeps = {
-      resolveProjectPath: async (name) =>
-        name === "repo" ? PROJECT_PATH : null,
-      getSession: async () => principalSession(conversationIds),
-      getActiveExecution: async () => execution,
-      mutateActive,
-      buildLiveEditDeps: async () =>
-        activeAtWriteTime === undefined ? fail() : TEST_LIVE_EDIT_DEPS,
-      prepareAssignmentSnapshots,
-      publishLiveEditApplied: fail,
-      publishCharterUpdated: fail,
-      publishExecutionAmended: fail,
-      writeCharterDocument: async () => fail(),
-      auth: { validateOptionalToken: async () => ({ kind: transport }) },
-      verifyConversationCapability: async (request) =>
-        verifyConversationCapability(
-          request.headers.get(CONVERSATION_CAPABILITY_HEADER),
-          CAPABILITY_SECRET,
-        ),
-      verifyLaneCapability: async (request) =>
-        verifyLaneCapability(
-          request.headers.get(LANE_CAPABILITY_HEADER),
-          CAPABILITY_SECRET,
-        ),
-    };
-    return {
-      handlers: createGraphWorkflowAmendRouteHandlers(deps),
-      mutateActive,
-      applyMutation,
-    };
-  }
-
-  function request(headers: Record<string, string> = {}) {
-    return new NextRequest(
-      "http://localhost/api/projects/repo/sessions/session-1/graph-workflow/amend",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          reason: "Discovered required follow-up work",
-          operations: [
-            {
-              type: "add-context",
-              id: "follow-up",
-              title: "Follow up",
-              acceptanceCriteria: "The follow-up is complete.",
-            },
-          ],
-        }),
-        headers: { "content-type": "application/json", ...headers },
-      },
-    );
-  }
-
-  const conversationCapabilityFor = (conversationId: string) => ({
-    [CONVERSATION_CAPABILITY_HEADER]: mintConversationCapability(
-      { sessionName: SESSION_NAME, conversationId },
-      CAPABILITY_SECRET,
-      1_760_000_000_000,
-    ),
-  });
-
-  const laneCapabilityFor = (conversationId: string) => ({
-    [LANE_CAPABILITY_HEADER]: mintLaneCapability(
-      {
-        laneKind: "implementer",
-        executionId: "execution-owned",
-        contextId: "context-plan",
-        conversationId,
-      },
-      CAPABILITY_SECRET,
-      1_760_000_000_000,
-    ),
-  });
-
-  it("refuses a non-origin amendment despite a claimed origin id", async () => {
-    const stack = buildStack("valid");
-
-    const response = await stack.handlers.POST(
-      request({
-        ...conversationCapabilityFor(SIBLING_CONV),
-        [OWNER_CONVERSATION_HEADER]: ORIGIN_CONV,
-      }),
-      makeContext({ name: "repo", session: SESSION_NAME }),
-    );
-
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toMatchObject({
-      code: "non_origin_principal",
-      originConversationId: ORIGIN_CONV,
-    });
-    expect(stack.mutateActive).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ["origin conversation", conversationCapabilityFor(ORIGIN_CONV)],
-    ["current lane", laneCapabilityFor(LANE_CONV)],
-    ["human UI", {}],
-  ] as const)(
-    "admits the %s amendment past the shared principal guard",
-    async (_caller, headers) => {
-      const transport = Object.keys(headers).length === 0 ? "absent" : "valid";
-      const stack = buildStack(transport);
-
-      const response = await stack.handlers.POST(
-        request(headers),
-        makeContext({ name: "repo", session: SESSION_NAME }),
-      );
-
-      expect(response.status).toBe(409);
-      await expect(response.json()).resolves.toMatchObject({
-        code: "not_a_delivery_plan",
-      });
-      expect(stack.mutateActive).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each([
-    [
-      "stale lane",
-      [ORIGIN_CONV, SIBLING_CONV, LANE_CONV, RETIRED_LANE_CONV],
-      laneCapabilityFor(RETIRED_LANE_CONV),
-      "stale_lane_principal",
-    ],
-    [
-      "current lane after origin deletion",
-      [SIBLING_CONV, LANE_CONV],
-      laneCapabilityFor(LANE_CONV),
-      "origin_conversation_absent",
-    ],
-  ] as const)(
-    "refuses the %s amendment write-free",
-    async (_caller, conversationIds, headers, code) => {
-      const stack = buildStack("valid", conversationIds);
-
-      const response = await stack.handlers.POST(
-        request(headers),
-        makeContext({ name: "repo", session: SESSION_NAME }),
-      );
-
-      expect(response.status).toBe(403);
-      await expect(response.json()).resolves.toMatchObject({ code });
-      expect(stack.mutateActive).not.toHaveBeenCalled();
-    },
-  );
-
-  it("refuses a lane whose binding rotates before its first serialized amendment write", async () => {
-    const execution = ownedExecution();
-    execution.workingDefinition = {
-      ...execution.workingDefinition,
-      origin: { sourceUri: "spec-plan://spec/attempt" },
-    };
-    const rebound = {
-      ...execution,
-      taskStates: {
-        ...execution.taskStates,
-        "task-plan-1": {
-          ...execution.taskStates["task-plan-1"]!,
-          lastConversationId: "conv-successor-lane",
-        },
-      },
-    };
-    const stack = buildStack("valid", undefined, execution, rebound);
-
-    const response = await stack.handlers.POST(
-      request(laneCapabilityFor(LANE_CONV)),
-      makeContext({ name: "repo", session: SESSION_NAME }),
-    );
-
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toMatchObject({
-      code: "stale_lane_principal",
-      originConversationId: ORIGIN_CONV,
-    });
-    expect(stack.applyMutation).not.toHaveBeenCalled();
   });
 });

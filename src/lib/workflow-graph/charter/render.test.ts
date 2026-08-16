@@ -141,6 +141,42 @@ describe("renderCharterDigest", () => {
     );
   });
 
+  it("labels global and context-scoped invariants when a charter declares scope", () => {
+    const charter = makeCharter({
+      invariants: [
+        { id: "global", statement: "Applies everywhere." },
+        {
+          id: "implementation-only",
+          statement: "Applies only to implementation work.",
+          appliesTo: { contextIds: ["context-implement", "context-verify"] },
+        },
+      ],
+    });
+
+    const digest = renderCharterDigest(charter);
+    const markdown = renderCharterMarkdown(charter);
+
+    for (const rendered of [digest, markdown]) {
+      expect(rendered).toContain("global)");
+      expect(rendered).toContain(
+        "applies to: context-implement, context-verify",
+      );
+    }
+  });
+
+  it("keeps all-unscoped invariant rendering byte-compatible", () => {
+    const charter = makeCharter({
+      invariants: [{ id: "global", statement: "Applies everywhere." }],
+    });
+
+    expect(renderCharterDigest(charter)).toContain(
+      "## Invariants (hold for every change)\n- `global` — Applies everywhere.",
+    );
+    expect(renderCharterMarkdown(charter)).toContain(
+      "## Invariants (hold for every change)\n- `global` — Applies everywhere.",
+    );
+  });
+
   it("omits the invariants section when the charter declares none", () => {
     const digest = renderCharterDigest(makeCharter());
 
@@ -212,6 +248,31 @@ describe("computeCharterHash", () => {
 
     expect(computeCharterHash(edited)).not.toBe(
       computeCharterHash(withInvariant),
+    );
+  });
+
+  it("changes when an invariant's context scope changes", () => {
+    const firstScope = makeCharter({
+      invariants: [
+        {
+          id: "inv",
+          statement: "Keep this invariant true.",
+          appliesTo: { contextIds: ["implement"] },
+        },
+      ],
+    });
+    const secondScope = makeCharter({
+      invariants: [
+        {
+          id: "inv",
+          statement: "Keep this invariant true.",
+          appliesTo: { contextIds: ["verify"] },
+        },
+      ],
+    });
+
+    expect(computeCharterHash(secondScope)).not.toBe(
+      computeCharterHash(firstScope),
     );
   });
 

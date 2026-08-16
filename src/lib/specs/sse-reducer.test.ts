@@ -64,6 +64,14 @@ const events: SpecSseEvent[] = [
     attentionId: "attention-1",
     active: true,
   },
+  {
+    type: "spec-delivery-plan-changed",
+    kind: "reaffirmed",
+    ...common,
+    attemptId: "attempt-1",
+    draftRevision: 3,
+    candidateId: null,
+  },
 ];
 
 describe("reduceSpecSseEvent", () => {
@@ -74,6 +82,7 @@ describe("reduceSpecSseEvent", () => {
     ["spec-execution-changed", ["attention", "execution", "summary"]],
     ["spec-evidence-changed", ["evidence", "execution", "summary"]],
     ["spec-attention-changed", ["attention", "summary"]],
+    ["spec-delivery-plan-changed", ["deliveryPlan", "summary"]],
   ] as const)("reduces %s to its affected cache facets", (type, facets) => {
     const event = events.find((candidate) => candidate.type === type);
     if (!event) throw new Error(`missing fixture for ${type}`);

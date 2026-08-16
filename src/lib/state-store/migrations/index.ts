@@ -30,10 +30,15 @@ import { graphWorkflowSeededDocuments } from "./0023-graph-workflow-seeded-docum
 import { collabLaneFlowAgentIds } from "./0024-collab-lane-flow-agent-ids";
 import { executionLeaseAndResultDeliveries } from "./0024-execution-lease-and-result-deliveries";
 import { graphWorkflowPendingArtifacts } from "./0025-graph-workflow-pending-artifacts";
+import { deliveryPlanLaunchCutover } from "./0026-delivery-plan-launch-cutover";
 import { retireReleaseSlotCleanupPhase } from "./0026-retire-release-slot-cleanup-phase";
 import { workflowResultNotifications } from "./0027-workflow-result-notifications";
+import { retireDeliveryPlanAmendments } from "./0027-retire-delivery-plan-amendments";
+import { retireLegacySpecExecutions } from "./0028-retire-legacy-spec-executions";
 import { workflowResultEffectReceipts } from "./0028-workflow-result-effect-receipts";
+import { addSpecDeliveryVerdicts } from "./0029-add-spec-delivery-verdicts";
 import { jobRecordParkedMerge } from "./0029-job-record-parked-merge";
+import { nativeSddV2Cutover } from "./0030-native-sdd-v2-cutover";
 
 /**
  * Ordered registry of state-store migrations. Append new migrations here in
@@ -73,10 +78,18 @@ export const migrations: readonly StateMigration[] = [
   collabLaneFlowAgentIds,
   executionLeaseAndResultDeliveries,
   graphWorkflowPendingArtifacts,
+  deliveryPlanLaunchCutover,
   retireReleaseSlotCleanupPhase,
   workflowResultNotifications,
+  retireDeliveryPlanAmendments,
+  retireLegacySpecExecutions,
   workflowResultEffectReceipts,
+  addSpecDeliveryVerdicts,
   jobRecordParkedMerge,
+  // Last by construction: the native-SDD v2 cutover is the destructive
+  // barrier that stamps schema version 9, so every additive migration
+  // applies before the version flips.
+  nativeSddV2Cutover,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

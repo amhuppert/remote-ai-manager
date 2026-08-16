@@ -3,17 +3,15 @@ import {
   deliveryPlanDocumentSchema,
   type DeliveryPlanDocument,
 } from "@/lib/specs/delivery-plan";
-import { deliveryPlanHash } from "@/lib/specs/delivery-plan-hash";
 import {
   createSpecEventsPublisher,
   type SpecEventsPublisher,
 } from "@/lib/specs/events";
-import { stableStringify } from "./serialization";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import { createSpecEventsRepo } from "./spec-events-repo";
 import { createSpecReviewRepo, type SpecReviewRepo } from "./spec-review-repo";
 import {
   createSpecDeliveryPlanRepo,
-  type ProposeDeliveryPlanCandidate,
   type SpecDeliveryPlanRepo,
 } from "./spec-delivery-plan-repo";
 
@@ -103,180 +101,305 @@ export function seedDeliveryPlanParents(db: Db): void {
  */
 export function maximalPlanDocument(): DeliveryPlanDocument {
   return deliveryPlanDocumentSchema.parse({
-    dispositions: [
-      {
-        criterionElementId: "criterion-reaffirmed",
-        disposition: "reaffirmed",
-        deliveredByExecutionId: EARLIER_EXECUTION_ID,
-        reaffirmation: {
-          actor: { kind: "human" },
-          at: "2026-08-07T09:30:00.000Z",
-          basisRevisionId: PRIOR_REVISION_ID,
-          basis: [
-            {
-              elementId: "req-1",
-              reason: "parent_requirement",
-              baseHash: "req-1-a",
-              currentHash: "req-1-b",
+    schemaVersion: 2,
+    launch: {
+      name: "Fixture launch",
+      description: "Fixture launch.",
+      definition: {
+        schemaVersion: 2,
+        workflowConfig: {
+          implementer: {
+            id: "fixture-implementer",
+            profile: { tier: "builtin", id: "general-implementer" },
+            focus: "Persist fixture launch configuration",
+            agent: {
+              backend: "claude",
+              model: "opus",
+              reasoningEffort: "high",
             },
-          ],
+          },
+          contextValidator: {
+            enabled: false,
+            assignments: [
+              {
+                id: "fixture-reviewer",
+                profile: { tier: "builtin", id: "general-reviewer" },
+                focus: "Review fixture launch configuration",
+                strategy: "conversation",
+                authority: "blocking",
+                agent: {
+                  backend: "claude",
+                  model: "sonnet",
+                  reasoningEffort: "medium",
+                },
+                continuity: { enabled: false, contextLimitTokens: 110_000 },
+              },
+            ],
+          },
+          scriptValidator: { commands: ["typecheck", "test"] },
+          iterationPolicy: {
+            maxIterations: 9,
+            continuity: { enabled: false, contextLimitTokens: 80_000 },
+          },
+          circuitBreaker: { consecutiveFailureThreshold: 4 },
+          mutability: {
+            allowAgentTaskAdd: true,
+            allowAgentContextAdd: true,
+          },
+          planRepair: {
+            enabled: false,
+            maxAttemptsPerContext: 3,
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
+          },
+          collaboration: {
+            enabled: true,
+            secondAgent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "low",
+            },
+            negotiationRounds: 3,
+            autonomousResolutionThreshold: "major",
+          },
+          humanApprovalGate: { enabled: true },
+          askUserQuestions: { enabled: true },
+          agentValidation: {
+            implementer: { mode: "all", except: ["format"] },
+            contextValidator: { mode: "only", commands: ["test"] },
+          },
+          laneMergeValidation: {
+            strategy: "every-merge",
+            commands: { mode: "only", commands: ["typecheck"] },
+          },
         },
-        note: "The parent requirement was reworded; the proof still holds.",
-      },
-      {
-        criterionElementId: "criterion-selected",
-        disposition: "selected",
-        deliveredByExecutionId: null,
-        reaffirmation: null,
-        note: null,
-      },
-    ],
-    // One context per authorable placement grade, so a grade dropped or
-    // flattened at the serialization boundary fails the round trip. `readOnly`
-    // is here because the SCHEMA admits it: propose-time lint is what refuses a
-    // plan-tier context with no write surface, and the column has to survive
-    // whatever the schema admits.
-    contexts: [
-      {
-        contextId: "ctx-store",
-        title: "Repository and round trip",
-        contextType: "delivery",
-        criterionElementIds: ["criterion-selected"],
-        acceptanceContract: [
-          "An attempt round-trips through SQLite via its repository.",
-        ],
-        proofPlan: [
+        charter: makeTestCharter(),
+        parameters: [
           {
-            criterionElementId: "criterion-selected",
-            evidenceKinds: ["validator_verdict"],
-            note: "The maximal round-trip contract test is the proof.",
+            type: "string",
+            name: "fixture-input",
+            label: "Fixture input",
+            required: true,
+            default: "value",
+            minLength: 1,
+            maxLength: 32,
+          },
+          {
+            type: "text",
+            name: "fixture-notes",
+            label: "Fixture notes",
+            required: false,
+            default: "Persist this complete authored launch.",
+            minLength: 1,
+            maxLength: 200,
+          },
+          {
+            type: "enum",
+            name: "fixture-mode",
+            label: "Fixture mode",
+            required: true,
+            options: ["safe", "fast"],
+            default: "safe",
           },
         ],
-        placement: {
-          lane: "store",
-          mode: "owned",
-          ownedPaths: [
-            "src/lib/state-store",
-            "src/lib/specs/delivery-plan.ts",
-            "docs/design",
-          ],
+        prerequisites: [
+          {
+            kind: "path",
+            path: "src",
+            label: "Fixture source path",
+          },
+          {
+            kind: "skill",
+            skill: "fixture-skill",
+            backend: "codex",
+            label: "Fixture skill prerequisite",
+          },
+        ],
+        executionContexts: [
+          {
+            id: "fixture-context",
+            title: "Fixture context",
+            description: "Persists every launch definition field.",
+            acceptanceCriteria: "The fixture persists.",
+            placement: {
+              lane: "fixture",
+              mode: "owned",
+              ownedPaths: ["src/fixture"],
+            },
+            outputSchema: {
+              type: "object",
+              properties: { result: { type: "string" } },
+              required: ["result"],
+            },
+            routing: { cardinality: "atLeastOne" },
+            implementer: {
+              id: "fixture-context-implementer",
+              profile: { tier: "project", id: "fixture-profile" },
+              focus: "Persist context configuration",
+              agent: {
+                backend: "claude",
+                model: "opus",
+                reasoningEffort: "high",
+              },
+            },
+            contextValidator: {
+              enabled: false,
+              assignments: [
+                {
+                  id: "fixture-context-reviewer",
+                  profile: { tier: "project", id: "fixture-reviewer" },
+                  focus: "Review context configuration",
+                  strategy: "task",
+                  authority: "blocking",
+                  agent: {
+                    backend: "codex",
+                    model: "gpt-5.4",
+                    reasoningEffort: "high",
+                  },
+                  continuity: {
+                    enabled: false,
+                    contextLimitTokens: 60_000,
+                  },
+                },
+              ],
+            },
+            scriptValidator: { commands: ["typecheck"] },
+            mutability: {
+              allowAgentTaskAdd: true,
+              allowAgentContextAdd: true,
+            },
+            circuitBreaker: { consecutiveFailureThreshold: 5 },
+            iterationPolicy: {
+              maxIterations: 7,
+              continuity: { enabled: false, contextLimitTokens: 90_000 },
+            },
+            planRepair: {
+              enabled: false,
+              maxAttemptsPerContext: 4,
+              agent: {
+                backend: "claude",
+                model: "opus",
+                reasoningEffort: "low",
+              },
+            },
+            collaboration: {
+              enabled: true,
+              secondAgent: {
+                backend: "claude",
+                model: "opus",
+                reasoningEffort: "high",
+              },
+              negotiationRounds: 2,
+              autonomousResolutionThreshold: "minor",
+            },
+            humanApprovalGate: { enabled: true },
+            askUserQuestions: { enabled: true },
+            agentValidation: {
+              implementer: { mode: "only", commands: ["typecheck", "test"] },
+              contextValidator: { mode: "all", except: ["format"] },
+            },
+            origin: {
+              sourceUri: "fixture://delivery-plan-launch/context",
+              label: "Fixture context source",
+            },
+            metadata: { fixture: "context" },
+          },
+          {
+            id: "fixture-followup",
+            title: "Fixture follow-up",
+            acceptanceCriteria: "The fixture follows up.",
+            placement: { lane: "fixture-followup", mode: "readOnly" },
+          },
+          {
+            id: "fixture-fallback",
+            title: "Fixture fallback",
+            acceptanceCriteria: "The fixture fallback remains available.",
+            placement: { lane: "fixture-fallback", mode: "full" },
+          },
+        ],
+        tasks: [
+          {
+            id: "fixture-task",
+            contextId: "fixture-context",
+            order: 1,
+            title: "Persist the fixture",
+            instructions: "Persist all fixture fields.",
+            metadata: { fixture: "launch" },
+            source: "agent",
+          },
+        ],
+        edges: [
+          {
+            id: "fixture-edge",
+            sourceContextId: "fixture-context",
+            targetContextId: "fixture-followup",
+            when: {
+              schema: {
+                type: "object",
+                properties: { result: { const: "persisted" } },
+                required: ["result"],
+              },
+            },
+          },
+          {
+            id: "fixture-edge-fallback",
+            sourceContextId: "fixture-context",
+            targetContextId: "fixture-fallback",
+            when: { else: true },
+          },
+        ],
+        loopGroups: [
+          {
+            id: "fixture-loop",
+            title: "Fixture loop",
+            bodyContextIds: ["fixture-context", "fixture-followup"],
+            entryContextId: "fixture-context",
+            exitContextId: "fixture-followup",
+            until: {
+              schema: {
+                type: "object",
+                properties: { result: { const: "persisted" } },
+                required: ["result"],
+              },
+            },
+            maxPasses: 2,
+          },
+        ],
+      },
+      layout: {
+        workflowId: "fixture-delivery-plan-launch",
+        contextPositions: {
+          "fixture-context": { x: 1, y: 2 },
+          "fixture-followup": { x: 5, y: 6 },
+          "fixture-fallback": { x: 9, y: 10 },
         },
+        viewport: { x: 3, y: 4, zoom: 1.5 },
       },
-      {
-        contextId: "ctx-integrate",
-        title: "Integration on the shared lane",
-        contextType: "integration",
-        criterionElementIds: [],
-        acceptanceContract: ["The delivered lanes join without conflict."],
-        proofPlan: [],
-        placement: { lane: "integration", mode: "full" },
-      },
-      {
-        contextId: "ctx-audit",
-        title: "Read-only audit",
-        contextType: "closeout",
-        criterionElementIds: [],
-        acceptanceContract: ["The audit reports without mutating the tree."],
-        proofPlan: [],
-        placement: { lane: "audit", mode: "readOnly" },
-      },
-    ],
-    tasks: [
-      {
-        taskId: "task-store",
-        contextId: "ctx-store",
-        title: "Write the repository",
-        instructions: "Implement open, saveDraft, propose, and reopen.",
-        order: 0,
-        contributesToCriterionElementIds: ["criterion-selected"],
-      },
-    ],
-    edges: [
-      {
-        edgeId: "edge-store-to-lint",
-        fromContextId: "ctx-store",
-        toContextId: "ctx-store",
-      },
-    ],
-    wiring: [
-      {
-        capabilityId: "delivery-plan-repo",
-        criterionElementIds: ["criterion-selected"],
-        owner: {
-          kind: "call_site",
-          contextId: "ctx-store",
-          locator: "src/lib/specs/service-factory.ts",
-        },
-      },
-    ],
-    policyOverrides: [
-      {
-        key: "validation.preMerge",
-        value: "typecheck,lint",
-        rationale: "The full suite runs once at closeout.",
-      },
-    ],
-    touchedSurfaces: ["src/lib/state-store/"],
-    governance: {
-      mission: "Persist the delivery plan attempt and prove it round-trips.",
-      charterInvariants: [
+    },
+    binding: {
+      dispositions: [
         {
-          id: "durability-contracts",
-          statement:
-            "Every persisted field lands with repository mapping and round-trip coverage.",
+          criterionElementId: "criterion-reaffirmed",
+          disposition: "delivered_elsewhere",
+          deliveredByExecutionId: EARLIER_EXECUTION_ID,
+        },
+        {
+          criterionElementId: "criterion-selected",
+          disposition: "in_scope",
+          deliveredByExecutionId: null,
         },
       ],
-      sourcesOfTruth: [
+      claims: [
         {
-          rank: 1,
-          id: "final-design",
-          label: "Final agreed design",
-          type: "document",
-          locator: "command-center#47 attachment f7b542c4",
-          description: "Section 4 owns the document shape.",
-          appliesTo: "every context",
-          accessPolicy: "external-readonly",
+          contextId: "fixture-context",
+          criterionElementIds: ["criterion-selected"],
         },
       ],
-      validationCommandNames: ["typecheck"],
     },
   });
-}
-
-/**
- * The compiled candidate a propose carries. The repository stores the compiled
- * bytes opaquely, so the fixture states a representative definition rather than
- * running the materializer: what these tests prove is that the candidate lands
- * atomically with its snapshot and survives a reload, not how it was compiled.
- * The plan hash is real, because the repository checks it.
- */
-export function candidateFor(
-  document: DeliveryPlanDocument,
-  input: {
-    readonly draftRevision: number;
-    readonly id?: string;
-    readonly pinnedRevisionId?: string;
-    readonly compiledDefinitionHash?: string;
-  },
-): ProposeDeliveryPlanCandidate {
-  const definition = {
-    schemaVersion: 1,
-    charter: { mission: "Fixture", sourcesOfTruth: [] },
-    executionContexts: [],
-    tasks: [],
-    edges: [],
-  };
-  return {
-    id: input.id ?? "candidate-delivery-plan",
-    compiledDefinitionHash:
-      input.compiledDefinitionHash ?? `sha256:${"c".repeat(64)}`,
-    definitionJson: stableStringify(definition),
-    planHash: deliveryPlanHash({
-      pinnedRevisionId: input.pinnedRevisionId ?? PINNED_REVISION_ID,
-      draftRevision: input.draftRevision,
-      document,
-    }),
-  };
 }
 
 export interface DeliveryPlanTestRepos {

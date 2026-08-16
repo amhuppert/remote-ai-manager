@@ -209,23 +209,23 @@ function executionSublabel(
     ({ id }) => id === execution.id,
   );
   const workflowStatus = statusExecution?.workflowStatus ?? "running";
-  const taskCount =
+  const claimCount =
     deliveryPlan === null || deliveryPlan === undefined
       ? planTaskCount(detail)
       : deliveryPlan.attempt.launchedExecutionId === execution.id
-        ? deliveryPlan.document.tasks.length
+        ? deliveryPlan.document.binding.claims.length
         : null;
   const workflowLabel =
     workflowStatus === "completed"
       ? "workflow complete"
       : workflowStatus.replaceAll("_", " ");
-  if (taskCount === null || taskCount === 0) {
+  if (claimCount === null || claimCount === 0) {
     return `${workflowLabel} · ${revision}`;
   }
 
   const completed = completedTaskCount(detail);
-  return `${workflowLabel} · ${completed}/${taskCount} ${
-    taskCount === 1 ? "task" : "tasks"
+  return `${workflowLabel} · ${completed}/${claimCount} ${
+    claimCount === 1 ? "binding claim" : "binding claims"
   } done`;
 }
 
@@ -284,12 +284,12 @@ function authoringStep(
   };
 }
 
-function deliveryPlanTaskSublabel(
+function deliveryPlanBindingSublabel(
   deliveryPlan: DeliveryPlanReviewView,
   state: string,
 ): string {
-  const count = deliveryPlan.document.tasks.length;
-  return `${pluralizedCount(count, "task")} · ${state}`;
+  const count = deliveryPlan.document.binding.claims.length;
+  return `${pluralizedCount(count, "binding claim")} · ${state}`;
 }
 
 function deliveryPlanIsApproved(
@@ -326,7 +326,7 @@ function deliveryPlanStep(
       sublabel:
         deliveryPlan === null || deliveryPlan === undefined
           ? "legacy plan launched"
-          : deliveryPlanTaskSublabel(deliveryPlan, "candidate launched"),
+          : deliveryPlanBindingSublabel(deliveryPlan, "candidate launched"),
     };
   }
 
@@ -351,28 +351,31 @@ function deliveryPlanStep(
       return {
         label: "Delivery plan",
         state: "draft",
-        sublabel: deliveryPlanTaskSublabel(deliveryPlan, "drafting"),
+        sublabel: deliveryPlanBindingSublabel(deliveryPlan, "drafting"),
       };
     case "proposed":
       return {
         label: "Delivery plan",
         state: "review",
-        sublabel: deliveryPlanTaskSublabel(deliveryPlan, "candidate in review"),
+        sublabel: deliveryPlanBindingSublabel(
+          deliveryPlan,
+          "candidate in review",
+        ),
       };
     case "approved":
       return {
         label: "Delivery plan",
         state: "done",
         sublabel: `candidate approved · ${pluralizedCount(
-          deliveryPlan.document.tasks.length,
-          "task",
+          deliveryPlan.document.binding.claims.length,
+          "binding claim",
         )}`,
       };
     case "parked":
       return {
         label: "Delivery plan",
         state: deliveryPlan.approval === null ? "review" : "ready",
-        sublabel: deliveryPlanTaskSublabel(
+        sublabel: deliveryPlanBindingSublabel(
           deliveryPlan,
           deliveryPlan.approval === null
             ? "parked · approval required"
@@ -383,7 +386,10 @@ function deliveryPlanStep(
       return {
         label: "Delivery plan",
         state: "done",
-        sublabel: deliveryPlanTaskSublabel(deliveryPlan, "candidate launched"),
+        sublabel: deliveryPlanBindingSublabel(
+          deliveryPlan,
+          "candidate launched",
+        ),
       };
     case "abandoned":
       return {
@@ -513,7 +519,7 @@ function contextSentence(
       case "draft":
         return `Delivery plan attempt ${attemptId} is being drafted. Propose its authored graph for review next.`;
       case "proposed":
-        return `Delivery plan attempt ${attemptId} awaits review of its exact compiled candidate.`;
+        return `Delivery plan attempt ${attemptId} awaits review of its exact finalized candidate.`;
       case "approved":
         return deliveryPlan.approval === null
           ? `Delivery plan attempt ${attemptId} still needs candidate-bound approval.`

@@ -16,6 +16,7 @@ import {
   createSpecDeliveryRepo,
   type SpecDeliveryRepo,
 } from "@/lib/state-store/spec-delivery-repo";
+import { createSpecExecutionBindingRepo } from "@/lib/state-store/spec-execution-binding-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
@@ -29,9 +30,7 @@ import {
 } from "@/lib/state-store/specs-repo";
 import { getStateDb } from "@/lib/state-store/store";
 import { getSharedWriteQueue } from "@/lib/state-store/write-queue";
-import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
-import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
-import { scopeForTier } from "@/lib/workflow-graph/template-library-service";
+import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/spec-bridge";
 
 import { draftAuthoringSequence } from "./authoring-sequence";
 import {
@@ -54,8 +53,8 @@ import {
   reorderDraftElementInputSchema,
   type AuthoringService,
 } from "./authoring-service";
-import { compiledWorkflowTaskId, scopePlanFromRevision } from "./compiler";
-import { isEarlierMergedDelivery } from "./delivery-gate";
+import { isEarlierMergedDelivery } from "./delivery-history";
+import { findDeliveryVerdictForExecution } from "./delivery-verdict-identity";
 import type { DeliveryPlanService } from "./delivery-plan-service";
 import {
   deliveryPlanEditRequestSchema,
@@ -69,6 +68,7 @@ import {
 import { DRAFT_HEALTH_TOP_FINDINGS, draftHealth } from "./draft-health";
 import type { EvidenceService } from "./evidence-service";
 import { createSpecEventsPublisher } from "./events";
+import type { LinkedSpecExecutionBindingV2 } from "./execution-binding";
 import {
   loadSpecExportState,
   renderCanonicalBundle,
@@ -78,13 +78,12 @@ import {
   type IntegrityReport,
 } from "./export";
 import {
-  hashExecutionScope,
   type ExecutionService,
   type ReconciledSpecExecution,
   type SpecWorkflowCleanupTarget,
 } from "./execution-service";
 import { createProductionSpecWorkflowCleanupPort } from "./workflow-cleanup-port";
-import { readSpecExecutionOriginMap } from "./execution-origin-map";
+import { nativeSddSeedSourceSummary } from "./execution-seed-source";
 import {
   createApprovalApplicability,
   type ApprovalApplicability,
@@ -135,12 +134,6 @@ import type { ImportService } from "./import-service";
 import type { LintFinding } from "./lint";
 import type { SpecMeasuresReport } from "./measures";
 import { createMeasuresQuery } from "./measures-query";
-import {
-  boundSpecPlanPreview,
-  buildSpecPlanPreview,
-  type SpecPlanPreview,
-} from "./plan-preview";
-import { resolveDial } from "./policy";
 import {
   projectDeliveryDisplay,
   projectRequirementStatus,
@@ -217,6 +210,7 @@ import {
   type SpecAssumptionRow,
   type SpecCommentRow,
   type SpecCriterionDispositionRow,
+  type SpecDeliveryVerdictRow,
   type SpecEventRow,
   type SpecEvidenceRow,
   type SpecExecutionRow,
@@ -228,7 +222,6 @@ import {
   type SpecRevision,
   type SpecRevisionElement,
   type SpecRevisionSnapshot,
-  type SpecTaskClaimRow,
   type SpecWaiverRow,
   type SpecWorkflowLaneStatus,
 } from "./schemas";
@@ -268,7 +261,6 @@ export interface SpecRouteDeps {
   findQuestionsBySpecId(specId: string): SpecQuestionRow[];
   findAssumptionsBySpecId(specId: string): SpecAssumptionRow[];
   findExecutionsBySpecId(specId: string): SpecExecutionRow[];
-  findTaskClaimsBySpecId(specId: string): SpecTaskClaimRow[];
   findWorkflowEventsByExecution(
     projectPath: string,
     sessionName: string,
@@ -278,10 +270,6 @@ export interface SpecRouteDeps {
     projectPath: string,
     execution: SpecExecutionRow,
   ): Promise<ReconciledSpecExecution>;
-  ingestExecutionEvidenceBestEffort(
-    projectPath: string,
-    executionId: string,
-  ): Promise<void>;
   findCriterionDispositionsByExecution(
     executionId: string,
   ): SpecCriterionDispositionRow[];
@@ -293,16 +281,17 @@ export interface SpecRouteDeps {
     criterionElementId: string,
     revisionId: string,
   ): SpecProofVerdictRow[];
+  findDeliveryVerdictsBySpecExecutionId(
+    executionId: string,
+  ): SpecDeliveryVerdictRow[];
+  findExecutionBindingBySpecExecutionId(
+    executionId: string,
+  ): LinkedSpecExecutionBindingV2 | null;
   findWaiverForCriterionRevision(
     criterionElementId: string,
     revisionId: string,
   ): SpecWaiverRow | null;
-  /**
-   * By-id waiver resolution for the delivery projection: the gate honors a
-   * waiver only through the execution disposition's `waiver_id` link, so the
-   * projection must resolve exactly that row rather than "any current waiver
-   * for the criterion/revision".
-   */
+  /** By-id waiver resolution for persisted disposition and delta history. */
   findWaiverById(waiverId: string): SpecWaiverRow | null;
   findWaiversByRevision(revisionId: string): SpecWaiverRow[];
   exportSpec(specId: string): Promise<CanonicalSpecBundle>;
@@ -413,26 +402,15 @@ function createDefaultDeps(): SpecRouteDeps {
   const specs = createSpecsRepo(db, getSharedWriteQueue());
   const review = createSpecReviewRepo(db);
   const delivery = createSpecDeliveryRepo(db);
+  const executionBindings = createSpecExecutionBindingRepo(db);
   const links = createSpecLinksRepo(db);
   const eventsRepo = createSpecEventsRepo(db);
   const workflowEvents = createGraphWorkflowEventsRepo(db);
-  const workflowStorage = createWorkflowStorageService();
   const measures = createMeasuresQuery({
     specs,
     events: eventsRepo,
     delivery,
-    workflowEvents,
-    async loadOriginMap(workflowDefinitionId, projectPath) {
-      const record = await workflowStorage.get(
-        scopeForTier("project", projectPath),
-        workflowDefinitionId,
-      );
-      return record === null
-        ? []
-        : readSpecExecutionOriginMap(record.definition, (revisionId) =>
-            specs.getRevisionSnapshot(revisionId),
-          );
-    },
+    executionBindings,
     now: () => new Date().toISOString(),
   });
   const authoring = createAuthoringService({
@@ -477,17 +455,12 @@ function createDefaultDeps(): SpecRouteDeps {
     findQuestionsBySpecId: (specId) => review.findQuestionsBySpecId(specId),
     findAssumptionsBySpecId: (specId) => review.findAssumptionsBySpecId(specId),
     findExecutionsBySpecId: (specId) => delivery.findExecutionsBySpecId(specId),
-    findTaskClaimsBySpecId: (specId) => delivery.findTaskClaimsBySpecId(specId),
     findWorkflowEventsByExecution: (projectPath, sessionName, executionId) =>
       workflowEvents.findByExecution(projectPath, sessionName, executionId),
     async reconcileExecution(projectPath, execution) {
       const services = await loadProductionSpecRouteServices(projectPath);
       const result = await services.execution.getStatus(execution.id);
       return result.ok ? result.value : { execution, workflowStatus: null };
-    },
-    async ingestExecutionEvidenceBestEffort(projectPath, executionId) {
-      const services = await loadProductionSpecRouteServices(projectPath);
-      await services.ingestEvidenceBestEffort(executionId);
     },
     findCriterionDispositionsByExecution: (executionId) =>
       delivery.findCriterionDispositionsByExecution(executionId),
@@ -498,6 +471,10 @@ function createDefaultDeps(): SpecRouteDeps {
         criterionElementId,
         revisionId,
       ),
+    findDeliveryVerdictsBySpecExecutionId: (executionId) =>
+      delivery.findDeliveryVerdictsBySpecExecutionId(executionId),
+    findExecutionBindingBySpecExecutionId: (executionId) =>
+      executionBindings.findBySpecExecutionId(executionId),
     findWaiverForCriterionRevision: (criterionElementId, revisionId) =>
       delivery.findWaiverForCriterionRevision(criterionElementId, revisionId),
     findWaiverById: (waiverId) => delivery.findWaiverById(waiverId),
@@ -545,31 +522,6 @@ export async function resolveSpecRoute(
   return {
     ok: true,
     value: { ...project.value, requestedSlug: slug ?? "", spec },
-  };
-}
-
-const planPreviewBodySchema = z
-  .object({
-    revisionId: z.string().min(1).optional(),
-    scope: executionScopeSchema.optional(),
-    contextId: z.string().min(1).optional(),
-  })
-  .strict();
-
-/**
- * The whole revision as a scope: every task selected, every criterion in
- * scope, nothing excluded. This serves only the read-only legacy preview;
- * active start reads its graph from an approved DeliveryPlanAttempt.
- */
-function fullRevisionScope(
-  slug: string,
-  snapshot: SpecRevisionSnapshot,
-): ExecutionScope {
-  const plan = scopePlanFromRevision(slug, snapshot);
-  return {
-    selectedTaskIds: plan.tasks.map((task) => task.id),
-    selectedCriterionIds: plan.criteria.map((criterion) => criterion.id),
-    exclusionDispositions: [],
   };
 }
 
@@ -729,15 +681,30 @@ function deliveryCriteria(
   const currentApprovedRevisionId = currentApprovedSnapshot?.revision.id;
   const externalDelivery =
     currentApprovedSnapshot?.revision.externalDelivery ?? null;
-  const deliveredDispositions = executions
-    .filter(
-      (execution) =>
-        execution.state === "delivered" &&
-        execution.revision_id === currentApprovedRevisionId,
-    )
-    .flatMap((execution) =>
+  const deliveredExecutions = executions.filter(
+    (execution) =>
+      execution.state === "delivered" &&
+      execution.revision_id === currentApprovedRevisionId,
+  );
+  const hasBoundDeliveryAttempt = deliveredExecutions.some(
+    (execution) =>
+      deps.findExecutionBindingBySpecExecutionId(execution.id) !== null,
+  );
+  const executionById = new Map(executions.map((row) => [row.id, row]));
+  const dispositionsByExecution = new Map(
+    executions.map((execution) => [
+      execution.id,
       deps.findCriterionDispositionsByExecution(execution.id),
-    );
+    ]),
+  );
+  const priorRuns: PriorRunLookup = {
+    findExecutionById: (executionId) => executionById.get(executionId) ?? null,
+    findCriterionDisposition: (executionId, criterionElementId) =>
+      dispositionsByExecution
+        .get(executionId)
+        ?.find((row) => row.criterion_element_id === criterionElementId) ??
+      null,
+  };
   return (
     currentApprovedSnapshot?.elements
       .filter(({ element }) => element.kind === "criterion")
@@ -750,12 +717,35 @@ function deliveryCriteria(
           return { criterionElementId: element.id, state: "waived" as const };
         }
 
-        const proven = deliveredDispositions.some(
-          (disposition) =>
-            disposition.criterion_element_id === element.id &&
-            (disposition.disposition === "in_scope" ||
-              disposition.disposition === "delivered_elsewhere"),
-        );
+        const proven = deliveredExecutions.some((execution) => {
+          const disposition = dispositionsByExecution
+            .get(execution.id)
+            ?.find((row) => row.criterion_element_id === element.id);
+          if (disposition?.disposition === "delivered_elsewhere") {
+            return isEarlierMergedDelivery(priorRuns, execution, disposition);
+          }
+          if (disposition?.disposition !== "in_scope") return false;
+          const linkedBinding = deps.findExecutionBindingBySpecExecutionId(
+            execution.id,
+          );
+          if (linkedBinding === null) {
+            if (hasBoundDeliveryAttempt) return false;
+            return deps
+              .findProofVerdictsByCriterionRevision(
+                element.id,
+                currentApprovedSnapshot.revision.id,
+              )
+              .some((verdict) => verdict.stale_at === null);
+          }
+          return (
+            findDeliveryVerdictForExecution(
+              deps.findDeliveryVerdictsBySpecExecutionId(execution.id),
+              execution,
+              linkedBinding,
+              element.id,
+            ) !== null
+          );
+        });
         if (proven) {
           return {
             criterionElementId: element.id,
@@ -854,6 +844,37 @@ function criterionProofState(
     revision.id,
   );
   if (waiver?.stale === 0) return "waived";
+  const deliveredExecutions = deps
+    .findExecutionsBySpecId(revision.specId)
+    .filter(
+      (execution) =>
+        execution.state === "delivered" &&
+        execution.revision_id === revision.id,
+    );
+  const boundExecutions = deliveredExecutions.flatMap((execution) => {
+    const linkedBinding = deps.findExecutionBindingBySpecExecutionId(
+      execution.id,
+    );
+    return linkedBinding === null ? [] : [{ execution, linkedBinding }];
+  });
+  if (
+    boundExecutions.some(
+      ({ execution, linkedBinding }) =>
+        findDeliveryVerdictForExecution(
+          deps.findDeliveryVerdictsBySpecExecutionId(execution.id),
+          execution,
+          linkedBinding,
+          criterionElementId,
+        ) !== null,
+    )
+  ) {
+    return "proven";
+  }
+  if (boundExecutions.length > 0) {
+    return revision.externalDelivery === null
+      ? "pending"
+      : "delivered_externally";
+  }
   if (
     deps
       .findProofVerdictsByCriterionRevision(criterionElementId, revision.id)
@@ -949,29 +970,11 @@ function outlineApprovalStatus(
 
 function buildElementStatuses(
   deps: SpecRouteDeps,
-  projectPath: string,
   snapshot: SpecRevisionSnapshot | null,
   approvals: readonly SpecApprovalRow[],
-  executions: readonly SpecExecutionRow[],
-  claims: readonly SpecTaskClaimRow[],
 ): SpecElementStatusesView {
   if (snapshot === null) {
     return { requirements: [], tasks: [] };
-  }
-
-  const snapshotRevisionId = snapshot.revision.id;
-  const snapshotExecutions = executions.filter(
-    (execution) => execution.revision_id === snapshotRevisionId,
-  );
-  const executionIds = new Set(
-    snapshotExecutions.map((execution) => execution.id),
-  );
-  const claimByTaskId = new Map<string, SpecTaskClaimRow>();
-  for (const claim of claims) {
-    if (claim.execution_id !== null && !executionIds.has(claim.execution_id)) {
-      continue;
-    }
-    claimByTaskId.set(claim.task_element_id, claim);
   }
 
   const requirements = snapshot.elements
@@ -984,41 +987,9 @@ function buildElementStatuses(
   const tasks = snapshot.elements
     .filter(({ element }) => element.kind === "task")
     .map((row) => {
-      const latestClaim = claimByTaskId.get(row.element.id);
-      const executionEvents = snapshotExecutions.flatMap((execution) => {
-        if (
-          execution.workflow_execution_id === null ||
-          execution.session_name === null
-        ) {
-          return [];
-        }
-        return deps
-          .findWorkflowEventsByExecution(
-            projectPath,
-            execution.session_name,
-            execution.workflow_execution_id,
-          )
-          .flatMap(({ event }) =>
-            event.type === "graph-workflow-task-status" &&
-            event.taskId === compiledWorkflowTaskId(row.element.id)
-              ? [{ status: event.status }]
-              : [],
-          );
-      });
       return {
         elementId: row.element.id,
-        status: projectTaskWorkStatus({
-          executionEvents,
-          latestClaim:
-            latestClaim === undefined
-              ? null
-              : {
-                  status: latestClaim.status,
-                  evidenceIds: z
-                    .array(z.string().min(1))
-                    .parse(JSON.parse(latestClaim.evidence_ids_json)),
-                },
-        }),
+        status: projectTaskWorkStatus({ executionEvents: [] }),
       };
     });
 
@@ -1164,11 +1135,8 @@ function toExecutionView(
     revisionId: execution.revision_id,
     revisionNumber: revisionNumberById.get(execution.revision_id) ?? null,
     state: execution.state,
-    workflowDefinitionId: execution.workflow_definition_id,
-    workflowDefinitionRevision: execution.workflow_definition_revision,
+    workflowSeedSource: nativeSddSeedSourceSummary(execution),
     workflowExecutionId: execution.workflow_execution_id,
-    definitionApprovalRequired:
-      definitionApprovalRequiredFromExecution(execution),
     scope,
     sessionName: execution.session_name,
     deliveredAt: execution.delivered_at,
@@ -1177,13 +1145,6 @@ function toExecutionView(
     updatedAt: execution.updated_at,
     deliveryProjection,
   };
-}
-
-function definitionApprovalRequiredFromExecution(
-  execution: SpecExecutionRow,
-): boolean | null {
-  const dial = execution.execution_start_dial;
-  return dial === null || dial === undefined ? null : dial === "gate";
 }
 
 /**
@@ -1201,11 +1162,8 @@ function toStartedExecutionView(
     revisionId: execution.revision_id,
     revisionNumber,
     state: execution.state,
-    workflowDefinitionId: execution.workflow_definition_id,
-    workflowDefinitionRevision: execution.workflow_definition_revision,
+    workflowSeedSource: nativeSddSeedSourceSummary(execution),
     workflowExecutionId: execution.workflow_execution_id,
-    definitionApprovalRequired:
-      definitionApprovalRequiredFromExecution(execution),
     scope: parseExecutionScope(execution.scope_json),
     sessionName: execution.session_name,
     deliveredAt: execution.delivered_at,
@@ -1226,14 +1184,10 @@ type PriorRunLookup = Pick<
 >;
 
 /**
- * The per-criterion proof standing the merge-gate panel renders (F26),
- * computed over the run's pinned revision with the gate's own precedence and
- * validity rules: a valid pinned-revision waiver wins even on a delivered run;
- * external delivery must satisfy the gate's prior-run rule
- * (`isEarlierMergedDelivery`); and a verdict counts only while it is non-stale
- * AND its cited evidence still resolves — `stale_at` alone is not proof,
- * because only the gate re-resolves evidence and Studio must not claim more
- * than the gate would honor.
+ * The per-criterion delivery standing the merge-gate panel renders. A valid
+ * pinned-revision waiver wins, external delivery must satisfy the prior-run
+ * rule, and a graph verdict must name this exact spec/workflow execution and
+ * criterion.
  */
 function buildDeliveryProjection(
   deps: SpecRouteDeps,
@@ -1245,24 +1199,20 @@ function buildDeliveryProjection(
   if (pinnedSnapshot === undefined) return [];
   const scope = parseExecutionScope(execution.scope_json);
   if (scope === null) return [];
-  const criteriaById = new Map(
+  const criterionIds = new Set(
     pinnedSnapshot.elements.flatMap((entry) =>
-      entry.version.payload.kind === "criterion"
-        ? [[entry.element.id, entry.version.payload] as const]
-        : [],
+      entry.version.payload.kind === "criterion" ? [entry.element.id] : [],
     ),
   );
   return scope.selectedCriterionIds.flatMap((criterionElementId) => {
-    const payload = criteriaById.get(criterionElementId);
-    if (payload === undefined) return [];
+    if (!criterionIds.has(criterionElementId)) return [];
     return [
       {
         criterionElementId,
         handle:
           elementHandleInSnapshot(pinnedSnapshot, criterionElementId) ??
           criterionElementId,
-        strategyKinds: payload.validationStrategy.kinds,
-        proofState: criterionDeliveryProofState(
+        ...criterionDeliveryState(
           deps,
           execution,
           criterionElementId,
@@ -1274,72 +1224,44 @@ function buildDeliveryProjection(
   });
 }
 
-function criterionDeliveryProofState(
+function criterionDeliveryState(
   deps: SpecRouteDeps,
   execution: SpecExecutionRow,
   criterionElementId: string,
   dispositions: readonly SpecCriterionDispositionRow[],
   priorRuns: PriorRunLookup,
-): CriterionDeliveryProjection["proofState"] {
+): Pick<CriterionDeliveryProjection, "deliveryState" | "verdict"> {
   const disposition = dispositions.find(
     (row) => row.criterion_element_id === criterionElementId,
   );
-  // The gate's disposition-owned waiver rule (`evaluateCriterion`): a waiver
-  // counts only when this run's disposition is `waived` AND its linked waiver
-  // resolves to a non-stale row for the pinned spec/revision/criterion. A
-  // merely-granted waiver that no disposition links is one the gate refuses,
-  // so Studio must not count it either; an invalid link falls through to the
-  // verdict evaluation and honestly reads awaiting_proof.
-  if (disposition?.disposition === "waived") {
-    const waiver =
-      disposition.waiver_id === null
-        ? null
-        : deps.findWaiverById(disposition.waiver_id);
-    if (isWaiverValidForExecution(waiver, execution, criterionElementId)) {
-      return "waived";
-    }
+  const waiver = deps.findWaiverForCriterionRevision(
+    criterionElementId,
+    execution.revision_id,
+  );
+  if (isWaiverValidForExecution(waiver, execution, criterionElementId)) {
+    return { deliveryState: "waived", verdict: null };
   }
   if (
     disposition?.disposition === "delivered_elsewhere" &&
     isEarlierMergedDelivery(priorRuns, execution, disposition)
   ) {
-    return "delivered_elsewhere";
+    return { deliveryState: "delivered_elsewhere", verdict: null };
   }
-  if (execution.state === "delivered") return "proven_merged";
-  const evidenceIds = new Set(
-    deps
-      .findEvidenceByCriterionRevision(
-        criterionElementId,
-        execution.revision_id,
-      )
-      .map((row) => row.id),
+  const verdict = deps.findDeliveryVerdictsBySpecExecutionId(execution.id);
+  const matchedVerdict = findDeliveryVerdictForExecution(
+    verdict,
+    execution,
+    deps.findExecutionBindingBySpecExecutionId(execution.id),
+    criterionElementId,
   );
-  const hasResolvableVerdict = deps
-    .findProofVerdictsByCriterionRevision(
-      criterionElementId,
-      execution.revision_id,
-    )
-    .some(
-      (verdict) =>
-        verdict.stale_at === null &&
-        verdictEvidenceResolves(verdict, evidenceIds),
-    );
-  return hasResolvableVerdict ? "proof_recorded" : "awaiting_proof";
-}
-
-function verdictEvidenceResolves(
-  verdict: SpecProofVerdictRow,
-  resolvableEvidenceIds: ReadonlySet<string>,
-): boolean {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(verdict.evidence_ids_json);
-  } catch {
-    return false;
+  if (matchedVerdict === null) {
+    return { deliveryState: "awaiting_outcome", verdict: null };
   }
-  const ids = z.array(z.string().min(1)).safeParse(raw);
-  if (!ids.success) return false;
-  return ids.data.every((id) => resolvableEvidenceIds.has(id));
+  return {
+    deliveryState:
+      execution.state === "delivered" ? "delivered" : "verdict_recorded",
+    verdict: matchedVerdict,
+  };
 }
 
 /**
@@ -1546,7 +1468,7 @@ async function buildStatus(
     executions: executions.map((run) => ({
       id: run.id,
       state: run.state,
-      workflowDefinitionId: run.workflow_definition_id,
+      workflowSeedSource: nativeSddSeedSourceSummary(run),
       workflowExecutionId: run.workflow_execution_id,
       workflowStatus: reconciled.laneStatusById.get(run.id) ?? null,
     })),
@@ -1848,11 +1770,8 @@ async function buildOutline(
   const applies = await loadApprovalApplicability(deps, state, approvals);
   const taskStatuses = buildElementStatuses(
     deps,
-    spec.projectPath,
     { ...snapshot, elements: taskEntries.map(({ row }) => row) },
     [],
-    reconciled.rows,
-    deps.findTaskClaimsBySpecId(spec.id),
   );
   const taskStatusById = new Map(
     taskStatuses.tasks.map((entry) => [entry.elementId, entry.status]),
@@ -1938,16 +1857,9 @@ async function buildOutline(
         ? [
             {
               ...outlineIdentity(row, handle, row.version.payload.title),
-              status: (() => {
-                const status = taskStatusById.get(row.element.id) ?? {
-                  status: "pending" as const,
-                  claimEvidenceIds: [],
-                };
-                return {
-                  status: status.status,
-                  claimEvidenceCount: status.claimEvidenceIds.length,
-                };
-              })(),
+              status: taskStatusById.get(row.element.id) ?? {
+                status: "pending" as const,
+              },
             },
           ]
         : [],
@@ -2380,11 +2292,8 @@ export function createSpecRouteHandlers(
       );
     const elementStatuses = buildElementStatuses(
       deps,
-      resolved.value.spec.projectPath,
       proofSnapshot,
       approvals,
-      executions,
-      deps.findTaskClaimsBySpecId(resolved.value.spec.id),
     );
     logger.debug("specs.routes.detail.complete", {
       projectName: resolved.value.projectName,
@@ -2656,111 +2565,6 @@ export function createSpecRouteHandlers(
     return NextResponse.json({ revisionId: lintRevision.id, findings });
   }
 
-  /**
-   * The compiled-plan preview. POST because the scope is a document, not a
-   * query string — the handler mutates nothing and writes no audit record.
-   *
-   * Unlike the compile path this accepts a draft or proposed revision: the
-   * whole point is showing a planner the shape their plan compiles to while it
-   * is still editable. A plan the compiler refuses is itself the answer, so a
-   * materialization error is returned as a 422 the planner can act on rather
-   * than a 500.
-   */
-  async function planPreviewPOST(
-    request: Request,
-    context: SpecRouteContext,
-  ): Promise<Response> {
-    const resolved = await resolveSpecRoute(deps, context);
-    if (!resolved.ok) return resolved.response;
-    const { spec } = resolved.value;
-    // An absent body is the explicit "preview the whole revision" request, but
-    // a MALFORMED one is not: silently reading it as {} would answer a request
-    // that meant to narrow by scope, revision, or context with the full plan
-    // instead — a wider answer than was asked for, and indistinguishable from
-    // a correct one.
-    const rawBody = await request.text();
-    let body: unknown = {};
-    if (rawBody.trim().length > 0) {
-      try {
-        body = JSON.parse(rawBody);
-      } catch {
-        return jsonError(
-          `Plan preview request body is not valid JSON. Send no body (or {}) to preview the whole revision, or a JSON object with scope, revisionId, or contextId, then re-run cctl spec plan preview ${spec.slug}.`,
-          400,
-          "plan_preview_invalid_body",
-        );
-      }
-    }
-    const parsedBody = planPreviewBodySchema.safeParse(body ?? {});
-    if (!parsedBody.success) {
-      return jsonError("Invalid plan preview request body", 400);
-    }
-    const state = await loadCurrentState(deps, spec.id);
-    const requestedRevisionId = parsedBody.data.revisionId ?? null;
-    const revision =
-      requestedRevisionId === null
-        ? state.currentRevision
-        : (state.revisions.find(
-            (candidate) => candidate.id === requestedRevisionId,
-          ) ?? null);
-    if (revision === null) return notFound("Spec revision not found");
-    const snapshot =
-      revision.id === state.currentRevision?.id
-        ? state.currentSnapshot
-        : await deps.getRevisionSnapshot(revision.id);
-    if (snapshot === null) return notFound("Spec revision not found");
-
-    // No scope document means "preview the whole plan": every task and every
-    // criterion this revision carries, which is the scope a planner is reading
-    // the compiled shape of before they narrow it.
-    const scope =
-      parsedBody.data.scope ?? fullRevisionScope(spec.slug, snapshot);
-    let preview: SpecPlanPreview;
-    try {
-      preview = buildSpecPlanPreview({
-        spec: { id: spec.id, slug: spec.slug, name: spec.name },
-        revisionSnapshot: snapshot,
-        scope,
-        scopeHash: hashExecutionScope(scope),
-        approvalRequired:
-          resolveDial(spec.gatePolicy, "execution_start") === "gate",
-      });
-    } catch (error) {
-      logger.debug("specs.routes.plan-preview.uncompilable", {
-        specId: spec.id,
-        revisionId: revision.id,
-      });
-      // The refusal names its own repair: an uncompilable plan is a plan
-      // defect or a scope defect, and both are edits the caller makes before
-      // re-running the same preview.
-      return jsonError(
-        `${error instanceof Error ? error.message : String(error)} Repair the plan elements or the selection in --scope, then re-run cctl spec plan preview ${spec.slug}.`,
-        422,
-        "plan_preview_uncompilable",
-      );
-    }
-    const bounded = boundSpecPlanPreview(preview, {
-      ...(parsedBody.data.contextId === undefined
-        ? {}
-        : { contextId: parsedBody.data.contextId }),
-    });
-    if (!bounded.ok) {
-      return jsonError(
-        `This plan has no context ${JSON.stringify(parsedBody.data.contextId)}. Re-run without --context, or name one of: ${bounded.knownContextIds.join(", ")}.`,
-        422,
-        "plan_preview_unknown_context",
-      );
-    }
-    logger.debug("specs.routes.plan-preview.complete", {
-      specId: spec.id,
-      revisionId: revision.id,
-      revisionState: revision.state,
-      contextCount: bounded.value.totalContextCount,
-      evidenceGapCount: bounded.value.evidenceGaps.length,
-    });
-    return NextResponse.json(bounded.value);
-  }
-
   function resolveQuestionOrAssumption(
     spec: Spec,
     requestedHandle: string,
@@ -2889,15 +2693,6 @@ export function createSpecRouteHandlers(
     }
 
     const revisionId = snapshot.revision.id;
-    const executions = deps
-      .findExecutionsBySpecId(resolved.value.spec.id)
-      .filter((execution) => execution.revision_id === revisionId);
-    for (const execution of executions) {
-      await deps.ingestExecutionEvidenceBestEffort(
-        resolved.value.projectPath,
-        execution.id,
-      );
-    }
     const evidenceState = criterionIdsForElement(snapshot, row).map(
       (criterionElementId) => ({
         criterionElementId,
@@ -3229,7 +3024,6 @@ export function createSpecRouteHandlers(
     getSpecEditContextGET,
     getSpecLintGET,
     getSpecDeltaGET,
-    planPreviewPOST,
     getSpecElementGET,
     searchSpecGET,
     searchProjectSpecsGET,
@@ -3250,7 +3044,6 @@ export const specCommentsGET = withTracing(handlers.getSpecCommentsGET);
 export const specEditContextGET = withTracing(handlers.getSpecEditContextGET);
 export const specLintGET = withTracing(handlers.getSpecLintGET);
 export const specDeltaGET = withTracing(handlers.getSpecDeltaGET);
-export const specPlanPreviewPOST = withTracing(handlers.planPreviewPOST);
 export const specElementGET = withTracing(handlers.getSpecElementGET);
 export const specSearchGET = withTracing(handlers.searchSpecGET);
 export const specProjectSearchGET = withTracing(handlers.searchProjectSpecsGET);
@@ -3280,7 +3073,6 @@ export interface SpecMutationServices {
     ExecutionService,
     | "start"
     | "parkDeliveryPlan"
-    | "approveExecutionStart"
     | "linkWorkflowExecution"
     | "markRunning"
     | "markDelivered"
@@ -3305,7 +3097,6 @@ export interface SpecMutationServices {
    */
   import: Pick<ImportService, "importSpec">;
   deliveryPlan: DeliveryPlanService;
-  ingestEvidenceBestEffort(executionId: string): Promise<unknown>;
   verify(specId: string): Promise<IntegrityReport>;
 }
 
@@ -3412,9 +3203,8 @@ const approveRemainingAndSignOffBodySchema =
     actor: true,
     approver: true,
   });
-// Delivery-only at the transport: execution-start grants must flow through
-// the approve-execution-start action, which also approves the pending
-// workflow definition so the granted gate actually starts the run.
+// Delivery is the only spec-side lifecycle grant; graph-run approval stays
+// with the immutable graph execution it governs.
 const grantGateApprovalBodySchema = grantGateApprovalInputSchema
   .omit({
     specId: true,
@@ -3422,9 +3212,6 @@ const grantGateApprovalBodySchema = grantGateApprovalInputSchema
     approver: true,
   })
   .extend({ gate: z.literal("delivery") });
-const approveExecutionStartBodySchema = z
-  .object({ executionId: z.string().min(1) })
-  .strict();
 const bulkApproveBodySchema = bulkApproveInputSchema.omit({
   specId: true,
   actor: true,
@@ -3463,19 +3250,6 @@ const linkTicketBodySchema = linkTicketInputSchema.omit({
   actor: true,
 });
 
-const taskClaimBodySchema = z
-  .object({
-    taskElementId: z.string().min(1),
-    executionId: z.string().min(1),
-    evidenceIds: z.array(z.string().min(1)),
-  })
-  .strict();
-const claimIdBodySchema = z
-  .object({
-    claimId: z.string().min(1),
-    changedIntentElementIds: z.array(z.string().min(1)).default([]),
-  })
-  .strict();
 const waiverBodySchema = z
   .object({
     criterionElementId: z.string().min(1),
@@ -3507,6 +3281,7 @@ const startExecutionBodySchema = z
      */
     scope: executionScopeSchema.nullable().optional(),
     sessionName: z.string().min(1).nullable(),
+    parameters: z.record(z.string(), z.unknown()).optional(),
     /** Hold a proposed or approved candidate for prelaunch review. */
     park: z.boolean().optional(),
   })
@@ -3671,7 +3446,6 @@ const HUMAN_ONLY_ACTIONS = new Map<string, string>([
   ["approve-remaining-and-sign-off", BROWSER_SESSION_REMEDY],
   ["bulk-approve", BROWSER_SESSION_REMEDY],
   ["grant-gate-approval", BROWSER_SESSION_REMEDY],
-  ["approve-execution-start", BROWSER_SESSION_REMEDY],
   ["grant-waiver", BROWSER_SESSION_REMEDY],
   ["change-policy", BROWSER_SESSION_REMEDY],
   // Assumption disposition is the human half of the propose/dispose split
@@ -4091,18 +3865,6 @@ export function createSpecWriteRouteHandlers(
               approver: "operator",
             }),
           );
-        case "approve-execution-start":
-          return invokeAction(
-            request,
-            approveExecutionStartBodySchema,
-            (input) =>
-              services.execution.approveExecutionStart({
-                ...input,
-                specId,
-                actor: actor.value,
-                projectName: name ?? "",
-              }),
-          );
         case "withdraw":
           return invokeAction(request, requestChangesBodySchema, (input) =>
             services.review.withdraw(withReviewIdentity(input)),
@@ -4190,28 +3952,10 @@ export function createSpecWriteRouteHandlers(
           return invokeAction(request, changePolicyBodySchema, (input) =>
             services.review.changePolicy(withReviewIdentity(input)),
           );
-        // "attach-evidence" and "record-verdict" were removed with the
-        // evidence-kind narrowing (ticket #24): evidence and proof verdicts
-        // originate only from execution ingestion or gate-side issuance, so
-        // both fall through to the 404 default.
-        case "claim-task-complete":
-          return invokeAction(request, taskClaimBodySchema, (input) =>
-            services.evidence.claimTaskComplete({
-              ...input,
-              specId,
-              actor: actor.value,
-            }),
-          );
-        case "reopen-claim":
-          return invokeAction(request, claimIdBodySchema, (input) =>
-            input.changedIntentElementIds.length === 0
-              ? services.evidence.reopenTaskClaim(input.claimId, actor.value)
-              : services.evidence.reopenTaskClaim(
-                  input.claimId,
-                  actor.value,
-                  input.changedIntentElementIds,
-                ),
-          );
+        // Evidence attachment, proof verdicts and task-completion claims were
+        // retired with the criterion-modality proof pipeline: authored context
+        // outcomes and human waivers decide delivery, so all of them fall
+        // through to the 404 default.
         case "request-waiver":
           if (actor.value.kind !== "agent") {
             return specRefusalResponse({
@@ -4271,7 +4015,7 @@ export function createSpecWriteRouteHandlers(
                     unmetConditions: [
                       "Execution scope documents are retired; the approved delivery plan is the execution graph.",
                     ],
-                    instruction: `Nothing was started. Import legacy planning with \`cctl spec plan open ${resolved.value.spec.slug} --seed-from last\`, then propose and sign off that candidate before rerunning \`cctl spec start ${resolved.value.spec.slug}\`.`,
+                    instruction: `Nothing was started. Open an authored delivery attempt with \`cctl spec plan open ${resolved.value.spec.slug}\`, then propose and sign off that candidate before rerunning \`cctl spec start ${resolved.value.spec.slug}\`.`,
                   },
                 };
               }
@@ -4299,7 +4043,7 @@ export function createSpecWriteRouteHandlers(
                   result.execution,
                   result.revisionNumber,
                 ),
-                definition: result.definition,
+                launch: result.launch,
                 deliveryPlan: result.deliveryPlan,
               };
             },
@@ -4512,9 +4256,9 @@ export function createSpecWriteRouteHandlers(
 
   /**
    * The delivery-plan preview. A read, but mounted here beside the plan
-   * mutations for the same reason `specPlanGET` is: previewing a draft
-   * compiles the very document propose freezes, and one owner is what keeps a
-   * preview and a proposal from ever compiling different bytes.
+   * mutations for the same reason `specPlanGET` is: previewing a draft reads
+   * the document proposal finalizes, and one owner keeps the preview and
+   * proposal on the same authored bytes.
    */
   async function specPlanPreviewGET(
     request: Request,

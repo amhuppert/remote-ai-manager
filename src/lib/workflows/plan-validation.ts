@@ -1,4 +1,3 @@
-import { z } from "zod";
 import { collectValidationCommandIssues } from "@/lib/workflow-graph/command-selector-validation";
 import {
   VALIDATION_COST_EXCEEDS_LIMIT_CODE,
@@ -11,10 +10,7 @@ import type {
   WorkflowGraphValidationError,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
-import {
-  graphWorkflowVisualLayoutSchema,
-  workflowSemanticDefinitionSchema,
-} from "@/lib/workflow-graph/definition-schemas";
+import { workflowDefinitionMutationSchema } from "@/lib/workflow-graph/definition-schemas";
 import { escapeDiagnosticValue } from "@/lib/shared/diagnostic-text";
 import {
   formatAssignmentUseSite,
@@ -23,23 +19,14 @@ import {
 } from "@/lib/workflow-graph/assignment-references";
 import { findLegacyAgentShapes } from "@/lib/workflow-graph/schema-cutover-guard";
 
-/**
- * The create/replace request body: a named, laid-out workflow definition. This
- * is the single schema both the persisting routes (create/replace) and the
- * non-persisting `graph-workflow/validate` endpoint parse, so a plan that
- * validates is guaranteed to be acceptable to create.
- */
-export const workflowDefinitionMutationSchema = z.object({
-  name: z.string().trim().min(1),
-  description: z.string().trim().min(1).nullable().optional(),
-  definition: workflowSemanticDefinitionSchema,
-  layout: graphWorkflowVisualLayoutSchema,
-});
-
 export interface WorkflowPlanIssue {
   /** JSON-path location within the request body, e.g. `definition.tasks.0.contextId`. */
   path: string;
   message: string;
+}
+
+export interface WorkflowPlanCommandIssue extends WorkflowPlanIssue {
+  code: string;
 }
 
 /**
@@ -56,6 +43,7 @@ export type WorkflowPlanValidationResult =
   | {
       ok: false;
       issues: WorkflowPlanIssue[];
+      commandIssues?: WorkflowPlanCommandIssue[];
       code?: typeof VALIDATION_COST_EXCEEDS_LIMIT_CODE;
     };
 
@@ -341,6 +329,15 @@ export function validateWorkflowPlan(
         path: structuralIssuePath(error, parsed.data.definition),
         message: error.message,
       })),
+      ...(commandSelectionErrors.length === 0
+        ? {}
+        : {
+            commandIssues: commandSelectionErrors.map((error) => ({
+              code: error.code,
+              path: structuralIssuePath(error, parsed.data.definition),
+              message: error.message,
+            })),
+          }),
     };
   }
 

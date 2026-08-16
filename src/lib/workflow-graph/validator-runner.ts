@@ -8,6 +8,7 @@ import type {
   WorkflowCharter,
 } from "@/lib/workflows/charter-schemas";
 import { renderCharterPromptSection } from "@/lib/workflow-graph/charter/render";
+import { resolveScopedCharterForContext } from "@/lib/workflow-graph/charter/invariant-scope";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import {
@@ -48,6 +49,11 @@ import { isQuerySlotAdmissionTimeout } from "@/lib/shared/query-semaphore";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import { formatQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
 import { buildAskUserQuestionsReminderSection } from "./iteration-prompt";
+import {
+  createRegisteredGraphExecutionContract,
+  type GraphExecutionContract,
+} from "./execution-contract-port";
+import { composeGraphRolePrompt } from "./prompt-composer";
 import {
   buildValidationCommandsSection,
   buildValidatorDeterministicChecksGuidance,
@@ -323,12 +329,12 @@ export function buildContextValidationPrompt(
     "",
   ];
 
-  // Active checking, not preamble: rendered only when the charter declares
-  // invariants so the guidance never references a section that isn't there.
+  // Active checking, not preamble: rendered only when the scoped charter
+  // declares invariants so the guidance never references a section that isn't there.
   const invariantGuidanceLines =
     input.charter?.invariants && input.charter.invariants.length > 0
       ? [
-          "- **Check every charter invariant.** The charter above declares invariants that must hold for every change. For each invariant that applies to this context's changes, verify it actually holds in the implementation; when one is violated, raise an issue and cite the invariant id in the issue description.",
+          "- **Check every applicable charter invariant.** The charter above declares the invariants that apply to this context's changes. Verify each one actually holds in the implementation; when one is violated, raise an issue and cite the invariant id in the issue description.",
         ]
       : [];
 
@@ -345,7 +351,7 @@ export function buildContextValidationPrompt(
     "",
     "- **Intent over strict wording.** Acceptance criteria may be imprecise. Use judgment to decide whether the completed work satisfies the intent of the criteria. Do not reject work that meets the spirit of the criteria simply because the wording differs or a detail is fuzzy.",
     "- **Respect context scope boundaries.** This execution context is one step in a larger graph workflow. Work that is explicitly out of scope for this context — for example, type updates or cleanup handled by a downstream context, or integration work reserved for another context — must not cause this context to fail. If the current context produced the intermediate state it is responsible for, treat that as success even if the wider codebase is not yet fully consistent.",
-    "- **Require a production call path for wiring criteria.** When a criterion requires a capability to exist or be wired — an event publication, route, notification, adapter, or control — it is satisfied only by a production call path that reaches it. An exported, unit-tested function with no production caller does not satisfy it. The only exemption is explicit deferral: an acceptance-criteria clause naming the downstream context that owns the wiring. With a named owner, record the deferral in your `summary` instead of failing; with no named owner, raise an issue.",
+    "- **Require a production call path for wiring criteria.** When a criterion requires a capability to exist or be wired — an event publication, route, notification, adapter, or control — it is satisfied only by a production call path that reaches it. An exported, unit-tested function with no production caller does not satisfy it. Deferral is valid only to a graph-downstream owner, and only when this context's acceptance criteria explicitly name that downstream owner for the obligation, or the downstream owner's acceptance criteria contain the matching obligation. A graph relationship or ownership claim alone cannot invent the handoff. With valid deferral evidence, record it in your `summary` instead of failing; without it, raise an issue.",
     ...invariantGuidanceLines,
     "- **Defer to the higher-ranked source on a charter conflict.** When an acceptance criterion conflicts with a higher-ranked source of truth and the implementation follows that higher-ranked source, do not fail the context solely for that acceptance-criterion mismatch — the higher-ranked source prevails. Instead, record the conflict in your `summary`, naming the affected acceptance criterion, the prevailing source, and the resolution. Evaluate each source's precedence within that source's declared applicability scope (`appliesTo`).",
     buildValidatorDeterministicChecksGuidance(
@@ -714,6 +720,7 @@ export interface ValidatorRunnerDeps {
   composeLaneWriteEnvelope?(
     input: ComposeValidatorLaneWriteEnvelopeInput,
   ): ValidatorLaneWriteEnvelope;
+  executionContract?: GraphExecutionContract;
 }
 
 const validatorLogger = createLogger("graph-workflow-validator");
@@ -962,6 +969,8 @@ interface RunValidatorTurnInput {
 }
 
 export function createValidatorRunner(deps: ValidatorRunnerDeps) {
+  const executionContract =
+    deps.executionContract ?? createRegisteredGraphExecutionContract();
   const executeWorkflowTaskRun =
     deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
   const getProjectDisplayName =
@@ -1837,13 +1846,20 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         return repoConfig?.validation;
       }),
     });
-    const prompt = buildContextValidationPrompt({
+    const scopedCharter = input.context.charter
+      ? resolveScopedCharterForContext({
+          execution: input.execution,
+          contextId: input.context.id,
+          charter: input.context.charter,
+        })
+      : undefined;
+    const basePrompt = buildContextValidationPrompt({
       context: input.context,
       tasks: contextTasks,
       taskStates: input.execution.taskStates,
       validator: input.validator,
       validationSelections,
-      ...(input.context.charter ? { charter: input.context.charter } : {}),
+      ...(scopedCharter ? { charter: scopedCharter } : {}),
       charterAmendments: input.execution.charterAmendments,
       diffScopeSection,
       askUserQuestionsEnabled: resolveValidatorAskUserQuestionsEnabled(
@@ -1858,6 +1874,13 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
             },
           }
         : {}),
+    });
+    const prompt = await composeGraphRolePrompt({
+      execution: input.execution,
+      executionContract,
+      prompt: basePrompt,
+      role: "context-validator",
+      contextId: input.context.id,
     });
 
     // One schema per dispatch, quoted in the role contract and enforced by the

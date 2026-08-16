@@ -186,7 +186,15 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         commands: { mode: "only", commands: ["typecheck"] },
       },
     },
-    charter: makeTestCharter(),
+    charter: makeTestCharter({
+      invariants: [
+        {
+          id: "durable-scope",
+          statement: "The durable contexts retain their scoped invariant.",
+          appliesTo: { contextIds: ["ctx-1", "ctx-loop-worker"] },
+        },
+      ],
+    }),
     parameters: [
       {
         type: "string",
@@ -231,12 +239,12 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
           sourceUri: "workflow-source:maximal/context/ctx-1",
           label: "Maximal context source",
         },
-        // Compiler provenance, opaque to storage but persisted with the
-        // definition: an exactly-materialized plan reads its source map back
-        // out of here, so a dropped column would strand a run's criteria.
+        // Authored annotations, opaque to storage but persisted with the
+        // definition: an author may hang arbitrary keys here, so a dropped
+        // column would silently strand them.
         metadata: {
-          specPlanContextId: "ctx-authored",
-          specPlanSourceMap: "{}",
+          authoredAnnotationKey: "ctx-authored",
+          authoredAnnotationPayload: "{}",
         },
         implementer: {
           id: "context-implementer",

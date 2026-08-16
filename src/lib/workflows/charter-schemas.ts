@@ -45,9 +45,36 @@ export type SourceOfTruth = z.infer<typeof sourceOfTruthSchema>;
 // one context builds). Rendered into both the implementer and validator
 // prompts; validators check each applicable invariant and cite its `id` in
 // issues, so ids must be stable and unique within the charter.
+export const charterInvariantAppliesToSchema = z
+  .object({
+    contextIds: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .superRefine((contextIds, ctx) => {
+        const seen = new Map<string, number>();
+        contextIds.forEach((contextId, index) => {
+          const firstIndex = seen.get(contextId);
+          if (firstIndex === undefined) {
+            seen.set(contextId, index);
+            return;
+          }
+          ctx.addIssue({
+            code: "custom",
+            message: `duplicate invariant scope context id '${contextId}' (already used at index ${firstIndex})`,
+            path: [index],
+          });
+        });
+      }),
+  })
+  .strict();
+export type CharterInvariantAppliesTo = z.infer<
+  typeof charterInvariantAppliesToSchema
+>;
+
 export const charterInvariantSchema = z.object({
   id: z.string().min(1),
   statement: z.string().min(1),
+  appliesTo: charterInvariantAppliesToSchema.optional(),
 });
 export type CharterInvariant = z.infer<typeof charterInvariantSchema>;
 

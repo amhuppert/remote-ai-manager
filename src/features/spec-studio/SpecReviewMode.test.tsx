@@ -11,8 +11,6 @@ import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 import {
   importedDeliveredSpecDetailFixture,
   liveProposalsFixture,
-  planPreviewRequestRevisionId,
-  planPreviewResponseFixture,
   specControlsDetailFixture,
   strandedProposalDetailFixture,
 } from "./SpecControls.fixtures";
@@ -28,35 +26,16 @@ vi.mock(
 
 const NOW = "2026-07-18T12:00:00.000Z";
 
-const PLAN_PREVIEW_PATH = "/api/specs/command-center/native-sdd/plan-preview";
-
-/**
- * Review compiles a plan preview for whichever proposal is selected, so every
- * render in this file reaches the network. The fixture is installed for all of
- * them — a test that only cares about the diff cards still has to answer the
- * preview request, or the surface it renders is not the surface production
- * renders.
- */
 let api: FetchFixture;
 
 beforeEach(() => {
   api = installFetchFixture();
-  api.reply("POST", PLAN_PREVIEW_PATH, (request) => ({
-    json: planPreviewResponseFixture(request.jsonBody),
-  }));
 });
 
 afterEach(() => {
   cleanup();
   api.restore();
 });
-
-/** The revision ids the panel asked the server to compile, in request order. */
-function previewedRevisionIds(): string[] {
-  return api
-    .requestsTo("POST", PLAN_PREVIEW_PATH)
-    .map((request) => planPreviewRequestRevisionId(request.jsonBody));
-}
 
 function reviewDetailFixture(blocked = true): SpecDetailView {
   const detail = specControlsDetailFixture();
@@ -1418,118 +1397,6 @@ function strandedAndCurrentProposalFixture(): SpecDetailView {
   };
 }
 
-/**
- * The plan preview is the compiled shape a launch would produce — lane-group
- * collapse, the criterion briefs unioned into each context's contract, and the
- * edges derived from task dependencies. None of it is derivable from the spec
- * content the review surface already holds, which is why these assertions are
- * about the server's answer arriving on the proposal being viewed rather than
- * about anything Studio could compute.
- */
-describe("SpecReviewMode plan preview", () => {
-  it("embeds the server's compiled preview for the plan-stage proposal under review", async () => {
-    renderWithQuery(
-      <SpecReviewMode
-        detail={reviewDetailFixture(false)}
-        projectName="command-center"
-        highlightedChangeId={null}
-      />,
-    );
-
-    const panel = await screen.findByTestId("plan-preview-panel");
-    // Lane-group collapse and the brief union happen inside the compiler, so a
-    // client-side recomputation over the fixture's own elements could not
-    // produce this context, its two task handles, or its brief.
-    const context = await within(panel).findByTestId(
-      "plan-preview-context-persistence",
-    );
-    expect(within(context).getByText("Persistence lane group")).toBeVisible();
-    expect(within(context).getByText(/T1, T2/)).toBeVisible();
-    expect(within(context).getByText("R1.1")).toBeVisible();
-    expect(
-      within(context).getByText(
-        "Prove R1.1 with a test_run over the reloaded repository.",
-      ),
-    ).toBeVisible();
-    expect(within(panel).getByText(/persistence → surface/)).toBeVisible();
-    // An unproducible evidence kind is the preview's headline finding: the
-    // criterion demanding it can never reach a proof.
-    expect(
-      within(panel).getByTestId("plan-preview-evidence-gaps"),
-    ).toHaveTextContent(/Evidence gaps: screenshot/);
-
-    expect(previewedRevisionIds()).toEqual(["revision-2"]);
-  });
-
-  it("follows the one selection model that drives the diff cards", async () => {
-    const user = userEvent.setup();
-    renderWithQuery(
-      <SpecReviewMode
-        detail={strandedAndCurrentProposalFixture()}
-        projectName="command-center"
-        highlightedChangeId={null}
-      />,
-    );
-
-    await screen.findByTestId("plan-preview-context-persistence");
-    expect(previewedRevisionIds()).toEqual(["revision-4"]);
-    // The scope hash is the one rendered fact that comes from the RESPONSE
-    // rather than from the revision prop, so it is what distinguishes a
-    // re-rendered heading over a stale body from a body the server recompiled.
-    expect(screen.getByText(/scope scope-revision-4/)).toBeVisible();
-
-    await user.click(
-      screen.getByRole("radio", { name: /Revision 2 — superseded/i }),
-    );
-
-    // One pick moves the diff cards and the preview together: a second
-    // selection model would leave the preview compiled against revision 4
-    // while the cards show revision 2's changes.
-    expect(
-      screen.getByTestId("superseded-proposal-review"),
-    ).toBeInTheDocument();
-    await waitFor(() =>
-      expect(previewedRevisionIds()).toEqual(["revision-4", "revision-2"]),
-    );
-    const panel = await screen.findByTestId("plan-preview-panel");
-    expect(
-      await within(panel).findByTestId("plan-preview-context-persistence"),
-    ).toBeVisible();
-    expect(within(panel).getByText(/Revision 2 as the compiler/)).toBeVisible();
-    expect(
-      await within(panel).findByText(/scope scope-revision-2/),
-    ).toBeVisible();
-    expect(
-      within(panel).queryByText(/scope scope-revision-4/),
-    ).not.toBeInTheDocument();
-  });
-
-  it("shows the server's refusal, with its remedy, when the plan does not compile", async () => {
-    api.reply("POST", PLAN_PREVIEW_PATH, {
-      status: 422,
-      json: {
-        error:
-          "Cannot compile lane-group cycle: persistence -> surface -> persistence. Repair the plan elements or the selection in --scope, then re-run cctl spec plan preview native-sdd.",
-        code: "plan_preview_uncompilable",
-      },
-    });
-    renderWithQuery(
-      <SpecReviewMode
-        detail={reviewDetailFixture(false)}
-        projectName="command-center"
-        highlightedChangeId={null}
-      />,
-    );
-
-    expect(
-      await screen.findByText(/Cannot compile lane-group cycle/),
-    ).toBeVisible();
-    expect(
-      screen.getByText(/Repair the plan elements or the selection/),
-    ).toBeVisible();
-  });
-});
-
 const CURRENT_NOTES = "Round 4 disposition: closed F3 by rebinding the exit.";
 const STRANDED_NOTES = "Round 2 disposition: split R1 into R1 and R4.";
 
@@ -1652,13 +1519,6 @@ function outstandingApprovalsFixture(): SpecDetailView {
 describe("SpecReviewMode combined approve-and-sign-off", () => {
   it("replaces the two-step flow with one act naming the subjects it approves", async () => {
     const api = installFetchFixture();
-    // This local fixture shadows the shared one, so it has to answer the
-    // preview request too: Review compiles a plan preview for the proposal it
-    // shows, and an unanswered one renders a second `role="alert"` beside the
-    // refusal this test is about.
-    api.reply("POST", PLAN_PREVIEW_PATH, (request) => ({
-      json: planPreviewResponseFixture(request.jsonBody),
-    }));
     try {
       const detail = outstandingApprovalsFixture();
       const current = detail.currentRevision;
@@ -1740,13 +1600,6 @@ describe("SpecReviewMode combined approve-and-sign-off", () => {
 
   it("surfaces the live-sibling refusal inline with the stranded revision and its remedy", async () => {
     const api = installFetchFixture();
-    // This local fixture shadows the shared one, so it has to answer the
-    // preview request too: Review compiles a plan preview for the proposal it
-    // shows, and an unanswered one renders a second `role="alert"` beside the
-    // refusal this test is about.
-    api.reply("POST", PLAN_PREVIEW_PATH, (request) => ({
-      json: planPreviewResponseFixture(request.jsonBody),
-    }));
     try {
       api.reply(
         "POST",

@@ -621,7 +621,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     summary: "act on this session's ACTIVE launched execution",
     description:
       "Read and edit the session's running (or paused/resumably-halted) graph-workflow execution in place — per-context config, task, and safe structural edits — plus pause/resume. Aliases: `workflow execution …` and `workflow exec …` are rewritten to `live`. This edits the LIVE execution's working copy; `workflow edit` edits a SAVED definition and does not touch a running run. The canonical loop is get → pause → edit → resume.",
-    usage: ["cctl workflow live <get|ledger|edit|amend|pause|resume|abort>"],
+    usage: ["cctl workflow live <get|ledger|edit|pause|resume|abort>"],
     flags: [],
     examples: [
       {

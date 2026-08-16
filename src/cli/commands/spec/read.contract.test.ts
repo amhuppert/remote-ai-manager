@@ -234,8 +234,8 @@ const priorRequirementsAdmission: SpecGateAdmissionRow = {
   created_at: CREATED_AT,
 };
 
-// A spec execution as `spec start` leaves it: compiled definition, parked at
-// definition review, no workflow lane behind it.
+// A spec execution as `spec start` leaves it: admitted one-off launch, parked
+// at workflow review, no workflow lane behind it.
 const parkedExecution: SpecExecutionRow = {
   id: "execution-1",
   spec_id: spec.id,
@@ -247,8 +247,17 @@ const parkedExecution: SpecExecutionRow = {
   }),
   state: "definition_review",
   execution_start_dial: "gate",
-  workflow_definition_id: "workflow-def-1",
-  workflow_definition_revision: 1,
+  workflow_definition_id: null,
+  workflow_definition_revision: null,
+  workflow_seed_source_json: JSON.stringify({
+    kind: "spec_delivery",
+    specSlug: "native-sdd",
+    candidateId: "launch-1",
+  }),
+  workflow_execution_binding_json: JSON.stringify({
+    dispositions: [],
+    claims: [],
+  }),
   workflow_execution_id: null,
   session_name: "feature-session",
   delivered_at: null,
@@ -261,9 +270,9 @@ const parkedExecution: SpecExecutionRow = {
   updated_at: CREATED_AT,
 };
 
-// The state `awaitingDefinitionApproval` leaves behind: the workflow execution
-// is linked precisely because the compiled definition is parked for a human.
-const definitionApprovalExecution: SpecExecutionRow = {
+// The graph workflow approval state links the execution while its one-off
+// launch is parked for a human.
+const workflowApprovalExecution: SpecExecutionRow = {
   ...parkedExecution,
   id: "execution-2",
   workflow_execution_id: "workflow-execution-9",
@@ -707,9 +716,6 @@ function createDeps(): SpecRouteDeps {
     findExecutionsBySpecId() {
       return [] as SpecExecutionRow[];
     },
-    findTaskClaimsBySpecId() {
-      return [];
-    },
     findWorkflowEventsByExecution() {
       return [];
     },
@@ -726,7 +732,6 @@ function createDeps(): SpecRouteDeps {
               : ("running" as const),
       };
     },
-    async ingestExecutionEvidenceBestEffort() {},
     findCriterionDispositionsByExecution() {
       return [];
     },
@@ -735,6 +740,12 @@ function createDeps(): SpecRouteDeps {
     },
     findProofVerdictsByCriterionRevision() {
       return [] as SpecProofVerdictRow[];
+    },
+    findDeliveryVerdictsBySpecExecutionId() {
+      return [];
+    },
+    findExecutionBindingBySpecExecutionId() {
+      return null;
     },
     findWaiverForCriterionRevision() {
       return null;
@@ -1089,6 +1100,27 @@ function makeHost(
 }
 
 describe("cctl spec read verbs against seeded read routes", () => {
+  it("refuses a preview without a stage using only direct-plan next acts", async () => {
+    const host = makeHost();
+    const result = await runCli(
+      ["spec", "plan", "preview", "native-sdd"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain(
+      "--stage draft or --stage proposed is required",
+    );
+    expect(result.stderr).toContain(
+      "cctl spec plan preview native-sdd --stage draft",
+    );
+    expect(result.stderr).not.toMatch(
+      /compiler|materializer|context pack|proofPlan|wiring|--seed-from/i,
+    );
+    expect(host.requests).toHaveLength(0);
+  });
+
   it("keeps the measures project endpoint distinct from a legal measures spec slug", async () => {
     const host = makeHost({ measuresSlug: true });
     const shown = await runCli(
@@ -1391,10 +1423,12 @@ describe("cctl spec read verbs against seeded read routes", () => {
     );
     expect(result.stdout).toContain("T2: Verify the CLI reads");
     expect(result.stdout).toContain("dependencies: T1");
-    expect(result.stdout).toContain("lane group: cli");
-    expect(result.stdout).toContain("execution lane: cli-surface");
+    // Authored intent, labelled as intent: nothing compiles a task element, so
+    // status must not read as a statement about how the run is laid out.
+    expect(result.stdout).toContain("intended lane group: cli");
+    expect(result.stdout).toContain("intended execution lane: cli-surface");
     expect(result.stdout).toContain(
-      "touched surfaces: src/cli/commands/spec/read.contract.test.ts",
+      "intended touched paths: src/cli/commands/spec/read.contract.test.ts",
     );
     expect(result.stdout).toContain("criterion coverage: R1.1");
     // Nothing is unresolvable here, so status must not carry a line about it.
@@ -1449,9 +1483,11 @@ describe("cctl spec read verbs against seeded read routes", () => {
     );
     // The park is its own line, not something to infer from the gate block.
     expect(text.stdout).toContain(
-      "execution-1: definition_review — no workflow lane launched",
+      "execution-1: definition_review — the admitted one-off launch is awaiting restart recovery before its workflow lane is attached",
     );
-    expect(text.stdout).toContain("cctl workflow start workflow-def-1");
+    expect(text.stdout).toContain(
+      "admitted one-off launch is awaiting restart recovery",
+    );
 
     expect(structured.exitCode).toBe(0);
     expect(JSON.parse(structured.stdout)).toMatchObject({
@@ -1460,7 +1496,11 @@ describe("cctl spec read verbs against seeded read routes", () => {
         {
           id: "execution-1",
           state: "definition_review",
-          workflowDefinitionId: "workflow-def-1",
+          workflowSeedSource: {
+            kind: "spec_delivery",
+            specSlug: "native-sdd",
+            candidateId: "launch-1",
+          },
           workflowExecutionId: null,
           laneState: "not_launched",
           actsNext: "agent",
@@ -1469,8 +1509,8 @@ describe("cctl spec read verbs against seeded read routes", () => {
     });
   });
 
-  it("reports a definition-review run whose lane is linked as parked for a human, not running", async () => {
-    const host = makeHost({ executions: [definitionApprovalExecution] });
+  it("reports a workflow-review run whose lane is linked as parked for a human, not running", async () => {
+    const host = makeHost({ executions: [workflowApprovalExecution] });
     const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
     const structured = await runCli(
       ["spec", "status", "native-sdd", "--json"],
@@ -1479,14 +1519,14 @@ describe("cctl spec read verbs against seeded read routes", () => {
     );
 
     expect(text.exitCode).toBe(0);
-    // Linking the lane is what parks the compiled definition for a human, so
+    // Linking the lane is what parks the admitted launch for a human, so
     // linkage alone must never be reported as progress.
     expect(text.stdout).not.toMatch(/workflow lanes? running/);
     expect(text.stdout).toContain(
-      "phase: executing (1 execution parked awaiting human approval of the compiled definition)",
+      "phase: executing (1 execution parked awaiting human approval of their workflow lane)",
     );
     expect(text.stdout).toContain(
-      "execution-2: definition_review — parked awaiting human approval of the compiled definition (workflow lane workflow-execution-9 is not running); next: a human approves it in Spec Studio",
+      "execution-2: definition_review — parked awaiting human approval of workflow lane workflow-execution-9; approve it from the workflow surface",
     );
 
     expect(structured.exitCode).toBe(0);
@@ -1496,9 +1536,13 @@ describe("cctl spec read verbs against seeded read routes", () => {
         {
           id: "execution-2",
           state: "definition_review",
-          workflowDefinitionId: "workflow-def-1",
+          workflowSeedSource: {
+            kind: "spec_delivery",
+            specSlug: "native-sdd",
+            candidateId: "launch-1",
+          },
           workflowExecutionId: "workflow-execution-9",
-          laneState: "awaiting_definition_approval",
+          laneState: "awaiting_workflow_approval",
           actsNext: "human",
         },
       ],
@@ -1560,7 +1604,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
   });
 
   it("reads executions off the status projection without a second detail request", async () => {
-    const host = makeHost({ executions: [definitionApprovalExecution] });
+    const host = makeHost({ executions: [workflowApprovalExecution] });
     const result = await runCli(
       ["spec", "status", "native-sdd"],
       baseEnv,

@@ -1,5 +1,5 @@
 import { getGlobalSingleton } from "@/lib/shared/global-singleton";
-import type { CriterionContextCoverage } from "@/lib/workflow-graph/criterion-coverage";
+import type { AuthoredAccountabilityCoverageGroup } from "@/lib/workflow-graph/authored-accountability-coverage-core";
 import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowGraphValidationError,
@@ -7,6 +7,7 @@ import type {
 } from "@/lib/workflow-graph/definition-schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
+import type { GraphRolePromptProjection } from "./prompt-composer";
 
 const EXECUTION_CONTRACT_PORT_KEY =
   "__cc_graph_execution_contract_port" as const;
@@ -31,14 +32,27 @@ export type GraphExecutionContractDefinition =
   | WorkflowSemanticDefinition
   | ResolvedWorkflowSemanticDefinition;
 
+/**
+ * The execution-scoped contract value consumed by the pure live-edit core.
+ * Persistence-backed authority is resolved before this value is created, so
+ * edit and frontier evaluation cannot perform repository lookups or bypass a
+ * failed binding read.
+ */
+export interface LoadedGraphExecutionLiveEditContract {
+  validateOperation(
+    execution: GraphWorkflowExecution,
+    operation: WorkflowLiveEditOperation,
+  ): GraphExecutionContractDecision;
+  readonly accountabilityCoverageGroups: readonly AuthoredAccountabilityCoverageGroup[];
+}
+
 export interface GraphExecutionContract {
   validateDefinition(
     definition: GraphExecutionContractDefinition,
   ): GraphExecutionContractDecision;
-  validateLiveEdit(
+  loadLiveEdit(
     execution: GraphWorkflowExecution,
-    operation: WorkflowLiveEditOperation,
-  ): GraphExecutionContractDecision;
+  ): LoadedGraphExecutionLiveEditContract;
   validateTaskCompletion(
     execution: GraphWorkflowExecution,
     taskId: string,
@@ -46,16 +60,9 @@ export interface GraphExecutionContract {
   deriveContextAcceptanceCriteria(
     definition: GraphExecutionContractDefinition,
   ): GraphExecutionContractDerivation;
-  /**
-   * Which contexts cover each linked acceptance criterion (D4 R5.2, decision
-   * D11). The engine holds no notion of a criterion, so the criterion-protection
-   * lock on the live-edit frontier reads coverage through this seam; an
-   * execution with no registered consumer — or one that is not spec-linked —
-   * derives an empty map and is never route-locked.
-   */
-  deriveCriterionContextCoverage(
-    definition: GraphExecutionContractDefinition,
-  ): CriterionContextCoverage;
+  loadPromptProjection?(
+    execution: GraphWorkflowExecution,
+  ): Promise<GraphRolePromptProjection | null>;
 }
 
 interface GraphExecutionContractPortState {
@@ -79,9 +86,12 @@ export function createRegisteredGraphExecutionContract(): GraphExecutionContract
     validateDefinition(definition) {
       return state().contract?.validateDefinition(definition) ?? { ok: true };
     },
-    validateLiveEdit(execution, operation) {
+    loadLiveEdit(execution) {
       return (
-        state().contract?.validateLiveEdit(execution, operation) ?? { ok: true }
+        state().contract?.loadLiveEdit(execution) ?? {
+          validateOperation: () => ({ ok: true }),
+          accountabilityCoverageGroups: [],
+        }
       );
     },
     validateTaskCompletion(execution, taskId) {
@@ -99,8 +109,10 @@ export function createRegisteredGraphExecutionContract(): GraphExecutionContract
         }
       );
     },
-    deriveCriterionContextCoverage(definition) {
-      return state().contract?.deriveCriterionContextCoverage(definition) ?? {};
+    async loadPromptProjection(execution) {
+      return (
+        (await state().contract?.loadPromptProjection?.(execution)) ?? null
+      );
     },
   };
 }

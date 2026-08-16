@@ -1,7 +1,7 @@
 import { stableStringify } from "@/lib/state-store/serialization";
 import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 
-import type { DeliveryPlanCandidateIdentity } from "./delivery-plan";
+import type { FinalizedDeliveryPlanCandidateIdentity } from "./delivery-plan";
 import type {
   PreparedSpecEventPublication,
   SpecEventsPublisher,
@@ -54,7 +54,7 @@ export interface AdmitExecutionStartForAttemptInput {
   spec: Spec;
   pinnedRevisionId: string;
   attemptId: string;
-  candidate: DeliveryPlanCandidateIdentity;
+  candidate: FinalizedDeliveryPlanCandidateIdentity;
   actor: ActorProvenance;
   approver: string;
   occurredAt: string;
@@ -126,8 +126,7 @@ export function admitExecutionStartForAttemptInTransaction(
       revisionId: input.pinnedRevisionId,
       attemptId: input.attemptId,
       candidateId: input.candidate.candidateId,
-      planHash: input.candidate.planHash,
-      compiledDefinitionHash: input.candidate.compiledDefinitionHash,
+      candidateHash: input.candidate.candidateHash,
       ...(approval === null ? {} : { approvalId: approval.id }),
     },
     sseEvent: {

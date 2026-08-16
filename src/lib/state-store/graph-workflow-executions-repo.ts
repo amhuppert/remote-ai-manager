@@ -292,6 +292,8 @@ export interface GraphWorkflowExecutionsRepo {
     projectPath: string,
     sessionName: string,
   ): GraphWorkflowExecution | null;
+  /** Read an active execution by its globally unique execution id. */
+  findByExecutionId(executionId: string): GraphWorkflowExecution | null;
   /**
    * `getActive` with this connection's caches for the key dropped first, so the
    * answer comes from SQLite rather than from what this process last saw.
@@ -356,6 +358,12 @@ export function createGraphWorkflowExecutionsRepo(
     `SELECT project_path, session_name, definition_json, runtime_json
        FROM graph_workflow_executions`,
   );
+  const findByExecutionIdStmt = db.prepare(
+    `SELECT project_path, session_name, definition_json, runtime_json
+       FROM graph_workflow_executions
+      WHERE execution_id = ?
+      LIMIT 1`,
+  );
   const upsertStmt = db.prepare(
     `INSERT INTO graph_workflow_executions (
        project_path, session_name, execution_id, seed_definition_id,
@@ -415,7 +423,11 @@ export function createGraphWorkflowExecutionsRepo(
 
   function timed<T>(
     op: string,
-    identifier: { projectPath?: string; sessionName?: string },
+    identifier: {
+      projectPath?: string;
+      sessionName?: string;
+      executionId?: string;
+    },
     fn: () => T,
   ): T {
     const start = performance.now();
@@ -429,6 +441,9 @@ export function createGraphWorkflowExecutionsRepo(
       }
       if (identifier.sessionName !== undefined) {
         payload.sessionName = identifier.sessionName;
+      }
+      if (identifier.executionId !== undefined) {
+        payload.executionId = identifier.executionId;
       }
       emitOrDeferRepositoryLog(() =>
         logger.info(
@@ -560,6 +575,39 @@ export function createGraphWorkflowExecutionsRepo(
           return readActive(projectPath, sessionName);
         },
       );
+    },
+    findByExecutionId(executionId) {
+      return timed("findByExecutionId", { executionId }, () => {
+        const row: unknown = findByExecutionIdStmt.get(executionId);
+        if (row === undefined) return null;
+        if (!isListRow(row)) {
+          return logAndThrowValidationFailure(executionId, [
+            {
+              code: "invalid_row_shape",
+              path: [],
+              message: "unexpected row shape",
+            },
+          ]);
+        }
+        const merged = mergeRow(
+          `${row.project_path}::${row.session_name}`,
+          row,
+        );
+        if (merged.migration !== null) {
+          // Same read-only contract as readActive: the upgrade is handed back,
+          // never written back — a lookup by execution id must not be a writer.
+          emitOrDeferRepositoryLog(() =>
+            parallelLogger.info("graph-workflow.parallel.legacy_migrated", {
+              projectPath: row.project_path,
+              sessionName: row.session_name,
+              executionId: merged.migration?.executionId,
+              repairedFields: merged.migration?.repairedFields,
+              persisted: false,
+            }),
+          );
+        }
+        return merged.value;
+      });
     },
     setActive(projectPath, sessionName, execution, updatedAt) {
       return timed("setActive", { projectPath, sessionName }, () => {

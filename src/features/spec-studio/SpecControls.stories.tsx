@@ -105,14 +105,13 @@ export const DeliveryPlanLaunchHandoff: Story = {
       onGrantWaiver={fn()}
       onSetDisposition={fn()}
       onGrantGateApproval={fn()}
-      onApproveExecutionStart={fn()}
       onCaptureScopeAmendment={fn()}
       onAbandonExecution={fn()}
     />
   ),
 };
 
-export const DefinitionReview: Story = {
+export const WorkflowReview: Story = {
   render: () => (
     <ExecutionPanel
       detail={denseSpecControlsDetailFixture("definition_review")}
@@ -122,7 +121,6 @@ export const DefinitionReview: Story = {
       onGrantWaiver={fn()}
       onSetDisposition={fn()}
       onGrantGateApproval={fn()}
-      onApproveExecutionStart={fn()}
       onCaptureScopeAmendment={fn()}
       onAbandonExecution={fn()}
     />
@@ -141,7 +139,6 @@ export const RunningExecution: Story = {
       onGrantWaiver={fn()}
       onSetDisposition={fn()}
       onGrantGateApproval={fn()}
-      onApproveExecutionStart={fn()}
       onCaptureScopeAmendment={fn()}
       onAbandonExecution={fn()}
     />
@@ -161,7 +158,6 @@ export const ReadyToMerge: Story = {
       onGrantWaiver={fn()}
       onSetDisposition={fn()}
       onGrantGateApproval={fn()}
-      onApproveExecutionStart={fn()}
       onCaptureScopeAmendment={fn()}
       onAbandonExecution={fn()}
     />
@@ -180,7 +176,6 @@ export const MergeGateApprovalPending: Story = {
       onGrantWaiver={fn()}
       onSetDisposition={fn()}
       onGrantGateApproval={fn()}
-      onApproveExecutionStart={fn()}
       onCaptureScopeAmendment={fn()}
       onAbandonExecution={fn()}
     />
@@ -199,7 +194,6 @@ export const MergeGateApprovedAwaitingProof: Story = {
       onGrantWaiver={fn()}
       onSetDisposition={fn()}
       onGrantGateApproval={fn()}
-      onApproveExecutionStart={fn()}
       onCaptureScopeAmendment={fn()}
       onAbandonExecution={fn()}
     />

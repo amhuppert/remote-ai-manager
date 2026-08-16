@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isEarlierMergedDelivery } from "@/lib/specs/delivery-gate";
+import { isEarlierMergedDelivery } from "@/lib/specs/delivery-history";
 import type { SpecExecutionRow } from "@/lib/specs/schemas";
 import {
   specDetailViewSchema,
@@ -127,9 +127,11 @@ function executionRowFromView(view: SpecExecutionView): SpecExecutionRow {
     revision_id: view.revisionId,
     scope_json: JSON.stringify(view.scope),
     state: view.state,
-    execution_start_dial:
-      view.definitionApprovalRequired === true ? "gate" : null,
-    workflow_definition_id: view.workflowDefinitionId,
+    // The view no longer projects the start dial or a persisted definition
+    // id — a direct-authored launch has neither — and the prior-run rule this
+    // adapter feeds reads ids and timestamps only.
+    execution_start_dial: null,
+    workflow_definition_id: null,
     workflow_definition_revision: null,
     workflow_execution_id: view.workflowExecutionId,
     session_name: view.sessionName,

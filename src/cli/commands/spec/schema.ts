@@ -47,6 +47,7 @@ import {
 } from "@/lib/specs/transitions";
 import type { DeliveryPlanDocument } from "@/lib/specs/delivery-plan";
 import { deliveryPlanEditRequestSchema } from "@/lib/specs/delivery-plan-views";
+import { graphWorkflowLaunchExample } from "@/lib/workflow-graph/launch-presentation";
 import {
   NATIVE_SDD_GUIDANCE,
   nativeSddGuidanceSchema,
@@ -266,16 +267,15 @@ const KIND_NOTES: Record<SpecElementKind, readonly string[]> = {
   ],
   criterion: [
     "parentElementId must be the owning requirement's elementId — the R<n>.<m> handle is composed from that requirement's number.",
-    `validationStrategy.kinds must include at least one machine-provable kind (${MACHINE_VALIDATION_EVIDENCE_KINDS.join(" or ")}); the delivery gate cannot prove a criterion from commits alone, so an empty or commit-only list is refused.`,
+    `validationStrategy.kinds must include at least one machine-provable kind (${MACHINE_VALIDATION_EVIDENCE_KINDS.join(" or ")}); a criterion whose only proposed proof is that someone committed something states no checkable claim, so an empty or commit-only list is refused. The kinds are the author's stated proof intent — delivery is decided by the claiming context's graph-configured gates, not by matching evidence against this list.`,
   ],
   decision: [
     "tracedRequirementElementIds holds requirement elementIds, not R<n> handles.",
   ],
   task: [
-    "Legacy-only: this document describes task elements on an already-open evergreen Plan revision. Current delivery tasks use `cctl spec schema plan-edit` and `cctl spec plan edit <slug> --file <plan.json>`.",
-    "All four id arrays hold elementIds, not handles; dependsOnTaskElementIds is the ordering consumed only by the legacy compiler.",
-    "Legacy task touchedPaths describe review surfaces. DeliveryPlanAttempt documents declare touchedSurfaces once for the authored graph.",
-    "laneGroup and executionLane are different claims: laneGroup contracts its tasks into ONE execution context, executionLane puts contexts on ONE lane — one worktree, one join — where touchedPaths become the ownership envelope that keeps them apart. Every context on an executionLane needs a non-empty envelope, so a task on one must declare touchedPaths unless it is contracted into a laneGroup where another member does. Every member of one laneGroup must agree on the executionLane or all omit it.",
+    "A task element states intended work on the spec's Plan revision. It is not a delivery plan: the graph that runs is authored directly with `cctl spec schema plan-edit` and `cctl spec plan edit <slug> --file <plan.json>`, and no task element compiles into it.",
+    "All four id arrays hold elementIds, not handles.",
+    "dependsOnTaskElementIds, laneGroup, executionLane and touchedPaths record the author's intended ordering, grouping, lane and surfaces. Nothing derives execution from them — the delivery-plan author reads them while placing contexts, tasks, edges and ownedPaths in the authored launch, where those decisions are actually made.",
   ],
 };
 
@@ -393,92 +393,24 @@ const REMOVAL_BATCH_EXAMPLE = {
  * disposition and ownership law, so an author can copy it and grow it rather
  * than assemble the shape from the JSON Schema.
  */
+const planEditExampleLaunch = graphWorkflowLaunchExample();
 const PLAN_EDIT_EXAMPLE: DeliveryPlanDocument = {
-  dispositions: [
-    {
-      criterionElementId: "crit-schema-per-kind",
-      disposition: "selected",
-      deliveredByExecutionId: null,
-      reaffirmation: null,
-      note: null,
-    },
-  ],
-  contexts: [
-    {
-      contextId: "publish-input-schemas",
-      title: "Publish every --file document",
-      contextType: "delivery",
-      criterionElementIds: ["crit-schema-per-kind"],
-      acceptanceContract: [
-        "`cctl spec schema` prints a JSON Schema and a worked example for every --file document the family accepts.",
-      ],
-      proofPlan: [
-        {
-          criterionElementId: "crit-schema-per-kind",
-          evidenceKinds: ["validator_verdict"],
-          note: "The schema contract test asserts one document per accepted file shape.",
-        },
-      ],
-    },
-  ],
-  tasks: [
-    {
-      taskId: "publish-plan-edit",
-      contextId: "publish-input-schemas",
-      title: "Publish the plan edit document",
-      instructions:
-        "Add the plan edit document to the schema registry with its example and notes.",
-      order: 0,
-      contributesToCriterionElementIds: ["crit-schema-per-kind"],
-    },
-  ],
-  edges: [],
-  wiring: [
-    {
-      capabilityId: "spec-schema-registry",
-      criterionElementIds: ["crit-schema-per-kind"],
-      owner: {
-        kind: "call_site",
-        contextId: "publish-input-schemas",
-        locator: "src/cli/commands/spec/schema.ts allDocuments()",
-      },
-    },
-  ],
-  policyOverrides: [],
-  touchedSurfaces: ["src/cli/commands/spec/"],
-  governance: {
-    mission: "Publish every plan input document from the schema registry.",
-    charterInvariants: [
+  schemaVersion: 2,
+  launch: planEditExampleLaunch,
+  binding: {
+    dispositions: [
       {
-        id: "portable-guidance",
-        statement:
-          "Agent-facing guidance ships through the CC skill and generated CLI help, never .kiro/steering.",
+        criterionElementId: "crit-schema-per-kind",
+        disposition: "in_scope",
+        deliveredByExecutionId: null,
       },
     ],
-    sourcesOfTruth: [
+    claims: [
       {
-        rank: 1,
-        id: "pinned-spec",
-        label: "Pinned spec self-describing-surface",
-        type: "spec",
-        locator: ".cc/graph-workflow-docs/spec/self-describing-surface.md",
-        description:
-          "The pinned revision this run implements, materialized into every lane worktree at launch.",
-        appliesTo: null,
-        accessPolicy: "worktree-relative",
-      },
-      {
-        rank: 2,
-        id: "final-design",
-        label: "Final agreed design",
-        type: "document",
-        locator: "command-center#47 attachment f7b542c4",
-        description: "Section 4 owns the plan document shape.",
-        appliesTo: "every context",
-        accessPolicy: "external-readonly",
+        contextId: "context-implement",
+        criterionElementIds: ["crit-schema-per-kind"],
       },
     ],
-    validationCommandNames: ["typecheck", "test"],
   },
 };
 
@@ -784,10 +716,9 @@ function planEditDocument(): SchemaDocument {
     },
     notes: [
       "`expectedDraftRevision` is the plan's compare-and-swap token, the way `baseElementVersion` is an element's: read it from `cctl spec plan get <slug> --json` and send back the revision you edited.",
-      "Every criterion of the pinned revision carries exactly one disposition; exactly one context owns each `selected` criterion, and every other disposition has zero owners.",
-      "A context owning no criterion must be typed `integration` or `closeout` and carry its own acceptance contract — that contract is the only thing its validator is held to.",
-      "Task `order` is per context and contiguous from 0; `contributesToCriterionElementIds` is provenance only and never manufactures a validator contract.",
-      "`spec plan open` already ranked the plan's own spec first at `.cc/graph-workflow-docs/spec/<slug>.md` with `worktree-relative` access, because the engine materializes the pinned revision into every lane worktree; keep that entry. `external-readonly` is for genuinely out-of-worktree sources — the charter gates those behind explicit human permission, so spelling your own spec that way refuses at propose (`plan/spec-source-unreadable`).",
+      "Every criterion of the pinned revision carries exactly one disposition. Each selected criterion needs at least one claim naming a stable authored graph source; dynamic contexts and execution outcomes stay graph-owned.",
+      "`launch` is the complete ordinary graph launch and is accepted without a native-SDD field allowlist. Graph admission owns topology, loops, guards, expansion, output schemas, invariants, runtime configuration, and layout.",
+      "Proposal adds the pinned-spec and claims sources as server-owned finalization data. Keep externally hosted sources `external-readonly`; the charter requires explicit human permission before they are read.",
     ],
   };
 }
@@ -796,13 +727,13 @@ function guidanceDocument(): SchemaDocument {
   const schema = jsonSchemaOf(nativeSddGuidanceSchema);
   return {
     id: "guidance",
-    title: "native SDD compile, lint, and evidence reference",
+    title: "native SDD graph-admission, lint, and evidence reference",
     usedBy: ["cctl spec schema guidance"],
     jsonSchema: schema,
     enums: collectEnums(schema, ""),
     example: NATIVE_SDD_GUIDANCE,
     notes: [
-      "Materializer mappings come from the field registry the delivery-plan materializer reads; lint rule ids and severities come from the registries that construct findings; evidence producers come from the registry evidence ingestion and plan preview share.",
+      "The empty delivery-plan lint taxonomy records that graph admission and accountability checks belong to the shared graph launch boundary. Evergreen lint rule ids and severities come from the registries that construct findings.",
       "test_run is minted only when the criterion's own strategy declares it, alongside validator_verdict from the same graph-workflow-validation-result event; no test runner mints independent test_run evidence.",
     ],
   };

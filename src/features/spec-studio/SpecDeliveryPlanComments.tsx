@@ -17,10 +17,8 @@ import { specMutationPaths } from "@/lib/specs/mutations";
 import { specKeys } from "@/lib/specs/query-keys";
 
 /**
- * Context-anchored review notes. A comment names the context it was written
- * against, and an anchor the current document no longer carries is shown as an
- * orphan rather than dropped: the note is durable review work, and the context
- * it discusses is what moved.
+ * Binding-anchored review notes stay attached to the opaque accountability
+ * source the signed sidecar names.
  */
 
 function CommentRow({
@@ -40,7 +38,7 @@ function CommentRow({
         </StatusChip>
         {comment.orphaned && (
           <span className="font-mono text-[0.66rem] text-amber">
-            orphan anchor — this plan no longer declares that context
+            orphan anchor — this binding no longer declares that source
           </span>
         )}
         <span className="font-mono text-[0.66rem] text-text-tertiary">
@@ -64,9 +62,9 @@ export default function SpecDeliveryPlanComments({
 }): React.JSX.Element {
   const slug = review.attempt.specSlug;
   const queryClient = useQueryClient();
-  const anchors = review.document.contexts.map((context) => ({
-    contextId: context.contextId,
-    title: context.title,
+  const anchors = review.document.binding.claims.map((claim) => ({
+    contextId: claim.contextId,
+    title: claim.criterionElementIds.join(", ") || "No criterion claims",
   }));
   const [contextId, setContextId] = useState(anchors[0]?.contextId ?? "");
   const [body, setBody] = useState("");
@@ -89,7 +87,7 @@ export default function SpecDeliveryPlanComments({
   });
 
   return (
-    <section aria-label="Context comments">
+    <section aria-label="Binding comments">
       <ul className="m-0 list-none p-0">
         {review.comments.length === 0 ? (
           <li className="font-mono text-[0.7rem] text-text-tertiary">
@@ -113,10 +111,10 @@ export default function SpecDeliveryPlanComments({
         >
           <FormGroup>
             <span className="mb-sm block font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-secondary uppercase">
-              Anchor context
+              Accountability source
             </span>
             <RadioGroup
-              aria-label="Anchor context"
+              aria-label="Accountability source"
               value={contextId}
               onValueChange={setContextId}
             >
@@ -136,7 +134,7 @@ export default function SpecDeliveryPlanComments({
               id="plan-comment-body"
               value={body}
               onChange={(event) => setBody(event.target.value)}
-              placeholder="What this context has to change"
+              placeholder="What this accountability source has to change"
             />
           </FormGroup>
           <div className="flex items-center gap-sm">
@@ -149,6 +147,14 @@ export default function SpecDeliveryPlanComments({
             >
               Comment
             </Button>
+            {addComment.isPending && (
+              <span
+                role="status"
+                className="font-mono text-[0.68rem] text-text-tertiary"
+              >
+                Saving comment…
+              </span>
+            )}
             {addComment.isError && (
               <span className="font-mono text-[0.68rem] text-red">
                 {addComment.error instanceof Error

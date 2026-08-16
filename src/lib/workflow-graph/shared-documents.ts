@@ -438,6 +438,24 @@ export function createWorkflowSeededDocumentService(
     }
 
     const nextExecution = cloneExecution(input.execution);
+    const occupiedPaths = new Set(
+      nextExecution.sharedDocuments.map((entry) =>
+        path.normalize(entry.relativePath),
+      ),
+    );
+    for (const document of input.documents) {
+      const relativePath = path.normalize(document.relativePath);
+      if (occupiedPaths.has(relativePath)) {
+        logger.warn("graph-workflow.seeded_document.path_collision", {
+          executionId: input.execution.id,
+          relativePath,
+        });
+        throw new Error(
+          `Seeded workflow document path collision at "${relativePath}"`,
+        );
+      }
+      occupiedPaths.add(relativePath);
+    }
     const timestamp = now();
 
     for (const document of input.documents) {

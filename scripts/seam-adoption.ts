@@ -869,6 +869,11 @@ export const SEAMS: readonly SeamDefinition[] = [
         justification:
           "Test-only fixture module (imported solely by the loop settlement, crash-safety and budget suites, never by production code) that the `.test.` filename filter misses — the same population as the entry above, in a domain-local file rather than a shared directory. Its `JUDGE_OUTPUT_SCHEMA` is the judge context's authored `outputSchema`, which the definition schema models as an opaque `z.record(z.string(), z.unknown())` document precisely because no Zod contract owns it; the loop's `until` predicate is then evaluated against that document, so inventing a Zod source for it would change what the suites exercise. Deletion condition: this entry drops if the loop fixtures stop declaring a literal output-schema document, or if the module moves under an already-allowlisted fixture directory.",
       },
+      {
+        path: "src/lib/state-store/spec-delivery-plan-test-fixture.ts",
+        justification:
+          "Test-only fixture module (imported solely by the delivery-plan repo, migration, and service suites, never by production code) that the `.test.` filename filter misses — the same population as the entries above. Its maximal version-2 attempt document must carry a distinctive per-context `outputSchema` so the round-trip durability contract proves the opaque author-supplied field survives persistence; no Zod contract owns that document, so the canonical generator cannot supply it. Deletion condition: this entry drops if the fixture stops declaring a literal output-schema document, or if the module moves under an already-allowlisted fixture directory.",
+      },
     ],
     inCorpus(relPath) {
       return (

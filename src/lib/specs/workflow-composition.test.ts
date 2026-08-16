@@ -58,13 +58,15 @@ describe("spec workflow composition", () => {
       mergeDeliveryLifecycle: { markDelivered: mergeMarkDelivered },
       executionContract: {
         validateDefinition,
-        validateLiveEdit: () => ({ ok: true }),
+        loadLiveEdit: () => ({
+          validateOperation: () => ({ ok: true }),
+          accountabilityCoverageGroups: [],
+        }),
         validateTaskCompletion: () => ({ ok: true }),
         deriveContextAcceptanceCriteria: () => ({
           ok: true,
           acceptanceCriteriaByContextId: {},
         }),
-        deriveCriterionContextCoverage: () => ({}),
       },
     });
 

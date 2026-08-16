@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { charterInvariantSchema } from "@/lib/workflows/charter-schemas";
 import {
   graphWorkflowAgentValidationOverrideSchema,
   graphWorkflowLaneMergeValidationOverrideSchema,
@@ -185,6 +186,7 @@ const outlineCharterSchema = z
     vocabulary: z.array(z.string()).optional(),
     testStrategy: z.string().optional(),
     knownAmbiguities: z.array(z.string()).optional(),
+    invariants: z.array(charterInvariantSchema).optional(),
     sourcesOfTruth: z.array(z.unknown()).optional(),
   })
   .loose();
@@ -255,6 +257,7 @@ export interface OutlineData {
     nonGoals: number;
     vocabulary: number;
     knownAmbiguities: number;
+    invariants: OutlineCharterInvariant[];
     sources: number;
   };
   parameters: Array<{ name: string; type: string; required: boolean }>;
@@ -269,6 +272,12 @@ export interface OutlineData {
     workflow: string[];
     contexts: Array<{ id: string; blocks: string[] }>;
   };
+}
+
+export interface OutlineCharterInvariant {
+  id: string;
+  contextIds: string[] | null;
+  statementChars: number;
 }
 
 export interface OutlineAssignmentRow {
@@ -334,6 +343,11 @@ export function buildOutlineData(record: OutlineRecord): OutlineData {
       nonGoals: charter.nonGoals?.length ?? 0,
       vocabulary: charter.vocabulary?.length ?? 0,
       knownAmbiguities: charter.knownAmbiguities?.length ?? 0,
+      invariants: (charter.invariants ?? []).map((invariant) => ({
+        id: invariant.id,
+        contextIds: invariant.appliesTo?.contextIds ?? null,
+        statementChars: invariant.statement.length,
+      })),
       sources: charter.sourcesOfTruth?.length ?? 0,
     },
     parameters: (def.parameters ?? []).map((param) => ({
@@ -408,6 +422,15 @@ export function renderOutline(record: OutlineRecord): string {
     charterParts.push(`knownAmbiguities ${data.charter.knownAmbiguities}`);
   charterParts.push(`sources ${data.charter.sources}`);
   lines.push(`charter: ${charterParts.join(" · ")}`);
+
+  if (data.charter.invariants.some((invariant) => invariant.contextIds)) {
+    const invariantScopes = data.charter.invariants.map((invariant) =>
+      invariant.contextIds
+        ? `${invariant.id} contexts=${invariant.contextIds.join(",")}`
+        : `${invariant.id} global`,
+    );
+    lines.push(`invariants: ${invariantScopes.join(" · ")}`);
+  }
 
   lines.push(
     `parameters: ${

@@ -20,8 +20,9 @@ describe("graph execution contract port", () => {
     const execution = createWorkflowExecution();
 
     expect(contract.validateDefinition(definition)).toEqual({ ok: true });
+    const liveEdit = contract.loadLiveEdit(execution);
     expect(
-      contract.validateLiveEdit(execution, {
+      liveEdit.validateOperation(execution, {
         type: "move-task",
         taskId: "task-plan-1",
         targetContextId: "context-implement",
@@ -34,12 +35,13 @@ describe("graph execution contract port", () => {
       ok: true,
       acceptanceCriteriaByContextId: {},
     });
-    expect(contract.deriveCriterionContextCoverage(definition)).toEqual({});
+    expect(liveEdit.accountabilityCoverageGroups).toEqual([]);
   });
 
   it("delegates to the currently registered contract", () => {
     const contract = createRegisteredGraphExecutionContract();
     const definition = createWorkflowDefinition();
+    const execution = createWorkflowExecution();
     registerGraphExecutionContract({
       validateDefinition() {
         return {
@@ -49,8 +51,16 @@ describe("graph execution contract port", () => {
           instruction: "Repair the contract.",
         };
       },
-      validateLiveEdit() {
-        return { ok: true };
+      loadLiveEdit() {
+        return {
+          validateOperation: () => ({ ok: true }),
+          accountabilityCoverageGroups: [
+            {
+              bindingKey: "criterion-1",
+              claimantContextIds: ["context-plan"],
+            },
+          ],
+        };
       },
       validateTaskCompletion() {
         return { ok: true };
@@ -60,9 +70,6 @@ describe("graph execution contract port", () => {
           ok: true,
           acceptanceCriteriaByContextId: { "context-plan": "Derived" },
         };
-      },
-      deriveCriterionContextCoverage() {
-        return { "criterion-1": ["context-plan"] };
       },
     });
 
@@ -74,8 +81,13 @@ describe("graph execution contract port", () => {
       ok: true,
       acceptanceCriteriaByContextId: { "context-plan": "Derived" },
     });
-    expect(contract.deriveCriterionContextCoverage(definition)).toEqual({
-      "criterion-1": ["context-plan"],
-    });
+    expect(
+      contract.loadLiveEdit(execution).accountabilityCoverageGroups,
+    ).toEqual([
+      {
+        bindingKey: "criterion-1",
+        claimantContextIds: ["context-plan"],
+      },
+    ]);
   });
 });

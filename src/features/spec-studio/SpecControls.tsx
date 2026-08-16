@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 
 import { CompactMarkdown } from "@/components/markdown/Markdown";
@@ -74,17 +74,6 @@ import {
   type SpecWaiverRow,
 } from "@/lib/specs/schemas";
 import { cn } from "@/lib/ui/cn";
-import type { GraphWorkflowExecutionAmendedEvent } from "@/lib/workflow-graph/event-schemas";
-import type {
-  WorkflowExecutionAmendmentRequest,
-  WorkflowExecutionAmendmentResponse,
-} from "@/lib/workflow-graph/execution-amendment";
-import { useGraphWorkflowEventsQuery } from "@/lib/workflows/queries";
-import {
-  useAmendGraphWorkflowMutation,
-  useStartGraphWorkflowMutation,
-  type StartGraphWorkflowResult,
-} from "@/lib/workflows/mutations";
 
 import { gateLabels } from "./presentation";
 import PostLaunchCapturePaths, {
@@ -92,7 +81,6 @@ import PostLaunchCapturePaths, {
   type CaptureScopeAmendmentReceipt,
   type PostLaunchFailure,
 } from "./PostLaunchCapturePaths";
-import { formatEvidenceKind } from "./SpecEvidenceLintTrace";
 import {
   openDraftForPolicyImpact,
   PolicyImpactPreview,
@@ -139,16 +127,16 @@ const dispositionLabels: Record<SpecCriterionDisposition, string> = {
   delivered_elsewhere: "Delivered elsewhere",
 };
 
-/** Rendered verbatim from the server's `deliveryProjection` (F26). */
-const proofStatePresentation: Record<
-  CriterionDeliveryProjection["proofState"],
+/** Rendered verbatim from the server's current-attempt delivery projection. */
+const deliveryStatePresentation: Record<
+  CriterionDeliveryProjection["deliveryState"],
   { label: string; tone: StatusChipTone }
 > = {
-  proven_merged: { label: "Proven & merged", tone: "green" },
-  proof_recorded: { label: "Proof recorded", tone: "cyan" },
+  delivered: { label: "Delivered", tone: "green" },
+  verdict_recorded: { label: "Outcome satisfied", tone: "cyan" },
   waived: { label: "Waived", tone: "amber" },
   delivered_elsewhere: { label: "Delivered elsewhere", tone: "neutral" },
-  awaiting_proof: { label: "Awaiting proof", tone: "neutral" },
+  awaiting_outcome: { label: "Awaiting outcome", tone: "neutral" },
 };
 
 export const renameSpecResultSchema = z
@@ -626,29 +614,13 @@ interface GrantGateApprovalPanelInput {
   revisionId: string;
 }
 
-interface ApproveExecutionStartPanelInput {
-  executionId: string;
-}
-
-interface StartPreparedWorkflowInput {
-  sessionName: string;
-  definitionId: string;
-  definitionRevision: number;
-}
-
 export type CaptureDiscoveredWorkInput = CaptureDiscoveredWorkRequest;
 
 export interface ExecutionPanelPostLaunchState {
   captureOutcomePath: "discovery" | "replan" | null;
   captureReceipt: CaptureScopeAmendmentReceipt | null;
   captureFailure: PostLaunchFailure | null;
-  amendmentPending: boolean;
-  amendmentReceipt: WorkflowExecutionAmendmentResponse | null;
-  amendmentEvent: GraphWorkflowExecutionAmendedEvent | null;
-  amendmentFailure: PostLaunchFailure | null;
-  canRequestAmendment: boolean;
   onCaptureIntent(path: "discovery" | "replan"): void;
-  onAmend(request: WorkflowExecutionAmendmentRequest): void;
 }
 
 export interface AbandonExecutionPanelInput {
@@ -661,15 +633,9 @@ export function ExecutionPanel({
   projectName,
   pendingAction,
   error,
-  definitionReviewError = null,
-  preparedWorkflowStartPending = false,
-  preparedWorkflowStartError = null,
-  preparedWorkflowStartResult = null,
   onGrantWaiver,
   onSetDisposition,
   onGrantGateApproval,
-  onApproveExecutionStart,
-  onStartPreparedWorkflow,
   onCaptureScopeAmendment,
   onAbandonExecution,
   postLaunch,
@@ -678,15 +644,9 @@ export function ExecutionPanel({
   projectName: string;
   pendingAction: string | null;
   error: string | null;
-  definitionReviewError?: string | null;
-  preparedWorkflowStartPending?: boolean;
-  preparedWorkflowStartError?: string | null;
-  preparedWorkflowStartResult?: StartGraphWorkflowResult | null;
   onGrantWaiver(input: GrantWaiverInput): void;
   onSetDisposition(input: SetDispositionInput): void;
   onGrantGateApproval(input: GrantGateApprovalPanelInput): void;
-  onApproveExecutionStart(input: ApproveExecutionStartPanelInput): void;
-  onStartPreparedWorkflow?(input: StartPreparedWorkflowInput): void;
   onCaptureScopeAmendment(input: CaptureDiscoveredWorkInput): void;
   onAbandonExecution(input: AbandonExecutionPanelInput): void;
   postLaunch?: ExecutionPanelPostLaunchState;
@@ -704,16 +664,12 @@ export function ExecutionPanel({
     );
   const deliveryRequiresGateApproval =
     resolveDial(detail.spec.gatePolicy, "delivery") === "gate";
-  const executionStartRequiresGateApproval =
-    resolveDial(detail.spec.gatePolicy, "execution_start") === "gate";
-  const gateAdmitted =
-    (gate: "delivery" | "execution_start") => (execution: { id: string }) =>
-      detail.gateAdmissions.some(
-        (admission) =>
-          admission.gate === gate && admission.executionId === execution.id,
-      );
+  const gateAdmitted = (gate: "delivery") => (execution: { id: string }) =>
+    detail.gateAdmissions.some(
+      (admission) =>
+        admission.gate === gate && admission.executionId === execution.id,
+    );
   const deliveryAdmitted = gateAdmitted("delivery");
-  const executionStartAdmitted = gateAdmitted("execution_start");
 
   return (
     <section
@@ -729,24 +685,10 @@ export function ExecutionPanel({
       {activeExecution !== undefined ? (
         <>
           {activeExecution.state === "definition_review" ? (
-            <DefinitionReviewPanel
+            <WorkflowReviewPanel
               detail={detail}
               projectName={projectName}
               execution={activeExecution}
-              snapshot={snapshotForExecution(detail, activeExecution)}
-              requiresApproval={
-                activeExecution.definitionApprovalRequired === true ||
-                (activeExecution.definitionApprovalRequired === null &&
-                  executionStartRequiresGateApproval)
-              }
-              admitted={executionStartAdmitted(activeExecution)}
-              pending={pendingAction === "approve-execution-start"}
-              error={definitionReviewError}
-              onApprove={onApproveExecutionStart}
-              preparedWorkflowStartPending={preparedWorkflowStartPending}
-              preparedWorkflowStartError={preparedWorkflowStartError}
-              preparedWorkflowStartResult={preparedWorkflowStartResult}
-              onStartPreparedWorkflow={onStartPreparedWorkflow}
             />
           ) : (
             <div className="mb-md flex flex-wrap items-center justify-between gap-md rounded-md border border-solid border-[var(--cc-green-border)] bg-green-glow px-md py-sm">
@@ -759,7 +701,7 @@ export function ExecutionPanel({
                   <p className="m-0 font-mono text-[0.72rem] font-bold tracking-[0.05em] text-green uppercase">
                     {workflowCompleted
                       ? "Workflow complete — ready to merge"
-                      : "Definition approved"}
+                      : "Workflow launch active"}
                   </p>
                   <p className="mt-[2px] mb-0 font-mono text-[0.66rem] text-text-primary">
                     {workflowCompleted
@@ -798,20 +740,14 @@ export function ExecutionPanel({
               slug={detail.spec.slug}
               executionId={activeExecution.id}
               state="running"
-              canRequestAmendment={postLaunch?.canRequestAmendment === true}
               capturePending={pendingAction === "capture-scope-amendment"}
               captureOutcomePath={postLaunch?.captureOutcomePath ?? null}
               captureReceipt={postLaunch?.captureReceipt ?? null}
               captureFailure={postLaunch?.captureFailure ?? null}
-              amendmentPending={postLaunch?.amendmentPending ?? false}
-              amendmentReceipt={postLaunch?.amendmentReceipt ?? null}
-              amendmentEvent={postLaunch?.amendmentEvent ?? null}
-              amendmentFailure={postLaunch?.amendmentFailure ?? null}
               onCapture={(path, input) => {
                 postLaunch?.onCaptureIntent(path);
                 onCaptureScopeAmendment(input);
               }}
-              onAmend={(request) => postLaunch?.onAmend(request)}
             />
           )}
 
@@ -833,7 +769,7 @@ export function ExecutionPanel({
             </h2>
             <p className="mt-sm mb-0 text-[0.76rem] leading-relaxed text-text-secondary">
               Execution starts from an approved DeliveryPlanAttempt. Review its
-              materialized candidate, sign it off, and launch those exact bytes
+              finalized candidate, sign it off, and launch those exact bytes
               from the Delivery plan surface.
             </p>
             <Link
@@ -848,20 +784,14 @@ export function ExecutionPanel({
             slug={detail.spec.slug}
             executionId={null}
             state="unlaunched"
-            canRequestAmendment={false}
             capturePending={pendingAction === "capture-scope-amendment"}
             captureOutcomePath={postLaunch?.captureOutcomePath ?? null}
             captureReceipt={postLaunch?.captureReceipt ?? null}
             captureFailure={postLaunch?.captureFailure ?? null}
-            amendmentPending={false}
-            amendmentReceipt={null}
-            amendmentEvent={null}
-            amendmentFailure={postLaunch?.amendmentFailure ?? null}
             onCapture={(path, input) => {
               postLaunch?.onCaptureIntent(path);
               onCaptureScopeAmendment(input);
             }}
-            onAmend={(request) => postLaunch?.onAmend(request)}
           />
         </>
       )}
@@ -925,12 +855,6 @@ function ExecutionLinks({
 }): React.JSX.Element {
   return (
     <div className="flex flex-wrap gap-md">
-      <Link
-        href={`/projects/${encodeURIComponent(projectName)}/workflows?definition=${encodeURIComponent(execution.workflowDefinitionId)}`}
-        className="font-mono text-[0.68rem] font-semibold text-cyan no-underline hover:text-cyan-dim focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
-      >
-        Open workflow definition
-      </Link>
       {readyToMerge && execution.sessionName !== null && (
         <Link
           href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(execution.sessionName)}`}
@@ -952,63 +876,18 @@ function ExecutionLinks({
   );
 }
 
-function DefinitionReviewPanel({
+function WorkflowReviewPanel({
   detail,
   projectName,
   execution,
-  snapshot,
-  requiresApproval,
-  admitted,
-  pending,
-  error,
-  onApprove,
-  preparedWorkflowStartPending,
-  preparedWorkflowStartError,
-  preparedWorkflowStartResult,
-  onStartPreparedWorkflow,
 }: {
   detail: SpecDetailView;
   projectName: string;
   execution: SpecExecutionView;
-  snapshot: SpecRevisionSnapshot | null;
-  requiresApproval: boolean;
-  admitted: boolean;
-  pending: boolean;
-  error: string | null;
-  onApprove(input: ApproveExecutionStartPanelInput): void;
-  preparedWorkflowStartPending: boolean;
-  preparedWorkflowStartError: string | null;
-  preparedWorkflowStartResult: StartGraphWorkflowResult | null;
-  onStartPreparedWorkflow?: (input: StartPreparedWorkflowInput) => void;
 }): React.JSX.Element {
-  const tasks = (snapshot?.elements ?? []).filter(
-    (entry) => entry.version.payload.kind === "task",
-  );
-  const revisionNumber = snapshot?.revision.number ?? "?";
-  const canStartPreparedWorkflow =
-    !requiresApproval &&
-    execution.sessionName !== null &&
-    execution.workflowDefinitionRevision !== null &&
-    onStartPreparedWorkflow !== undefined;
-
-  function startPreparedWorkflow(): void {
-    if (
-      execution.sessionName === null ||
-      execution.workflowDefinitionRevision === null ||
-      onStartPreparedWorkflow === undefined
-    ) {
-      return;
-    }
-    onStartPreparedWorkflow({
-      sessionName: execution.sessionName,
-      definitionId: execution.workflowDefinitionId,
-      definitionRevision: execution.workflowDefinitionRevision,
-    });
-  }
-
   return (
     <section
-      data-testid="definition-review-banner"
+      data-testid="workflow-review-banner"
       className="relative mb-md overflow-hidden rounded-lg border border-solid border-border-subtle bg-bg-surface p-md before:absolute before:inset-x-0 before:top-0 before:h-[2px] before:bg-gradient-to-r before:from-amber before:via-amber before:to-transparent"
     >
       <div className="flex flex-wrap items-start justify-between gap-md border-x-0 border-t-0 border-b border-solid border-border-dim pb-md">
@@ -1019,14 +898,11 @@ function DefinitionReviewPanel({
           />
           <div>
             <h3 className="m-0 font-mono text-[0.78rem] font-bold tracking-[0.04em] text-amber uppercase">
-              {requiresApproval
-                ? "Definition awaiting approval"
-                : "Definition ready to start"}
+              Workflow launch awaiting approval
             </h3>
             <p className="mt-[3px] mb-0 text-[0.72rem] leading-relaxed text-text-secondary">
-              Generated from {detail.spec.slug} revision {revisionNumber}.
-              Contract content is pinned; only execution settings remain
-              adjustable.
+              The admitted one-off launch is bound to {detail.spec.slug}. Its
+              approval and execution controls live on the workflow run.
             </p>
           </div>
         </div>
@@ -1037,156 +913,23 @@ function DefinitionReviewPanel({
           >
             Request changes
           </Link>
-          {requiresApproval && !admitted && (
-            <Button
-              size="sm"
-              variant="success"
-              loading={pending}
-              onClick={() => onApprove({ executionId: execution.id })}
-            >
-              Approve definition &amp; start
-            </Button>
-          )}
-          {!requiresApproval &&
-            preparedWorkflowStartResult === null &&
-            canStartPreparedWorkflow && (
-              <Button
-                size="sm"
-                variant="success"
-                loading={preparedWorkflowStartPending}
-                onClick={startPreparedWorkflow}
-              >
-                Start workflow
-              </Button>
-            )}
-          {!requiresApproval &&
-            preparedWorkflowStartResult?.kind === "started" && (
-              <StatusChip tone="green">Workflow started</StatusChip>
-            )}
-          {!requiresApproval &&
-            preparedWorkflowStartResult?.kind === "awaiting_approval" && (
-              <StatusChip tone="amber">Awaiting approval</StatusChip>
-            )}
-          {admitted && (
-            <StatusChip tone="green">Execution start approved</StatusChip>
-          )}
         </div>
       </div>
-
-      {(error ?? preparedWorkflowStartError) !== null && (
-        <FormError role="alert">
-          {error ?? preparedWorkflowStartError}
-        </FormError>
-      )}
-
-      <div className="mt-md grid grid-cols-[minmax(0,1.3fr)_minmax(260px,0.7fr)] gap-md max-768:grid-cols-1">
-        <section
-          aria-label="Contract-derived — provenance-locked"
-          className="rounded-md border border-solid border-border-dim bg-bg-base p-md"
-        >
-          <h4 className="m-0 font-mono text-[0.68rem] font-bold tracking-[0.08em] text-text-secondary uppercase">
-            Contract-derived — provenance-locked
-          </h4>
-          <div className="mt-sm grid gap-[6px]">
-            {tasks.map((entry) => {
-              if (entry.version.payload.kind !== "task") return null;
-              const criteria = entry.version.payload.coveredCriterionElementIds
-                .map((id) => criterionHandle(snapshot, id))
-                .filter((handle): handle is string => handle !== null);
-              return (
-                <div
-                  key={entry.element.id}
-                  className="grid grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim py-[6px] last:border-b-0"
-                >
-                  <span className="font-mono text-[0.68rem] font-bold text-cyan">
-                    T{entry.element.number ?? "?"}
-                  </span>
-                  <span className="truncate text-[0.72rem] text-text-primary">
-                    {entry.version.payload.title}
-                  </span>
-                  <span className="font-mono text-[0.64rem] text-text-tertiary">
-                    → {criteria.join(", ") || "no criteria"}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-          <p className="mt-sm mb-0 font-mono text-[0.64rem] text-text-tertiary">
-            read-only · owned by {detail.spec.slug} rev {revisionNumber}
-          </p>
-        </section>
-
-        <section
-          aria-label="Execution-only — editable"
-          className="rounded-md border border-solid border-border-dim bg-bg-base p-md"
-        >
-          <h4 className="m-0 font-mono text-[0.68rem] font-bold tracking-[0.08em] text-text-secondary uppercase">
-            Execution-only — editable
-          </h4>
-          <dl className="mt-sm mb-0 grid gap-[6px]">
-            {[
-              ["Isolation", "Session worktree"],
-              ["Validation", "Pre-merge checks"],
-              ["Budgets", "Workflow defaults"],
-            ].map(([term, value]) => (
-              <div
-                key={term}
-                className="flex items-center justify-between gap-md border-x-0 border-t-0 border-b border-solid border-border-dim py-[6px] last:border-b-0"
-              >
-                <dt className="font-mono text-[0.68rem] text-text-secondary">
-                  {term}
-                </dt>
-                <dd className="m-0 font-mono text-[0.66rem] text-text-primary">
-                  {value}
-                </dd>
-              </div>
-            ))}
-          </dl>
-          <div className="mt-sm">
-            <ExecutionLinks
-              projectName={projectName}
-              execution={execution}
-              readyToMerge={false}
-            />
-          </div>
-        </section>
+      <div className="mt-md">
+        <ExecutionLinks
+          projectName={projectName}
+          execution={execution}
+          readyToMerge={false}
+        />
       </div>
-
-      {requiresApproval && admitted && (
-        <p className="mt-md mb-0 font-mono text-[0.66rem] text-text-tertiary">
-          A human approved this run&apos;s start. If the workflow hasn&apos;t
-          begun, start it from the session — the approval stays recorded.
-        </p>
-      )}
-      {requiresApproval && !admitted && (
-        <p className="mt-md mb-0 font-mono text-[0.66rem] text-text-tertiary">
-          The compiled definition won&apos;t run until a human approves this
-          execution&apos;s start.
-        </p>
-      )}
-      {!requiresApproval &&
-        preparedWorkflowStartResult === null &&
-        canStartPreparedWorkflow && (
-          <p className="mt-md mb-0 font-mono text-[0.66rem] text-text-tertiary">
-            This execution was compiled without a human start gate. Start
-            workflow definition revision {execution.workflowDefinitionRevision}{" "}
-            in its pinned session.
-          </p>
-        )}
-      {!requiresApproval && !canStartPreparedWorkflow && (
+      {execution.workflowSeedSource === null && (
         <p
           role="alert"
           className="mt-md mb-0 font-mono text-[0.66rem] text-red"
         >
-          {`This legacy execution has no complete immutable launch target. Abandon it with cctl spec abandon ${detail.spec.slug} --execution ${execution.id} --reason <reason>, then run cctl spec plan open ${detail.spec.slug} --seed-from last, propose and sign the candidate off, and run cctl spec start ${detail.spec.slug}.`}
+          {`This retired execution has no immutable one-off launch. Abandon it with cctl spec abandon ${detail.spec.slug} --execution ${execution.id} --reason <reason>, then author and sign off a new delivery-plan launch.`}
         </p>
       )}
-      {!requiresApproval &&
-        preparedWorkflowStartResult?.kind === "awaiting_approval" && (
-          <p className="mt-md mb-0 font-mono text-[0.66rem] text-amber">
-            {preparedWorkflowStartResult.instruction}
-          </p>
-        )}
     </section>
   );
 }
@@ -1237,15 +980,16 @@ function MergeGatePanel({
   const projectionByCriterion = new Map(
     execution.deliveryProjection.map((row) => [row.criterionElementId, row]),
   );
-  const proofRecordedOrBetter = execution.deliveryProjection.filter(
+  const satisfiedOrDelivered = execution.deliveryProjection.filter(
     (row) =>
-      row.proofState === "proof_recorded" || row.proofState === "proven_merged",
+      row.deliveryState === "verdict_recorded" ||
+      row.deliveryState === "delivered",
   ).length;
   const projectionWaivedCount = execution.deliveryProjection.filter(
-    (row) => row.proofState === "waived",
+    (row) => row.deliveryState === "waived",
   ).length;
   const projectionDeliveredElsewhereCount = execution.deliveryProjection.filter(
-    (row) => row.proofState === "delivered_elsewhere",
+    (row) => row.deliveryState === "delivered_elsewhere",
   ).length;
 
   return (
@@ -1351,7 +1095,7 @@ function MergeGatePanel({
       <div className="m-md flex flex-wrap items-center justify-between gap-md border-x-0 border-t border-b-0 border-solid border-border-dim pt-md">
         <div>
           <p className="m-0 font-mono text-[0.7rem] font-bold text-text-primary">
-            {proofRecordedOrBetter}/{scopedCriteria.length} proof recorded ·{" "}
+            {satisfiedOrDelivered}/{scopedCriteria.length} outcomes satisfied ·{" "}
             {projectionWaivedCount} waived · {projectionDeliveredElsewhereCount}{" "}
             external delivery
           </p>
@@ -1675,19 +1419,11 @@ function CriterionExecutionControls({
           <CompactMarkdown content={text} />
         </div>
         <span className="inline-flex flex-wrap items-center justify-end gap-[6px]">
-          {projection?.strategyKinds.map((kind) => (
-            <span
-              key={kind}
-              className="inline-flex items-center rounded-full border border-solid border-border-subtle px-[7px] py-[1px] font-mono text-[0.6rem] tracking-[0.04em] text-text-tertiary uppercase"
-            >
-              {formatEvidenceKind(kind)}
-            </span>
-          ))}
           {projection !== undefined && (
             <StatusChip
-              tone={proofStatePresentation[projection.proofState].tone}
+              tone={deliveryStatePresentation[projection.deliveryState].tone}
             >
-              {proofStatePresentation[projection.proofState].label}
+              {deliveryStatePresentation[projection.deliveryState].label}
             </StatusChip>
           )}
           <StatusChip
@@ -1952,10 +1688,7 @@ export function SpecIntegrityPanel({
   );
 }
 
-// The capture receipt: a durable discovery, plus what a blocking capture
-// retired and opened. The Studio controls that present the three post-launch
-// paths side by side are owned downstream by the capture-studio context; this
-// schema only keeps the existing panel honest about what the route returns.
+// The capture receipt names the durable discovery and any replacement attempt.
 const captureScopeAmendmentResponseSchema = z
   .object({
     discovery: z
@@ -2004,56 +1737,6 @@ export default function SpecControlsPanel({
   const [captureOutcomePath, setCaptureOutcomePath] = useState<
     "discovery" | "replan" | null
   >(null);
-  const postLaunchExecution = detail.executions.find(
-    (execution) => execution.state === "running",
-  );
-  const postLaunchSessionName = postLaunchExecution?.sessionName ?? "";
-  const workflowExecutionId = postLaunchExecution?.workflowExecutionId ?? null;
-  const amendGraphWorkflow = useAmendGraphWorkflowMutation(
-    projectName,
-    postLaunchSessionName,
-    workflowExecutionId,
-  );
-  const workflowEvents = useGraphWorkflowEventsQuery(
-    projectName,
-    postLaunchSessionName,
-    workflowExecutionId,
-  );
-  const latestAmendmentEvent = useMemo(() => {
-    const events = workflowEvents.data ?? [];
-    const entry = [...events]
-      .reverse()
-      .find(
-        (candidate) =>
-          candidate.event.type === "graph-workflow-execution-amended",
-      );
-    return entry?.event.type === "graph-workflow-execution-amended"
-      ? entry.event
-      : null;
-  }, [workflowEvents.data]);
-  const preparedExecution = detail.executions.find(
-    (execution) => execution.state === "definition_review",
-  );
-  const preparedExecutionId = preparedExecution?.id ?? null;
-  const preparedSessionName = preparedExecution?.sessionName ?? "";
-  const startPreparedWorkflow = useStartGraphWorkflowMutation(
-    projectName,
-    preparedSessionName,
-  );
-  const previousPreparedExecutionId = useRef(preparedExecutionId);
-  const resetPreparedWorkflowStart = startPreparedWorkflow.reset;
-  useEffect(() => {
-    const previousExecutionId = previousPreparedExecutionId.current;
-    if (previousExecutionId === preparedExecutionId) return;
-
-    previousPreparedExecutionId.current = preparedExecutionId;
-    resetPreparedWorkflowStart();
-    logger.info("spec_studio.prepared_workflow.identity_changed", {
-      specId: detail.spec.id,
-      previousExecutionId,
-      executionId: preparedExecutionId,
-    });
-  }, [detail.spec.id, preparedExecutionId, resetPreparedWorkflowStart]);
   // change-policy answers with the spec *and* what the open draft still owes
   // under the confirmed dials, so a spec-only schema would reject every
   // accepted change as a parse failure.
@@ -2087,15 +1770,6 @@ export default function SpecControlsPanel({
     detail.spec.slug,
     "grant-gate-approval",
     specApprovalRowSchema,
-  );
-  const approveExecutionStart = useSpecActionMutation<
-    ApproveExecutionStartPanelInput,
-    z.infer<typeof specExecutionRowSchema>
-  >(
-    projectName,
-    detail.spec.slug,
-    "approve-execution-start",
-    specExecutionRowSchema,
   );
   const captureScopeAmendment = useSpecActionMutation<
     CaptureDiscoveredWorkInput,
@@ -2146,15 +1820,11 @@ export default function SpecControlsPanel({
         ? "set-disposition"
         : grantGateApproval.isPending
           ? "grant-gate-approval"
-          : approveExecutionStart.isPending
-            ? "approve-execution-start"
-            : startPreparedWorkflow.isPending
-              ? "start-prepared-workflow"
-              : captureScopeAmendment.isPending
-                ? "capture-scope-amendment"
-                : abandonExecution.isPending
-                  ? "abandon-execution"
-                  : null;
+          : captureScopeAmendment.isPending
+            ? "capture-scope-amendment"
+            : abandonExecution.isPending
+              ? "abandon-execution"
+              : null;
 
   if (detail.spec.abandonedAt !== null) {
     const context =
@@ -2233,28 +1903,12 @@ export default function SpecControlsPanel({
             detail={detail}
             projectName={projectName}
             pendingAction={pendingAction}
-            definitionReviewError={
-              actionFailure?.action === "approve-execution-start"
-                ? actionFailure.message
-                : null
-            }
-            preparedWorkflowStartPending={startPreparedWorkflow.isPending}
-            preparedWorkflowStartError={
-              actionFailure?.action === "start-prepared-workflow" &&
-              actionFailure.executionId === preparedExecutionId
-                ? actionFailure.message
-                : null
-            }
-            preparedWorkflowStartResult={startPreparedWorkflow.data ?? null}
             error={
               actionFailure !== null &&
               actionFailure.action !== "change-policy" &&
               actionFailure.action !== "abandon-spec" &&
               actionFailure.action !== "rename" &&
-              actionFailure.action !== "approve-execution-start" &&
-              actionFailure.action !== "start-prepared-workflow" &&
-              actionFailure.action !== "capture-scope-amendment" &&
-              actionFailure.action !== "amend-graph-workflow"
+              actionFailure.action !== "capture-scope-amendment"
                 ? actionFailure.message
                 : null
             }
@@ -2270,75 +1924,6 @@ export default function SpecControlsPanel({
                 mutationCallbacks("grant-gate-approval"),
               )
             }
-            onApproveExecutionStart={(input) =>
-              approveExecutionStart.mutate(
-                input,
-                mutationCallbacks("approve-execution-start"),
-              )
-            }
-            onStartPreparedWorkflow={(input) => {
-              if (input.sessionName !== preparedSessionName) {
-                const message =
-                  "The prepared execution changed before its workflow could start.";
-                setActionFailure({
-                  action: "start-prepared-workflow",
-                  message,
-                  executionId: preparedExecutionId,
-                });
-                logger.warn("spec_studio.prepared_workflow.identity_mismatch", {
-                  specId: detail.spec.id,
-                  executionId: preparedExecutionId,
-                  expectedSessionName: preparedSessionName,
-                  receivedSessionName: input.sessionName,
-                });
-                return;
-              }
-              logger.info("spec_studio.prepared_workflow.start_requested", {
-                specId: detail.spec.id,
-                executionId: preparedExecutionId,
-                sessionName: input.sessionName,
-                definitionId: input.definitionId,
-                definitionRevision: input.definitionRevision,
-              });
-              startPreparedWorkflow.mutate(
-                {
-                  definitionId: input.definitionId,
-                  definitionRevision: input.definitionRevision,
-                  tier: "project",
-                },
-                {
-                  onSuccess: (result) => {
-                    setActionFailure(null);
-                    logger.info(
-                      "spec_studio.prepared_workflow.start_completed",
-                      {
-                        specId: detail.spec.id,
-                        executionId: preparedExecutionId,
-                        sessionName: input.sessionName,
-                        definitionId: input.definitionId,
-                        definitionRevision: input.definitionRevision,
-                        outcome: result.kind,
-                      },
-                    );
-                  },
-                  onError: (mutationError) => {
-                    setActionFailure({
-                      action: "start-prepared-workflow",
-                      message: mutationError.message,
-                      executionId: preparedExecutionId,
-                    });
-                    logger.warn("spec_studio.prepared_workflow.start_failed", {
-                      specId: detail.spec.id,
-                      executionId: preparedExecutionId,
-                      sessionName: input.sessionName,
-                      definitionId: input.definitionId,
-                      definitionRevision: input.definitionRevision,
-                      error: mutationError.message,
-                    });
-                  },
-                },
-              );
-            }}
             onCaptureScopeAmendment={(input) => {
               logger.info("spec_studio.discovery.capture_requested", {
                 specId: detail.spec.id,
@@ -2377,48 +1962,9 @@ export default function SpecControlsPanel({
               captureOutcomePath,
               captureReceipt: captureScopeAmendment.data ?? null,
               captureFailure: postLaunchFailure(captureScopeAmendment.error),
-              amendmentPending: amendGraphWorkflow.isPending,
-              amendmentReceipt: amendGraphWorkflow.data ?? null,
-              amendmentEvent: latestAmendmentEvent,
-              amendmentFailure: postLaunchFailure(amendGraphWorkflow.error),
-              canRequestAmendment:
-                postLaunchExecution?.sessionName !== null &&
-                postLaunchExecution?.sessionName !== undefined,
               onCaptureIntent: (path) => {
                 captureScopeAmendment.reset();
                 setCaptureOutcomePath(path);
-              },
-              onAmend: (request) => {
-                logger.info("spec_studio.execution_amendment.requested", {
-                  specId: detail.spec.id,
-                  executionId: workflowExecutionId,
-                  sessionName: postLaunchSessionName,
-                  operationCount: request.operations.length,
-                });
-                amendGraphWorkflow.mutate(request, {
-                  onSuccess: (receipt) => {
-                    setActionFailure(null);
-                    logger.info("spec_studio.execution_amendment.completed", {
-                      specId: detail.spec.id,
-                      executionId: workflowExecutionId,
-                      sessionName: postLaunchSessionName,
-                      liveRevision: receipt.liveRevision,
-                      amended: receipt.amended,
-                      previousWorkingDefinitionHash:
-                        receipt.previousWorkingDefinitionHash,
-                      workingDefinitionHash: receipt.workingDefinitionHash,
-                    });
-                  },
-                  onError: (mutationError) => {
-                    logger.warn("spec_studio.execution_amendment.failed", {
-                      specId: detail.spec.id,
-                      executionId: workflowExecutionId,
-                      sessionName: postLaunchSessionName,
-                      operationCount: request.operations.length,
-                      error: mutationError.message,
-                    });
-                  },
-                });
               },
             }}
           />
@@ -2548,7 +2094,7 @@ function criterionHandle(
 function executionStateLabel(state: SpecExecutionView["state"]): string {
   switch (state) {
     case "definition_review":
-      return "Definition review";
+      return "Workflow review";
     case "running":
       return "Running";
     case "delivered":

@@ -8,11 +8,9 @@ import {
   specDetailViewSchema,
   specExecutionViewSchema,
   specGateAdmissionViewSchema,
-  specPlanPreviewViewSchema,
   type LiveProposalView,
   type SpecExecutionView,
   type SpecGateAdmissionView,
-  type SpecPlanPreviewView,
   type SpecRevisionSnapshotView,
 } from "@/lib/specs/view-schemas";
 
@@ -96,10 +94,12 @@ export function executionViewFixture(
     revisionId: "revision-1",
     revisionNumber: 1,
     state: "running",
-    workflowDefinitionId: "workflow-definition-1",
-    workflowDefinitionRevision: 1,
+    workflowSeedSource: {
+      kind: "spec_delivery",
+      specSlug: "spec-1",
+      candidateId: "launch-1",
+    },
     workflowExecutionId: null,
-    definitionApprovalRequired: true,
     scope: {
       selectedTaskIds: ["task-1"],
       selectedCriterionIds: ["criterion-1"],
@@ -114,162 +114,11 @@ export function executionViewFixture(
       {
         criterionElementId: "criterion-1",
         handle: "R1.1",
-        strategyKinds: ["test_run"],
-        proofState: "awaiting_proof",
+        deliveryState: "awaiting_outcome",
+        verdict: null,
       },
     ],
     ...overrides,
-  });
-}
-
-/**
- * The bounded plan preview `/api/specs/{project}/{slug}/plan-preview` returns
- * for one revision, parsed through the response schema for the same reason the
- * fixtures above are.
- *
- * Its context titles, lane grouping, and criterion briefs deliberately name
- * things no snapshot element carries: lane-group collapse and the union of
- * task briefs into a context contract happen inside the compiler, so a surface
- * that re-derived the plan from the spec content on the client could not
- * produce these strings. A test asserting on them is asserting that the server
- * compiled the answer.
- */
-export function specPlanPreviewFixture(
-  revision: SpecRevision,
-  overrides: Partial<SpecPlanPreviewView> = {},
-): SpecPlanPreviewView {
-  return specPlanPreviewViewSchema.parse({
-    spec: { id: "spec-1", slug: "native-sdd", name: "Native SDD" },
-    revision: {
-      id: revision.id,
-      number: revision.number,
-      state: revision.state,
-      authoringStage: revision.authoringStage,
-    },
-    scopeHash: `scope-${revision.id}`,
-    approvalRequired: true,
-    charter: {
-      mission: "Pin every execution to the exact approved scope.",
-      sourcesOfTruth: [
-        {
-          rank: 1,
-          id: "revision",
-          label: "The pinned revision",
-          type: "spec",
-          locator: "spec://native-sdd",
-          description: "The approved content the lanes implement.",
-          accessPolicy: "worktree-relative",
-        },
-      ],
-    },
-    totalContextCount: 2,
-    shownContextCount: 2,
-    taskCount: 2,
-    criterionCount: 2,
-    contexts: [
-      {
-        contextId: "persistence",
-        title: "Persistence lane group",
-        description: "T1 and T2 collapsed into one lane by their lane group.",
-        acceptanceCriteria: "1. The selected task and criterion are pinned.",
-        taskHandles: ["T1", "T2"],
-        criterionBriefs: [
-          {
-            criterionElementId: "criterion-1",
-            criterionHandle: "R1.1",
-            text: "The selected task and criterion are pinned.",
-            brief: "Prove R1.1 with a test_run over the reloaded repository.",
-            strategyNote: "Round-trip through the repository, not a JS fake.",
-            evidence: [
-              {
-                kind: "test_run",
-                producer: "graph-workflow-validation-result",
-                detail: "minted from this context's validation-result event",
-              },
-            ],
-          },
-        ],
-        totalBriefCount: 1,
-        shownBriefCount: 1,
-        omittedBriefCount: 0,
-      },
-      {
-        contextId: "surface",
-        title: "Gate surface",
-        description: null,
-        acceptanceCriteria: "1. The pinned scope is visible on the gate.",
-        taskHandles: ["T3"],
-        criterionBriefs: [
-          {
-            criterionElementId: "criterion-2",
-            criterionHandle: "R2.1",
-            text: "The pinned scope is visible on the gate screen.",
-            brief: "Prove R2.1 with a screenshot of the gate surface.",
-            strategyNote: null,
-            evidence: [
-              {
-                kind: "screenshot",
-                producer: null,
-                detail:
-                  "no evidence producer mints screenshot; a criterion requiring it can never reach a proof",
-              },
-            ],
-          },
-        ],
-        totalBriefCount: 1,
-        shownBriefCount: 1,
-        omittedBriefCount: 0,
-      },
-    ],
-    edges: [
-      {
-        id: "edge-persistence-surface",
-        sourceContextId: "persistence",
-        targetContextId: "surface",
-      },
-    ],
-    evidenceGaps: ["screenshot"],
-    briefLimit: 20,
-    ...overrides,
-  });
-}
-
-/**
- * The `revisionId` a plan-preview request named. The route resolves the
- * revision from this field alone, so a fixture route that ignored it would
- * answer every proposal with the same plan — exactly the confusion the
- * revision-keyed preview exists to prevent.
- */
-export function planPreviewRequestRevisionId(body: unknown): string {
-  if (
-    typeof body !== "object" ||
-    body === null ||
-    !("revisionId" in body) ||
-    typeof body.revisionId !== "string"
-  ) {
-    throw new Error("Plan preview request carried no revisionId");
-  }
-  return body.revisionId;
-}
-
-/**
- * The preview the route returns for a request body, with the requested
- * revision echoed back the way the handler echoes it.
- */
-export function planPreviewResponseFixture(body: unknown): SpecPlanPreviewView {
-  const revisionId = planPreviewRequestRevisionId(body);
-  return specPlanPreviewFixture({
-    id: revisionId,
-    specId: "spec-1",
-    number: Number(revisionId.replace("revision-", "")) || 1,
-    state: "proposed",
-    authoringStage: "plan",
-    basedOnRevisionId: null,
-    contentHash: `${revisionId}-hash`,
-    proposedAt: SPEC_CONTROLS_FIXTURE_NOW,
-    approvedAt: null,
-    externalDelivery: null,
-    createdAt: SPEC_CONTROLS_FIXTURE_NOW,
   });
 }
 
@@ -492,7 +341,7 @@ export function specControlsDetailFixture(
       executions: executions.map((execution) => ({
         id: execution.id,
         state: execution.state,
-        workflowDefinitionId: execution.workflowDefinitionId,
+        workflowSeedSource: execution.workflowSeedSource,
         workflowExecutionId: execution.workflowExecutionId,
         workflowStatus:
           execution.workflowExecutionId === null
@@ -627,26 +476,26 @@ export function denseSpecControlsDetailFixture(
       { criterionId: "criterion-3", disposition: "deferred" },
     ],
   };
-  // One populated row per proof state the running merge gate can host:
-  // recorded machine proof, a human waiver, and a validated external delivery.
+  // One populated row per delivery state the running merge gate can host:
+  // a graph verdict, a human waiver, and a validated external delivery.
   execution.deliveryProjection = [
     {
       criterionElementId: "criterion-1",
       handle: "R1.1",
-      strategyKinds: ["test_run"],
-      proofState: "proof_recorded",
+      deliveryState: "verdict_recorded",
+      verdict: null,
     },
     {
       criterionElementId: "criterion-2",
       handle: "R1.2",
-      strategyKinds: ["test_run"],
-      proofState: "waived",
+      deliveryState: "waived",
+      verdict: null,
     },
     {
       criterionElementId: "criterion-4",
       handle: "R1.4",
-      strategyKinds: ["test_run"],
-      proofState: "delivered_elsewhere",
+      deliveryState: "delivered_elsewhere",
+      verdict: null,
     },
   ];
   detail.criterionDispositions = [
@@ -718,8 +567,8 @@ export function denseSpecControlsDetailFixture(
         {
           criterionElementId: "criterion-4",
           handle: "R1.4",
-          strategyKinds: ["test_run"],
-          proofState: "proven_merged",
+          deliveryState: "delivered",
+          verdict: null,
         },
       ],
     }),
@@ -735,7 +584,7 @@ export function denseSpecControlsDetailFixture(
 }
 
 /**
- * Delivery already approved by a human while proof is still outstanding. The
+ * Delivery already approved by a human while graph outcomes are still pending. The
  * admission is complete — a real approval id and the human actor — because
  * production's human grant always persists both; a basis-only mutation is a
  * state the live route cannot emit. Lives here (not in a story file) and is
@@ -749,20 +598,20 @@ export function approvedAwaitingProofSpecControlsDetailFixture(): SpecDetailView
     {
       criterionElementId: "criterion-1",
       handle: "R1.1",
-      strategyKinds: ["test_run"],
-      proofState: "proof_recorded",
+      deliveryState: "verdict_recorded",
+      verdict: null,
     },
     {
       criterionElementId: "criterion-2",
       handle: "R1.2",
-      strategyKinds: ["test_run"],
-      proofState: "awaiting_proof",
+      deliveryState: "awaiting_outcome",
+      verdict: null,
     },
     {
       criterionElementId: "criterion-4",
       handle: "R1.4",
-      strategyKinds: ["validator_verdict"],
-      proofState: "awaiting_proof",
+      deliveryState: "awaiting_outcome",
+      verdict: null,
     },
   ];
   // The human kept every current-run criterion in scope; the prior run's own

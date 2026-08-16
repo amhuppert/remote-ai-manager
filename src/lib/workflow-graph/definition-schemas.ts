@@ -209,10 +209,13 @@ export const contextPlacementSchema = z.discriminatedUnion("mode", [
     .object({
       ...placementLaneShape,
       mode: z.literal("owned"),
-      ownedPaths: z.array(ownedPathSchema).min(1, {
-        message:
-          'an owning placement must declare at least one owned path; use mode "readOnly" for a context with no write surface',
-      }),
+      ownedPaths: z
+        .array(ownedPathSchema)
+        .min(1, {
+          message:
+            'an owning placement must declare at least one owned path; use mode "readOnly" for a context with no write surface',
+        })
+        .max(100),
     })
     .strict(),
   z.object({ ...placementLaneShape, mode: z.literal("readOnly") }).strict(),
@@ -765,6 +768,23 @@ export const graphWorkflowVisualLayoutSchema = z.object({
 export type GraphWorkflowVisualLayout = z.infer<
   typeof graphWorkflowVisualLayoutSchema
 >;
+
+/**
+ * The create/replace request body: a named, laid-out workflow definition. This
+ * is the single schema both the persisting routes (create/replace) and the
+ * non-persisting `graph-workflow/validate` endpoint parse, so a plan that
+ * validates is guaranteed to be acceptable to create.
+ */
+export const workflowDefinitionMutationSchema = z.object({
+  name: z.string().trim().min(1),
+  description: z.string().trim().min(1).nullable().default(null),
+  definition: workflowSemanticDefinitionSchema,
+  layout: graphWorkflowVisualLayoutSchema,
+});
+export type WorkflowDefinitionMutation = z.infer<
+  typeof workflowDefinitionMutationSchema
+>;
+export type WorkflowDefinitionDraft = WorkflowDefinitionMutation;
 
 export const workflowDefinitionRecordSchema = z.object({
   id: z.string().trim().min(1),

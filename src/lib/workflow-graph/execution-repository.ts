@@ -143,7 +143,19 @@ export interface GraphWorkflowExecutionSeed {
    * clean-worktree launch, which pins nothing.
    */
   liveSessionReadOnlyPinned?: boolean;
+  /**
+   * Caller-owned rows committed atomically with the execution's reservation —
+   * the native-SDD launch bridge writes its spec execution, immutable binding
+   * snapshot, and typed link here. Runs inside the reserving transaction after
+   * the execution row is installed; throwing refuses the launch whole.
+   */
+  transactionAttachment?: GraphWorkflowExecutionTransactionAttachment;
 }
+
+/** The atomic spec-row attachment a launch bridge rides into the reservation. */
+export type GraphWorkflowExecutionTransactionAttachment = (input: {
+  executionId: string;
+}) => void;
 
 /**
  * A `mutateActive` callback may return the next execution alone (its
@@ -669,6 +681,9 @@ export function createGraphWorkflowExecutionRepository(
         // where each document goes, never what it says.
         seededDocuments,
         ...(fence !== undefined && { fence }),
+        ...(seed.transactionAttachment !== undefined && {
+          transactionAttachment: seed.transactionAttachment,
+        }),
       },
     );
     if (!reservation.reserved) {

@@ -8,7 +8,12 @@ import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
 import { checkFsWritePolicy } from "@/lib/agent-backends/fs-write-policy";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import type { SessionState } from "@/lib/sessions/schemas";
-import { createWorkflowExecution, makeProfileSnapshot } from "./test-fixtures";
+import {
+  createWorkflowDefinition,
+  createWorkflowExecution,
+  createWorkflowLayout,
+  makeProfileSnapshot,
+} from "./test-fixtures";
 import {
   applyLiveExecutionEdits,
   prepareLiveExecutionEdits,
@@ -23,7 +28,6 @@ import type {
 } from "@/lib/workflow-graph/schemas";
 import { workflowLiveEditOperationSchema } from "@/lib/workflows/edit-schemas";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
-import { createSpecExecutionContract } from "@/lib/specs/execution-contract";
 import { DEFAULT_PLAN_REPAIR_POLICY } from "@/lib/workflow-graph/config-schemas";
 import type {
   GraphWorkflowResolvedContext,
@@ -83,6 +87,28 @@ function makeDeps(overrides: Partial<LiveEditDeps> = {}): LiveEditDeps {
     now: () => "2026-07-29T00:00:00.000Z",
     ...overrides,
   };
+}
+
+/**
+ * The accountability-coverage half of the execution-contract port. A bound
+ * execution states which authored contexts claim which criteria; an unbound
+ * one claims nothing. The graph never learns that from the definition.
+ */
+function makeSpecDeps(execution: GraphWorkflowExecution): LiveEditDeps {
+  return makeDeps({
+    executionContract: {
+      validateOperation: () => ({ ok: true }),
+      accountabilityCoverageGroups:
+        execution.origin.kind === "spec_delivery"
+          ? [
+              {
+                bindingKey: "criterion-1",
+                claimantContextIds: ["context-verify"],
+              },
+            ]
+          : [],
+    },
+  });
 }
 
 function pendingTaskState(
@@ -681,40 +707,6 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("frozen");
-  });
-
-  it("rejects move-task for a launched spec execution through the registered contract seam", () => {
-    const base = withTwoImplTasks({ status: "paused" });
-    const execution: GraphWorkflowExecution = {
-      ...base,
-      workingDefinition: {
-        ...base.workingDefinition,
-        origin: {
-          sourceUri:
-            "spec-execution://spec-native-sdd/revisions/revision-1?scope=scope-1",
-        },
-      },
-    };
-    const result = apply(
-      execution,
-      [
-        {
-          type: "move-task",
-          taskId: "task-implement-2",
-          targetContextId: "context-verify",
-        },
-      ],
-      makeDeps({ executionContract: createSpecExecutionContract() }),
-    );
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.code).toBe("spec_grouping_frozen");
-    expect(result.issues[0]).toMatchObject({
-      code: "spec-grouping-frozen",
-      operationIndex: 0,
-      taskId: "task-implement-2",
-    });
   });
 
   it("rejects a move-task while running unless both contexts are unstarted", () => {
@@ -1536,6 +1528,21 @@ describe("applyLiveExecutionEdits — amend-charter", () => {
 
   it("merges content, propagates to non-frozen contexts only, and appends the amendment log", () => {
     const execution = pausedWithFrozenPlan();
+    const frozenScopeCharter = {
+      ...execution.charter,
+      invariants: [
+        {
+          id: "plan-only",
+          statement:
+            "Plan scope remains part of the completed context's history.",
+          appliesTo: { contextIds: ["context-plan"] },
+        },
+      ],
+    };
+    execution.charter = frozenScopeCharter;
+    for (const context of execution.workingDefinition.executionContexts) {
+      context.charter = structuredClone(frozenScopeCharter);
+    }
     const frozenCharterBefore = structuredClone(
       execution.workingDefinition.executionContexts.find(
         (entry) => entry.id === "context-plan",
@@ -1548,7 +1555,11 @@ describe("applyLiveExecutionEdits — amend-charter", () => {
         rationale: "Invariant inv-x was impossible against the shipped API",
         mission: "Amended mission statement",
         invariants: [
-          { id: "inv-new", statement: "One authority per decision" },
+          {
+            id: "inv-new",
+            statement: "One authority per decision",
+            appliesTo: { contextIds: ["context-implement"] },
+          },
         ],
       },
     ]);
@@ -1559,7 +1570,11 @@ describe("applyLiveExecutionEdits — amend-charter", () => {
 
     expect(next.charter.mission).toBe("Amended mission statement");
     expect(next.charter.invariants).toEqual([
-      { id: "inv-new", statement: "One authority per decision" },
+      {
+        id: "inv-new",
+        statement: "One authority per decision",
+        appliesTo: { contextIds: ["context-implement"] },
+      },
     ]);
 
     const byId = new Map(
@@ -1609,6 +1624,200 @@ describe("applyLiveExecutionEdits — amend-charter", () => {
     if (result.ok) return;
     expect(result.code).toBe("invalid_edit");
     expect(result.issues[0]?.operationIndex).toBe(0);
+  });
+
+  it("rejects a charter amendment whose invariant scope names no logical context", () => {
+    const result = applyAmend(createWorkflowExecution({ status: "paused" }), [
+      {
+        type: "amend-charter",
+        rationale: "Limit the invariant to the work it governs",
+        invariants: [
+          {
+            id: "missing-context",
+            statement: "Must never be admitted.",
+            appliesTo: { contextIds: ["context-missing"] },
+          },
+        ],
+      },
+    ]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("invalid_edit");
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: "unknown-invariant-scope-context",
+        field: "charter.invariants.0.appliesTo.contextIds.0",
+        operationIndex: 0,
+      }),
+    );
+  });
+
+  it("accepts a charter amendment scoped to a loop body template context", () => {
+    const result = applyAmend(
+      loopBearingExecution({ status: "paused", activeContextIds: [] }),
+      [
+        {
+          type: "amend-charter",
+          rationale: "Limit the rule to every worker pass.",
+          invariants: [
+            {
+              id: "worker-only",
+              statement: "Applies to the worker template across loop passes.",
+              appliesTo: { contextIds: ["worker"] },
+            },
+          ],
+        },
+      ],
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.execution.charter.invariants).toEqual([
+      {
+        id: "worker-only",
+        statement: "Applies to the worker template across loop passes.",
+        appliesTo: { contextIds: ["worker"] },
+      },
+    ]);
+  });
+
+  it("rejects a charter amendment scoped to a materialized loop instance", () => {
+    const result = applyAmend(
+      loopBearingExecution({ status: "paused", activeContextIds: [] }),
+      [
+        {
+          type: "amend-charter",
+          rationale: "Constrain the rule to the current loop pass.",
+          invariants: [
+            {
+              id: "pass-only",
+              statement: "Must not bind to a materialized loop instance.",
+              appliesTo: { contextIds: ["refine__p1__worker"] },
+            },
+          ],
+        },
+      ],
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("invalid_edit");
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: "unknown-invariant-scope-context",
+        field: "charter.invariants.0.appliesTo.contextIds.0",
+        operationIndex: 0,
+      }),
+    );
+  });
+
+  it("rejects a charter amendment scoped to an expansion-generated context", () => {
+    const base = createWorkflowExecution({ status: "paused" });
+    const generatedContextId = "context-implement-xa1b2c3d4-child";
+    const invoker = base.workingDefinition.executionContexts.find(
+      (context) => context.id === "context-implement",
+    );
+    if (!invoker) throw new Error("fixture must include expansion invoker");
+    const workingDefinition = {
+      ...base.workingDefinition,
+      executionContexts: [
+        ...base.workingDefinition.executionContexts,
+        { ...invoker, id: generatedContextId },
+      ],
+    };
+    const execution = createWorkflowExecution({
+      status: "paused",
+      workingDefinition,
+      contextStates: buildInitialContextStates(workingDefinition),
+      taskStates: buildInitialTaskStates(workingDefinition),
+      expansionReceipts: {
+        accepted: [
+          {
+            requestId: "add-child",
+            payloadHash: "a".repeat(64),
+            invokerContextId: "context-implement",
+            initiatorConversationId: "conversation-1",
+            rationale: "Split implementation work into a focused child.",
+            addedContextIds: [generatedContextId],
+            addedTaskIds: [],
+            rejoinContextIds: [],
+            liveRevision: 2,
+            acceptedAt: "2026-08-15T00:00:00.000Z",
+          },
+        ],
+        refusals: [],
+      },
+    });
+
+    const result = applyAmend(execution, [
+      {
+        type: "amend-charter",
+        rationale: "Constrain the rule to the generated child.",
+        invariants: [
+          {
+            id: "child-only",
+            statement: "Must not bind to an expansion-generated context.",
+            appliesTo: { contextIds: [generatedContextId] },
+          },
+        ],
+      },
+    ]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("invalid_edit");
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: "unknown-invariant-scope-context",
+        field: "charter.invariants.0.appliesTo.contextIds.0",
+        operationIndex: 0,
+      }),
+    );
+  });
+
+  it("refuses to remove a context while the current charter scopes an invariant to it", () => {
+    const execution = createWorkflowExecution({ status: "paused" });
+    const charter = {
+      ...execution.charter,
+      invariants: [
+        {
+          id: "verify-only",
+          statement: "Verification scope must stay attached to verification.",
+          appliesTo: { contextIds: ["context-verify"] },
+        },
+      ],
+    };
+    execution.charter = charter;
+    for (const context of execution.workingDefinition.executionContexts) {
+      context.charter = structuredClone(charter);
+    }
+
+    const result = applyLiveExecutionEdits(
+      execution,
+      {
+        source: "cli",
+        operations: [
+          {
+            type: "remove-context",
+            contextId: "context-verify",
+            deleteTasks: true,
+          },
+        ],
+      },
+      amendDeps(),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("invalid_edit");
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: "unknown-invariant-scope-context",
+        field: "charter.invariants.0.appliesTo.contextIds.0",
+        operationIndex: 0,
+      }),
+    );
   });
 
   it("gives a later add-context the amended charter (sequential visibility)", () => {
@@ -2961,16 +3170,23 @@ describe("applyLiveExecutionEdits — criterion must-run coverage at the frontie
     const base = createWorkflowExecution({ status: "paused" });
     return createWorkflowExecution({
       status: "paused",
+      ...(specLinked
+        ? {
+            origin: {
+              kind: "spec_delivery" as const,
+              specSlug: "runtime-coverage",
+              candidateId: "candidate-runtime-coverage",
+            },
+            launchDocument: {
+              name: "Runtime coverage fixture",
+              description: null,
+              definition: createWorkflowDefinition(),
+              layout: createWorkflowLayout(),
+            },
+          }
+        : {}),
       workingDefinition: {
         ...base.workingDefinition,
-        ...(specLinked
-          ? {
-              origin: {
-                sourceUri:
-                  "spec-execution://spec-native-sdd/revisions/revision-1?scope=scope-1",
-              },
-            }
-          : {}),
         // `alreadyGuarded` seeds an execution that ARRIVED with the coverage gap
         // (the state a guarded ancestor leaves behind), so the frontier is asked
         // about the post-batch graph rather than about what this batch changed.
@@ -2984,22 +3200,6 @@ describe("applyLiveExecutionEdits — criterion must-run coverage at the frontie
             context.id === "context-plan"
               ? { ...context, outputSchema: { ...PLAN_OUTPUT_SCHEMA } }
               : context,
-        ),
-        tasks: base.workingDefinition.tasks.map((task) =>
-          task.id === "task-verify-1"
-            ? {
-                ...task,
-                metadata: {
-                  specTaskElementId: "task-3",
-                  specTaskHandle: "T3",
-                  specDependsOnTaskElementIds: "[]",
-                  specCriterionElementIds: JSON.stringify(["criterion-1"]),
-                  specCriterionBriefs: JSON.stringify({
-                    "criterion-1": "Validate T3.",
-                  }),
-                },
-              }
-            : task,
         ),
       },
     });
@@ -3017,11 +3217,7 @@ describe("applyLiveExecutionEdits — criterion must-run coverage at the frontie
     const execution = coveredExecution(true);
     const before = structuredClone(execution);
 
-    const result = apply(
-      execution,
-      guardPlanEdge,
-      makeDeps({ executionContract: createSpecExecutionContract() }),
-    );
+    const result = apply(execution, guardPlanEdge, makeSpecDeps(execution));
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -3037,11 +3233,8 @@ describe("applyLiveExecutionEdits — criterion must-run coverage at the frontie
   });
 
   it("accepts the same edit in an execution that is not spec-linked", () => {
-    const result = apply(
-      coveredExecution(false),
-      guardPlanEdge,
-      makeDeps({ executionContract: createSpecExecutionContract() }),
-    );
+    const execution = coveredExecution(false);
+    const result = apply(execution, guardPlanEdge, makeSpecDeps(execution));
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -3053,8 +3246,9 @@ describe("applyLiveExecutionEdits — criterion must-run coverage at the frontie
   });
 
   it("accepts a spec-linked edit that routes a new branch without touching the covering context", () => {
+    const execution = coveredExecution(true);
     const result = apply(
-      coveredExecution(true),
+      execution,
       [
         {
           type: "add-context",
@@ -3069,7 +3263,7 @@ describe("applyLiveExecutionEdits — criterion must-run coverage at the frontie
           when: SHIP_GUARD,
         },
       ],
-      makeDeps({ executionContract: createSpecExecutionContract() }),
+      makeSpecDeps(execution),
     );
 
     expect(result.ok).toBe(true);
@@ -3088,7 +3282,7 @@ describe("applyLiveExecutionEdits — criterion must-run coverage at the frontie
         { type: "remove-task", taskId: "task-verify-1" },
         { type: "remove-context", contextId: "context-verify" },
       ],
-      makeDeps({ executionContract: createSpecExecutionContract() }),
+      makeSpecDeps(execution),
     );
 
     expect(result.ok).toBe(false);
@@ -3110,7 +3304,7 @@ describe("applyLiveExecutionEdits — criterion must-run coverage at the frontie
           description: "Reworded while the criterion is already unprotected",
         },
       ],
-      makeDeps({ executionContract: createSpecExecutionContract() }),
+      makeSpecDeps(execution),
     );
 
     expect(result.ok).toBe(false);
@@ -3130,7 +3324,7 @@ describe("applyLiveExecutionEdits — criterion must-run coverage at the frontie
         { type: "remove-task", taskId: "task-verify-1" },
         { type: "remove-context", contextId: "context-verify" },
       ],
-      makeDeps({ executionContract: createSpecExecutionContract() }),
+      makeSpecDeps(execution),
     );
 
     expect(result.ok).toBe(false);
@@ -3141,10 +3335,11 @@ describe("applyLiveExecutionEdits — criterion must-run coverage at the frontie
   });
 
   it("accepts the repairing edit that restores must-run coverage", () => {
+    const execution = coveredExecution(true, { alreadyGuarded: true });
     const result = apply(
-      coveredExecution(true, { alreadyGuarded: true }),
+      execution,
       [{ type: "update-edge", edgeId: "edge-plan-implement", when: null }],
-      makeDeps({ executionContract: createSpecExecutionContract() }),
+      makeSpecDeps(execution),
     );
 
     expect(result.ok).toBe(true);
@@ -3157,8 +3352,9 @@ describe("applyLiveExecutionEdits — criterion must-run coverage at the frontie
   });
 
   it("accepts the same already-gapped execution's edits when it is not spec-linked", () => {
+    const execution = coveredExecution(false, { alreadyGuarded: true });
     const result = apply(
-      coveredExecution(false, { alreadyGuarded: true }),
+      execution,
       [
         {
           type: "update-context",
@@ -3166,7 +3362,7 @@ describe("applyLiveExecutionEdits — criterion must-run coverage at the frontie
           description: "Unlinked executions are never route-locked",
         },
       ],
-      makeDeps({ executionContract: createSpecExecutionContract() }),
+      makeSpecDeps(execution),
     );
 
     expect(result.ok).toBe(true);

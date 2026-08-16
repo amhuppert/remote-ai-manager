@@ -5,7 +5,6 @@ import { ApiCallError } from "@/lib/api/errors";
 import { tracedFetch } from "@/lib/shared/traced-fetch";
 import {
   collaborationKeys,
-  graphWorkflowEventsKeys,
   graphWorkflowExecutionKeys,
   graphWorkflowHistoryKeys,
   graphWorkflowResultKeys,
@@ -25,10 +24,6 @@ import {
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
 import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
-import {
-  workflowExecutionAmendmentResponseSchema,
-  type WorkflowExecutionAmendmentRequest,
-} from "@/lib/workflow-graph/execution-amendment";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type {
   WorkflowLiveEditOperation,
@@ -647,45 +642,6 @@ export function useRuntimeEditGraphWorkflowMutation(
           queryKey: graphWorkflowExecutionKeys.detail(projectName, sessionName),
         });
       }
-    },
-  });
-}
-
-export function useAmendGraphWorkflowMutation(
-  projectName: string,
-  sessionName: string,
-  executionId: string | null,
-) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (request: WorkflowExecutionAmendmentRequest) =>
-      mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/amend`,
-        "amend-graph-workflow",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(request),
-        },
-        workflowExecutionAmendmentResponseSchema,
-      ),
-    onSettled: () => {
-      void queryClient.invalidateQueries({
-        queryKey: graphWorkflowExecutionKeys.detail(projectName, sessionName),
-      });
-      if (executionId !== null) {
-        void queryClient.invalidateQueries({
-          queryKey: graphWorkflowEventsKeys.list(
-            projectName,
-            sessionName,
-            executionId,
-          ),
-        });
-      }
-      void queryClient.invalidateQueries({
-        queryKey: sessionKeys.detail(projectName, sessionName),
-      });
     },
   });
 }

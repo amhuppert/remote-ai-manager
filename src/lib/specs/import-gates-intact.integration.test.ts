@@ -7,6 +7,7 @@ import {
 import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
+import { createSpecExecutionBindingRepo } from "@/lib/state-store/spec-execution-binding-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 
@@ -14,7 +15,9 @@ import {
   createAuthoringService,
   type AuthoringService,
 } from "./authoring-service";
-import { createDeliveryGate, type DeliveryGateDeps } from "./delivery-gate";
+import { createDeliveryGate, type DeliveryGateDeps } from "./delivery-gate-v2";
+import { createSpecExecutionBindingPorts } from "./execution-binding-service";
+import { createAuthoredContextOutcomeService } from "@/lib/workflow-graph/authored-context-outcome";
 import { createSpecEventsPublisher } from "./events";
 import { createImportService, type ImportService } from "./import-service";
 import { createReviewService, type ReviewService } from "./review-service";
@@ -36,6 +39,7 @@ interface Harness {
   readonly importing: ImportService;
   readonly authoring: AuthoringService;
   readonly reviewing: ReviewService;
+  readonly bindingRepo: ReturnType<typeof createSpecExecutionBindingRepo>;
   readonly gateDeps: DeliveryGateDeps;
   readonly requestedApprovals: Array<{
     specId: string;
@@ -133,19 +137,13 @@ async function importedSpec(): Promise<{
   };
 }
 
-/** A refusal every unreachable dependency reports loudly rather than silently. */
-function unreachable(name: string): () => never {
-  return () => {
-    throw new Error(`${name} must not be reached by this evaluation`);
-  };
-}
-
 beforeEach(() => {
   const fixture = createPersistenceFixture();
   fixture.seedProject(PROJECT_PATH);
   const review = createSpecReviewRepo(fixture.db);
   const delivery = createSpecDeliveryRepo(fixture.db);
   const links = createSpecLinksRepo(fixture.db);
+  const bindingRepo = createSpecExecutionBindingRepo(fixture.db);
   const specEvents = createSpecEventsRepo(fixture.db);
   const events = createSpecEventsPublisher({
     appendInTransaction: specEvents.appendInTransaction,
@@ -172,6 +170,7 @@ beforeEach(() => {
     fixture,
     review,
     delivery,
+    bindingRepo,
     requestedApprovals,
     importing: createImportService(deps),
     authoring: createAuthoringService(deps),
@@ -181,27 +180,22 @@ beforeEach(() => {
       delivery,
     }),
     gateDeps: {
+      bindingPort: createSpecExecutionBindingPorts(bindingRepo).delivery,
+      // Honest "nothing recorded" answers: an imported spec shipped elsewhere,
+      // so this system holds no graph execution and therefore no authored
+      // context outcome for any of its criteria.
+      outcomePort: createAuthoredContextOutcomeService({
+        findExecutionById: async () => null,
+      }),
       deliveryRepo: delivery,
       reviewRepo: review,
       specsRepo: fixture.specs,
+      newVerdictId: () => `delivery-verdict-${++ids}`,
       newAdmissionId: () => `admission-policy-${++ids}`,
       events,
       writeQueue: createWriteQueue(),
       runInImmediateTransaction: <T>(fn: () => T): T =>
         fixture.db.transaction(fn).immediate(),
-      evidenceService: {
-        attachEvidence: unreachable("attachEvidence"),
-        recordProofVerdict: unreachable("recordProofVerdict"),
-      },
-      ingestExecutionEvidence: async () => undefined,
-      // Honest "nothing recorded" answers: an imported spec has shipped
-      // elsewhere, so this system holds no candidate validation and no
-      // evidence for its criteria.
-      gitProbesForProject: () => ({
-        isAncestor: async () => false,
-        relevantTreeHash: async () => "tree-candidate",
-      }),
-      resolveCandidateValidation: async () => null,
       recordIntervention: () => undefined,
       async requestDeliveryApproval(input) {
         requestedApprovals.push(input);
@@ -320,6 +314,28 @@ describe("an imported spec keeps every human gate", () => {
       created_at: AT,
       updated_at: AT,
     });
+    // The typed link the direct path gates on. Every imported criterion is in
+    // scope and nothing claims any of them, which is exactly the state of a
+    // spec whose delivery happened outside this system.
+    harness.bindingRepo.insert({
+      specExecutionId: executionId,
+      workflowExecutionId: WORKFLOW_EXECUTION_ID,
+      binding: {
+        schemaVersion: 2,
+        candidateId: "candidate-imported",
+        candidateHash: `sha256:${"b".repeat(64)}`,
+        pinnedRevisionId: imported.revision.id,
+        dispositions: imported.criterionElementIds.map(
+          (criterionElementId) => ({
+            criterionElementId,
+            disposition: "in_scope",
+            deliveredByExecutionId: null,
+          }),
+        ),
+        claims: [],
+      },
+      createdAt: AT,
+    });
 
     const blocked = await createDeliveryGate(harness.gateDeps).evaluate({
       workflowExecutionId: WORKFLOW_EXECUTION_ID,
@@ -367,15 +383,17 @@ describe("an imported spec keeps every human gate", () => {
     });
 
     // The human approval is what moved the gate off the approval refusal. What
-    // it does NOT do is prove the criteria: the run still owes proof, which is
-    // the honest state of a spec whose delivery happened somewhere else.
+    // it does NOT do is deliver the criteria: no authored context claims them
+    // and no graph execution integrated them, which is the honest state of a
+    // spec whose delivery happened somewhere else. The execution-keyed row is
+    // the integration check the direct gate reports alongside the criteria.
     expect(approved).toMatchObject({ status: "refused" });
     expect(approved).not.toMatchObject({ refusalCode: "approval_required" });
     expect(
       approved.status === "refused"
         ? approved.unmet.map(({ criterionId }) => criterionId).sort()
         : [],
-    ).toEqual([...imported.criterionElementIds].sort());
+    ).toEqual([...imported.criterionElementIds, executionId].sort());
     expect(harness.requestedApprovals).toHaveLength(1);
     expect(
       (await harness.fixture.specs.findRevision(imported.revision.id))

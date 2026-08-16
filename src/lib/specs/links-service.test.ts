@@ -16,6 +16,10 @@ import {
   createSpecDeliveryRepo,
   type SpecDeliveryRepo,
 } from "@/lib/state-store/spec-delivery-repo";
+import {
+  createSpecExecutionBindingRepo,
+  type SpecExecutionBindingRepo,
+} from "@/lib/state-store/spec-execution-binding-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import {
   createSpecLinksRepo,
@@ -47,6 +51,7 @@ let db: Db;
 let specs: SpecsRepo;
 let linksRepo: SpecLinksRepo;
 let delivery: SpecDeliveryRepo;
+let executionBindings: SpecExecutionBindingRepo;
 let authoring: AuthoringService;
 let service: LinksService;
 let secondService: LinksService;
@@ -69,6 +74,7 @@ beforeEach(() => {
   const review = createSpecReviewRepo(db);
   linksRepo = createSpecLinksRepo(db);
   delivery = createSpecDeliveryRepo(db);
+  executionBindings = createSpecExecutionBindingRepo(db);
   const events = createSpecEventsPublisher({
     appendInTransaction: createSpecEventsRepo(db).appendInTransaction,
     publish: () => ({ delivered: true }),
@@ -130,6 +136,7 @@ beforeEach(() => {
     specs,
     links: linksRepo,
     delivery,
+    executionBindings,
     authoring,
     events,
     workflowEvents: {
@@ -631,6 +638,7 @@ describe("LinksService entry paths and read-through", () => {
       execution_start_dial: "gate",
       workflow_definition_id: "workflow-definition-1",
       workflow_definition_revision: 1,
+      workflow_execution_binding_json: null,
       workflow_execution_id: "workflow-execution-1",
       session_name: "native-sdd-execution",
       delivered_at: null,
@@ -641,6 +649,23 @@ describe("LinksService entry paths and read-through", () => {
       cleanup_last_error_at: null,
       created_at: "2026-07-18T17:31:00.000Z",
       updated_at: "2026-07-18T17:31:00.000Z",
+    });
+    // The typed link is the only place a task's accountable contexts are
+    // stated: the claim names the context and the criteria T1 covers.
+    executionBindings.insert({
+      specExecutionId: "execution-1",
+      workflowExecutionId: "workflow-execution-1",
+      binding: {
+        schemaVersion: 2,
+        candidateId: "candidate-1",
+        candidateHash: `sha256:${"c".repeat(64)}`,
+        pinnedRevisionId: created.draft.id,
+        dispositions: [],
+        claims: [
+          { contextId: "context-1", criterionElementIds: ["criterion-1"] },
+        ],
+      },
+      createdAt: "2026-07-18T17:31:00.000Z",
     });
     workflowEventsByExecution.set("workflow-execution-1", [
       {
@@ -667,6 +692,104 @@ describe("LinksService entry paths and read-through", () => {
     expect(running.specs[0]).toMatchObject({
       phase: { primary: "executing" },
       linkedTasks: [{ workStatus: "running" }],
+    });
+  });
+
+  it("projects a v2-only delivered criterion through its bound candidate identity", async () => {
+    const created = await createApprovedTaskSpec();
+    const [ticket] = await service.materializeApprovedTasks({
+      specId: created.spec.id,
+      projectName: PROJECT_NAME,
+      actor: AGENT,
+    });
+    if (ticket === undefined) throw new Error("expected a materialized ticket");
+
+    delivery.insertExecution({
+      id: "execution-v2-delivered",
+      spec_id: created.spec.id,
+      revision_id: created.draft.id,
+      scope_json: JSON.stringify({
+        selectedTaskIds: ["task-1"],
+        selectedCriterionIds: ["criterion-1"],
+        exclusionDispositions: [],
+      }),
+      state: "delivered",
+      execution_start_dial: "gate",
+      workflow_definition_id: "workflow-definition-v2",
+      workflow_definition_revision: 1,
+      workflow_execution_binding_json: null,
+      workflow_execution_id: "workflow-execution-v2",
+      session_name: "native-sdd-execution",
+      delivered_at: "2026-07-18T17:32:00.000Z",
+      abandoned_reason: null,
+      cleanup_phase: null,
+      linked_workflow_execution_id: null,
+      cleanup_last_error: null,
+      cleanup_last_error_at: null,
+      created_at: "2026-07-18T17:31:00.000Z",
+      updated_at: "2026-07-18T17:32:00.000Z",
+    });
+    delivery.saveCriterionDisposition({
+      execution_id: "execution-v2-delivered",
+      criterion_element_id: "criterion-1",
+      disposition: "in_scope",
+      waiver_id: null,
+      delivered_by_execution_id: null,
+      created_at: "2026-07-18T17:31:00.000Z",
+      updated_at: "2026-07-18T17:31:00.000Z",
+    });
+    executionBindings.insert({
+      specExecutionId: "execution-v2-delivered",
+      workflowExecutionId: "workflow-execution-v2",
+      binding: {
+        schemaVersion: 2,
+        candidateId: "candidate-v2",
+        candidateHash: `sha256:${"a".repeat(64)}`,
+        pinnedRevisionId: created.draft.id,
+        dispositions: [],
+        claims: [],
+      },
+      createdAt: "2026-07-18T17:31:00.000Z",
+    });
+    delivery.saveDeliveryVerdict({
+      id: "delivery-verdict-v2",
+      specExecutionId: "execution-v2-delivered",
+      workflowExecutionId: "workflow-execution-v2",
+      candidateId: "candidate-v2",
+      candidateHash: `sha256:${"a".repeat(64)}`,
+      criterionElementId: "criterion-1",
+      satisfyingContextId: "stable-spawner",
+      recordedAt: "2026-07-18T17:32:00.000Z",
+    });
+
+    const readThrough = await service.getTicketReadThrough({
+      projectName: PROJECT_NAME,
+      number: ticket.number,
+    });
+
+    expect(readThrough.specs[0]).toMatchObject({
+      phase: { primary: "delivered" },
+      criteriaProgress: { proven: 1, total: 1 },
+    });
+
+    db.prepare("DELETE FROM spec_delivery_verdicts").run();
+    delivery.saveDeliveryVerdict({
+      id: "delivery-verdict-wrong-candidate",
+      specExecutionId: "execution-v2-delivered",
+      workflowExecutionId: "workflow-execution-v2",
+      candidateId: "candidate-other",
+      candidateHash: `sha256:${"b".repeat(64)}`,
+      criterionElementId: "criterion-1",
+      satisfyingContextId: "stable-spawner",
+      recordedAt: "2026-07-18T17:33:00.000Z",
+    });
+    const wrongCandidate = await service.getTicketReadThrough({
+      projectName: PROJECT_NAME,
+      number: ticket.number,
+    });
+    expect(wrongCandidate.specs[0]).toMatchObject({
+      phase: { primary: "approved" },
+      criteriaProgress: { proven: 0, total: 1 },
     });
   });
 

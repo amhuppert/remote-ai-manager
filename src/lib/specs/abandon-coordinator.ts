@@ -1,4 +1,4 @@
-import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
+import type { GraphWorkflowStatus } from "@/lib/workflow-graph/spec-bridge";
 import { assertNever } from "@/lib/shared/assert-never";
 import { specExecutionCleanupPhaseSchema } from "./schemas";
 import type { SpecExecutionCleanupPhase } from "./schemas";

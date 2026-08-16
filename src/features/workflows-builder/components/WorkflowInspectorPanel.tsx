@@ -71,6 +71,7 @@ import InspectorConfigBlock, {
 import ParameterDeclarationEditor from "./ParameterDeclarationEditor";
 import { SectionLabel } from "@/components/ui/SectionHeader";
 import type { ParameterDeclaration } from "@/lib/workflow-graph/definition-schemas";
+import type { CharterInvariant } from "@/lib/workflows/charter-schemas";
 import {
   AgentValidationEditor,
   CircuitBreakerEditor,
@@ -887,6 +888,7 @@ export default function WorkflowInspectorPanel({
                 workflowConfig={workflowConfig}
                 globalDefaults={defaults}
                 parameters={draftDefinition.parameters}
+                charterInvariants={draftDefinition.charter.invariants ?? []}
                 parameterSaveError={parameterSaveError(validationErrors)}
                 onParametersChange={(next) => {
                   updateDefinition({ ...draftDefinition, parameters: next });
@@ -1016,6 +1018,7 @@ function WorkflowTabBody({
   workflowConfig,
   globalDefaults,
   parameters,
+  charterInvariants,
   parameterSaveError,
   onParametersChange,
   onPrimaryAction,
@@ -1028,6 +1031,7 @@ function WorkflowTabBody({
   workflowConfig: WorkflowConfigOverride;
   globalDefaults: WorkflowDefaults;
   parameters: ParameterDeclaration[];
+  charterInvariants: CharterInvariant[];
   parameterSaveError: string | null;
   onParametersChange: (next: ParameterDeclaration[]) => void;
   onPrimaryAction: (force?: boolean) => void;
@@ -1048,6 +1052,35 @@ function WorkflowTabBody({
 
   return (
     <div className="flex flex-col" data-scope="workflow">
+      {charterInvariants.length > 0 ? (
+        <section className="mb-xl" data-section="charter-invariants">
+          <GroupHeader
+            label="Charter invariants"
+            count={charterInvariants.length}
+          />
+          <div className="flex flex-col gap-sm">
+            {charterInvariants.map((invariant) => (
+              <div
+                className="rounded-sm border border-solid border-border-dim bg-bg-base px-md py-sm"
+                key={invariant.id}
+              >
+                <div className="font-mono text-[0.72rem] text-text-primary">
+                  {invariant.id}
+                </div>
+                <div className="mt-[3px] text-[0.76rem] leading-[1.45] text-text-secondary">
+                  {invariant.statement}
+                </div>
+                <div className="mt-[6px] font-mono text-[0.68rem] text-text-tertiary">
+                  {invariant.appliesTo
+                    ? `Context scope: ${invariant.appliesTo.contextIds.join(", ")}`
+                    : "Global"}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       <section className="mb-xl" data-section="parameters">
         <GroupHeader label="Launch parameters" />
         <ParameterDeclarationEditor

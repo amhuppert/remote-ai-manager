@@ -92,7 +92,7 @@ const finalTaskSelfCheck: LaneReminderRule = {
     input.halted === null &&
     !input.contextLimitStopped,
   text: () =>
-    "That was the last remaining task — the context validator reviews this context next. Before ending your turn, re-verify each acceptance criterion (and each charter invariant, if the charter declares any) against your actual changes, not your tests' assumptions: confirm every capability you introduced is reachable through a production call path, not only exported and unit-tested. Fix any gap now, then end your turn.",
+    "That was the last remaining task — the context validator reviews this context next. Before ending your turn, re-verify each acceptance criterion (and each applicable charter invariant, if the charter declares any) against your actual changes, not your tests' assumptions: confirm every capability you introduced is reachable through a production call path, not only exported and unit-tested. Fix any gap now, then end your turn.",
 };
 
 /**

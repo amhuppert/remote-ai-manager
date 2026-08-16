@@ -1,307 +1,184 @@
-import type { CriterionDeliveryClass } from "./delivery-delta";
+import type { WorkflowDefinitionMutation } from "@/lib/workflow-graph/definition-schemas";
+
 import {
-  emptyDeliveryPlanDocument,
-  withPinnedSpecSource,
-  type DeliveryPlanContext,
-  type DeliveryPlanCriterionDisposition,
-  type DeliveryPlanDisposition,
+  NATIVE_SDD_CLAIMS_SOURCE_ID,
+  NATIVE_SDD_PINNED_SPEC_SOURCE_ID,
+  deliveryPlanDocumentSchema,
+  type DeliveryPlanBinding,
   type DeliveryPlanDocument,
-  type DeliveryPlanTask,
 } from "./delivery-plan";
+import type { CriterionDeliveryClass } from "./delivery-delta";
+
+const RESERVED_SOURCE_IDS = new Set([
+  NATIVE_SDD_PINNED_SPEC_SOURCE_ID,
+  NATIVE_SDD_CLAIMS_SOURCE_ID,
+]);
+const RESERVED_SOURCE_LOCATOR_PREFIXES = [
+  ".cc/graph-workflow-docs/spec/",
+  ".cc/graph-workflow-docs/spec-bindings/",
+] as const;
 
 /**
- * `spec plan open --seed-from last`: the total-disposition-preserving seed.
- *
- * The point of seeding is that the author starts from a plan that already
- * accounts for EVERY criterion of the pinned revision rather than from an empty
- * document they must reconcile by hand — which is how a criterion silently
- * leaves scope. So the seed assigns exactly one disposition per pinned
- * criterion, derived from the delivery-delta class the projection computed, and
- * carries the prior plan's shape forward only where the work is still selected.
- *
- * The seed never asserts a human act: a soft-stale criterion seeds as
- * `pending_reaffirmation`, which a draft may carry and a proposal may not, so
- * lint names the two resolutions instead of the seed choosing one.
+ * The only thing a new attempt can seed from: a finalized version-2 candidate.
+ * There is no translation from an older dialect — a spec with nothing to copy
+ * opens an unseeded draft and authors its launch.
  */
+export interface DeliveryPlanSeedSource {
+  readonly candidateId: string;
+  readonly launch: WorkflowDefinitionMutation;
+  readonly binding: DeliveryPlanBinding;
+}
 
-export interface PlanSeedCriterion {
+/** One pinned criterion as the compared delivery left it. */
+export interface DeliveryPlanSeedBasisCriterion {
   readonly criterionElementId: string;
-  readonly handle: string;
-  /** P1/P2 classification against the delta basis (`projectDeliveryDelta`). */
   readonly deliveryClass: CriterionDeliveryClass;
-}
-
-/**
- * Work a running execution captured as a discovery. It is work the run found
- * and deliberately did not do, so the next plan is exactly where it belongs.
- */
-export interface PlanSeedDiscovery {
-  readonly discoveryId: string;
-  readonly title: string;
-  readonly instructions: string;
-  readonly coveredCriterionElementIds: readonly string[];
-}
-
-/** The task id a discovery takes in a seeded plan, and its dedupe key. */
-export function discoveryTaskId(discoveryId: string): string {
-  return `discovery-${discoveryId}`;
-}
-
-export interface DeliveryPlanSeedInput {
-  /** Every criterion judgment is made against this revision, never the head. */
-  readonly pinnedRevisionId: string;
-  /** Names the spec whose materialized revision the seed ranks first. */
-  readonly specSlug: string;
-  readonly criteria: readonly PlanSeedCriterion[];
-  /** The earlier merged execution a `delivered_elsewhere` seed rests on. */
+  /** The execution whose delivery proved it, or null when none did. */
   readonly deliveredByExecutionId: string | null;
-  /** The last launched attempt's document, or null when this is the first. */
-  readonly priorPlan: DeliveryPlanDocument | null;
-  readonly discoveries: readonly PlanSeedDiscovery[];
 }
 
 /**
- * Where a discovery goes when no selected criterion it covers has an owner.
- * Typed rather than delivery, because it owns no criterion; its acceptance
- * contract is deliberately left empty so lint asks the author what the context
- * must make observable. Auto-writing a contract from the discovery titles would
- * manufacture the one thing a validator is held to.
+ * The delivery a new attempt is measured against: the compared execution and
+ * how that delivery left each pinned criterion. Assembled from the read-only
+ * delivery-delta projection, never from a persisted classification.
  */
-const DISCOVERY_CONTEXT_ID = "discovered-work";
+export interface DeliveryPlanSeedBasis {
+  readonly comparedExecutionId: string | null;
+  readonly criteria: readonly DeliveryPlanSeedBasisCriterion[];
+}
 
-export function seedDeliveryPlanDocument(
-  input: DeliveryPlanSeedInput,
-): DeliveryPlanDocument {
-  const dispositions = input.criteria.map((criterion) =>
-    seedDisposition(criterion, input.deliveredByExecutionId),
-  );
-  const selectedIds = new Set(
-    dispositions
-      .filter((entry) => entry.disposition === "selected")
-      .map((entry) => entry.criterionElementId),
-  );
-  const pinnedIds = new Set(
-    input.criteria.map((criterion) => criterion.criterionElementId),
-  );
+export type DeliveryPlanSeedBasisResult =
+  | { readonly ok: true; readonly basis: DeliveryPlanSeedBasis }
+  | { readonly ok: false; readonly message: string };
 
-  const contexts = carriedContexts(input.priorPlan, selectedIds);
-  const keptContextIds = new Set(contexts.map((context) => context.contextId));
-  const tasks = carriedTasks(input.priorPlan, keptContextIds, pinnedIds);
-
-  const staged = stageDiscoveries(
-    input.discoveries,
-    contexts,
-    tasks,
-    selectedIds,
-    pinnedIds,
+/**
+ * Total over the pinned revision: every criterion gets exactly one disposition,
+ * derived from the delivery delta rather than carried forward from the previous
+ * candidate. A criterion the last delivery proved and nothing has invalidated
+ * auto-proposes `delivered_elsewhere` against the execution that proved it; one
+ * whose governing content moved becomes `pending_reaffirmation`, which a draft
+ * may carry and a proposal may not; a criterion whose own text moved, one never
+ * delivered, and one the last plan deferred are selected again; an honoured
+ * waiver stays waived. A criterion the compared delivery never saw is new work
+ * and is selected.
+ */
+export function seedDispositionsFromDelivery(input: {
+  readonly basis: DeliveryPlanSeedBasis;
+  readonly pinnedCriterionElementIds: readonly string[];
+}): DeliveryPlanBinding["dispositions"] {
+  const byCriterion = new Map(
+    input.basis.criteria.map((entry) => [entry.criterionElementId, entry]),
   );
-
-  // Governance carries forward authored, then the reserved pinned-spec source
-  // is installed over it. A prior attempt authored before the lane
-  // materialization existed ranks this spec through a spelling no lane can
-  // read, and a seed that passed governance through untouched would hand the
-  // next plan that same unreadable #1 source with nothing to replace it with.
-  return withPinnedSpecSource(
-    {
-      ...emptyDeliveryPlanDocument(),
-      dispositions,
-      contexts: staged.contexts,
-      tasks: renumbered(staged.tasks),
-      edges: (input.priorPlan?.edges ?? []).filter(
-        (edge) =>
-          keptContextIds.has(edge.fromContextId) &&
-          keptContextIds.has(edge.toContextId),
-      ),
-      wiring: (input.priorPlan?.wiring ?? [])
-        .filter((entry) => keptContextIds.has(entry.owner.contextId))
-        .map((entry) => ({
-          ...entry,
-          criterionElementIds: entry.criterionElementIds.filter((id) =>
-            pinnedIds.has(id),
-          ),
-        })),
-      policyOverrides: input.priorPlan?.policyOverrides ?? [],
-      touchedSurfaces: input.priorPlan?.touchedSurfaces ?? [],
-      governance:
-        input.priorPlan?.governance ?? emptyDeliveryPlanDocument().governance,
-    },
-    {
-      specSlug: input.specSlug,
-      pinnedRevisionId: input.pinnedRevisionId,
-    },
-  );
+  return input.pinnedCriterionElementIds.map((criterionElementId) => {
+    const measured = byCriterion.get(criterionElementId);
+    const selected = {
+      criterionElementId,
+      disposition: "in_scope" as const,
+      deliveredByExecutionId: null,
+    };
+    if (measured === undefined) return selected;
+    switch (measured.deliveryClass) {
+      case "delivered_and_fresh":
+        return {
+          criterionElementId,
+          disposition: "delivered_elsewhere" as const,
+          deliveredByExecutionId: requireDelivery(measured),
+        };
+      case "soft_stale":
+        return {
+          criterionElementId,
+          disposition: "pending_reaffirmation" as const,
+          deliveredByExecutionId: requireDelivery(measured),
+        };
+      case "waived":
+        return {
+          criterionElementId,
+          disposition: "waived" as const,
+          deliveredByExecutionId: null,
+        };
+      case "hard_stale":
+      case "never_delivered":
+      case "deferred":
+        return selected;
+    }
+  });
 }
 
 /**
- * The class-to-disposition law. `deferred` maps to `selected` because a
- * criterion the last run deferred is due in the plan that follows it — a
- * deferral that re-seeded as a deferral is how work disappears one round at a
- * time.
+ * A disposition that stands on an earlier delivery must name it: the delivery
+ * gate resolves the attribution, and a null would silently become an unproven
+ * exclusion at gate time.
  */
-function seedDisposition(
-  criterion: PlanSeedCriterion,
-  deliveredByExecutionId: string | null,
-): DeliveryPlanCriterionDisposition {
-  const base = {
-    criterionElementId: criterion.criterionElementId,
-    deliveredByExecutionId: null,
-    reaffirmation: null,
-    note: null,
-  } satisfies Omit<DeliveryPlanCriterionDisposition, "disposition">;
-
-  switch (criterion.deliveryClass) {
-    case "delivered_and_fresh":
-      // Auto-proposed, not asserted: with no basis to name, the claim cannot
-      // be made at all, so the criterion re-enters scope instead.
-      return deliveredByExecutionId === null
-        ? { ...base, disposition: "selected" }
-        : {
-            ...base,
-            disposition: "delivered_elsewhere",
-            deliveredByExecutionId,
-            note: `Seeded from the delta against ${deliveredByExecutionId}, which delivered this criterion against text that has not changed since.`,
-          };
-    case "soft_stale":
-      return { ...base, disposition: "pending_reaffirmation" };
-    case "waived":
-      return { ...base, disposition: "waived" };
-    case "hard_stale":
-    case "never_delivered":
-    case "deferred":
-      return { ...base, disposition: "selected" };
-    default:
-      return { ...base, disposition: unreachable(criterion.deliveryClass) };
+function requireDelivery(criterion: DeliveryPlanSeedBasisCriterion): string {
+  if (criterion.deliveredByExecutionId === null) {
+    throw new Error(
+      `Criterion ${criterion.criterionElementId} is ${criterion.deliveryClass} but names no delivering execution, so its disposition cannot be attributed.`,
+    );
   }
+  return criterion.deliveredByExecutionId;
 }
 
-function unreachable(deliveryClass: never): DeliveryPlanDisposition {
-  throw new Error(
-    `unhandled criterion delivery class ${String(deliveryClass)}`,
-  );
-}
-
-/**
- * A prior context survives when it still owns selected work. A typed
- * integration/closeout context owns nothing by construction, so it survives
- * with the delivery work it existed to close over — and disappears with it.
- */
-function carriedContexts(
-  priorPlan: DeliveryPlanDocument | null,
-  selectedIds: ReadonlySet<string>,
-): DeliveryPlanContext[] {
-  if (priorPlan === null) return [];
-  const delivering = priorPlan.contexts.filter((context) =>
-    context.criterionElementIds.some((id) => selectedIds.has(id)),
-  );
-  if (delivering.length === 0) return [];
-  return priorPlan.contexts
-    .filter(
-      (context) =>
-        delivering.includes(context) || context.contextType !== "delivery",
+export function seedDeliveryPlanFromLast(input: {
+  readonly source: DeliveryPlanSeedSource;
+  readonly dispositions: DeliveryPlanBinding["dispositions"];
+}): DeliveryPlanDocument {
+  const launch = structuredClone(input.source.launch);
+  const {
+    approvalRequired: _approvalRequired,
+    lockedRegions: _lockedRegions,
+    origin: _origin,
+    ...definition
+  } = launch.definition;
+  const reservedRanks = definition.charter.sourcesOfTruth.flatMap((source) =>
+    RESERVED_SOURCE_IDS.has(source.id) ||
+    RESERVED_SOURCE_LOCATOR_PREFIXES.some((prefix) =>
+      source.locator.startsWith(prefix),
     )
-    .map((context) => ({
-      ...context,
-      criterionElementIds: context.criterionElementIds.filter((id) =>
-        selectedIds.has(id),
-      ),
-      proofPlan: context.proofPlan.filter((step) =>
-        selectedIds.has(step.criterionElementId),
-      ),
-    }));
-}
-
-function carriedTasks(
-  priorPlan: DeliveryPlanDocument | null,
-  keptContextIds: ReadonlySet<string>,
-  pinnedIds: ReadonlySet<string>,
-): DeliveryPlanTask[] {
-  if (priorPlan === null) return [];
-  return [...priorPlan.tasks]
-    .filter((task) => keptContextIds.has(task.contextId))
-    .sort((left, right) => left.order - right.order)
-    .map((task) => ({
-      ...task,
-      contributesToCriterionElementIds:
-        task.contributesToCriterionElementIds.filter((id) => pinnedIds.has(id)),
-    }));
-}
-
-function stageDiscoveries(
-  discoveries: readonly PlanSeedDiscovery[],
-  contexts: readonly DeliveryPlanContext[],
-  tasks: readonly DeliveryPlanTask[],
-  selectedIds: ReadonlySet<string>,
-  pinnedIds: ReadonlySet<string>,
-): { contexts: DeliveryPlanContext[]; tasks: DeliveryPlanTask[] } {
-  const nextContexts = [...contexts];
-  const nextTasks = [...tasks];
-  // A discovery the prior plan already placed comes forward as an ordinary
-  // carried task, so re-appending it would duplicate the work. Consumption is
-  // read here rather than persisted: the plan that carries the task IS the
-  // record that the discovery was taken up.
-  const alreadyPlaced = new Set(nextTasks.map((task) => task.taskId));
-  const pending = discoveries.filter(
-    (discovery) => !alreadyPlaced.has(discoveryTaskId(discovery.discoveryId)),
+      ? [source.rank]
+      : [],
   );
-  if (pending.length === 0) {
-    return { contexts: nextContexts, tasks: nextTasks };
-  }
+  const sourcesOfTruth = definition.charter.sourcesOfTruth
+    .filter(
+      (source) =>
+        !RESERVED_SOURCE_IDS.has(source.id) &&
+        !RESERVED_SOURCE_LOCATOR_PREFIXES.some((prefix) =>
+          source.locator.startsWith(prefix),
+        ),
+    )
+    .map((source) => ({
+      ...source,
+      rank:
+        source.rank - reservedRanks.filter((rank) => rank < source.rank).length,
+    }));
+  const selectedCriteria = new Set(
+    input.dispositions
+      .filter((disposition) => disposition.disposition === "in_scope")
+      .map((disposition) => disposition.criterionElementId),
+  );
+  const claims = input.source.binding.claims.flatMap((claim) => {
+    const criterionElementIds = claim.criterionElementIds.filter((id) =>
+      selectedCriteria.has(id),
+    );
+    return criterionElementIds.length === 0
+      ? []
+      : [{ contextId: claim.contextId, criterionElementIds }];
+  });
 
-  const ownerByCriterion = new Map<string, string>();
-  for (const context of contexts) {
-    for (const criterionElementId of context.criterionElementIds) {
-      if (!ownerByCriterion.has(criterionElementId)) {
-        ownerByCriterion.set(criterionElementId, context.contextId);
-      }
-    }
-  }
-
-  for (const discovery of pending) {
-    const owned = discovery.coveredCriterionElementIds
-      .filter((id) => selectedIds.has(id))
-      .map((id) => ownerByCriterion.get(id))
-      .find((contextId) => contextId !== undefined);
-    const contextId = owned ?? DISCOVERY_CONTEXT_ID;
-    if (
-      contextId === DISCOVERY_CONTEXT_ID &&
-      !nextContexts.some(
-        (context) => context.contextId === DISCOVERY_CONTEXT_ID,
-      )
-    ) {
-      nextContexts.push({
-        contextId: DISCOVERY_CONTEXT_ID,
-        title: "Discovered work carried forward",
-        contextType: "integration",
-        criterionElementIds: [],
-        acceptanceContract: [],
-        proofPlan: [],
-      });
-    }
-    nextTasks.push({
-      taskId: discoveryTaskId(discovery.discoveryId),
-      contextId,
-      title: discovery.title,
-      instructions: discovery.instructions,
-      // Rewritten by `renumbered`; the append position is what carries here.
-      order: nextTasks.length,
-      contributesToCriterionElementIds:
-        discovery.coveredCriterionElementIds.filter((id) => pinnedIds.has(id)),
-    });
-  }
-
-  return { contexts: nextContexts, tasks: nextTasks };
-}
-
-/**
- * Task order is per-context and contiguous, which lint enforces. Dropping a
- * context's tasks or appending a discovery both break that, so the seed
- * renumbers rather than emitting a document that refuses itself.
- */
-function renumbered(tasks: readonly DeliveryPlanTask[]): DeliveryPlanTask[] {
-  const nextOrder = new Map<string, number>();
-  return tasks.map((task) => {
-    const order = nextOrder.get(task.contextId) ?? 0;
-    nextOrder.set(task.contextId, order + 1);
-    return { ...task, order };
+  return deliveryPlanDocumentSchema.parse({
+    schemaVersion: 2,
+    launch: {
+      ...launch,
+      definition: {
+        ...definition,
+        charter: {
+          ...definition.charter,
+          sourcesOfTruth,
+        },
+      },
+    },
+    binding: {
+      dispositions: input.dispositions,
+      claims,
+    },
   });
 }

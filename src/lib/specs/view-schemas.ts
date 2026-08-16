@@ -1,7 +1,9 @@
 import { z } from "zod";
 
-import { graphWorkflowStatusSchema } from "@/lib/workflow-graph/definition-schemas";
-import { workflowCharterSchema } from "@/lib/workflows/charter-schemas";
+import {
+  graphWorkflowExecutionOriginSchema,
+  graphWorkflowStatusSchema,
+} from "@/lib/workflow-graph/spec-bridge";
 import { revisionDiffResultSchema } from "./revision-diff";
 import { executionScopeSchema } from "./scope-validation";
 import {
@@ -20,6 +22,7 @@ import {
   specAuthoringStageSchema,
   specCommentResolutionSchema,
   specCriterionDispositionRowSchema,
+  specDeliveryVerdictRowSchema,
   specElementKindSchema,
   specEvidenceRowSchema,
   specExecutionCleanupPhaseSchema,
@@ -271,12 +274,7 @@ const specTaskPlanStatusSchema = z
 export const lintFindingSchema = z
   .object({
     ruleId: z.string().min(1),
-    severity: z.enum([
-      "blocks_propose",
-      "blocks_claim",
-      "blocks_signoff",
-      "advisory",
-    ]),
+    severity: z.enum(["blocks_propose", "blocks_signoff", "advisory"]),
     elementHandle: z.string(),
     message: z.string(),
   })
@@ -308,7 +306,7 @@ const draftHealthTierSchema = z
 /**
  * The runs behind the phase, reconciled at read time. `phase: executing`
  * collapses every run into one word, so state and workflow linkage are what
- * let a reader tell a parked definition review from a launched lane — and
+ * let a reader tell a parked graph review from a launched lane — and
  * they are the only fields that make a parked run diagnosable without a
  * second full detail read.
  */
@@ -316,7 +314,7 @@ const specStatusExecutionSchema = z
   .object({
     id: z.string().min(1),
     state: specExecutionStateSchema,
-    workflowDefinitionId: z.string().min(1),
+    workflowSeedSource: graphWorkflowExecutionOriginSchema.nullable(),
     workflowExecutionId: z.string().min(1).nullable(),
     /**
      * The linked lane's live status at read time. A `running` spec execution
@@ -456,26 +454,19 @@ export const specProjectSearchViewSchema = z
   .strict();
 export type SpecProjectSearchView = z.infer<typeof specProjectSearchViewSchema>;
 
-/**
- * The server-computed proof standing of one scoped criterion for one run
- * (F26). Computed where the truth lives — the detail route mirrors the
- * delivery gate's precedence and validity rules (waiver validity, the
- * prior-run rule for external delivery, evidence-resolvable verdict
- * freshness) — so Studio renders it verbatim instead of re-deriving a
- * divergent client answer.
- */
+/** The current attempt's server-computed delivery standing for one criterion. */
 export const criterionDeliveryProjectionSchema = z
   .object({
     criterionElementId: z.string().min(1),
     handle: z.string().min(1),
-    strategyKinds: z.array(evidenceKindSchema),
-    proofState: z.enum([
-      "proven_merged",
+    deliveryState: z.enum([
+      "delivered",
       "waived",
       "delivered_elsewhere",
-      "proof_recorded",
-      "awaiting_proof",
+      "verdict_recorded",
+      "awaiting_outcome",
     ]),
+    verdict: specDeliveryVerdictRowSchema.nullable(),
   })
   .strict();
 export type CriterionDeliveryProjection = z.infer<
@@ -487,10 +478,9 @@ export type CriterionDeliveryProjection = z.infer<
  * scope column parsed into the object it holds, and the revision's number
  * alongside its internal id.
  *
- * `state`, `workflowDefinitionId` and `workflowExecutionId` are load-bearing,
- * not decoration: they are what separates a run parked awaiting human
- * definition approval from a launched lane, and were once the only way to
- * diagnose a parked execution at all.
+ * `state`, `workflowSeedSource` and `workflowExecutionId` are load-bearing,
+ * not decoration: they identify the immutable launch bound to the run and
+ * separate a parked graph review from a launched lane.
  */
 export const specExecutionViewSchema = z
   .object({
@@ -499,18 +489,8 @@ export const specExecutionViewSchema = z
     revisionId: z.string().min(1),
     revisionNumber: z.number().int().positive().nullable(),
     state: specExecutionStateSchema,
-    workflowDefinitionId: z.string().min(1),
-    /**
-     * The immutable workflow definition revision compiled for this execution.
-     * Null identifies a legacy row that cannot be launched safely by revision.
-     */
-    workflowDefinitionRevision: z.number().int().positive().nullable(),
+    workflowSeedSource: graphWorkflowExecutionOriginSchema.nullable(),
     workflowExecutionId: z.string().min(1).nullable(),
-    /**
-     * The approval contract frozen on the immutable spec execution row. Null
-     * identifies a legacy row whose launch contract predates that field.
-     */
-    definitionApprovalRequired: z.boolean().nullable(),
     /**
      * Null when the stored scope does not parse. A row written by an older
      * build must not 500 the read, and an empty scope would be a different
@@ -811,10 +791,7 @@ export const specOutlineDecisionViewSchema = specOutlineElementIdentitySchema
 
 export const specOutlineTaskViewSchema = specOutlineElementIdentitySchema
   .extend({
-    status: taskWorkStatusSchema
-      .omit({ claimEvidenceIds: true })
-      .extend({ claimEvidenceCount: z.number().int().nonnegative() })
-      .strict(),
+    status: taskWorkStatusSchema,
   })
   .strict();
 
@@ -1270,83 +1247,3 @@ export const integrityReportSchema = z
   })
   .strict();
 export type IntegrityReport = z.infer<typeof integrityReportSchema>;
-
-const evidenceProducerRowSchema = z
-  .object({
-    kind: z.string().min(1),
-    /** Null names a gap: nothing in the ingest path mints this kind. */
-    producer: z.string().min(1).nullable(),
-    detail: z.string().min(1),
-  })
-  .strict();
-
-const specPlanPreviewCriterionBriefSchema = z
-  .object({
-    criterionElementId: z.string().min(1),
-    criterionHandle: z.string().min(1),
-    text: z.string(),
-    brief: z.string(),
-    strategyNote: z.string().nullable(),
-    evidence: z.array(evidenceProducerRowSchema),
-  })
-  .strict();
-
-const specPlanPreviewContextSchema = z
-  .object({
-    contextId: z.string().min(1),
-    title: z.string(),
-    description: z.string().nullable(),
-    acceptanceCriteria: z.string(),
-    taskHandles: z.array(z.string().min(1)),
-    criterionBriefs: z.array(specPlanPreviewCriterionBriefSchema),
-    totalBriefCount: z.number().int().nonnegative(),
-    shownBriefCount: z.number().int().nonnegative(),
-    omittedBriefCount: z.number().int().nonnegative(),
-  })
-  .strict();
-
-const specPlanPreviewEdgeSchema = z
-  .object({
-    id: z.string().min(1),
-    sourceContextId: z.string().min(1),
-    targetContextId: z.string().min(1),
-  })
-  .strict();
-
-/**
- * The bounded plan preview the CLI and Studio read. The unbounded projection
- * (including the full compiled definition the parity contract is stated
- * against) stays server-side in `plan-preview.ts`; what crosses the wire is
- * already capped, which is what keeps a wide plan's preview readable.
- */
-export const specPlanPreviewViewSchema = z
-  .object({
-    spec: z
-      .object({
-        id: z.string().min(1),
-        slug: z.string().min(1),
-        name: z.string().min(1),
-      })
-      .strict(),
-    revision: z
-      .object({
-        id: z.string().min(1),
-        number: z.number().int().positive(),
-        state: specRevisionStateSchema,
-        authoringStage: specAuthoringStageSchema,
-      })
-      .strict(),
-    scopeHash: z.string().min(1),
-    approvalRequired: z.boolean(),
-    charter: workflowCharterSchema,
-    totalContextCount: z.number().int().nonnegative(),
-    shownContextCount: z.number().int().nonnegative(),
-    taskCount: z.number().int().nonnegative(),
-    criterionCount: z.number().int().nonnegative(),
-    contexts: z.array(specPlanPreviewContextSchema),
-    edges: z.array(specPlanPreviewEdgeSchema),
-    evidenceGaps: z.array(z.string().min(1)),
-    briefLimit: z.number().int().positive(),
-  })
-  .strict();
-export type SpecPlanPreviewView = z.infer<typeof specPlanPreviewViewSchema>;

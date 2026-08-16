@@ -44,10 +44,11 @@ const TOPOLOGY_READERS: Readonly<Record<string, string>> = {
   "src/lib/workflow-graph/expansion-service.ts":
     "'downstream of the invoker' is a claim about the graph the PLANNER drew, and an expansion's rejoin targets are unstarted by construction — nothing has resolved for the projection to answer with",
   "src/lib/workflow-graph/builder-draft.ts": "the authoring draft",
+  "src/lib/workflow-graph/prompt-composer.ts":
+    "the validator-deferral cohort is a claim about the graph the PLANNER drew — which authored contexts sit downstream of this one — so the authored edge set is exactly the right input; a resolved projection would narrow the cohort to routes already decided and hide the sibling ownership the section exists to show",
   "src/lib/workflow-graph/loop-resolver.ts":
     "validates and clones authored loop bodies",
   "src/lib/workflows/edit-schemas.ts": "declares the edit vocabulary",
-  "src/lib/specs/execution-contract.ts": "walks the authored graph statically",
 
   // Views of the drawn graph: position, declared dependencies, provenance.
   "src/lib/workflow-graph/layout.ts": "lays out the drawn graph",
@@ -59,26 +60,6 @@ const TOPOLOGY_READERS: Readonly<Record<string, string>> = {
     "definition-tier upstream walk; the execution-tier resolver above it is projection-resolved",
   "src/components/workflow-graph/derive-graph.ts":
     "renders the LOGICAL edge as topology; its status follows the effective source",
-
-  // Structural-edit vocabulary, on the same footing as the definition- and
-  // live-tier editors above: an add-edge operation NAMES a source, it does not
-  // resolve one.
-  "src/lib/workflow-graph/execution-amendment.ts":
-    "declares and applies add-edge amendments; the source is the operation's authored subject, and the edge it adds has never routed",
-  "src/features/spec-studio/PostLaunchCapturePaths.tsx":
-    "the amendment authoring form — the source is typed by the operator into an edge that does not exist yet",
-
-  // Plan preview and parity: the graph a plan WOULD compile to. These run
-  // before any launch, so there is no execution for the projection to resolve
-  // against.
-  "src/lib/specs/plan-preview.ts":
-    "projects the compiled-but-unlaunched graph; nothing has routed",
-  "src/cli/commands/spec/plan-preview-text.ts":
-    "renders the preview's drawn edges as text",
-  "src/features/spec-studio/SpecPlanPreviewPanel.tsx":
-    "renders the preview's drawn edges in Studio",
-  "src/lib/specs/legacy-parity-harness.ts":
-    "compares two COMPILERS' drawn output for equivalence; the authored source is the thing under comparison",
 };
 
 /**

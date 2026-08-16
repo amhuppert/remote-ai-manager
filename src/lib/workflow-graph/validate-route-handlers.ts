@@ -5,8 +5,7 @@
  *   Body: the same `{ name, description?, definition, layout }` a create/replace
  *   accepts; `?tier=global|project` (default project) selects which document
  *   scope the assignment rules are applied under, mirroring the scope the plan
- *   will be saved to. Runs the create-path Zod parse + structural graph checks
- *   via the shared `validateWorkflowPlan` pure function and PERSISTS NOTHING —
+ *   will be saved to. Runs shared authored-launch admission and PERSISTS NOTHING —
  *   it has no storage dependency by design. Returns `{ ok: true }` (200) or
  *   `{ error, issues[] }` (400) with JSON-path locations. Token-gated. Backs
  *   `cctl workflow validate --file plan.json`; the browser UI never calls it.
@@ -22,12 +21,11 @@ import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
 import { getSession } from "@/lib/state-store";
 import { createLogger, withTracing } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
-import { validateWorkflowPlan } from "@/lib/workflows/plan-validation";
-import { createValidationCommandPreflight } from "@/lib/validation/preflight";
+import { admitAuthoredWorkflowLaunch } from "./authored-launch-admission";
 import {
-  createAssignmentReferenceChecker,
   type AssignmentDocumentScope,
   type AssignmentReferenceChecker,
+  WORKFLOW_ASSIGNMENT_REFERENCE_INVALID_CODE,
 } from "./assignment-references";
 
 const log = createLogger("graph-workflow-validate-route");
@@ -86,9 +84,7 @@ export interface GraphWorkflowValidateRouteDeps {
 export function createGraphWorkflowValidateHandlers(
   deps: GraphWorkflowValidateRouteDeps,
 ) {
-  const assignmentReferences =
-    deps.assignmentReferences ?? createAssignmentReferenceChecker();
-  const readConfigDep = deps.readConfig ?? readConfig;
+  const assignmentReferences = deps.assignmentReferences;
   async function post(
     request: Request,
     { params }: { params: Promise<Record<string, string>> },
@@ -132,11 +128,16 @@ export function createGraphWorkflowValidateHandlers(
       deps.readRepoConfig(resolved.value.projectPath),
       deps.readConfig(),
     ]);
-    const validation = validateWorkflowPlan(rawBody, {
-      validationCommandPreflight: createValidationCommandPreflight(
-        repoConfig?.validation,
-        globalConfig.validation,
-      ),
+    const validation = await admitAuthoredWorkflowLaunch(rawBody, {
+      caller:
+        scope.kind === "global"
+          ? "global-template-validate"
+          : "project-validate",
+      documentScope: scope,
+      projectValidation: repoConfig?.validation ?? null,
+      globalValidation: globalConfig.validation,
+      workflowDefaults: globalConfig.workflowDefaults,
+      assignmentReferences,
     });
     if (!validation.ok) {
       log.info("graph-workflow-validate.invalid", {
@@ -148,41 +149,13 @@ export function createGraphWorkflowValidateHandlers(
       return NextResponse.json(
         {
           error: "Workflow plan is invalid",
-          ...(validation.code ? { code: validation.code } : {}),
+          ...(validation.code === WORKFLOW_ASSIGNMENT_REFERENCE_INVALID_CODE
+            ? {}
+            : validation.code
+              ? { code: validation.code }
+              : {}),
           issues: validation.issues,
         },
-        { status: 400 },
-      );
-    }
-
-    // Reference existence and the tier-scope rule need the library and the
-    // document's own scope, so they run after the pure layer and report through
-    // the SAME located issue shape — the CLI renders both layers identically.
-    //
-    // The inherited `workflowDefaults` are checked alongside the plan because a
-    // plan can be flawless and still be unlaunchable: the cascade staffs it
-    // from defaults it never mentions, and a profile deleted out from under
-    // those defaults would otherwise pass validate and fail at launch. The
-    // issue is located in the config field, not in the plan, so an author can
-    // see at a glance that their document is not the thing to fix (R15).
-    const referenceIssues = [
-      ...(await assignmentReferences.checkDefinition(
-        validation.draft.definition,
-        scope,
-      )),
-      ...(await assignmentReferences.checkWorkflowDefaults(
-        (await readConfigDep()).workflowDefaults,
-      )),
-    ];
-    if (referenceIssues.length > 0) {
-      log.info("graph-workflow-validate.invalid", {
-        projectName,
-        sessionName,
-        scope: scope.kind,
-        issueCount: referenceIssues.length,
-      });
-      return NextResponse.json(
-        { error: "Workflow plan is invalid", issues: referenceIssues },
         { status: 400 },
       );
     }

@@ -1,12 +1,14 @@
 import type Database from "better-sqlite3";
 import {
   specCriterionDispositionRowSchema,
+  specDeliveryVerdictRowSchema,
   specEvidenceRowSchema,
   specExecutionRowSchema,
   specProofVerdictRowSchema,
   specTaskClaimRowSchema,
   specWaiverRowSchema,
   type SpecCriterionDispositionRow,
+  type SpecDeliveryVerdictRow,
   type SpecEvidenceRow,
   type SpecExecutionCleanupPhase,
   type SpecExecutionRow,
@@ -21,6 +23,17 @@ type Db = InstanceType<typeof Database>;
 const { parseRow, readMany, readOne, timed } = createSpecRepoHelpers(
   "state-store.spec-delivery",
 );
+
+export interface SaveSpecDeliveryVerdictInput {
+  id: string;
+  specExecutionId: string;
+  workflowExecutionId: string;
+  candidateId: string;
+  candidateHash: string;
+  criterionElementId: string;
+  satisfyingContextId: string;
+  recordedAt: string;
+}
 
 export interface SpecDeliveryRepo {
   insertEvidence(evidence: SpecEvidenceRow): SpecEvidenceRow;
@@ -47,6 +60,18 @@ export interface SpecDeliveryRepo {
     criterionElementId: string,
     revisionId: string,
   ): SpecProofVerdictRow[];
+  saveDeliveryVerdict(
+    input: SaveSpecDeliveryVerdictInput,
+  ): SpecDeliveryVerdictRow;
+  findDeliveryVerdictsByWorkflowExecutionId(
+    workflowExecutionId: string,
+  ): SpecDeliveryVerdictRow[];
+  findDeliveryVerdictsBySpecExecutionId(
+    specExecutionId: string,
+  ): SpecDeliveryVerdictRow[];
+  findDeliveryVerdictsByCriterion(
+    criterionElementId: string,
+  ): SpecDeliveryVerdictRow[];
   saveWaiver(waiver: SpecWaiverRow): void;
   findWaiverById(id: string): SpecWaiverRow | null;
   findWaiversByRevision(revisionId: string): SpecWaiverRow[];
@@ -85,24 +110,6 @@ export interface SpecDeliveryRepo {
   ): SpecExecutionRow[];
   findExecutionByWorkflowExecutionId(
     workflowExecutionId: string,
-  ): SpecExecutionRow | null;
-  findExecutionByWorkflowExecutionIdInSession(
-    projectPath: string,
-    sessionName: string,
-    workflowExecutionId: string,
-  ): SpecExecutionRow | null;
-  /**
-   * The spec execution still awaiting its workflow: in definition_review with
-   * this exact compiled definition revision pinned and no workflow execution
-   * linked yet, within the project/session that launched it. This is how a
-   * generic workflow start finds the spec side without the workflow machinery
-   * knowing about specs.
-   */
-  findExecutionAwaitingWorkflowByDefinitionIdInSession(
-    projectPath: string,
-    sessionName: string,
-    workflowDefinitionId: string,
-    workflowDefinitionRevision: number,
   ): SpecExecutionRow | null;
   linkWorkflowExecution(
     executionId: string,
@@ -211,6 +218,45 @@ export function createSpecDeliveryRepo(db: Db): SpecDeliveryRepo {
      ORDER BY verdict_at DESC, id DESC`,
   );
 
+  const saveDeliveryVerdictStmt = db.prepare(
+    `INSERT INTO spec_delivery_verdicts (
+       id, spec_execution_id, workflow_execution_id, candidate_id,
+       candidate_hash, criterion_element_id, satisfying_context_id, verdict_at
+     ) VALUES (
+       @id, @spec_execution_id, @workflow_execution_id, @candidate_id,
+       @candidate_hash, @criterion_element_id, @satisfying_context_id,
+       @verdict_at
+     )
+     ON CONFLICT (
+       workflow_execution_id, candidate_id, candidate_hash,
+       criterion_element_id, satisfying_context_id
+     ) DO NOTHING`,
+  );
+  const findDeliveryVerdictByIdentityStmt = db.prepare(
+    `SELECT * FROM spec_delivery_verdicts
+      WHERE workflow_execution_id = ?
+        AND candidate_id = ?
+        AND candidate_hash = ?
+        AND criterion_element_id = ?
+        AND satisfying_context_id = ?
+      LIMIT 1`,
+  );
+  const findDeliveryVerdictsByWorkflowExecutionStmt = db.prepare(
+    `SELECT * FROM spec_delivery_verdicts
+      WHERE workflow_execution_id = ?
+      ORDER BY verdict_at ASC, id ASC`,
+  );
+  const findDeliveryVerdictsBySpecExecutionStmt = db.prepare(
+    `SELECT * FROM spec_delivery_verdicts
+      WHERE spec_execution_id = ?
+      ORDER BY verdict_at ASC, id ASC`,
+  );
+  const findDeliveryVerdictsByCriterionStmt = db.prepare(
+    `SELECT * FROM spec_delivery_verdicts
+      WHERE criterion_element_id = ?
+      ORDER BY verdict_at ASC, id ASC`,
+  );
+
   const saveWaiverStmt = db.prepare(
     `INSERT INTO spec_waivers (
        id, spec_id, criterion_element_id, revision_id, reason, waived_at, stale
@@ -301,13 +347,16 @@ export function createSpecDeliveryRepo(db: Db): SpecDeliveryRepo {
     `INSERT INTO spec_executions (
        id, spec_id, revision_id, scope_json, state, execution_start_dial,
        workflow_definition_id, workflow_definition_revision,
+       workflow_seed_source_json, workflow_execution_binding_json,
        workflow_execution_id, session_name, delivered_at, abandoned_reason,
        cleanup_phase, linked_workflow_execution_id, cleanup_last_error,
        cleanup_last_error_at, created_at, updated_at
      ) VALUES (
        @id, @spec_id, @revision_id, @scope_json, @state,
        @execution_start_dial, @workflow_definition_id,
-       @workflow_definition_revision, @workflow_execution_id, @session_name,
+       @workflow_definition_revision, @workflow_seed_source_json,
+       @workflow_execution_binding_json,
+       @workflow_execution_id, @session_name,
        @delivered_at, @abandoned_reason, @cleanup_phase,
        @linked_workflow_execution_id, @cleanup_last_error,
        @cleanup_last_error_at, @created_at, @updated_at
@@ -343,26 +392,6 @@ export function createSpecDeliveryRepo(db: Db): SpecDeliveryRepo {
   const findExecutionByWorkflowExecutionStmt = db.prepare(
     `SELECT * FROM spec_executions
      WHERE workflow_execution_id = ?
-     LIMIT 1`,
-  );
-  const findExecutionByWorkflowExecutionInSessionStmt = db.prepare(
-    `SELECT e.* FROM spec_executions e
-     JOIN specs s ON s.id = e.spec_id
-     WHERE s.project_path = ?
-       AND e.session_name = ?
-       AND e.workflow_execution_id = ?
-     LIMIT 1`,
-  );
-  const findExecutionAwaitingWorkflowByDefinitionInSessionStmt = db.prepare(
-    `SELECT e.* FROM spec_executions e
-     JOIN specs s ON s.id = e.spec_id
-     WHERE s.project_path = ?
-       AND e.session_name = ?
-       AND e.workflow_definition_id = ?
-       AND e.workflow_definition_revision = ?
-       AND e.workflow_execution_id IS NULL
-       AND e.state = 'definition_review'
-     ORDER BY e.created_at DESC, e.id DESC
      LIMIT 1`,
   );
   const linkWorkflowExecutionStmt = db.prepare(
@@ -538,6 +567,89 @@ export function createSpecDeliveryRepo(db: Db): SpecDeliveryRepo {
           ),
       );
     },
+    saveDeliveryVerdict(input) {
+      const identifier = `${input.workflowExecutionId}:${input.candidateId}:${input.criterionElementId}:${input.satisfyingContextId}`;
+      return timed("save", "spec_delivery_verdict", identifier, () => {
+        const row = parseRow(
+          specDeliveryVerdictRowSchema,
+          "spec_delivery_verdict",
+          identifier,
+          {
+            id: input.id,
+            spec_execution_id: input.specExecutionId,
+            workflow_execution_id: input.workflowExecutionId,
+            candidate_id: input.candidateId,
+            candidate_hash: input.candidateHash,
+            criterion_element_id: input.criterionElementId,
+            satisfying_context_id: input.satisfyingContextId,
+            verdict_at: input.recordedAt,
+          },
+        );
+        saveDeliveryVerdictStmt.run(row);
+        const saved = readOne(
+          specDeliveryVerdictRowSchema,
+          "spec_delivery_verdict",
+          identifier,
+          () =>
+            findDeliveryVerdictByIdentityStmt.get(
+              input.workflowExecutionId,
+              input.candidateId,
+              input.candidateHash,
+              input.criterionElementId,
+              input.satisfyingContextId,
+            ),
+        );
+        if (saved === null) {
+          throw new Error(`Delivery verdict ${identifier} was not persisted.`);
+        }
+        return saved;
+      });
+    },
+    findDeliveryVerdictsByWorkflowExecutionId(workflowExecutionId) {
+      return timed(
+        "find_by_workflow_execution",
+        "spec_delivery_verdict",
+        workflowExecutionId,
+        () =>
+          readMany(
+            specDeliveryVerdictRowSchema,
+            "spec_delivery_verdict",
+            workflowExecutionId,
+            () =>
+              findDeliveryVerdictsByWorkflowExecutionStmt.all(
+                workflowExecutionId,
+              ),
+          ),
+      );
+    },
+    findDeliveryVerdictsBySpecExecutionId(specExecutionId) {
+      return timed(
+        "find_by_spec_execution",
+        "spec_delivery_verdict",
+        specExecutionId,
+        () =>
+          readMany(
+            specDeliveryVerdictRowSchema,
+            "spec_delivery_verdict",
+            specExecutionId,
+            () => findDeliveryVerdictsBySpecExecutionStmt.all(specExecutionId),
+          ),
+      );
+    },
+    findDeliveryVerdictsByCriterion(criterionElementId) {
+      return timed(
+        "find_by_criterion",
+        "spec_delivery_verdict",
+        criterionElementId,
+        () =>
+          readMany(
+            specDeliveryVerdictRowSchema,
+            "spec_delivery_verdict",
+            criterionElementId,
+            () => findDeliveryVerdictsByCriterionStmt.all(criterionElementId),
+          ),
+      );
+    },
     saveWaiver(waiver) {
       timed("save", "spec_waiver", waiver.id, () => {
         saveWaiverStmt.run(
@@ -648,14 +760,18 @@ export function createSpecDeliveryRepo(db: Db): SpecDeliveryRepo {
     },
     insertExecution(execution) {
       timed("insert", "spec_execution", execution.id, () => {
-        insertExecutionStmt.run(
-          parseRow(
-            specExecutionRowSchema,
-            "spec_execution",
-            execution.id,
-            execution,
-          ),
+        const row = parseRow(
+          specExecutionRowSchema,
+          "spec_execution",
+          execution.id,
+          execution,
         );
+        insertExecutionStmt.run({
+          ...row,
+          workflow_seed_source_json: row.workflow_seed_source_json ?? null,
+          workflow_execution_binding_json:
+            row.workflow_execution_binding_json ?? null,
+        });
       });
     },
     findExecutionById(id) {
@@ -715,48 +831,6 @@ export function createSpecDeliveryRepo(db: Db): SpecDeliveryRepo {
             "spec_execution",
             workflowExecutionId,
             () => findExecutionByWorkflowExecutionStmt.get(workflowExecutionId),
-          ),
-      );
-    },
-    findExecutionByWorkflowExecutionIdInSession(
-      projectPath,
-      sessionName,
-      workflowExecutionId,
-    ) {
-      const identifier = `${projectPath}:${sessionName}:${workflowExecutionId}`;
-      return timed(
-        "find_by_workflow_execution_in_session",
-        "spec_execution",
-        identifier,
-        () =>
-          readOne(specExecutionRowSchema, "spec_execution", identifier, () =>
-            findExecutionByWorkflowExecutionInSessionStmt.get(
-              projectPath,
-              sessionName,
-              workflowExecutionId,
-            ),
-          ),
-      );
-    },
-    findExecutionAwaitingWorkflowByDefinitionIdInSession(
-      projectPath,
-      sessionName,
-      workflowDefinitionId,
-      workflowDefinitionRevision,
-    ) {
-      const identifier = `${projectPath}:${sessionName}:${workflowDefinitionId}@${workflowDefinitionRevision}`;
-      return timed(
-        "find_awaiting_by_definition_in_session",
-        "spec_execution",
-        identifier,
-        () =>
-          readOne(specExecutionRowSchema, "spec_execution", identifier, () =>
-            findExecutionAwaitingWorkflowByDefinitionInSessionStmt.get(
-              projectPath,
-              sessionName,
-              workflowDefinitionId,
-              workflowDefinitionRevision,
-            ),
           ),
       );
     },

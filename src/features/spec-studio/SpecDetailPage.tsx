@@ -658,14 +658,12 @@ function NarrativeSectionHeading({
 
 const lintDotClass: Record<LintFinding["severity"], string> = {
   blocks_propose: "bg-red",
-  blocks_claim: "bg-red",
   blocks_signoff: "bg-red",
   advisory: "bg-amber",
 };
 
 const lintSeverityClass: Record<LintFinding["severity"], string> = {
   blocks_propose: "text-red",
-  blocks_claim: "text-red",
   blocks_signoff: "text-red",
   advisory: "text-amber",
 };
@@ -1082,7 +1080,7 @@ export function detailStatePresentation(
           tone: "amber",
           banner: "Delivery plan awaits approval",
           description:
-            "Review and approve the exact compiled candidate before execution.",
+            "Review and approve the exact finalized candidate before execution.",
           action: "Review delivery plan",
           view: "plan",
         };
@@ -2037,10 +2035,6 @@ function taskStatusPresentation(
       return { status: "Running", statusTone: "cyan" };
     case "completed":
       return { status: "Completed", statusTone: "green" };
-    case "claimed":
-      return { status: "Claimed", statusTone: "green" };
-    case "reopened":
-      return { status: "Reopened", statusTone: "amber" };
     case "interrupted":
       return { status: "Interrupted", statusTone: "amber" };
     case "failed":

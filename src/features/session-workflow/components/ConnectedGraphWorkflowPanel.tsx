@@ -32,6 +32,7 @@ import GraphWorkflowPanel from "./GraphWorkflowPanel";
 import ApprovalGatePanel from "@/components/ApprovalGatePanel";
 import { useApprovalScopedChanges } from "@/hooks/use-approval-scoped-changes";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import { originFallbackName } from "@/lib/workflow-graph/execution-origin";
 import { holdsExecutionLease } from "@/lib/workflow-graph/lifecycle-classifier";
 
 const logger = createClientLogger("session-workflow");
@@ -122,10 +123,7 @@ function CurrentContextApprovalPanel({
     <ApprovalGatePanel
       contextTitle={approval.contextTitle}
       workflowName={
-        execution.launchDocument?.name ??
-        (execution.origin.kind === "one_off"
-          ? execution.origin.planName
-          : execution.origin.definitionId)
+        execution.launchDocument?.name ?? originFallbackName(execution.origin)
       }
       requestedAt={approval.requestedAt}
       isSubmitting={resolveMutation.isPending}

@@ -56,7 +56,6 @@ describe("help registry contract", () => {
   it("redirects retired evergreen plan authoring to the delivery-plan family", () => {
     for (const command of [
       "spec draft",
-      "spec task",
       "spec propose",
       "spec advance",
       "spec request-approval",
@@ -90,18 +89,63 @@ describe("help registry contract", () => {
     }
   });
 
-  it("keeps start --file as a retired parser flag, not an advertised usage", () => {
+  it("registers direct start inputs and keeps --file as a retired parser flag", () => {
     const entry = ENTRIES.find(
       (candidate) => pathKey(candidate.path) === "spec start",
     );
     expect(entry).toBeDefined();
-    expect(entry?.usage).toEqual(["cctl spec start <slug> [--park]"]);
+    expect(entry?.usage).toEqual([
+      "cctl spec start <slug> [--inputs .cc/temp/inputs.json] [--park]",
+    ]);
+
+    const inputsFlag = entry?.flags.find((flag) => flag.name === "inputs");
+    expect(inputsFlag).toMatchObject({
+      kind: "value",
+      valuePlaceholder: "<inputs.json>",
+    });
+    expect(inputsFlag?.description).toMatch(/JSON object/i);
 
     const fileFlag = entry?.flags.find((flag) => flag.name === "file");
     expect(fileFlag?.description).toMatch(/retired/i);
     expect(fileFlag?.description).toContain(
-      "cctl spec plan open <slug> --seed-from last",
+      "Open an authored delivery attempt",
     );
+  });
+
+  it("keeps portable delivery help on the direct graph boundary", () => {
+    const portableEntries = [
+      "spec plan",
+      "spec plan edit",
+      "spec plan preview",
+      "spec start",
+    ].map((command) => {
+      const entry = ENTRIES.find(
+        (candidate) => pathKey(candidate.path) === command,
+      );
+      expect(entry, `${command}: missing help entry`).toBeDefined();
+      return entry;
+    });
+    const text = portableEntries
+      .map(
+        (entry) =>
+          `${entry?.summary} ${entry?.description} ${entry?.usage.join(" ")}`,
+      )
+      .join(" ");
+
+    expect(text).toMatch(/ordinary graph launch/i);
+    expect(text).toMatch(/candidate/i);
+    expect(text).toContain("--inputs .cc/temp/inputs.json");
+    expect(text).not.toMatch(
+      /compiler|materializer|context pack|proofPlan|wiring/i,
+    );
+
+    // `spec task` retired with the task-completion path; the registry must
+    // not describe a verb the CLI no longer dispatches.
+    for (const command of ["spec task", "spec task complete"]) {
+      expect(
+        ENTRIES.find((candidate) => pathKey(candidate.path) === command),
+      ).toBeUndefined();
+    }
   });
 
   describe("every entry has non-empty summary/description/usage", () => {

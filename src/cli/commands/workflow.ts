@@ -111,9 +111,14 @@ type WorkflowLaunchRefusalDetails = z.infer<
 >;
 
 function formatWorkflowOrigin(origin: GraphWorkflowExecutionOrigin): string {
-  return origin.kind === "one_off"
-    ? `one_off (${origin.planName})`
-    : `template (${origin.tier}:${origin.definitionId}@${origin.definitionRevision})`;
+  switch (origin.kind) {
+    case "one_off":
+      return `one_off (${origin.planName})`;
+    case "spec_delivery":
+      return `spec_delivery (${origin.specSlug} candidate ${origin.candidateId})`;
+    case "template":
+      return `template (${origin.tier}:${origin.definitionId}@${origin.definitionRevision})`;
+  }
 }
 
 /** One text projection for every launch refusal carrying the typed D7 details. */

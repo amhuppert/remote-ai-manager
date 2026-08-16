@@ -62,8 +62,6 @@ const TASK_STATUS_PRESENTATION: Record<TaskStatus, ChipPresentation> = {
   interrupted: { label: "Interrupted", tone: "amber" },
   completed: { label: "Completed", tone: "green" },
   failed: { label: "Failed", tone: "red" },
-  claimed: { label: "Claimed", tone: "green" },
-  reopened: { label: "Reopened", tone: "amber" },
 };
 
 const APPROVAL_PRESENTATION: Record<

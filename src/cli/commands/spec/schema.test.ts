@@ -18,18 +18,11 @@ import {
   touchedPathSchema,
   validationStrategySchema,
 } from "@/lib/specs/schemas";
-import {
-  deliveryPlanDocumentSchema,
-  pinnedSpecDocumentPath,
-} from "@/lib/specs/delivery-plan";
-import { lintDeliveryPlan } from "@/lib/specs/delivery-plan-lint";
+import { deliveryPlanDocumentSchema } from "@/lib/specs/delivery-plan";
 import { NATIVE_SDD_GUIDANCE } from "@/lib/specs/native-sdd-guidance";
+import { createMaximalAuthoredWorkflowLaunchFixture } from "@/lib/workflow-graph/testing/maximal-authored-launch";
 import { runCli } from "../../core";
 import type { CliEnv, CliHost } from "../../shared";
-
-/** The spec the published plan-edit example plans delivery for. */
-const PLAN_EXAMPLE_SPEC_SLUG = "self-describing-surface";
-const PLAN_EXAMPLE_SPEC_PATH = pinnedSpecDocumentPath(PLAN_EXAMPLE_SPEC_SLUG);
 
 const env: CliEnv = {
   CC_SERVER_URL: "http://127.0.0.1:4999",
@@ -327,18 +320,11 @@ describe("cctl spec schema", () => {
     ).toHaveLength(1);
   });
 
-  it("publishes the materializer, lint, and evidence registries as one offline guidance document", async () => {
+  it("publishes the lint registry as one offline guidance document", async () => {
     const documents = await readDocuments();
     const guidance = documents.find(({ id }) => id === "guidance");
     const reference = z
       .object({
-        materializerFieldMappings: z.array(
-          z.object({
-            source: z.string(),
-            target: z.string(),
-            transformation: z.string(),
-          }),
-        ),
         lintTaxonomy: z.object({
           evergreen: z.array(
             z.object({ ruleId: z.string(), severity: z.string() }),
@@ -347,85 +333,19 @@ describe("cctl spec schema", () => {
             z.object({ ruleId: z.string(), severity: z.string() }),
           ),
         }),
-        evidenceProducers: z.array(
-          z.object({
-            kind: z.string(),
-            sourceEvent: z.string(),
-            requiresStrategyDeclaration: z.boolean(),
-            detail: z.string(),
-          }),
-        ),
       })
       .parse(guidance?.example);
 
     expect(reference).toEqual(NATIVE_SDD_GUIDANCE);
 
-    expect(reference.materializerFieldMappings).toContainEqual({
-      source: "contexts[].contextId",
-      target: "executionContexts[].id",
-      transformation: "copy",
-    });
-    // The audit found the solo-lane default undocumented: a planner reading
-    // this registry is how the "omit placement and take a lane of your own"
-    // rule becomes learnable outside the materializer's source.
-    expect(reference.materializerFieldMappings).toContainEqual({
-      source: "contexts[].placement",
-      target: "executionContexts[].placement",
-      transformation:
-        "copy when authored; solo lane (context id, full access) when absent",
-    });
     expect(reference.lintTaxonomy.evergreen).toContainEqual({
-      ruleId: "9.7.claim-without-evidence",
-      severity: "blocks_claim",
-    });
-    expect(reference.lintTaxonomy.deliveryPlan).toContainEqual({
-      ruleId: "plan/selected-multi-owned",
+      ruleId: "9.3.uncovered-criterion",
       severity: "blocks_propose",
     });
-    // The generated registry is how a planner authoring from another
-    // repository learns a rule exists at all; a rule missing here refuses at
-    // propose with no surface that ever announced it.
-    expect(reference.lintTaxonomy.deliveryPlan).toContainEqual({
-      ruleId: "plan/spec-source-unreadable",
-      severity: "blocks_propose",
-    });
-    // Placement is the newest thing a planner authors, so the whole placement
-    // family is pinned here rather than sampled: an author who never saw a rule
-    // announced writes the plan that the rule refuses.
     expect(
-      reference.lintTaxonomy.deliveryPlan.filter(({ ruleId }) =>
-        ruleId.startsWith("plan/placement-"),
-      ),
-    ).toEqual([
-      { ruleId: "plan/placement-lane-grammar", severity: "blocks_propose" },
-      {
-        ruleId: "plan/placement-readonly-unsupported",
-        severity: "blocks_propose",
-      },
-      { ruleId: "plan/placement-owned-overlap", severity: "blocks_propose" },
-      { ruleId: "plan/placement-full-shared", severity: "blocks_propose" },
-      { ruleId: "plan/placement-lane-cycle", severity: "blocks_propose" },
-      { ruleId: "plan/placement-closeout-shared", severity: "advisory" },
-    ]);
-    // Placement guidance is the only advisory the plan taxonomy publishes;
-    // everything else refuses at propose.
-    expect(
-      reference.lintTaxonomy.deliveryPlan
-        .filter(({ severity }) => severity === "advisory")
-        .map(({ ruleId }) => ruleId),
-    ).toEqual(["plan/placement-closeout-shared"]);
-    const validatorVerdict = reference.evidenceProducers.find(
-      ({ kind }) => kind === "validator_verdict",
-    );
-    const testRun = reference.evidenceProducers.find(
-      ({ kind }) => kind === "test_run",
-    );
-    expect(testRun).toMatchObject({
-      sourceEvent: "graph-workflow-validation-result",
-      requiresStrategyDeclaration: true,
-    });
-    expect(validatorVerdict?.sourceEvent).toBe(testRun?.sourceEvent);
-    expect(testRun?.detail).toContain("same validation event");
+      reference.lintTaxonomy.evergreen.map(({ severity }) => severity),
+    ).not.toContain("blocks_claim");
+    expect(reference.lintTaxonomy.deliveryPlan).toEqual([]);
   });
 
   /**
@@ -835,33 +755,83 @@ describe("cctl spec schema", () => {
     ).toBe(true);
   });
 
-  /**
-   * The worked example is what a planner copies. An example ranking the plan's
-   * own spec `external-readonly` is exactly the artifact the audited run
-   * learned the unreadable spelling from, so it must satisfy the rule that now
-   * refuses it — an example that fails its own lint reintroduces the defect.
-   */
-  it("shows the plan's own spec as the readable materialized source", async () => {
+  it("ships a direct launch envelope for plan edits", async () => {
     const documents = await readDocuments();
     const example = z
       .object({ document: deliveryPlanDocumentSchema })
       .parse(documents.find(({ id }) => id === "plan-edit")?.example);
-    const sources = example.document.governance.sourcesOfTruth;
-    const specSource = sources.find(
-      (source) => source.locator === PLAN_EXAMPLE_SPEC_PATH,
-    );
+    expect(example.document.launch).toMatchObject({
+      name: "Workflow Graph Builder",
+      definition: {
+        schemaVersion: 1,
+        executionContexts: expect.arrayContaining([
+          expect.objectContaining({ id: "context-implement" }),
+        ]),
+      },
+      layout: {
+        workflowId: "workflow-1",
+        contextPositions: expect.objectContaining({
+          "context-implement": expect.any(Object),
+        }),
+      },
+    });
+    expect(example.document.binding).toMatchObject({
+      dispositions: [
+        { criterionElementId: "crit-schema-per-kind", disposition: "in_scope" },
+      ],
+      claims: [
+        {
+          contextId: "context-implement",
+          criterionElementIds: ["crit-schema-per-kind"],
+        },
+      ],
+    });
+  });
 
-    expect(specSource?.rank).toBe(1);
-    expect(specSource?.accessPolicy).toBe("worktree-relative");
-    expect(
-      lintDeliveryPlan({
-        pinnedRevisionId: "revision-example",
-        specSlug: PLAN_EXAMPLE_SPEC_SLUG,
-        document: example.document,
-        pinnedCriteria: [],
-        deliveredElsewhereVerdicts: [],
-      }).map((finding) => finding.ruleId),
-    ).not.toContain("plan/spec-source-unreadable");
+  it("accepts a maximal ordinary launch without a spec-specific field allowlist", () => {
+    const launch = createMaximalAuthoredWorkflowLaunchFixture();
+    const definition = { ...launch.definition };
+    delete definition.approvalRequired;
+    delete definition.lockedRegions;
+    delete definition.origin;
+
+    const document = deliveryPlanDocumentSchema.parse({
+      schemaVersion: 2,
+      launch: { ...launch, definition },
+      binding: {
+        dispositions: [
+          {
+            criterionElementId: "crit-maximal-launch",
+            disposition: "in_scope",
+            deliveredByExecutionId: null,
+          },
+        ],
+        claims: [
+          {
+            contextId: "context-spawner",
+            criterionElementIds: ["crit-maximal-launch"],
+          },
+        ],
+      },
+    });
+
+    expect(document.launch).toEqual({ ...launch, definition });
+    expect(document.launch.definition).toMatchObject({
+      loopGroups: [expect.objectContaining({ id: "refine" })],
+      parameters: expect.arrayContaining([
+        expect.objectContaining({ name: "ticket", required: true }),
+      ]),
+      executionContexts: expect.arrayContaining([
+        expect.objectContaining({
+          id: "context-spawner",
+          outputSchema: expect.any(Object),
+          circuitBreaker: expect.any(Object),
+        }),
+      ]),
+      edges: expect.arrayContaining([
+        expect.objectContaining({ when: expect.any(Object) }),
+      ]),
+    });
   });
 
   it("states the earliest authoring stage that admits each element kind", async () => {
@@ -873,9 +843,16 @@ describe("cctl spec schema", () => {
     expect(stageOf("criterion")).toBe("requirements");
     expect(stageOf("decision")).toBe("design");
     expect(stageOf("task")).toBe("plan");
-    expect(
-      documents.find((document) => document.id === "task")?.notes.join(" "),
-    ).toMatch(/legacy-only.*spec schema plan-edit/i);
+    // A task element is spec content, and the note has to say so: an author
+    // who reads it as the delivery plan writes ordering and lanes here and
+    // then wonders why nothing runs. Nothing compiles a task element, so the
+    // note must point at `plan-edit` as the surface that does.
+    const taskNotes = documents
+      .find((document) => document.id === "task")
+      ?.notes.join(" ");
+    expect(taskNotes).toMatch(/spec schema plan-edit/i);
+    expect(taskNotes).toMatch(/no task element compiles into it/i);
+    expect(taskNotes).not.toMatch(/legacy compiler|legacy-only/i);
     // A section's stage depends on its role, so the per-role answer is what a
     // caller can act on; a single stage would be a lie for design_narrative.
     expect(stageOf("section")).toBe("requirements");

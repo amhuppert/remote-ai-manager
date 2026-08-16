@@ -1,6 +1,6 @@
 ---
 name: native-sdd-authoring
-description: Author and review native Command Center specs and graph-shaped delivery plans. Use when drafting, linting, proposing, revising, approving, planning, starting, capturing discoveries for, or amending a native spec through cctl spec and its compiled graph-workflow execution.
+description: Author and review native Command Center specs and direct-authored graph delivery plans. Use when drafting, linting, proposing, revising, approving, planning, starting, capturing discoveries for, or amending a native spec through cctl spec and graph-workflow execution.
 ---
 
 # Native SDD Authoring
@@ -37,37 +37,33 @@ of state, and `currentApprovedRevision` is the latest revision whose state is
 approved. Inspect the offline field map and revision semantics with
 `cctl spec schema read-envelopes`.
 
-## One-context-provable criteria
+## Direct-authored delivery launch
 
-Give every selected criterion exactly one owning delivery-plan context. Let that context contain as many ordered tasks as its single validation thesis needs; task boundaries organize work but never manufacture separate validator contracts.
+After design sign-off, open an attempt with `cctl spec plan open <slug>`. Read the bounded receipt with `cctl spec plan get <slug>`, then submit the exact version-2 document with `cctl spec plan edit <slug> --file <plan.json>`. Keep payloads under `.cc/temp/` and use the receipt's `expectedDraftRevision` as the compare-and-swap token.
 
-When proof genuinely spans contexts, split the criterion into independently provable criteria or add one bounded integration context as the sole owner of the combined outcome. Keep the authored context boundary aligned with what one validator can prove from production behavior.
+`cctl spec plan open <slug> --seed-from last` carries the previous candidate's authored launch forward and derives the binding from the delivery delta rather than from the previous author's dispositions: a criterion the last delivery proved and nothing has invalidated auto-proposes `delivered_elsewhere` against the execution that proved it; one whose governing content moved seeds as `pending_reaffirmation`, which a draft may carry and a proposal may not; undelivered, hard-stale, and previously deferred criteria are selected again. Only a human clears a pending reaffirmation, in Spec Studio, at the draft revision they read.
 
-Inspect the plan shape with `cctl spec plan edit --help`. For the generated compile, lint, and evidence registries, run `cctl spec schema guidance`.
+The document is `{ "schemaVersion": 2, "launch": ..., "binding": ... }`. `launch` is the ordinary graph launch, written verbatim as its `name`, `description`, `definition`, and `layout`; no native-SDD parser selects, renames, or reconstructs graph fields. Read the ordinary workflow authoring help for loops, guards, expansion configuration, output schemas, scoped invariants, per-context validation and breakers, layout, and required inputs. Use `cctl spec schema guidance` for the current lint and evidence reference.
 
-## Typed integration/closeout ownership
+## Stable-source claims and dynamic accountability
 
-Type a criterion-owning implementation context as `delivery`. Admit a context with no selected criterion only by typing it `integration` or `closeout` and giving it its own observable acceptance contract. Name the production integration or closeout result the context owns; a prerequisite apology or task list is not a contract.
+`binding` gives every pinned criterion one disposition and records claims against stable authored source contexts. A selected criterion needs an existential claim: at least one stable source must be accountable. Dynamic contexts, expansion, must-run coverage, and execution outcomes remain owned by graph semantics; never infer them in the spec document from topology or lineage.
 
-Keep criterion ownership, production-wiring ownership, proof intent, and deterministic validation selection explicit in the authored plan. Inspect the document with `cctl spec schema delivery-plan`; for the generated compile, lint, and evidence registries, run `cctl spec schema guidance`.
+There is no modality-proof field. Validators and graph execution outcomes provide the evidence that the delivery gate reads. Inspect the exact binding and lifecycle contract with `cctl spec plan edit --help`, `cctl spec plan get --help`, and `cctl spec schema guidance`.
 
-## Placement: shared lanes and disjoint ownership
+## Finalized proposal, sign-off, and one-off start
 
-Every context you leave placement-free takes its own solo lane — one worktree, one join, one merge. When a group of contexts is already edge-ordered into a chain, put the whole chain on one lane: it then costs one worktree and one join instead of N and N, and its members may write the same paths freely, because ordering is what makes sharing safe.
+Run `cctl spec plan preview <slug> --stage draft` to review authored bytes before proposal. After `cctl spec plan propose <slug>`, inspect `--stage proposed`: it is the immutable server-finalized envelope, including injected sources, locks, origin, `approvalRequired: false`, and the `candidateId` and `candidateHash` that sign-off and launch both address. A draft never has a candidate identity; reopen a stale proposal, edit, and propose its replacement.
 
-Members of one lane that no edge orders must be `mode: "owned"` with disjoint `ownedPaths`; a `full` member unordered against a write-capable lane-mate is refused outright. Ownership is compared as segment-boundary prefix cover at directory grain — `src/lib` covers everything beneath it but not the sibling `src/libraries`, and there are no globs — so two contexts that can run at the same time must not claim prefixes that cover each other. When several members need one shared surface, home it upstream in a context they all depend on rather than splitting that file's ownership by intent.
+Only a human can sign off. After sign-off, run `cctl spec start <slug> --inputs .cc/temp/inputs.json` for the one-off start; the file is the exact JSON object sent to the shared graph start boundary for ordinary input validation. `--park` is only prelaunch review and creates no execution. Read `cctl spec start --help` and `cctl spec schema guidance` before launch.
 
-`readOnly` is not yet authorable at the plan tier. A read-only context delivers only through a structured output contract, and the delivery-plan document cannot author one, so lint refuses the grade at propose and names the gap instead of letting a launch discover it. That puts the reserved `session` lane out of reach here too — it admits read-only contexts only — so every lane a plan names is a lane it pays a worktree for. When the shape is unclear, omit `placement` entirely: the materializer gives that context a solo lane with full access, which is the pre-placement behavior byte for byte and never refuses.
+## Ordinary live edit, capture, and replacement
 
-The rest of the model — the three grades, the ownership envelope an implementer runs under, and the accept-time refusal codes — is the graph-workflow-planning skill's "Lane Placement and File Ownership" section; read it before authoring a lane several contexts share. Inspect the authored field with `cctl spec plan edit --help` and `cctl spec schema delivery-plan`. For the generated compile, lint, and evidence registries, run `cctl spec schema guidance`.
+After launch, use the ordinary `cctl workflow live edit` surface for a running execution's working copy. It never changes the immutable approved candidate. Use `cctl spec capture` for discovered delivery work: without `--blocking-reason` it records follow-up work; with that reason it abandons the run and opens a replacement attempt. Before launch, edit a draft or reopen the proposed attempt instead of trying to capture work.
 
-## Ranked sources of truth a lane can read
+Direct launch ends in a destructive cutover: the dedicated legacy-retirement boundary removes the inactive historical delivery-planning runtime and obsolete plan command surfaces. Do not retain or reintroduce a parallel reader, compatibility branch, or alternate plan dialect after that boundary.
 
-Keep the plan's own spec ranked first exactly as `cctl spec plan open` seeded it: locator `.cc/graph-workflow-docs/spec/<slug>.md`, `accessPolicy: "worktree-relative"`. Launch materializes the pinned revision into that path in every lane worktree, so implementers and validators can open the contract they are judged against. Never re-point that entry at a `cctl spec` invocation; a command is not a locator, and nothing in a lane can read it as a path.
-
-Reserve `external-readonly` for sources that genuinely live outside the worktree — another repository, a URL, an issue attachment. The charter gates those behind explicit human permission, so spelling your own spec that way leaves rank 1 unreadable and every validator judging from memory. Author the rest of `governance.sourcesOfTruth` freely; a source a prior attempt carried forward comes back beneath the seeded entry with its rank shifted, and `plan/spec-source-unreadable` blocks propose until an unreadable duplicate of this spec is retired.
-
-Inspect the seeded entry with `cctl spec plan open --help` and the document with `cctl spec schema plan-edit`. For the generated compile, lint, and evidence registries, run `cctl spec schema guidance`.
+Inspect lifecycle refusals and bounded file payloads with `cctl workflow live edit --help`, `cctl spec capture --help`, and `cctl spec schema guidance`.
 
 ## Removal and reintroduction symmetry
 
@@ -75,7 +71,7 @@ Remove draft elements by handle with `cctl spec remove`. When a surviving elemen
 
 Treat removal as reversible history, not deletion. Reintroduce the same element id with `"reintroduceHistorical": true` and `"baseElementVersion": null`; this restores its original number and handle. Follow the exact recovery printed by the removal receipt.
 
-Inspect both acts with `cctl spec remove --help`, `cctl spec draft --help`, and `cctl spec schema element-batch`. For the generated compile, lint, and evidence registries, run `cctl spec schema guidance`.
+Inspect both acts with `cctl spec remove --help`, `cctl spec draft --help`, and `cctl spec schema element-batch`. For the current lint and evidence reference, run `cctl spec schema guidance`.
 
 ## Withdraw-proposal vs dismiss-superseded
 
@@ -83,7 +79,7 @@ Use `cctl spec withdraw-proposal` only to take back a proposal authored by the c
 
 Use dismiss-superseded only for a stranded proposal that a later approved lineage forked past. This is a human act, records the superseding revision and reason, and opens no draft. Never substitute withdrawal when stale content must stay closed.
 
-Inspect the distinct guards and outcomes with `cctl spec withdraw-proposal --help` and `cctl spec dismiss-superseded --help`. For the generated compile, lint, and evidence registries, run `cctl spec schema guidance`.
+Inspect the distinct guards and outcomes with `cctl spec withdraw-proposal --help` and `cctl spec dismiss-superseded --help`. For the current lint and evidence reference, run `cctl spec schema guidance`.
 
 ## Element-id/handle/version semantics
 
@@ -91,7 +87,7 @@ Treat an element id as its globally unique, immutable identity — unique across
 
 Treat `elementVersion` as a compare-and-swap token local to one revision. Versions restart when approved content is copied into a new amendment revision, so re-read every element before writing and never compare revisions by element version.
 
-Inspect the write contract with `cctl spec draft --help` and the relevant `cctl spec schema <document>` leaf. For the generated compile, lint, and evidence registries, run `cctl spec schema guidance`.
+Inspect the write contract with `cctl spec draft --help` and the relevant `cctl spec schema <document>` leaf. For the current lint and evidence reference, run `cctl spec schema guidance`.
 
 ## Importing a spec authored outside CC
 
@@ -99,11 +95,11 @@ Bring a spec authored outside CC in whole with `cctl spec import --file <bundle.
 
 Run the act in one order. Check `cctl spec list` and `cctl spec search --all <query>` and stop if an existing spec already covers the work. Author the bundle from the source documents yourself: you are the parser, and the server never reads a source file. Iterate with `--dry-run` until it reports no blocking finding and prints the handles it would allocate, so bundle-local refs resolve against the real numbering. Then import once and read the receipt. Treat a refusal as unfinished work — nothing was written, so follow the named remedy and import again.
 
-Import creates new specs only; change an existing spec with `cctl spec amend` instead. Import is never an approval shortcut for work authored here — content drafted in conversation earns its approval through `cctl spec propose` and human sign-off. Import is also not the legacy delivery-plan seed: `cctl spec plan open <slug> --seed-from last` seeds delivery on a spec that already exists here, while import is for content that has never been in CC at all.
+Import creates new specs only; change an existing spec with `cctl spec amend` instead. Import is never an approval shortcut for work authored here — content drafted in conversation earns its approval through `cctl spec propose` and human sign-off. Once the imported spec is ready, use its ordinary direct-authored delivery lifecycle.
 
 Author the bundle so a delivered import owes a human no review pass. `delivered` defaults to true and records external-delivery provenance rather than machine proof, which the delivery gate never reads; opt out with `"delivered": false` when the source carries no acceptance criterion to record delivery against. Import a question already answered when the source holds the answer, and import an assumption with its real disposition — confirmed included — when the source shows it held. Carrying a source's disposition across is provenance capture, not the human disposition act: disposing an assumption here stays a Spec Studio act, so never invent a disposition the source does not show. An import authored this way arrives with zero open review items.
 
-Inspect the act with `cctl spec import --help` and its document with `cctl spec schema import-bundle`. For the generated compile, lint, and evidence registries, run `cctl spec schema guidance`.
+Inspect the act with `cctl spec import --help` and its document with `cctl spec schema import-bundle`. For the current lint and evidence reference, run `cctl spec schema guidance`.
 
 ## Consistency sweep and `propose --notes` protocol
 
@@ -111,7 +107,7 @@ Before proposing, run `cctl spec lint`, repair its consistency findings, and swe
 
 For every review repair round, write a bounded notes file that maps prior findings to dispositions, names changed elements, and states deliberate non-changes. Attach it with `cctl spec propose <slug> --notes <notes.md>` so the reviewer starts from the disposition and diff rather than reconstructing intent.
 
-Inspect the loop with `cctl spec lint --help`, `cctl spec diff --help`, and `cctl spec propose --help`. For the generated compile, lint, and evidence registries, run `cctl spec schema guidance`.
+Inspect the loop with `cctl spec lint --help`, `cctl spec diff --help`, and `cctl spec propose --help`. For the current lint and evidence reference, run `cctl spec schema guidance`.
 
 ## Finding classes and bounded terminal rounds
 
@@ -119,20 +115,10 @@ Classify each review finding as `new_risk`, `regression`, or `consistency_drift`
 
 Call a round terminal only when every consistency finding is repaired, the mechanical pass is clean, no new-risk or regression finding remains, and the repair diff contains no semantic expansion. A semantic expansion always receives another bounded changed-surface review.
 
-Inspect the current lint and diff surfaces with `cctl spec lint --help` and `cctl spec diff --help`. For the generated compile, lint, and evidence registries, run `cctl spec schema guidance`.
-
-## Three capture paths
-
-Before launch, edit a draft plan or reopen a frozen plan; capture is not a prelaunch planning verb. After launch, choose exactly one path for discovered delivery work:
-
-1. Record non-blocking work with `cctl spec capture` and let the current run continue on its pinned scope.
-2. Pass `--blocking-reason` to capture the work, abandon the current run, and open a seeded replacement plan.
-3. Add intentional current-run work through `cctl workflow live amend`, with its actor, rationale, policy admission, and old/new hashes audited while the approved candidate remains immutable.
-
-Inspect the choice with `cctl spec capture --help` and `cctl workflow live amend --help`. For the generated compile, lint, and evidence registries, run `cctl spec schema guidance`.
+Inspect the current lint and diff surfaces with `cctl spec lint --help` and `cctl spec diff --help`. For the current lint and evidence reference, run `cctl spec schema guidance`.
 
 ## Notify only from success receipts
 
 Notify the user that an act completed only after its success receipt proves the durable transition occurred. Treat a refusal, redirect, partial-progress receipt, or transport ambiguity as unfinished work: follow the named remedy, then notify only from the eventual success receipt.
 
-Use `cctl <command> --help` when a receipt redirects the flow, and use `cctl spec status --help` to re-read durable state. For the generated compile, lint, and evidence registries, run `cctl spec schema guidance`.
+Use `cctl <command> --help` when a receipt redirects the flow, and use `cctl spec status --help` to re-read durable state. For the current lint and evidence reference, run `cctl spec schema guidance`.

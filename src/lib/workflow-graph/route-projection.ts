@@ -649,12 +649,14 @@ export function projectRoutes<
 export function projectMustRunContextIds(topology: {
   readonly executionContexts: readonly RouteProjectionContext[];
   readonly edges: readonly RouteProjectionEdge[];
+  readonly loops?: readonly RouteProjectionLoop[] | undefined;
 }): ReadonlySet<string> {
   return projectRoutes({
     executionContexts: topology.executionContexts,
     edges: topology.edges,
     contextStates: {},
     contextOutputs: {},
+    loops: topology.loops,
   }).mustRunContextIds;
 }
 

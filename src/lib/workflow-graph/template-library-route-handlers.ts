@@ -5,8 +5,12 @@ import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/
 import type { ApiError } from "@/lib/api/errors";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
-import { validateWorkflowPlan } from "@/lib/workflows/plan-validation";
 import { resolveWorkflowDefinition } from "./resolve-config";
+import { admitAuthoredWorkflowLaunch } from "./authored-launch-admission";
+import {
+  type AssignmentReferenceChecker,
+  WORKFLOW_ASSIGNMENT_REFERENCE_INVALID_CODE,
+} from "./assignment-references";
 import {
   createWorkflowStorageService,
   type WorkflowDefinitionDraft,
@@ -17,7 +21,10 @@ import {
   type TemplateLibraryItem,
 } from "./template-library-service";
 import { runDefinitionEditRequest } from "@/lib/workflows/definition-edit-handler";
-import { assignmentReferenceRefusal } from "@/lib/workflows/assignment-reference-refusal";
+import {
+  assignmentReferenceRefusal,
+  assignmentReferenceRefusalBody,
+} from "@/lib/workflows/assignment-reference-refusal";
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -43,6 +50,7 @@ export interface TemplateLibraryRouteDeps {
     draft: WorkflowDefinitionDraft,
   ): Promise<WorkflowDefinitionRecord>;
   deleteGlobal(workflowId: string): Promise<boolean>;
+  assignmentReferences?: AssignmentReferenceChecker;
 }
 
 const defaultStorage = createWorkflowStorageService();
@@ -64,17 +72,24 @@ const defaultDeps: TemplateLibraryRouteDeps = {
 };
 
 /**
- * The global tier accepts a plan through the SAME validator as the per-project
- * create/replace routes (`validateWorkflowPlan`), not a local re-parse. That is
+ * The global tier accepts a plan through the same admission service as the
+ * per-project create/replace routes, not a local re-parse. That is
  * what makes a semantic rejection here carry a JSON-path locator: storage's
  * accept-time gate can only throw a comma-joined list of error CODES, which
  * names neither the offending context nor the field inside it.
  */
 function invalidPlanResponse(
   issues: ReadonlyArray<{ path: string; message: string }>,
+  code?: string,
 ): Response {
   return NextResponse.json(
-    { error: "Workflow plan is invalid", issues },
+    code === WORKFLOW_ASSIGNMENT_REFERENCE_INVALID_CODE
+      ? assignmentReferenceRefusalBody(issues)
+      : {
+          error: "Workflow plan is invalid",
+          ...(code ? { code } : {}),
+          issues,
+        },
     { status: 400 },
   );
 }
@@ -82,6 +97,7 @@ function invalidPlanResponse(
 export function createTemplateLibraryRouteHandlers(
   deps: TemplateLibraryRouteDeps = defaultDeps,
 ) {
+  const assignmentReferences = deps.assignmentReferences;
   async function LIST_TEMPLATES(
     _request: Request,
     context: RouteContext,
@@ -106,15 +122,23 @@ export function createTemplateLibraryRouteHandlers(
     request: Request,
     _context: RouteContext,
   ): Promise<Response> {
-    const validation = validateWorkflowPlan(
+    const globalConfig = await deps.readConfig();
+    const validation = await admitAuthoredWorkflowLaunch(
       await request.json().catch(() => null),
+      {
+        caller: "global-template-create",
+        documentScope: { kind: "global" },
+        globalValidation: globalConfig.validation,
+        workflowDefaults: globalConfig.workflowDefaults,
+        assignmentReferences,
+      },
     );
     if (!validation.ok) {
-      return invalidPlanResponse(validation.issues);
+      return invalidPlanResponse(validation.issues, validation.code);
     }
 
     try {
-      const item = await deps.createGlobal(validation.draft);
+      const item = await deps.createGlobal(validation.launch);
       return NextResponse.json({ item }, { status: 201 });
     } catch (error) {
       const refusal = assignmentReferenceRefusal(error);
@@ -147,15 +171,23 @@ export function createTemplateLibraryRouteHandlers(
     context: RouteContext,
   ): Promise<Response> {
     const { workflowId = "" } = await context.params;
-    const validation = validateWorkflowPlan(
+    const globalConfig = await deps.readConfig();
+    const validation = await admitAuthoredWorkflowLaunch(
       await request.json().catch(() => null),
+      {
+        caller: "global-template-replace",
+        documentScope: { kind: "global" },
+        globalValidation: globalConfig.validation,
+        workflowDefaults: globalConfig.workflowDefaults,
+        assignmentReferences,
+      },
     );
     if (!validation.ok) {
-      return invalidPlanResponse(validation.issues);
+      return invalidPlanResponse(validation.issues, validation.code);
     }
 
     try {
-      const item = await deps.updateGlobal(workflowId, validation.draft);
+      const item = await deps.updateGlobal(workflowId, validation.launch);
       return NextResponse.json({ item });
     } catch (error) {
       const refusal = assignmentReferenceRefusal(error);
@@ -181,6 +213,16 @@ export function createTemplateLibraryRouteHandlers(
       rawBody,
       notFoundError: "Template not found",
       loadRecord: () => deps.getGlobal(workflowId),
+      admitLaunch: async (launch) => {
+        const globalConfig = await deps.readConfig();
+        return admitAuthoredWorkflowLaunch(launch, {
+          caller: "global-template-edit",
+          documentScope: { kind: "global" },
+          globalValidation: globalConfig.validation,
+          workflowDefaults: globalConfig.workflowDefaults,
+          assignmentReferences,
+        });
+      },
       persist: (draft) => deps.updateGlobal(workflowId, draft),
     });
   }

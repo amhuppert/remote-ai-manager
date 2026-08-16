@@ -150,7 +150,6 @@ function makeHarness(initial: GraphWorkflowExecution): Harness {
         charterUpdated.push(input);
         return { events: [], pushes: [] };
       },
-      publishExecutionAmended: () => ({ events: [], pushes: [] }),
       getSession: () =>
         Promise.resolve({
           worktreePath: "/wt/session",
@@ -183,6 +182,37 @@ function makeRequest(
 }
 
 describe("applyLiveEditsToActiveExecution", () => {
+  it("loads persisted execution authority before entering ordinary operation and frontier evaluation", async () => {
+    const harness = makeHarness(createWorkflowExecution({ status: "paused" }));
+    const calls: string[] = [];
+    harness.deps.executionContract = {
+      validateDefinition: () => ({ ok: true }),
+      loadLiveEdit: () => {
+        calls.push("binding-loaded");
+        return {
+          validateOperation: () => {
+            calls.push("operation-evaluated");
+            return { ok: true };
+          },
+          accountabilityCoverageGroups: [],
+        };
+      },
+      validateTaskCompletion: () => ({ ok: true }),
+      deriveContextAcceptanceCriteria: () => ({
+        ok: true,
+        acceptanceCriteriaByContextId: {},
+      }),
+    };
+
+    const outcome = await applyLiveEditsToActiveExecution(
+      { projectPath: "/p", sessionName: "s", request: makeRequest() },
+      harness.deps,
+    );
+
+    expect(outcome.ok).toBe(true);
+    expect(calls).toEqual(["binding-loaded", "operation-evaluated"]);
+  });
+
   it("applies a batch with the server-derived plan-repair source and bumps liveRevision once", async () => {
     const harness = makeHarness(createWorkflowExecution({ status: "paused" }));
 
@@ -435,7 +465,7 @@ describe("applyLiveEditsToActiveExecution", () => {
     ).toBe(SECURITY_V2);
   });
 
-  it("applies an amendment when the execution pauses before the serialized mutation", async () => {
+  it("applies a live edit when the execution pauses before the serialized mutation", async () => {
     const initial = createWorkflowExecution({
       status: "running",
       workingDefinition: createResolvedWorkflowDefinition({
@@ -466,30 +496,12 @@ describe("applyLiveEditsToActiveExecution", () => {
           operations: [
             {
               type: "add-task",
-              id: "task-amended",
+              id: "task-added",
               contextId: "context-implement",
-              title: "Amended task",
-              instructions: "Verify the paused amendment path.",
+              title: "Added task",
+              instructions: "Verify the paused live-edit path.",
             },
           ],
-          amendment: {
-            reason: "The running plan needs a verification task.",
-            actor: "human",
-            policyActor: { kind: "human" },
-            operations: [
-              {
-                type: "add-task",
-                id: "task-amended",
-                contextId: "context-implement",
-                title: "Amended task",
-                instructions: "Verify the paused amendment path.",
-              },
-            ],
-            addedContextIds: [],
-            addedTaskIds: ["task-amended"],
-            addedEdgeIds: [],
-            hashDefinition: () => hash("c"),
-          },
         }),
       },
       harness.deps,
@@ -502,7 +514,7 @@ describe("applyLiveEditsToActiveExecution", () => {
     expect(harness.current().liveRevision).toBe(2);
     expect(
       harness.current().workingDefinition.tasks.map(({ id }) => id),
-    ).toContain("task-amended");
+    ).toContain("task-added");
     expect(harness.liveEditApplied).toHaveLength(1);
   });
 
@@ -528,30 +540,12 @@ describe("applyLiveEditsToActiveExecution", () => {
           operations: [
             {
               type: "add-task",
-              id: "task-amended",
+              id: "task-added",
               contextId: "context-implement",
-              title: "Amended task",
+              title: "Added task",
               instructions: "Do work the running context did not start with.",
             },
           ],
-          amendment: {
-            reason: "The running plan needs another implementation task.",
-            actor: "human",
-            policyActor: { kind: "human" },
-            operations: [
-              {
-                type: "add-task",
-                id: "task-amended",
-                contextId: "context-implement",
-                title: "Amended task",
-                instructions: "Do work the running context did not start with.",
-              },
-            ],
-            addedContextIds: [],
-            addedTaskIds: ["task-amended"],
-            addedEdgeIds: [],
-            hashDefinition: () => hash("d"),
-          },
         }),
       },
       harness.deps,
@@ -561,7 +555,7 @@ describe("applyLiveEditsToActiveExecution", () => {
     if (outcome.ok || outcome.kind !== "rejected") return;
     expect(outcome.failure.code).toBe("requires_pause");
     expect(harness.current().workingDefinition.tasks).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: "task-amended" })]),
+      expect.arrayContaining([expect.objectContaining({ id: "task-added" })]),
     );
   });
 

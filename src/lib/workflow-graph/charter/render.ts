@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { truncate } from "@/lib/shared/truncate";
 import type {
   CharterAmendment,
+  CharterInvariant,
   SourceOfTruth,
   WorkflowCharter,
 } from "@/lib/workflows/charter-schemas";
@@ -24,6 +25,36 @@ const APPLICATION_RULE = [
 
 function rankedSources(charter: WorkflowCharter): SourceOfTruth[] {
   return [...charter.sourcesOfTruth].sort((a, b) => a.rank - b.rank);
+}
+
+function hasScopedInvariants(
+  invariants: readonly CharterInvariant[] | undefined,
+): boolean {
+  return (
+    invariants?.some((invariant) => invariant.appliesTo !== undefined) ?? false
+  );
+}
+
+function invariantHeading(
+  invariants: readonly CharterInvariant[] | undefined,
+): string {
+  return hasScopedInvariants(invariants)
+    ? "Invariants (global and context-scoped)"
+    : "Invariants (hold for every change)";
+}
+
+function renderInvariant(
+  invariant: CharterInvariant,
+  showScopes: boolean,
+): string {
+  if (!showScopes) {
+    return `\`${invariant.id}\` — ${invariant.statement}`;
+  }
+
+  const scope = invariant.appliesTo
+    ? `applies to: ${invariant.appliesTo.contextIds.join(", ")}`
+    : "global";
+  return `\`${invariant.id}\` — ${invariant.statement} (${scope})`;
 }
 
 function renderDigestSourceLine(source: SourceOfTruth): string {
@@ -76,13 +107,14 @@ export function renderCharterDigest(
   ];
 
   // Invariants render ahead of the source hierarchy: they are active per-change
-  // obligations for every context, not precedence bookkeeping.
+  // obligations, not precedence bookkeeping.
   if (charter.invariants && charter.invariants.length > 0) {
+    const showScopes = hasScopedInvariants(charter.invariants);
     sections.push(
       [
-        "## Invariants (hold for every change)",
+        `## ${invariantHeading(charter.invariants)}`,
         ...charter.invariants.map(
-          (invariant) => `- \`${invariant.id}\` — ${invariant.statement}`,
+          (invariant) => `- ${renderInvariant(invariant, showScopes)}`,
         ),
       ].join("\n"),
     );
@@ -174,13 +206,14 @@ export function renderCharterMarkdown(
   charter: WorkflowCharter,
   amendments: readonly CharterAmendment[] = [],
 ): string {
+  const showInvariantScopes = hasScopedInvariants(charter.invariants);
   const sections: Array<string | null> = [
     "# Workflow Charter",
     `## Mission\n${charter.mission}`,
     renderBulletSection(
-      "Invariants (hold for every change)",
-      charter.invariants?.map(
-        (invariant) => `\`${invariant.id}\` — ${invariant.statement}`,
+      invariantHeading(charter.invariants),
+      charter.invariants?.map((invariant) =>
+        renderInvariant(invariant, showInvariantScopes),
       ),
     ),
     renderBulletSection("Conventions", charter.conventions),

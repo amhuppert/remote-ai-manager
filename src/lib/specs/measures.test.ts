@@ -231,6 +231,23 @@ const specEvents: SpecMeasureEvent[] = [
       source: "execution_ingest",
     },
   },
+  {
+    id: 18,
+    specId,
+    occurredAt: "2026-07-18T13:04:00.000Z",
+    eventType: "spec-execution-changed",
+    payload: {
+      kind: "delivery-verdict-recorded",
+      verdictId: "delivery-verdict-1",
+      criterionId: "criterion-1",
+      revisionId: "revision-1",
+      executionId: "execution-1",
+      workflowExecutionId: "workflow-execution-1",
+      candidateId: "candidate-1",
+      candidateHash: `sha256:${"a".repeat(64)}`,
+      satisfyingContextId: "stable-spawner",
+    },
+  },
 ];
 
 const workflowEvents: LinkedWorkflowMeasureEvent[] = [
@@ -254,7 +271,7 @@ const workflowEvents: LinkedWorkflowMeasureEvent[] = [
 
 describe("measures", () => {
   it("exposes the frozen measure definitions version", () => {
-    expect(MEASURE_DEFINITIONS_VERSION).toBe("native-sdd-measures-v1");
+    expect(MEASURE_DEFINITIONS_VERSION).toBe("native-sdd-measures-v2");
   });
 
   it("computes requirement-caused rework from attributed events only", () => {
@@ -287,25 +304,28 @@ describe("measures", () => {
     );
   });
 
-  it("counts a valid human-proof chain independently from its task commit", () => {
+  it("counts a stable authored-context verdict without task-grain proof", () => {
     const events: SpecMeasureEvent[] = [
       ...specEvents,
       {
-        id: 18,
+        id: 19,
         specId,
         occurredAt: "2026-07-18T13:03:01.000Z",
         eventType: "spec-evidence-changed",
         payload: {
-          kind: "proof-verdict-recorded",
-          verdictId: "verdict-3",
+          kind: "delivery-verdict-recorded",
+          verdictId: "delivery-verdict-3",
           criterionId: "criterion-3",
           revisionId: "revision-1",
-          evidenceIds: ["evidence-3"],
-          valid: true,
+          executionId: "execution-1",
+          workflowExecutionId: "workflow-execution-1",
+          candidateId: "candidate-1",
+          candidateHash: `sha256:${"a".repeat(64)}`,
+          satisfyingContextId: "stable-orchestrator",
         },
       },
       {
-        id: 19,
+        id: 20,
         specId,
         occurredAt: "2026-07-18T13:03:02.000Z",
         eventType: "spec-execution-changed",
@@ -319,19 +339,7 @@ describe("measures", () => {
         },
       },
     ];
-    const linkedEvents: LinkedWorkflowMeasureEvent[] = [
-      ...workflowEvents,
-      {
-        id: 3,
-        occurredAt: "2026-07-18T12:56:00.000Z",
-        eventType: "task-commit-recorded",
-        executionId: "execution-1",
-        taskId: "task-3",
-        commitSha: "task-3-sha",
-      },
-    ];
-
-    expect(computeTraceabilityCompleteness(events, linkedEvents)).toEqual({
+    expect(computeTraceabilityCompleteness(events, workflowEvents)).toEqual({
       deliveredInScopeCriterionCount: 3,
       completeChainCount: 2,
       share: 2 / 3,
@@ -351,7 +359,7 @@ describe("measures", () => {
 
   it("computes all four measures from the same retained event fixtures", () => {
     expect(computeSpecMeasures(specEvents, workflowEvents)).toEqual({
-      definitionsVersion: "native-sdd-measures-v1",
+      definitionsVersion: "native-sdd-measures-v2",
       requirementCausedRework: computeRequirementCausedRework(specEvents),
       approvalFriction: computeApprovalFriction(specEvents),
       traceabilityCompleteness: computeTraceabilityCompleteness(

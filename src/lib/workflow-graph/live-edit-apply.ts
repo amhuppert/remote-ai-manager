@@ -42,19 +42,13 @@ import { assignmentProfileBlockOptions } from "./role-instructions";
 import type {
   GraphWorkflowEventDelivery,
   PublishCharterUpdatedInput,
-  PublishExecutionAmendedInput,
   PublishLiveEditAppliedInput,
 } from "./execution-events";
 import { CHARTER_DOCUMENT_PATH, renderCharterMarkdown } from "./charter/render";
-import { createRegisteredGraphExecutionContract } from "./execution-contract-port";
 import {
-  admitWorkflowExecutionAmendment,
-  isWorkflowExecutionAmendableStatus,
-  workflowExecutionAmendmentRefusalInstruction,
-  type WorkflowAmendmentActor,
-  type WorkflowAmendmentOperation,
-  type WorkflowAmendmentPolicyBasis,
-} from "./execution-amendment";
+  createRegisteredGraphExecutionContract,
+  type GraphExecutionContract,
+} from "./execution-contract-port";
 import type { MutateActiveResult } from "./execution-repository";
 import { classifyExecutionEditability } from "./lifecycle-classifier";
 import {
@@ -208,7 +202,6 @@ export async function buildDefaultLiveEditDeps(
       );
     },
     now: () => new Date().toISOString(),
-    executionContract: createRegisteredGraphExecutionContract(),
   };
 }
 
@@ -252,29 +245,6 @@ export interface LiveEditApplyRequest {
   source: LiveEditSource;
   dryRun?: boolean;
   operations: WorkflowLiveEditOperation[];
-  /**
-   * Present only for the dedicated audited amendment (`cctl workflow live
-   * amend`). The audit row is emitted INSIDE the same mutation as the working
-   * definition change, so a launched definition can never diverge from its
-   * approved candidate without the record that explains the divergence
-   * (`audited-transitions`). Every field here is server-derived; the amend
-   * route builds it, and the generic runtime-edits route never sets it.
-   */
-  amendment?: LiveEditAmendmentAudit;
-}
-
-export interface LiveEditAmendmentAudit {
-  reason: string;
-  actor: string;
-  policyActor: WorkflowAmendmentActor;
-  operations: WorkflowAmendmentOperation[];
-  addedContextIds: string[];
-  addedTaskIds: string[];
-  addedEdgeIds: string[];
-  /** Hash the working definition before and after, in one implementation. */
-  hashDefinition(
-    definition: GraphWorkflowExecution["workingDefinition"],
-  ): string;
 }
 
 export type LiveEditApplyOutcome =
@@ -286,7 +256,6 @@ export type LiveEditApplyOutcome =
       dryRun: boolean;
       /** The committed execution on an apply; null on a dry run. */
       execution: GraphWorkflowExecution | null;
-      amendmentPolicyBasis: WorkflowAmendmentPolicyBasis | null;
     }
   | { ok: false; kind: "no_active_execution" }
   | { ok: false; kind: "rejected"; failure: LiveEditFailure };
@@ -304,6 +273,7 @@ export interface LiveEditApplyServiceDeps {
     ) => MutateActiveResult | GraphWorkflowExecution,
   ): Promise<GraphWorkflowExecution>;
   buildLiveEditDeps(projectPath: string): Promise<LiveEditDeps>;
+  executionContract?: GraphExecutionContract;
   /**
    * Compose and hash the snapshot for every assignment this batch introduces,
    * BEFORE the serialized mutation (D10). Library resolution is async and the
@@ -319,10 +289,6 @@ export interface LiveEditApplyServiceDeps {
   ): GraphWorkflowEventDelivery;
   publishCharterUpdated(
     input: PublishCharterUpdatedInput,
-  ): GraphWorkflowEventDelivery;
-  /** Optional because generic live-edit callers do not emit amendment audits. */
-  publishExecutionAmended?(
-    input: PublishExecutionAmendedInput,
   ): GraphWorkflowEventDelivery;
   getSession(
     projectPath: string,
@@ -346,7 +312,6 @@ type LiveEditGateResult =
       ok: true;
       execution: GraphWorkflowExecution;
       affectedContextIds: string[];
-      amendmentPolicyBasis: WorkflowAmendmentPolicyBasis | null;
     }
   | { ok: false; failure: LiveEditFailure };
 
@@ -371,7 +336,14 @@ function evaluateLiveEditRequest(
   execution: GraphWorkflowExecution,
   request: LiveEditApplyRequest,
   liveEditDeps: LiveEditDeps,
+  executionContract: GraphExecutionContract,
 ): LiveEditGateResult {
+  const loadedExecutionContract = executionContract.loadLiveEdit(execution);
+  const boundLiveEditDeps: LiveEditDeps = {
+    ...liveEditDeps,
+    executionContract: loadedExecutionContract,
+  };
+
   if (request.executionId !== execution.id) {
     return {
       ok: false,
@@ -395,21 +367,6 @@ function evaluateLiveEditRequest(
     };
   }
 
-  if (
-    request.amendment !== undefined &&
-    !isWorkflowExecutionAmendableStatus(execution.status)
-  ) {
-    return {
-      ok: false,
-      failure: {
-        status: 409,
-        code: "not_running",
-        error: `execution "${execution.id}" is ${execution.status}; only a running or paused execution can be amended`,
-        instruction: workflowExecutionAmendmentRefusalInstruction(execution),
-      },
-    };
-  }
-
   const editability = classifyExecutionEditability(execution);
   if (editability.kind === "not-editable") {
     return {
@@ -422,40 +379,11 @@ function evaluateLiveEditRequest(
     };
   }
 
-  const amendmentAdmission =
-    request.amendment === undefined
-      ? null
-      : admitWorkflowExecutionAmendment(
-          execution,
-          request.amendment.operations,
-          request.amendment.policyActor,
-        );
-  if (amendmentAdmission?.ok === false) {
-    return {
-      ok: false,
-      failure: {
-        status: 409,
-        code: amendmentAdmission.code,
-        error: amendmentAdmission.error,
-        instruction: amendmentAdmission.instruction,
-      },
-    };
-  }
-
   const applied = applyLiveExecutionEdits(
     execution,
     { operations: request.operations, source: request.source },
-    liveEditDeps,
-    amendmentAdmission === null
-      ? {}
-      : {
-          additiveAmendment: true,
-          ...(amendmentAdmission.addContextSeed === undefined
-            ? {}
-            : {
-                amendmentContextSeed: amendmentAdmission.addContextSeed,
-              }),
-        },
+    boundLiveEditDeps,
+    {},
   );
   if (!applied.ok) {
     return {
@@ -463,7 +391,7 @@ function evaluateLiveEditRequest(
       failure: {
         status:
           applied.code === "region_locked" ||
-          applied.code === "spec_grouping_frozen"
+          applied.code === "contract_refused"
             ? 409
             : 400,
         code: applied.code,
@@ -478,7 +406,6 @@ function evaluateLiveEditRequest(
     ok: true,
     execution: applied.execution,
     affectedContextIds: applied.affectedContextIds,
-    amendmentPolicyBasis: amendmentAdmission?.policyBasis ?? null,
   };
 }
 
@@ -503,6 +430,8 @@ export async function applyLiveEditsToActiveExecution(
   deps: LiveEditApplyServiceDeps,
 ): Promise<LiveEditApplyOutcome> {
   const { projectPath, sessionName, request } = input;
+  const executionContract =
+    deps.executionContract ?? createRegisteredGraphExecutionContract();
 
   // Preparation first (D10). A dangling reference fails here, where the op that
   // carried it is still known, rather than as a throw out of a reducer that has
@@ -537,7 +466,12 @@ export async function applyLiveEditsToActiveExecution(
     if (!execution) {
       return { ok: false, kind: "no_active_execution" };
     }
-    const gate = evaluateLiveEditRequest(execution, request, liveEditDeps);
+    const gate = evaluateLiveEditRequest(
+      execution,
+      request,
+      liveEditDeps,
+      executionContract,
+    );
     if (!gate.ok) {
       return rejected(gate.failure);
     }
@@ -548,7 +482,6 @@ export async function applyLiveEditsToActiveExecution(
       affectedContextIds: gate.affectedContextIds,
       dryRun: true,
       execution: null,
-      amendmentPolicyBasis: gate.amendmentPolicyBasis,
     };
   }
 
@@ -559,7 +492,6 @@ export async function applyLiveEditsToActiveExecution(
   let applied = 0;
   let liveRevision = 0;
   let affectedContextIds: string[] = [];
-  let amendmentPolicyBasis: WorkflowAmendmentPolicyBasis | null = null;
   const containsCharterAmendment = request.operations.some(
     (operation) => operation.type === "amend-charter",
   );
@@ -567,7 +499,12 @@ export async function applyLiveEditsToActiveExecution(
   let amendedExecution: GraphWorkflowExecution | null = null;
   try {
     await deps.mutateActive(projectPath, sessionName, (current) => {
-      const gate = evaluateLiveEditRequest(current, request, liveEditDeps);
+      const gate = evaluateLiveEditRequest(
+        current,
+        request,
+        liveEditDeps,
+        executionContract,
+      );
       if (!gate.ok) {
         throw new LiveEditRejectionSignal(gate.failure);
       }
@@ -587,42 +524,8 @@ export async function applyLiveEditsToActiveExecution(
         source: request.source,
       });
 
-      // The audited amendment's durable row, appended in this same mutation so
-      // the hash pair and the working definition it describes commit together.
-      const amendment = request.amendment;
-      if (amendment !== undefined) {
-        if (deps.publishExecutionAmended === undefined) {
-          throw new Error(
-            "an amendment request needs a publishExecutionAmended publisher",
-          );
-        }
-        if (gate.amendmentPolicyBasis === null) {
-          throw new Error("an amendment request needs a policy admission");
-        }
-        const amendedDelivery = deps.publishExecutionAmended({
-          projectPath,
-          sessionName,
-          executionId: bumped.id,
-          liveRevision: bumpedLiveRevision,
-          reason: amendment.reason,
-          actor: amendment.actor,
-          policyBasis: gate.amendmentPolicyBasis,
-          previousWorkingDefinitionHash: amendment.hashDefinition(
-            current.workingDefinition,
-          ),
-          workingDefinitionHash: amendment.hashDefinition(
-            bumped.workingDefinition,
-          ),
-          addedContextIds: amendment.addedContextIds,
-          addedTaskIds: amendment.addedTaskIds,
-          addedEdgeIds: amendment.addedEdgeIds,
-        });
-        delivery.events.push(...amendedDelivery.events);
-        delivery.pushes.push(...amendedDelivery.pushes);
-      }
-
-      // An amendment additionally emits the dedicated charter event (its own
-      // hash-bearing audit row + the UI's refresh signal for charter surfaces).
+      // A charter edit additionally emits the dedicated charter event so
+      // charter surfaces refresh after the transaction commits.
       if (containsCharterAmendment) {
         const latestAmendment = bumped.charterAmendments.at(-1);
         const charterDelivery = deps.publishCharterUpdated({
@@ -641,7 +544,6 @@ export async function applyLiveEditsToActiveExecution(
       applied = request.operations.length;
       liveRevision = bumpedLiveRevision;
       affectedContextIds = gate.affectedContextIds;
-      amendmentPolicyBasis = gate.amendmentPolicyBasis;
       committedExecution = bumped;
       return { execution: bumped, ...delivery };
     });
@@ -697,6 +599,5 @@ export async function applyLiveEditsToActiveExecution(
     affectedContextIds,
     dryRun: false,
     execution: committedExecution,
-    amendmentPolicyBasis,
   };
 }

@@ -75,6 +75,7 @@ import { readWorktreeDirtyPaths } from "@/lib/git/worktree";
 import { getFinalizingSessionMergeJob } from "@/lib/jobs/queue";
 import {
   validateLaunchInputs,
+  WorkflowStartInputError,
   type LaunchInputError,
 } from "@/lib/workflow-graph/start-input-service";
 import type { MutateActiveResult } from "@/lib/workflow-graph/execution-repository";
@@ -243,6 +244,30 @@ export interface GraphWorkflowRunInput {
 }
 
 /**
+ * A native SDD spec delivery riding the shared gauntlet. The plan is the
+ * signed candidate's launch document, already admitted at proposal time and
+ * re-checked by the gauntlet exactly as a template start is (the TOCTOU
+ * recheck between sign-off and launch). Spec provenance travels as origin
+ * fields only; the typed spec-execution link is the authoritative binding.
+ */
+export interface GraphWorkflowSpecDeliveryInput {
+  projectPath: string;
+  sessionName: string;
+  /** As {@link GraphWorkflowRunInput.plan}. */
+  plan: WorkflowDefinitionDraft;
+  specSlug: string;
+  candidateId: string;
+  /** As {@link GraphWorkflowRunInput.inputs}. */
+  inputs?: Record<string, unknown>;
+  /** As {@link GraphWorkflowStartInput.ownerConversationId}. */
+  ownerConversationId?: string | null;
+  /** As {@link GraphWorkflowStartInput.seededDocuments}. */
+  seededDocuments?: readonly SeededWorkflowDocument[];
+  /** As {@link GraphWorkflowExecutionSeed.transactionAttachment}. */
+  transactionAttachment?: (input: { executionId: string }) => void;
+}
+
+/**
  * How a launch names the definition content it will run — the ONE difference
  * between `workflow start` and `workflow run`. Explicitly discriminated rather
  * than inferred from which fields happen to be set, so every downstream branch
@@ -255,7 +280,13 @@ export type WorkflowLaunchSourceRequest =
       expectedRevision?: number;
       tier?: TemplateTier;
     }
-  | { kind: "one_off"; plan: WorkflowDefinitionDraft };
+  | { kind: "one_off"; plan: WorkflowDefinitionDraft }
+  | {
+      kind: "spec_delivery";
+      plan: WorkflowDefinitionDraft;
+      specSlug: string;
+      candidateId: string;
+    };
 
 /**
  * What a resolved launch source yields: provenance, the definition content the
@@ -274,6 +305,8 @@ export interface GraphWorkflowLaunchInput {
   source: WorkflowLaunchSourceRequest;
   parameters?: Record<string, unknown>;
   ownerConversationId?: string | null;
+  /** As {@link GraphWorkflowExecutionSeed.transactionAttachment}. */
+  transactionAttachment?: (input: { executionId: string }) => void;
   seededDocuments?: readonly SeededWorkflowDocument[];
 }
 
@@ -409,20 +442,11 @@ function sessionFinalizingStartGuardError(
   );
 }
 
-/**
- * Raised by the shared start path when start-input validation rejects the
- * launch. Carries the structured `LaunchInputError` so the surface can map it to
- * a 400 naming the offending parameter without re-parsing the message.
- */
-export class WorkflowStartInputError extends Error {
-  readonly inputError: LaunchInputError;
-
-  constructor(inputError: LaunchInputError, message: string) {
-    super(message);
-    this.name = "WorkflowStartInputError";
-    this.inputError = inputError;
-  }
-}
+// The ONE start-input refusal class, owned by the pure start-input-service
+// module so client-safe surfaces (the spec bridge) can share the identity
+// without importing this server-side manager. Re-exported for the transports
+// that already import it from here.
+export { WorkflowStartInputError };
 
 export class WorkflowDefinitionApprovalRequiredError extends Error {
   readonly code = "definition_approval_required" as const;
@@ -1355,13 +1379,9 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     sessionName: string,
   ): void {
     // Attribution comes from the recorded origin, never from the seed
-    // projection: on a one-off row those fields are deliberate filler naming a
-    // definition that does not exist (D7 decision D2).
-    const attribution = describeLaunchSource(
-      execution.origin.kind === "template"
-        ? { ...execution.origin }
-        : { kind: "one_off", planName: execution.origin.planName },
-    );
+    // projection: on a definition-less row those fields are deliberate filler
+    // naming a definition that does not exist (D7 decision D2).
+    const attribution = describeLaunchSource(execution.origin);
     const execLogger = createExecutionLogger(execution.id);
     registerExecutionLogger(execLogger);
     execLogger.writeManifest(execution);
@@ -1394,6 +1414,27 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     if (request.kind === "one_off") {
       return {
         source: { kind: "one_off", planName: request.plan.name },
+        definition: request.plan.definition,
+        launchDocument: {
+          name: request.plan.name,
+          description: request.plan.description,
+          definition: request.plan.definition,
+          layout: request.plan.layout,
+        },
+      };
+    }
+
+    // A spec delivery resolves like a one-off — the caller already holds the
+    // signed candidate's launch document — but records its spec provenance.
+    // The authoritative spec linkage is the typed spec-execution link written
+    // by the launch bridge, never this origin.
+    if (request.kind === "spec_delivery") {
+      return {
+        source: {
+          kind: "spec_delivery",
+          specSlug: request.specSlug,
+          candidateId: request.candidateId,
+        },
         definition: request.plan.definition,
         launchDocument: {
           name: request.plan.name,
@@ -1746,6 +1787,9 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         // the execution's whole lifetime: the live-edit frontier re-asserts the
         // property against every later structural mutation (R8.3).
         liveSessionReadOnlyPinned: exemptedSource !== null,
+        ...(input.transactionAttachment !== undefined && {
+          transactionAttachment: input.transactionAttachment,
+        }),
       },
     );
 
@@ -1840,6 +1884,37 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         : {}),
       ...(input.seededDocuments !== undefined
         ? { seededDocuments: input.seededDocuments }
+        : {}),
+    });
+  }
+
+  /**
+   * The spec-delivery adapter onto the shared gauntlet: identical to `run`
+   * except for the recorded provenance. Kept a separate verb so the origin is
+   * always the caller's explicit statement, never inferred from which optional
+   * fields happen to be set (D7 decision D2).
+   */
+  async function launchSpecDelivery(
+    input: GraphWorkflowSpecDeliveryInput,
+  ): Promise<GraphWorkflowLaunchOutcome> {
+    return launch({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      source: {
+        kind: "spec_delivery",
+        plan: input.plan,
+        specSlug: input.specSlug,
+        candidateId: input.candidateId,
+      },
+      ...(input.inputs !== undefined ? { parameters: input.inputs } : {}),
+      ...(input.ownerConversationId !== undefined
+        ? { ownerConversationId: input.ownerConversationId }
+        : {}),
+      ...(input.seededDocuments !== undefined
+        ? { seededDocuments: input.seededDocuments }
+        : {}),
+      ...(input.transactionAttachment !== undefined
+        ? { transactionAttachment: input.transactionAttachment }
         : {}),
     });
   }
@@ -4786,6 +4861,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
   return {
     start,
     run,
+    launchSpecDelivery,
     claimDefinitionApproval,
     releaseDefinitionApprovalClaim,
     recordDefinitionApproval,

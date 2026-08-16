@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import type { SpecGatePreset } from "@/lib/specs/schemas";
 import { revisionInReviewInstruction } from "@/lib/specs/authoring-service";
+import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtures";
 import { runCli } from "../../core";
 import type { CliEnv, CliHost, FetchInit } from "../../shared";
 
@@ -17,6 +18,8 @@ const SPEC_FILE = "/tmp/spec-element.json";
 const DRAFT_FILE = "/tmp/spec-draft-element.json";
 const BATCH_FILE = "/tmp/spec-elements.json";
 const SCOPE_FILE = "/tmp/spec-scope.json";
+const INPUTS_FILE = "/tmp/spec-start-inputs.json";
+const RELATIVE_INPUTS_FILE = "inputs.json";
 const TASK_FILE = "/tmp/spec-discovered-task.json";
 const NOTES_FILE = "/tmp/spec-proposal-notes.md";
 
@@ -39,6 +42,16 @@ const SPEC_SCOPE = {
     { criterionId: "criterion-id-2", disposition: "deferred" },
   ],
 };
+
+function launchFixture() {
+  const record = createWorkflowDefinitionRecord({ id: "workflow-1" });
+  return {
+    name: record.name,
+    description: record.description,
+    definition: record.definition,
+    layout: record.layout,
+  };
+}
 
 function revision(state: "draft" | "approved" = "draft") {
   return {
@@ -260,7 +273,6 @@ function makeHost(
     files?: Record<string, string>;
     refusal?:
       | "propose"
-      | "claim-task-complete"
       | "draft-upsert"
       | "draft-batch"
       | "draft-batch-dangling"
@@ -353,21 +365,6 @@ function makeHost(
             findings,
             instruction:
               "Resolve the blocking lint findings and propose again.",
-          },
-          409,
-        );
-      }
-      if (
-        options.refusal === "claim-task-complete" &&
-        action === "claim-task-complete"
-      ) {
-        return response(
-          {
-            code: "lint_blocked",
-            unmetConditions: ["A task completion claim must cite evidence."],
-            findings: [],
-            instruction:
-              "Cite ingested evidence ids for the task's covered criteria — the server ingests commit and validation evidence from workflow events — and claim again.",
           },
           409,
         );
@@ -801,18 +798,6 @@ function makeHost(
             createdAt: CREATED_AT,
             updatedAt: CREATED_AT,
           });
-        case "claim-task-complete":
-          return response({
-            id: "claim-id-1",
-            spec_id: spec.id,
-            revision_id: "revision-approved",
-            task_element_id: "task-id-1",
-            execution_id: "execution-1",
-            actor_json: "{}",
-            evidence_ids_json: '["evidence-1"]',
-            claimed_at: CREATED_AT,
-            status: "accepted",
-          });
         case "request-approval": {
           // The server, not the CLI, decides the scope: an omitted subject is
           // the whole-gate ask and carries no element.
@@ -847,22 +832,25 @@ function makeHost(
               revisionNumber: 1,
               scope: null,
               state: "definition_review",
-              workflowDefinitionId: "workflow-1",
-              workflowDefinitionRevision: 1,
+              workflowSeedSource: {
+                kind: "spec_delivery",
+                specSlug: "native-sdd",
+                candidateId: "launch-1",
+              },
               workflowExecutionId: null,
-              definitionApprovalRequired: false,
               sessionName: "feature-session",
               deliveredAt: null,
               abandonedReason: null,
               createdAt: CREATED_AT,
               updatedAt: CREATED_AT,
             },
-            definition: { id: "workflow-1" },
+            launch: launchFixture(),
             deliveryPlan: {
               attemptId: "attempt-1",
               candidateId: "candidate-1",
-              planHash: "sha256:plan",
-              compiledDefinitionHash: "sha256:compiled",
+              candidateHash: "sha256:candidate",
+              workflowExecutionId: "workflow-execution-1",
+              resolvedDefinitionHash: `sha256:${"d".repeat(64)}`,
             },
           });
         case "open-amendment":
@@ -1302,19 +1290,19 @@ describe("cctl spec write verbs", () => {
 
   it("names the missing spec slug for a well-formed but unqualified handle", async () => {
     const host = makeHost();
-    const task = await runCli(
-      ["spec", "task", "complete", "T7", "--execution", "execution-1"],
+    const answer = await runCli(
+      ["spec", "answer", "Q2", "--answer", "The full scope."],
       baseEnv,
       host,
     );
-    expect(task.exitCode).toBe(2);
-    expect(task.stderr).toContain(
-      '"T7" is missing its spec slug; this command takes a qualified handle like <slug>/T7',
+    expect(answer.exitCode).toBe(2);
+    expect(answer.stderr).toContain(
+      '"Q2" is missing its spec slug; this command takes a qualified handle like <slug>/Q2',
     );
-    // T7 is a valid task handle, so the grammar refusal would be false, and
-    // these commands cannot honor "optionally qualify".
-    expect(task.stderr).not.toContain("not a valid element handle");
-    expect(task.stderr).not.toContain("Optionally qualify");
+    // Q2 is a valid question handle, so the grammar refusal would be false,
+    // and this command cannot honor "optionally qualify".
+    expect(answer.stderr).not.toContain("not a valid element handle");
+    expect(answer.stderr).not.toContain("Optionally qualify");
 
     expect(host.requests).toHaveLength(0);
   });
@@ -1333,41 +1321,14 @@ describe("cctl spec write verbs", () => {
     expect(result.stderr).toContain("Q1");
   });
 
-  it("names the wrong element kind for a qualified handle these commands cannot take", async () => {
+  it("names the wrong element kind for a qualified handle this command cannot take", async () => {
     const host = makeHost();
-    const task = await runCli(
-      [
-        "spec",
-        "task",
-        "complete",
-        "native-sdd/Q2",
-        "--execution",
-        "execution-1",
-      ],
-      baseEnv,
-      host,
-    );
     const answer = await runCli(
       ["spec", "answer", "native-sdd/T7", "--answer", "The full scope."],
       baseEnv,
       host,
     );
 
-    const unqualified = await runCli(
-      ["spec", "task", "complete", "Q2", "--execution", "execution-1"],
-      baseEnv,
-      host,
-    );
-
-    expect(task.exitCode).toBe(2);
-    expect(task.stderr).toContain(
-      '"native-sdd/Q2" is a question handle; this command takes a task handle like <slug>/T7',
-    );
-    // The wrong kind is the more useful diagnosis than the missing slug.
-    expect(unqualified.exitCode).toBe(2);
-    expect(unqualified.stderr).toContain(
-      '"Q2" is a question handle; this command takes a task handle like <slug>/T7',
-    );
     expect(answer.exitCode).toBe(2);
     expect(answer.stderr).toContain(
       '"native-sdd/T7" is a task handle; this command takes a question handle like <slug>/Q2',
@@ -1375,26 +1336,18 @@ describe("cctl spec write verbs", () => {
     expect(host.requests).toHaveLength(0);
   });
 
-  it("keeps the grammar refusal for an ungrammatical task target and names the qualified form", async () => {
+  it("keeps the grammar refusal for an ungrammatical target and names the qualified form", async () => {
     const host = makeHost();
     const result = await runCli(
-      [
-        "spec",
-        "task",
-        "complete",
-        "native-sdd/task_7",
-        "--execution",
-        "execution-1",
-      ],
+      ["spec", "answer", "native-sdd/question_7", "--answer", "The scope."],
       baseEnv,
       host,
     );
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("looks like an element id");
-    expect(result.stderr).toContain("T<n> for a task");
     expect(result.stderr).toContain(
-      "This command takes the qualified form <slug>/T7",
+      "This command takes the qualified form <slug>/Q2",
     );
     expect(host.requests).toHaveLength(0);
   });
@@ -1971,51 +1924,6 @@ describe("cctl spec write verbs", () => {
     });
   });
 
-  it("reports the claim's status and the execution it was filed against", async () => {
-    const result = await runCli(
-      [
-        "spec",
-        "task",
-        "complete",
-        "native-sdd/T1",
-        "--execution",
-        "execution-1",
-        "--evidence",
-        "evidence-1",
-      ],
-      baseEnv,
-      makeHost({ approved: true }),
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("state: claim accepted");
-    expect(result.stdout).toContain("  execution: execution-1");
-    expect(result.stdout).toContain("  claim: claim-id-1");
-  });
-
-  it("lets the server refuse an evidence-less task completion with instruction", async () => {
-    const host = makeHost({ refusal: "claim-task-complete" });
-    const result = await runCli(
-      [
-        "spec",
-        "task",
-        "complete",
-        "native-sdd/T1",
-        "--execution",
-        "execution-1",
-      ],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("must cite evidence");
-    expect(result.stderr).toContain("Cite ingested evidence");
-    expect(
-      JSON.parse(actionRequests(host)[0]?.init.body ?? "{}").evidenceIds,
-    ).toEqual([]);
-  });
-
   it("renders the server's pending block instead of deriving one from the stage", async () => {
     const result = await runCli(
       ["spec", "propose", "native-sdd"],
@@ -2259,7 +2167,7 @@ describe("cctl spec write verbs", () => {
     );
   });
 
-  it("16.9 records a discovery and states the three post-launch paths", async () => {
+  it("16.9 records a discovery and states the two post-launch paths", async () => {
     const host = makeHost({
       files: { [TASK_FILE]: DISCOVERED_TASK_FILE_CONTENT },
     });
@@ -2284,10 +2192,9 @@ describe("cctl spec write verbs", () => {
     });
     expect(result.stdout).toContain("discovery-1");
     expect(result.stdout).toContain("keeps its pinned scope");
-    // Exactly the three post-launch paths, side by side.
+    // The two post-launch paths are presented side by side.
     expect(result.stdout).toContain("cctl spec capture native-sdd");
     expect(result.stdout).toContain("--blocking-reason <why>");
-    expect(result.stdout).toContain("cctl workflow live amend");
     expect(result.stdout).toContain("cctl spec plan open native-sdd");
   });
 
@@ -2316,11 +2223,9 @@ describe("cctl spec write verbs", () => {
     });
     expect(result.stdout).toContain("abandoned execution execution-1");
     expect(result.stdout).toContain("replacement attempt attempt-2");
-    // Still bounded to the enumerated three, and truthful about the other two:
-    // the run they addressed is retired, so neither remains available for it.
-    expect(result.stdout).toContain("second of the three post-launch paths");
-    expect(result.stdout).toContain("cctl workflow live amend");
-    expect(result.stdout).toContain("neither remains available for it");
+    expect(result.stdout).toContain("This took the second post-launch path");
+    expect(result.stdout).toContain("The other path");
+    expect(result.stdout).toContain("is no longer available for it");
   });
 
   it("forwards an explicit --execution for a legacy run with no attempt", async () => {
@@ -2387,8 +2292,9 @@ describe("cctl spec start against a delivery plan", () => {
   const CANDIDATE = {
     attemptId: "attempt-1",
     candidateId: "candidate-1",
-    planHash: "sha256:plan",
-    compiledDefinitionHash: "sha256:compiled",
+    candidateHash: "sha256:candidate",
+    workflowExecutionId: "workflow-execution-1",
+    resolvedDefinitionHash: `sha256:${"d".repeat(64)}`,
   };
 
   it("rejects the retired scope file before reading it or contacting the server", async () => {
@@ -2404,9 +2310,8 @@ describe("cctl spec start against a delivery plan", () => {
     );
 
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain(
-      "cctl spec plan open native-sdd --seed-from last",
-    );
+    expect(result.stderr).toContain("cctl spec plan open native-sdd");
+    expect(result.stderr).not.toMatch(/legacy planning|--seed-from/i);
     expect(host.requests).toHaveLength(0);
 
     const structured = await runCli(
@@ -2417,16 +2322,23 @@ describe("cctl spec start against a delivery plan", () => {
     expect(structured.exitCode).toBe(2);
     expect(JSON.parse(structured.stdout)).toMatchObject({
       ok: false,
-      instruction: expect.stringContaining(
-        "cctl spec plan open native-sdd --seed-from last",
-      ),
+      instruction: expect.stringContaining("cctl spec plan open native-sdd"),
     });
+    expect(JSON.parse(structured.stdout).instruction).not.toMatch(
+      /legacy planning|--seed-from/i,
+    );
     expect(host.requests).toHaveLength(0);
   });
 
-  it("sends no scope document and reports the approved candidate it launched", async () => {
+  it("forwards an inputs JSON object unchanged and reports every launch identity", async () => {
+    const parameters = {
+      required: "ticket-66",
+      mode: "careful",
+      brief: "Preserve this text exactly.\nIncluding its newline.",
+    };
     const host = makeHost({
       approved: true,
+      files: { [INPUTS_FILE]: JSON.stringify(parameters) },
       startBody: {
         body: {
           execution: {
@@ -2436,21 +2348,57 @@ describe("cctl spec start against a delivery plan", () => {
             revisionNumber: 1,
             scope: null,
             state: "definition_review",
-            workflowDefinitionId: "workflow-1",
-            workflowDefinitionRevision: 1,
+            workflowSeedSource: {
+              kind: "spec_delivery",
+              specSlug: "native-sdd",
+              candidateId: "launch-1",
+            },
             workflowExecutionId: null,
-            definitionApprovalRequired: false,
             sessionName: "feature-session",
             deliveredAt: null,
             abandonedReason: null,
             createdAt: CREATED_AT,
             updatedAt: CREATED_AT,
           },
-          definition: { id: "workflow-1" },
+          launch: launchFixture(),
           deliveryPlan: CANDIDATE,
         },
       },
     });
+
+    const result = await runCli(
+      ["spec", "start", "native-sdd", "--inputs", INPUTS_FILE, "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const started = host.requests.find((request) =>
+      request.url.includes("/actions/start-execution"),
+    );
+    expect(JSON.parse(String(started?.init.body))).toEqual({
+      revisionId: "revision-approved",
+      sessionName: "feature-session",
+      parameters,
+    });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      tokens: {
+        execution: "execution-1",
+        workflowExecution: "workflow-execution-1",
+        planAttempt: "attempt-1",
+        candidate: "candidate-1",
+        candidateHash: "sha256:candidate",
+        resolvedDefinitionHash: `sha256:${"d".repeat(64)}`,
+      },
+      execution: {
+        deliveryPlan: CANDIDATE,
+      },
+    });
+  });
+
+  it("omits parameters when --inputs is absent", async () => {
+    const host = makeHost({ approved: true });
 
     const result = await runCli(["spec", "start", "native-sdd"], baseEnv, host);
 
@@ -2462,10 +2410,47 @@ describe("cctl spec start against a delivery plan", () => {
       revisionId: "revision-approved",
       sessionName: "feature-session",
     });
-    expect(result.stdout).toContain("sha256:compiled");
+    expect(result.stdout).toContain("sha256:candidate");
     expect(result.stdout).toContain("ran unchanged");
     expect(result.stdout).toContain("acts next: agent");
   });
+
+  it("applies the shared .cc/temp payload advisory to --inputs", async () => {
+    const host = makeHost({
+      approved: true,
+      files: { [RELATIVE_INPUTS_FILE]: "{}" },
+    });
+
+    const result = await runCli(
+      ["spec", "start", "native-sdd", "--inputs", RELATIVE_INPUTS_FILE],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain(".cc/temp/");
+    expect(result.stderr).toContain(RELATIVE_INPUTS_FILE);
+  });
+
+  it.each([
+    ["malformed", "{broken", "is not valid JSON"],
+    ["array", '["not", "an", "object"]', "must be a JSON object"],
+  ])(
+    "rejects a %s inputs file locally before contacting the server",
+    async (_label, contents, expectedMessage) => {
+      const host = makeHost({ files: { [INPUTS_FILE]: contents } });
+
+      const result = await runCli(
+        ["spec", "start", "native-sdd", "--inputs", INPUTS_FILE],
+        baseEnv,
+        host,
+      );
+
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain(expectedMessage);
+      expect(host.requests).toHaveLength(0);
+    },
+  );
 
   it("reports a park as holding the candidate with no execution and no slot", async () => {
     const host = makeHost({
@@ -2473,7 +2458,9 @@ describe("cctl spec start against a delivery plan", () => {
       startBody: {
         body: {
           parked: {
-            ...CANDIDATE,
+            attemptId: CANDIDATE.attemptId,
+            candidateId: CANDIDATE.candidateId,
+            candidateHash: CANDIDATE.candidateHash,
             nextAct: {
               actor: "agent",
               command: "cctl spec start native-sdd",

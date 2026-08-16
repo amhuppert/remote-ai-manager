@@ -7,8 +7,8 @@ import {
 import type {
   Spec,
   SpecCriterionDispositionRow,
+  SpecDeliveryVerdictRow,
   SpecExecutionRow,
-  SpecProofVerdictRow,
   SpecRevisionSnapshot,
   SpecWaiverRow,
 } from "./schemas";
@@ -136,7 +136,7 @@ interface FakeState {
   snapshots: Record<string, SpecRevisionSnapshot>;
   executions: SpecExecutionRow[];
   dispositions: Record<string, SpecCriterionDispositionRow[]>;
-  verdicts: SpecProofVerdictRow[];
+  verdicts: SpecDeliveryVerdictRow[];
   waivers: SpecWaiverRow[];
 }
 
@@ -147,14 +147,32 @@ function deps(state: FakeState): DeliveryDeltaQueryDeps {
     findExecutionsBySpecId: () => state.executions,
     findCriterionDispositionsByExecution: (executionId) =>
       state.dispositions[executionId] ?? [],
-    findProofVerdictsByCriterionRevision: (criterionElementId, revisionId) =>
-      state.verdicts.filter(
-        (row) =>
-          row.criterion_element_id === criterionElementId &&
-          row.revision_id === revisionId,
-      ),
-    findWaiverById: (waiverId) =>
-      state.waivers.find((row) => row.id === waiverId) ?? null,
+    findDeliveryVerdictsBySpecExecutionId: (executionId) =>
+      state.verdicts.filter((row) => row.spec_execution_id === executionId),
+    findExecutionBindingBySpecExecutionId: (executionId) => {
+      const execution = state.executions.find((row) => row.id === executionId);
+      if (
+        execution?.workflow_execution_id === null ||
+        execution === undefined
+      ) {
+        return null;
+      }
+      return {
+        specExecutionId: execution.id,
+        workflowExecutionId: execution.workflow_execution_id,
+        binding: {
+          schemaVersion: 2,
+          candidateId: `candidate-${execution.id}`,
+          candidateHash: `sha256:${"a".repeat(64)}`,
+          pinnedRevisionId: execution.revision_id,
+          dispositions: [],
+          claims: [],
+        },
+        createdAt: TS,
+      };
+    },
+    findWaiversByRevision: (revisionId) =>
+      state.waivers.filter((row) => row.revision_id === revisionId),
   };
 }
 
@@ -180,8 +198,8 @@ function baseState(): FakeState {
       "exec-new": [criterionDisposition("exec-new", "crit-1", "in_scope")],
     },
     verdicts: [
-      proofVerdict("crit-1", "rev-1"),
-      proofVerdict("crit-1", "rev-2"),
+      deliveryVerdict("crit-1", "exec-old"),
+      deliveryVerdict("crit-1", "exec-new"),
     ],
     waivers: [],
   };
@@ -216,21 +234,19 @@ function criterionDisposition(
   };
 }
 
-function proofVerdict(
+function deliveryVerdict(
   criterionElementId: string,
-  revisionId: string,
-): SpecProofVerdictRow {
+  executionId: string,
+): SpecDeliveryVerdictRow {
   return {
-    id: `verdict-${criterionElementId}-${revisionId}`,
-    spec_id: SPEC_ID,
+    id: `delivery-verdict-${criterionElementId}-${executionId}`,
+    spec_execution_id: executionId,
+    workflow_execution_id: `wfx-${executionId}`,
+    candidate_id: `candidate-${executionId}`,
+    candidate_hash: `sha256:${"a".repeat(64)}`,
     criterion_element_id: criterionElementId,
-    revision_id: revisionId,
-    execution_id: null,
-    verdict_kind: "deterministic_validator",
-    evidence_ids_json: "[]",
+    satisfying_context_id: "authored-context-1",
     verdict_at: TS,
-    stale_at: null,
-    stale_reason: null,
   };
 }
 
@@ -332,6 +348,34 @@ describe("loadDeliveryDelta", () => {
         stale: 0,
       },
     ];
+    const result = await loadDeliveryDelta(deps(state), {
+      spec,
+      currentApprovedSnapshot: snapshotFor(state, "rev-3"),
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.projection.criteria[0]?.class).toBe("waived");
+  });
+
+  it("retains a current waiver accepted while the frozen disposition remains in-scope", async () => {
+    const state = baseState();
+    state.dispositions["exec-new"] = [
+      criterionDisposition("exec-new", "crit-1", "in_scope"),
+    ];
+    state.verdicts = [];
+    state.waivers = [
+      {
+        id: "waiver-current",
+        spec_id: SPEC_ID,
+        criterion_element_id: "crit-1",
+        revision_id: "rev-2",
+        reason: "Accepted during execution.",
+        waived_at: TS,
+        stale: 0,
+      },
+    ];
+
     const result = await loadDeliveryDelta(deps(state), {
       spec,
       currentApprovedSnapshot: snapshotFor(state, "rev-3"),

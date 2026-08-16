@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createWorkflowExecution } from "./test-fixtures";
 import { createGraphWorkflowRuntimeEditService } from "./runtime-edits";
+
+const UNBOUND_EXECUTION_CONTRACT = {
+  validateOperation: () => ({ ok: true as const }),
+  accountabilityCoverageGroups: [],
+};
+
 describe("graph workflow runtime edit service", () => {
   it("appends agent-created tasks to the active execution context", () => {
     const service = createGraphWorkflowRuntimeEditService({
@@ -85,6 +91,7 @@ describe("graph workflow runtime edit service", () => {
         title: "Capture open questions",
         instructions: "Document the unknowns discovered during planning.",
       },
+      UNBOUND_EXECUTION_CONTRACT,
     );
 
     // Pure helper: the observability payload is returned as DATA (the caller
@@ -203,10 +210,15 @@ describe("graph workflow runtime edit service", () => {
     });
 
     expect(() =>
-      service.applyAgentTaskAdd(execution, "context-implement", {
-        title: "Sneak in implementation work",
-        instructions: "This should not be allowed.",
-      }),
+      service.applyAgentTaskAdd(
+        execution,
+        "context-implement",
+        {
+          title: "Sneak in implementation work",
+          instructions: "This should not be allowed.",
+        },
+        UNBOUND_EXECUTION_CONTRACT,
+      ),
     ).toThrow(
       'Agents can add tasks only to the currently executing context "context-plan"',
     );

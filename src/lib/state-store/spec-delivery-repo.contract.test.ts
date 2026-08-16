@@ -12,6 +12,7 @@ vi.mock("@/lib/logging", () => ({
 import type Database from "better-sqlite3";
 import {
   specCriterionDispositionRowSchema,
+  specDeliveryVerdictRowSchema,
   specEvidenceRowSchema,
   specExecutionRowSchema,
   specProofVerdictRowSchema,
@@ -253,6 +254,28 @@ function maximalExecution(): SpecExecutionRow {
     execution_start_dial: "notify",
     workflow_definition_id: "workflow-definition-delivery-maximal",
     workflow_definition_revision: 4,
+    workflow_seed_source_json: JSON.stringify({
+      kind: "spec_delivery",
+      specSlug: "delivery-maximal",
+      candidateId: "candidate-delivery-maximal",
+    }),
+    workflow_execution_binding_json: JSON.stringify({
+      dispositions: [
+        {
+          criterionElementId: CRITERION_ID,
+          disposition: "in_scope",
+          deliveredByExecutionId: null,
+        },
+      ],
+      claims: [
+        {
+          accountabilitySourceId: "context-delivery-maximal",
+          taskElementId: TASK_ID,
+          touchedPaths: ["src/lib/specs"],
+          criterionElementIds: [CRITERION_ID],
+        },
+      ],
+    }),
     workflow_execution_id: "workflow-execution-delivery-maximal",
     session_name: "native-sdd-delivery-maximal",
     delivered_at: "2026-07-18T11:07:00.000Z",
@@ -279,6 +302,60 @@ afterEach(() => {
 });
 
 describe("spec-delivery-repo durability contract", () => {
+  it("persists verdicts under the complete attempt and authored-context identity", () => {
+    const saved = repo.saveDeliveryVerdict({
+      id: "delivery-verdict-current",
+      specExecutionId: SOURCE_EXECUTION_ID,
+      workflowExecutionId: `workflow-execution-${SOURCE_EXECUTION_ID}`,
+      candidateId: "candidate-current",
+      candidateHash: `sha256:${"a".repeat(64)}`,
+      criterionElementId: CRITERION_ID,
+      satisfyingContextId: "context-current",
+      recordedAt: "2026-07-18T11:09:00.000Z",
+    });
+
+    expect(specDeliveryVerdictRowSchema.parse(saved)).toEqual({
+      id: "delivery-verdict-current",
+      spec_execution_id: SOURCE_EXECUTION_ID,
+      workflow_execution_id: `workflow-execution-${SOURCE_EXECUTION_ID}`,
+      candidate_id: "candidate-current",
+      candidate_hash: `sha256:${"a".repeat(64)}`,
+      criterion_element_id: CRITERION_ID,
+      satisfying_context_id: "context-current",
+      verdict_at: "2026-07-18T11:09:00.000Z",
+    });
+    expect(
+      repo.findDeliveryVerdictsByWorkflowExecutionId(
+        `workflow-execution-${SOURCE_EXECUTION_ID}`,
+      ),
+    ).toEqual([saved]);
+    expect(
+      repo.findDeliveryVerdictsBySpecExecutionId(SOURCE_EXECUTION_ID),
+    ).toEqual([saved]);
+    expect(repo.findDeliveryVerdictsByCriterion(CRITERION_ID)).toEqual([saved]);
+
+    const replay = repo.saveDeliveryVerdict({
+      id: "delivery-verdict-replayed",
+      specExecutionId: SOURCE_EXECUTION_ID,
+      workflowExecutionId: `workflow-execution-${SOURCE_EXECUTION_ID}`,
+      candidateId: "candidate-current",
+      candidateHash: `sha256:${"a".repeat(64)}`,
+      criterionElementId: CRITERION_ID,
+      satisfyingContextId: "context-current",
+      recordedAt: "2026-07-18T11:10:00.000Z",
+    });
+    expect(replay).toEqual(saved);
+
+    expect(
+      repo.findDeliveryVerdictsByWorkflowExecutionId(
+        `workflow-execution-${DELIVERED_EXECUTION_ID}`,
+      ),
+    ).toEqual([]);
+    expect(repo.findDeliveryVerdictsByCriterion(SECOND_CRITERION_ID)).toEqual(
+      [],
+    );
+  });
+
   it("round-trips every persisted delivery field and structured payload", async () => {
     await assertRoundTripDurability({
       label: "spec-evidence",
@@ -498,122 +575,6 @@ describe("spec-delivery-repo durability contract", () => {
       workflow_definition_id: "workflow-definition-frozen-launch",
       workflow_definition_revision: 7,
     });
-  });
-
-  it("finds the awaiting execution by exact workflow definition revision", () => {
-    const revisionSeven = {
-      ...maximalExecution(),
-      id: "execution-definition-revision-7",
-      state: "definition_review",
-      workflow_definition_id: "workflow-definition-shared",
-      workflow_definition_revision: 7,
-      workflow_execution_id: null,
-      delivered_at: null,
-      abandoned_reason: null,
-      created_at: "2026-07-18T12:00:00.000Z",
-      updated_at: "2026-07-18T12:00:00.000Z",
-    } as SpecExecutionRow;
-    const revisionEight = {
-      ...revisionSeven,
-      id: "execution-definition-revision-8",
-      workflow_definition_revision: 8,
-      created_at: "2026-07-18T12:01:00.000Z",
-      updated_at: "2026-07-18T12:01:00.000Z",
-    } as SpecExecutionRow;
-    repo.insertExecution(revisionSeven);
-    repo.insertExecution(revisionEight);
-
-    expect(
-      repo.findExecutionAwaitingWorkflowByDefinitionIdInSession(
-        "/repos/delivery-contract",
-        "native-sdd-delivery-maximal",
-        "workflow-definition-shared",
-        7,
-      ),
-    ).toMatchObject({
-      id: "execution-definition-revision-7",
-      workflow_definition_revision: 7,
-    });
-  });
-
-  it("isolates identical awaiting definition identities by project and session", () => {
-    const otherProjectPath = "/repos/delivery-contract-other";
-    const otherSpecId = "spec-delivery-other";
-    const otherRevisionId = "revision-delivery-other";
-    db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(
-      otherProjectPath,
-    );
-    db.prepare(
-      `INSERT INTO specs (
-         id, project_path, slug, name, gate_policy_json,
-         abandoned_at, abandoned_reason, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      otherSpecId,
-      otherProjectPath,
-      "delivery-other",
-      "Delivery other",
-      '{"preset":"contract-bearing"}',
-      null,
-      null,
-      "2026-07-18T08:00:00.000Z",
-      "2026-07-18T08:01:00.000Z",
-    );
-    db.prepare(
-      `INSERT INTO spec_revisions (
-         id, spec_id, number, state, based_on_revision_id, content_hash,
-         proposed_at, approved_at, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      otherRevisionId,
-      otherSpecId,
-      1,
-      "approved",
-      null,
-      "sha256:delivery-other",
-      "2026-07-18T08:04:00.000Z",
-      "2026-07-18T08:05:00.000Z",
-      "2026-07-18T08:03:30.000Z",
-    );
-
-    const sharedIdentity = {
-      state: "definition_review" as const,
-      workflow_definition_id: "workflow-definition-collision",
-      workflow_definition_revision: 3,
-      workflow_execution_id: null,
-      session_name: "shared-session",
-      delivered_at: null,
-      abandoned_reason: null,
-    };
-    repo.insertExecution({
-      ...maximalExecution(),
-      ...sharedIdentity,
-      id: "execution-collision-primary",
-    });
-    repo.insertExecution({
-      ...maximalExecution(),
-      ...sharedIdentity,
-      id: "execution-collision-other",
-      spec_id: otherSpecId,
-      revision_id: otherRevisionId,
-    });
-
-    expect(
-      repo.findExecutionAwaitingWorkflowByDefinitionIdInSession(
-        "/repos/delivery-contract",
-        "shared-session",
-        "workflow-definition-collision",
-        3,
-      ),
-    ).toMatchObject({ id: "execution-collision-primary" });
-    expect(
-      repo.findExecutionAwaitingWorkflowByDefinitionIdInSession(
-        otherProjectPath,
-        "shared-session",
-        "workflow-definition-collision",
-        3,
-      ),
-    ).toMatchObject({ id: "execution-collision-other" });
   });
 
   it("exposes no evidence update path and refuses reinsertion as an update", () => {

@@ -445,7 +445,7 @@ describe("SpecLintPanel", () => {
         revisionId="revision-1"
         findings={[
           {
-            ruleId: "9.12.serialized-plan",
+            ruleId: "9.9.approval-freshness",
             severity: "advisory" as const,
             elementHandle: "T2",
             message: "The plan serialises every task.",

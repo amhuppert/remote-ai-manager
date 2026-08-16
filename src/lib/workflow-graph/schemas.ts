@@ -1947,14 +1947,17 @@ export type GraphWorkflowLifecycleDecision = z.infer<
  * Where a run came from (D7 decision D2). A `template` run names the saved
  * definition and the revision it was launched from; a `one_off` run has no
  * definition record anywhere — its authored source is `launchDocument` and its
- * only human-facing identity is the submitted plan name.
+ * only human-facing identity is the submitted plan name. A `spec_delivery` run
+ * likewise has no definition record: its authored source is the signed native
+ * SDD candidate, named here by spec slug and candidate id; the authoritative
+ * spec linkage is the typed spec-execution link, never this field.
  *
  * Provenance, not a dependency: nothing here is resolved against stored
  * definitions at read time, which is what lets a historical run render after
- * its template is edited or deleted. A one-off row additionally writes
- * legacy-shaped filler into the seed fields so an older build's eager
- * `listActive()` still parses it (see `execution-origin.ts`); every consumer
- * branches on THIS field and never on that filler.
+ * its template is edited or deleted. One-off and spec-delivery rows
+ * additionally write legacy-shaped filler into the seed fields so an older
+ * build's eager `listActive()` still parses them (see `execution-origin.ts`);
+ * every consumer branches on THIS field and never on that filler.
  */
 export const graphWorkflowExecutionOriginSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -1966,6 +1969,11 @@ export const graphWorkflowExecutionOriginSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("one_off"),
     planName: z.string().trim().min(1),
+  }),
+  z.object({
+    kind: z.literal("spec_delivery"),
+    specSlug: z.string().trim().min(1),
+    candidateId: z.string().trim().min(1),
   }),
 ]);
 export type GraphWorkflowExecutionOrigin = z.infer<

@@ -9,10 +9,16 @@ import {
 } from "./schemas";
 import {
   ONE_OFF_SEED_DEFINITION_ID_PREFIX,
+  SPEC_DELIVERY_SEED_DEFINITION_ID_PREFIX,
+  buildExecutionProvenance,
   buildOneOffSeedCompatibilityFields,
+  buildSpecDeliverySeedCompatibilityFields,
+  describeLaunchSource,
   deriveTemplateOriginFromSeedFields,
   floorRawExecutionOrigin,
   isOneOffExecution,
+  originFallbackName,
+  originKindLabel,
 } from "./execution-origin";
 
 /**
@@ -60,6 +66,29 @@ describe("graph-workflow execution origin", () => {
         planName: "Repair the flaky suite",
       }),
     ).toEqual({ kind: "one_off", planName: "Repair the flaky suite" });
+  });
+
+  it("accepts a spec-delivery origin carrying the spec slug and candidate id", () => {
+    expect(
+      graphWorkflowExecutionOriginSchema.parse({
+        kind: "spec_delivery",
+        specSlug: "conversation-compaction",
+        candidateId: "cand-42",
+      }),
+    ).toEqual({
+      kind: "spec_delivery",
+      specSlug: "conversation-compaction",
+      candidateId: "cand-42",
+    });
+  });
+
+  it("refuses a spec-delivery origin missing its candidate id", () => {
+    expect(
+      graphWorkflowExecutionOriginSchema.safeParse({
+        kind: "spec_delivery",
+        specSlug: "conversation-compaction",
+      }).success,
+    ).toBe(false);
   });
 
   it("refuses an origin kind outside the union", () => {
@@ -176,6 +205,128 @@ describe("one-off legacy seed filler", () => {
       },
     );
     expect(isOneOffExecution(templateWithSentinelShapedSeedId)).toBe(false);
+  });
+});
+
+describe("spec-delivery legacy seed filler", () => {
+  it("mints a nonempty seed id namespaced to the execution", () => {
+    const filler = buildSpecDeliverySeedCompatibilityFields("exec-9");
+    expect(filler).toEqual({
+      seedDefinitionId: `${SPEC_DELIVERY_SEED_DEFINITION_ID_PREFIX}exec-9`,
+      seedDefinitionRevision: 1,
+      launchedTier: "project",
+    });
+  });
+
+  it("keeps a spec-delivery definition tier parseable under the pre-D7 required shape", () => {
+    const execution = graphWorkflowExecutionSchema.parse({
+      ...maximal(),
+      ...buildSpecDeliverySeedCompatibilityFields("exec-9"),
+      origin: {
+        kind: "spec_delivery",
+        specSlug: "conversation-compaction",
+        candidateId: "cand-42",
+      },
+    });
+
+    expect(preD7RequiredDefinitionShape.parse(execution)).toEqual({
+      seedDefinitionId: "spec-delivery:exec-9",
+      seedDefinitionRevision: 1,
+      launchedTier: "project",
+    });
+  });
+
+  it("is not classified as a one-off run", () => {
+    const specDelivery = graphWorkflowExecutionSchema.parse({
+      ...maximal(),
+      ...buildSpecDeliverySeedCompatibilityFields("exec-9"),
+      origin: {
+        kind: "spec_delivery",
+        specSlug: "conversation-compaction",
+        candidateId: "cand-42",
+      },
+    });
+    expect(isOneOffExecution(specDelivery)).toBe(false);
+  });
+});
+
+describe("launch-source provenance", () => {
+  it("pairs a spec-delivery origin with its seed filler in one derivation", () => {
+    expect(
+      buildExecutionProvenance(
+        {
+          kind: "spec_delivery",
+          specSlug: "conversation-compaction",
+          candidateId: "cand-42",
+        },
+        "exec-9",
+      ),
+    ).toEqual({
+      origin: {
+        kind: "spec_delivery",
+        specSlug: "conversation-compaction",
+        candidateId: "cand-42",
+      },
+      seedDefinitionId: "spec-delivery:exec-9",
+      seedDefinitionRevision: 1,
+      launchedTier: "project",
+    });
+  });
+
+  it("attributes a spec-delivery launch by slug and candidate, never the filler", () => {
+    expect(
+      describeLaunchSource({
+        kind: "spec_delivery",
+        specSlug: "conversation-compaction",
+        candidateId: "cand-42",
+      }),
+    ).toEqual({
+      origin: "spec_delivery",
+      specSlug: "conversation-compaction",
+      candidateId: "cand-42",
+    });
+  });
+});
+
+describe("origin display projections", () => {
+  it("falls back to the human-facing identity each origin carries", () => {
+    expect(
+      originFallbackName({
+        kind: "template",
+        definitionId: "def-1",
+        definitionRevision: 3,
+        tier: "project",
+      }),
+    ).toBe("def-1");
+    expect(
+      originFallbackName({ kind: "one_off", planName: "Repair the suite" }),
+    ).toBe("Repair the suite");
+    expect(
+      originFallbackName({
+        kind: "spec_delivery",
+        specSlug: "conversation-compaction",
+        candidateId: "cand-42",
+      }),
+    ).toBe("conversation-compaction");
+  });
+
+  it("labels each origin kind distinctly", () => {
+    expect(
+      originKindLabel({
+        kind: "template",
+        definitionId: "def-1",
+        definitionRevision: 3,
+        tier: "project",
+      }),
+    ).toBe("Template");
+    expect(originKindLabel({ kind: "one_off", planName: "n" })).toBe("One-off");
+    expect(
+      originKindLabel({
+        kind: "spec_delivery",
+        specSlug: "conversation-compaction",
+        candidateId: "cand-42",
+      }),
+    ).toBe("Spec delivery");
   });
 });
 

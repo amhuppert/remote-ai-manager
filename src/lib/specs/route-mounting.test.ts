@@ -10,10 +10,7 @@ import { GET as outlineGET } from "@/app/api/specs/[name]/[slug]/outline/route";
 import { GET as planGET } from "@/app/api/specs/[name]/[slug]/plan/route";
 import { GET as planDiffGET } from "@/app/api/specs/[name]/[slug]/plan/diff/route";
 import { GET as planReviewGET } from "@/app/api/specs/[name]/[slug]/plan/review/route";
-import {
-  GET as planAttemptPreviewGET,
-  POST as planPreviewPOST,
-} from "@/app/api/specs/[name]/[slug]/plan-preview/route";
+import { GET as planAttemptPreviewGET } from "@/app/api/specs/[name]/[slug]/plan-preview/route";
 import {
   specCommentsGET,
   specDeltaGET,
@@ -23,7 +20,6 @@ import {
   specPlanAttemptPreviewGET,
   specPlanDiffGET,
   specPlanGET,
-  specPlanPreviewPOST,
   specPlanReviewGET,
   specProjectSearchGET,
   specsInventoryGET,
@@ -79,14 +75,6 @@ describe("spec API route mounting", () => {
     expect(planDiffGET).toBe(specPlanDiffGET);
   });
 
-  // POST because the preview's request carries an execution scope document;
-  // it reads only, so it sits on the read handlers rather than the actions route.
-  it("mounts the compiled-plan preview the CLI reaches at .../plan-preview", () => {
-    expect(planPreviewPOST).toBe(specPlanPreviewPOST);
-  });
-
-  // Same resource, different question: GET reads the delivery-plan ATTEMPT's
-  // compiled shape (query-string stage), POST compiles a scope document.
   it("mounts the delivery-plan attempt preview behind `cctl spec plan preview --stage`", () => {
     expect(planAttemptPreviewGET).toBe(specPlanAttemptPreviewGET);
   });

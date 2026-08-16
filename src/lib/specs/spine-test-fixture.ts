@@ -9,6 +9,7 @@ import { runRegisteredMergeJob } from "@/lib/jobs/queue";
 import { createGraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
 import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecDeliveryPlanRepo } from "@/lib/state-store/spec-delivery-plan-repo";
+import { createSpecExecutionBindingRepo } from "@/lib/state-store/spec-execution-binding-repo";
 import { createMergeAssociationResolver } from "./merge-association";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
@@ -27,6 +28,9 @@ import {
 } from "@/lib/workflow-graph/event-schemas";
 import { createRegisteredGraphExecutionLifecycleCallbacks } from "@/lib/workflow-graph/execution-lifecycle-port";
 import { createGraphWorkflowExecutionRouteHandlers } from "@/lib/workflow-graph/execution-route-handlers";
+import { WorkflowStartInputError } from "@/lib/workflow-graph/spec-bridge";
+import { workingDefinitionHash } from "@/lib/workflow-graph/working-definition-hash";
+import { admitAuthoredWorkflowLaunch } from "@/lib/workflow-graph/authored-launch-admission";
 import { createGraphWorkflowMergeRunner } from "@/lib/workflow-graph/graph-merge-runner";
 import type {
   GraphWorkflowExecution,
@@ -39,7 +43,6 @@ import {
   makeProfileSnapshot,
   stubAssignmentSnapshotPreparation,
 } from "@/lib/workflow-graph/test-fixtures";
-import { createGraphWorkflowAmendRouteHandlers } from "@/lib/workflow-graph/amend-route-handlers";
 import { createGraphWorkflowRuntimeEditRouteHandlers } from "@/lib/workflow-graph/runtime-edit-route-handlers";
 import {
   buildInitialContextStates,
@@ -79,35 +82,22 @@ import type {
 } from "@/lib/workflows/validation-fix/actors";
 
 import { createAuthoringService } from "./authoring-service";
-import { compileSpecExecutionPlan, readCompiledOriginMap } from "./compiler";
-import {
-  deliveryPlanDocumentSchema,
-  type DeliveryPlanDocument,
-} from "./delivery-plan";
-import { readDeliveryPlanSourceMap } from "./delivery-plan-materializer";
-import {
-  deliveryPlanMutationViewSchema,
-  deliveryPlanPreviewViewSchema,
-} from "./delivery-plan-views";
-import {
-  classifyEarlierMergedDelivery,
-  createDeliveryGate,
-} from "./delivery-gate";
-import { loadDeliveryDelta } from "./delivery-delta-query";
+import { createDeliveryGate } from "./delivery-gate-v2";
+import { createAuthoredContextOutcomeService } from "@/lib/workflow-graph/authored-context-outcome";
+import { loadDeliveryPlanSeedBasis } from "./delivery-plan-basis-query";
 import { createDeliveryPlanService } from "./delivery-plan-service";
-import { createEvidenceIngestService } from "./evidence-ingest";
-import { readSpecExecutionOriginMap } from "./execution-origin-map";
+import {
+  executionScopeFromBinding,
+  specExecutionBindingSchema,
+  type SpecExecutionBinding,
+} from "./execution-binding";
+import { createSpecExecutionBindingPorts } from "./execution-binding-service";
 import {
   createEvidenceMutationRecorder,
   createEvidenceService,
 } from "./evidence-service";
 import { createSpecEventsPublisher } from "./events";
 import { createImportService } from "./import-service";
-import {
-  discoveredTaskSchema,
-  specGateDialSchema,
-  type SpecExecutionRow,
-} from "./schemas";
 import {
   loadSpecExportState,
   renderCanonicalBundle,
@@ -116,16 +106,11 @@ import {
 import {
   createExecutionLifecycleCallbacks,
   createExecutionService,
-  hashExecutionScope,
   type ExecutionStartGatePort,
-  type ExecutionWorkflowDefinitions,
   type SpecWorkflowCleanupObservation,
   type SpecWorkflowCleanupTarget,
 } from "./execution-service";
-import { resolveLegacyDeliverySource } from "./legacy-plan-import";
 import { createMeasuresQuery } from "./measures-query";
-import { toLintSnapshot } from "./review-state";
-import { resolveDial } from "./policy";
 import type {
   SpecPolicyAdmissionNotice,
   SpecPolicyAdmissionNotifier,
@@ -146,7 +131,6 @@ import { registerSpecWorkflowComposition } from "./workflow-composition";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import {
   CONVERSATION_CAPABILITY_HEADER,
-  mintConversationCapability,
   verifyConversationCapability,
 } from "@/lib/agent-gateway/conversation-capability";
 import {
@@ -164,6 +148,8 @@ export const SPINE_PROJECT_PATH = "/repos/spec-spine";
 export const SPINE_SESSION_NAME = "spine-session";
 export const SPINE_CONVERSATION_ID = "conversation-spine";
 export const SPINE_WORKFLOW_EXECUTION_ID = "workflow-execution-spine";
+const SPINE_CANDIDATE_ID = "candidate-spine";
+const SPINE_CANDIDATE_HASH = `sha256:${"5".repeat(64)}`;
 export const SPINE_BEARER_TOKEN = "contract-token";
 /**
  * Stands in for the server-only capability signing key. It is deliberately NOT
@@ -173,7 +159,7 @@ export const SPINE_BEARER_TOKEN = "contract-token";
  */
 const SPINE_CAPABILITY_SECRET = "spine-server-only-capability-key";
 
-class InMemoryWorkflowDefinitions implements ExecutionWorkflowDefinitions {
+class InMemoryWorkflowDefinitions {
   records: WorkflowDefinitionRecord[] = [];
   private revisionCount = 0;
 
@@ -275,6 +261,8 @@ export interface SpecSpineWorld {
     specs: ReturnType<typeof createSpecsRepo>;
     review: ReturnType<typeof createSpecReviewRepo>;
     delivery: ReturnType<typeof createSpecDeliveryRepo>;
+    deliveryPlans: ReturnType<typeof createSpecDeliveryPlanRepo>;
+    executionBindings: ReturnType<typeof createSpecExecutionBindingRepo>;
     links: ReturnType<typeof createSpecLinksRepo>;
     events: ReturnType<typeof createSpecEventsRepo>;
     workflowEvents: ReturnType<typeof createGraphWorkflowEventsRepo>;
@@ -284,7 +272,6 @@ export interface SpecSpineWorld {
     execution: ReturnType<typeof createExecutionService>;
   };
   definitions: InMemoryWorkflowDefinitions;
-  ingest: ReturnType<typeof createEvidenceIngestService>;
   measures: ReturnType<typeof createMeasuresQuery>;
   readHandlers: ReturnType<typeof createSpecRouteHandlers>;
   writeHandlers: ReturnType<typeof createSpecWriteRouteHandlers>;
@@ -335,17 +322,6 @@ export interface SpecSpineWorld {
       | "ABORT",
     body?: unknown,
     headers?: Record<string, string>,
-  ): Promise<Response>;
-  /**
-   * Drive the REAL `graph-workflow/amend` route — the one authorized way to
-   * change a launched delivery-plan definition. `human` posts with no token
-   * (the Studio control); `agent` posts the bearer token plus its signed
-   * conversation capability, which is what the route derives the audit actor
-   * from — a claimed conversation id would prove nothing.
-   */
-  postWorkflowAmend(
-    body: unknown,
-    transport: "agent" | "human",
   ): Promise<Response>;
   /**
    * Drive the REAL generic `graph-workflow/runtime-edits` route — the surface a
@@ -536,6 +512,7 @@ export function createSpecSpineWorld(
   const specs = createSpecsRepo(db, writeQueue);
   const review = createSpecReviewRepo(db);
   const delivery = createSpecDeliveryRepo(db);
+  const bindingRepo = createSpecExecutionBindingRepo(db);
   const links = createSpecLinksRepo(db);
   const eventsRepo = createSpecEventsRepo(db);
   const plans = createSpecDeliveryPlanRepo(db, {
@@ -596,13 +573,6 @@ export function createSpecSpineWorld(
   });
 
   const definitions = new InMemoryWorkflowDefinitions(now);
-  async function loadFixtureOriginMap(workflowDefinitionId: string) {
-    const record = definitions.findById(workflowDefinitionId);
-    if (record === null) return [];
-    return readSpecExecutionOriginMap(record.definition, (revisionId) =>
-      specs.getRevisionSnapshot(revisionId),
-    );
-  }
   const knownCommits = new Set<string>();
   const treeByCommit = new Map<string, string>();
   // Explicit ancestry model: commit -> parents. `isCommitAncestor` mirrors
@@ -634,48 +604,6 @@ export function createSpecSpineWorld(
     return false;
   }
 
-  const evidenceRef: {
-    current?: ReturnType<typeof createEvidenceService>;
-  } = {};
-  const ingest = createEvidenceIngestService({
-    repo: delivery,
-    workflowEvents,
-    evidenceService: {
-      attachEvidence(input) {
-        if (evidenceRef.current === undefined) {
-          throw new Error("Spine evidence service is not initialized");
-        }
-        return evidenceRef.current.attachEvidence(input);
-      },
-      recordProofVerdict(input) {
-        if (evidenceRef.current === undefined) {
-          throw new Error("Spine evidence service is not initialized");
-        }
-        return evidenceRef.current.recordProofVerdict(input);
-      },
-    },
-    writeQueue,
-    resolveProjectPath: async () => SPINE_PROJECT_PATH,
-    async validatedTreeHash(_execution, commitSha) {
-      const tree = treeByCommit.get(commitSha);
-      if (tree === undefined) {
-        throw new Error(`No relevant tree registered for ${commitSha}`);
-      }
-      return tree;
-    },
-    loadOriginMap: loadFixtureOriginMap,
-    // Late-bound like the execution service's probe below: the fixture's live
-    // workflow status decides deferred-stamp terminality exactly as the
-    // production repos do.
-    getWorkflowExecutionStatus: async (workflowExecutionId) =>
-      activeWorkflowExecution !== null &&
-      activeWorkflowExecution.id === workflowExecutionId
-        ? activeWorkflowExecution.status
-        : null,
-  });
-  const ingestExecutionEvidence = (executionId: string) =>
-    ingest.ingestAuthoritatively(executionId);
-
   const evidencePublication = createEvidenceMutationRecorder({
     eventsRepo,
     events,
@@ -685,82 +613,13 @@ export function createSpecSpineWorld(
   const recordMutation = evidencePublication.recordMutation;
   const evidence = createEvidenceService({
     repo: delivery,
-    ingestExecutionEvidence,
     recordMutation,
     runInImmediateTransaction: evidencePublication.runInImmediateTransaction,
     nextId: newId,
     now,
-    async getApprovedCriterion(revisionId, criterionElementId) {
-      const snapshot = await specs.getRevisionSnapshot(revisionId);
-      if (snapshot?.revision.state !== "approved") return null;
-      const criterion = snapshot.elements.find(
-        (item) =>
-          item.element.id === criterionElementId &&
-          item.version.payload.kind === "criterion",
-      );
-      return criterion?.version.payload.kind === "criterion"
-        ? {
-            specId: snapshot.revision.specId,
-            validationStrategy: criterion.version.payload.validationStrategy,
-          }
-        : null;
-    },
-    gitObjectExists: async (ref) => knownCommits.has(ref.objectId),
-    async workflowEventExists(ref, expectedExecution) {
-      const record = workflowEvents.findRecordById(
-        SPINE_PROJECT_PATH,
-        SPINE_SESSION_NAME,
-        expectedExecution.workflowExecutionId ?? "",
-        ref.eventId,
-      );
-      return (
-        record !== null &&
-        record.executionId === expectedExecution.workflowExecutionId &&
-        "contextId" in record.event &&
-        record.event.contextId === ref.contextId
-      );
-    },
-    async mergeValidationFactExists(ref, expectedExecution) {
-      const job = jobs.getJobRecord(ref.mergeJobId);
-      return (
-        job?.executionId === expectedExecution.workflowExecutionId &&
-        job.candidateValidation?.validationRef === ref.validationRef
-      );
-    },
-
-    isEvidenceFresh: async () => true,
-    routeStrategyInadequacy: async () => undefined,
     routeWaiverRequestToHuman: async () => ({
       attentionId: newId("attention"),
     }),
-    async getTaskClaimContext(executionId, taskElementId) {
-      const execution = delivery.findExecutionById(executionId);
-      if (execution === null) return null;
-      const [spec, snapshot] = await Promise.all([
-        specs.findById(execution.spec_id),
-        specs.getRevisionSnapshot(execution.revision_id),
-      ]);
-      const task = snapshot?.elements.find(
-        (item) =>
-          item.element.id === taskElementId &&
-          item.version.payload.kind === "task",
-      );
-      if (
-        spec === null ||
-        snapshot === null ||
-        task?.version.payload.kind !== "task"
-      ) {
-        return null;
-      }
-      return {
-        specId: spec.id,
-        revisionId: execution.revision_id,
-        policy: spec.gatePolicy,
-        draft: toLintSnapshot(spec, snapshot),
-        coveredCriterionElementIds:
-          task.version.payload.coveredCriterionElementIds,
-      };
-    },
     async getCriterionVersion(revisionId, criterionElementId) {
       const snapshot = await specs.getRevisionSnapshot(revisionId);
       const criterion = snapshot?.elements.find(
@@ -778,91 +637,40 @@ export function createSpecSpineWorld(
     },
     wasCriterionDeliveredByMergedExecution: async () => false,
   });
-  evidenceRef.current = evidence;
 
   // Late-bound: the graph-workflow route handlers are constructed further
   // down (they need the workflow manager), but the execution service's gate
   // port must reach their non-HTTP definition-approval seam.
   const workflowDefinitionGateRef: {
-    approve:
-      | ((input: {
-          projectName: string;
-          sessionName: string;
-          workflowExecutionId: string;
-        }) => Promise<
-          Awaited<
-            ReturnType<ExecutionStartGatePort["approveWorkflowDefinition"]>
-          >
-        >)
-      | null;
-    hasPending:
-      | (() => ReturnType<
-          ExecutionStartGatePort["findPendingDefinitionApproval"]
-        >)
-      | null;
-    ensurePending:
-      | ((input: {
-          projectName: string;
-          sessionName: string;
-          definitionId: string;
-          definitionRevision: number;
-        }) => ReturnType<
-          ExecutionStartGatePort["ensurePendingDefinitionApproval"]
-        >)
-      | null;
     launchApproved:
-      | ((input: {
-          projectName: string;
-          sessionName: string;
-          definitionId: string;
-          definitionRevision: number;
-          ownerConversationId: string | null;
-        }) => ReturnType<ExecutionStartGatePort["launchApprovedDefinition"]>)
+      | ((
+          input: Parameters<ExecutionStartGatePort["launchApprovedLaunch"]>[0],
+        ) => ReturnType<ExecutionStartGatePort["launchApprovedLaunch"]>)
       | null;
   } = {
-    approve: null,
-    hasPending: null,
-    ensurePending: null,
     launchApproved: null,
   };
 
   const executionStartGate: ExecutionStartGatePort = {
-    async launchApprovedDefinition(input) {
+    async launchApprovedLaunch(input) {
       if (workflowDefinitionGateRef.launchApproved === null) {
         return { ok: false, reason: "unavailable" };
       }
       return workflowDefinitionGateRef.launchApproved(input);
-    },
-    async findPendingDefinitionApproval() {
-      if (workflowDefinitionGateRef.hasPending === null) return null;
-      return workflowDefinitionGateRef.hasPending();
-    },
-    async ensurePendingDefinitionApproval(input) {
-      if (workflowDefinitionGateRef.ensurePending === null) {
-        return { ok: false, reason: "unavailable" };
-      }
-      return workflowDefinitionGateRef.ensurePending(input);
-    },
-    async approveWorkflowDefinition(input) {
-      if (workflowDefinitionGateRef.approve === null) {
-        return { ok: false, reason: "unavailable" };
-      }
-      return workflowDefinitionGateRef.approve(input);
     },
   };
 
   const execution = createExecutionService({
     specsRepo: specs,
     deliveryRepo: delivery,
+    bindingRepo,
     linksRepo: links,
     eventsRepo,
     reviewRepo: review,
     events,
-    workflowDefinitions: definitions,
     writeQueue,
     nextId: newId,
     now,
-    ingestExecutionEvidence,
     // The fixture has no sessions store; every named session resolves.
     sessionExists: async () => true,
     // Late-bound like the definition gate below: reports the fixture's live
@@ -884,10 +692,12 @@ export function createSpecSpineWorld(
     deliveryPlanLaunch: {
       resolveLaunch: (launchInput) => deliveryPlan.resolveLaunch(launchInput),
       park: (parkInput) => deliveryPlan.park(parkInput),
-      recordLaunch: (launchInput) => deliveryPlan.recordLaunch(launchInput),
     },
     plansRepo: plans,
     deliveryPlanCapture: {
+      abandonLaunchedAttempt(input) {
+        return deliveryPlan.abandonLaunch(input);
+      },
       async openSeededReplacement(replacementInput) {
         const opened = await deliveryPlan.open({
           spec: replacementInput.spec,
@@ -988,102 +798,32 @@ export function createSpecSpineWorld(
         : specs.getRevisionSnapshot(approved.id);
     },
     revisionSnapshot: (revisionId) => specs.getRevisionSnapshot(revisionId),
-    deliveryDelta({ spec, pinned, sinceExecutionId }) {
-      return loadDeliveryDelta(
+    launchedExecutionState: (executionId) =>
+      delivery.findExecutionById(executionId)?.state ?? null,
+    lastDeliveryBasis: ({ spec, pinnedRevision }) =>
+      loadDeliveryPlanSeedBasis(
         {
           getRevisionSnapshot: (revisionId) =>
             specs.getRevisionSnapshot(revisionId),
-          findExecutionsBySpecId:
-            delivery.findExecutionsBySpecId.bind(delivery),
-          findCriterionDispositionsByExecution:
-            delivery.findCriterionDispositionsByExecution.bind(delivery),
-          findProofVerdictsByCriterionRevision:
-            delivery.findProofVerdictsByCriterionRevision.bind(delivery),
-          findWaiverById: delivery.findWaiverById.bind(delivery),
+          findExecutionsBySpecId: (id) => delivery.findExecutionsBySpecId(id),
+          findCriterionDispositionsByExecution: (executionId) =>
+            delivery.findCriterionDispositionsByExecution(executionId),
+          findDeliveryVerdictsBySpecExecutionId: (executionId) =>
+            delivery.findDeliveryVerdictsBySpecExecutionId(executionId),
+          findExecutionBindingBySpecExecutionId: (executionId) =>
+            bindingRepo.findBySpecExecutionId(executionId),
+          findWaiversByRevision: (revisionId) =>
+            delivery.findWaiversByRevision(revisionId),
         },
-        {
-          spec,
-          currentApprovedSnapshot: pinned,
-          ...(sinceExecutionId === null ? {} : { sinceExecutionId }),
-        },
-      );
-    },
-    // The same resolution production performs, over the fixture's own rows: a
-    // stubbed null would hide the legacy-import branch from every spine test.
-    latestLegacyDeliverySource: (specId) =>
-      resolveLegacyDeliverySource(
-        delivery.findExecutionsBySpecId(specId),
-        (revisionId) => specs.getRevisionSnapshot(revisionId),
+        { spec, pinnedRevision },
       ),
-    // The production read, over the fixture's own rows: a stubbed empty list
-    // would hide the seeded-replacement path from every spine test.
-    async capturedDiscoveries({ specId }) {
-      return plans.findDiscoveriesBySpecId(specId).map((row) => {
-        const task = discoveredTaskSchema.parse(
-          JSON.parse(row.discovered_task_json),
-        );
-        return {
-          discoveryId: row.id,
-          title: task.title,
-          instructions: task.instructions,
-          coveredCriterionElementIds: task.coveredCriterionElementIds,
-        };
-      });
-    },
-    classifyDeliveredElsewhere: ({
-      claim,
-      criterionElementId,
-      deliveredByExecutionId,
-    }) =>
-      classifyEarlierMergedDelivery(
-        {
-          findExecutionById: delivery.findExecutionById.bind(delivery),
-          findCriterionDisposition:
-            delivery.findCriterionDisposition.bind(delivery),
-        },
-        { id: claim.id, spec_id: claim.specId, created_at: claim.createdAt },
-        {
-          criterion_element_id: criterionElementId,
-          delivered_by_execution_id: deliveredByExecutionId,
-        },
-      ),
-    // The same resolution production performs, against the fixture's own
-    // revision store: the spine walks a plan through propose, and propose
-    // materializes, so a stubbed context would let a compile break go unseen.
-    async compilationContext({ pinnedRevisionId }) {
-      const snapshot = await specs.getRevisionSnapshot(pinnedRevisionId);
-      if (snapshot === null) return null;
-      return {
-        criteria: snapshot.elements.flatMap(({ element, version }) =>
-          version.payload.kind === "criterion"
-            ? [
-                {
-                  criterionElementId: element.id,
-                  handle: `C${element.number ?? 0}`,
-                  text: version.payload.text,
-                  validationStrategy: version.payload.validationStrategy,
-                },
-              ]
-            : [],
-        ),
-        registeredValidationCommandNames: ["typecheck", "test", "lint"],
-        // Mirrors production: a delivery-plan candidate never parks for
-        // workflow definition approval, because the plan sign-off already
-        // admitted the execution-start gate.
-        defaults: {
-          approvalRequired: false,
-          workflowConfig:
-            options.pinnedAllowAgentTaskAdd === undefined
-              ? {}
-              : {
-                  mutability: {
-                    allowAgentTaskAdd: options.pinnedAllowAgentTaskAdd,
-                    allowAgentContextAdd: false,
-                  },
-                },
-        },
-      };
-    },
+    admitLaunch: ({ spec, launch, accountabilityGroups }) =>
+      admitAuthoredWorkflowLaunch(launch, {
+        caller: "spec-proposal",
+        documentScope: { kind: "project", projectPath: spec.projectPath },
+        workflowDefaults: {},
+        accountabilityGroups,
+      }),
     nextId: () => newId("delivery-plan"),
     now,
   });
@@ -1096,8 +836,6 @@ export function createSpecSpineWorld(
     links: failingLinks,
     deliveryPlan,
     import: createImportService({ specs, review, links, events, newId, now }),
-    ingestEvidenceBestEffort: (executionId) =>
-      ingest.ingestBestEffort(executionId),
     async verify(specId) {
       return verifyExportState(await loadSpecExportState(exportDeps, specId));
     },
@@ -1107,8 +845,7 @@ export function createSpecSpineWorld(
     specs,
     events: eventsRepo,
     delivery,
-    workflowEvents,
-    loadOriginMap: loadFixtureOriginMap,
+    executionBindings: bindingRepo,
     now,
   });
 
@@ -1135,7 +872,6 @@ export function createSpecSpineWorld(
     findQuestionsBySpecId: (specId) => review.findQuestionsBySpecId(specId),
     findAssumptionsBySpecId: (specId) => review.findAssumptionsBySpecId(specId),
     findExecutionsBySpecId: (specId) => delivery.findExecutionsBySpecId(specId),
-    findTaskClaimsBySpecId: (specId) => delivery.findTaskClaimsBySpecId(specId),
     findWorkflowEventsByExecution: (_projectPath, _sessionName, executionId) =>
       workflowEvents.findByExecution(
         SPINE_PROJECT_PATH,
@@ -1148,9 +884,6 @@ export function createSpecSpineWorld(
         ? result.value
         : { execution: executionRow, workflowStatus: null };
     },
-    async ingestExecutionEvidenceBestEffort(_projectPath, executionId) {
-      await ingest.ingestBestEffort(executionId);
-    },
     findCriterionDispositionsByExecution: (executionId) =>
       delivery.findCriterionDispositionsByExecution(executionId),
     findEvidenceByCriterionRevision: (criterionElementId, revisionId) =>
@@ -1160,6 +893,10 @@ export function createSpecSpineWorld(
         criterionElementId,
         revisionId,
       ),
+    findDeliveryVerdictsBySpecExecutionId: (executionId) =>
+      delivery.findDeliveryVerdictsBySpecExecutionId(executionId),
+    findExecutionBindingBySpecExecutionId: (executionId) =>
+      bindingRepo.findBySpecExecutionId(executionId),
     findWaiverForCriterionRevision: (criterionElementId, revisionId) =>
       delivery.findWaiverForCriterionRevision(criterionElementId, revisionId),
     findWaiverById: (waiverId) => delivery.findWaiverById(waiverId),
@@ -1201,11 +938,18 @@ export function createSpecSpineWorld(
 
   function registerMergeComposition(): void {
     const deliveryGate = createDeliveryGate({
+      bindingPort: createSpecExecutionBindingPorts(bindingRepo).delivery,
+      outcomePort: createAuthoredContextOutcomeService({
+        async findExecutionById(executionId) {
+          return activeWorkflowExecution !== null &&
+            activeWorkflowExecution.id === executionId
+            ? { execution: activeWorkflowExecution, location: "active" }
+            : null;
+        },
+      }),
       deliveryRepo: delivery,
       reviewRepo: review,
       specsRepo: specs,
-      evidenceService: evidence,
-      ingestExecutionEvidence,
       recordIntervention: recordMutation,
       getProjectDisplayName: () => SPINE_PROJECT_NAME,
       // Mirrors production composition: the gate's missing-approval refusal
@@ -1227,6 +971,7 @@ export function createSpecSpineWorld(
         });
       },
       now,
+      newVerdictId: () => newId("delivery-verdict"),
       newAdmissionId: () => newId("admission"),
       events,
       writeQueue,
@@ -1234,36 +979,11 @@ export function createSpecSpineWorld(
         return db.transaction(fn).immediate();
       },
       policyNotifier,
-      gitProbesForProject: () => ({
-        isAncestor: async (ancestorSha, descendantSha) =>
-          isCommitAncestor(ancestorSha, descendantSha),
-        async relevantTreeHash(commitSha) {
-          const tree = treeByCommit.get(commitSha);
-          if (tree === undefined) {
-            throw new Error(`No relevant tree registered for ${commitSha}`);
-          }
-          return tree;
-        },
-      }),
-      async resolveCandidateValidation(input) {
-        const source = jobs.findMergeValidationByExecutionIdAndRef(
-          input.workflowExecutionId,
-          input.validationRef,
-        );
-        return source === null
-          ? null
-          : {
-              ...source,
-              producer: {
-                kind: "agent" as const,
-                conversationId: SPINE_CONVERSATION_ID,
-              },
-            };
-      },
     });
     const lifecycleCallbacks = createExecutionLifecycleCallbacks({
       specsRepo: specs,
       deliveryRepo: delivery,
+      bindingRepo,
       linksRepo: links,
       eventsRepo,
       reviewRepo: review,
@@ -1271,7 +991,6 @@ export function createSpecSpineWorld(
       writeQueue,
       nextId: newId,
       now,
-      ingestExecutionEvidence,
       getPublishedMerge: async (workflowExecutionId) =>
         jobs.findLatestPublishedMergeByExecutionId(workflowExecutionId),
       runInImmediateTransaction<T>(fn: () => T): T {
@@ -1498,7 +1217,7 @@ export function createSpecSpineWorld(
         seed.source,
         seed.executionId,
       );
-      activeWorkflowExecution = createWorkflowExecution({
+      const created = createWorkflowExecution({
         id: seed.executionId,
         origin: provenance.origin,
         launchDocument: seed.launchDocument,
@@ -1516,7 +1235,9 @@ export function createSpecSpineWorld(
         taskStates: buildInitialTaskStates(workingDefinition),
         startedAt: seed.startedAt,
       });
-      return activeWorkflowExecution;
+      seed.transactionAttachment?.({ executionId: created.id });
+      activeWorkflowExecution = created;
+      return created;
     },
     // Honours guard and stamp because the audited acts built on this seam
     // (abandon) depend on both: the guard is their admission test and the stamp
@@ -1638,6 +1359,8 @@ export function createSpecSpineWorld(
     normalizeExecutionAfterRestart: async () => activeWorkflowExecution,
     startExecution: (input) => workflowManager.start(input),
     runExecution: (input) => workflowManager.run(input),
+    launchSpecDeliveryExecution: (input) =>
+      workflowManager.launchSpecDelivery(input),
     markRunning: (context, workflowExecutionId, origin) =>
       createRegisteredGraphExecutionLifecycleCallbacks().markRunning(
         context,
@@ -1696,62 +1419,40 @@ export function createSpecSpineWorld(
     auth: spineAuth,
     ...spineCapabilityVerifiers,
   });
-  workflowDefinitionGateRef.approve = async (input) =>
-    workflowHandlers.approveDefinition({
-      projectPath: SPINE_PROJECT_PATH,
-      projectName: input.projectName,
-      sessionName: input.sessionName,
-      expectedExecutionId: input.workflowExecutionId,
-    });
-  workflowDefinitionGateRef.hasPending = () =>
-    workflowHandlers.findPendingDefinitionApproval({
-      projectPath: SPINE_PROJECT_PATH,
-      sessionName: SPINE_SESSION_NAME,
-    });
-  // The production start+kickoff seam, exactly as `launchGraphWorkflowExecution`
-  // wires it live: the same route handlers, the same manager, and the owner
-  // conversation the spec-launch seam resolved server-side.
+  // The production start+kickoff seam, exactly as
+  // `launchSpecDeliveryGraphWorkflowExecution` wires it live: the same route
+  // handlers, the same manager, and the owner conversation the spec-launch
+  // seam resolved server-side.
   workflowDefinitionGateRef.launchApproved = async (input) => {
     try {
-      const launched = await workflowHandlers.launch({
+      const launched = await workflowHandlers.launchSpecDelivery({
         projectPath: SPINE_PROJECT_PATH,
         projectName: input.projectName,
         sessionName: input.sessionName,
-        definitionId: input.definitionId,
-        expectedDefinitionRevision: input.definitionRevision,
+        plan: input.plan,
+        specSlug: input.specSlug,
+        candidateId: input.candidateId,
         ownerConversationId: input.ownerConversationId,
+        ...(input.parameters === undefined ? {} : { inputs: input.parameters }),
+        seededDocuments: input.seededDocuments,
+        transactionAttachment: input.transactionAttachment,
       });
-      return { ok: true, workflowExecutionId: launched.id };
+      return {
+        ok: true,
+        workflowExecutionId: launched.id,
+        resolvedDefinitionHash: workingDefinitionHash(
+          launched.workingDefinition,
+        ),
+      };
     } catch (error) {
       return {
         ok: false,
         reason: error instanceof Error ? error.message : String(error),
+        ...(error instanceof WorkflowStartInputError
+          ? { code: "validation" as const }
+          : {}),
       };
     }
-  };
-  workflowDefinitionGateRef.ensurePending = async (input) => {
-    const response = await postWorkflowRoute("START", {
-      definitionId: input.definitionId,
-      definitionRevision: input.definitionRevision,
-    });
-    const park = await workflowHandlers.findPendingDefinitionApproval({
-      projectPath: SPINE_PROJECT_PATH,
-      sessionName: SPINE_SESSION_NAME,
-    });
-    if (park !== null) {
-      return { ok: true, park };
-    }
-    const payload = (await response.json()) as {
-      code?: string;
-      error?: string;
-    };
-    return {
-      ok: false,
-      reason:
-        payload.error ??
-        payload.code ??
-        `workflow start failed with status ${response.status}`,
-    };
   };
 
   /**
@@ -1911,37 +1612,11 @@ export function createSpecSpineWorld(
     return workflowHandlers[handler](request, context);
   }
 
-  /**
-   * The REAL amend route over this world's live execution and event store, so
-   * the audited amendment is exercised as `cctl workflow live amend` and the
-   * Studio control reach it. Only the agent-profile resolution is stubbed — the
-   * library is not part of what an amendment decides.
-   */
-  const amendEventPublisher = createGraphWorkflowExecutionEventPublisher({
+  const liveEditEventPublisher = createGraphWorkflowExecutionEventPublisher({
     broadcast(event) {
       publishedSse.push(event);
     },
   });
-  const amendHandlers = createGraphWorkflowAmendRouteHandlers({
-    resolveProjectPath: async (name) =>
-      name === SPINE_PROJECT_NAME ? SPINE_PROJECT_PATH : null,
-    getSession: async (projectPath, sessionName) =>
-      projectPath === SPINE_PROJECT_PATH && sessionName === SPINE_SESSION_NAME
-        ? spineSession
-        : null,
-    getActiveExecution: async () => activeWorkflowExecution,
-    mutateActive: mutateActiveImpl,
-    buildLiveEditDeps: async () =>
-      spineLiveEditDeps(now, options.currentGlobalAllowAgentTaskAdd ?? false),
-    prepareAssignmentSnapshots: stubAssignmentSnapshotPreparation(),
-    publishLiveEditApplied: amendEventPublisher.publishLiveEditApplied,
-    publishCharterUpdated: amendEventPublisher.publishCharterUpdated,
-    publishExecutionAmended: amendEventPublisher.publishExecutionAmended,
-    writeCharterDocument: async () => {},
-    auth: spineAuth,
-    ...spineCapabilityVerifiers,
-  });
-
   const runtimeEditHandlers = createGraphWorkflowRuntimeEditRouteHandlers({
     resolveProjectPath: async (name) =>
       name === SPINE_PROJECT_NAME ? SPINE_PROJECT_PATH : null,
@@ -1954,8 +1629,8 @@ export function createSpecSpineWorld(
     buildLiveEditDeps: async () =>
       spineLiveEditDeps(now, options.currentGlobalAllowAgentTaskAdd ?? false),
     prepareAssignmentSnapshots: stubAssignmentSnapshotPreparation(),
-    publishLiveEditApplied: amendEventPublisher.publishLiveEditApplied,
-    publishCharterUpdated: amendEventPublisher.publishCharterUpdated,
+    publishLiveEditApplied: liveEditEventPublisher.publishLiveEditApplied,
+    publishCharterUpdated: liveEditEventPublisher.publishCharterUpdated,
     writeCharterDocument: async () => {},
   });
 
@@ -1981,39 +1656,6 @@ export function createSpecSpineWorld(
     });
   }
 
-  async function postWorkflowAmend(
-    body: unknown,
-    transport: "agent" | "human",
-  ): Promise<Response> {
-    const headers: Record<string, string> = {
-      "content-type": "application/json",
-    };
-    if (transport === "agent") {
-      headers.authorization = `Bearer ${SPINE_BEARER_TOKEN}`;
-      // What `cctl workflow live amend` presents: a signed capability, not a
-      // conversation id the caller typed. The route derives the audit actor
-      // from the signature, so a claimed header would prove nothing here.
-      headers[CONVERSATION_CAPABILITY_HEADER] = mintConversationCapability(
-        {
-          sessionName: SPINE_SESSION_NAME,
-          conversationId: SPINE_CONVERSATION_ID,
-        },
-        SPINE_CAPABILITY_SECRET,
-        1_760_000_000_000,
-      );
-    }
-    const request = new Request(
-      `http://cc.test/api/projects/${SPINE_PROJECT_NAME}/sessions/${SPINE_SESSION_NAME}/graph-workflow/amend`,
-      { method: "POST", headers, body: JSON.stringify(body) },
-    );
-    return amendHandlers.POST(request, {
-      params: Promise.resolve({
-        name: SPINE_PROJECT_NAME,
-        session: SPINE_SESSION_NAME,
-      }),
-    });
-  }
-
   return {
     db,
     publishedSse,
@@ -2023,6 +1665,8 @@ export function createSpecSpineWorld(
       specs,
       review,
       delivery,
+      deliveryPlans: plans,
+      executionBindings: bindingRepo,
       links,
       events: eventsRepo,
       workflowEvents,
@@ -2030,7 +1674,6 @@ export function createSpecSpineWorld(
     },
     services,
     definitions,
-    ingest,
     measures,
     readHandlers,
     writeHandlers,
@@ -2043,7 +1686,6 @@ export function createSpecSpineWorld(
     postAction,
     getRoute,
     postWorkflowRoute,
-    postWorkflowAmend,
     postWorkflowLiveEdit,
     haltWorkflowExecution,
     pauseWorkflowExecution,
@@ -2409,332 +2051,249 @@ export interface StartedSpineExecution {
   deliveryPlan?: {
     attemptId: string;
     candidateId: string;
-    planHash: string;
-    compiledDefinitionHash: string;
+    candidateHash: string;
   };
 }
 
-function spineDeliveryPlanDocument(
-  seeded: DeliveryPlanDocument,
+function spineExecutionBinding(
   authored: AuthoredSpineSpec,
-): DeliveryPlanDocument {
-  return deliveryPlanDocumentSchema.parse({
-    ...seeded,
+): SpecExecutionBinding {
+  return specExecutionBindingSchema.parse({
     dispositions: [authored.criterionOneId, authored.criterionTwoId].map(
       (criterionElementId) => ({
         criterionElementId,
-        disposition: "selected",
+        disposition: "in_scope" as const,
         deliveredByExecutionId: null,
-        reaffirmation: null,
-        note: null,
       }),
     ),
-    contexts: [
+    claims: [
       {
-        contextId: "ctx-implement",
-        title: "Implement the spine service",
-        contextType: "delivery",
+        accountabilitySourceId: "ctx-implement",
+        taskElementId: authored.taskOneId,
+        touchedPaths: [],
         criterionElementIds: [authored.criterionOneId],
-        acceptanceContract: [
-          "The first approved spine criterion is observable in production.",
-        ],
-        proofPlan: [
-          {
-            criterionElementId: authored.criterionOneId,
-            evidenceKinds: ["validator_verdict"],
-            note: "Validate the implementation context against criterion one.",
-          },
-        ],
       },
       {
-        contextId: "ctx-wire",
-        title: "Wire the spine delivery",
-        contextType: "delivery",
+        accountabilitySourceId: "ctx-wire",
+        taskElementId: authored.taskTwoId,
+        touchedPaths: [],
         criterionElementIds: [authored.criterionTwoId],
-        acceptanceContract: [
-          "The second approved spine criterion is observable in production.",
-        ],
-        proofPlan: [
-          {
-            criterionElementId: authored.criterionTwoId,
-            evidenceKinds: ["validator_verdict"],
-            note: "Validate the production wiring against criterion two.",
-          },
-        ],
       },
     ],
-    tasks: [
-      {
-        taskId: authored.taskOneId,
-        contextId: "ctx-implement",
-        title: "Implement the spine service",
-        instructions: "Build the service behind criterion one.",
-        order: 0,
-        contributesToCriterionElementIds: [authored.criterionOneId],
-      },
-      {
-        taskId: authored.taskTwoId,
-        contextId: "ctx-wire",
-        title: "Wire the spine delivery",
-        instructions: "Land the delivery path behind criterion two.",
-        order: 0,
-        contributesToCriterionElementIds: [authored.criterionTwoId],
-      },
-    ],
-    edges: [
-      {
-        edgeId: "edge-implement-wire",
-        fromContextId: "ctx-implement",
-        toContextId: "ctx-wire",
-      },
-    ],
-    wiring: [],
-    policyOverrides: [],
-    touchedSurfaces: ["src/lib/specs/"],
-    governance: {
-      mission: "Deliver the spine feature from its approved delivery plan.",
-      charterInvariants: [
-        {
-          id: "exact-approval",
-          statement:
-            "The launched graph is the exact candidate the human approved.",
-        },
-      ],
-      sourcesOfTruth: [
-        {
-          rank: 1,
-          id: "approved-revision",
-          label: "Approved spec revision",
-          type: "spec",
-          locator: `spec://${authored.specId}/revisions/${authored.draftRevisionId}`,
-          description: "The immutable revision this delivery plan pins.",
-          appliesTo: null,
-          accessPolicy: "worktree-relative",
-        },
-      ],
-      validationCommandNames: ["typecheck"],
-    },
   });
 }
 
+function spineAuthoredLaunch(
+  authored: AuthoredSpineSpec,
+): WorkflowDefinitionDraft {
+  const sourceUri = `spec-plan://${authored.specId}/attempts/authored-spine`;
+  return {
+    name: "Agent-authored spine delivery",
+    description: "An admitted graph launch authored for the spine delivery.",
+    definition: {
+      schemaVersion: 1,
+      approvalRequired: false,
+      origin: { sourceUri, label: "Agent-authored spine delivery" },
+      lockedRegions: [
+        {
+          paths: ["/tasks/*/instructions"],
+          sourceUri,
+          reason: "The admitted delivery binding owns these instructions.",
+          instruction: "Reopen the delivery plan to change the authored graph.",
+        },
+      ],
+      workflowConfig: {},
+      charter: {
+        mission: "Deliver the spine feature from its approved graph launch.",
+        invariants: [
+          {
+            id: "exact-approval",
+            statement:
+              "The launched graph is the exact candidate the human approved.",
+          },
+        ],
+        sourcesOfTruth: [
+          {
+            rank: 1,
+            id: "approved-revision",
+            label: "Approved spec revision",
+            type: "spec",
+            locator: `spec://${authored.specId}/revisions/${authored.draftRevisionId}`,
+            description: "The immutable revision this delivery binding pins.",
+            accessPolicy: "worktree-relative",
+          },
+        ],
+      },
+      parameters: [],
+      prerequisites: [],
+      executionContexts: [
+        {
+          id: "ctx-implement",
+          title: "Implement the spine service",
+          description: "Deliver the first approved criterion.",
+          acceptanceCriteria:
+            "The first approved spine criterion is observable in production.",
+          placement: { lane: "ctx-implement", mode: "full" },
+          origin: {
+            sourceUri: `${sourceUri}#ctx-implement`,
+            label: "Implement the spine service",
+          },
+        },
+        {
+          id: "ctx-wire",
+          title: "Wire the spine delivery",
+          description: "Deliver the second approved criterion.",
+          acceptanceCriteria:
+            "The second approved spine criterion is observable in production.",
+          placement: { lane: "ctx-wire", mode: "full" },
+          origin: {
+            sourceUri: `${sourceUri}#ctx-wire`,
+            label: "Wire the spine delivery",
+          },
+        },
+      ],
+      tasks: [
+        {
+          id: authored.taskOneId,
+          contextId: "ctx-implement",
+          order: 1,
+          title: "Implement the spine service",
+          instructions: "Build the service behind criterion one.",
+          source: "user",
+        },
+        {
+          id: authored.taskTwoId,
+          contextId: "ctx-wire",
+          order: 1,
+          title: "Wire the spine delivery",
+          instructions: "Land the delivery path behind criterion two.",
+          source: "user",
+        },
+      ],
+      edges: [
+        {
+          id: "edge-implement-wire",
+          sourceContextId: "ctx-implement",
+          targetContextId: "ctx-wire",
+        },
+      ],
+    },
+    layout: {
+      workflowId: "agent-authored-spine-layout",
+      contextPositions: {
+        "ctx-implement": { x: 71, y: -29 },
+        "ctx-wire": { x: 613, y: 164 },
+      },
+      viewport: { x: -149, y: 53, zoom: 1.2 },
+    },
+  };
+}
+
+/**
+ * Seeds post-launch spine state — a running graph, the typed binding, and the
+ * criterion dispositions — without going through proposal and sign-off, so the
+ * cleanup, delivery-gate and refusal suites can start from a live run and
+ * assert their own subject. It writes the rows production start writes, but it
+ * is a shortcut, not the boundary: `delivery-plan-launch.integration.test.ts`
+ * owns the proof that the direct path produces this state, including that it
+ * mints no saved workflow definition. The saved definition here exists only to
+ * give those suites a graph to drive; nothing reads it as a spec launch.
+ */
 export async function startSpineExecution(
   world: SpecSpineWorld,
-  slug: string,
+  _slug: string,
   authored: AuthoredSpineSpec,
 ): Promise<StartedSpineExecution> {
-  const opened = deliveryPlanMutationViewSchema.parse(
-    await postJson(
-      world.postAction(slug, "plan-open", { seedFromLast: false }, "agent"),
-    ),
-  );
-  await postJson(
-    world.postAction(
-      slug,
-      "plan-edit",
-      {
-        expectedDraftRevision: opened.attempt.draftRevision,
-        document: spineDeliveryPlanDocument(opened.document, authored),
-      },
-      "agent",
-    ),
-  );
-  await postJson(world.postAction(slug, "plan-propose", {}, "agent"));
-  const previewResponse = await world.writeHandlers.specPlanPreviewGET(
-    new Request(
-      `http://cc.test/api/specs/${SPINE_PROJECT_NAME}/${slug}/plan/preview?stage=proposed`,
-    ),
-    {
-      params: Promise.resolve({ name: SPINE_PROJECT_NAME, slug }),
-    },
-  );
-  const preview = deliveryPlanPreviewViewSchema.parse(
-    await postJson(Promise.resolve(previewResponse)),
-  );
-  if (preview.candidateId === null) {
-    throw new Error("The proposed spine delivery plan stored no candidate");
-  }
-  await postJson(
-    world.postAction(
-      slug,
-      "plan-sign-off",
-      {
-        candidateId: preview.candidateId,
-        planHash: preview.planHash,
-        compiledDefinitionHash: preview.compiledDefinitionHash,
-      },
-      "human",
-    ),
-  );
+  const launch = spineAuthoredLaunch(authored);
+  const binding = spineExecutionBinding(authored);
+  const definition = await world.definitions.create(launch);
+
   world.registerMergeComposition();
-  const started = await postJson<{
-    execution: { id: string; state: string };
-    definition: WorkflowDefinitionRecord;
-    deliveryPlan: {
-      attemptId: string;
-      candidateId: string;
-      planHash: string;
-      compiledDefinitionHash: string;
-    };
-  }>(
-    world.postAction(
-      slug,
-      "start-execution",
-      {
-        revisionId: authored.draftRevisionId,
-        sessionName: SPINE_SESSION_NAME,
-      },
-      "agent",
-    ),
+  await postJson(
+    world.postWorkflowRoute("START", {
+      definitionId: definition.id,
+      definitionRevision: definition.revision,
+      tier: "project",
+    }),
   );
+
+  const specExecutionId = `execution-${authored.specId}`;
+  const timestamp = world.now();
+  world.db
+    .transaction(() => {
+      world.repos.delivery.insertExecution({
+        id: specExecutionId,
+        spec_id: authored.specId,
+        revision_id: authored.draftRevisionId,
+        scope_json: JSON.stringify(executionScopeFromBinding(binding)),
+        state: "running",
+        execution_start_dial: "gate",
+        workflow_definition_id: definition.id,
+        workflow_definition_revision: definition.revision,
+        workflow_seed_source_json: JSON.stringify({
+          kind: "saved-definition",
+          id: definition.id,
+          revision: definition.revision,
+          tier: "project",
+        }),
+        workflow_execution_binding_json: null,
+        workflow_execution_id: SPINE_WORKFLOW_EXECUTION_ID,
+        session_name: SPINE_SESSION_NAME,
+        delivered_at: null,
+        abandoned_reason: null,
+        cleanup_phase: null,
+        linked_workflow_execution_id: null,
+        cleanup_last_error: null,
+        cleanup_last_error_at: null,
+        created_at: timestamp,
+        updated_at: timestamp,
+      });
+      // The typed link the direct delivery path resolves from. Production
+      // start writes it through the start attachment; the spine writes the
+      // same row so the gate under test is the bound one.
+      world.repos.executionBindings.insert({
+        specExecutionId,
+        workflowExecutionId: SPINE_WORKFLOW_EXECUTION_ID,
+        binding: {
+          schemaVersion: 2,
+          candidateId: SPINE_CANDIDATE_ID,
+          candidateHash: SPINE_CANDIDATE_HASH,
+          pinnedRevisionId: authored.draftRevisionId,
+          dispositions: binding.dispositions.map((disposition) => ({
+            ...disposition,
+          })),
+          claims: binding.claims.map((claim) => ({
+            contextId: claim.accountabilitySourceId,
+            criterionElementIds: [...claim.criterionElementIds],
+          })),
+        },
+        createdAt: timestamp,
+      });
+      for (const disposition of binding.dispositions) {
+        world.repos.delivery.saveCriterionDisposition({
+          execution_id: specExecutionId,
+          criterion_element_id: disposition.criterionElementId,
+          disposition: disposition.disposition,
+          waiver_id: null,
+          delivered_by_execution_id: disposition.deliveredByExecutionId,
+          created_at: timestamp,
+          updated_at: timestamp,
+        });
+      }
+    })
+    .immediate();
+
   return {
-    specExecutionId: started.execution.id,
-    definition: started.definition,
-    deliveryPlan: started.deliveryPlan,
+    specExecutionId,
+    definition,
   };
 }
 
-/**
- * Seeds the persisted shape of a legacy compiled run. This is a historical
- * compatibility fixture, not an alternate active start path.
- */
-export async function startLegacySpineExecution(
-  world: SpecSpineWorld,
-  slug: string,
-  authored: AuthoredSpineSpec,
-): Promise<StartedSpineExecution> {
-  const spec = await world.repos.specs.resolve(SPINE_PROJECT_PATH, slug);
-  const snapshot = await world.repos.specs.getRevisionSnapshot(
-    authored.draftRevisionId,
-  );
-  if (spec === null || snapshot === null) {
-    throw new Error("The historical spine revision could not be read");
-  }
-  const scope = {
-    selectedTaskIds: [authored.taskOneId, authored.taskTwoId],
-    selectedCriterionIds: [authored.criterionOneId, authored.criterionTwoId],
-    exclusionDispositions: [],
-  };
-  const scopeHash = hashExecutionScope(scope);
-  const executionStartDial = specGateDialSchema.parse(
-    resolveDial(spec.gatePolicy, "execution_start"),
-  );
-  const compiled = compileSpecExecutionPlan({
-    spec: { id: spec.id, slug: spec.slug, name: spec.name },
-    revisionSnapshot: snapshot,
-    scope,
-    scopeHash,
-    approvalRequired: executionStartDial === "gate",
-  });
-  const definition = await world.definitions.create({
-    name: `${spec.name} revision ${snapshot.revision.number}`,
-    description: `Historical compiled execution for ${spec.slug}.`,
-    definition: compiled,
-    layout: {
-      workflowId: "historical-compiled-spec-definition",
-      contextPositions: Object.fromEntries(
-        compiled.executionContexts.map((context, index) => [
-          context.id,
-          { x: index * 360, y: 0 },
-        ]),
-      ),
-      viewport: { x: 0, y: 0, zoom: 1 },
-    },
-  });
-  const createdAt = world.now();
-  const execution: SpecExecutionRow = {
-    id: `historical-execution-${slug}`,
-    spec_id: spec.id,
-    revision_id: snapshot.revision.id,
-    scope_json: JSON.stringify(scope),
-    state: "definition_review",
-    execution_start_dial: executionStartDial,
-    workflow_definition_id: definition.id,
-    workflow_definition_revision: definition.revision,
-    workflow_execution_id: null,
-    session_name: SPINE_SESSION_NAME,
-    delivered_at: null,
-    abandoned_reason: null,
-    cleanup_phase: null,
-    linked_workflow_execution_id: null,
-    cleanup_last_error: null,
-    cleanup_last_error_at: null,
-    created_at: createdAt,
-    updated_at: createdAt,
-  };
-  world.repos.delivery.insertExecution(execution);
-  for (const criterionElementId of scope.selectedCriterionIds) {
-    world.repos.delivery.saveCriterionDisposition({
-      execution_id: execution.id,
-      criterion_element_id: criterionElementId,
-      disposition: "in_scope",
-      waiver_id: null,
-      delivered_by_execution_id: null,
-      created_at: createdAt,
-      updated_at: createdAt,
-    });
-  }
-  return { specExecutionId: execution.id, definition };
-}
-
-/**
- * Simulates the linked workflow going live and producing evidence: lane
- * commits and passing validation results for every compiled context.
- */
-/**
- * Approves the compiled definition through the real workflow-definition gate
- * and starts the workflow through the production route path. The spec
- * execution ends up linked + running exclusively via the registered lifecycle
- * port — the same handoff a live start uses. Returns after asserting that
- * handoff took effect.
- */
 export async function startSpineWorkflowThroughProductionGate(
   world: SpecSpineWorld,
   started: StartedSpineExecution,
-  slug = "spec-spine",
+  _slug = "spec-spine",
 ): Promise<void> {
-  // The start/approval handlers report through the registered lifecycle port;
-  // make sure this world's composition owns the registration before starting.
-  world.registerMergeComposition();
-  const existing = world.repos.delivery.findExecutionById(
-    started.specExecutionId,
-  );
-  if (
-    existing?.workflow_execution_id === SPINE_WORKFLOW_EXECUTION_ID &&
-    existing.state === "running"
-  ) {
-    return;
-  }
-  const startResponse = await world.postWorkflowRoute("START", {
-    definitionId: started.definition.id,
-  });
-  if (startResponse.status !== 202) {
-    throw new Error(
-      `Workflow start failed with status ${startResponse.status}`,
-    );
-  }
-  // A park is an ACCEPTED launch carrying a receipt (D7 decision D1), so the
-  // disposition is read from the receipt rather than decoded from a refusal.
-  const payload = (await startResponse.json()) as {
-    receipt?: { status?: string };
-  };
-  if (payload.receipt?.status === "awaiting_definition_approval") {
-    // The execution-start gate is a human-only act: approval flows through
-    // the spec-side approve-execution-start action on human transport, which
-    // records the spec approval + execution_start admission with provenance
-    // and then approves the pending workflow definition through the seam.
-    const approve = await world.postAction(
-      slug,
-      "approve-execution-start",
-      { executionId: started.specExecutionId },
-      "human",
-    );
-    if (approve.status !== 200) {
-      throw new Error(
-        `Execution-start approval failed with status ${approve.status}: ${await approve.text()}`,
-      );
-    }
-  }
-
   const linked = world.repos.delivery.findExecutionById(
     started.specExecutionId,
   );
@@ -2756,21 +2315,14 @@ export async function runSpineWorkflowToEvidence(
 ): Promise<{ commitShas: string[] }> {
   await startSpineWorkflowThroughProductionGate(world, started, slug);
 
-  const contextIds = started.definition.definition.origin?.sourceUri.startsWith(
-    "spec-plan://",
-  )
-    ? readDeliveryPlanSourceMap(started.definition.definition).contexts.map(
-        (entry) => entry.contextId,
-      )
-    : [
-        ...new Set(
-          readCompiledOriginMap(started.definition.definition).map(
-            (entry) => entry.contextId,
-          ),
-        ),
-      ];
+  const linked = world.repos.executionBindings.findBySpecExecutionId(
+    started.specExecutionId,
+  );
+  const contextIds = [
+    ...new Set(linked?.binding.claims.map((claim) => claim.contextId) ?? []),
+  ];
   if (contextIds.length === 0) {
-    throw new Error("The compiled definition exposes no origin map");
+    throw new Error("The started execution has no accountable binding sources");
   }
   const commitShas: string[] = [];
   const workflowEventRows = contextIds.flatMap((contextId, index) => {

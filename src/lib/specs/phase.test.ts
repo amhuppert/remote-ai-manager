@@ -412,28 +412,12 @@ describe("requirement status projection", () => {
 });
 
 describe("task work status projection", () => {
-  it("uses the latest execution task event when no claim exists", () => {
+  it("uses the latest execution task event", () => {
     expect(
       projectTaskWorkStatus({
         executionEvents: [{ status: "pending" }, { status: "running" }],
-        latestClaim: null,
       }),
-    ).toEqual({ status: "running", claimEvidenceIds: [] });
-  });
-
-  it("projects accepted and reopened completion claims with their evidence", () => {
-    expect(
-      projectTaskWorkStatus({
-        executionEvents: [{ status: "completed" }],
-        latestClaim: { status: "accepted", evidenceIds: ["evidence-1"] },
-      }),
-    ).toEqual({ status: "claimed", claimEvidenceIds: ["evidence-1"] });
-    expect(
-      projectTaskWorkStatus({
-        executionEvents: [{ status: "completed" }],
-        latestClaim: { status: "reopened", evidenceIds: ["evidence-1"] },
-      }),
-    ).toEqual({ status: "reopened", claimEvidenceIds: ["evidence-1"] });
+    ).toEqual({ status: "running" });
   });
 
   it("never derives task work status from criterion dispositions", () => {
@@ -441,13 +425,9 @@ describe("task work status projection", () => {
       criterionDispositions: string[];
     } = {
       executionEvents: [{ status: "pending" }],
-      latestClaim: null,
       criterionDispositions: ["waived", "delivered_elsewhere"],
     };
 
-    expect(projectTaskWorkStatus(input)).toEqual({
-      status: "pending",
-      claimEvidenceIds: [],
-    });
+    expect(projectTaskWorkStatus(input)).toEqual({ status: "pending" });
   });
 });

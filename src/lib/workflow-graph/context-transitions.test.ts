@@ -567,9 +567,11 @@ describe("single-transition-owner grep assertion (Phase 2 exit criterion)", () =
       // Execution-level lifecycle (D4: stays hand-rolled).
       /nextExecution\.status = status/,
       /execution\.status = "(running|completed)"/,
+      /current\.status = "paused"/,
       // Task-level status.
       /taskState\.status = "interrupted"/,
     ],
+    "execution-repository.ts": [/execution\.status = "running"/],
     "iteration-orchestrator.ts": [
       // Task-level status.
       /taskState\.status = "(completed|pending)"/,

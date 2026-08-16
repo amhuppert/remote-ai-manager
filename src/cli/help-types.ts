@@ -74,6 +74,8 @@ export interface CommandHelpEntry {
   skills?: SkillRef[];
   /** Mechanical reference rows generated from production registries. */
   generatedReference?: readonly GeneratedReferenceSection[];
+  /** Whether this command appears in the portable generated command reference. */
+  includeInGeneratedReference?: boolean;
   /** Whether `--help` queries /api/agent/help-context (docs/design/cc-cli/04 §4). */
   dynamicContext?: boolean;
 }

@@ -25,6 +25,7 @@ import {
   assertGraphExecutionContractAccepted,
   createRegisteredGraphExecutionContract,
   type GraphExecutionContract,
+  type LoadedGraphExecutionLiveEditContract,
 } from "./execution-contract-port";
 
 const logger = createLogger("graph-workflow-execution-tool-context");
@@ -34,6 +35,7 @@ interface GraphWorkflowExecutionToolContextRuntimeEditService {
     execution: GraphWorkflowExecution,
     contextId: string,
     task: AgentAddedTask,
+    executionContract: LoadedGraphExecutionLiveEditContract,
   ): AgentTaskAddResult;
 }
 
@@ -415,11 +417,13 @@ export function createGraphWorkflowExecutionToolContext(
         input.projectPath,
         input.sessionName,
         (current) => {
+          const liveEditContract = executionContract.loadLiveEdit(current);
           ensureBoundContextActive(current);
           const applied = deps.runtimeEditService.applyAgentTaskAdd(
             current,
             input.contextId,
             task,
+            liveEditContract,
           );
           addedBox.value = applied.added;
           // Lane-agent add_task is an accepted live edit and MUST emit the

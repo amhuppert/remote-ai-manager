@@ -826,6 +826,19 @@ export function createAccessors(core: StateStoreCore, log: Logger = logger) {
     }
   }
 
+  async function findGraphWorkflowExecutionById(executionId: string): Promise<{
+    execution: GraphWorkflowExecution;
+    location: "active" | "archived";
+  } | null> {
+    const active = repos.graphWorkflowExecutions.findByExecutionId(executionId);
+    if (active !== null) return { execution: active, location: "active" };
+    const archived =
+      repos.graphWorkflowArchivedExecutions.findByExecutionId(executionId);
+    return archived === null
+      ? null
+      : { execution: archived, location: "archived" };
+  }
+
   async function listArchivedGraphWorkflowExecutions(
     projectPath: string,
     sessionName: string,
@@ -872,6 +885,7 @@ export function createAccessors(core: StateStoreCore, log: Logger = logger) {
     getGraphWorkflowResultDelivery,
     listPendingGraphWorkflowResultEffects,
     listActiveGraphWorkflowExecutions,
+    findGraphWorkflowExecutionById,
     listArchivedGraphWorkflowExecutions,
   };
 }

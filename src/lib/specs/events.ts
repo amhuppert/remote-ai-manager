@@ -50,6 +50,7 @@ export interface SpecEventsPublisher {
   ): PreparedSpecEventPublication;
   appendDurableInTransaction(input: AppendDurableSpecEventInput): SpecEventRow;
   publishAfterCommit(prepared: PreparedSpecEventPublication): void;
+  publishSseAfterCommit(event: SpecSseEvent): void;
 }
 
 export function createSpecEventsPublisher(
@@ -89,6 +90,23 @@ export function createSpecEventsPublisher(
     });
   }
 
+  function publishSseAfterCommit(event: SpecSseEvent): void {
+    const sseEvent = specSseEventSchema.parse(event);
+    publishEventBestEffort({
+      publish:
+        injectedPublish === undefined
+          ? publishEvent
+          : (published) => injectedPublish(published),
+      logger,
+      failureEvent: "specs.events.publish_failed",
+      context: {
+        eventType: sseEvent.type,
+        specId: sseEvent.specId,
+      },
+      build: () => sseEvent,
+    });
+  }
+
   function appendDurableInTransaction(
     input: AppendDurableSpecEventInput,
   ): SpecEventRow {
@@ -105,5 +123,6 @@ export function createSpecEventsPublisher(
     appendInTransaction,
     appendDurableInTransaction,
     publishAfterCommit,
+    publishSseAfterCommit,
   };
 }

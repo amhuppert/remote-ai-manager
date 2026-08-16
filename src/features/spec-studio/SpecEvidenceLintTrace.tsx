@@ -127,7 +127,6 @@ const nodeLabel: Record<TraceabilityNodeKind, string> = {
 
 const severityTone: Record<LintFinding["severity"], StatusChipTone> = {
   blocks_propose: "red",
-  blocks_claim: "red",
   blocks_signoff: "red",
   advisory: "amber",
 };

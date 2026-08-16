@@ -1,13 +1,12 @@
 import { z } from "zod";
 
-import { graphWorkflowTaskStatusSchema } from "@/lib/workflow-graph/definition-schemas";
+import { graphWorkflowTaskStatusSchema } from "@/lib/workflow-graph/spec-bridge";
 
 import {
   specApprovalValiditySchema,
   specAuthoringStageSchema,
   specExecutionStateSchema,
   specRevisionStateSchema,
-  specTaskClaimStatusSchema,
 } from "./schemas";
 
 export const deliveryCriterionStateSchema = z.enum([
@@ -165,29 +164,13 @@ const executionTaskEventSchema = z
   .object({ status: graphWorkflowTaskStatusSchema })
   .strict();
 
-const taskClaimProjectionSchema = z
-  .object({
-    status: specTaskClaimStatusSchema,
-    evidenceIds: z.array(z.string().min(1)),
-  })
-  .strict();
-
 export const taskWorkStatusInputSchema = z
-  .object({
-    executionEvents: z.array(executionTaskEventSchema),
-    latestClaim: taskClaimProjectionSchema.nullable(),
-  })
+  .object({ executionEvents: z.array(executionTaskEventSchema) })
   .strict();
 export type TaskWorkStatusInput = z.infer<typeof taskWorkStatusInputSchema>;
 
 export const taskWorkStatusSchema = z
-  .object({
-    status: z.union([
-      graphWorkflowTaskStatusSchema,
-      z.enum(["claimed", "reopened"]),
-    ]),
-    claimEvidenceIds: z.array(z.string().min(1)),
-  })
+  .object({ status: graphWorkflowTaskStatusSchema })
   .strict();
 export type TaskWorkStatus = z.infer<typeof taskWorkStatusSchema>;
 
@@ -275,24 +258,7 @@ export function projectRequirementStatus(
 export function projectTaskWorkStatus(
   input: TaskWorkStatusInput,
 ): TaskWorkStatus {
-  if (input.latestClaim?.status === "accepted") {
-    return {
-      status: "claimed",
-      claimEvidenceIds: [...input.latestClaim.evidenceIds],
-    };
-  }
-
-  if (input.latestClaim?.status === "reopened") {
-    return {
-      status: "reopened",
-      claimEvidenceIds: [...input.latestClaim.evidenceIds],
-    };
-  }
-
-  return {
-    status: input.executionEvents.at(-1)?.status ?? "pending",
-    claimEvidenceIds: [],
-  };
+  return { status: input.executionEvents.at(-1)?.status ?? "pending" };
 }
 
 function resolveAuthoringFacet(

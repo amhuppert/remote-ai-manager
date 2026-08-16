@@ -19,17 +19,11 @@ const meta = {
     slug: "native-sdd",
     executionId: "execution-1",
     state: "running",
-    canRequestAmendment: true,
     capturePending: false,
     captureOutcomePath: null,
     captureReceipt: null,
     captureFailure: null,
-    amendmentPending: false,
-    amendmentReceipt: null,
-    amendmentEvent: null,
-    amendmentFailure: null,
     onCapture: fn(),
-    onAmend: fn(),
   },
 } satisfies Meta<typeof PostLaunchCapturePaths>;
 
@@ -57,69 +51,16 @@ export const SeededReplacementReceipt: Story = {
   },
 };
 
-export const DurableAmendmentEvent: Story = {
-  args: {
-    amendmentReceipt: {
-      amended: 1,
-      liveRevision: 3,
-      policyBasis: "human_operator",
-      addedContextIds: [],
-      addedTaskIds: ["verify-added-path"],
-      addedEdgeIds: [],
-      previousWorkingDefinitionHash: "sha256:old",
-      workingDefinitionHash: "sha256:new",
-    },
-    amendmentEvent: {
-      type: "graph-workflow-execution-amended",
-      projectName: "command-center",
-      sessionName: "native-sdd-run",
-      executionId: "workflow-execution-1",
-      liveRevision: 3,
-      reason: "Add live verification.",
-      actor: "human",
-      policyBasis: "human_operator",
-      previousWorkingDefinitionHash: "sha256:old",
-      workingDefinitionHash: "sha256:new",
-      addedContextIds: [],
-      addedTaskIds: ["verify-added-path"],
-      addedEdgeIds: [],
-    },
-  },
-};
-
 export const UnlaunchedRedirect: Story = {
   args: {
     executionId: null,
     state: "unlaunched",
-    canRequestAmendment: false,
     captureOutcomePath: "discovery",
     captureFailure: {
       message:
         "Delivery plan attempt attempt-3 is approved and has launched no execution.",
       instruction:
         "Nothing was captured. Add the discovered work to the plan itself with `cctl spec plan reopen native-sdd --reason <why>`.",
-    },
-  },
-};
-
-export const CompletedAmendmentRefusal: Story = {
-  args: {
-    amendmentFailure: {
-      message:
-        'Execution "workflow-execution-1" is completed; only a running or paused execution can be amended. Nothing was applied.',
-      instruction:
-        "Plan the work into the next attempt with `cctl spec plan open --seed-from last`.",
-    },
-  },
-};
-
-export const ResumableHaltAmendmentRefusal: Story = {
-  args: {
-    amendmentFailure: {
-      message:
-        'Execution "workflow-execution-1" is halted; only a running or paused execution can be amended. Nothing was applied.',
-      instruction:
-        "Resume the run with `cctl workflow live resume`; if the target work has started, pause it again before re-running `cctl workflow live amend`.",
     },
   },
 };

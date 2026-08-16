@@ -73,6 +73,14 @@ export interface GraphWorkflowExecutionReservation {
   events: GraphWorkflowExecutionEvent[];
   pushes?: GraphWorkflowPushInfo[];
   /**
+   * Caller-owned rows committed atomically with the winner's installation —
+   * the native-SDD launch bridge writes its spec execution, binding snapshot,
+   * and link here so a crash cannot leave a graph run without its spec
+   * linkage. Runs inside the reserving transaction after the execution row is
+   * installed; throwing refuses the launch and rolls everything back.
+   */
+  transactionAttachment?: (input: { executionId: string }) => void;
+  /**
    * The launch's seeded documents WITH their contents, recorded in this same
    * transaction as the winner's outstanding-artifact record. The execution row
    * carries only registrations, and the `.cc` writes deliberately run after the
@@ -1661,6 +1669,9 @@ export function createSetters(
           sessionName,
           documents: [...(reservation.seededDocuments ?? [])],
           recordedAt: now,
+        });
+        reservation.transactionAttachment?.({
+          executionId: reservation.execution.id,
         });
         return {
           reserved: true,

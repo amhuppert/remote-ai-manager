@@ -410,7 +410,9 @@ describe("0024-execution-lease-and-result-deliveries", () => {
         .prepare("SELECT MAX(version) AS version FROM schema_migrations")
         .get(),
     ).toEqual(stampedBefore);
-    expect(KNOWN_SCHEMA_VERSION).toBe(8);
+    // Version 9 is the native-SDD v2 cutover (migration 0030); this
+    // migration's own barrier remains the version-8 stamp asserted above.
+    expect(KNOWN_SCHEMA_VERSION).toBe(9);
   });
 
   it("cascades a delivery with its session but survives losing the origin conversation", async () => {

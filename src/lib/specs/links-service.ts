@@ -5,6 +5,7 @@ import type { MessageContentBlock } from "@/lib/conversations/message-content-sc
 import { createLogger } from "@/lib/logging";
 import type { GraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
 import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
+import type { SpecExecutionBindingRepo } from "@/lib/state-store/spec-execution-binding-repo";
 import type { SpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import {
   computeSpecElementPayloadHash,
@@ -27,8 +28,9 @@ import {
   type AuthoringService,
   type AuthoringSpecResult,
 } from "./authoring-service";
-import { compiledWorkflowTaskId } from "./compiler";
 import type { SpecEventsPublisher } from "./events";
+import { isEarlierMergedDelivery } from "./delivery-history";
+import { findDeliveryVerdictForExecution } from "./delivery-verdict-identity";
 import { formatElementHandle, parseSpecSlug } from "./handles";
 import { openDraftAuthoringStage } from "./transitions";
 import {
@@ -211,6 +213,7 @@ export interface LinksServiceDeps {
   specs: SpecsRepo;
   links: SpecLinksRepo;
   delivery: SpecDeliveryRepo;
+  executionBindings: Pick<SpecExecutionBindingRepo, "findBySpecExecutionId">;
   authoring: Pick<AuthoringService, "createSpec" | "upsertDraftElement">;
   events: SpecEventsPublisher;
   workflowEvents: Pick<GraphWorkflowEventsRepo, "findByExecution">;
@@ -1011,8 +1014,24 @@ export function createLinksService(deps: LinksServiceDeps): LinksService {
       criterionSnapshot?.elements.filter(
         ({ version }) => version.payload.kind === "criterion",
       ) ?? [];
-    const verdicts =
-      approved === null
+    const executions = deps.delivery.findExecutionsBySpecId(spec.id);
+    const linkedBindings = new Map(
+      executions.flatMap((execution) => {
+        const linkedBinding = deps.executionBindings.findBySpecExecutionId(
+          execution.id,
+        );
+        return linkedBinding === null
+          ? []
+          : [[execution.id, linkedBinding] as const];
+      }),
+    );
+    const hasCurrentV2Attempt = executions.some(
+      (execution) =>
+        execution.revision_id === approved?.id &&
+        linkedBindings.has(execution.id),
+    );
+    const legacyVerdicts =
+      approved === null || hasCurrentV2Attempt
         ? []
         : deps.delivery
             .findProofVerdictsByRevision(approved.id)
@@ -1023,27 +1042,28 @@ export function createLinksService(deps: LinksServiceDeps): LinksService {
         : deps.delivery
             .findWaiversByRevision(approved.id)
             .filter((waiver) => waiver.stale === 0);
-    const provenCriterionIds = new Set(
-      verdicts.map((verdict) => verdict.criterion_element_id),
-    );
     const waivedCriterionIds = new Set(
       waivers.map((waiver) => waiver.criterion_element_id),
     );
-    const executions = deps.delivery.findExecutionsBySpecId(spec.id);
-    const deliveredExecutionIds = new Set(
-      executions
-        .filter((execution) => execution.state === "delivered")
-        .map((execution) => execution.id),
+    const provenCriterionIds = new Set(
+      hasCurrentV2Attempt
+        ? []
+        : legacyVerdicts.map((verdict) => verdict.criterion_element_id),
     );
     const mergedCriterionIds = new Set<string>();
     for (const criterion of criteria) {
       const criterionId = criterion.element.id;
       if (
-        verdicts.some(
+        !hasCurrentV2Attempt &&
+        legacyVerdicts.some(
           (verdict) =>
             verdict.criterion_element_id === criterionId &&
             verdict.execution_id !== null &&
-            deliveredExecutionIds.has(verdict.execution_id),
+            executions.some(
+              (execution) =>
+                execution.id === verdict.execution_id &&
+                execution.state === "delivered",
+            ),
         )
       ) {
         mergedCriterionIds.add(criterionId);
@@ -1054,21 +1074,34 @@ export function createLinksService(deps: LinksServiceDeps): LinksService {
           execution.id,
           criterionId,
         );
+        const linkedBinding = linkedBindings.get(execution.id) ?? null;
         const deliveredInScope =
-          execution.state === "delivered" &&
-          disposition?.disposition === "in_scope" &&
-          provenCriterionIds.has(criterionId);
+          linkedBinding === null
+            ? !hasCurrentV2Attempt &&
+              execution.state === "delivered" &&
+              disposition?.disposition === "in_scope" &&
+              provenCriterionIds.has(criterionId)
+            : execution.state === "delivered" &&
+              execution.revision_id === approved?.id &&
+              disposition?.disposition === "in_scope" &&
+              findDeliveryVerdictForExecution(
+                deps.delivery.findDeliveryVerdictsBySpecExecutionId(
+                  execution.id,
+                ),
+                execution,
+                linkedBinding,
+                criterionId,
+              ) !== null;
         const deliveredElsewhere =
           disposition?.disposition === "delivered_elsewhere" &&
-          disposition.delivered_by_execution_id !== null &&
-          deliveredExecutionIds.has(disposition.delivered_by_execution_id);
+          isEarlierMergedDelivery(deps.delivery, execution, disposition);
         if (deliveredInScope || deliveredElsewhere) {
+          if (deliveredInScope) provenCriterionIds.add(criterionId);
           mergedCriterionIds.add(criterionId);
           break;
         }
       }
     }
-    const claims = deps.delivery.findTaskClaimsBySpecId(spec.id);
     const knownTaskIds = new Set(
       [currentSnapshot, approvedSnapshot].flatMap(
         (snapshot) =>
@@ -1130,9 +1163,13 @@ export function createLinksService(deps: LinksServiceDeps): LinksService {
           currentSnapshot === null
             ? null
             : taskPayload(currentSnapshot, taskElementId);
-        const latestClaim = claims
-          .filter((claim) => claim.task_element_id === taskElementId)
-          .at(-1);
+        // Claims are context-grain, so a task's progress is the progress of
+        // the contexts accountable for the criteria it covers. Both the claims
+        // and the criterion coverage are read from the typed execution link
+        // and the pinned revision, never from graph metadata.
+        const coveredCriterionIds = new Set(
+          current?.coveredCriterionElementIds ?? [],
+        );
         const executionEvents = executions.flatMap((execution) => {
           if (
             execution.workflow_execution_id === null ||
@@ -1140,6 +1177,20 @@ export function createLinksService(deps: LinksServiceDeps): LinksService {
           ) {
             return [];
           }
+          const linked = deps.executionBindings.findBySpecExecutionId(
+            execution.id,
+          );
+          if (linked === null || coveredCriterionIds.size === 0) return [];
+          const contextIds = new Set(
+            linked.binding.claims
+              .filter((claim) =>
+                claim.criterionElementIds.some((criterionElementId) =>
+                  coveredCriterionIds.has(criterionElementId),
+                ),
+              )
+              .map((claim) => claim.contextId),
+          );
+          if (contextIds.size === 0) return [];
           return deps.workflowEvents
             .findByExecution(
               spec.projectPath,
@@ -1148,23 +1199,12 @@ export function createLinksService(deps: LinksServiceDeps): LinksService {
             )
             .flatMap(({ event }) =>
               event.type === "graph-workflow-task-status" &&
-              event.taskId === compiledWorkflowTaskId(taskElementId)
+              contextIds.has(event.contextId)
                 ? [{ status: event.status }]
                 : [],
             );
         });
-        const work = projectTaskWorkStatus({
-          executionEvents,
-          latestClaim:
-            latestClaim === undefined
-              ? null
-              : {
-                  status: latestClaim.status,
-                  evidenceIds: z
-                    .array(z.string().min(1))
-                    .parse(JSON.parse(latestClaim.evidence_ids_json)),
-                },
-        });
+        const work = projectTaskWorkStatus({ executionEvents });
         let sourceTaskState: SourceTaskState = "current";
         if (current === null) {
           sourceTaskState = "removed";

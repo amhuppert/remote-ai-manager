@@ -1,27 +1,28 @@
 import type Database from "better-sqlite3";
 import {
-  deliveryPlanApprovalSchema,
+  canonicalDeliveryPlanCandidateBytes,
+  canonicalDeliveryPlanEnvelopeBytes,
   deliveryPlanDocumentSchema,
-  deliveryPlanPrelaunchSchema,
+  finalizedDeliveryPlanApprovalSchema,
+  finalizedDeliveryPlanCandidateIdentitySchema,
+  finalizedDeliveryPlanPrelaunchSchema,
   postLaunchPathsSentence,
-  type DeliveryPlanApproval,
-  type DeliveryPlanCandidateIdentity,
+  type DeliveryPlanCandidateRecord,
   type DeliveryPlanDocument,
-  type DeliveryPlanPrelaunch,
-  type DeliveryPlanReaffirmation,
+  type FinalizedDeliveryPlanApproval,
+  type FinalizedDeliveryPlanCandidateIdentity,
+  type FinalizedDeliveryPlanPrelaunch,
 } from "@/lib/specs/delivery-plan";
-import { deliveryPlanHash } from "@/lib/specs/delivery-plan-hash";
+import { deliveryPlanCandidateHash } from "@/lib/specs/delivery-plan-hash";
 import {
   specDeliveryDiscoveryRowSchema,
   specDeliveryPlanAttemptRowSchema,
-  specDeliveryPlanCandidateRowSchema,
   specDeliveryPlanCommentRowSchema,
   specDeliveryPlanSnapshotRowSchema,
   type ActorProvenance,
   type DeliveryPlanAttemptStatus,
   type SpecDeliveryDiscoveryRow,
   type SpecDeliveryPlanAttemptRow,
-  type SpecDeliveryPlanCandidateRow,
   type SpecDeliveryPlanCommentRow,
   type SpecDeliveryPlanSnapshotRow,
   type SpecEventRow,
@@ -92,21 +93,6 @@ export interface OpenDeliveryPlanAttemptInput {
 }
 
 /**
- * One audited reaffirmation. The whole document rides along because the
- * disposition it changes lives inside the document blob — the repository
- * writes the edit and its audit row together so a `reaffirmed` disposition
- * can never exist without the act that produced it (`audited-transitions`).
- */
-export interface RecordDeliveryPlanReaffirmationInput {
-  readonly attemptId: string;
-  readonly expectedDraftRevision: number;
-  readonly document: DeliveryPlanDocument;
-  readonly updatedAt: string;
-  readonly criterionElementId: string;
-  readonly reaffirmation: DeliveryPlanReaffirmation;
-}
-
-/**
  * One context-anchored review note. The caller states the whole row because a
  * comment's identity, its anchor and its author are review decisions rather
  * than storage ones — the repository's job is to make the write durable and
@@ -124,6 +110,28 @@ export interface SaveDeliveryPlanDraftInput {
   readonly updatedAt: string;
 }
 
+export interface ReaffirmDeliveryPlanDraftInput {
+  readonly attemptId: string;
+  readonly expectedDraftRevision: number;
+  readonly criterionElementId: string;
+  readonly reaffirmedAt: string;
+  readonly actor: ActorProvenance;
+}
+
+export class DeliveryPlanReaffirmationStateError extends Error {
+  readonly code = "plan_status_conflict" as const;
+
+  constructor(
+    readonly attemptId: string,
+    readonly criterionElementId: string,
+  ) {
+    super(
+      `delivery plan attempt ${attemptId} has no pending reaffirmation for criterion ${criterionElementId}. Nothing was written. Read the draft with \`cctl spec plan get\` and reaffirm only a criterion marked pending_reaffirmation.`,
+    );
+    this.name = "DeliveryPlanReaffirmationStateError";
+  }
+}
+
 /**
  * The compiled candidate the caller materialized from the very document this
  * proposal freezes. It is stated by the caller rather than compiled here
@@ -132,46 +140,34 @@ export interface SaveDeliveryPlanDraftInput {
  * is written inside the same transaction so a proposal can never exist without
  * the candidate a human would approve.
  */
-export interface ProposeDeliveryPlanCandidate {
-  readonly id: string;
-  readonly compiledDefinitionHash: string;
-  readonly definitionJson: string;
-  /** Guards against materializing a document other than the one being frozen. */
-  readonly planHash: string;
-}
-
 export interface ProposeDeliveryPlanInput {
   readonly attemptId: string;
   readonly expectedDraftRevision: number;
   readonly snapshotId: string;
+  readonly candidate: {
+    readonly record: DeliveryPlanCandidateRecord;
+    readonly candidateHash: string;
+  };
   readonly proposedAt: string;
   readonly actor: ActorProvenance;
-  readonly candidate: ProposeDeliveryPlanCandidate;
 }
 
 export interface ProposeDeliveryPlanResult {
   readonly attempt: SpecDeliveryPlanAttemptRow;
   readonly snapshot: SpecDeliveryPlanSnapshotRow;
-  readonly candidate: SpecDeliveryPlanCandidateRow;
 }
 
-/**
- * The caller's candidate was compiled from different bytes than the snapshot
- * froze. Nothing is written: a candidate that does not answer to its own
- * proposal is exactly the drift `exact-approval` exists to make impossible.
- */
-export class DeliveryPlanCandidateMismatchError extends Error {
+export class FinalizedDeliveryPlanCandidateMismatchError extends Error {
   readonly code = "integrity_mismatch" as const;
 
   constructor(
     readonly attemptId: string,
-    readonly expectedPlanHash: string,
-    readonly candidatePlanHash: string,
+    readonly reason: string,
   ) {
     super(
-      `delivery plan attempt ${attemptId} froze plan hash ${expectedPlanHash}, but the compiled candidate was materialized from ${candidatePlanHash}. Nothing was written. Re-read the attempt with \`cctl spec plan status\` and re-run \`cctl spec plan propose\`.`,
+      `delivery plan attempt ${attemptId} cannot freeze the finalized candidate: ${reason}. Nothing was written. Re-run \`cctl spec plan propose\` from the current draft.`,
     );
-    this.name = "DeliveryPlanCandidateMismatchError";
+    this.name = "FinalizedDeliveryPlanCandidateMismatchError";
   }
 }
 
@@ -184,10 +180,9 @@ export interface ReopenDeliveryPlanInput {
 
 export interface ReopenDeliveryPlanResult {
   readonly attempt: SpecDeliveryPlanAttemptRow;
-  /** What the reopen took away, so the receipt can say a new approval is due. */
   readonly invalidatedApproval: {
     readonly snapshotId: string;
-    readonly planHash: string;
+    readonly candidateHash: string;
   } | null;
 }
 
@@ -203,45 +198,32 @@ export interface ReopenDeliveryPlanResult {
  * racing an approval cannot slide different bytes under it (`exact-approval`).
  */
 export type DeliveryPlanTransition =
-  | ({ readonly kind: "approve" } & DeliveryPlanCandidateIdentity)
+  | ({ readonly kind: "approve" } & FinalizedDeliveryPlanCandidateIdentity)
   | ({
       readonly kind: "park";
       readonly reason: string | null;
-    } & DeliveryPlanCandidateIdentity)
+    } & FinalizedDeliveryPlanCandidateIdentity)
   | ({
       readonly kind: "launch";
       readonly executionId: string;
-    } & DeliveryPlanCandidateIdentity)
+    } & FinalizedDeliveryPlanCandidateIdentity)
   | { readonly kind: "abandon"; readonly reason: string };
 
-/**
- * The caller named a candidate the attempt's live proposal does not carry. The
- * message states both hashes because the recovery differs by which one moved:
- * a stale read re-reads and retries, while a candidate that was re-proposed
- * underneath needs a fresh approval of the bytes that exist now.
- */
-export class DeliveryPlanApprovalIdentityMismatchError extends Error {
+export class FinalizedDeliveryPlanApprovalIdentityMismatchError extends Error {
   readonly code = "integrity_mismatch" as const;
 
   constructor(
     readonly attemptId: string,
-    readonly stated: DeliveryPlanCandidateIdentity,
-    readonly stored: DeliveryPlanCandidateIdentity | null,
+    readonly stated: FinalizedDeliveryPlanCandidateIdentity,
+    readonly stored: FinalizedDeliveryPlanCandidateIdentity | null,
   ) {
     super(
       stored === null
-        ? `delivery plan attempt ${attemptId} has no stored compiled candidate to act on. Nothing was written. Re-run \`cctl spec plan propose\` to compile one, then re-approve it.`
-        : `delivery plan attempt ${attemptId} stores candidate ${stored.candidateId} (plan ${stored.planHash}, compiled ${stored.compiledDefinitionHash}), not candidate ${stated.candidateId} (plan ${stated.planHash}, compiled ${stated.compiledDefinitionHash}). Nothing was written. Read the stored candidate with \`cctl spec plan preview <slug> --stage proposed\` and approve exactly those bytes, or re-run \`cctl spec plan propose <slug>\` and approve the candidate it stores.`,
+        ? `delivery plan attempt ${attemptId} has no finalized proposal snapshot to act on. Nothing was written. Re-run \`cctl spec plan propose\`, then sign the candidate it stores.`
+        : `delivery plan attempt ${attemptId} stores candidate ${stored.candidateId} at ${stored.candidateHash}, not candidate ${stated.candidateId} at ${stated.candidateHash}. Nothing was written. Re-read the proposed snapshot and sign exactly those immutable bytes.`,
     );
-    this.name = "DeliveryPlanApprovalIdentityMismatchError";
+    this.name = "FinalizedDeliveryPlanApprovalIdentityMismatchError";
   }
-}
-
-export interface RecordDeliveryPlanTransitionInput {
-  readonly attemptId: string;
-  readonly transition: DeliveryPlanTransition;
-  readonly occurredAt: string;
-  readonly actor: ActorProvenance;
 }
 
 export interface SpecDeliveryPlanRepoDeps {
@@ -285,20 +267,19 @@ export interface SpecDeliveryPlanRepo {
   findAttemptById(attemptId: string): SpecDeliveryPlanAttemptRow | null;
   findAttemptsBySpecId(specId: string): SpecDeliveryPlanAttemptRow[];
   saveDraft(input: SaveDeliveryPlanDraftInput): SpecDeliveryPlanAttemptRow;
+  reaffirmDraft(
+    input: ReaffirmDeliveryPlanDraftInput,
+  ): SpecDeliveryPlanAttemptRow;
   propose(input: ProposeDeliveryPlanInput): ProposeDeliveryPlanResult;
   reopen(input: ReopenDeliveryPlanInput): ReopenDeliveryPlanResult;
-  recordTransition(
-    input: RecordDeliveryPlanTransitionInput,
-  ): SpecDeliveryPlanAttemptRow;
+  recordTransition(input: {
+    readonly attemptId: string;
+    readonly transition: DeliveryPlanTransition;
+    readonly occurredAt: string;
+    readonly actor: ActorProvenance;
+  }): SpecDeliveryPlanAttemptRow;
   findSnapshotById(snapshotId: string): SpecDeliveryPlanSnapshotRow | null;
   findSnapshotsByAttemptId(attemptId: string): SpecDeliveryPlanSnapshotRow[];
-  findCandidateBySnapshotId(
-    snapshotId: string,
-  ): SpecDeliveryPlanCandidateRow | null;
-  findCandidatesByAttemptId(attemptId: string): SpecDeliveryPlanCandidateRow[];
-  recordReaffirmation(
-    input: RecordDeliveryPlanReaffirmationInput,
-  ): SpecDeliveryPlanAttemptRow;
   addComment(input: AddDeliveryPlanCommentInput): SpecDeliveryPlanCommentRow;
   findCommentsByAttemptId(attemptId: string): SpecDeliveryPlanCommentRow[];
   recordDiscovery(
@@ -360,11 +341,11 @@ export function createSpecDeliveryPlanRepo(
   );
   const insertSnapshotStmt = db.prepare(
     `INSERT INTO spec_delivery_plan_snapshots (
-       id, attempt_id, draft_revision, plan_hash, content_json,
-       pinned_revision_id, proposed_at, proposed_by_json
+       id, attempt_id, candidate_id, candidate_hash, draft_revision,
+       content_json, pinned_revision_id, proposed_at, proposed_by_json
      ) VALUES (
-       @id, @attempt_id, @draft_revision, @plan_hash, @content_json,
-       @pinned_revision_id, @proposed_at, @proposed_by_json
+       @id, @attempt_id, @candidate_id, @candidate_hash, @draft_revision,
+       @content_json, @pinned_revision_id, @proposed_at, @proposed_by_json
      )`,
   );
   const findSnapshotStmt = db.prepare(
@@ -374,23 +355,6 @@ export function createSpecDeliveryPlanRepo(
     `SELECT * FROM spec_delivery_plan_snapshots
      WHERE attempt_id = ?
      ORDER BY draft_revision ASC, id ASC`,
-  );
-  const insertCandidateStmt = db.prepare(
-    `INSERT INTO spec_delivery_plan_candidates (
-       id, attempt_id, snapshot_id, compiled_definition_hash,
-       definition_json, materialized_at
-     ) VALUES (
-       @id, @attempt_id, @snapshot_id, @compiled_definition_hash,
-       @definition_json, @materialized_at
-     )`,
-  );
-  const findCandidateBySnapshotStmt = db.prepare(
-    "SELECT * FROM spec_delivery_plan_candidates WHERE snapshot_id = ? LIMIT 1",
-  );
-  const findCandidatesByAttemptStmt = db.prepare(
-    `SELECT * FROM spec_delivery_plan_candidates
-     WHERE attempt_id = ?
-     ORDER BY materialized_at ASC, id ASC`,
   );
   const insertCommentStmt = db.prepare(
     `INSERT INTO spec_delivery_plan_comments (
@@ -474,36 +438,6 @@ export function createSpecDeliveryPlanRepo(
     });
   }
 
-  const recordReaffirmationTx = db.transaction(
-    (input: RecordDeliveryPlanReaffirmationInput) => {
-      const attempt = requireAttempt(input.attemptId);
-      requireDraft(attempt, input.expectedDraftRevision);
-      const next: SpecDeliveryPlanAttemptRow = {
-        ...attempt,
-        draft_revision: attempt.draft_revision + 1,
-        content_json: stableStringify(
-          deliveryPlanDocumentSchema.parse(input.document),
-        ),
-        updated_at: input.updatedAt,
-      };
-      updateAttemptStmt.run(next);
-      appendPlanEvent(
-        next,
-        input.reaffirmation.at,
-        input.reaffirmation.actor,
-        "spec-delivery-plan-reaffirmed",
-        {
-          criterionElementId: input.criterionElementId,
-          pinnedRevisionId: attempt.pinned_revision_id,
-          basisRevisionId: input.reaffirmation.basisRevisionId,
-          basis: input.reaffirmation.basis,
-          draftRevision: next.draft_revision,
-        },
-      );
-      return next;
-    },
-  );
-
   // The comment and its audit row land together: a note stored with no event
   // behind it is a service-layer bypass write (`audited-transitions`).
   const addCommentTx = db.transaction(
@@ -523,7 +457,13 @@ export function createSpecDeliveryPlanRepo(
   );
 
   const openTx = db.transaction((input: OpenDeliveryPlanAttemptInput) => {
-    const attempt = specDeliveryPlanAttemptRowSchema.parse(input.attempt);
+    const parsed = specDeliveryPlanAttemptRowSchema.parse(input.attempt);
+    const attempt = {
+      ...parsed,
+      content_json: canonicalDeliveryPlanEnvelopeBytes(
+        deliveryPlanDocumentSchema.parse(JSON.parse(parsed.content_json)),
+      ),
+    };
     insertAttemptStmt.run(attempt);
     appendPlanEvent(
       attempt,
@@ -548,7 +488,7 @@ export function createSpecDeliveryPlanRepo(
     const next: SpecDeliveryPlanAttemptRow = {
       ...attempt,
       draft_revision: attempt.draft_revision + 1,
-      content_json: stableStringify(
+      content_json: canonicalDeliveryPlanEnvelopeBytes(
         deliveryPlanDocumentSchema.parse(input.document),
       ),
       updated_at: input.updatedAt,
@@ -557,43 +497,93 @@ export function createSpecDeliveryPlanRepo(
     return next;
   });
 
+  const reaffirmDraftTx = db.transaction(
+    (input: ReaffirmDeliveryPlanDraftInput): SpecDeliveryPlanAttemptRow => {
+      const attempt = requireAttempt(input.attemptId);
+      requireDraft(attempt, input.expectedDraftRevision);
+      const document = deliveryPlanDocumentSchema.parse(
+        JSON.parse(attempt.content_json),
+      );
+      const disposition = document.binding.dispositions.find(
+        (entry) => entry.criterionElementId === input.criterionElementId,
+      );
+      if (disposition?.disposition !== "pending_reaffirmation") {
+        throw new DeliveryPlanReaffirmationStateError(
+          attempt.id,
+          input.criterionElementId,
+        );
+      }
+      const nextDocument = deliveryPlanDocumentSchema.parse({
+        ...document,
+        binding: {
+          ...document.binding,
+          dispositions: document.binding.dispositions.map((entry) =>
+            entry.criterionElementId === input.criterionElementId
+              ? { ...entry, disposition: "reaffirmed" as const }
+              : entry,
+          ),
+        },
+      });
+      const next: SpecDeliveryPlanAttemptRow = {
+        ...attempt,
+        draft_revision: attempt.draft_revision + 1,
+        content_json: canonicalDeliveryPlanEnvelopeBytes(nextDocument),
+        updated_at: input.reaffirmedAt,
+      };
+      updateAttemptStmt.run(next);
+      appendPlanEvent(
+        next,
+        input.reaffirmedAt,
+        input.actor,
+        "spec-delivery-plan-reaffirmed",
+        {
+          criterionElementId: input.criterionElementId,
+          draftRevision: next.draft_revision,
+        },
+      );
+      return next;
+    },
+  );
+
   const proposeTx = db.transaction((input: ProposeDeliveryPlanInput) => {
     const attempt = requireAttempt(input.attemptId);
     requireDraft(attempt, input.expectedDraftRevision);
-    const document = deliveryPlanDocumentSchema.parse(
-      JSON.parse(attempt.content_json),
-    );
+    deliveryPlanDocumentSchema.parse(JSON.parse(attempt.content_json));
+    const record = input.candidate.record;
+    const candidate = finalizedDeliveryPlanCandidateIdentitySchema.parse({
+      candidateId: record.candidateId,
+      candidateHash: input.candidate.candidateHash,
+    });
+    const mismatchedField =
+      record.specId !== attempt.spec_id
+        ? "specId does not match the attempt"
+        : record.attemptId !== attempt.id
+          ? "attemptId does not match the attempt"
+          : record.pinnedRevisionId !== attempt.pinned_revision_id
+            ? "pinnedRevisionId does not match the attempt"
+            : record.draftRevision !== attempt.draft_revision
+              ? "draftRevision does not match the attempt"
+              : deliveryPlanCandidateHash(record) !== candidate.candidateHash
+                ? "candidateHash does not match the canonical candidate bytes"
+                : null;
+    if (mismatchedField !== null) {
+      throw new FinalizedDeliveryPlanCandidateMismatchError(
+        attempt.id,
+        mismatchedField,
+      );
+    }
     const snapshot = specDeliveryPlanSnapshotRowSchema.parse({
       id: input.snapshotId,
       attempt_id: attempt.id,
+      candidate_id: candidate.candidateId,
+      candidate_hash: candidate.candidateHash,
       draft_revision: attempt.draft_revision,
-      plan_hash: deliveryPlanHash({
-        pinnedRevisionId: attempt.pinned_revision_id,
-        draftRevision: attempt.draft_revision,
-        document,
-      }),
-      content_json: attempt.content_json,
+      content_json: canonicalDeliveryPlanCandidateBytes(record),
       pinned_revision_id: attempt.pinned_revision_id,
       proposed_at: input.proposedAt,
       proposed_by_json: stableStringify(input.actor),
     });
-    if (input.candidate.planHash !== snapshot.plan_hash) {
-      throw new DeliveryPlanCandidateMismatchError(
-        attempt.id,
-        snapshot.plan_hash,
-        input.candidate.planHash,
-      );
-    }
     insertSnapshotStmt.run(snapshot);
-    const candidate = specDeliveryPlanCandidateRowSchema.parse({
-      id: input.candidate.id,
-      attempt_id: attempt.id,
-      snapshot_id: snapshot.id,
-      compiled_definition_hash: input.candidate.compiledDefinitionHash,
-      definition_json: input.candidate.definitionJson,
-      materialized_at: input.proposedAt,
-    });
-    insertCandidateStmt.run(candidate);
     const next: SpecDeliveryPlanAttemptRow = {
       ...attempt,
       status: "proposed",
@@ -608,14 +598,13 @@ export function createSpecDeliveryPlanRepo(
       "spec-delivery-plan-proposed",
       {
         snapshotId: snapshot.id,
-        planHash: snapshot.plan_hash,
+        candidateId: candidate.candidateId,
+        candidateHash: candidate.candidateHash,
         draftRevision: snapshot.draft_revision,
         pinnedRevisionId: snapshot.pinned_revision_id,
-        candidateId: candidate.id,
-        compiledDefinitionHash: candidate.compiled_definition_hash,
       },
     );
-    return { attempt: next, snapshot, candidate };
+    return { attempt: next, snapshot };
   });
 
   const reopenTx = db.transaction((input: ReopenDeliveryPlanInput) => {
@@ -648,7 +637,7 @@ export function createSpecDeliveryPlanRepo(
       attempt.approval_json === null
         ? null
         : parseRow(
-            deliveryPlanApprovalSchema,
+            finalizedDeliveryPlanApprovalSchema,
             "spec_delivery_plan_approval",
             attempt.id,
             JSON.parse(attempt.approval_json),
@@ -672,7 +661,7 @@ export function createSpecDeliveryPlanRepo(
         reason: input.reason,
         draftRevision: next.draft_revision,
         invalidatedApprovedSnapshotId: approval?.snapshotId ?? null,
-        invalidatedPlanHash: approval?.planHash ?? null,
+        invalidatedCandidateHash: approval?.candidateHash ?? null,
       },
     );
     return {
@@ -680,7 +669,10 @@ export function createSpecDeliveryPlanRepo(
       invalidatedApproval:
         approval === null
           ? null
-          : { snapshotId: approval.snapshotId, planHash: approval.planHash },
+          : {
+              snapshotId: approval.snapshotId,
+              candidateHash: approval.candidateHash,
+            },
     };
   });
 
@@ -692,7 +684,7 @@ export function createSpecDeliveryPlanRepo(
    */
   function liveCandidateIdentity(
     attempt: SpecDeliveryPlanAttemptRow,
-  ): DeliveryPlanCandidateIdentity | null {
+  ): FinalizedDeliveryPlanCandidateIdentity | null {
     const snapshotId = attempt.proposed_snapshot_id;
     if (snapshotId === null) return null;
     const snapshot = readOne(
@@ -701,38 +693,39 @@ export function createSpecDeliveryPlanRepo(
       snapshotId,
       () => findSnapshotStmt.get(snapshotId),
     );
-    const candidate = readOne(
-      specDeliveryPlanCandidateRowSchema,
-      "spec_delivery_plan_candidate",
-      snapshotId,
-      () => findCandidateBySnapshotStmt.get(snapshotId),
-    );
-    if (snapshot === null || candidate === null) return null;
+    if (
+      snapshot === null ||
+      snapshot.candidate_id === null ||
+      snapshot.candidate_hash === null
+    ) {
+      return null;
+    }
     return {
-      candidateId: candidate.id,
-      planHash: snapshot.plan_hash,
-      compiledDefinitionHash: candidate.compiled_definition_hash,
+      candidateId: snapshot.candidate_id,
+      candidateHash: snapshot.candidate_hash,
     };
   }
 
   const recordTransitionTx = db.transaction(
-    (input: RecordDeliveryPlanTransitionInput) => {
+    (input: {
+      readonly attemptId: string;
+      readonly transition: DeliveryPlanTransition;
+      readonly occurredAt: string;
+      readonly actor: ActorProvenance;
+    }) => {
       const attempt = requireAttempt(input.attemptId);
       if (input.transition.kind !== "abandon") {
         const stored = liveCandidateIdentity(attempt);
         if (
           stored === null ||
           stored.candidateId !== input.transition.candidateId ||
-          stored.planHash !== input.transition.planHash ||
-          stored.compiledDefinitionHash !==
-            input.transition.compiledDefinitionHash
+          stored.candidateHash !== input.transition.candidateHash
         ) {
-          throw new DeliveryPlanApprovalIdentityMismatchError(
+          throw new FinalizedDeliveryPlanApprovalIdentityMismatchError(
             attempt.id,
             {
               candidateId: input.transition.candidateId,
-              planHash: input.transition.planHash,
-              compiledDefinitionHash: input.transition.compiledDefinitionHash,
+              candidateHash: input.transition.candidateHash,
             },
             stored,
           );
@@ -802,6 +795,14 @@ export function createSpecDeliveryPlanRepo(
         () => saveDraftTx(input),
       );
     },
+    reaffirmDraft(input) {
+      return timed(
+        "reaffirm_draft",
+        "spec_delivery_plan_attempt",
+        input.attemptId,
+        () => reaffirmDraftTx(input),
+      );
+    },
     propose(input) {
       return timed(
         "propose",
@@ -840,30 +841,6 @@ export function createSpecDeliveryPlanRepo(
         "spec_delivery_plan_snapshot",
         `attempt:${attemptId}`,
         () => findSnapshotsByAttemptStmt.all(attemptId),
-      );
-    },
-    findCandidateBySnapshotId(snapshotId) {
-      return readOne(
-        specDeliveryPlanCandidateRowSchema,
-        "spec_delivery_plan_candidate",
-        snapshotId,
-        () => findCandidateBySnapshotStmt.get(snapshotId),
-      );
-    },
-    findCandidatesByAttemptId(attemptId) {
-      return readMany(
-        specDeliveryPlanCandidateRowSchema,
-        "spec_delivery_plan_candidate",
-        `attempt:${attemptId}`,
-        () => findCandidatesByAttemptStmt.all(attemptId),
-      );
-    },
-    recordReaffirmation(input) {
-      return timed(
-        "recordReaffirmation",
-        "spec_delivery_plan_attempt",
-        input.attemptId,
-        () => recordReaffirmationTx(input),
       );
     },
     addComment(input) {
@@ -920,13 +897,14 @@ function requireProposedSnapshotId(
 
 function applyTransition(
   attempt: SpecDeliveryPlanAttemptRow,
-  input: RecordDeliveryPlanTransitionInput,
+  input: {
+    readonly transition: DeliveryPlanTransition;
+    readonly occurredAt: string;
+    readonly actor: ActorProvenance;
+  },
 ): SpecDeliveryPlanAttemptRow {
   const transition = input.transition;
   if (transition.kind === "approve") {
-    // A parked attempt is approvable too: parking is prelaunch review, and an
-    // attempt parked before anyone signed off would otherwise have no way to
-    // become launchable without a reopen that discards the reviewed candidate.
     if (attempt.status !== "proposed" && attempt.status !== "parked") {
       throw new DeliveryPlanStatusConflictError(
         attempt.id,
@@ -934,18 +912,19 @@ function applyTransition(
         "Only a live proposal can be approved. Propose the draft with `cctl spec plan propose` first.",
       );
     }
-    const approval: DeliveryPlanApproval = {
+    const approval: FinalizedDeliveryPlanApproval = {
       snapshotId: requireProposedSnapshotId(attempt),
       candidateId: transition.candidateId,
-      planHash: transition.planHash,
-      compiledDefinitionHash: transition.compiledDefinitionHash,
+      candidateHash: transition.candidateHash,
       approvedAt: input.occurredAt,
       approvedBy: input.actor,
     };
     return {
       ...attempt,
       status: "approved",
-      approval_json: stableStringify(approval),
+      approval_json: stableStringify(
+        finalizedDeliveryPlanApprovalSchema.parse(approval),
+      ),
       updated_at: input.occurredAt,
     };
   }
@@ -957,14 +936,13 @@ function applyTransition(
         "Only a proposed or approved attempt can be parked for prelaunch review. Propose the draft with `cctl spec plan propose` first.",
       );
     }
-    const prelaunch: DeliveryPlanPrelaunch = {
+    const prelaunch: FinalizedDeliveryPlanPrelaunch = {
       parkedAt: input.occurredAt,
       parkedBy: input.actor,
       reason: transition.reason,
       candidate: {
         candidateId: transition.candidateId,
-        planHash: transition.planHash,
-        compiledDefinitionHash: transition.compiledDefinitionHash,
+        candidateHash: transition.candidateHash,
       },
       approvedAtPark: attempt.status === "approved",
     };
@@ -972,15 +950,12 @@ function applyTransition(
       ...attempt,
       status: "parked",
       prelaunch_json: stableStringify(
-        deliveryPlanPrelaunchSchema.parse(prelaunch),
+        finalizedDeliveryPlanPrelaunchSchema.parse(prelaunch),
       ),
       updated_at: input.occurredAt,
     };
   }
   if (transition.kind === "launch") {
-    // Approval is a launch precondition here, not only in the service: the
-    // status alone cannot express it, because a parked attempt may or may not
-    // carry one and both states are legal to park in.
     if (
       (attempt.status !== "approved" && attempt.status !== "parked") ||
       attempt.approval_json === null

@@ -6,15 +6,17 @@ import {
   specElementKindSchema,
   specExecutionStateSchema,
   type SpecCriterionDispositionRow,
+  type SpecDeliveryVerdictRow,
   type SpecElementKind,
   type SpecElementPayload,
   type SpecExecutionRow,
-  type SpecProofVerdictRow,
   type SpecRevisionSnapshot,
   type SpecWaiverRow,
   type ValidationStrategy,
 } from "./schemas";
 import { isWaiverValidForExecution } from "./waiver-staleness";
+import { findDeliveryVerdictForExecution } from "./delivery-verdict-identity";
+import type { LinkedSpecExecutionBindingV2 } from "./execution-binding";
 
 /**
  * P1 — the delivery-delta projection. Read-time only: it compares the current
@@ -213,8 +215,10 @@ export interface DeliveryDeltaInput {
   comparedExecution: SpecExecutionRow | null;
   /** The compared execution's criterion dispositions. */
   dispositions: readonly SpecCriterionDispositionRow[];
-  /** Proof verdicts for the spec; each pins the revision it was proved against. */
-  proofVerdicts: readonly SpecProofVerdictRow[];
+  /** Authored-outcome verdicts belonging to the compared delivery attempt. */
+  deliveryVerdicts: readonly SpecDeliveryVerdictRow[];
+  /** The compared attempt's authoritative immutable candidate binding. */
+  executionBinding: LinkedSpecExecutionBindingV2 | null;
   waivers: readonly SpecWaiverRow[];
   priorDelivery: EarlierDeliveryProbe;
 }
@@ -460,40 +464,42 @@ function sameValidationStrategy(
   );
 }
 
-function hasFreshProofAtPinnedRevision(
+function hasDeliveryVerdict(
   input: DeliveryDeltaInput,
   criterionElementId: string,
-  pinnedRevisionId: string,
 ): boolean {
-  return input.proofVerdicts.some(
-    (row) =>
-      row.criterion_element_id === criterionElementId &&
-      row.revision_id === pinnedRevisionId &&
-      row.stale_at === null,
+  const execution = input.comparedExecution;
+  if (execution === null || execution.workflow_execution_id === null) {
+    return false;
+  }
+  return (
+    findDeliveryVerdictForExecution(
+      input.deliveryVerdicts,
+      execution,
+      input.executionBinding,
+      criterionElementId,
+    ) !== null
   );
 }
 
 /**
- * A waiver counts only through the disposition's own `waiver_id` link and only
- * while the gate's own validity rule holds, which is why that rule is imported
- * rather than restated: a waiver pinned to another revision or another spec
- * excuses nothing here because it excuses nothing at delivery. A waiver that
- * went stale when its criterion changed likewise excuses nothing, so the
- * criterion falls back to undelivered while `priorDisposition` still reports
- * `waived`.
+ * A waiver counts only while the gate's own validity rule holds, which is why
+ * that rule is imported rather than restated. The gate can accept a current
+ * Studio waiver while the frozen disposition remains in-scope, so the delta
+ * resolves both the persisted waiver id and current criterion identity.
  */
 function waiverHonored(
   input: DeliveryDeltaInput,
   dispositionRow: SpecCriterionDispositionRow,
 ): boolean {
   const execution = input.comparedExecution;
-  const waiverId = dispositionRow.waiver_id;
-  if (execution === null || waiverId === null) return false;
-  const waiver = input.waivers.find((row) => row.id === waiverId) ?? null;
-  return isWaiverValidForExecution(
-    waiver,
-    execution,
-    dispositionRow.criterion_element_id,
+  if (execution === null) return false;
+  return input.waivers.some((waiver) =>
+    isWaiverValidForExecution(
+      waiver,
+      execution,
+      dispositionRow.criterion_element_id,
+    ),
   );
 }
 
@@ -510,11 +516,7 @@ function wasDelivered(
     return false;
   }
   if (dispositionRow.disposition === "in_scope") {
-    return hasFreshProofAtPinnedRevision(
-      input,
-      dispositionRow.criterion_element_id,
-      pinnedRevisionId,
-    );
+    return hasDeliveryVerdict(input, dispositionRow.criterion_element_id);
   }
   return (
     dispositionRow.disposition === "delivered_elsewhere" &&
@@ -528,8 +530,11 @@ function classifyCriterion(
   freshness: CriterionFreshness | null,
   pinnedRevisionId: string | null,
 ): CriterionDeliveryClass {
+  if (dispositionRow !== undefined && waiverHonored(input, dispositionRow)) {
+    return "waived";
+  }
   if (dispositionRow?.disposition === "waived") {
-    return waiverHonored(input, dispositionRow) ? "waived" : "never_delivered";
+    return "never_delivered";
   }
   if (dispositionRow?.disposition === "deferred") return "deferred";
   if (!wasDelivered(input, dispositionRow, pinnedRevisionId)) {

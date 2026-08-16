@@ -1,11 +1,10 @@
 import { createLogger } from "@/lib/logging";
-import type { GraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
 import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import type { SpecEventsRepo } from "@/lib/state-store/spec-events-repo";
+import type { SpecExecutionBindingRepo } from "@/lib/state-store/spec-execution-binding-repo";
 import { stableStringify } from "@/lib/state-store/serialization";
 import type { SpecsRepo } from "@/lib/state-store/specs-repo";
 
-import type { SpecExecutionOriginMapEntry } from "./execution-origin-map";
 import {
   MEASURE_DEFINITIONS_VERSION,
   computeSpecMeasuresReport,
@@ -14,6 +13,7 @@ import {
   type SpecMeasureEvent,
   type SpecMeasuresReport,
 } from "./measures";
+import { deliveryVerdictMatchesExecutionBinding } from "./delivery-verdict-identity";
 import type { SpecEventRow } from "./schemas";
 
 const logger = createLogger("specs.measures");
@@ -21,12 +21,11 @@ const logger = createLogger("specs.measures");
 export interface MeasuresQueryDeps {
   specs: Pick<SpecsRepo, "listByProject">;
   events: Pick<SpecEventsRepo, "findBySpecId" | "append">;
-  delivery: Pick<SpecDeliveryRepo, "findExecutionsBySpecId">;
-  workflowEvents: Pick<GraphWorkflowEventsRepo, "findRecordsByExecution">;
-  loadOriginMap(
-    workflowDefinitionId: string,
-    projectPath: string,
-  ): Promise<SpecExecutionOriginMapEntry[]>;
+  delivery: Pick<
+    SpecDeliveryRepo,
+    "findExecutionsBySpecId" | "findDeliveryVerdictsBySpecExecutionId"
+  >;
+  executionBindings: Pick<SpecExecutionBindingRepo, "findBySpecExecutionId">;
   now(): string;
 }
 
@@ -121,25 +120,6 @@ function mergeEvent(
   };
 }
 
-function taskIdsByContext(
-  origins: readonly SpecExecutionOriginMapEntry[],
-): ReadonlyMap<string, readonly string[]> {
-  const grouped = new Map<string, Set<string>>();
-  for (const origin of origins) {
-    const taskIds = grouped.get(origin.contextId) ?? new Set<string>();
-    if (origin.taskElementId !== null) {
-      taskIds.add(origin.taskElementId);
-    }
-    grouped.set(origin.contextId, taskIds);
-  }
-  return new Map(
-    [...grouped].map(([contextId, taskIds]) => [
-      contextId,
-      [...taskIds].sort(),
-    ]),
-  );
-}
-
 export function createMeasuresQuery(deps: MeasuresQueryDeps): MeasuresQuery {
   return {
     async forProject(projectPath) {
@@ -147,6 +127,7 @@ export function createMeasuresQuery(deps: MeasuresQueryDeps): MeasuresQuery {
       const measureEvents: SpecMeasureEvent[] = [];
       const linkedEvents: LinkedWorkflowMeasureEvent[] = [];
       let ignoredSpecEventCount = 0;
+      let ignoredDeliveryVerdictCount = 0;
 
       for (const spec of specs) {
         const rows = deps.events.findBySpecId(spec.id);
@@ -179,50 +160,40 @@ export function createMeasuresQuery(deps: MeasuresQueryDeps): MeasuresQuery {
         }
 
         for (const execution of deps.delivery.findExecutionsBySpecId(spec.id)) {
-          if (
-            execution.workflow_execution_id === null ||
-            execution.session_name === null
-          ) {
-            continue;
-          }
-          const commitRecords = deps.workflowEvents
-            .findRecordsByExecution(
-              projectPath,
-              execution.session_name,
-              execution.workflow_execution_id,
-            )
-            .filter(
-              (record) => record.event.type === "graph-workflow-lane-commit",
-            );
-          if (commitRecords.length === 0) continue;
-          const origins = await deps.loadOriginMap(
-            execution.workflow_definition_id,
-            projectPath,
+          if (execution.workflow_execution_id === null) continue;
+          const linkedBinding = deps.executionBindings.findBySpecExecutionId(
+            execution.id,
           );
-          const taskIdsForContext = taskIdsByContext(origins);
-          for (const record of commitRecords) {
-            if (record.event.type !== "graph-workflow-lane-commit") continue;
-            const taskIds = taskIdsForContext.get(record.event.contextId);
-            if (taskIds === undefined) {
-              logger.warn("specs.measures.commit_context_unresolved", {
-                specId: spec.id,
-                specExecutionId: execution.id,
-                workflowDefinitionId: execution.workflow_definition_id,
-                workflowContextId: record.event.contextId,
-                workflowEventId: record.id,
-              });
+          const deliveryVerdicts =
+            deps.delivery.findDeliveryVerdictsBySpecExecutionId(execution.id);
+          for (const [index, verdict] of deliveryVerdicts.entries()) {
+            if (
+              !deliveryVerdictMatchesExecutionBinding(
+                verdict,
+                execution,
+                linkedBinding,
+              )
+            ) {
+              ignoredDeliveryVerdictCount += 1;
               continue;
             }
-            for (const taskId of taskIds) {
-              linkedEvents.push({
-                id: record.id,
-                occurredAt: record.occurredAt,
-                eventType: "task-commit-recorded",
+            measureEvents.push({
+              id: Number.MAX_SAFE_INTEGER - index,
+              specId: spec.id,
+              occurredAt: verdict.verdict_at,
+              eventType: "spec-execution-changed",
+              payload: {
+                kind: "delivery-verdict-recorded",
+                verdictId: verdict.id,
+                criterionId: verdict.criterion_element_id,
+                revisionId: execution.revision_id,
                 executionId: execution.id,
-                taskId,
-                commitSha: record.event.sha,
-              });
-            }
+                workflowExecutionId: verdict.workflow_execution_id,
+                candidateId: verdict.candidate_id,
+                candidateHash: verdict.candidate_hash,
+                satisfyingContextId: verdict.satisfying_context_id,
+              },
+            });
           }
         }
       }
@@ -235,6 +206,7 @@ export function createMeasuresQuery(deps: MeasuresQueryDeps): MeasuresQuery {
         measureEventCount: measureEvents.length,
         linkedEventCount: linkedEvents.length,
         ignoredSpecEventCount,
+        ignoredDeliveryVerdictCount,
         deliveredCriterionCount:
           report.traceabilityCompleteness.deliveredInScopeCriterionCount,
       });

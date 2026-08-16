@@ -177,6 +177,7 @@ describe("final-task-self-check rule", () => {
     expect(reminders).toHaveLength(1);
     expect(reminders[0]).toContain("acceptance criterion");
     expect(reminders[0]).toContain("charter invariant");
+    expect(reminders[0]).toContain("applicable charter invariant");
     expect(reminders[0]).toContain("production call path");
     expect(reminders[0]).toContain("end your turn");
   });

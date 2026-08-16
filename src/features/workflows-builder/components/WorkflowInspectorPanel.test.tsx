@@ -159,6 +159,43 @@ describe("WorkflowInspectorPanel — persistent tab strip", () => {
 });
 
 describe("WorkflowInspectorPanel — workflow tab body", () => {
+  it("shows global and context-scoped charter invariants", () => {
+    resetStore();
+    const definition = createWorkflowDefinition();
+    setupStore({
+      selectedContextId: null,
+      definition: {
+        ...definition,
+        charter: {
+          ...definition.charter,
+          invariants: [
+            { id: "global", statement: "Applies everywhere." },
+            {
+              id: "implementation-only",
+              statement: "Applies only to implementation work.",
+              appliesTo: {
+                contextIds: ["context-implement", "context-verify"],
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const invariants = container.querySelector(
+      '[data-section="charter-invariants"]',
+    );
+    expect(invariants).not.toBeNull();
+    expect(invariants?.textContent).toContain("global");
+    expect(invariants?.textContent).toContain("Global");
+    expect(invariants?.textContent).toContain("implementation-only");
+    expect(invariants?.textContent).toContain(
+      "Context scope: context-implement, context-verify",
+    );
+  });
+
   it("clicking Override then Reset on a workflow block mutates workflowConfig", () => {
     resetStore();
     setupStore({ selectedContextId: null });

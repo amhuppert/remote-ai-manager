@@ -11,33 +11,24 @@ const baseProps = {
   slug: "native-sdd",
   executionId: "execution-1",
   state: "running" as const,
-  canRequestAmendment: true,
   capturePending: false,
   captureOutcomePath: null,
   captureReceipt: null,
   captureFailure: null,
-  amendmentPending: false,
-  amendmentReceipt: null,
-  amendmentEvent: null,
-  amendmentFailure: null,
   onCapture: vi.fn(),
-  onAmend: vi.fn(),
 };
 
 describe("PostLaunchCapturePaths", () => {
-  it("presents the three post-launch paths side by side as one operator surface", () => {
+  it("presents the non-mutating post-launch paths as one operator surface", () => {
     render(<PostLaunchCapturePaths {...baseProps} />);
 
     const surface = screen.getByRole("region", { name: "Post-launch capture" });
-    expect(surface).toHaveAttribute("data-layout", "three-paths");
+    expect(surface).toHaveAttribute("data-layout", "capture-paths");
     expect(
       within(surface).getByRole("region", { name: "Non-blocking discovery" }),
     ).toBeVisible();
     expect(
       within(surface).getByRole("region", { name: "Blocking replan" }),
-    ).toBeVisible();
-    expect(
-      within(surface).getByRole("region", { name: "Amend current run" }),
     ).toBeVisible();
   });
 
@@ -123,56 +114,6 @@ describe("PostLaunchCapturePaths", () => {
     });
   });
 
-  it("collects a required rationale and canonical additive task operation", async () => {
-    const onAmend = vi.fn();
-    const user = userEvent.setup();
-    render(<PostLaunchCapturePaths {...baseProps} onAmend={onAmend} />);
-
-    const card = screen.getByRole("region", { name: "Amend current run" });
-    const apply = within(card).getByRole("button", {
-      name: "Apply amendment",
-    });
-    expect(apply).toBeDisabled();
-
-    await user.type(
-      within(card).getByRole("textbox", { name: "Amendment rationale" }),
-      "The running plan needs one additive verification task.",
-    );
-    await user.type(
-      within(card).getByRole("textbox", { name: "Task id" }),
-      "verify-added-path",
-    );
-    await user.type(
-      within(card).getByRole("textbox", { name: "Target context id" }),
-      "capture-studio",
-    );
-    await user.type(
-      within(card).getByRole("textbox", { name: "Task title" }),
-      "Verify the added path",
-    );
-    await user.type(
-      within(card).getByRole("textbox", { name: "Task instructions" }),
-      "Exercise the added route through the browser.",
-    );
-    await user.click(
-      within(card).getByRole("button", { name: "Queue task addition" }),
-    );
-    await user.click(apply);
-
-    expect(onAmend).toHaveBeenCalledWith({
-      reason: "The running plan needs one additive verification task.",
-      operations: [
-        {
-          type: "add-task",
-          id: "verify-added-path",
-          contextId: "capture-studio",
-          title: "Verify the added path",
-          instructions: "Exercise the added route through the browser.",
-        },
-      ],
-    });
-  });
-
   it("shows durable discovery and blocking replacement receipts from the server", () => {
     const { rerender } = render(
       <PostLaunchCapturePaths
@@ -220,35 +161,6 @@ describe("PostLaunchCapturePaths", () => {
     expect(screen.getByText(/new attempt-4/)).toBeVisible();
   });
 
-  it("shows the durable amendment event, additions, and old/new working-definition hashes", () => {
-    render(
-      <PostLaunchCapturePaths
-        {...baseProps}
-        amendmentEvent={{
-          type: "graph-workflow-execution-amended",
-          projectName: "command-center",
-          sessionName: "native-sdd-run",
-          executionId: "workflow-execution-1",
-          liveRevision: 3,
-          reason: "Add live verification.",
-          actor: "human",
-          policyBasis: "human_operator",
-          previousWorkingDefinitionHash: "sha256:old",
-          workingDefinitionHash: "sha256:new",
-          addedContextIds: [],
-          addedTaskIds: ["verify-added-path"],
-          addedEdgeIds: [],
-        }}
-      />,
-    );
-
-    expect(screen.getByText("Durable amendment event")).toBeVisible();
-    expect(screen.getByText(/verify-added-path/)).toBeVisible();
-    expect(screen.getByText(/sha256:old/)).toBeVisible();
-    expect(screen.getByText(/sha256:new/)).toBeVisible();
-    expect(screen.getByText(/human/)).toBeVisible();
-  });
-
   it("renders production refusals and exact remedies inline", () => {
     render(
       <PostLaunchCapturePaths
@@ -260,12 +172,6 @@ describe("PostLaunchCapturePaths", () => {
             "Delivery plan attempt attempt-3 is approved and has launched no execution.",
           instruction:
             "Nothing was captured. Add the discovered work to the plan itself with `cctl spec plan reopen native-sdd --reason <why>`.",
-        }}
-        amendmentFailure={{
-          message:
-            'Execution "workflow-execution-1" was not compiled from a delivery plan.',
-          instruction:
-            "Edit it directly with `cctl workflow live edit --file <live-ops.json>`.",
         }}
       />,
     );
@@ -279,7 +185,5 @@ describe("PostLaunchCapturePaths", () => {
         screen.getByRole("region", { name: "Non-blocking discovery" }),
       ).getByRole("link", { name: "Open delivery plan" }),
     ).toHaveAttribute("href", "/specs/command-center/native-sdd?view=plan");
-    expect(screen.getByText(/not compiled from a delivery plan/)).toBeVisible();
-    expect(screen.getByText(/cctl workflow live edit/)).toBeVisible();
   });
 });

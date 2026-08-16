@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { cn } from "@/lib/ui/cn";
 import { WithTooltip } from "@/components/ui/WithTooltip";
 import { buildMessageRefXml } from "@/lib/conversations/message-ref";
@@ -41,6 +41,15 @@ export default function CopyMessageRefButton({
   meta,
 }: CopyMessageRefButtonProps) {
   const [copied, setCopied] = useState(false);
+  // The revert timer outlives a fast unmount, so it is cleared on teardown:
+  // left running it fires against a torn-down document.
+  const revertTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (revertTimer.current !== null) clearTimeout(revertTimer.current);
+    },
+    [],
+  );
   const { data: artifacts } = useContextArtifacts(target, {
     staleTime: ARTIFACT_LIST_STALE_MS,
   });
@@ -67,7 +76,8 @@ export default function CopyMessageRefButton({
     });
     void navigator.clipboard.writeText(xml).then(() => {
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      if (revertTimer.current !== null) clearTimeout(revertTimer.current);
+      revertTimer.current = setTimeout(() => setCopied(false), 1500);
     });
   }, [target, messageIndex, role, meta, artifact]);
 

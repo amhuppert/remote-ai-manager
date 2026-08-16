@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createGraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
 import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
+import { createSpecExecutionBindingRepo } from "@/lib/state-store/spec-execution-binding-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { _createTestDb } from "@/lib/state-store/state-db";
 import { createSpecsRepo } from "@/lib/state-store/specs-repo";
@@ -12,7 +12,6 @@ import type { CliHost } from "@/cli/shared";
 
 import { MEASURE_DEFINITIONS_VERSION } from "./measures";
 import { createMeasuresQuery } from "./measures-query";
-import type { SpecExecutionOriginMapEntry } from "./execution-origin-map";
 
 const PROJECT_PATH = "/repos/measures";
 const SPEC_ID = "spec-measures";
@@ -60,8 +59,14 @@ describe("MeasuresQuery", () => {
          proposed_at, approved_at, created_at
        ) VALUES (?, ?, 1, 'approved', NULL, 'hash', ?, ?, ?)`,
     ).run(REVISION_ID, SPEC_ID, AT, AT, AT);
+    db.prepare(
+      `INSERT INTO spec_elements (
+         id, spec_id, kind, number, parent_element_id, created_at
+       ) VALUES ('criterion-1', ?, 'criterion', 1, NULL, ?)`,
+    ).run(SPEC_ID, AT);
 
-    createSpecDeliveryRepo(db).insertExecution({
+    const delivery = createSpecDeliveryRepo(db);
+    delivery.insertExecution({
       id: SPEC_EXECUTION_ID,
       spec_id: SPEC_ID,
       revision_id: REVISION_ID,
@@ -80,6 +85,29 @@ describe("MeasuresQuery", () => {
       cleanup_last_error_at: null,
       created_at: AT,
       updated_at: AT,
+    });
+    delivery.saveDeliveryVerdict({
+      id: "delivery-verdict-1",
+      specExecutionId: SPEC_EXECUTION_ID,
+      workflowExecutionId: WORKFLOW_EXECUTION_ID,
+      candidateId: "candidate-measures",
+      candidateHash: `sha256:${"a".repeat(64)}`,
+      criterionElementId: "criterion-1",
+      satisfyingContextId: "stable-spawner",
+      recordedAt: AT,
+    });
+    createSpecExecutionBindingRepo(db).insert({
+      specExecutionId: SPEC_EXECUTION_ID,
+      workflowExecutionId: WORKFLOW_EXECUTION_ID,
+      binding: {
+        schemaVersion: 2,
+        candidateId: "candidate-measures",
+        candidateHash: `sha256:${"a".repeat(64)}`,
+        pinnedRevisionId: REVISION_ID,
+        dispositions: [],
+        claims: [],
+      },
+      createdAt: AT,
     });
 
     const specEvents = createSpecEventsRepo(db);
@@ -181,29 +209,6 @@ describe("MeasuresQuery", () => {
       },
       7,
     );
-
-    createGraphWorkflowEventsRepo(db).appendMany(
-      PROJECT_PATH,
-      "measure-session",
-      WORKFLOW_EXECUTION_ID,
-      AT,
-      [
-        {
-          occurredAt: AT,
-          preReset: false,
-          event: {
-            type: "graph-workflow-lane-commit",
-            projectName: "measures",
-            sessionName: "measure-session",
-            executionId: WORKFLOW_EXECUTION_ID,
-            contextId: "context-regrouped",
-            laneId: "lane-1",
-            sha: "task-sha",
-            committedAt: AT,
-          },
-        },
-      ],
-    );
   });
 
   afterEach(() => db.close());
@@ -235,23 +240,7 @@ describe("MeasuresQuery", () => {
       specs: createSpecsRepo(db, createWriteQueue()),
       events: createSpecEventsRepo(db),
       delivery: createSpecDeliveryRepo(db),
-      workflowEvents: createGraphWorkflowEventsRepo(db),
-      async loadOriginMap() {
-        return [
-          {
-            contextId: "context-regrouped",
-            taskElementId: "task-1",
-            taskHandle: "T1",
-            touchedPaths: [],
-            criterionElementIds: ["criterion-1"],
-            criterionHandles: ["R1.1"],
-            validationStrategies: {
-              "criterion-1": { kinds: ["validator_verdict"] as const },
-            },
-            criterionBriefs: { "criterion-1": "Run the committed proof." },
-          },
-        ];
-      },
+      executionBindings: createSpecExecutionBindingRepo(db),
       now: () => "2026-07-18T12:01:00.000Z",
     });
 
@@ -262,44 +251,12 @@ describe("MeasuresQuery", () => {
     expect(report.automaticEvidenceCapture).toMatchObject({ share: 1 });
   });
 
-  it("computes all measures and attributes a regrouped context commit to every compiled task", async () => {
+  it("computes traceability through the stable authored claimant verdict", async () => {
     const query = createMeasuresQuery({
       specs: createSpecsRepo(db, createWriteQueue()),
       events: createSpecEventsRepo(db),
       delivery: createSpecDeliveryRepo(db),
-      workflowEvents: createGraphWorkflowEventsRepo(db),
-      async loadOriginMap(workflowDefinitionId, projectPath) {
-        expect(workflowDefinitionId).toBe("workflow-definition-measures");
-        expect(projectPath).toBe(PROJECT_PATH);
-        return [
-          ...["task-1", "task-2"].map<SpecExecutionOriginMapEntry>(
-            (taskElementId) => ({
-              contextId: "context-regrouped",
-              taskElementId,
-              taskHandle: taskElementId === "task-1" ? "T1" : "T2",
-              touchedPaths: [],
-              criterionElementIds: ["criterion-1"],
-              criterionHandles: ["R1.1"],
-              validationStrategies: {
-                "criterion-1": { kinds: ["commit"] },
-              },
-              criterionBriefs: {
-                "criterion-1": "Run the committed proof.",
-              },
-            }),
-          ),
-          {
-            contextId: "context-regrouped",
-            taskElementId: null,
-            taskHandle: null,
-            touchedPaths: [],
-            criterionElementIds: [],
-            criterionHandles: [],
-            validationStrategies: {},
-            criterionBriefs: {},
-          },
-        ];
-      },
+      executionBindings: createSpecExecutionBindingRepo(db),
       now: () => "2026-07-18T12:01:00.000Z",
     });
 
@@ -345,11 +302,12 @@ describe("MeasuresQuery", () => {
         {
           criterionId: "criterion-1",
           approvedRevisionId: REVISION_ID,
-          tasks: [
-            { taskId: "task-1", changedCode: [{ commitSha: "task-sha" }] },
-            { taskId: "task-2", changedCode: [{ commitSha: "task-sha" }] },
-          ],
-          validProof: { verdictId: "verdict-1" },
+          deliveryVerdict: {
+            verdictId: "delivery-verdict-1",
+            workflowExecutionId: WORKFLOW_EXECUTION_ID,
+            candidateId: "candidate-measures",
+            satisfyingContextId: "stable-spawner",
+          },
           mergeResult: { mergeCommitSha: "merge-sha" },
           complete: true,
         },
@@ -367,5 +325,29 @@ describe("MeasuresQuery", () => {
       kind: "measure-definitions-frozen",
       definitionsVersion: MEASURE_DEFINITIONS_VERSION,
     });
+  });
+
+  it("excludes a delivery verdict whose candidate differs from the frozen binding", async () => {
+    db.prepare("DELETE FROM spec_delivery_verdicts").run();
+    createSpecDeliveryRepo(db).saveDeliveryVerdict({
+      id: "delivery-verdict-wrong-candidate",
+      specExecutionId: SPEC_EXECUTION_ID,
+      workflowExecutionId: WORKFLOW_EXECUTION_ID,
+      candidateId: "candidate-other",
+      candidateHash: `sha256:${"b".repeat(64)}`,
+      criterionElementId: "criterion-1",
+      satisfyingContextId: "stable-spawner",
+      recordedAt: AT,
+    });
+    const report = await createMeasuresQuery({
+      specs: createSpecsRepo(db, createWriteQueue()),
+      events: createSpecEventsRepo(db),
+      delivery: createSpecDeliveryRepo(db),
+      executionBindings: createSpecExecutionBindingRepo(db),
+      now: () => "2026-07-18T12:01:00.000Z",
+    }).forProject(PROJECT_PATH);
+
+    expect(report.traceabilityCompleteness).toMatchObject({ share: 0 });
+    expect(report.navigationChains[0]?.deliveryVerdict).toBeNull();
   });
 });

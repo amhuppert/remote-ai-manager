@@ -30,6 +30,7 @@ import {
   expansionRefusalEventInput,
   type ExpansionRefusalNotice,
 } from "./expansion-service";
+import { createRegisteredGraphExecutionContract } from "./execution-contract-port";
 
 export {
   classifyExpansionPayloadRefusal,
@@ -57,16 +58,16 @@ const executionRepository = createGraphWorkflowExecutionRepository({
 });
 
 /**
- * The production expansion service. `buildDefaultLiveEditDeps` carries the
- * REGISTERED execution contract, which is what puts a spec-linked expansion
- * under the criterion must-run coverage lock — an expansion entry point that
- * built deps without one would edit unlocked.
+ * The production expansion service preloads the registered execution contract
+ * before compiling or evaluating an expansion, then gives the pure edit core
+ * only the execution-scoped result.
  */
 export function createDefaultExpansionService() {
   return createGraphWorkflowExpansionService({
     getActiveExecution: getActiveGraphWorkflowExecution,
     mutateActive: executionRepository.mutateActive,
     buildLiveEditDeps: buildDefaultLiveEditDeps,
+    executionContract: createRegisteredGraphExecutionContract(),
     prepareAssignmentSnapshots: buildDefaultAssignmentSnapshotPreparation,
     publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
     publishGraphExpansion: eventPublisher.publishGraphExpansion,

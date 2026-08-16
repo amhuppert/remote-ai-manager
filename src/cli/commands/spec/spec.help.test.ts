@@ -82,15 +82,11 @@ describe("cctl spec help nodes", () => {
   it("routes retired evergreen plan acts to delivery-plan attempts", async () => {
     const draft = await helpText(["spec", "draft"]);
     expect(draft).toContain("cctl spec plan edit");
-    expect(draft).toMatch(/task.*legacy/i);
 
     const advance = await helpText(["spec", "advance"]);
     expect(advance).toContain("--from <requirements>");
     expect(advance).not.toContain("<requirements|design>");
     expect(advance).toContain("cctl spec plan open");
-
-    const task = await helpText(["spec", "task"]);
-    expect(task).toContain("cctl spec plan edit");
 
     const propose = await helpText(["spec", "propose"]);
     expect(propose).toContain("cctl spec plan propose");
@@ -99,47 +95,48 @@ describe("cctl spec help nodes", () => {
     expect(requestApproval).toContain("cctl spec plan sign-off");
 
     const remove = await helpText(["spec", "remove"]);
-    expect(remove).toMatch(/task handles are legacy-only/i);
+    expect(remove).toContain("Delivery graph tasks are authored only");
+    expect(remove).not.toMatch(/legacy-only/i);
     expect(remove).toContain("cctl spec plan edit");
 
     const preview = await helpText(["spec", "plan", "preview"]);
     expect(preview).toContain("--stage draft|proposed");
     for (const flag of ["scope", "context", "revision"]) {
-      expect(preview).toMatch(new RegExp(`--${flag}[^\\n]+retired`, "i"));
+      expect(preview).not.toMatch(new RegExp(`--${flag}\\b`, "i"));
     }
-    expect(preview).toContain("spec plan open <slug> --seed-from last");
+    expect(preview).toContain("server-injected sources, locks, origin");
   });
 
-  it("keeps the retired start --file flag recognizable without advertising it as a launch path", async () => {
+  it("advertises direct graph inputs while keeping retired scope files recognizable", async () => {
     const start = await helpText(["spec", "start"]);
 
-    expect(start).toContain("cctl spec start <slug> [--park]");
+    expect(start).toContain(
+      "cctl spec start <slug> [--inputs .cc/temp/inputs.json] [--park]",
+    );
+    expect(start).toMatch(/--inputs[\s\S]{0,240}JSON object/i);
     expect(start).not.toContain("cctl spec start <slug> --file <scope.json>");
     expect(start).toMatch(/--file[\s\S]{0,240}retired/i);
-    expect(start).toContain("cctl spec plan open <slug> --seed-from last");
+    expect(start).toContain("Open an authored delivery attempt");
+    expect(start).not.toContain("--seed-from last");
     expect(start).not.toContain("cctl spec schema scope");
     expect(start).not.toMatch(/starts the legacy way/i);
     expect(start).toContain("proposed or approved candidate");
     expect(start).toContain("receipt reports the plan's projected next act");
   });
 
-  it("surfaces registry-generated guidance on the lint and compilation leaves", async () => {
+  it("keeps plan lifecycle guidance on binding and finalized-envelope contracts", async () => {
     const lint = await helpText(["spec", "lint"]);
     expect(lint).toContain("Evergreen lint taxonomy");
-    expect(lint).toContain("9.7.claim-without-evidence — blocks_claim");
+    expect(lint).toContain("9.3.uncovered-criterion — blocks_propose");
+    expect(lint).not.toContain("blocks_claim");
 
     const planStatus = await helpText(["spec", "plan", "status"]);
     expect(planStatus).toContain("Delivery-plan lint taxonomy");
-    expect(planStatus).toContain("plan/selected-multi-owned — blocks_propose");
+    expect(planStatus).not.toContain("plan/selected-multi-owned");
 
     const preview = await helpText(["spec", "plan", "preview"]);
-    expect(preview).toContain("Materializer field mappings");
-    expect(preview).toContain(
-      "contexts[].contextId -> executionContexts[].id (copy)",
-    );
-    expect(preview).toContain("Evidence producers");
-    expect(preview).toContain("test_run <- graph-workflow-validation-result");
-    expect(preview).toContain("same validation event");
+    expect(preview).toContain("server-injected sources, locks, origin");
+    expect(preview).not.toContain("Evidence producers");
 
     const schema = await helpText(["spec", "schema"]);
     expect(schema).toContain("cctl spec schema guidance");
@@ -149,10 +146,6 @@ describe("cctl spec help nodes", () => {
     ]);
     expect(await generatedReference(["spec", "plan", "status"])).toEqual([
       NATIVE_SDD_GUIDANCE_SECTIONS.deliveryPlanLint,
-    ]);
-    expect(await generatedReference(["spec", "plan", "preview"])).toEqual([
-      NATIVE_SDD_GUIDANCE_SECTIONS.materializer,
-      NATIVE_SDD_GUIDANCE_SECTIONS.evidenceProducers,
     ]);
   });
 
@@ -491,19 +484,14 @@ describe("cctl spec help nodes", () => {
 
   /**
    * An agent that finds work mid-run reads this node to learn what it may do
-   * about it. If the help names fewer than three exits the agent invents one;
-   * if it names more, something other than the audited amendment is being
-   * offered as a way to change a launched definition.
+   * about it. The launch is immutable, so the help presents the two paths that
+   * preserve it.
    */
-  it("presents the three post-launch paths side by side on the capture node", async () => {
+  it("presents the two post-launch paths side by side on the capture node", async () => {
     const text = await helpText(["spec", "capture"]);
 
-    expect(text).toContain("exactly three post-launch paths");
+    expect(text).toContain("Non-blocking capture and blocking capture");
     expect(text).toContain("--blocking-reason");
-    expect(text).toContain("cctl workflow live amend");
-    expect(text).toContain(
-      "the only operation that may change a launched definition",
-    );
     expect(text).toContain("cctl spec plan open");
   });
 
@@ -560,9 +548,10 @@ describe("cctl spec help nodes", () => {
     ]) {
       expect(text, `spec import help omits ${command}`).toContain(command);
     }
-    // The neighbouring seed path, which imports nothing from outside CC.
+    // Import leads to the direct delivery-plan entry point only after the
+    // imported spec is ready for delivery.
     expect(text).toContain("cctl spec plan open");
-    expect(text).toContain("--seed-from last");
+    expect(text).not.toContain("--seed-from last");
   });
 
   /**

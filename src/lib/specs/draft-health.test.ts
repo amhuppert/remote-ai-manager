@@ -35,7 +35,7 @@ describe("draftHealth", () => {
 
   it("groups by severity in refusal order and omits severities with no findings", () => {
     const health = draftHealth([
-      finding("advisory", "R1.1", "9.12.serialized-plan"),
+      finding("advisory", "R1.1", "9.9.approval-freshness"),
       finding("blocks_signoff", "R2.1", "9.9.open-question"),
       finding("blocks_propose", "T1", "9.3.task-without-criterion"),
     ]);
@@ -48,8 +48,8 @@ describe("draftHealth", () => {
     expect(health.groups.map((group) => group.findings.length)).toEqual([
       1, 1, 1,
     ]);
-    // blocks_claim produced nothing, so it is not named at all — a zero beside
-    // a severity reads as a checked-and-clean claim this projection cannot make.
+    // A severity that produced nothing is not named at all — a zero beside it
+    // reads as a checked-and-clean claim this projection cannot make.
     expect(health.counts).toEqual([
       { severity: "blocks_propose", count: 1 },
       { severity: "blocks_signoff", count: 1 },
@@ -72,12 +72,11 @@ describe("draftHealth", () => {
   it("counts and collects exactly the blocks_propose findings", () => {
     const health = draftHealth([
       finding("blocks_propose", "T1", "9.3.task-without-criterion"),
-      finding("advisory", "T2", "9.12.overloaded-task"),
+      finding("advisory", "T2", "9.9.cited-element-change"),
       finding("blocks_propose", "R1.1"),
-      finding("blocks_claim", "T3", "9.7.claim-without-evidence"),
     ]);
 
-    expect(health.total).toBe(4);
+    expect(health.total).toBe(3);
     expect(health.blocking).toBe(2);
     expect(health.blockingFindings.map((entry) => entry.elementHandle)).toEqual(
       ["T1", "R1.1"],
@@ -86,21 +85,18 @@ describe("draftHealth", () => {
 
   it("orders every severity ahead of the advisory tail", () => {
     const health = draftHealth([
-      finding("advisory", "A1", "9.12.serialized-plan"),
-      finding("blocks_claim", "C1", "9.7.claim-without-evidence"),
+      finding("advisory", "A1", "9.9.approval-freshness"),
       finding("blocks_signoff", "S1", "9.9.open-question"),
       finding("blocks_propose", "P1"),
     ]);
 
     expect(health.ordered.map((entry) => entry.elementHandle)).toEqual([
       "P1",
-      "C1",
       "S1",
       "A1",
     ]);
     expect(LINT_SEVERITY_ORDER).toEqual([
       "blocks_propose",
-      "blocks_claim",
       "blocks_signoff",
       "advisory",
     ]);

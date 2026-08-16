@@ -41,7 +41,6 @@ import {
   runSpecReply,
   runSpecRequestApproval,
   runSpecStart,
-  runSpecTaskComplete,
   runSpecWithdrawProposal,
 } from "./write";
 
@@ -49,7 +48,7 @@ export async function runSpec(
   rest: string[],
   flags: GlobalFlags,
   values: Record<string, string>,
-  lists: Record<string, string[]>,
+  _lists: Record<string, string[]>,
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
@@ -86,16 +85,6 @@ export async function runSpec(
       answer: (next) => runSpecAnswer(next, flags, values, env, host),
       reply: (next) => runSpecReply(next, flags, values, env, host),
       assume: (next) => runSpecAssume(next, flags, values, env, host),
-      task: (next) =>
-        dispatchGroup({
-          group: ["spec", "task"],
-          rest: next,
-          json: flags.json,
-          handlers: {
-            complete: (taskRest) =>
-              runSpecTaskComplete(taskRest, flags, values, lists, env, host),
-          },
-        }),
       plan: (next) =>
         dispatchGroup({
           group: ["spec", "plan"],

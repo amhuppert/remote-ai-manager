@@ -756,7 +756,7 @@ describe("buildContextValidationPrompt", () => {
     );
   });
 
-  it("requires a production call path for wiring criteria and allows only named downstream deferral", () => {
+  it("requires a production call path and both accepted forms of explicit deferral evidence", () => {
     const prompt = buildContextValidationPrompt({
       context,
       tasks,
@@ -767,10 +767,15 @@ describe("buildContextValidationPrompt", () => {
     const guidance = prompt.slice(prompt.indexOf("## Evaluation Guidance"));
     expect(guidance).toContain("production call path");
     expect(guidance).toContain("no production caller");
-    // Deferral must be explicit: only an acceptance-criteria clause naming the
-    // downstream owner exempts missing wiring from failing this context.
-    expect(guidance.toLowerCase()).toContain(
-      "the downstream context that owns the wiring",
+    expect(guidance).toContain(
+      "this context's acceptance criteria explicitly name that downstream owner",
+    );
+    expect(guidance).toContain(
+      "the downstream owner's acceptance criteria contain the matching obligation",
+    );
+    expect(guidance).toContain("only to a graph-downstream owner");
+    expect(guidance).toContain(
+      "ownership claim alone cannot invent the handoff",
     );
   });
 
@@ -1739,6 +1744,49 @@ describe("createValidatorRunner", () => {
       "Every task summary is complete and the final plan document is updated.",
     );
     expect(result.result.kind).toBe("pass");
+  });
+
+  it("filters scoped charter invariants from the dispatched validator prompt", async () => {
+    const executeWorkflowTaskRun = vi.fn(
+      async (_input: ExecuteWorkflowTaskRunInput) =>
+        textTaskRun(verdictJson("Context completed correctly")),
+    );
+    const runner = createValidatorRunner({
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
+    });
+    const execution = buildExecutionWithContextValidation();
+    const charter: WorkflowCharter = {
+      mission: "Apply invariants only to their declared graph contexts.",
+      invariants: [
+        { id: "global", statement: "Global-validator-sentinel" },
+        {
+          id: "verify-only",
+          statement: "Out-of-scope-validator-sentinel",
+          appliesTo: { contextIds: ["context-verify"] },
+        },
+      ],
+      sourcesOfTruth: [],
+    };
+    execution.charter = charter;
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (candidate) => candidate.id === "context-plan",
+    )!;
+    contextDef.charter = charter;
+
+    await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: soleAssignment(contextDef),
+    });
+
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.prompt).toContain("Global-validator-sentinel");
+    expect(input.prompt).not.toContain("Out-of-scope-validator-sentinel");
   });
 
   it("runContextValidator persists the agent transcript alongside validation.jsonl", async () => {

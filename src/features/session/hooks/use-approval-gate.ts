@@ -92,7 +92,11 @@ export function useApprovalGate({
   const resolveMutation = useResolveApprovalMutation(projectName, sessionName);
   const seedDefinitionQuery = useWorkflowDefinitionQuery(
     projectName,
-    standing !== null ? (execution?.seedDefinitionId ?? null) : null,
+    standing !== null &&
+      execution !== null &&
+      execution.origin.kind === "template"
+      ? execution.origin.definitionId
+      : null,
   );
   // Fetched only for an enveloped context. A full-access member is left on the
   // whole-tree view it has always been reviewed under, so it costs no request.

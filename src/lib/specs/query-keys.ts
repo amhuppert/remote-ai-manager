@@ -42,6 +42,20 @@ export const specKeys = {
     ] as const,
   planReview: (projectName: string, slug: string) =>
     [...specKeys.detail(projectName, slug), "plan-review"] as const,
+  planPreview: (
+    projectName: string,
+    slug: string,
+    stage: "draft" | "proposed",
+    expectedDraftRevision?: number,
+  ) =>
+    [
+      ...specKeys.detail(projectName, slug),
+      "plan-preview",
+      stage,
+      ...(expectedDraftRevision === undefined
+        ? []
+        : (["draft-revision", expectedDraftRevision] as const)),
+    ] as const,
   planDiff: (
     projectName: string,
     slug: string,
@@ -56,15 +70,6 @@ export const specKeys = {
     ] as const,
   integrity: (projectName: string, slug: string) =>
     [...specKeys.detail(projectName, slug), "integrity"] as const,
-  // Keyed by revision because the preview IS the compiled shape of one
-  // revision: a key shared across revisions would show a reviewer the plan
-  // they last looked at under the heading of the one they selected.
-  planPreview: (projectName: string, slug: string, revisionId: string) =>
-    [
-      ...specKeys.detail(projectName, slug),
-      "plan-preview",
-      revisionId,
-    ] as const,
   search: (projectName: string, slug: string, query: string) =>
     [...specKeys.detail(projectName, slug), "search", query] as const,
 } as const;

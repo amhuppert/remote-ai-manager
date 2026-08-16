@@ -90,7 +90,11 @@ describe("workflow outline", () => {
       id: "plan-survey",
       instructionChars: 612,
     });
-    expect(data.charter).toMatchObject({ missionChars: 214, sources: 2 });
+    expect(data.charter).toMatchObject({
+      missionChars: 214,
+      sources: 2,
+      invariants: [],
+    });
     expect(data.configOverrides.workflow).toEqual(["scriptValidator"]);
     expect(data.configOverrides.contexts).toEqual([
       { id: "plan", blocks: ["contextValidator"] },
@@ -110,6 +114,70 @@ describe("workflow outline", () => {
     expect(text).toContain("parameters: feature-name (string, required)");
     expect(text).toContain("prerequisites: path:.kiro/steering/tech.md");
     expect(text).toContain("config overrides: workflow=scriptValidator");
+  });
+
+  it("renders global and context-scoped charter invariants in the text outline", () => {
+    const record = parseOutlineRecord({
+      ...RECORD,
+      definition: {
+        ...RECORD.definition,
+        charter: {
+          ...RECORD.definition.charter,
+          invariants: [
+            { id: "global", statement: "Applies everywhere." },
+            {
+              id: "implementation-only",
+              statement: "Applies only to implementation work.",
+              appliesTo: { contextIds: ["impl"] },
+            },
+          ],
+        },
+      },
+    });
+    if (!record) throw new Error("record must parse");
+
+    const text = renderOutline(record);
+
+    expect(text).toContain("invariants: global global");
+    expect(text).toContain("implementation-only contexts=impl");
+  });
+
+  it("projects charter invariant scopes without their statement prose", () => {
+    const statement = "Applies only to implementation work.";
+    const record = parseOutlineRecord({
+      ...RECORD,
+      definition: {
+        ...RECORD.definition,
+        charter: {
+          ...RECORD.definition.charter,
+          invariants: [
+            { id: "global", statement: "Applies everywhere." },
+            {
+              id: "implementation-only",
+              statement,
+              appliesTo: { contextIds: ["impl"] },
+            },
+          ],
+        },
+      },
+    });
+    if (!record) throw new Error("record must parse");
+
+    const data = buildOutlineData(record);
+
+    expect(data.charter.invariants).toEqual([
+      {
+        id: "global",
+        contextIds: null,
+        statementChars: "Applies everywhere.".length,
+      },
+      {
+        id: "implementation-only",
+        contextIds: ["impl"],
+        statementChars: statement.length,
+      },
+    ]);
+    expect(JSON.stringify(data)).not.toContain(statement);
   });
 
   it("renders concrete validation selections for the new selector blocks", () => {

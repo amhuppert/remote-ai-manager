@@ -6,7 +6,11 @@ import { apiFetch, apiFetchOptional } from "@/lib/api/fetcher";
 import { specPhaseProjectionSchema, taskWorkStatusSchema } from "./phase";
 import { deliveryDeltaProjectionSchema } from "./delivery-delta";
 import { deliveryPlanReviewViewSchema } from "./delivery-plan-review";
-import { deliveryPlanSnapshotDiffViewSchema } from "./delivery-plan-views";
+import {
+  deliveryPlanPreviewViewSchema,
+  deliveryPlanSnapshotDiffViewSchema,
+  type DeliveryPlanPreviewStage,
+} from "./delivery-plan-views";
 import { specKeys } from "./query-keys";
 import {
   actorProvenanceSchema,
@@ -22,7 +26,6 @@ import {
 import {
   integrityReportSchema,
   specDetailViewSchema,
-  specPlanPreviewViewSchema,
   specStatusViewSchema,
   specSummaryViewSchema,
   type SpecDetailView,
@@ -138,12 +141,7 @@ export type SpecElementGetResponse = z.infer<
 const lintFindingSchema = z
   .object({
     ruleId: z.string().min(1),
-    severity: z.enum([
-      "blocks_propose",
-      "blocks_claim",
-      "blocks_signoff",
-      "advisory",
-    ]),
+    severity: z.enum(["blocks_propose", "blocks_signoff", "advisory"]),
     elementHandle: z.string(),
     message: z.string(),
   })
@@ -339,6 +337,35 @@ export const specQueries = {
         ),
       refetchOnReconnect: false,
     }),
+  // Cached on the draft revision it was read for: the preview describes one
+  // attempt state, and a caller that names a different one is refused rather
+  // than served the bytes it did not ask for.
+  planPreview: (
+    projectName: string,
+    slug: string,
+    stage: DeliveryPlanPreviewStage,
+    expectedDraftRevision?: number,
+  ) =>
+    queryOptions({
+      queryKey: specKeys.planPreview(
+        projectName,
+        slug,
+        stage,
+        expectedDraftRevision,
+      ),
+      queryFn: ({ signal }) => {
+        const params = new URLSearchParams({ stage });
+        if (expectedDraftRevision !== undefined) {
+          params.set("expectedDraftRevision", String(expectedDraftRevision));
+        }
+        return apiFetch(
+          `${specBasePath(projectName, slug)}/plan-preview?${params.toString()}`,
+          deliveryPlanPreviewViewSchema,
+          { signal },
+        );
+      },
+      refetchOnReconnect: false,
+    }),
   // A comparison of two immutable snapshots: the answer can never change for a
   // given pair, so it is cached on the pair itself.
   planDiff: (
@@ -382,28 +409,6 @@ export const specQueries = {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: "{}",
-            signal,
-          },
-        ),
-      refetchOnReconnect: false,
-    }),
-  // The compiled-plan preview. Like `integrity`, it is read state behind a POST
-  // — the scope is a document, not a query string — and the handler mutates
-  // nothing. Studio reads THIS rather than compiling anything itself: lane-group
-  // collapse, the criterion-brief union, and edge derivation all live in the
-  // compiler, so a client-side second answer could only ever be a guess at what
-  // the launch would produce.
-  planPreview: (projectName: string, slug: string, revisionId: string) =>
-    queryOptions({
-      queryKey: specKeys.planPreview(projectName, slug, revisionId),
-      queryFn: ({ signal }) =>
-        apiFetch(
-          `${specBasePath(projectName, slug)}/plan-preview`,
-          specPlanPreviewViewSchema,
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ revisionId }),
             signal,
           },
         ),
@@ -482,6 +487,22 @@ export function useSpecDeltaQuery(
 
 export function useSpecPlanReviewQuery(projectName: string, slug: string) {
   return useQuery(specQueries.planReview(projectName, slug));
+}
+
+export function useSpecPlanPreviewQuery(
+  projectName: string,
+  slug: string,
+  stage: DeliveryPlanPreviewStage | null,
+  expectedDraftRevision: number | null = null,
+) {
+  const expected =
+    expectedDraftRevision === null ? undefined : expectedDraftRevision;
+  return useQuery({
+    ...(stage === null
+      ? specQueries.planPreview(projectName, slug, "draft", expected)
+      : specQueries.planPreview(projectName, slug, stage, expected)),
+    enabled: stage !== null,
+  });
 }
 
 export function useSpecPlanDiffQuery(

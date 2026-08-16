@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { buildMaximalGraphWorkflowExecution } from "@/lib/shared/testing/graph-workflow-execution-fixture";
-import { buildOneOffSeedCompatibilityFields } from "@/lib/workflow-graph/execution-origin";
+import {
+  buildOneOffSeedCompatibilityFields,
+  buildSpecDeliverySeedCompatibilityFields,
+} from "@/lib/workflow-graph/execution-origin";
 import { decodeGraphWorkflowExecution } from "./graph-workflow-execution-codec";
 
 /**
@@ -116,6 +119,31 @@ describe("decodeGraphWorkflowExecution origin floor", () => {
     // The filler is what an older reader parses; the new reader must neither
     // rewrite nor discard it.
     expect(decoded.seedDefinitionId).toBe("one-off:exec-77");
+    expect(decoded.seedDefinitionRevision).toBe(1);
+    expect(decoded.launchedTier).toBe("project");
+  });
+
+  it("decodes a spec-delivery row as spec_delivery while its seed sentinel survives intact", () => {
+    const decoded = decodeOrThrow(
+      storedCandidate((candidate) => {
+        Object.assign(
+          candidate,
+          buildSpecDeliverySeedCompatibilityFields("exec-9"),
+        );
+        candidate.origin = {
+          kind: "spec_delivery",
+          specSlug: "conversation-compaction",
+          candidateId: "cand-42",
+        };
+      }),
+    );
+
+    expect(decoded.origin).toEqual({
+      kind: "spec_delivery",
+      specSlug: "conversation-compaction",
+      candidateId: "cand-42",
+    });
+    expect(decoded.seedDefinitionId).toBe("spec-delivery:exec-9");
     expect(decoded.seedDefinitionRevision).toBe(1);
     expect(decoded.launchedTier).toBe("project");
   });

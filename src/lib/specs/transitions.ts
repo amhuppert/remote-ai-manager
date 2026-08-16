@@ -126,12 +126,6 @@ export interface StartExecutionContext {
   activeExecution: boolean;
 }
 
-export interface TaskClaimContext {
-  policy: SpecGatePolicy;
-  draft: RevisionSnapshot;
-  records: SpecRecords;
-}
-
 export interface WaiverContext {
   actor: ActorProvenance;
   reason: string;
@@ -731,34 +725,6 @@ export function startExecution(
       "invalid_scope",
       scopeResult.defects.map((defect) => defect.message),
       "Repair the selected tasks, criteria, and exclusions, then start again.",
-    );
-  }
-
-  return allowed();
-}
-
-export function claimTaskComplete(
-  context: TaskClaimContext,
-): TransitionDecision {
-  if (isExploratoryShippingRefused(context.policy)) {
-    return refused(
-      "gate_blocked",
-      ["Exploratory specs cannot record task completion claims."],
-      "Switch the spec to a shipping-capable preset through a human-confirmed policy change.",
-    );
-  }
-
-  const findings = blockingFindings(
-    context.draft,
-    context.records,
-    "blocks_claim",
-  );
-  if (findings.length > 0) {
-    return refused(
-      "lint_blocked",
-      findings.map((finding) => finding.message),
-      "Cite ingested evidence for every covered criterion and claim again.",
-      findings,
     );
   }
 

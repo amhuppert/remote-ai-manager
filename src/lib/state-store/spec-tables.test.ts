@@ -25,11 +25,11 @@ const SPEC_TABLES = [
   "spec_criterion_dispositions",
   "spec_task_claims",
   "spec_executions",
+  "spec_execution_bindings",
   "spec_links",
   "spec_events",
   "spec_delivery_plan_attempts",
   "spec_delivery_plan_snapshots",
-  "spec_delivery_plan_candidates",
 ] as const;
 
 function tableNames(db: Db): Set<string> {
@@ -80,7 +80,7 @@ describe("native SDD schema floor", () => {
     }
   });
 
-  it("creates all 21 spec tables on a fresh in-memory database", () => {
+  it("creates all 22 spec tables on a fresh in-memory database", () => {
     const db = _createTestDb({ inMemory: true });
     openDbs.push(db);
 
@@ -116,16 +116,17 @@ describe("native SDD schema floor", () => {
       "execution_id",
       "criterion_element_id",
     ]);
+    expect(primaryKeyColumns(db, "spec_execution_bindings")).toEqual([
+      "spec_execution_id",
+    ]);
+    expect(uniqueIndexColumnSets(db, "spec_execution_bindings")).toContainEqual(
+      ["workflow_execution_id"],
+    );
     // One frozen proposal snapshot per attempt draft revision: a second
     // propose at the same revision would be a second identity for one plan.
     expect(
       uniqueIndexColumnSets(db, "spec_delivery_plan_snapshots"),
     ).toContainEqual(["attempt_id", "draft_revision"]);
-    // Exactly one compiled candidate per proposed snapshot: a second one would
-    // be a second set of bytes an approval could have meant.
-    expect(
-      uniqueIndexColumnSets(db, "spec_delivery_plan_candidates"),
-    ).toContainEqual(["snapshot_id"]);
   });
 
   it("refuses a delivery-plan attempt status outside the lifecycle", () => {

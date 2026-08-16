@@ -189,7 +189,7 @@ const specStatusExecutionEnvelopeSchema = specStatusViewSchema.shape.executions
       "running",
       "merge_pending",
       "halted",
-      "awaiting_definition_approval",
+      "awaiting_workflow_approval",
       "not_launched",
     ]),
     actsNext: z.enum(["human", "agent"]).nullable(),
