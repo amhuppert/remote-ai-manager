@@ -791,17 +791,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
 
     const projectName = getProjectDisplayName(projectPath);
 
-    // Resolve parent worktree path when targeting a non-main branch
-    let targetWorktreePath: string | undefined;
-    const targetBranch = session.targetBranch ?? "main";
-    if (targetBranch !== "main" && session.parentSessionName) {
-      const parentSession = await getSession(
-        projectPath,
-        session.parentSessionName,
-      );
-      targetWorktreePath = parentSession?.worktreePath;
-    }
-
     // Launch orchestrator as fire-and-forget (not awaited)
     void executeOptimisticWorkflow({
       projectPath,
@@ -809,7 +798,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       session,
       instructions,
       images,
-      targetWorktreePath,
     });
 
     return session;

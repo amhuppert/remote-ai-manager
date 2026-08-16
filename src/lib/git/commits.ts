@@ -1,4 +1,8 @@
 import { defaultGitClient, type GitClient } from "./client";
+import {
+  isMergeInProgress,
+  scanStagingConflictArtifacts,
+} from "./conflict-markers";
 import { parseDiff } from "./diff";
 import { createOwnedLandingOperations } from "./owned-landing";
 import { createLogger } from "../logging";
@@ -143,13 +147,44 @@ export function createCommitsOperations(client: GitClient = defaultGitClient) {
     }
   }
 
-  /** True when the worktree has an unconcluded merge (MERGE_HEAD exists). */
-  async function isMergeInProgress(worktreePath: string): Promise<boolean> {
-    try {
-      await git(worktreePath, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]);
-      return true;
-    } catch {
-      return false;
+  function refuseConflictArtifacts(
+    worktreePath: string,
+    reason: "unmerged_entries" | "conflict_markers",
+    files: string[],
+  ): never {
+    logger.error("git.commit.refused", { worktreePath, reason, files });
+    throw new Error(
+      `Refusing to commit: ${files.length} file(s) contain conflict artifacts ` +
+        `(${files.join(", ")}). Resolve the conflicts (or abort the merge) ` +
+        `before committing.`,
+    );
+  }
+
+  /**
+   * Refuse to stage-and-commit a worktree that still carries conflict
+   * artifacts. Unmerged index entries catch every genuinely mid-merge tree;
+   * the marker scan catches the poisoned tree an index resync leaves behind,
+   * where MERGE_HEAD and the unmerged entries are gone but the markers are
+   * still in the files. The scan reaches as far as `git add -A` does, so an
+   * untracked file is judged by the same rule as a tracked one.
+   */
+  async function assertNoConflictArtifacts(
+    worktreePath: string,
+  ): Promise<void> {
+    const artifacts = await scanStagingConflictArtifacts(worktreePath, client);
+    if (artifacts.unmergedFiles.length > 0) {
+      refuseConflictArtifacts(
+        worktreePath,
+        "unmerged_entries",
+        artifacts.unmergedFiles,
+      );
+    }
+    if (artifacts.markerFiles.length > 0) {
+      refuseConflictArtifacts(
+        worktreePath,
+        "conflict_markers",
+        artifacts.markerFiles,
+      );
     }
   }
 
@@ -168,9 +203,11 @@ export function createCommitsOperations(client: GitClient = defaultGitClient) {
     // file leaves `git status --porcelain` empty while MERGE_HEAD still
     // exists — `git commit` is still required to conclude the merge.
     const hasChanges = await hasUncommittedChanges(worktreePath);
-    if (!hasChanges && !(await isMergeInProgress(worktreePath))) {
+    if (!hasChanges && !(await isMergeInProgress(worktreePath, client))) {
       throw new Error("No uncommitted changes to commit");
     }
+
+    await assertNoConflictArtifacts(worktreePath);
 
     logger.info("git.commit", { worktreePath, messageLength: message.length });
 

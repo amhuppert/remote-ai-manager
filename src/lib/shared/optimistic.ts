@@ -3,6 +3,10 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import { executePromptStream } from "../prompt/sdk-driver";
 import { dispatchMergeJob } from "../jobs/queue";
 import { createJobNotification } from "../notifications/service";
+import {
+  evaluateSessionMergeAdmission,
+  type SessionMergeAdmission,
+} from "@/lib/workflow-graph/session-merge-admission";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { sleep } from "@/lib/shared/sleep";
 import { createLogger } from "../logging";
@@ -35,6 +39,11 @@ export interface OptimisticDeps {
   dispatchMergeJob: typeof dispatchMergeJob;
   createNotification: typeof createJobNotification;
   sleep(ms: number): Promise<void>;
+  /** Whether the session's merge may start; see the merge-admission module. */
+  evaluateSessionMergeAdmission(input: {
+    projectPath: string;
+    sessionName: string;
+  }): Promise<SessionMergeAdmission>;
 }
 
 export const defaultOptimisticDeps: OptimisticDeps = {
@@ -42,6 +51,9 @@ export const defaultOptimisticDeps: OptimisticDeps = {
   dispatchMergeJob,
   createNotification: createJobNotification,
   sleep,
+  evaluateSessionMergeAdmission(input) {
+    return evaluateSessionMergeAdmission({ ...input, surface: "optimistic" });
+  },
 };
 
 /**
@@ -60,18 +72,10 @@ export async function executeOptimisticWorkflow(
     session: SessionState;
     instructions: string;
     images?: ImagePayload[];
-    targetWorktreePath?: string;
   },
   deps: OptimisticDeps = defaultOptimisticDeps,
 ): Promise<void> {
-  const {
-    projectPath,
-    projectName,
-    session,
-    instructions,
-    images,
-    targetWorktreePath,
-  } = params;
+  const { projectPath, projectName, session, instructions, images } = params;
   const conversationId = session.conversations[0]?.id;
 
   logger.info("optimistic.workflow_start", {
@@ -104,6 +108,26 @@ export async function executeOptimisticWorkflow(
     // Brief delay to allow state persistence to settle
     await deps.sleep(500);
 
+    // The publish would refuse under the project lock anyway; asking here keeps
+    // an optimistic run from spending a whole merge pipeline on the answer.
+    const admission = await deps.evaluateSessionMergeAdmission({
+      projectPath,
+      sessionName: session.sessionName,
+    });
+    if (!admission.admitted) {
+      deps.createNotification({
+        type: "merge-failed",
+        title: "Optimistic merge not dispatched",
+        message: `Optimistic task "${instructions}" finished but its merge was not dispatched: ${admission.refusal.message}`,
+        projectName,
+        sessionName: session.sessionName,
+        branchName: session.branchName,
+        jobId: "optimistic-" + session.sessionName,
+        jobType: "merge",
+      });
+      return;
+    }
+
     // Dispatch smart merge with auto-resolve
     const merge = deps.dispatchMergeJob({
       projectPath,
@@ -114,7 +138,6 @@ export async function executeOptimisticWorkflow(
       message: `Optimistic: ${instructions}`,
       autoResolve: true,
       targetBranch: session.targetBranch,
-      targetWorktreePath,
     });
 
     if (!merge.ok) {

@@ -16,6 +16,27 @@ export interface MergeDeliveryLifecycle {
   markDelivered(workflowExecutionId: string, mergeHash: string): Promise<void>;
 }
 
+/**
+ * The commit a completed merge delivered, or null when it delivered nothing.
+ *
+ * A merge that landed carries its own commit. A merge that found the target
+ * already containing the branch published none, yet delivered exactly the same
+ * content, so the target tip the delivery gate evaluated as its candidate
+ * stands for it — otherwise a no-op final publish would finish its session
+ * while leaving the execution it delivered permanently unmarked.
+ */
+export function resolveDeliveredMergeSha(merge: {
+  mergeHash?: string | null;
+  upToDate?: boolean;
+  expectedTargetSha?: string | null;
+}): string | null {
+  if (merge.mergeHash !== undefined && merge.mergeHash !== null) {
+    return merge.mergeHash;
+  }
+  if (merge.upToDate !== true) return null;
+  return merge.expectedTargetSha ?? null;
+}
+
 const MERGE_DELIVERY_LIFECYCLE_KEY = "__cc_merge_delivery_lifecycle" as const;
 
 interface MergeDeliveryLifecycleState {

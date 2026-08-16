@@ -183,6 +183,7 @@ export const normalizedAgentCallFailureKindSchema = z.enum([
   "capability_unavailable",
   "stale_resume_ref",
   "session_died",
+  "quota_exhausted",
 ]);
 export type NormalizedAgentCallFailureKind = z.infer<
   typeof normalizedAgentCallFailureKindSchema
@@ -192,6 +193,18 @@ export const normalizedAgentCallErrorSchema = z.object({
   failureKind: normalizedAgentCallFailureKindSchema,
   backend: agentBackendSchema,
   message: z.string(),
+  /**
+   * Whether re-running the call could plausibly succeed, as the backend's
+   * classifier decided from the error value. The kind alone cannot answer it —
+   * a session that died before delivering the prompt is safe to re-dispatch
+   * while one that died mid-turn is not — so a caller's retry policy reads this
+   * rather than mapping the kind. Absent where the failure was minted without a
+   * classifier (a refused capability, a facade-level guard).
+   */
+  retryable: z.boolean().optional(),
+  /** Opaque provider text naming when capacity returns (the classification's
+   *  `retryAfterHint`). Display-only — never parsed for scheduling. */
+  retryAfterHint: z.string().optional(),
   backendDetails: z.unknown().optional(),
 });
 

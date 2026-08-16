@@ -1615,7 +1615,12 @@ const SCHEMA_DDL = `
     owner_pid      INTEGER,
     execution_id   TEXT,
     final_publish  INTEGER NOT NULL DEFAULT 0,
-    candidate_validation TEXT
+    candidate_validation TEXT,
+    parked_ref     TEXT,
+    prepared_sha   TEXT,
+    expected_target_sha TEXT,
+    finalize_session_on_publish INTEGER,
+    resolution_context TEXT
   );
 
   CREATE INDEX IF NOT EXISTS idx_job_records_status ON job_records(status);
@@ -1972,6 +1977,22 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     type: "INTEGER NOT NULL DEFAULT 0",
   },
   { table: "job_records", column: "candidate_validation", type: "TEXT" },
+  // Parked-merge bookkeeping for a `ready-to-land` job. Additive and nullable
+  // with no back-fill: a job that parked a commit before these columns existed
+  // left the fact only in the in-memory registry, so null is the truth for
+  // every pre-existing row and there is nothing to reconstruct.
+  { table: "job_records", column: "parked_ref", type: "TEXT" },
+  { table: "job_records", column: "prepared_sha", type: "TEXT" },
+  { table: "job_records", column: "expected_target_sha", type: "TEXT" },
+  // Nullable rather than `NOT NULL DEFAULT 0`: a row that predates the column
+  // never recorded the decision, and defaulting it to "does not finalize" would
+  // manufacture a graph-lane fact for a user-driven merge.
+  {
+    table: "job_records",
+    column: "finalize_session_on_publish",
+    type: "INTEGER",
+  },
+  { table: "job_records", column: "resolution_context", type: "TEXT" },
   { table: "project_conversations", column: "pending_queue", type: "TEXT" },
   {
     table: "project_conversations",

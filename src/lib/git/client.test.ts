@@ -37,6 +37,16 @@ describe("defaultGitClient (real git)", () => {
     expect(stdout.trim()).toBe(customIndex);
   });
 
+  it("pins the child locale to C so git's own output stays parseable", async () => {
+    // A `!`-prefixed alias runs through the shell, which is the only way to
+    // read the environment git itself was handed.
+    const { stdout } = await defaultGitClient.git(
+      ["-c", "alias.readlocale=!printenv LC_ALL", "readlocale"],
+      repoDir,
+    );
+    expect(stdout.trim()).toBe("C");
+  });
+
   it("strips inherited git env vars when no override is given", async () => {
     const saved = process.env.GIT_INDEX_FILE;
     process.env.GIT_INDEX_FILE = "/tmp/should-not-leak-into-child";

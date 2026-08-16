@@ -8,7 +8,10 @@
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
-import type { ContinuationDisposition } from "@/lib/agent-backends/errors";
+import type {
+  AgentFailureClassification,
+  ContinuationDisposition,
+} from "@/lib/agent-backends/errors";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { AgentTranscriptEntry } from "@/lib/agent-backends/transcript";
 import type {
@@ -358,6 +361,15 @@ export interface PromptActorResult {
   abortReason?: "timeout" | "stalled" | "user" | "shutdown";
   timeoutMs?: number;
   error: string | null;
+  /**
+   * Neutral classification of the failure named by `error`, as the backend
+   * classified the error VALUE. Present whenever the turn failed through the
+   * AgentCall boundary; absent for a clean turn and for failures projected
+   * without one. Callers must prefer it over re-classifying `error`, which no
+   * longer carries the facts the verdict was made from (an undelivered prompt,
+   * a provider error code).
+   */
+  failure?: AgentFailureClassification;
   /**
    * Whether the machine may keep falling back to its prior `backendRef` when
    * this turn surfaced none. Backend continuation policy (whether a failed

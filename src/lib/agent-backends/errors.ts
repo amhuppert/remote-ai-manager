@@ -8,6 +8,7 @@ export const agentFailureKindSchema = z.enum([
   "stale_resume_ref",
   "session_died",
   "capability_unavailable",
+  "quota_exhausted",
   "backend_error",
 ]);
 export type AgentFailureKind = z.infer<typeof agentFailureKindSchema>;
@@ -16,6 +17,12 @@ export const agentFailureClassificationSchema = z.object({
   kind: agentFailureKindSchema,
   message: z.string(),
   retryable: z.boolean(),
+  /**
+   * Opaque provider text naming when capacity returns (e.g. "Aug 19th, 2026
+   * 11:29 PM"). Display-only: it is a provider sentence in a provider's own
+   * format and timezone, so no scheduler may parse it into a retry time.
+   */
+  retryAfterHint: z.string().optional(),
 });
 export type AgentFailureClassification = z.infer<
   typeof agentFailureClassificationSchema
@@ -133,6 +140,73 @@ export function isLikelyStaleResumeMessage(message: string): boolean {
       message,
     )
   );
+}
+
+/**
+ * Marker-first message shapes for a provider capacity refusal: the account's
+ * usage quota or rate limit is exhausted, so the turn never reached the agent.
+ * A capacity noun (usage/rate/quota/credit/token) must sit in the same clause
+ * as an exhaustion verb, or the provider's own status/error code must appear,
+ * so ordinary text that merely says "usage" or "limit reached" keeps its
+ * `backend_error` classification. Both providers emit both families (Codex
+ * returns 429s; Claude Code prints "usage limit reached"), so the vocabulary is
+ * shared rather than per-provider.
+ *
+ * Consumed exclusively by the backend failure classifiers
+ * (`claude/failure-classifier.ts`, `codex/failure-classifier.ts`) — like
+ * {@link isLikelyStaleResumeMessage}, orchestration consumes the typed
+ * `quota_exhausted` output, never this heuristic.
+ */
+const QUOTA_EXHAUSTED_MESSAGE_PATTERNS: readonly RegExp[] = [
+  /\b(?:usage|rate|quota|credit|token)[- ]?limits?\b[^.\n]{0,30}?\b(?:reached|exceeded|hit|exhausted)\b/i,
+  /\b(?:hit|reached|exceeded|exhausted)\b[^.\n]{0,30}?\b(?:usage|rate|quota|credit|token)[- ]?limits?\b/i,
+  /\b(?:quota|credits?)\b[^.\n]{0,20}?\b(?:exceeded|exhausted|depleted)\b/i,
+  /\bout of (?:credits|quota|tokens)\b/i,
+  /\btoo many requests\b/i,
+  /\brate[_ ]limit_?error\b/i,
+  /\boverloaded_error\b/i,
+  /^overloaded\b/i,
+  // HTTP 429 in a provider status shape ("API Error: 429", "HTTP 429",
+  // "status code 429"). A bare number is never evidence on its own: commit
+  // SHAs (`e429fa1`), byte counts, and `file:line:column` coordinates all carry
+  // one, and the merge path quotes all three. The token boundary excludes
+  // embedded digits AND embedded letters; the status noun must sit in the same
+  // clause.
+  /\b(?:http|https|status|code|error)\b[^.\n]{0,20}?(?<![\w:.\-/])429(?![\w:.\-/])/i,
+  /(?<![\w:.\-/])429(?![\w:.\-/])[^.\n]{0,20}?\b(?:too many requests|rate[-_ ]?limits?)\b/i,
+];
+
+export function isLikelyQuotaExhaustedMessage(message: string): boolean {
+  return QUOTA_EXHAUSTED_MESSAGE_PATTERNS.some((pattern) =>
+    pattern.test(message),
+  );
+}
+
+/**
+ * Provider clauses naming when capacity returns. The captured text is opaque —
+ * a display hint carried on {@link AgentFailureClassification.retryAfterHint},
+ * never a parsed schedule.
+ */
+const RETRY_AFTER_HINT_PATTERNS: readonly RegExp[] = [
+  /\btry again (?:at|in|after)\s+([^.\n]+)/i,
+  /\bresets?\s+(?:at|in|on)\s+([^.\n]+)/i,
+  /\bretry[-_ ]?after[:=]?\s*([^.\n]+)/i,
+  /\bavailable again (?:at|in)\s+([^.\n]+)/i,
+];
+
+export function extractRetryAfterHint(message: string): string | undefined {
+  for (const pattern of RETRY_AFTER_HINT_PATTERNS) {
+    const captured = pattern.exec(message)?.[1];
+    if (captured === undefined) continue;
+    // Trailing separators only: a closing bracket can belong to the hint
+    // itself ("10pm (America/New_York)").
+    const hint = captured
+      .trim()
+      .replace(/[,;:]+$/, "")
+      .trim();
+    if (hint.length > 0) return hint;
+  }
+  return undefined;
 }
 
 /**

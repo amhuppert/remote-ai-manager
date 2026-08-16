@@ -245,6 +245,47 @@ describe("graph-workflow-executions-repo durability contract", () => {
     });
   });
 
+  // The resume gate reads `resolutionFailure.retryable` off a reloaded
+  // execution to decide whether a join may be rescheduled automatically, so a
+  // classification the repository drops silently re-enables the retries that
+  // walked the incident back into a quota wall.
+  it("carries the join resolution failure classification in the maximal SQLite fixture", () => {
+    const execution = maximalExecution();
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      execution,
+      "2026-03-01T00:00:00Z",
+    );
+
+    const reloaded = createGraphWorkflowExecutionsRepo(db).getActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(
+      reloaded?.secondaryHaltReasons.find(
+        (reason) => reason.type === "join_failure",
+      ),
+    ).toEqual({
+      type: "join_failure",
+      joinId: "join-1",
+      joinKind: "context_merge",
+      contextId: "ctx-1",
+      sourceLaneIds: ["lane-2"],
+      targetLaneId: "lane-1",
+      message:
+        "Conflict resolution failed before reaching the conflict: " +
+        "quota_exhausted — You've hit your usage limit.",
+      conflictFiles: ["foo.ts"],
+      resolutionFailure: {
+        kind: "quota_exhausted",
+        message: "You've hit your usage limit.",
+        retryable: false,
+        retryAfterHint: "Aug 19th, 2026 11:29 PM",
+      },
+    });
+  });
+
   // R9: advisories and their dispositions are durable per specialist and per
   // round, and the long-lived kinds are additionally readable from the execution
   // without opening a round. The durability harness above proves every key path

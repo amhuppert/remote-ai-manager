@@ -144,6 +144,70 @@ describe("createClaudeFailureClassifier", () => {
     }
   });
 
+  it("classifies rate-limit, usage-limit and overload refusals as non-retryable quota_exhausted", () => {
+    for (const message of [
+      "Claude AI usage limit reached",
+      "API Error: 429 Too Many Requests",
+      'API Error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"Number of requests has exceeded your rate limit"}}',
+      "Overloaded",
+    ]) {
+      expect(classifier.classify(message), message).toEqual({
+        kind: "quota_exhausted",
+        message,
+        retryable: false,
+      });
+    }
+  });
+
+  it("carries the provider's reset text as the display-only capacity hint", () => {
+    const message =
+      "Claude AI usage limit reached. Your limit will reset at 10pm (America/New_York).";
+
+    expect(classifier.classify(message)).toEqual({
+      kind: "quota_exhausted",
+      message,
+      retryable: false,
+      retryAfterHint: "10pm (America/New_York)",
+    });
+  });
+
+  it("keeps the continuation on a quota refusal — the session is still resumable", () => {
+    const message = "Claude AI usage limit reached";
+
+    expect(classifier.classifyWithContinuation(message)).toEqual({
+      failure: { kind: "quota_exhausted", message, retryable: false },
+      continuationDisposition: "retain",
+    });
+  });
+
+  it("leaves every pre-quota classification untouched", () => {
+    const abortError = new Error("The operation was aborted");
+    abortError.name = "AbortError";
+    const tagged = tagQuerySessionError(
+      new Error("QuerySession ended before the turn completed"),
+      QUERY_SESSION_ERROR_CODES.promptNotDelivered,
+    );
+    const cases: Array<[unknown, string]> = [
+      [abortError, "aborted"],
+      [new Error("Task timed out"), "timeout"],
+      [
+        "Agent exceeded structured output retry limit",
+        "structured_output_exhausted",
+      ],
+      [tagged, "session_died"],
+      ["QuerySession closed while turn was in progress", "session_died"],
+      ["session abc-123 not found", "stale_resume_ref"],
+      ["config file not found", "backend_error"],
+      ["OAuth token expired for this session", "backend_error"],
+      ["usage: cctl validate run <name>", "backend_error"],
+      ["boom", "backend_error"],
+    ];
+
+    for (const [input, kind] of cases) {
+      expect(classifier.classify(input).kind, String(input)).toBe(kind);
+    }
+  });
+
   it("does not classify a missing-file error without continuity nouns as stale", () => {
     expect(classifier.classify("config file not found").kind).toBe(
       "backend_error",

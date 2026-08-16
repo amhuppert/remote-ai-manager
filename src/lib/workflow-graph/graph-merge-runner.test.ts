@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import { fromPromise } from "xstate";
 import { mergeMachine } from "@/lib/workflows/merge/machine";
 import type {
+  AbortStaleMergeInput,
+  AbortStaleMergeOutput,
   AnalyzeConflictsInput,
   AnalyzeConflictsOutput,
+  ClassifyWorktreeInput,
+  ClassifyWorktreeOutput,
   GetCurrentBranchInput,
   GetCurrentBranchOutput,
   MergeMainInput,
@@ -44,6 +48,10 @@ function buildCapturingMachine(
 ) {
   return mergeMachine.provide({
     actors: {
+      classifyWorktree: fromPromise<
+        ClassifyWorktreeOutput,
+        ClassifyWorktreeInput
+      >(async () => ({ kind: "clean" })),
       checkUncommitted: fromPromise<
         CheckUncommittedOutput,
         CheckUncommittedInput
@@ -111,7 +119,6 @@ describe("graph-merge-runner", () => {
     const runner = createGraphWorkflowMergeRunner({
       buildMachine: () => buildCapturingMachine([]),
       deliveryGate,
-      recordMergeIntent: () => {},
     });
     const baseInput = {
       jobId: "job-gated",
@@ -157,7 +164,6 @@ describe("graph-merge-runner", () => {
       async markDelivered(executionId, mergeHash) {
         delivered.push({ executionId, mergeHash });
       },
-      recordMergeIntent: () => {},
     });
 
     await runner.run({
@@ -184,11 +190,70 @@ describe("graph-merge-runner", () => {
     ]);
   });
 
+  /**
+   * A join whose target already contains the lane publishes no commit, but the
+   * execution it closes is delivered all the same — the target tip the gate
+   * evaluated carries the work.
+   */
+  it("marks a linked execution delivered when the final publish had nothing to land", async () => {
+    const delivered: Array<{ executionId: string; mergeHash: string }> = [];
+    const upToDateMachine = buildCapturingMachine([], {
+      status: "up-to-date",
+    }).provide({
+      actors: {
+        prepare: fromPromise<PrepareActorOutput, PrepareActorInput>(
+          async () => ({
+            status: "up-to-date",
+            expectedTargetSha: "target-tip",
+          }),
+        ),
+      },
+    });
+    const runner = createGraphWorkflowMergeRunner({
+      buildMachine: () => upToDateMachine,
+      deliveryGate: {
+        async evaluate() {
+          return { status: "pass", satisfied: [], deferred: [] };
+        },
+      },
+      async markDelivered(executionId, mergeHash) {
+        delivered.push({ executionId, mergeHash });
+      },
+    });
+
+    const output = await runner.run({
+      jobId: "job-delivered-no-op",
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      contextId: "join-final",
+      branchName: "csm/lane-b",
+      featureWorktreePath: "/tmp/lane-b",
+      targetBranch: "csm/session",
+      targetWorktreePath: "/tmp/session",
+      message: "final publish",
+      executionId: "workflow-execution-no-op",
+      finalPublish: true,
+      validationMode: graphLaneValidationMode,
+    });
+
+    expect(output).toMatchObject({
+      status: "completed",
+      upToDate: true,
+      mergeHash: null,
+    });
+    expect(delivered).toEqual([
+      {
+        executionId: "workflow-execution-no-op",
+        mergeHash: "target-tip",
+      },
+    ]);
+  });
+
   it("threads resolutionContext into the machine so the conflict resolver receives it", async () => {
     const captured: ResolveConflictsInput[] = [];
     const runner = createGraphWorkflowMergeRunner({
       buildMachine: () => buildCapturingMachine(captured),
-      recordMergeIntent: () => {},
     });
 
     const output = await runner.run({
@@ -213,11 +278,75 @@ describe("graph-merge-runner", () => {
     );
   });
 
+  it("aborts a stale unresolved merge the machinery left in the lane worktree", async () => {
+    const abortedPaths: string[] = [];
+    const machine = mergeMachine.provide({
+      actors: {
+        classifyWorktree: fromPromise<
+          ClassifyWorktreeOutput,
+          ClassifyWorktreeInput
+        >(async () => ({ kind: "mid-merge", unresolved: true })),
+        abortStaleMerge: fromPromise<
+          AbortStaleMergeOutput,
+          AbortStaleMergeInput
+        >(async ({ input }) => {
+          abortedPaths.push(input.worktreePath);
+          return { aborted: true };
+        }),
+        checkUncommitted: fromPromise<
+          CheckUncommittedOutput,
+          CheckUncommittedInput
+        >(async () => ({ hasChanges: false })),
+        getCurrentBranch: fromPromise<
+          GetCurrentBranchOutput,
+          GetCurrentBranchInput
+        >(async () => ({ branch: "csm/lane-b" })),
+        mergeMain: fromPromise<MergeMainOutput, MergeMainInput>(async () => ({
+          status: "clean",
+          conflictFiles: [],
+        })),
+        runValidation: fromPromise<RunValidationOutput, RunValidationInput>(
+          async () => null,
+        ),
+        prepare: fromPromise<PrepareActorOutput, PrepareActorInput>(
+          async () => ({
+            status: "prepared",
+            preparedSha: "prepared-sha",
+            expectedTargetSha: "expected-sha",
+            parkedRef: "refs/cc-merges/test",
+          }),
+        ),
+        publish: fromPromise<PublishActorOutput, PublishActorInput>(
+          async () => ({ status: "completed", mergeHash: "merge-hash" }),
+        ),
+      },
+    });
+    const runner = createGraphWorkflowMergeRunner({
+      buildMachine: () => machine,
+    });
+
+    const output = await runner.run({
+      jobId: "job-1",
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      contextId: "context-verify",
+      branchName: "csm/lane-b",
+      featureWorktreePath: "/tmp/lane-b",
+      targetBranch: "csm/lane-a",
+      targetWorktreePath: "/tmp/lane-a",
+      message: "join merge",
+      validationMode: graphLaneValidationMode,
+    });
+
+    expect(output.status).toBe("completed");
+    expect(abortedPaths).toEqual(["/tmp/lane-b"]);
+  });
+
   it("threads conversationId into the machine so the conflict resolver binds to the lane conversation", async () => {
     const captured: ResolveConflictsInput[] = [];
     const runner = createGraphWorkflowMergeRunner({
       buildMachine: () => buildCapturingMachine(captured),
-      recordMergeIntent: () => {},
     });
 
     const output = await runner.run({
@@ -245,7 +374,6 @@ describe("graph-merge-runner", () => {
     const runner = createGraphWorkflowMergeRunner({
       buildMachine: () =>
         buildCapturingMachine([], undefined, capturedValidation),
-      recordMergeIntent: () => {},
     });
 
     await runner.run({
@@ -276,45 +404,10 @@ describe("graph-merge-runner", () => {
     );
   });
 
-  it("records the intent against the landed squash commit when the merge completes", async () => {
-    const recorded: unknown[] = [];
-    const runner = createGraphWorkflowMergeRunner({
-      buildMachine: () => buildCapturingMachine([]),
-      recordMergeIntent: (input) => {
-        recorded.push(input);
-      },
-    });
-
-    await runner.run({
-      jobId: "job-1",
-      projectPath: "/repo",
-      projectName: "repo",
-      sessionName: "session",
-      contextId: "context-verify",
-      branchName: "csm/lane-b",
-      featureWorktreePath: "/tmp/lane-b",
-      targetBranch: "csm/lane-a",
-      targetWorktreePath: "/tmp/lane-a",
-      message: "join merge",
-      validationMode: graphLaneValidationMode,
-      resolutionContext: "Ours: verification work. Theirs: implementation.",
-    });
-
-    expect(recorded).toEqual([
-      {
-        projectPath: "/repo",
-        commitSha: "merge-hash",
-        intent: "Ours: verification work. Theirs: implementation.",
-        source: "graph-join",
-      },
-    ]);
-  });
-
   it("emits a deduped phase breadcrumb for each merge phase the join walks through", async () => {
     const phases: string[] = [];
     const runner = createGraphWorkflowMergeRunner({
       buildMachine: () => buildCapturingMachine([]),
-      recordMergeIntent: () => {},
       onPhase: (info) => {
         phases.push(info.phase);
       },
@@ -360,7 +453,6 @@ describe("graph-merge-runner", () => {
           preparedSha: "prepared-sha",
           targetWorktreePath: "/tmp/lane-a",
         }),
-      recordMergeIntent: () => {},
       onPhase: (info) => {
         phases.push(info.phase);
       },
@@ -394,31 +486,5 @@ describe("graph-merge-runner", () => {
       "publishing",
       "awaiting-land",
     ]);
-  });
-
-  it("does not record an intent when no resolutionContext was provided", async () => {
-    const recorded: unknown[] = [];
-    const runner = createGraphWorkflowMergeRunner({
-      buildMachine: () => buildCapturingMachine([]),
-      recordMergeIntent: (input) => {
-        recorded.push(input);
-      },
-    });
-
-    await runner.run({
-      jobId: "job-1",
-      projectPath: "/repo",
-      projectName: "repo",
-      sessionName: "session",
-      contextId: "context-verify",
-      branchName: "csm/lane-b",
-      featureWorktreePath: "/tmp/lane-b",
-      targetBranch: "csm/lane-a",
-      targetWorktreePath: "/tmp/lane-a",
-      message: "join merge",
-      validationMode: graphLaneValidationMode,
-    });
-
-    expect(recorded).toEqual([]);
   });
 });

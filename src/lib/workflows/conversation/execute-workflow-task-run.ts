@@ -19,7 +19,10 @@
 
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
-import type { ContinuationDisposition } from "@/lib/agent-backends/errors";
+import type {
+  AgentFailureClassification,
+  ContinuationDisposition,
+} from "@/lib/agent-backends/errors";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { AgentTranscriptEntry } from "@/lib/agent-backends/transcript";
 import type { AgentCallStructuredOutputParse } from "@/lib/workflows/primitives/agent-call-vocabulary";
@@ -28,6 +31,7 @@ import { createLogger, type Logger } from "@/lib/logging";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { createKeyedMutex } from "@/lib/shared/keyed-mutex";
 import type { ConversationActorRef } from "./machine";
+import { classifyFailureForBackend } from "./failure-classification";
 import { ensureConversationActor, type EnsureActorInputData } from "./manager";
 import { conversationRuntimeKey } from "./runtime-state";
 import type {
@@ -88,6 +92,15 @@ export interface ExecuteWorkflowTaskRunInput {
    * task-runs to leave the entry unmarked.
    */
   origin?: TranscriptMessageOrigin;
+  /**
+   * Cancels the turn: signals the conversation's abort controller and sends the
+   * machine's ABORT_TURN transition — the same pair the Stop route uses, and
+   * both are required (the controller stops backend execution, the transition
+   * settles the machine). Callers hosted on an XState actor pass the invoke's
+   * AbortSignal, so stopping their state stops the agent turn instead of
+   * leaving it writing into a worktree nothing is waiting on.
+   */
+  signal?: AbortSignal;
 }
 
 export interface TaskRunUsage {
@@ -129,6 +142,15 @@ export type TaskRunResult =
       kind: "error";
       error: string;
       aborted: boolean;
+      /**
+       * Neutral classification of why the turn failed, so callers branch on
+       * `retryable` and `kind` instead of pattern-matching `error` prose — a
+       * backend that never ran (quota, transport) and an agent that ran and
+       * failed are indistinguishable as strings. Present whenever the
+       * conversation layer produced one; absent for callers that project a
+       * `TaskRunResult` without a classifier.
+       */
+      failure?: AgentFailureClassification;
       /** Set when the structured-output gate refused the turn: its per-issue
        *  validator errors, each prefixed with the failing instance path. */
       structuredOutputIssues?: string[];
@@ -183,6 +205,99 @@ export function executeWorkflowTaskRun(
   return dispatchMutex.run(key, () => runOnce(input, deps.log ?? logger));
 }
 
+/** Usage for a turn that produced no measurable run. */
+function emptyTaskRunUsage(): TaskRunUsage {
+  return {
+    costUsd: null,
+    durationMs: null,
+    contextTokens: null,
+    contextWindowMax: null,
+    inputTokens: null,
+    outputTokens: null,
+    cachedInputTokens: null,
+  };
+}
+
+/** The turn's outcome when its caller cancelled it. */
+function abortedTaskRunResult(conversationId: string): TaskRunResult {
+  const message = `executeWorkflowTaskRun: aborted (conversation ${conversationId})`;
+  return {
+    kind: "error",
+    error: message,
+    aborted: true,
+    failure: { kind: "aborted", message, retryable: false },
+    usage: emptyTaskRunUsage(),
+    backendRef: null,
+    continuationDisposition: "retain",
+  };
+}
+
+interface TurnCancellation {
+  /** Whether the caller's signal fired while this turn was in flight. */
+  requested(): boolean;
+  detach(): void;
+}
+
+/**
+ * Stop a turn nothing is waiting on any more, both halves as the Stop route
+ * does it: the controller stops backend execution, the transition settles the
+ * machine. Either half alone leaves the LLM writing into a worktree its caller
+ * has already moved on from.
+ */
+function stopTurn(
+  actor: ConversationActorRef,
+  input: ExecuteWorkflowTaskRunInput,
+  log: Logger,
+  scopeRef: ReturnType<typeof scopeRefFromStoreSessionName>,
+  cause: "signal" | "timeout",
+): Promise<void> {
+  log.info("conversation.execute_workflow_task_run.abort_requested", {
+    projectPath: input.projectPath,
+    ...scopeRef,
+    conversationId: input.conversationId,
+    kind: input.kind,
+    cause,
+  });
+  actor.send({
+    type: "ABORT_TURN",
+    reason: cause === "timeout" ? "timeout" : "user",
+  });
+  return import("@/lib/conversations/abort-registry").then(
+    ({ abortConversation }) => {
+      abortConversation(input.conversationId);
+    },
+  );
+}
+
+/**
+ * Stop the turn on the caller's signal, and detach once it settles: the
+ * conversation actor outlives the turn, so a listener left attached would send
+ * a later turn's machine an ABORT_TURN meant for this one.
+ */
+function bindTurnCancellation(
+  actor: ConversationActorRef,
+  input: ExecuteWorkflowTaskRunInput,
+  log: Logger,
+  scopeRef: ReturnType<typeof scopeRefFromStoreSessionName>,
+): TurnCancellation {
+  const signal = input.signal;
+  if (signal === undefined) {
+    return { requested: () => false, detach: () => {} };
+  }
+
+  let requested = false;
+  const onAbort = (): void => {
+    requested = true;
+    void stopTurn(actor, input, log, scopeRef, "signal");
+  };
+
+  signal.addEventListener("abort", onAbort, { once: true });
+  return {
+    requested: () => requested,
+    detach: () => signal.removeEventListener("abort", onAbort),
+  };
+}
+
 async function runOnce(
   input: ExecuteWorkflowTaskRunInput,
   log: Logger,
@@ -205,6 +320,13 @@ async function runOnce(
     },
   );
 
+  // Checked after the actor is ensured and before anything is submitted: a
+  // signal that fired during that await must not still start a turn nobody
+  // waits on.
+  if (input.signal?.aborted === true) {
+    return abortedTaskRunResult(input.conversationId);
+  }
+
   log.info("conversation.execute_workflow_task_run.dispatch", {
     projectPath: input.projectPath,
     ...scopeRef,
@@ -221,6 +343,7 @@ async function runOnce(
   });
 
   const completion = waitForTaskRunCompletion(actor, input);
+  const cancellation = bindTurnCancellation(actor, input, log, scopeRef);
 
   actor.send({
     type: "SUBMIT_TASK_RUN",
@@ -245,6 +368,14 @@ async function runOnce(
   });
 
   const { result, error, timedOut } = await completion;
+  cancellation.detach();
+
+  // The conversation's own backend owns what its failures mean; the actor
+  // reports the turn's error as a string, so the classification is re-derived
+  // here rather than guessed by the workflow caller reading the prose.
+  const backend = actor.getSnapshot().context.agentBackend;
+  const classifyFailure = (failure: unknown): AgentFailureClassification =>
+    classifyFailureForBackend(backend, failure);
 
   log.info("conversation.execute_workflow_task_run.finalized", {
     projectPath: input.projectPath,
@@ -256,29 +387,33 @@ async function runOnce(
     timedOut,
   });
 
+  // A cancelled turn's own machine state is whatever the abort transition left
+  // behind; the caller's cancellation is the authoritative reason it ended.
+  if (cancellation.requested()) {
+    return abortedTaskRunResult(input.conversationId);
+  }
+
   if (timedOut) {
+    // The bound is only real if it cuts the turn off: a caller that retries on
+    // the timeout would otherwise re-enter a worktree the abandoned agent is
+    // still editing, on a conversation still holding its turn.
+    await stopTurn(actor, input, log, scopeRef, "timeout");
     const timeoutMs = input.timeoutMs ?? 0;
+    const timeoutError =
+      `executeWorkflowTaskRun: timed out after ${timeoutMs}ms ` +
+      `(conversation ${input.conversationId})`;
     return {
       kind: "error",
-      error:
-        `executeWorkflowTaskRun: timed out after ${timeoutMs}ms ` +
-        `(conversation ${input.conversationId})`,
+      error: timeoutError,
       aborted: false,
-      usage: {
-        costUsd: null,
-        durationMs: null,
-        contextTokens: null,
-        contextWindowMax: null,
-        inputTokens: null,
-        outputTokens: null,
-        cachedInputTokens: null,
-      },
+      failure: classifyFailure(timeoutError),
+      usage: emptyTaskRunUsage(),
       backendRef: null,
       continuationDisposition: "retain",
     };
   }
 
-  return mapToTaskRunResult(result, error, input.outputFormat);
+  return mapToTaskRunResult(result, error, input.outputFormat, classifyFailure);
 }
 
 interface TurnCompletion {
@@ -367,6 +502,38 @@ function joinTextBlocks(result: PromptActorResult | null): string | null {
 }
 
 /**
+ * Classifies a failed turn for {@link mapToTaskRunResult}. The entrypoint binds
+ * the conversation's registered backend classifier; callers projecting a result
+ * without one get no `failure` field rather than a guessed classification.
+ */
+export type TaskRunFailureClassifier = (
+  error: unknown,
+) => AgentFailureClassification;
+
+/**
+ * The turn's classification, preferring the one the conversation layer already
+ * made from the error VALUE: an undelivered prompt, a provider error code, and
+ * an abort tag are facts of the object that no longer exist once the failure is
+ * prose, and re-reading the prose downgrades them. Falling back, aborts are
+ * decided by the turn's own `aborted` fact (a cancelled turn carries no
+ * provider error a classifier could read) and everything else by the backend's
+ * registered classifier.
+ */
+function classifyTaskRunFailure(
+  recorded: AgentFailureClassification | undefined,
+  aborted: boolean,
+  message: string,
+  classify: TaskRunFailureClassifier | undefined,
+): { failure?: AgentFailureClassification } {
+  if (recorded !== undefined) return { failure: recorded };
+  if (classify === undefined) return {};
+  if (aborted) {
+    return { failure: { kind: "aborted", message, retryable: false } };
+  }
+  return { failure: classify(message) };
+}
+
+/**
  * The turn-result projection: `PromptActorResult` (what the conversation actor
  * returns) → `TaskRunResult` (what every workflow caller branches on).
  *
@@ -379,6 +546,7 @@ export function mapToTaskRunResult(
   result: PromptActorResult | null,
   error: string | null,
   outputFormat: StructuredOutputFormat | undefined,
+  classifyFailure?: TaskRunFailureClassifier,
 ): TaskRunResult {
   const usage: TaskRunUsage = {
     costUsd: result?.costUsd ?? null,
@@ -409,10 +577,17 @@ export function mapToTaskRunResult(
   };
 
   if (error !== null && (result === null || result.error !== null)) {
+    const message = error ?? result?.error ?? "task_run failed";
     return {
       kind: "error",
-      error: error ?? result?.error ?? "task_run failed",
+      error: message,
       aborted: result?.aborted === true,
+      ...classifyTaskRunFailure(
+        result?.failure,
+        result?.aborted === true,
+        message,
+        classifyFailure,
+      ),
       ...gateFields,
       ...transcriptFields,
       usage,
@@ -426,6 +601,12 @@ export function mapToTaskRunResult(
       kind: "error",
       error: "task_run produced no result",
       aborted: false,
+      ...classifyTaskRunFailure(
+        undefined,
+        false,
+        "task_run produced no result",
+        classifyFailure,
+      ),
       usage,
       backendRef,
       continuationDisposition,
@@ -437,6 +618,12 @@ export function mapToTaskRunResult(
       kind: "error",
       error: result.error,
       aborted: result.aborted,
+      ...classifyTaskRunFailure(
+        result.failure,
+        result.aborted,
+        result.error,
+        classifyFailure,
+      ),
       ...gateFields,
       ...transcriptFields,
       usage,

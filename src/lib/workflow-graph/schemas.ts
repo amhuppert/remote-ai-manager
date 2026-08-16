@@ -4,6 +4,7 @@ import {
   conflictEntrySchema,
   deliveryGateHaltReasonSchema,
 } from "@/lib/jobs/schemas";
+import { agentFailureClassificationSchema } from "@/lib/agent-backends/errors";
 import {
   askQuestionAnswerSchema,
   askQuestionItemSchema,
@@ -148,6 +149,13 @@ export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
     targetLaneId: z.string().trim().min(1),
     message: z.string(),
     conflictFiles: z.array(z.string()).default([]),
+    // Set when the conflict resolver failed before reaching a verdict (backend
+    // quota, transport, abort, timeout). `conflictFiles` above is then the
+    // merge's context rather than the cause, and `retryable` decides whether
+    // anything but a human restoring capacity can change the outcome. Optional
+    // rather than defaulted: a join that failed on content carries no
+    // classification, and neither does a halt recorded before this field.
+    resolutionFailure: agentFailureClassificationSchema.optional(),
   }),
   z.object({
     type: z.literal("merge_precondition_failed"),
@@ -464,6 +472,14 @@ export type GraphWorkflowExecutionJoinResolvedConflict = z.infer<
 export const graphWorkflowExecutionJoinValidationEvidenceSchema = z.object({
   sourceLaneIds: z.array(graphWorkflowExecutionLaneIdSchema).min(1),
   contextIds: z.array(z.string().trim().min(1)),
+  /**
+   * The `+`-joined validation command list this barrier actually ran, `""`
+   * when the configured selection was empty (debt still clears — there is
+   * nothing to run — so the ledger has to say so rather than imply a run).
+   * Optional because evidence recorded before the ledger tracked identity says
+   * nothing about which commands ran, which is not the same claim as `""`.
+   */
+  commandIdentity: z.string().optional(),
   recordedAt: z.string(),
 });
 export type GraphWorkflowExecutionJoinValidationEvidence = z.infer<

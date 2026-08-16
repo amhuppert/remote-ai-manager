@@ -148,6 +148,23 @@ export function createValidationFixStates<
     actions: [errorAssign(), assign({ phase: null })],
   };
 
+  /**
+   * The validation error says what has to be fixed; the fix agent's error says
+   * why it could not be. Only both together distinguish "the agent tried and
+   * the code still fails" from "the fix turn never ran" (quota, transport,
+   * abort) — with the second dropped, the halt reads as the former.
+   */
+  const composeFixFailureError = (
+    validationError: string | null,
+    fixError: string | undefined,
+  ): string | null => {
+    if (fixError === undefined || fixError.length === 0) return validationError;
+    if (validationError === null || validationError.length === 0) {
+      return `Fix agent failed: ${fixError}`;
+    }
+    return `${validationError}\n\nFix agent failed: ${fixError}`;
+  };
+
   const states: Record<string, unknown> = {
     validating: {
       entry: assign({ phase: "validating" }),
@@ -202,9 +219,19 @@ export function createValidationFixStates<
             target: "checkingFixChanges",
           },
           {
-            // Fix failed — go to failed with the original validation error
             target: "failed",
             actions: assign({
+              // The host machine's context/event types are generic here, so an
+              // assigner may only claim what any event satisfies: the done
+              // event's output is read as optional and falls back to the
+              // untouched validation error.
+              error: ({
+                context,
+                event,
+              }: {
+                context: ValidationFixHostContext;
+                event: { type: string; output?: FixValidationOutput };
+              }) => composeFixFailureError(context.error, event.output?.error),
               completedAt: () => new Date().toISOString(),
               phase: null,
             }),

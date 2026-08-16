@@ -1,14 +1,15 @@
 import { describe, it, expect, vi } from "vitest";
 import {
-  containsConflictMarkers,
   createConflictResolver,
   parseConflictEntries,
+  DEFAULT_RESOLUTION_TIMEOUT_MS,
   type ConflictResolutionDeps,
 } from "./conflict-resolution";
 import type {
   ExecuteWorkflowTaskRunInput,
   TaskRunResult,
 } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { AgentFailureClassification } from "@/lib/agent-backends/errors";
 
 // ============================================================
 // Test helpers
@@ -55,11 +56,16 @@ function textOk(text: string): TaskRunResult {
   };
 }
 
-function errResult(error: string, aborted = false): TaskRunResult {
+function errResult(
+  error: string,
+  aborted = false,
+  failure?: AgentFailureClassification,
+): TaskRunResult {
   return {
     kind: "error",
     error,
     aborted,
+    ...(failure !== undefined ? { failure } : {}),
     usage: {
       costUsd: null,
       durationMs: null,
@@ -80,6 +86,7 @@ function createTestDeps(
   return {
     executeWorkflowTaskRun: vi.fn().mockResolvedValue(textOk("")),
     listUnmergedFiles: async () => [],
+    listTrackedMarkerFiles: async () => [],
     readWorktreeFile: async () => null,
     ...overrides,
   };
@@ -145,7 +152,7 @@ describe("resolveConflicts (executeWorkflowTaskRun)", () => {
       },
       required: ["conflicts"],
     });
-    expect(input.timeoutMs).toBeUndefined();
+    expect(input.timeoutMs).toBe(DEFAULT_RESOLUTION_TIMEOUT_MS);
   });
 
   it("pins the agent turn to the merge worktree (worktreePath forwarded to executeWorkflowTaskRun)", async () => {
@@ -212,7 +219,7 @@ ${JSON.stringify({ conflicts: SAMPLE_ENTRIES }, null, 2)}
     }
   });
 
-  it("returns failed status when executeWorkflowTaskRun returns kind=error", async () => {
+  it("returns an infrastructure outcome when executeWorkflowTaskRun returns kind=error", async () => {
     const executeWorkflowTaskRun = vi
       .fn()
       .mockResolvedValue(errResult("backend exploded"));
@@ -226,13 +233,13 @@ ${JSON.stringify({ conflicts: SAMPLE_ENTRIES }, null, 2)}
       conversationId: CONVERSATION_ID,
     });
 
-    expect(result.status).toBe("failed");
-    if (result.status === "failed") {
-      expect(result.error).toContain("backend exploded");
+    expect(result.status).toBe("infrastructure");
+    if (result.status === "infrastructure") {
+      expect(result.failure.message).toContain("backend exploded");
     }
   });
 
-  it("returns failed status when structured output does not match the schema", async () => {
+  it("returns an infrastructure outcome when structured output does not match the schema", async () => {
     const executeWorkflowTaskRun = vi
       .fn()
       .mockResolvedValue(structuredOk({ conflicts: [{ file: "x" }] }));
@@ -246,7 +253,7 @@ ${JSON.stringify({ conflicts: SAMPLE_ENTRIES }, null, 2)}
       conversationId: CONVERSATION_ID,
     });
 
-    expect(result.status).toBe("failed");
+    expect(result.status).toBe("infrastructure");
   });
 
   it("includes the resolution context section in the prompt when provided", async () => {
@@ -447,8 +454,310 @@ describe("resolver prompt hardening", () => {
   });
 });
 
+// ============================================================
+// Turn bound: an unbounded resolver turn holds the merge (and the session's
+// git lock) open indefinitely.
+// ============================================================
+
+describe("resolver turn timeout", () => {
+  async function captureTurnInput(
+    call: (
+      run: (input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>,
+    ) => Promise<unknown>,
+  ): Promise<ExecuteWorkflowTaskRunInput> {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: [] }));
+    await call(executeWorkflowTaskRun);
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    return input;
+  }
+
+  it("bounds the resolution turn with the default timeout", async () => {
+    const input = await captureTurnInput((executeWorkflowTaskRun) =>
+      createConflictResolver(
+        createTestDeps({ executeWorkflowTaskRun }),
+      ).resolveConflicts({
+        worktreePath: "/tmp/worktree",
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        conversationId: CONVERSATION_ID,
+      }),
+    );
+
+    expect(input.timeoutMs).toBe(900_000);
+  });
+
+  it("bounds the analysis turn with the default timeout", async () => {
+    const input = await captureTurnInput((executeWorkflowTaskRun) =>
+      createConflictResolver(
+        createTestDeps({ executeWorkflowTaskRun }),
+      ).analyzeConflicts({
+        worktreePath: "/tmp/worktree",
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        conversationId: CONVERSATION_ID,
+      }),
+    );
+
+    expect(input.timeoutMs).toBe(900_000);
+  });
+
+  it("honors an explicit per-run timeout override", async () => {
+    const input = await captureTurnInput((executeWorkflowTaskRun) =>
+      createConflictResolver(
+        createTestDeps({ executeWorkflowTaskRun }),
+      ).resolveConflicts({
+        worktreePath: "/tmp/worktree",
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        conversationId: CONVERSATION_ID,
+        resolutionTimeoutMs: 60_000,
+      }),
+    );
+
+    expect(input.timeoutMs).toBe(60_000);
+  });
+
+  it("honors an explicit per-run timeout override on the analysis turn", async () => {
+    const input = await captureTurnInput((executeWorkflowTaskRun) =>
+      createConflictResolver(
+        createTestDeps({ executeWorkflowTaskRun }),
+      ).analyzeConflicts({
+        worktreePath: "/tmp/worktree",
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        conversationId: CONVERSATION_ID,
+        resolutionTimeoutMs: 60_000,
+      }),
+    );
+
+    expect(input.timeoutMs).toBe(60_000);
+  });
+
+  it("hands the caller's cancellation to the resolution turn", async () => {
+    const controller = new AbortController();
+    const input = await captureTurnInput((executeWorkflowTaskRun) =>
+      createConflictResolver(
+        createTestDeps({ executeWorkflowTaskRun }),
+      ).resolveConflicts({
+        worktreePath: "/tmp/worktree",
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        conversationId: CONVERSATION_ID,
+        signal: controller.signal,
+      }),
+    );
+
+    expect(input.signal).toBe(controller.signal);
+  });
+
+  it("hands the caller's cancellation to the analysis turn", async () => {
+    const controller = new AbortController();
+    const input = await captureTurnInput((executeWorkflowTaskRun) =>
+      createConflictResolver(
+        createTestDeps({ executeWorkflowTaskRun }),
+      ).analyzeConflicts({
+        worktreePath: "/tmp/worktree",
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        conversationId: CONVERSATION_ID,
+        signal: controller.signal,
+      }),
+    );
+
+    expect(input.signal).toBe(controller.signal);
+  });
+});
+
+// ============================================================
+// Outcome classification: "the resolver ran and the conflict is still
+// unresolved" must be distinguishable from "the resolver never ran".
+// ============================================================
+
+describe("resolveConflicts outcome classification", () => {
+  async function resolveWith(result: TaskRunResult | Error) {
+    const executeWorkflowTaskRun = vi.fn(async () => {
+      if (result instanceof Error) throw result;
+      return result;
+    });
+    const { resolveConflicts } = createConflictResolver(
+      createTestDeps({ executeWorkflowTaskRun }),
+    );
+    return resolveConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+  }
+
+  it("carries the backend's classification when the turn failed with one", async () => {
+    const failure: AgentFailureClassification = {
+      kind: "quota_exhausted",
+      message:
+        "You've hit your usage limit. Visit https://example.com to purchase more credits or try again at Aug 19th, 2026 11:29 PM.",
+      retryable: false,
+      retryAfterHint: "Aug 19th, 2026 11:29 PM",
+    };
+
+    const result = await resolveWith(
+      errResult(failure.message, false, failure),
+    );
+
+    expect(result.status).toBe("infrastructure");
+    if (result.status === "infrastructure") {
+      expect(result.failure).toEqual(failure);
+    }
+  });
+
+  it("classifies an unclassified error result as a non-retryable backend error", async () => {
+    const result = await resolveWith(errResult("backend exploded"));
+
+    expect(result.status).toBe("infrastructure");
+    if (result.status === "infrastructure") {
+      expect(result.failure).toEqual({
+        kind: "backend_error",
+        message: "backend exploded",
+        retryable: false,
+      });
+    }
+  });
+
+  it("classifies an aborted turn without a classification as aborted", async () => {
+    const result = await resolveWith(errResult("turn cancelled", true));
+
+    expect(result.status).toBe("infrastructure");
+    if (result.status === "infrastructure") {
+      expect(result.failure.kind).toBe("aborted");
+      expect(result.failure.retryable).toBe(false);
+    }
+  });
+
+  it("classifies a structured-output parse failure as retryable schema validation", async () => {
+    const result = await resolveWith(
+      structuredOk({ conflicts: [{ file: "x" }] }),
+    );
+
+    expect(result.status).toBe("infrastructure");
+    if (result.status === "infrastructure") {
+      expect(result.failure.kind).toBe("schema_validation");
+      expect(result.failure.retryable).toBe(true);
+      expect(result.failure.message.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("makes a timed-out resolver turn retryable, overriding the backend's verdict", async () => {
+    // What the backend classifiers hand back for a timed-out turn: not
+    // retryable, because a generic conversation turn may have half-run.
+    const backendVerdict: AgentFailureClassification = {
+      kind: "timeout",
+      message:
+        "executeWorkflowTaskRun: timed out after 900000ms (conversation conv-conflicts-1)",
+      retryable: false,
+    };
+
+    const result = await resolveWith(
+      errResult(backendVerdict.message, false, backendVerdict),
+    );
+
+    expect(result.status).toBe("infrastructure");
+    if (result.status === "infrastructure") {
+      expect(result.failure).toEqual({ ...backendVerdict, retryable: true });
+    }
+  });
+
+  it("classifies a thrown dispatch failure as infrastructure", async () => {
+    const result = await resolveWith(new Error("conversation actor exploded"));
+
+    expect(result.status).toBe("infrastructure");
+    if (result.status === "infrastructure") {
+      expect(result.failure).toEqual({
+        kind: "backend_error",
+        message: "conversation actor exploded",
+        retryable: false,
+      });
+    }
+  });
+
+  it("reports a resolver that ran but left the conflict unresolved as unresolved", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+    const { resolveConflicts } = createConflictResolver(
+      createTestDeps({
+        executeWorkflowTaskRun,
+        listUnmergedFiles: async () => ["src/index.ts"],
+      }),
+    );
+
+    const result = await resolveConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+
+    expect(result.status).toBe("unresolved");
+    if (result.status === "unresolved") {
+      expect(result.error).toContain("src/index.ts");
+      expect(result.partialConflicts).toEqual(SAMPLE_ENTRIES);
+    }
+  });
+});
+
+describe("analyzeConflicts outcome classification", () => {
+  it("carries the backend's classification when the analysis turn failed", async () => {
+    const failure: AgentFailureClassification = {
+      kind: "quota_exhausted",
+      message: "You've hit your usage limit.",
+      retryable: false,
+    };
+    const executeWorkflowTaskRun = vi
+      .fn()
+      .mockResolvedValue(errResult(failure.message, false, failure));
+    const { analyzeConflicts } = createConflictResolver(
+      createTestDeps({ executeWorkflowTaskRun }),
+    );
+
+    const result = await analyzeConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+
+    expect(result.status).toBe("infrastructure");
+    if (result.status === "infrastructure") {
+      expect(result.failure).toEqual(failure);
+    }
+  });
+
+  it("classifies an unparseable analysis turn as retryable schema validation", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn()
+      .mockResolvedValue(structuredOk({ conflicts: [{ file: "x" }] }));
+    const { analyzeConflicts } = createConflictResolver(
+      createTestDeps({ executeWorkflowTaskRun }),
+    );
+
+    const result = await analyzeConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+
+    expect(result.status).toBe("infrastructure");
+    if (result.status === "infrastructure") {
+      expect(result.failure.kind).toBe("schema_validation");
+      expect(result.failure.retryable).toBe(true);
+    }
+  });
+});
+
 describe("resolveConflicts ground-truth verification", () => {
-  it("returns failed when git still reports unmerged paths after the agent claims resolution", async () => {
+  it("returns unresolved when git still reports unmerged paths after the agent claims resolution", async () => {
     const executeWorkflowTaskRun = vi
       .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
       .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
@@ -466,15 +775,15 @@ describe("resolveConflicts ground-truth verification", () => {
       conversationId: CONVERSATION_ID,
     });
 
-    expect(result.status).toBe("failed");
-    if (result.status === "failed") {
+    expect(result.status).toBe("unresolved");
+    if (result.status === "unresolved") {
       expect(result.error).toContain("package.json");
       expect(result.error).toContain("unresolved");
       expect(result.partialConflicts).toEqual(SAMPLE_ENTRIES);
     }
   });
 
-  it("returns failed when a previously-conflicted file still contains conflict markers", async () => {
+  it("returns unresolved when a previously-conflicted file still contains conflict markers", async () => {
     const executeWorkflowTaskRun = vi
       .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
       .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
@@ -507,8 +816,8 @@ describe("resolveConflicts ground-truth verification", () => {
       conflictFiles: ["package.json"],
     });
 
-    expect(result.status).toBe("failed");
-    if (result.status === "failed") {
+    expect(result.status).toBe("unresolved");
+    if (result.status === "unresolved") {
       expect(result.error).toContain("conflict markers");
       expect(result.error).toContain("package.json");
       expect(result.partialConflicts).toEqual(SAMPLE_ENTRIES);
@@ -534,9 +843,37 @@ describe("resolveConflicts ground-truth verification", () => {
       conversationId: CONVERSATION_ID,
     });
 
-    expect(result.status).toBe("failed");
-    if (result.status === "failed") {
+    expect(result.status).toBe("unresolved");
+    if (result.status === "unresolved") {
       expect(result.error).toContain("src/index.ts");
+    }
+  });
+
+  it("returns unresolved for a marker-bearing tracked file the agent never claimed", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+
+    const deps = createTestDeps({
+      executeWorkflowTaskRun,
+      // Staged by the agent, mentioned by nobody: neither the merge's conflict
+      // list nor the agent's own entries name it.
+      listTrackedMarkerFiles: async () => ["src/unclaimed.ts"],
+    });
+    const { resolveConflicts } = createConflictResolver(deps);
+
+    const result = await resolveConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      conflictFiles: ["package.json"],
+    });
+
+    expect(result.status).toBe("unresolved");
+    if (result.status === "unresolved") {
+      expect(result.error).toContain("src/unclaimed.ts");
+      expect(result.partialConflicts).toEqual(SAMPLE_ENTRIES);
     }
   });
 
@@ -562,7 +899,7 @@ describe("resolveConflicts ground-truth verification", () => {
     expect(result.status).toBe("resolved");
   });
 
-  it("returns failed when the ground-truth check itself cannot run", async () => {
+  it("returns unresolved when the ground-truth check itself cannot run", async () => {
     const executeWorkflowTaskRun = vi
       .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
       .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
@@ -582,27 +919,10 @@ describe("resolveConflicts ground-truth verification", () => {
       conversationId: CONVERSATION_ID,
     });
 
-    expect(result.status).toBe("failed");
-    if (result.status === "failed") {
+    expect(result.status).toBe("unresolved");
+    if (result.status === "unresolved") {
       expect(result.error).toContain("not a git repository");
     }
-  });
-});
-
-describe("containsConflictMarkers", () => {
-  it("detects git begin/end markers", () => {
-    expect(
-      containsConflictMarkers("<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> b"),
-    ).toBe(true);
-    expect(containsConflictMarkers("a\n>>>>>>> csm/branch\n")).toBe(true);
-  });
-
-  it("does not flag a bare ======= line (legitimate in markdown/config)", () => {
-    expect(containsConflictMarkers("Title\n=======\nbody text")).toBe(false);
-  });
-
-  it("does not flag marker-like text mid-line", () => {
-    expect(containsConflictMarkers("const s = 'a <<<<<<< b';")).toBe(false);
   });
 });
 
@@ -714,7 +1034,7 @@ describe("analyzeConflicts (executeWorkflowTaskRun)", () => {
     }
   });
 
-  it("returns failed status on backend error", async () => {
+  it("returns an infrastructure outcome on backend error", async () => {
     const executeWorkflowTaskRun = vi
       .fn()
       .mockResolvedValue(errResult("SDK down"));
@@ -728,9 +1048,9 @@ describe("analyzeConflicts (executeWorkflowTaskRun)", () => {
       conversationId: CONVERSATION_ID,
     });
 
-    expect(result.status).toBe("failed");
-    if (result.status === "failed") {
-      expect(result.error).toContain("SDK down");
+    expect(result.status).toBe("infrastructure");
+    if (result.status === "infrastructure") {
+      expect(result.failure.message).toContain("SDK down");
     }
   });
 });

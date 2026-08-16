@@ -5376,6 +5376,67 @@ describe("runTaskRunTurnForMachine", () => {
     ).not.toHaveBeenCalled();
   });
 
+  // Whether a failure is worth retrying is decided from the error VALUE (an
+  // undelivered prompt is safe to re-dispatch, a mid-turn death is not) and is
+  // unrecoverable from the message alone, so the turn result carries the
+  // classifier's verdict rather than leaving callers to re-read prose.
+  it("task_run failure carries the classifier's verdict on the result", async () => {
+    const runner = makeMockTaskRunner(async () => ({
+      backendRef: null,
+      text: null,
+      usage: null,
+      error: "QuerySession ended before the turn completed",
+      timedOut: false,
+      failure: {
+        kind: "session_died",
+        message: "QuerySession ended before the turn completed",
+        retryable: true,
+      },
+      continuationDisposition: "retain",
+    }));
+
+    const executeAgentCallSpy = vi.fn(async () => ({
+      backend: "claude" as const,
+      backendRef: null,
+      capabilities: {
+        backend: "claude" as const,
+        nativeStructuredOutput: false,
+        nativeAskUserQuestion: false,
+        nativeSessionResumption: false,
+        portableMcpScope: "between_turns" as const,
+        forkSemantics: "synthetic_seed" as const,
+      },
+      usage: {},
+      artifacts: [],
+      outcome: {
+        kind: "failed" as const,
+        error: {
+          failureKind: "session_died" as const,
+          backend: "claude" as const,
+          message: "QuerySession ended before the turn completed",
+          retryable: true,
+        },
+        contentBlocks: [],
+      },
+    }));
+
+    mockDeps = createMockDeps({
+      getTaskRunner: vi.fn(() => runner),
+      executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
+        typeof vi.fn
+      >,
+    } as unknown as Partial<ActorImplementationDeps>);
+    setActorDeps(mockDeps);
+
+    const result = await runTaskRunTurnForMachine(makeRunTaskRunInput());
+
+    expect(result.failure).toEqual({
+      kind: "session_died",
+      message: "QuerySession ended before the turn completed",
+      retryable: true,
+    });
+  });
+
   it("task_run failure preserves captured backend transcript without appending an assistant message", async () => {
     const runner = makeMockTaskRunner(async () => ({
       backendRef: null,

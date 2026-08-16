@@ -30,6 +30,13 @@ export interface GitClient {
   ): Promise<GitResult>;
 }
 
+/**
+ * Callers read git's own prose — `"CONFLICT"` in a failed merge's output is how
+ * a conflict is told apart from a broken repository — so the child runs in the
+ * C locale rather than whatever the operator's shell would translate it into.
+ */
+const GIT_OUTPUT_LOCALE = { LC_ALL: "C" } as const;
+
 /** Default GitClient implementation backed by the timed exec wrapper. */
 class ExecFileGitClient implements GitClient {
   async git(
@@ -37,12 +44,11 @@ class ExecFileGitClient implements GitClient {
     cwd: string,
     options?: { maxBuffer?: number; env?: Record<string, string> },
   ): Promise<GitResult> {
+    const env = { ...buildChildEnv(), ...GIT_OUTPUT_LOCALE };
     return execFile("git", args, {
       cwd,
       maxBuffer: options?.maxBuffer,
-      env: options?.env
-        ? { ...buildChildEnv(), ...options.env }
-        : buildChildEnv(),
+      env: options?.env ? { ...env, ...options.env } : env,
       eventPrefix: "git",
     });
   }

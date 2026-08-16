@@ -106,6 +106,7 @@ import type {
   GraphWorkflowLaunchDocument,
   GraphWorkflowLeaseBlocker,
 } from "@/lib/workflow-graph/schemas";
+import type { AgentFailureClassification } from "@/lib/agent-backends/errors";
 import type {
   ContextPlacement,
   GraphWorkflowStatus,
@@ -697,6 +698,15 @@ export interface GraphWorkflowResumeOptions {
    * serialized reducer, which is the only place the answer cannot go stale.
    */
   expectedExecutionId?: string;
+  /**
+   * Who is resuming. A resume reschedules every concluded-failed join, which is
+   * a retry decision — and some halts are only worth retrying because a human
+   * looked at the infrastructure first. Defaults to `"operator"`: a caller that
+   * resumes without a human in the loop (plan repair, any future supervisor)
+   * declares `"system"` and is refused when the halt names a failure nothing
+   * but restored capacity can change.
+   */
+  initiator?: "operator" | "system";
 }
 
 export type GraphWorkflowLifecycleAction =
@@ -733,6 +743,25 @@ function assertLifecycleTransitionAllowed(
     allowedStatuses,
     message,
   );
+}
+
+/**
+ * The classification of the first halt that says a join's conflict resolver
+ * failed on infrastructure nothing but a human can restore, or null when no
+ * halt says that.
+ *
+ * Keyed on `retryable`, not on the failure kind: a schema-validation or
+ * timeout failure is worth another attempt, an exhausted quota is not.
+ */
+function nonRetryableResolutionHalt(
+  haltReasons: readonly (GraphWorkflowHaltReason | null | undefined)[],
+): AgentFailureClassification | null {
+  for (const reason of haltReasons) {
+    if (reason?.type !== "join_failure") continue;
+    const failure = reason.resolutionFailure;
+    if (failure !== undefined && !failure.retryable) return failure;
+  }
+  return null;
 }
 
 export type GraphWorkflowManagerEvent =
@@ -2360,6 +2389,32 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
               ? `Graph workflow execution ${execution.id} was abandoned and belongs to History; launch a new run instead.`
               : `Graph workflow execution ${execution.id} halted for a reason that cannot be resumed; launch a new run instead.`,
           );
+        }
+
+        // Resuming reschedules every concluded-failed join. When the halt says
+        // the conflict resolver never reached the conflict and the failure is
+        // not retryable — an exhausted quota, a revoked key — the rescheduled
+        // join runs straight back into it (incident 3edd5fd7 spent three
+        // attempts that way). Only a human can know capacity was restored, so
+        // the automatic caller is refused and the operator's resume proceeds.
+        if ((options?.initiator ?? "operator") === "system") {
+          const blocking = nonRetryableResolutionHalt([
+            execution.haltReason,
+            ...execution.secondaryHaltReasons,
+          ]);
+          if (blocking !== null) {
+            const hint =
+              blocking.retryAfterHint === undefined
+                ? ""
+                : ` (capacity hint: ${blocking.retryAfterHint})`;
+            throw new GraphWorkflowTransitionConflictError(
+              "resume",
+              execution.status,
+              ["paused", "halted"],
+              `Graph workflow execution ${execution.id} halted because conflict resolution failed on ${blocking.kind}: ${blocking.message}${hint}. ` +
+                `An automatic resume would retry the join into the same failure; resume it manually once the backend is available.`,
+            );
+          }
         }
 
         previousStatus = execution.status;

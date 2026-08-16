@@ -2921,6 +2921,10 @@ describe("execution loop", () => {
     expect(mergeRunner.run).toHaveBeenCalledWith(
       expect.objectContaining({
         workflowExecutionId: initial.id,
+        // The context's own implementer conversation, so the resolver and fix
+        // agent run in the context worktree instead of whichever session
+        // conversation happened to be active last.
+        conversationId: "conv-1",
         validationMode: {
           mode: "run",
           source: "graph_lane_merge",
@@ -4943,6 +4947,7 @@ describe("execution loop", () => {
           conflictFiles: ["ticket-detail.ts"],
           failedSourceLaneId: "lane-b",
           haltReason: null,
+          resolutionFailure: null,
         };
       },
     );
@@ -5772,6 +5777,7 @@ describe("execution loop", () => {
           message: "Delivery gate refused merge",
           conflictFiles: [],
           failedSourceLaneId: "lane-plan",
+          resolutionFailure: null,
           haltReason: {
             type: "delivery_gate_failed",
             unmet: [

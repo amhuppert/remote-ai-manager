@@ -136,11 +136,17 @@ export const resolveConflictsActor = fromPromise<
     conversationId,
     conflictFiles: input.conflictFiles,
   });
+  if (result.status === "resolved") {
+    return { status: "resolved", conflicts: result.conflicts };
+  }
+  // The rebase machine has a single failure branch, so the resolver's
+  // unresolved/infrastructure split collapses here; only the merge machine
+  // routes them apart today.
   return {
-    status: result.status,
-    conflicts: result.status === "resolved" ? result.conflicts : [],
+    status: "failed",
+    conflicts: [],
     partialConflicts:
-      result.status === "failed" ? result.partialConflicts : undefined,
+      result.status === "unresolved" ? result.partialConflicts : undefined,
   };
 });
 

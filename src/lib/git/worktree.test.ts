@@ -220,6 +220,7 @@ describe("prepareSquashMerge plumbing path", () => {
   it("produces parked commit on a clean merge", async () => {
     mockGitSequence([
       { stdout: "treeOID123\n" },
+      { stdout: "targetTreeOID\n" },
       { stdout: "preparedSHA456\n" },
       { stdout: "" },
     ]);
@@ -239,7 +240,8 @@ describe("prepareSquashMerge plumbing path", () => {
       "tar012",
       "feat789",
     ]);
-    expect(gitMock.mock.calls[1]![0]).toEqual([
+    expect(gitMock.mock.calls[1]![0]).toEqual(["rev-parse", "tar012^{tree}"]);
+    expect(gitMock.mock.calls[2]![0]).toEqual([
       "commit-tree",
       "treeOID123",
       "-p",
@@ -247,7 +249,7 @@ describe("prepareSquashMerge plumbing path", () => {
       "-m",
       "Merge feature",
     ]);
-    expect(gitMock.mock.calls[2]![0]).toEqual([
+    expect(gitMock.mock.calls[3]![0]).toEqual([
       "update-ref",
       "refs/cc-merges/job-1",
       "preparedSHA456",
@@ -438,6 +440,7 @@ describe("prepareSquashMerge auto-detect path", () => {
     mockGitSequence([
       { stdout: "git version 2.39.2\n" }, // git --version
       { stdout: "treeOID\n" }, // merge-tree
+      { stdout: "targetTreeOID\n" }, // rev-parse <target>^{tree}
       { stdout: "preparedSHA\n" }, // commit-tree
       { stdout: "" }, // update-ref park
     ]);
@@ -486,9 +489,11 @@ describe("prepareSquashMerge auto-detect path", () => {
     mockGitSequence([
       { stdout: "git version 2.40.0\n" }, // git --version (only called once)
       { stdout: "tree1\n" }, // first prepare: merge-tree
+      { stdout: "targetTree1\n" }, // first prepare: rev-parse <target>^{tree}
       { stdout: "sha1\n" }, // first prepare: commit-tree
       { stdout: "" }, // first prepare: update-ref
       { stdout: "tree2\n" }, // second prepare: merge-tree (no version check!)
+      { stdout: "targetTree2\n" }, // second prepare: rev-parse <target>^{tree}
       { stdout: "sha2\n" }, // second prepare: commit-tree
       { stdout: "" }, // second prepare: update-ref
     ]);
@@ -506,6 +511,7 @@ describe("prepareSquashMerge auto-detect path", () => {
     const opsLocal = createWorktreeOperations(testClient);
     mockGitSequence([
       { stdout: "treeOID\n" },
+      { stdout: "targetTreeOID\n" },
       { stdout: "preparedSHA\n" },
       { stdout: "" },
     ]);
@@ -520,6 +526,97 @@ describe("prepareSquashMerge auto-detect path", () => {
       (c) => Array.isArray(c[0]) && c[0][0] === "--version",
     );
     expect(versionCalls).toHaveLength(0);
+  });
+});
+
+describe("prepareSquashMerge on an already-merged branch (real git)", () => {
+  const realOps = createWorktreeOperations(defaultGitClient);
+  let repo: string;
+  let targetSha: string;
+  let featureSha: string;
+
+  async function realGit(args: string[], cwd = repo): Promise<string> {
+    const { stdout } = await defaultGitClient.git(args, cwd);
+    return stdout.trim();
+  }
+
+  beforeEach(async () => {
+    repo = await mkdtemp(path.join(tmpdir(), "cc-prepare-uptodate-"));
+    await realGit(["init", "--initial-branch=main", "."]);
+    await realGit(["config", "user.email", "engine@command-center.test"]);
+    await realGit(["config", "user.name", "Command Center"]);
+    await writeFile(path.join(repo, "a.txt"), "base\n", "utf-8");
+    await realGit(["add", "-A"]);
+    await realGit(["commit", "-m", "base"]);
+
+    // The feature lands on the target, which then moves on: the branch is
+    // strictly behind its target yet fully contained in it.
+    await realGit(["checkout", "-b", "csm/feature"]);
+    await writeFile(path.join(repo, "feature.txt"), "feature\n", "utf-8");
+    await realGit(["add", "-A"]);
+    await realGit(["commit", "-m", "feature work"]);
+    featureSha = await realGit(["rev-parse", "HEAD"]);
+    await realGit(["checkout", "main"]);
+    await realGit(["merge", "--no-ff", "-m", "land feature", "csm/feature"]);
+    await writeFile(path.join(repo, "b.txt"), "later\n", "utf-8");
+    await realGit(["add", "-A"]);
+    await realGit(["commit", "-m", "later work on target"]);
+    targetSha = await realGit(["rev-parse", "HEAD"]);
+  });
+
+  afterEach(async () => {
+    await rm(repo, { recursive: true, force: true });
+  });
+
+  const jobId = "job-uptodate";
+
+  for (const forcePath of ["plumbing", "fallback"] as const) {
+    it(`reports up-to-date without parking a commit on the ${forcePath} path`, async () => {
+      const result = await realOps.prepareSquashMerge({
+        projectPath: repo,
+        featureBranch: "csm/feature",
+        featureSha,
+        targetBranch: "main",
+        targetSha,
+        message: "Merge: feature",
+        jobId,
+        forcePath,
+      });
+
+      expect(result).toEqual({
+        kind: "up-to-date",
+        expectedTargetSha: targetSha,
+      });
+      expect(await realGit(["rev-parse", "refs/heads/main"])).toBe(targetSha);
+      expect(
+        await realGit([
+          "for-each-ref",
+          "--format=%(refname)",
+          "refs/cc-merges/",
+        ]),
+      ).toBe("");
+    });
+  }
+
+  it("still prepares a commit when the branch carries work the target lacks", async () => {
+    await realGit(["checkout", "csm/feature"]);
+    await writeFile(path.join(repo, "feature.txt"), "more feature\n", "utf-8");
+    await realGit(["add", "-A"]);
+    await realGit(["commit", "-m", "more feature work"]);
+    const advancedFeatureSha = await realGit(["rev-parse", "HEAD"]);
+
+    const result = await realOps.prepareSquashMerge({
+      projectPath: repo,
+      featureBranch: "csm/feature",
+      featureSha: advancedFeatureSha,
+      targetBranch: "main",
+      targetSha,
+      message: "Merge: feature",
+      jobId,
+      forcePath: "plumbing",
+    });
+
+    expect(result.kind).toBe("prepared");
   });
 });
 
@@ -632,6 +729,92 @@ describe("publishPreparedMerge", () => {
     expect(commands).not.toContainEqual(
       expect.arrayContaining(["update-ref", "-d", "refs/cc-merges/job-3"]),
     );
+  });
+});
+
+describe("publishPreparedMerge (real git)", () => {
+  const realOps = createWorktreeOperations(defaultGitClient);
+  const parkedRef = "refs/cc-merges/job-real";
+  let repo: string;
+  let baseSha: string;
+  let preparedSha: string;
+
+  async function realGit(args: string[], cwd = repo): Promise<string> {
+    const { stdout } = await defaultGitClient.git(args, cwd);
+    return stdout.trim();
+  }
+
+  beforeEach(async () => {
+    repo = await mkdtemp(path.join(tmpdir(), "cc-publish-prepared-"));
+    await realGit(["init", "--initial-branch=main", "."]);
+    await realGit(["config", "user.email", "engine@command-center.test"]);
+    await realGit(["config", "user.name", "Command Center"]);
+    await writeFile(path.join(repo, "a.txt"), "base\n", "utf-8");
+    await realGit(["add", "-A"]);
+    await realGit(["commit", "-m", "base"]);
+    baseSha = await realGit(["rev-parse", "HEAD"]);
+
+    // Park a commit whose tree differs from main's, so a stray reset --hard
+    // into the target checkout would be visible in the working file.
+    await realGit(["checkout", "-b", "prep"]);
+    await writeFile(path.join(repo, "a.txt"), "prepared\n", "utf-8");
+    await realGit(["commit", "-am", "prepared"]);
+    preparedSha = await realGit(["rev-parse", "HEAD"]);
+    await realGit(["update-ref", parkedRef, preparedSha]);
+    await realGit(["checkout", "main"]);
+    await realGit(["branch", "-D", "prep"]);
+  });
+
+  afterEach(async () => {
+    await rm(repo, { recursive: true, force: true });
+  });
+
+  it("reports publish-failed with the git error when update-ref fails but the target ref never moved", async () => {
+    // A crashed git leaves this behind; every later update-ref on the branch
+    // fails with the tip still where the prepare left it.
+    await writeFile(
+      path.join(repo, ".git", "refs", "heads", "main.lock"),
+      "",
+      "utf-8",
+    );
+
+    const result = await realOps.publishPreparedMerge({
+      projectPath: repo,
+      targetBranch: "main",
+      preparedSha,
+      expectedTargetSha: baseSha,
+      parkedRef,
+      cleanTargetWorktreePath: repo,
+    });
+
+    expect(result.kind).toBe("publish-failed");
+    if (result.kind !== "publish-failed") throw new Error("unexpected");
+    expect(result.error).toContain("refs/heads/main");
+    expect(result.error).toMatch(/lock/i);
+
+    expect(await realGit(["rev-parse", "refs/heads/main"])).toBe(baseSha);
+    // Neither the target checkout nor the parked ref may be touched.
+    expect(await readFile(path.join(repo, "a.txt"), "utf-8")).toBe("base\n");
+    expect(await realGit(["rev-parse", parkedRef])).toBe(preparedSha);
+  });
+
+  it("reports cas-lost with the moved tip when the target ref advanced under the prepare", async () => {
+    await writeFile(path.join(repo, "b.txt"), "concurrent\n", "utf-8");
+    await realGit(["add", "-A"]);
+    await realGit(["commit", "-m", "concurrent"]);
+    const movedSha = await realGit(["rev-parse", "HEAD"]);
+
+    const result = await realOps.publishPreparedMerge({
+      projectPath: repo,
+      targetBranch: "main",
+      preparedSha,
+      expectedTargetSha: baseSha,
+      parkedRef,
+      cleanTargetWorktreePath: repo,
+    });
+
+    expect(result).toEqual({ kind: "cas-lost", actualTargetSha: movedSha });
+    expect(await realGit(["rev-parse", parkedRef])).toBe(preparedSha);
   });
 });
 
@@ -1108,5 +1291,65 @@ describe("readWorktreeStatusV2 (real git)", () => {
       entries: [],
       roots: [],
     });
+  });
+});
+
+describe("parked merge refs (real git)", () => {
+  const realOps = createWorktreeOperations(defaultGitClient);
+  let refRepo: string;
+  let firstSha: string;
+
+  async function refGit(args: string[]): Promise<string> {
+    const { stdout } = await defaultGitClient.git(args, refRepo);
+    return stdout.trim();
+  }
+
+  beforeEach(async () => {
+    refRepo = await mkdtemp(path.join(tmpdir(), "cc-parked-refs-"));
+    await refGit(["init", "--initial-branch=main", "."]);
+    await refGit(["config", "user.email", "engine@command-center.test"]);
+    await refGit(["config", "user.name", "Command Center"]);
+    await writeFile(path.join(refRepo, "a.txt"), "base\n", "utf-8");
+    await refGit(["add", "-A"]);
+    await refGit(["commit", "-m", "base"]);
+    firstSha = await refGit(["rev-parse", "HEAD"]);
+  });
+
+  afterEach(async () => {
+    await rm(refRepo, { recursive: true, force: true });
+  });
+
+  it("lists every parked ref with the job id that owns it", async () => {
+    await refGit(["update-ref", "refs/cc-merges/job-a", firstSha]);
+    await refGit(["update-ref", "refs/cc-merges/job-b", firstSha]);
+    await refGit(["update-ref", "refs/heads/unrelated", firstSha]);
+
+    expect(await realOps.listParkedMergeRefs(refRepo)).toEqual([
+      { ref: "refs/cc-merges/job-a", jobId: "job-a" },
+      { ref: "refs/cc-merges/job-b", jobId: "job-b" },
+    ]);
+  });
+
+  it("reports no parked refs for a repository that has none", async () => {
+    expect(await realOps.listParkedMergeRefs(refRepo)).toEqual([]);
+  });
+
+  it("deletes a parked ref and reports the deletion", async () => {
+    await refGit(["update-ref", "refs/cc-merges/job-a", firstSha]);
+
+    expect(
+      await realOps.deleteParkedMergeRef(refRepo, "refs/cc-merges/job-a"),
+    ).toBe(true);
+
+    expect(await realOps.listParkedMergeRefs(refRepo)).toEqual([]);
+    // The commit itself is only unreachable, never rewritten: deleting the ref
+    // must not touch the branch the prepare was based on.
+    expect(await refGit(["rev-parse", "refs/heads/main"])).toBe(firstSha);
+  });
+
+  it("reports false for a ref that is already gone instead of throwing", async () => {
+    expect(
+      await realOps.deleteParkedMergeRef(refRepo, "refs/cc-merges/never"),
+    ).toBe(false);
   });
 });

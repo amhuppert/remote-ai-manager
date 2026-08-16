@@ -562,25 +562,42 @@ export function resolveLaneConversationId(
   }
 
   for (const contextId of candidateContextIds) {
-    const laneStatesByKind = execution.laneStates[contextId];
-    if (laneStatesByKind) {
-      for (const state of Object.values(laneStatesByKind)) {
-        if (state.lane === "implementer" && state.workflowConversationId) {
-          return state.workflowConversationId;
-        }
+    const conversationId = resolveContextConversationId(execution, contextId);
+    if (conversationId !== null) return conversationId;
+  }
+
+  return null;
+}
+
+/**
+ * The conversation a merge of ONE context's work should bind its agent
+ * sub-turns to: that context's implementer conversation, or its most recent
+ * task conversation as a fallback. Same question as
+ * {@link resolveLaneConversationId} at a single context — a fan-in merges one
+ * context's worktree, so it has no lane to walk. Returns null when the context
+ * recorded no conversation.
+ */
+export function resolveContextConversationId(
+  execution: GraphWorkflowExecution,
+  contextId: string,
+): string | null {
+  const laneStatesByKind = execution.laneStates[contextId];
+  if (laneStatesByKind) {
+    for (const state of Object.values(laneStatesByKind)) {
+      if (state.lane === "implementer" && state.workflowConversationId) {
+        return state.workflowConversationId;
       }
     }
+  }
 
-    const taskConversationId = Object.values(execution.taskStates)
+  return (
+    Object.values(execution.taskStates)
       .filter(
         (task) =>
           task.contextId === contextId && task.lastConversationId !== null,
       )
-      .sort((a, b) => b.order - a.order)[0]?.lastConversationId;
-    if (taskConversationId) return taskConversationId;
-  }
-
-  return null;
+      .sort((a, b) => b.order - a.order)[0]?.lastConversationId ?? null
+  );
 }
 
 export function materializeSessionLane(

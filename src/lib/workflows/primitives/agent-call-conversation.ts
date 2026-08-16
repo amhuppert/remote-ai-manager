@@ -159,6 +159,12 @@ export async function dispatchConversationTurn(
       artifacts: deps.artifacts,
       failureKind: classification?.kind ?? "backend_error",
       message,
+      ...(classification !== undefined
+        ? { retryable: classification.retryable }
+        : {}),
+      ...(classification?.retryAfterHint !== undefined
+        ? { retryAfterHint: classification.retryAfterHint }
+        : {}),
       continuationDisposition: decision?.continuationDisposition ?? "retain",
     });
   }
@@ -176,6 +182,9 @@ export async function dispatchConversationTurn(
       artifacts: deps.artifacts,
       failureKind: "aborted",
       message: turnResult.failure?.message ?? "aborted",
+      // A cancelled turn is never worth re-running on its own account: the
+      // caller that aborted it decides what happens next.
+      retryable: false,
       turnResult,
     });
   }
@@ -194,6 +203,10 @@ export async function dispatchConversationTurn(
       artifacts: deps.artifacts,
       failureKind: turnResult.failure.kind,
       message: turnResult.failure.message,
+      retryable: turnResult.failure.retryable,
+      ...(turnResult.failure.retryAfterHint !== undefined
+        ? { retryAfterHint: turnResult.failure.retryAfterHint }
+        : {}),
       turnResult,
     });
   }
@@ -269,6 +282,9 @@ interface BuildFailureResultInput {
   artifacts?: readonly ArtifactRef[];
   failureKind: NormalizedAgentCallFailureKind;
   message: string;
+  /** The classifier's retry verdict, when the failure came from one. */
+  retryable?: boolean;
+  retryAfterHint?: string;
   /**
    * Adapter turn result the failure was derived from, when one exists. Its
    * partial content, usage, and continuation verdict ride the normalized
@@ -293,6 +309,12 @@ function buildFailureResult(input: BuildFailureResultInput): AgentCallResult {
         failureKind: input.failureKind,
         backend: input.backend,
         message: input.message,
+        ...(input.retryable !== undefined
+          ? { retryable: input.retryable }
+          : {}),
+        ...(input.retryAfterHint !== undefined
+          ? { retryAfterHint: input.retryAfterHint }
+          : {}),
       },
       ...(turnResult !== undefined
         ? {

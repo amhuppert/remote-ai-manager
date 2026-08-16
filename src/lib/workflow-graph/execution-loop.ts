@@ -91,6 +91,7 @@ import {
   materializeSessionLane,
   planContextJoin,
   planFinalPublishJoin,
+  resolveContextConversationId,
 } from "@/lib/workflow-graph/lane-join";
 import {
   applyJoinProgress,
@@ -2020,6 +2021,15 @@ export function createGraphWorkflowExecutionLoop(
                   config: execution.workingDefinition.laneMergeValidation,
                   readRepoConfig,
                 });
+                // The context's own implementer conversation: without it the
+                // merge's agent sub-turns fall back to the session's
+                // most-recently-active conversation, which in a parallel
+                // workflow can belong to a context still running in a
+                // different worktree.
+                const conversationId = resolveContextConversationId(
+                  execution,
+                  contextId,
+                );
                 return deps.mergeRunner.run({
                   jobId: createJobId(),
                   projectPath: input.projectPath,
@@ -2032,6 +2042,7 @@ export function createGraphWorkflowExecutionLoop(
                   targetWorktreePath: session.worktreePath,
                   message: `Graph workflow context ${contextId}`,
                   workflowExecutionId: execution.id,
+                  ...(conversationId !== null ? { conversationId } : {}),
                   validationMode,
                 });
               },
@@ -3633,6 +3644,7 @@ export function createGraphWorkflowExecutionLoop(
             targetLaneId: claimedJoin.targetLaneId,
             message: result.message,
             conflictFiles: result.conflictFiles,
+            resolutionFailure: result.resolutionFailure ?? undefined,
           },
         });
         adoptExecution(haltResult.execution);

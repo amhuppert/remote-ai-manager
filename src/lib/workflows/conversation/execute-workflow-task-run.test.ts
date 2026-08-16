@@ -25,9 +25,16 @@ import {
 import { _resetForTesting as resetRuntime } from "./runtime-state";
 import {
   executeWorkflowTaskRun,
+  mapToTaskRunResult,
   _getExecuteWorkflowTaskRunInFlightCountForTesting,
   _resetExecuteWorkflowTaskRunForTesting,
+  type TaskRunFailureClassifier,
 } from "./execute-workflow-task-run";
+import {
+  registerAbortController,
+  unregisterAbortController,
+} from "@/lib/conversations/abort-registry";
+import { createConflictResolver } from "@/lib/sessions/conflict-resolution";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import {
   createCapturingLogger,
@@ -322,6 +329,54 @@ describe("executeWorkflowTaskRun", () => {
     }
   });
 
+  it("cancels the in-flight turn and reports it as aborted when the caller's signal fires", async () => {
+    const controller = new AbortController();
+    const call = executeWorkflowTaskRun({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      kind: "task_run",
+      prompt: "long resolution",
+      timeoutMs: 5000,
+      signal: controller.signal,
+    });
+
+    await nextPendingInvocation();
+    controller.abort();
+
+    const result = await call;
+
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      // The classification is what callers branch on: an aborted turn is not
+      // retryable, unlike the backend failures that share the error variant.
+      expect(result.aborted).toBe(true);
+      expect(result.failure?.kind).toBe("aborted");
+      expect(result.failure?.retryable).toBe(false);
+    }
+  });
+
+  it("never dispatches a turn whose signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await executeWorkflowTaskRun({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      kind: "task_run",
+      prompt: "already stopped",
+      timeoutMs: 5000,
+      signal: controller.signal,
+    });
+
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      expect(result.failure?.kind).toBe("aborted");
+    }
+    expect(pendingRunTaskRunInvocations).toHaveLength(0);
+  });
+
   it("returns the parsed structured output when outputFormat is set", async () => {
     const structured = { answer: 42, label: "the-meaning" };
 
@@ -479,6 +534,37 @@ describe("executeWorkflowTaskRun", () => {
     expect(result.kind).toBe("structured");
   });
 
+  it("cancels the backend turn the entrypoint timer gave up on", async () => {
+    // The timeout is what bounds a conflict resolver holding a worktree
+    // mid-merge. Returning without cancelling would leave that agent editing
+    // the tree while the caller's retry merges and dispatches into it again.
+    const controller = new AbortController();
+    registerAbortController(CONVERSATION_ID, controller);
+
+    const callPromise = executeWorkflowTaskRun({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      kind: "task_run",
+      prompt: "will-time-out",
+      timeoutMs: 25,
+    });
+
+    await nextPendingInvocation();
+    const result = await callPromise;
+
+    expect(result.kind).toBe("error");
+    expect(controller.signal.aborted).toBe(true);
+    const actor = getConversationActor(
+      PROJECT_PATH,
+      SESSION_NAME,
+      CONVERSATION_ID,
+    );
+    expect(actor?.getSnapshot().context.activeTurn).toBeNull();
+
+    unregisterAbortController(CONVERSATION_ID, controller);
+  });
+
   it("resolves to an error TaskRunResult when the entrypoint timer fires", async () => {
     const callPromise = executeWorkflowTaskRun({
       projectPath: PROJECT_PATH,
@@ -501,6 +587,29 @@ describe("executeWorkflowTaskRun", () => {
       expect(result.error).toContain("timed out after 25ms");
       expect(result.aborted).toBe(false);
     }
+  });
+
+  // The conflict resolver is the caller whose turn must be bounded: it holds a
+  // worktree mid-merge for as long as it runs. This is the only harness with a
+  // real conversation actor behind the entrypoint, so the arming of the timer
+  // and the resolver's reading of the result are proven together here.
+  it("bounds a resolver turn that never returns, and the resolver calls it retryable", async () => {
+    const resolution = createConflictResolver({}).resolveConflicts({
+      worktreePath: "/test/project/.worktrees/test-session",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      resolutionTimeoutMs: 25,
+    });
+
+    const invocation = await nextPendingInvocation();
+    expect(invocation.input.timeoutMs).toBe(25);
+
+    const result = await resolution;
+    expect(result.status).toBe("infrastructure");
+    if (result.status !== "infrastructure") return;
+    expect(result.failure.kind).toBe("timeout");
+    expect(result.failure.retryable).toBe(true);
   });
 
   it("preserves a captured transcript on failed task_run results", async () => {
@@ -693,6 +802,181 @@ describe("executeWorkflowTaskRun", () => {
     if (secondResult.kind === "text") {
       expect(secondResult.text).toBe("B");
     }
+  });
+
+  // A merge-conflict resolver turn that dies on a backend quota wall and a
+  // resolver that read the conflict and gave up are the same bare string to
+  // every caller downstream (ticket #71 defect 1). The error variant carries
+  // the neutral classification so callers branch on `retryable`, not on prose.
+  describe("failure classification", () => {
+    const QUOTA_MESSAGE =
+      "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Aug 19th, 2026 11:29 PM.";
+
+    async function runFailingTaskRun(
+      result: Partial<PromptActorResult>,
+      backend: "claude" | "codex",
+    ) {
+      setEnsureConversationActorDeps({
+        loadActorInput: async () =>
+          makeActorInputData({
+            conversation: {
+              createdAt: "2026-01-01T00:00:00.000Z",
+              forkedFrom: null,
+              role: null,
+              transcriptPath: null,
+              agentBackend: backend,
+              backendRef: null,
+              promptCount: 0,
+              debugMode: null,
+            },
+          }),
+      });
+
+      const call = executeWorkflowTaskRun({
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        conversationId: CONVERSATION_ID,
+        kind: "task_run",
+        prompt: "resolve conflicts",
+        timeoutMs: 5000,
+      });
+      const invocation = await nextPendingInvocation();
+      invocation.resolve(defaultResult({ contentBlocks: [], ...result }));
+      return call;
+    }
+
+    it("classifies a Codex quota refusal through the conversation's registered backend classifier", async () => {
+      const result = await runFailingTaskRun({ error: QUOTA_MESSAGE }, "codex");
+
+      expect(result.kind).toBe("error");
+      if (result.kind !== "error") return;
+      expect(result.failure).toEqual({
+        kind: "quota_exhausted",
+        message: QUOTA_MESSAGE,
+        retryable: false,
+        retryAfterHint: "Aug 19th, 2026 11:29 PM",
+      });
+    });
+
+    it("classifies an ordinary backend failure as non-retryable backend_error", async () => {
+      const result = await runFailingTaskRun(
+        {
+          error: "Codex Exec exited with code 1: Reading prompt from stdin...",
+        },
+        "codex",
+      );
+
+      expect(result.kind).toBe("error");
+      if (result.kind !== "error") return;
+      expect(result.failure).toEqual({
+        kind: "backend_error",
+        message: "Codex Exec exited with code 1: Reading prompt from stdin...",
+        retryable: false,
+      });
+    });
+
+    it("reports an aborted turn as the aborted classification, not as backend prose", async () => {
+      const result = await runFailingTaskRun(
+        { aborted: true, error: "Prompt execution was cancelled" },
+        "claude",
+      );
+
+      expect(result.kind).toBe("error");
+      if (result.kind !== "error") return;
+      expect(result.aborted).toBe(true);
+      expect(result.failure).toEqual({
+        kind: "aborted",
+        message: "Prompt execution was cancelled",
+        retryable: false,
+      });
+    });
+
+    it("classifies the entrypoint timeout as a timeout failure", async () => {
+      const callPromise = executeWorkflowTaskRun({
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        conversationId: CONVERSATION_ID,
+        kind: "task_run",
+        prompt: "will-time-out",
+        timeoutMs: 25,
+      });
+      await nextPendingInvocation();
+
+      const result = await callPromise;
+      expect(result.kind).toBe("error");
+      if (result.kind !== "error") return;
+      expect(result.failure?.kind).toBe("timeout");
+      expect(result.failure?.retryable).toBe(false);
+    });
+
+    it("classifies a turn that produced no result at all", async () => {
+      const mapped = mapToTaskRunResult(null, null, undefined, (error) => ({
+        kind: "backend_error",
+        message: String(error),
+        retryable: false,
+      }));
+
+      expect(mapped.kind).toBe("error");
+      if (mapped.kind !== "error") return;
+      expect(mapped.failure).toEqual({
+        kind: "backend_error",
+        message: "task_run produced no result",
+        retryable: false,
+      });
+    });
+
+    // Retryability of a session death is decided by the error OBJECT (an
+    // undelivered prompt is safe to re-dispatch, a mid-turn death is not), and
+    // that fact is gone by the time the failure is prose. When the turn already
+    // carries the classification, re-reading the string would downgrade a
+    // retryable transient into a halt.
+    it("keeps the classification the turn recorded instead of re-reading its prose", () => {
+      const undelivered = "QuerySession ended before the turn completed";
+      // Mirrors the Claude classifier's prose verdict for this string
+      // (non-retryable session death — pinned in
+      // agent-backends/claude/failure-classifier.test.ts): a re-read of the
+      // prose would downgrade the recorded retryable transient.
+      const proseClassify: TaskRunFailureClassifier = (error) => ({
+        kind: "session_died",
+        message: String(error),
+        retryable: false,
+      });
+
+      const mapped = mapToTaskRunResult(
+        defaultResult({
+          contentBlocks: [],
+          error: undelivered,
+          failure: {
+            kind: "session_died",
+            message: undelivered,
+            retryable: true,
+          },
+        }),
+        null,
+        undefined,
+        proseClassify,
+      );
+
+      expect(mapped.kind).toBe("error");
+      if (mapped.kind !== "error") return;
+      expect(mapped.failure).toEqual({
+        kind: "session_died",
+        message: undelivered,
+        retryable: true,
+      });
+    });
+
+    it("leaves the classification absent for callers that supply no classifier", () => {
+      const mapped = mapToTaskRunResult(
+        null,
+        "actor rejected the turn",
+        undefined,
+      );
+
+      expect(mapped.kind).toBe("error");
+      if (mapped.kind !== "error") return;
+      expect(mapped.failure).toBeUndefined();
+    });
   });
 
   // Project compaction and ticket generation both address this entrypoint with

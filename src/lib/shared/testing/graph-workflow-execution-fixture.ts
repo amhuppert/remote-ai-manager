@@ -1465,6 +1465,7 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
           {
             sourceLaneIds: ["lane-2"],
             contextIds: ["ctx-2", "ctx-3"],
+            commandIdentity: "typecheck+test",
             recordedAt: "2026-01-02T04:30:00Z",
           },
         ],
@@ -1557,6 +1558,28 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
         assignmentId: "security-reviewer",
         attempts: 3,
         roundSeq: 4,
+      },
+      // Maximal join halt: the conflict resolver failed before reaching a
+      // verdict, so the halt carries the backend classification the resume gate
+      // reads back (kind + retryable + the provider's capacity hint) alongside
+      // the merge's conflict context.
+      {
+        type: "join_failure",
+        joinId: "join-1",
+        joinKind: "context_merge",
+        contextId: "ctx-1",
+        sourceLaneIds: ["lane-2"],
+        targetLaneId: "lane-1",
+        message:
+          "Conflict resolution failed before reaching the conflict: " +
+          "quota_exhausted — You've hit your usage limit.",
+        conflictFiles: ["foo.ts"],
+        resolutionFailure: {
+          kind: "quota_exhausted",
+          message: "You've hit your usage limit.",
+          retryable: false,
+          retryAfterHint: "Aug 19th, 2026 11:29 PM",
+        },
       },
       // Maximal loop-budget halt (D4 R10): the execution-scope variant, whose
       // verdict/passCount/totalPassCount fields are what an operator reads back

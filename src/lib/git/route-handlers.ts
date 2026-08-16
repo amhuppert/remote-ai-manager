@@ -18,17 +18,21 @@ import {
   resolveConflictsRequestSchema,
   type BackgroundJob,
   type ConflictDecisionInput,
+  type JobRecord,
 } from "@/lib/jobs/schemas";
 import type { JobDispatchResult } from "@/lib/jobs/machine-host";
 import {
+  abortSessionJob as defaultAbortSessionJob,
   dispatchCommitJob as defaultDispatchCommitJob,
   dispatchMergeJob as defaultDispatchMergeJob,
   dispatchResolveConflictsJob as defaultDispatchResolveConflictsJob,
   getJob as defaultGetJob,
+  type AbortSessionJobResult,
   type MergeDispatchError,
   type MergeDispatchResult,
 } from "@/lib/jobs/queue";
 import { defaultGitClient, type GitClient } from "./client";
+import { PARKED_MERGE_REF_PREFIX } from "./worktree";
 import {
   resolveSessionRoute,
   type ResolvedSessionRoute,
@@ -42,8 +46,10 @@ import {
 } from "@/lib/shared/route-resolution";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import { evaluateGraphWorkflowSessionDelivery } from "@/lib/workflow-graph/lifecycle-classifier";
+import { evaluateSessionMergeAdmission } from "@/lib/workflow-graph/session-merge-admission";
 import { createLogger, withTracing } from "@/lib/logging";
+import { createJobsRepo } from "@/lib/jobs/repo";
+import { getStateDb } from "@/lib/state-store/store";
 import type { ApiError } from "@/lib/api/errors";
 
 const diffLogger = createLogger("api.diff");
@@ -106,7 +112,6 @@ export interface GitRouteDeps {
     message: string;
     autoResolve: boolean;
     targetBranch?: string;
-    targetWorktreePath?: string;
     entryMode?: "land" | "discard";
     preparedSha?: string;
     expectedTargetSha?: string;
@@ -126,8 +131,9 @@ export interface GitRouteDeps {
     branchName: string;
     mergeMessage: string;
     decisions?: ConflictDecisionInput[];
+    /** Carried forward from the conflicted job this retry resumes. */
+    conflictFiles?: string[];
     targetBranch?: string;
-    targetWorktreePath?: string;
     resolutionContext?: string;
     executionId?: string;
     finalPublish?: boolean;
@@ -136,6 +142,20 @@ export interface GitRouteDeps {
     candidateValidation?: BackgroundJob["candidateValidation"];
   }): MergeDispatchResult;
   getJob(projectPath: string, sessionName: string): BackgroundJob | undefined;
+  /**
+   * The session's most recent job as persisted — the durable stand-in for the
+   * registry entry, read only when the registry holds nothing for the session.
+   * The registry dies with the process, while the parked commit and the row
+   * describing it do not.
+   */
+  findLatestJobRecordForSession(
+    projectName: string,
+    sessionName: string,
+  ): JobRecord | null;
+  abortSessionJob(
+    projectPath: string,
+    sessionName: string,
+  ): AbortSessionJobResult;
   gitClient: GitClient;
 }
 
@@ -152,6 +172,12 @@ function defaultDeps(): GitRouteDeps {
     dispatchMergeJob: defaultDispatchMergeJob,
     dispatchResolveConflictsJob: defaultDispatchResolveConflictsJob,
     getJob: defaultGetJob,
+    findLatestJobRecordForSession: (projectName, sessionName) =>
+      createJobsRepo(getStateDb()).findLatestJobRecordForSession(
+        projectName,
+        sessionName,
+      ),
+    abortSessionJob: defaultAbortSessionJob,
     gitClient: defaultGitClient,
   };
 }
@@ -234,14 +260,33 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
   }
 
   /**
-   * Precondition ladder shared by land/discard: a registered job in
-   * `ready-to-land` state carrying its prepared-commit bookkeeping.
+   * Precondition ladder shared by land/discard: a job in `ready-to-land` state
+   * carrying its prepared-commit bookkeeping, from the in-memory registry or —
+   * when a restart emptied it — from the durable row.
+   *
+   * The registry is consulted first and wins outright: a session whose current
+   * job is running or already finished has no parked candidate to act on, and
+   * falling through to an older row would resurrect a superseded decision. The
+   * durable fallback answers the same question the same way — the session's
+   * LATEST job, judged by the same ladder — because a land or discard runs as a
+   * new job for the session, so a candidate that has been acted on is no longer
+   * the latest row and must not be offered a second time.
+   *
+   * `parkedRefPolicy` is the caller's, because the same missing ref means
+   * opposite things to the two callers. Landing a commit that is gone is
+   * impossible, so land requires the ref. Discarding it is idempotent cleanup —
+   * refusing there would strand the session showing a candidate no act can
+   * clear — so discard tolerates its absence and skips the probe.
    */
-  function resolvePreparedJob(
-    projectPath: string,
-    sessionName: string,
-  ): RouteResolution<PreparedJob> {
-    const job = deps.getJob(projectPath, sessionName);
+  async function resolvePreparedJob(
+    route: { projectPath: string; projectName: string; sessionName: string },
+    parkedRefPolicy: "require" | "tolerate-missing",
+  ): Promise<RouteResolution<PreparedJob>> {
+    const { projectPath, projectName, sessionName } = route;
+    const registered = deps.getJob(projectPath, sessionName);
+    const job: BackgroundJob | null =
+      registered ??
+      deps.findLatestJobRecordForSession(projectName, sessionName);
     if (!job) {
       return {
         ok: false,
@@ -262,7 +307,7 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       };
     }
 
-    const parkedRef = job.parkedRef ?? `refs/cc-merges/${job.jobId}`;
+    const parkedRef = job.parkedRef ?? `${PARKED_MERGE_REF_PREFIX}${job.jobId}`;
     const preparedSha = job.preparedSha ?? null;
     if (!preparedSha) {
       return {
@@ -275,6 +320,30 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
           { status: 409 },
         ),
       };
+    }
+
+    if (parkedRefPolicy === "require") {
+      const actualSha = await readParkedRefSha(projectPath, parkedRef);
+      if (actualSha !== preparedSha) {
+        mergeLogger.warn("merge.parked_ref_unresolvable", {
+          projectPath,
+          sessionName,
+          jobId: job.jobId,
+          parkedRef,
+          resolved: actualSha,
+          fromRegistry: registered !== undefined,
+        });
+        return {
+          ok: false,
+          response: NextResponse.json(
+            {
+              error: `Parked ref ${parkedRef} no longer resolves to prepared commit ${preparedSha} — the prepared merge is gone. Run the merge again to prepare a new candidate.`,
+              code: "PARKED_REF_MISSING",
+            } satisfies ApiError,
+            { status: 409 },
+          ),
+        };
+      }
     }
 
     return { ok: true, value: { job, parkedRef, preparedSha } };
@@ -440,28 +509,22 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
 
     if (session.finished) return finishedSessionConflict();
 
-    const deliveryDecision = evaluateGraphWorkflowSessionDelivery(
-      await deps.getActiveGraphWorkflowExecution(projectPath, sessionName),
-    );
-    if (!deliveryDecision.allowed) {
-      mergeLogger.warn("merge.active_graph_workflow_refused", {
-        projectPath,
-        sessionName,
-        executionId: deliveryDecision.executionId,
-        workflowStatus: deliveryDecision.status,
-        remedy: deliveryDecision.remedy,
-      });
+    const admission = await evaluateSessionMergeAdmission({
+      projectPath,
+      sessionName,
+      surface: "merge-route",
+      readActiveExecution: deps.getActiveGraphWorkflowExecution,
+    });
+    if (!admission.admitted) {
+      const { refusal } = admission;
       return NextResponse.json(
         {
-          error: deliveryDecision.message,
-          code: "GRAPH_WORKFLOW_ACTIVE",
+          error: refusal.message,
+          code: refusal.code,
           details: {
-            executionId: deliveryDecision.executionId,
-            status: deliveryDecision.status,
-            // The act that clears the block, machine-readable beside the
-            // sentence: this refusal is advisory and the publish actor repeats
-            // it under the lock, so both refusals name one remedy.
-            remedy: deliveryDecision.remedy,
+            executionId: refusal.executionId,
+            status: refusal.status,
+            remedy: refusal.remedy,
           },
         } satisfies ApiError,
         { status: 409 },
@@ -475,7 +538,7 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
     );
     if (!body.ok) return body.response;
 
-    const { targetBranch, targetWorktreePath } = await deps.resolveMergeTarget(
+    const { targetBranch } = await deps.resolveMergeTarget(
       projectPath,
       session,
     );
@@ -490,7 +553,6 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       message: mergeMessage,
       autoResolve: body.value.autoResolve,
       targetBranch,
-      targetWorktreePath: targetWorktreePath ?? undefined,
     });
 
     if (!result.ok) return mergeDispatchErrorResponse(result.error);
@@ -513,7 +575,7 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
     );
     if (!body.ok) return body.response;
 
-    const { targetBranch, targetWorktreePath } = await deps.resolveMergeTarget(
+    const { targetBranch } = await deps.resolveMergeTarget(
       projectPath,
       session,
     );
@@ -533,8 +595,11 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       branchName: session.branchName,
       mergeMessage,
       decisions: body.value.decisions,
+      // The retry never sees the merge that produced these, so the ground-truth
+      // check after the agent claims resolution has nothing to hold it to
+      // unless the conflicted job's own list rides along.
+      conflictFiles: priorJob?.conflictFiles,
       targetBranch,
-      targetWorktreePath: targetWorktreePath ?? undefined,
       resolutionContext: priorJob?.resolutionContext,
       executionId: priorJob?.executionId,
       finalPublish: priorJob?.finalPublish,
@@ -555,6 +620,55 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
     );
   }
 
+  /**
+   * POST /api/projects/[name]/sessions/[session]/merge/abort — stop the
+   * session's in-flight merge-family job.
+   *
+   * The job registry holds one job per session, so this reaches the running
+   * merge, conflict-resolution retry, or Smart Commit alike; the machine's
+   * terminal projection turns the stop into the same failed record any other
+   * failure produces.
+   *
+   * `delivery` distinguishes a run that is winding down from one whose current
+   * operation cannot be recalled (a merge already publishing): the second only
+   * takes effect if that operation comes back without landing.
+   */
+  async function abortSessionMergeJob(
+    _request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const r = await resolveRoute(context);
+    if (!r.ok) return r.response;
+    const { projectPath, sessionName } = r.value;
+
+    const result = deps.abortSessionJob(projectPath, sessionName);
+    if (!result.ok) {
+      if (result.error === "NO_ABORTABLE_JOB") {
+        return notFound("No running merge or commit job for this session");
+      }
+      return NextResponse.json(
+        {
+          error:
+            "The running job has no live actor in this process; it cannot be stopped from here",
+          code: "JOB_ACTOR_MISSING",
+        } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+
+    return NextResponse.json({
+      ok: true,
+      jobId: result.jobId,
+      delivery: result.delivery,
+      ...(result.delivery === "deferred"
+        ? {
+            message:
+              "The job is publishing and cannot be recalled; the stop applies only if the publish does not land.",
+          }
+        : {}),
+    });
+  }
+
   /** POST /api/projects/[name]/sessions/[session]/merge/land — publish a prepared squash commit */
   async function landSession(
     _request: Request,
@@ -564,7 +678,10 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
     if (!r.ok) return r.response;
     const { projectPath, projectName, sessionName, session } = r.value;
 
-    const prepared = resolvePreparedJob(projectPath, sessionName);
+    const prepared = await resolvePreparedJob(
+      { projectPath, projectName, sessionName },
+      "require",
+    );
     if (!prepared.ok) return prepared.response;
     const { job, parkedRef, preparedSha } = prepared.value;
 
@@ -579,18 +696,7 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       );
     }
 
-    const actualSha = await readParkedRefSha(projectPath, parkedRef);
-    if (actualSha === null || actualSha !== preparedSha) {
-      return NextResponse.json(
-        {
-          error: `Parked ref ${parkedRef} no longer resolves to the prepared commit`,
-          code: "PARKED_REF_MISSING",
-        } satisfies ApiError,
-        { status: 409 },
-      );
-    }
-
-    const { targetBranch, targetWorktreePath } = await deps.resolveMergeTarget(
+    const { targetBranch } = await deps.resolveMergeTarget(
       projectPath,
       session,
     );
@@ -605,7 +711,6 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       message: mergeMessage,
       autoResolve: false,
       targetBranch,
-      targetWorktreePath: targetWorktreePath ?? undefined,
       entryMode: "land",
       preparedSha,
       expectedTargetSha,
@@ -632,10 +737,17 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
     if (!r.ok) return r.response;
     const { projectPath, projectName, sessionName, session } = r.value;
 
-    const prepared = resolvePreparedJob(projectPath, sessionName);
+    const prepared = await resolvePreparedJob(
+      { projectPath, projectName, sessionName },
+      "tolerate-missing",
+    );
     if (!prepared.ok) return prepared.response;
     const { parkedRef, preparedSha } = prepared.value;
 
+    // The session's own recorded target, deliberately NOT `resolveMergeTarget`:
+    // a discard deletes a parked ref and touches no target branch, so resolving
+    // the parent session's checkout would buy a state-store read for a value
+    // nothing here can act on. The branch name only labels the notification.
     const targetBranch = session.targetBranch ?? "main";
     const mergeMessage = `Discard prepared merge for ${session.branchName}`;
 
@@ -665,6 +777,7 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
     commitSession,
     mergeSession,
     resolveSessionConflicts,
+    abortSessionMergeJob,
     landSession,
     discardSession,
   };
@@ -689,6 +802,9 @@ export const commitSession = withTracing(_defaultHandlers.commitSession);
 export const mergeSession = withTracing(_defaultHandlers.mergeSession);
 export const resolveSessionConflicts = withTracing(
   _defaultHandlers.resolveSessionConflicts,
+);
+export const abortSessionMergeJob = withTracing(
+  _defaultHandlers.abortSessionMergeJob,
 );
 export const landSession = withTracing(_defaultHandlers.landSession);
 export const discardSession = withTracing(_defaultHandlers.discardSession);

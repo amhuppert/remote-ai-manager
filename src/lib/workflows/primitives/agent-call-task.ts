@@ -200,6 +200,12 @@ export async function dispatchTaskRun(
       artifacts: deps.artifacts,
       failureKind: classification?.kind ?? "backend_error",
       message,
+      ...(classification !== undefined
+        ? { retryable: classification.retryable }
+        : {}),
+      ...(classification?.retryAfterHint !== undefined
+        ? { retryAfterHint: classification.retryAfterHint }
+        : {}),
       continuationDisposition,
     });
   }
@@ -252,6 +258,10 @@ export async function dispatchTaskRun(
       artifacts: deps.artifacts,
       failureKind: classification.kind,
       message: runResult.error,
+      retryable: classification.retryable,
+      ...(classification.retryAfterHint !== undefined
+        ? { retryAfterHint: classification.retryAfterHint }
+        : {}),
       usage,
       continuationDisposition: runResult.continuationDisposition,
       ...(runResult.transcript !== undefined
@@ -292,6 +302,9 @@ interface BuildFailureResultInput {
   artifacts?: readonly ArtifactRef[];
   failureKind: NormalizedAgentCallFailureKind;
   message: string;
+  /** The classifier's retry verdict, when the failure came from one. */
+  retryable?: boolean;
+  retryAfterHint?: string;
   usage?: AgentCallUsageMetrics;
   transcript?: AgentTaskResult["transcript"];
   continuationDisposition?: AgentCallResult["continuationDisposition"];
@@ -313,6 +326,12 @@ function buildFailureResult(input: BuildFailureResultInput): AgentCallResult {
         failureKind: input.failureKind,
         backend: input.backend,
         message: input.message,
+        ...(input.retryable !== undefined
+          ? { retryable: input.retryable }
+          : {}),
+        ...(input.retryAfterHint !== undefined
+          ? { retryAfterHint: input.retryAfterHint }
+          : {}),
       },
     },
     ...(input.continuationDisposition !== undefined

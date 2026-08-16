@@ -3,9 +3,6 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger } from "@/lib/logging";
 import { observePhaseTransitions } from "@/lib/jobs/machine-host";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
-import { createMergeIntentsRepo } from "@/lib/merge-intents/repo";
-import type { RecordMergeIntentInput } from "@/lib/merge-intents/repo";
-import { getStateDb } from "@/lib/state-store/store";
 import {
   mergeMachine,
   type MergeMachineType,
@@ -18,6 +15,7 @@ import type {
   MergePhase,
 } from "@/lib/workflows/merge/types";
 import { createDeliveryGateActor } from "@/lib/workflows/merge/actors";
+import { resolveDeliveredMergeSha } from "@/lib/workflows/merge/delivery-lifecycle-port";
 import type { MergeValidationMode } from "@/lib/workflows/validation-fix/types";
 
 const logger = createLogger("graph-workflow-merge-runner");
@@ -31,6 +29,8 @@ export interface GraphMergeRunnerInput {
   branchName: string;
   featureWorktreePath: string;
   targetBranch: string;
+  /** The lane worktree the target branch is checked out in. Forensic only —
+   *  the publish rediscovers the checkout from the branch. */
   targetWorktreePath: string;
   message: string;
   /** The source lane's implementer conversation. Conflict-resolution and
@@ -90,8 +90,6 @@ export interface GraphMergeRunnerDeps {
     input: MergeInput;
     onPhase(phase: MergePhase): void;
   }): Promise<MergeOutput>;
-  /** Persists the intent brief against the landed squash commit. */
-  recordMergeIntent?(input: RecordMergeIntentInput): void;
   /** Invoked once per distinct merge phase. Defaults to a structured log. */
   onPhase?(info: GraphMergePhaseInfo): void;
 }
@@ -100,10 +98,6 @@ export function createGraphWorkflowMergeRunner(
   deps: GraphMergeRunnerDeps = {},
 ): GraphMergeRunner {
   const buildMachine = deps.buildMachine ?? (() => mergeMachine);
-  const recordMergeIntent =
-    deps.recordMergeIntent ??
-    ((input: RecordMergeIntentInput) =>
-      createMergeIntentsRepo(getStateDb()).recordMergeIntent(input));
   const onPhase =
     deps.onPhase ??
     ((info: GraphMergePhaseInfo) =>
@@ -160,6 +154,12 @@ export function createGraphWorkflowMergeRunner(
           ? { conversationId: input.conversationId }
           : {}),
         autoResolve: true,
+        // Every graph-owned merge (join and fan-in alike) re-enters a worktree
+        // only this machinery drives, so an unresolved merge found there is a
+        // previous run's wreckage rather than an operator's work in progress.
+        // The resolved-but-uncommitted tree is still refused by the machine
+        // under this policy — that shape can only be a human's.
+        staleMergePolicy: "abort",
         validationMode: input.validationMode,
         ...(input.decisions !== undefined
           ? { decisions: input.decisions }
@@ -168,7 +168,6 @@ export function createGraphWorkflowMergeRunner(
           ? { resolutionContext: input.resolutionContext }
           : {}),
         targetBranch: input.targetBranch,
-        targetWorktreePath: input.targetWorktreePath,
         finalizeSessionOnPublish: false,
         ...(input.executionId !== undefined
           ? { executionId: input.executionId }
@@ -228,44 +227,21 @@ export function createGraphWorkflowMergeRunner(
             : [],
       });
 
+      const deliveredSha = resolveDeliveredMergeSha(output);
       if (
         output.status === "completed" &&
-        output.mergeHash !== null &&
+        deliveredSha !== null &&
         input.executionId !== undefined &&
         input.finalPublish === true &&
         deps.markDelivered !== undefined
       ) {
         try {
-          await deps.markDelivered(input.executionId, output.mergeHash);
+          await deps.markDelivered(input.executionId, deliveredSha);
         } catch (err) {
           logger.error("graph_merge_mark_delivered_failed", {
             jobId: input.jobId,
             executionId: input.executionId,
-            mergeHash: output.mergeHash,
-            error: getErrorMessage(err),
-          });
-        }
-      }
-
-      // Attach the lane-derived intent brief to the landed squash commit so
-      // later merges that pull this commit in can explain it to their
-      // conflict resolvers. Non-throwing.
-      if (
-        output.status === "completed" &&
-        output.mergeHash &&
-        input.resolutionContext
-      ) {
-        try {
-          recordMergeIntent({
-            projectPath: input.projectPath,
-            commitSha: output.mergeHash,
-            intent: input.resolutionContext,
-            source: "graph-join",
-          });
-        } catch (err) {
-          logger.error("graph_merge_record_intent_failed", {
-            jobId: input.jobId,
-            mergeHash: output.mergeHash,
+            mergeHash: deliveredSha,
             error: getErrorMessage(err),
           });
         }

@@ -55,6 +55,14 @@ const jobRecordRowSchema = registerTrustedSchema(
     execution_id: z.string().nullable(),
     final_publish: z.number().int(),
     candidate_validation: z.string().nullable(),
+    // Nullish rather than nullable: a row read by a build that has the columns
+    // from a connection opened before the floor added them yields `undefined`,
+    // and both readings mean the same absent fact.
+    parked_ref: z.string().nullish(),
+    prepared_sha: z.string().nullish(),
+    expected_target_sha: z.string().nullish(),
+    finalize_session_on_publish: z.number().int().nullish(),
+    resolution_context: z.string().nullish(),
   }),
   "jobRecordRowSchema",
 );
@@ -65,6 +73,19 @@ const jobConflictFilesSchema = registerTrustedSchema(
   "jobRecord.conflictFiles",
 );
 
+const jobIdColumnSchema = registerTrustedSchema(
+  z.object({ job_id: z.string() }),
+  "jobRecord.jobIdColumn",
+);
+
+const publishedMergeColumnsSchema = registerTrustedSchema(
+  z.object({
+    merge_hash: z.string().nullable(),
+    expected_target_sha: z.string().nullish(),
+  }),
+  "jobRecord.publishedMergeColumns",
+);
+
 const jobRecordUpdateSchema = z.object({
   status: jobStatusSchema,
   mergeHash: z.string().optional(),
@@ -73,6 +94,9 @@ const jobRecordUpdateSchema = z.object({
   conflictFiles: z.array(z.string()).optional(),
   errorMessage: z.string().optional(),
   executionId: z.string().optional(),
+  parkedRef: z.string().optional(),
+  preparedSha: z.string().optional(),
+  expectedTargetSha: z.string().optional(),
   candidateValidation: candidateValidationFactSchema.optional(),
 });
 
@@ -239,6 +263,14 @@ function rowToBackgroundJob(rawRow: unknown): BackgroundJob {
   if (row.error_message !== null) candidate.errorMessage = row.error_message;
   if (row.execution_id !== null) candidate.executionId = row.execution_id;
   if (row.final_publish === 1) candidate.finalPublish = true;
+  if (row.parked_ref != null) candidate.parkedRef = row.parked_ref;
+  if (row.prepared_sha != null) candidate.preparedSha = row.prepared_sha;
+  if (row.expected_target_sha != null)
+    candidate.expectedTargetSha = row.expected_target_sha;
+  if (row.finalize_session_on_publish != null)
+    candidate.finalizeSessionOnPublish = row.finalize_session_on_publish === 1;
+  if (row.resolution_context != null)
+    candidate.resolutionContext = row.resolution_context;
   if (candidateValidationResult.value !== undefined) {
     candidate.candidateValidation = candidateValidationResult.value;
   }
@@ -246,6 +278,47 @@ function rowToBackgroundJob(rawRow: unknown): BackgroundJob {
   return parseTrusted(backgroundJobSchema, candidate, (issues) =>
     logAndThrowJobRecordValidationFailure(row.job_id, issues),
   );
+}
+
+/**
+ * Project a stored row onto the durable {@link JobRecord} shape. Live-only keys
+ * are dropped by construction: `jobRecordSchema` is `.strict()`, so anything the
+ * runtime job carries but the row layer does not own would fail here rather
+ * than travel silently.
+ */
+function rowToJobRecord(rawRow: unknown): JobRecord {
+  const job = rowToBackgroundJob(rawRow);
+  const durable: Record<string, unknown> = {
+    jobId: job.jobId,
+    jobType: job.jobType,
+    status: job.status,
+    projectName: job.projectName,
+    sessionName: job.sessionName,
+    branchName: job.branchName,
+    startedAt: job.startedAt,
+  };
+  if (job.completedAt !== undefined) durable.completedAt = job.completedAt;
+  if (job.mergeHash !== undefined) durable.mergeHash = job.mergeHash;
+  if (job.commitHash !== undefined) durable.commitHash = job.commitHash;
+  if (job.conflictCount !== undefined)
+    durable.conflictCount = job.conflictCount;
+  if (job.conflictFiles !== undefined)
+    durable.conflictFiles = job.conflictFiles;
+  if (job.errorMessage !== undefined) durable.errorMessage = job.errorMessage;
+  if (job.executionId !== undefined) durable.executionId = job.executionId;
+  if (job.finalPublish !== undefined) durable.finalPublish = job.finalPublish;
+  if (job.parkedRef !== undefined) durable.parkedRef = job.parkedRef;
+  if (job.preparedSha !== undefined) durable.preparedSha = job.preparedSha;
+  if (job.expectedTargetSha !== undefined)
+    durable.expectedTargetSha = job.expectedTargetSha;
+  if (job.finalizeSessionOnPublish !== undefined)
+    durable.finalizeSessionOnPublish = job.finalizeSessionOnPublish;
+  if (job.resolutionContext !== undefined)
+    durable.resolutionContext = job.resolutionContext;
+  if (job.candidateValidation !== undefined) {
+    durable.candidateValidation = job.candidateValidation;
+  }
+  return parseTrusted(jobRecordSchema, durable);
 }
 
 export interface JobRecordUpdate {
@@ -256,6 +329,15 @@ export interface JobRecordUpdate {
   conflictFiles?: string[];
   errorMessage?: string;
   executionId?: string;
+  /**
+   * Parked-merge bookkeeping, carried by a `ready-to-land` terminal. Written
+   * unconditionally (not COALESCEd) so a later terminal for the same job — a
+   * land that published the commit, a discard that deleted the ref — clears a
+   * ref that no longer exists instead of leaving a land re-entry pointing at it.
+   */
+  parkedRef?: string;
+  preparedSha?: string;
+  expectedTargetSha?: string;
   candidateValidation?: BackgroundJob["candidateValidation"];
 }
 
@@ -332,6 +414,38 @@ export interface JobsRepo {
    * row matches the id.
    */
   getJobRecord(jobId: string): JobRecord | null;
+  /**
+   * The session's most recent job, or null — the durable answer to the question
+   * the in-memory registry answers while the process lives, and answered the
+   * same way: one job per session, the latest dispatch owning the slot. A land
+   * or discard re-entry resolves against it after a restart, and reads the
+   * status ladder off it exactly as it would off the registry entry, so a
+   * candidate a later job already took the session from is not offered again.
+   */
+  findLatestJobRecordForSession(
+    projectName: string,
+    sessionName: string,
+  ): JobRecord | null;
+  /**
+   * Every parked candidate row the session still has on offer, newest first.
+   * A dispatch consults it to end offers the registry no longer remembers —
+   * after a restart the row and its `refs/cc-merges/` commit are all that is
+   * left of a candidate, and nothing else will ever withdraw them.
+   */
+  listParkedJobRecords(projectName: string, sessionName: string): JobRecord[];
+  /**
+   * Job ids that may still own a `refs/cc-merges/` ref: parked candidates
+   * awaiting an operator, plus jobs still `running` — a merge mid-prepare in
+   * another worker sharing this database has already written its ref, and the
+   * startup sweep has by then failed every running row whose owner is gone.
+   */
+  listJobIdsHoldingParkedRefs(): string[];
+  /**
+   * The commit the execution's gated final publish delivered, for the read-path
+   * reconciliation that backstops delivery marking. A no-op publish delivers
+   * the target tip it found the branch already contained in, so a completed
+   * final publish with no merge hash answers with that tip rather than nothing.
+   */
   findLatestPublishedMergeByExecutionId(workflowExecutionId: string): {
     mergeHash: string;
     deliveryGatePassed: true;
@@ -362,9 +476,13 @@ export function createJobsRepo(db: Db): JobsRepo {
         // the inserting pid is the process holding the live machine actor. The
         // startup sweep uses it to distinguish rows orphaned by a dead process
         // from jobs still live in another worker sharing the file-backed DB.
+        // finalize_session_on_publish and resolution_context are dispatch-time
+        // facts: both are decided before the machine starts and never change
+        // for the job, so they are written once here and left alone by the
+        // terminal update.
         db.prepare(
-          `INSERT OR REPLACE INTO job_records (job_id, job_type, status, project_name, session_name, branch_name, started_at, owner_pid, execution_id, final_publish, candidate_validation)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT OR REPLACE INTO job_records (job_id, job_type, status, project_name, session_name, branch_name, started_at, owner_pid, execution_id, final_publish, candidate_validation, finalize_session_on_publish, resolution_context)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           validated.jobId,
           validated.jobType,
@@ -379,6 +497,12 @@ export function createJobsRepo(db: Db): JobsRepo {
           validated.candidateValidation
             ? JSON.stringify(validated.candidateValidation)
             : null,
+          validated.finalizeSessionOnPublish === undefined
+            ? null
+            : validated.finalizeSessionOnPublish
+              ? 1
+              : 0,
+          validated.resolutionContext ?? null,
         );
       },
     );
@@ -401,6 +525,9 @@ export function createJobsRepo(db: Db): JobsRepo {
        conflict_files = ?,
        error_message = ?,
        execution_id = COALESCE(?, execution_id),
+       parked_ref = ?,
+       prepared_sha = ?,
+       expected_target_sha = ?,
        candidate_validation = COALESCE(?, candidate_validation)
      WHERE job_id = ?`,
         ).run(
@@ -413,6 +540,9 @@ export function createJobsRepo(db: Db): JobsRepo {
             : null,
           validated.errorMessage ?? null,
           validated.executionId ?? null,
+          validated.parkedRef ?? null,
+          validated.preparedSha ?? null,
+          validated.expectedTargetSha ?? null,
           validated.candidateValidation
             ? JSON.stringify(validated.candidateValidation)
             : null,
@@ -455,39 +585,73 @@ export function createJobsRepo(db: Db): JobsRepo {
           .prepare("SELECT * FROM job_records WHERE job_id = ?")
           .get(jobId);
         if (rawRow === undefined) return null;
-
-        const job = rowToBackgroundJob(rawRow);
-        const durable: Record<string, unknown> = {
-          jobId: job.jobId,
-          jobType: job.jobType,
-          status: job.status,
-          projectName: job.projectName,
-          sessionName: job.sessionName,
-          branchName: job.branchName,
-          startedAt: job.startedAt,
-        };
-        if (job.completedAt !== undefined)
-          durable.completedAt = job.completedAt;
-        if (job.mergeHash !== undefined) durable.mergeHash = job.mergeHash;
-        if (job.commitHash !== undefined) durable.commitHash = job.commitHash;
-        if (job.conflictCount !== undefined)
-          durable.conflictCount = job.conflictCount;
-        if (job.conflictFiles !== undefined)
-          durable.conflictFiles = job.conflictFiles;
-        if (job.errorMessage !== undefined)
-          durable.errorMessage = job.errorMessage;
-        if (job.executionId !== undefined)
-          durable.executionId = job.executionId;
-        if (job.finalPublish !== undefined)
-          durable.finalPublish = job.finalPublish;
-        if (job.candidateValidation !== undefined) {
-          durable.candidateValidation = job.candidateValidation;
-        }
-
-        return parseTrusted(jobRecordSchema, durable);
+        return rowToJobRecord(rawRow);
       },
       (result) => ({ found: result !== null }),
     );
+  }
+
+  function findLatestJobRecordForSession(
+    projectName: string,
+    sessionName: string,
+  ): JobRecord | null {
+    return timedSync(
+      jobRecordLogger,
+      "state-db.findLatestJobRecordForSession",
+      { projectName, sessionName },
+      () => {
+        // Insert order is dispatch order, which is the registry's own rule for
+        // which job owns the session; `started_at` would sort two dispatches
+        // inside the same millisecond arbitrarily.
+        const rawRow = db
+          .prepare(
+            `SELECT *
+               FROM job_records
+              WHERE project_name = ?
+                AND session_name = ?
+              ORDER BY rowid DESC
+              LIMIT 1`,
+          )
+          .get(projectName, sessionName);
+        if (rawRow === undefined) return null;
+        return rowToJobRecord(rawRow);
+      },
+      (result) => ({ found: result !== null }),
+    );
+  }
+
+  function listParkedJobRecords(
+    projectName: string,
+    sessionName: string,
+  ): JobRecord[] {
+    return timedSync(
+      jobRecordLogger,
+      "state-db.listParkedJobRecords",
+      { projectName, sessionName },
+      () => {
+        const rows = db
+          .prepare(
+            `SELECT *
+               FROM job_records
+              WHERE project_name = ?
+                AND session_name = ?
+                AND status = 'ready-to-land'
+              ORDER BY rowid DESC`,
+          )
+          .all(projectName, sessionName);
+        return rows.map(rowToJobRecord);
+      },
+      (result) => ({ count: result.length }),
+    );
+  }
+
+  function listJobIdsHoldingParkedRefs(): string[] {
+    const rows = db
+      .prepare(
+        `SELECT job_id FROM job_records WHERE status IN ('ready-to-land', 'running')`,
+      )
+      .all() as unknown[];
+    return rows.map((row) => parseTrusted(jobIdColumnSchema, row).job_id);
   }
 
   function findLatestPublishedMergeByExecutionId(
@@ -498,22 +662,28 @@ export function createJobsRepo(db: Db): JobsRepo {
       "state-db.findLatestPublishedMergeByExecutionId",
       { workflowExecutionId },
       () => {
-        const row = db
+        const rawRow = db
           .prepare(
-            `SELECT merge_hash
+            `SELECT merge_hash, expected_target_sha
                FROM job_records
               WHERE job_type IN ('merge', 'resolve-conflicts')
                 AND status = 'completed'
                 AND execution_id = ?
                 AND final_publish = 1
-                AND merge_hash IS NOT NULL
+                AND COALESCE(merge_hash, expected_target_sha) IS NOT NULL
               ORDER BY completed_at DESC, rowid DESC
               LIMIT 1`,
           )
-          .get(workflowExecutionId) as { merge_hash: string } | undefined;
-        return row === undefined
+          .get(workflowExecutionId);
+        if (rawRow === undefined) return null;
+        const row = parseTrusted(publishedMergeColumnsSchema, rawRow);
+        // A merge that landed carries its own commit; one that completed
+        // without a merge hash found the target already containing the branch
+        // and delivered the target tip the gate evaluated as its candidate.
+        const deliveredSha = row.merge_hash ?? row.expected_target_sha;
+        return deliveredSha === undefined || deliveredSha === null
           ? null
-          : { mergeHash: row.merge_hash, deliveryGatePassed: true };
+          : { mergeHash: deliveredSha, deliveryGatePassed: true };
       },
       (result) => ({ found: result !== null }),
     );
@@ -656,6 +826,9 @@ export function createJobsRepo(db: Db): JobsRepo {
     updateJobRecord,
     persistCandidateValidation,
     getJobRecord,
+    findLatestJobRecordForSession,
+    listParkedJobRecords,
+    listJobIdsHoldingParkedRefs,
     findLatestPublishedMergeByExecutionId,
     findMergeValidationByExecutionIdAndRef,
     deleteJobRecordsForSession,

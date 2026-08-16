@@ -10,6 +10,7 @@ import type { BigIntStats } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { defaultGitClient, type GitClient } from "./client";
+import { isMergeInProgress } from "./conflict-markers";
 import { createLogger } from "../logging";
 import type { DirtyPath } from "@/lib/workflow-graph/errors";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -520,6 +521,20 @@ export type MergeMainResult =
   | { status: "clean" }
   | { status: "conflicts"; conflictFiles: string[] };
 
+/**
+ * Namespace holding prepared squash-merge commits between prepare and publish.
+ * A parked commit is reachable only through its ref, so the ref IS the
+ * candidate's lifetime: it names the owning job, and deleting it hands the
+ * commit to git's gc.
+ */
+export const PARKED_MERGE_REF_PREFIX = "refs/cc-merges/";
+
+export interface ParkedMergeRef {
+  ref: string;
+  /** The job that prepared the commit — the ref's name below the prefix. */
+  jobId: string;
+}
+
 export type TargetCheckoutState =
   | { kind: "not-checked-out" }
   | { kind: "clean"; worktreePath: string }
@@ -545,6 +560,16 @@ export type PrepareResult =
       expectedTargetSha: string;
       parkedRef: string;
     }
+  /**
+   * The merge is a no-op: the target already contains everything the branch
+   * carries, so there is no commit to park and nothing to publish. Distinct
+   * from `conflicts` with an empty file list, which reads as a failure, and
+   * from `prepared`, which would land an empty commit on the target.
+   */
+  | {
+      kind: "up-to-date";
+      expectedTargetSha: string;
+    }
   | {
       kind: "conflicts";
       expectedTargetSha: string;
@@ -565,7 +590,11 @@ export interface PublishPreparedMergeInput {
 
 export type PublishResult =
   | { kind: "published"; mergeHash: string; refreshWarning?: string }
-  | { kind: "cas-lost"; actualTargetSha: string };
+  | { kind: "cas-lost"; actualTargetSha: string }
+  /** The CAS update failed while the target tip still held `expectedTargetSha`:
+   *  the ref never moved, so re-preparing cannot help (stale ref lock,
+   *  permissions, a corrupt ref store). Carries the underlying git error. */
+  | { kind: "publish-failed"; error: string };
 
 /**
  * Parse the conflict-info section emitted by `git merge-tree --write-tree -z`
@@ -697,13 +726,64 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
    *  is left untouched — including one where an operator manually resolved
    *  and committed the merge. */
   async function abortInProgressMerge(worktreePath: string): Promise<boolean> {
+    if (!(await isMergeInProgress(worktreePath, client))) return false;
+    await git(worktreePath, ["merge", "--abort"]);
+    logger.info("git.abortInProgressMerge.aborted", { worktreePath });
+    return true;
+  }
+
+  /**
+   * Every prepared-merge commit parked in this repository, with the job id that
+   * owns it. A ref whose job is finished is unreachable garbage the startup
+   * sweep collects; nothing else reads `refs/cc-merges/`.
+   */
+  async function listParkedMergeRefs(
+    projectPath: string,
+  ): Promise<ParkedMergeRef[]> {
+    const { stdout } = await git(projectPath, [
+      "for-each-ref",
+      "--format=%(refname)",
+      PARKED_MERGE_REF_PREFIX,
+    ]);
+    return stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((ref) => ref.startsWith(PARKED_MERGE_REF_PREFIX))
+      .map((ref) => ({
+        ref,
+        jobId: ref.slice(PARKED_MERGE_REF_PREFIX.length),
+      }));
+  }
+
+  /**
+   * Drop a parked prepared-merge commit, leaving it unreachable for git's own
+   * gc. Returns whether a ref was there to delete — `update-ref -d` succeeds on
+   * a ref that never existed, so the probe is what makes the answer honest. The
+   * observed SHA is passed as the expected old value so a ref replaced between
+   * the probe and the delete is left alone.
+   */
+  async function deleteParkedMergeRef(
+    projectPath: string,
+    parkedRef: string,
+  ): Promise<boolean> {
+    let parkedSha: string;
     try {
-      await git(worktreePath, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]);
+      const { stdout } = await git(projectPath, [
+        "rev-parse",
+        "--verify",
+        parkedRef,
+      ]);
+      parkedSha = stdout.trim();
     } catch {
       return false;
     }
-    await git(worktreePath, ["merge", "--abort"]);
-    logger.info("git.abortInProgressMerge.aborted", { worktreePath });
+    if (parkedSha.length === 0) return false;
+    await git(projectPath, ["update-ref", "-d", parkedRef, parkedSha]);
+    logger.info("git.parkedMergeRef.deleted", {
+      projectPath,
+      parkedRef,
+      parkedSha,
+    });
     return true;
   }
 
@@ -782,6 +862,19 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
       throw err;
     }
 
+    const { stdout: targetTreeOut } = await git(projectPath, [
+      "rev-parse",
+      `${targetSha}^{tree}`,
+    ]);
+    if (treeOid === targetTreeOut.trim()) {
+      logger.info("git.prepareSquashMerge.plumbing.up_to_date", {
+        projectPath,
+        jobId,
+        expectedTargetSha: targetSha,
+      });
+      return { kind: "up-to-date", expectedTargetSha: targetSha };
+    }
+
     const { stdout: commitOut } = await git(projectPath, [
       "commit-tree",
       treeOid,
@@ -795,7 +888,7 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
       throw new Error("git commit-tree returned no commit OID");
     }
 
-    const parkedRef = `refs/cc-merges/${jobId}`;
+    const parkedRef = `${PARKED_MERGE_REF_PREFIX}${jobId}`;
     await git(projectPath, ["update-ref", parkedRef, preparedSha]);
 
     logger.info("git.prepareSquashMerge.plumbing.success", {
@@ -819,7 +912,7 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
   ): Promise<PrepareResult> {
     const { projectPath, featureBranch, targetSha, message, jobId } = input;
     const tempWorktreePath = `${projectPath}/.worktrees/__merge_${jobId}`;
-    const parkedRef = `refs/cc-merges/${jobId}`;
+    const parkedRef = `${PARKED_MERGE_REF_PREFIX}${jobId}`;
 
     await git(projectPath, [
       "worktree",
@@ -864,13 +957,14 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
         "--name-only",
       ]);
       if (stagedOut.trim().length === 0) {
-        // No staged changes -> feature already matches target; surface as
-        // empty-conflicts since there is nothing to publish.
-        return {
-          kind: "conflicts",
+        // The squash staged nothing: the target already holds the branch's
+        // work, so there is no commit to prepare.
+        logger.info("git.prepareSquashMerge.fallback.up_to_date", {
+          projectPath,
+          jobId,
           expectedTargetSha: targetSha,
-          conflictFiles: [],
-        };
+        });
+        return { kind: "up-to-date", expectedTargetSha: targetSha };
       }
 
       await git(tempWorktreePath, ["commit", "--no-verify", "-m", message]);
@@ -959,16 +1053,30 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
         expectedTargetSha,
       ]);
     } catch (err) {
-      // CAS lost: capture the current target tip so the caller can decide
-      // whether to re-prepare. Parked ref is intentionally retained.
+      // An update-ref failure only means CAS loss when the tip actually moved;
+      // the parked ref is retained either way.
       const { stdout } = await git(projectPath, ["rev-parse", targetRef]);
       const actualTargetSha = stdout.trim();
+      const stderr = isExecError(err) ? (err.stderr ?? "") : "";
+      const error =
+        (stderr || getErrorMessage(err)).trim() || "git update-ref failed";
+
+      if (actualTargetSha === expectedTargetSha) {
+        logger.error("git.publishPreparedMerge.publish_failed", {
+          projectPath,
+          targetBranch,
+          expectedTargetSha,
+          error,
+        });
+        return { kind: "publish-failed", error };
+      }
+
       logger.info("git.publishPreparedMerge.cas_lost", {
         projectPath,
         targetBranch,
         expectedTargetSha,
         actualTargetSha,
-        error: getErrorMessage(err),
+        error,
       });
       return { kind: "cas-lost", actualTargetSha };
     }
@@ -1052,6 +1160,8 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
   return {
     abortInProgressMerge,
     listUnmergedFiles,
+    listParkedMergeRefs,
+    deleteParkedMergeRef,
     mergeTargetIntoFeature,
     discoverTargetCheckout,
     prepareSquashMerge,
@@ -1067,6 +1177,8 @@ const defaultOps = createWorktreeOperations();
 
 export const abortInProgressMerge = defaultOps.abortInProgressMerge;
 export const listUnmergedFiles = defaultOps.listUnmergedFiles;
+export const listParkedMergeRefs = defaultOps.listParkedMergeRefs;
+export const deleteParkedMergeRef = defaultOps.deleteParkedMergeRef;
 export const mergeTargetIntoFeature = defaultOps.mergeTargetIntoFeature;
 export const discoverTargetCheckout = defaultOps.discoverTargetCheckout;
 export const prepareSquashMerge = defaultOps.prepareSquashMerge;

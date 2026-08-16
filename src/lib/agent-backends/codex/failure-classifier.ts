@@ -4,8 +4,10 @@ import type {
 } from "../errors";
 import {
   createClassifierWithDefaultContinuation,
+  extractRetryAfterHint,
   failureMessage,
   isAbortFailure,
+  isLikelyQuotaExhaustedMessage,
   isLikelyStaleResumeMessage,
   isTimeoutFailure,
 } from "../errors";
@@ -21,12 +23,15 @@ import {
 const RESUME_FAILURE_PREFIX = "failed to resume codex thread";
 
 /**
- * Codex failure classifier: normalizes abort/timeout shapes and stale
- * thread-resume failures into the neutral `AgentFailureClassification`
- * vocabulary. A stale thread ref is retryable because recovery (a fresh
- * thread) is always available; everything else is a non-retryable
- * `backend_error` — `codex exec` re-materializes per turn, so there is no
- * live session whose death would warrant `session_died`.
+ * Codex failure classifier: normalizes abort/timeout shapes, stale
+ * thread-resume failures and account capacity refusals into the neutral
+ * `AgentFailureClassification` vocabulary. A stale thread ref is retryable
+ * because recovery (a fresh thread) is always available; everything else is a
+ * non-retryable `backend_error` — `codex exec` re-materializes per turn, so
+ * there is no live session whose death would warrant `session_died`.
+ *
+ * Capacity refusals are recognized last, so they only reclaim messages that
+ * would otherwise fall through to `backend_error`; no earlier verdict changes.
  */
 export function createCodexFailureClassifier(): AgentFailureClassifier {
   function classify(error: unknown): AgentFailureClassification {
@@ -42,6 +47,15 @@ export function createCodexFailureClassifier(): AgentFailureClassifier {
       isLikelyStaleResumeMessage(message)
     ) {
       return { kind: "stale_resume_ref", message, retryable: true };
+    }
+    if (isLikelyQuotaExhaustedMessage(message)) {
+      const retryAfterHint = extractRetryAfterHint(message);
+      return {
+        kind: "quota_exhausted",
+        message,
+        retryable: false,
+        ...(retryAfterHint !== undefined ? { retryAfterHint } : {}),
+      };
     }
     return { kind: "backend_error", message, retryable: false };
   }

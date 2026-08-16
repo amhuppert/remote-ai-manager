@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { fromPromise } from "xstate";
+import { defaultGitClient } from "../git/client";
 import {
+  abortSessionJob,
   dispatchMergeJob,
   dispatchCommitJob,
   dispatchResolveConflictsJob,
@@ -11,6 +16,7 @@ import {
   getFinalizingSessionMergeJob,
   runRegisteredMergeJob,
   _resetForTesting,
+  type AcquireSessionLockFn,
 } from "./queue";
 import { mergeMachine } from "../workflows/merge/machine";
 import {
@@ -37,6 +43,12 @@ import type {
   AbortRebaseOutput,
 } from "../workflows/rebase/actors";
 import type {
+  AbortMergeCleanupInput,
+  AbortMergeCleanupOutput,
+  AbortStaleMergeInput,
+  AbortStaleMergeOutput,
+  ClassifyWorktreeInput,
+  ClassifyWorktreeOutput,
   GetCurrentBranchInput,
   GetCurrentBranchOutput,
   MergeMainInput,
@@ -66,7 +78,11 @@ import type {
 } from "../workflows/validation-fix/actors";
 import { validationFixLoopError } from "../workflows/validation-fix/actors";
 import { getTraceContext, runWithTrace, type TraceContext } from "../logging";
-import type { JobRecord, JobStatusEvent } from "@/lib/jobs/schemas";
+import type {
+  BackgroundJob,
+  JobRecord,
+  JobStatusEvent,
+} from "@/lib/jobs/schemas";
 import type { PublishFn } from "@/lib/events/publication";
 import { createJobsRepo } from "./repo";
 
@@ -98,6 +114,9 @@ let notificationsRepo: NotificationsRepo;
 // Actor mock fns — injected via mergeMachine.provide()
 // ============================================================
 
+const mockClassifyWorktree = vi.fn();
+const mockAbortStaleMerge = vi.fn();
+const mockAbortMergeCleanup = vi.fn();
 const mockCheckUncommitted = vi.fn();
 const mockGetCurrentBranch = vi.fn();
 const mockCommitChangesActor = vi.fn();
@@ -114,6 +133,17 @@ const mockDiscardParkedRefActor = vi.fn();
 /** Test machine: real merge machine with mock actors */
 const testMachine = mergeMachine.provide({
   actors: {
+    classifyWorktree: fromPromise<
+      ClassifyWorktreeOutput,
+      ClassifyWorktreeInput
+    >(async ({ input }) => mockClassifyWorktree(input)),
+    abortStaleMerge: fromPromise<AbortStaleMergeOutput, AbortStaleMergeInput>(
+      async ({ input }) => mockAbortStaleMerge(input),
+    ),
+    abortMergeCleanup: fromPromise<
+      AbortMergeCleanupOutput,
+      AbortMergeCleanupInput
+    >(async ({ input }) => mockAbortMergeCleanup(input)),
     checkUncommitted: fromPromise<
       CheckUncommittedOutput,
       CheckUncommittedInput
@@ -161,6 +191,10 @@ const testMachine = mergeMachine.provide({
 /** Test machine: real commit machine with mock actors */
 const testCommitMachine = commitMachine.provide({
   actors: {
+    classifyWorktree: fromPromise<
+      ClassifyWorktreeOutput,
+      ClassifyWorktreeInput
+    >(async ({ input }) => mockClassifyWorktree(input)),
     commitChanges: fromPromise<CommitChangesOutput, CommitChangesInput>(
       async ({ input }) => mockCommitChangesActor(input),
     ),
@@ -333,6 +367,25 @@ function broadcastAt(index: number): JobStatusEvent {
   return mockBroadcast.mock.calls[index]![0] as JobStatusEvent;
 }
 
+/** Every job-status event broadcast for one job, in order. */
+function broadcastsForJob(jobId: string): JobStatusEvent[] {
+  return mockBroadcast.mock.calls
+    .map((call) => call[0])
+    .filter((event): event is JobStatusEvent => event.type === "job-status")
+    .filter((event) => event.jobId === jobId);
+}
+
+/** Poll the registered job until the machine reports the given phase. */
+async function waitForJobPhase(phase: string): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (getJob("/projects/foo", "my-session")?.phase !== phase) {
+    if (Date.now() > deadline) {
+      throw new Error(`Timed out waiting for job phase ${phase}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+}
+
 /** Total merge-intent rows persisted (no per-sha lookup needed). */
 function countMergeIntents(): number {
   const row = testDb
@@ -366,6 +419,13 @@ describe("background-jobs", () => {
 
     // Default: session lock acquired successfully
     mockAcquireSessionLock.mockReturnValue(releaseSession);
+    // Default: a committed worktree with no merge in progress
+    mockClassifyWorktree.mockResolvedValue({ kind: "clean" });
+    mockAbortStaleMerge.mockResolvedValue({ aborted: true });
+    mockAbortMergeCleanup.mockResolvedValue({
+      abortedMerge: false,
+      preservedMerge: false,
+    });
     // Default: no uncommitted changes
     mockCheckUncommitted.mockResolvedValue({ hasChanges: false });
     // Default: worktree is on the expected branch
@@ -568,8 +628,58 @@ describe("background-jobs", () => {
       expect(releaseSession).toHaveBeenCalled();
     });
 
+    it("reports an already-merged branch as a completed no-op and says so", async () => {
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      mockPrepareActor.mockResolvedValue({
+        status: "up-to-date" as const,
+        expectedTargetSha: "target-tip",
+      });
+      mockPublishActor.mockResolvedValue({ status: "up-to-date" as const });
+
+      dispatchMergeJob({ ...BASE_MERGE_PARAMS, targetBranch: "main" });
+      await waitForJobCompletions();
+
+      const last = lastBroadcast();
+      expect(last.status).toBe("completed");
+      expect(last.upToDate).toBe(true);
+      expect(last.mergeHash).toBeUndefined();
+
+      const job = getJob(
+        BASE_MERGE_PARAMS.projectPath,
+        BASE_MERGE_PARAMS.sessionName,
+      );
+      expect(job?.upToDate).toBe(true);
+      expect(job?.mergeHash).toBeUndefined();
+
+      const [notification] = notificationsRepo.getNotifications().notifications;
+      expect(notification?.message).toBe(
+        "Branch csm/my-session is already fully merged into main — session finished (nothing new to merge)",
+      );
+    });
+
+    it("does not claim a session finished for a no-op merge that never finalizes one", async () => {
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      mockPrepareActor.mockResolvedValue({
+        status: "up-to-date" as const,
+        expectedTargetSha: "target-tip",
+      });
+      mockPublishActor.mockResolvedValue({ status: "up-to-date" as const });
+
+      dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        targetBranch: "main",
+        finalizeSessionOnPublish: false,
+      });
+      await waitForJobCompletions();
+
+      const [notification] = notificationsRepo.getNotifications().notifications;
+      expect(notification?.message).toBe(
+        "Branch csm/my-session is already fully merged into main (nothing new to merge)",
+      );
+    });
+
     it("phase 0: commits uncommitted changes before merging main", async () => {
-      mockCheckUncommitted.mockResolvedValue({ hasChanges: true });
+      mockClassifyWorktree.mockResolvedValue({ kind: "dirty" });
       mockCommitChangesActor.mockResolvedValue({ hash: "phase0hash" });
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
       mockPublishActor.mockResolvedValue({
@@ -600,7 +710,7 @@ describe("background-jobs", () => {
     });
 
     it("phase 0: skips commit when no uncommitted changes", async () => {
-      mockCheckUncommitted.mockResolvedValue({ hasChanges: false });
+      mockClassifyWorktree.mockResolvedValue({ kind: "clean" });
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
       mockPublishActor.mockResolvedValue({
         status: "completed" as const,
@@ -615,7 +725,7 @@ describe("background-jobs", () => {
     });
 
     it("phase 0: commit failure causes job to fail", async () => {
-      mockCheckUncommitted.mockResolvedValue({ hasChanges: true });
+      mockClassifyWorktree.mockResolvedValue({ kind: "dirty" });
       mockCommitChangesActor.mockRejectedValue(
         new Error("pre-commit hook failed"),
       );
@@ -749,8 +859,8 @@ describe("background-jobs", () => {
         conflictFiles: ["file1.ts", "file2.ts"],
       });
       mockResolveConflictsActor.mockResolvedValue({
-        status: "failed",
-        conflicts: [],
+        status: "unresolved",
+        error: "Conflict resolution left conflict markers in: file1.ts",
         partialConflicts: [
           {
             file: "file1.ts",
@@ -1037,31 +1147,554 @@ describe("background-jobs", () => {
   });
 
   // ----------------------------------------------------------
-  // Stale job timeout recovery
+  // Progress stamping
   // ----------------------------------------------------------
-  describe("stale job timeout recovery", () => {
-    it("force-transitions stale running job and allows new dispatch", async () => {
-      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockPublishActor.mockResolvedValue({
-        status: "completed" as const,
-        mergeHash: "abc",
+  describe("job progress stamping", () => {
+    const DISPATCHED_AT = "2026-08-16T00:00:00.000Z";
+    const MERGED_AT = "2026-08-16T00:05:00.000Z";
+    const PUBLISHED_AT = "2026-08-16T00:09:00.000Z";
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("advances lastProgressAt on every status broadcast", async () => {
+      // Only the clock is faked: the machine's promise actors and the
+      // completion signals still run on real microtasks.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(DISPATCHED_AT));
+      mockMergeMain.mockImplementation(async () => {
+        vi.setSystemTime(new Date(MERGED_AT));
+        return { status: "clean", conflictFiles: [] };
+      });
+      mockPublishActor.mockImplementation(async () => {
+        vi.setSystemTime(new Date(PUBLISHED_AT));
+        return { status: "completed" as const, mergeHash: "abc123" };
       });
 
-      const first = dispatchMergeJob(BASE_MERGE_PARAMS);
-      expect(first.ok).toBe(true);
+      dispatchMergeJob(BASE_MERGE_PARAMS);
+      await waitForJobCompletions();
 
-      // Manually make the job stale by backdating startedAt
+      expect(broadcastAt(0)).toMatchObject({
+        status: "running",
+        lastProgressAt: DISPATCHED_AT,
+      });
+      const stamps = mockBroadcast.mock.calls.map(
+        (call) => (call[0] as JobStatusEvent).lastProgressAt,
+      );
+      expect(stamps).toContain(MERGED_AT);
+      expect(stamps).toEqual([...stamps].sort());
+      expect(lastBroadcast().lastProgressAt).toBe(PUBLISHED_AT);
+      expect(
+        getJob(BASE_MERGE_PARAMS.projectPath, BASE_MERGE_PARAMS.sessionName)
+          ?.lastProgressAt,
+      ).toBe(PUBLISHED_AT);
+    });
+
+    it("advances lastProgressAt when a durable progress write lands", async () => {
+      const candidateValidation = {
+        validationRef: "validation-progress",
+        validatedSha: "validated-sha",
+        validatedTreeHash: "validated-tree",
+        commandIdentity: "./validate.sh",
+        outcome: "pass" as const,
+      };
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(DISPATCHED_AT));
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      mockRunValidation.mockImplementation(async () => {
+        vi.setSystemTime(new Date(MERGED_AT));
+        return candidateValidation;
+      });
+      // A publish that reports nothing new: only the validation proof moved.
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "abc123",
+      });
+
+      const result = dispatchMergeJob(BASE_MERGE_PARAMS);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      await waitForJobCompletions();
+
+      // The proof reached the durable record, so the progress write ran.
+      expect(
+        createJobsRepo(testDb).getJobRecord(result.value.jobId),
+      ).toMatchObject({ candidateValidation });
+      expect(
+        getJob(BASE_MERGE_PARAMS.projectPath, BASE_MERGE_PARAMS.sessionName)
+          ?.lastProgressAt,
+      ).toBe(MERGED_AT);
+    });
+  });
+
+  // ----------------------------------------------------------
+  // Stale job recovery
+  // ----------------------------------------------------------
+  describe("stale job recovery", () => {
+    const INACTIVE_MS = 31 * 60 * 1000;
+    const LONG_RUNTIME_MS = 3 * 60 * 60 * 1000;
+
+    /** The registered job for the shared test session. */
+    function registeredJob(): BackgroundJob {
       const job = getJob(
         BASE_MERGE_PARAMS.projectPath,
         BASE_MERGE_PARAMS.sessionName,
       );
-      expect(job).toBeDefined();
-      job!.startedAt = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+      if (job === undefined) throw new Error("no job is registered");
+      return job;
+    }
 
-      // New dispatch should succeed because the old job is stale
-      mockAcquireSessionLock.mockReturnValue(vi.fn());
+    /**
+     * A session lock with the exclusivity the production single-flight manager
+     * enforces: while a job holds it, acquiring throws. Stale recovery is
+     * exactly the case where the difference shows — the closed-out job keeps
+     * the lock until its teardown settles.
+     */
+    function createExclusiveSessionLock(): {
+      acquire: AcquireSessionLockFn;
+      isHeld(): boolean;
+    } {
+      let held = false;
+      return {
+        acquire: () => {
+          if (held) throw new Error("Session is busy");
+          held = true;
+          return () => {
+            held = false;
+          };
+        },
+        isHeld: () => held,
+      };
+    }
+
+    it("tears down the actor and records the forced terminal state when a job stops reporting progress", async () => {
+      mockMergeMain.mockResolvedValue({
+        status: "conflicts",
+        conflictFiles: ["src/a.ts"],
+      });
+      // A resolver turn that never returns — the shape of the hang stale
+      // recovery exists for.
+      mockResolveConflictsActor.mockImplementation(() => new Promise(() => {}));
+
+      const lock = createExclusiveSessionLock();
+      const stalling = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        autoResolve: true,
+        acquireSessionLock: lock.acquire,
+      });
+      expect(stalling.ok).toBe(true);
+      if (!stalling.ok) return;
+      await waitForJobPhase("resolving-conflicts");
+      const stalledJobId = stalling.value.jobId;
+      registeredJob().lastProgressAt = new Date(
+        Date.now() - INACTIVE_MS,
+      ).toISOString();
+
+      // The dispatch that detects the stall starts nothing: the closed-out job
+      // holds the session until its own teardown finishes, and starting a merge
+      // in a worktree another machine is still aborting in would be worse than
+      // asking the operator to retry.
+      const next = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        acquireSessionLock: lock.acquire,
+      });
+      expect(next).toEqual({ ok: false, error: "SESSION_BUSY" });
+
+      // The machine was told to stop and ran its own abort cleanup.
+      await vi.waitFor(() => {
+        expect(mockAbortMergeCleanup).toHaveBeenCalled();
+      });
+
+      const staleEvents = broadcastsForJob(stalledJobId);
+      expect(staleEvents[staleEvents.length - 1]).toMatchObject({
+        status: "failed",
+      });
+      expect(staleEvents[staleEvents.length - 1]?.errorMessage).toMatch(
+        /progress/i,
+      );
+
+      const persisted = createJobsRepo(testDb).getJobRecord(stalledJobId);
+      expect(persisted?.status).toBe("failed");
+      expect(persisted?.errorMessage).toMatch(/progress/i);
+      expect(persisted?.completedAt).toBeDefined();
+
+      await waitForJobCompletions();
+
+      // The torn-down machine's own terminal does not overwrite the verdict
+      // the operator was already shown.
+      expect(
+        createJobsRepo(testDb).getJobRecord(stalledJobId)?.errorMessage,
+      ).toMatch(/progress/i);
+
+      // Once the teardown released the session, a retry does start.
+      await vi.waitFor(() => {
+        expect(lock.isHeld()).toBe(false);
+      });
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "after-recovery",
+      });
+      const retry = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        acquireSessionLock: lock.acquire,
+      });
+      expect(retry.ok).toBe(true);
+      await waitForJobCompletions();
+    });
+
+    it("answers the graph merge awaiting a job it closed out", async () => {
+      mockMergeMain.mockResolvedValue({
+        status: "conflicts",
+        conflictFiles: ["src/a.ts"],
+      });
+      mockResolveConflictsActor.mockImplementation(() => new Promise(() => {}));
+
+      const laneMerge = runRegisteredMergeJob({
+        machine: testMachine,
+        broadcast: mockBroadcast,
+        input: {
+          jobId: "graph-job-stalled",
+          projectPath: BASE_MERGE_PARAMS.projectPath,
+          projectName: BASE_MERGE_PARAMS.projectName,
+          sessionName: BASE_MERGE_PARAMS.sessionName,
+          worktreePath: BASE_MERGE_PARAMS.worktreePath,
+          branchName: BASE_MERGE_PARAMS.branchName,
+          message: BASE_MERGE_PARAMS.message,
+          autoResolve: true,
+          validationMode: {
+            mode: "run",
+            source: "graph_lane_merge",
+            selection: { mode: "only", commands: ["typecheck"] },
+          },
+          targetBranch: "main",
+          finalizeSessionOnPublish: false,
+          executionId: "workflow-execution-stalled",
+        },
+      });
+      await waitForJobPhase("resolving-conflicts");
+      registeredJob().lastProgressAt = new Date(
+        Date.now() - INACTIVE_MS,
+      ).toISOString();
+
+      expect(dispatchMergeJob(BASE_MERGE_PARAMS).ok).toBe(true);
+
+      // The join is waiting on this promise: a teardown that never settles it
+      // would hang the lane instead of failing it.
+      await expect(laneMerge).resolves.toMatchObject({ status: "failed" });
+      await waitForJobCompletions();
+    });
+
+    it("leaves a long-running job alone while it is still reporting progress", async () => {
+      let finishMerge!: (value: MergeMainOutput) => void;
+      mockMergeMain.mockReturnValue(
+        new Promise<MergeMainOutput>((resolve) => {
+          finishMerge = resolve;
+        }),
+      );
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "abc123",
+      });
+
+      expect(dispatchMergeJob(BASE_MERGE_PARAMS).ok).toBe(true);
+      const running = registeredJob();
+      running.startedAt = new Date(Date.now() - LONG_RUNTIME_MS).toISOString();
+      running.lastProgressAt = new Date(Date.now() - 60_000).toISOString();
+
       const second = dispatchMergeJob(BASE_MERGE_PARAMS);
-      expect(second.ok).toBe(true);
+
+      expect(second).toEqual({ ok: false, error: "JOB_ALREADY_RUNNING" });
+      expect(mockAbortMergeCleanup).not.toHaveBeenCalled();
+      expect(registeredJob().status).toBe("running");
+
+      finishMerge({ status: "clean", conflictFiles: [] });
+      await waitForJobCompletions();
+    });
+
+    it("measures a job that carries no progress stamp from when it started", async () => {
+      let finishMerge!: (value: MergeMainOutput) => void;
+      mockMergeMain.mockReturnValue(
+        new Promise<MergeMainOutput>((resolve) => {
+          finishMerge = resolve;
+        }),
+      );
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "abc123",
+      });
+
+      const lock = createExclusiveSessionLock();
+      const stalling = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        acquireSessionLock: lock.acquire,
+      });
+      expect(stalling.ok).toBe(true);
+      if (!stalling.ok) return;
+      await waitForJobPhase("merging-main");
+      const stalled = registeredJob();
+      // A job registered before the progress stamp existed (the live registry
+      // outlives a module reload).
+      delete stalled.lastProgressAt;
+      stalled.startedAt = new Date(Date.now() - INACTIVE_MS).toISOString();
+
+      expect(
+        dispatchMergeJob({
+          ...BASE_MERGE_PARAMS,
+          acquireSessionLock: lock.acquire,
+        }),
+      ).toEqual({ ok: false, error: "SESSION_BUSY" });
+
+      await vi.waitFor(() => {
+        expect(mockAbortMergeCleanup).toHaveBeenCalled();
+      });
+      expect(
+        createJobsRepo(testDb).getJobRecord(stalling.value.jobId)?.status,
+      ).toBe("failed");
+
+      finishMerge({ status: "clean", conflictFiles: [] });
+      await waitForJobCompletions();
+    });
+  });
+
+  // ----------------------------------------------------------
+  // Superseded parked candidates
+  // ----------------------------------------------------------
+  describe("parked candidate replacement", () => {
+    let repo: string;
+    let parkedSha: string;
+
+    async function repoGit(args: string[]): Promise<string> {
+      const { stdout } = await defaultGitClient.git(args, repo);
+      return stdout.trim();
+    }
+
+    beforeEach(async () => {
+      // Temp root, not the worktree path: this repository's absolute path ends
+      // up inside git's own bookkeeping, and a session worktree path is long
+      // enough to hit ENAMETOOLONG.
+      repo = await mkdtemp(path.join(tmpdir(), "cc-parked-replace-"));
+      await repoGit(["init", "--initial-branch=main", "."]);
+      await repoGit(["config", "user.email", "engine@command-center.test"]);
+      await repoGit(["config", "user.name", "Command Center"]);
+      await writeFile(path.join(repo, "a.txt"), "base\n", "utf-8");
+      await repoGit(["add", "-A"]);
+      await repoGit(["commit", "-m", "base"]);
+      parkedSha = await repoGit(["rev-parse", "HEAD"]);
+    });
+
+    afterEach(async () => {
+      await rm(repo, { recursive: true, force: true });
+    });
+
+    /**
+     * Park a merge for the session and return its job id. The parked ref exists
+     * in the real repository, exactly as the prepare step would have left it.
+     */
+    async function parkMerge(): Promise<string> {
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      mockPrepareActor.mockResolvedValue({
+        status: "prepared" as const,
+        preparedSha: parkedSha,
+        expectedTargetSha: parkedSha,
+        parkedRef: "refs/cc-merges/parked-candidate",
+      });
+      mockPublishActor.mockResolvedValue({
+        status: "ready-to-land" as const,
+        parkedRef: "refs/cc-merges/parked-candidate",
+        preparedSha: parkedSha,
+        targetWorktreePath: repo,
+      });
+      await repoGit([
+        "update-ref",
+        "refs/cc-merges/parked-candidate",
+        parkedSha,
+      ]);
+
+      const result = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        projectPath: repo,
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("parked merge dispatch was refused");
+      await waitForJobCompletions();
+      expect(getJob(repo, BASE_MERGE_PARAMS.sessionName)).toMatchObject({
+        status: "ready-to-land",
+      });
+      return result.value.jobId;
+    }
+
+    /**
+     * The registry holds one job per session, so a new dispatch takes the parked
+     * candidate's place. Left alone, its commit stays parked under a ref nothing
+     * can ever land — and after a restart the durable row would offer it as this
+     * session's landable candidate.
+     */
+    it("deletes the superseded parked ref and records the old job as discarded", async () => {
+      const parkedJobId = await parkMerge();
+
+      const replacement = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        projectPath: repo,
+      });
+      expect(replacement.ok).toBe(true);
+
+      await vi.waitFor(async () => {
+        await expect(
+          repoGit(["rev-parse", "--verify", "refs/cc-merges/parked-candidate"]),
+        ).rejects.toThrow();
+      });
+      expect(createJobsRepo(testDb).getJobRecord(parkedJobId)).toMatchObject({
+        status: "discarded",
+      });
+      expect(broadcastsForJob(parkedJobId).at(-1)).toMatchObject({
+        status: "discarded",
+      });
+
+      await waitForJobCompletions();
+    });
+
+    /**
+     * The registry dies with the process; the row offering the candidate and
+     * the commit under `refs/cc-merges/` do not. A dispatch after a restart is
+     * the first act that can end that offer — left alone the ref is unreachable
+     * and no sweep collects it, because the row still claims it.
+     */
+    it("discards a parked candidate the registry lost to a restart", async () => {
+      const parkedJobId = await parkMerge();
+      // A restart: the registry is empty, the durable row and the ref are not.
+      _resetForTesting();
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "landed-sha",
+      });
+
+      const replacement = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        projectPath: repo,
+      });
+      expect(replacement.ok).toBe(true);
+
+      await vi.waitFor(async () => {
+        await expect(
+          repoGit(["rev-parse", "--verify", "refs/cc-merges/parked-candidate"]),
+        ).rejects.toThrow();
+      });
+      await vi.waitFor(() => {
+        expect(createJobsRepo(testDb).getJobRecord(parkedJobId)).toMatchObject({
+          status: "discarded",
+        });
+      });
+      expect(broadcastsForJob(parkedJobId).at(-1)).toMatchObject({
+        status: "discarded",
+      });
+
+      await waitForJobCompletions();
+    });
+
+    /**
+     * A candidate whose commit was already published leaves nothing but a row.
+     * Closing it is bookkeeping, and announcing it as a discard would describe
+     * a merge that landed as one that was dropped.
+     */
+    it("closes out a consumed candidate's row without announcing a discard", async () => {
+      const parkedJobId = await parkMerge();
+      // What a land leaves behind: the commit is on the target and the ref that
+      // held it is gone, but the row that offered it is still there.
+      await repoGit(["update-ref", "-d", "refs/cc-merges/parked-candidate"]);
+      _resetForTesting();
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "landed-sha",
+      });
+
+      const next = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        projectPath: repo,
+      });
+      expect(next.ok).toBe(true);
+
+      await vi.waitFor(() => {
+        expect(createJobsRepo(testDb).getJobRecord(parkedJobId)).toMatchObject({
+          status: "discarded",
+        });
+      });
+      expect(
+        broadcastsForJob(parkedJobId).some(
+          (event) => event.status === "discarded",
+        ),
+      ).toBe(false);
+      expect(
+        notificationsRepo
+          .getNotifications()
+          .notifications.some(
+            (notification) => notification.type === "merge-discarded",
+          ),
+      ).toBe(false);
+
+      await waitForJobCompletions();
+    });
+
+    /**
+     * A dispatch the session lock refuses replaces nothing — no job runs, and
+     * the operator is told to try again — so it must leave the candidate it
+     * would have superseded exactly as landable as it found it.
+     */
+    it("keeps the parked candidate when the replacing dispatch is refused", async () => {
+      const parkedJobId = await parkMerge();
+
+      const refused = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        projectPath: repo,
+        acquireSessionLock: () => {
+          throw new Error("session is busy");
+        },
+      });
+
+      expect(refused).toEqual({ ok: false, error: "SESSION_BUSY" });
+      expect(createJobsRepo(testDb).getJobRecord(parkedJobId)).toMatchObject({
+        status: "ready-to-land",
+      });
+      expect(getJob(repo, BASE_MERGE_PARAMS.sessionName)).toMatchObject({
+        status: "ready-to-land",
+      });
+      expect(
+        broadcastsForJob(parkedJobId).some(
+          (event) => event.status === "discarded",
+        ),
+      ).toBe(false);
+      // The ref deletion is fired without being awaited, so the candidate's
+      // survival is only proven after a window in which it could have run.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(
+        await repoGit(["rev-parse", "refs/cc-merges/parked-candidate"]),
+      ).toBe(parkedSha);
+    });
+
+    /** A land re-entry IS that candidate's job — deleting its ref would destroy
+     *  the very commit it is about to publish. */
+    it("keeps the parked ref when the replacing job is the candidate's land re-entry", async () => {
+      await parkMerge();
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: parkedSha,
+      });
+
+      const land = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        projectPath: repo,
+        entryMode: "land",
+        preparedSha: parkedSha,
+        expectedTargetSha: parkedSha,
+        parkedRef: "refs/cc-merges/parked-candidate",
+      });
+      expect(land.ok).toBe(true);
+      await waitForJobCompletions();
+
+      expect(
+        await repoGit(["rev-parse", "refs/cc-merges/parked-candidate"]),
+      ).toBe(parkedSha);
     });
   });
 
@@ -1130,8 +1763,8 @@ describe("background-jobs", () => {
 
     it("resolution failure → conflicts broadcast", async () => {
       mockResolveConflictsActor.mockResolvedValue({
-        status: "failed",
-        conflicts: [],
+        status: "unresolved",
+        error: "Conflict resolution left conflict markers in: a.ts",
         partialConflicts: [
           {
             file: "a.ts",
@@ -1396,6 +2029,35 @@ describe("background-jobs", () => {
       );
     });
 
+    /**
+     * A final publish with nothing to land delivered the same content as one
+     * that landed a commit, so it owes the same Delivered marking; the target
+     * tip the delivery gate evaluated is the commit that carries the work.
+     */
+    it("notifies delivery with the target tip when the final publish had nothing to land", async () => {
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      mockPrepareActor.mockResolvedValue({
+        status: "up-to-date" as const,
+        expectedTargetSha: "target-tip",
+      });
+      mockPublishActor.mockResolvedValue({ status: "up-to-date" as const });
+      const markDelivered = vi.fn().mockResolvedValue(undefined);
+      registerMergeDeliveryLifecycle({ markDelivered });
+
+      const result = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        executionId: "wf-exec-noop-deliver",
+        finalPublish: true,
+      });
+      expect(result.ok).toBe(true);
+      await waitForJobCompletions();
+
+      expect(markDelivered).toHaveBeenCalledWith(
+        "wf-exec-noop-deliver",
+        "target-tip",
+      );
+    });
+
     it("does not notify delivery for a linked merge that is not the final publish", async () => {
       completeCleanMerge();
       const markDelivered = vi.fn().mockResolvedValue(undefined);
@@ -1481,7 +2143,6 @@ describe("background-jobs", () => {
             selection: { mode: "only", commands: ["typecheck"] },
           },
           targetBranch: "main",
-          targetWorktreePath: "/projects/foo",
           finalizeSessionOnPublish: false,
           executionId: "workflow-execution-parked",
           finalPublish: true,
@@ -1505,6 +2166,41 @@ describe("background-jobs", () => {
         executionId: "workflow-execution-parked",
         finalPublish: true,
         candidateValidation,
+      });
+    });
+
+    /**
+     * The registry dies with the process; the parked commit does not. Everything
+     * a land or discard re-entry has to reconstruct — the ref, the two SHAs, the
+     * finalization decision, the resolver's intent notes — must therefore be on
+     * the durable row, not only on the in-memory job.
+     */
+    it("persists the parked candidate's bookkeeping for a land re-entry after a restart", async () => {
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      mockPublishActor.mockResolvedValue({
+        status: "ready-to-land" as const,
+        parkedRef: "refs/cc-merges/test",
+        preparedSha: "prepared-sha",
+        targetWorktreePath: "/projects/foo",
+      });
+
+      const result = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        resolutionContext: "kept the session's rename",
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      await waitForJobCompletions();
+
+      expect(
+        createJobsRepo(testDb).getJobRecord(result.value.jobId),
+      ).toMatchObject({
+        status: "ready-to-land",
+        parkedRef: "refs/cc-merges/test",
+        preparedSha: "prepared-sha",
+        expectedTargetSha: "expected-target-sha",
+        finalizeSessionOnPublish: true,
+        resolutionContext: "kept the session's rename",
       });
     });
 
@@ -1559,7 +2255,6 @@ describe("background-jobs", () => {
             selection: { mode: "only", commands: ["typecheck"] },
           },
           targetBranch: "main",
-          targetWorktreePath: "/projects/foo",
           finalizeSessionOnPublish: false,
           executionId: "workflow-execution-lane",
         },
@@ -1635,7 +2330,6 @@ describe("background-jobs", () => {
               selection: { mode: "only", commands: ["typecheck"] },
             },
             targetBranch: "main",
-            targetWorktreePath: "/projects/foo",
             finalizeSessionOnPublish: false,
             executionId: "workflow-execution-lane-running",
           },
@@ -1956,7 +2650,7 @@ describe("background-jobs", () => {
       });
     });
 
-    it("dispatchMergeJob passes targetBranch and targetWorktreePath to MergeInput", async () => {
+    it("dispatchMergeJob passes targetBranch to MergeInput", async () => {
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
       mockPublishActor.mockResolvedValue({
         status: "completed" as const,
@@ -1966,7 +2660,6 @@ describe("background-jobs", () => {
       const result = dispatchMergeJob({
         ...BASE_MERGE_PARAMS,
         targetBranch: "csm/parent-branch",
-        targetWorktreePath: "/projects/foo/.worktrees/parent",
       });
       expect(result.ok).toBe(true);
 
@@ -1978,8 +2671,8 @@ describe("background-jobs", () => {
           targetBranch: "csm/parent-branch",
         }),
       );
-      // prepare actor should receive targetBranch (publish discovers the
-      // target worktree itself; targetWorktreePath lives only on context)
+      // prepare actor should receive targetBranch; the publish discovers the
+      // target checkout from the branch
       expect(mockPrepareActor).toHaveBeenCalledWith(
         expect.objectContaining({
           targetBranch: "csm/parent-branch",
@@ -1992,7 +2685,7 @@ describe("background-jobs", () => {
       );
     });
 
-    it("dispatchResolveConflictsJob passes targetBranch and targetWorktreePath to MergeInput", async () => {
+    it("dispatchResolveConflictsJob passes targetBranch to MergeInput", async () => {
       mockResolveConflictsActor.mockResolvedValue({
         status: "resolved",
         conflicts: [],
@@ -2006,7 +2699,6 @@ describe("background-jobs", () => {
       const result = dispatchResolveConflictsJob({
         ...BASE_RESOLVE_PARAMS,
         targetBranch: "csm/parent-branch",
-        targetWorktreePath: "/projects/foo/.worktrees/parent",
       });
       expect(result.ok).toBe(true);
 
@@ -2057,6 +2749,75 @@ describe("background-jobs", () => {
       );
     });
 
+    it("dispatchMergeJob refuses a worktree left mid-merge (default refuse policy)", async () => {
+      mockClassifyWorktree.mockResolvedValue({
+        kind: "mid-merge",
+        unresolved: true,
+      });
+
+      const result = dispatchMergeJob(BASE_MERGE_PARAMS);
+      expect(result.ok).toBe(true);
+
+      await waitForJobCompletions();
+
+      expect(mockAbortStaleMerge).not.toHaveBeenCalled();
+      expect(mockMergeMain).not.toHaveBeenCalled();
+      const last = lastBroadcast();
+      expect(last.status).toBe("failed");
+      expect(last.errorMessage).toContain("mid-merge");
+    });
+
+    it("dispatchResolveConflictsJob seeds the resolver's conflictFiles from the job it resumes", async () => {
+      mockResolveConflictsActor.mockResolvedValue({
+        status: "resolved",
+        conflicts: [],
+      });
+      mockCommitChangesActor.mockResolvedValue({ hash: "h" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "m",
+      });
+
+      dispatchResolveConflictsJob({
+        ...BASE_RESOLVE_PARAMS,
+        conflictFiles: ["src/a.ts", "src/b.ts"],
+      });
+      await waitForJobCompletions();
+
+      expect(mockResolveConflictsActor).toHaveBeenCalledWith(
+        expect.objectContaining({ conflictFiles: ["src/a.ts", "src/b.ts"] }),
+      );
+    });
+
+    /**
+     * The retry resumes a merge that had the fix loop; losing it here would
+     * fail a conflict resolution on a lint error the original merge would have
+     * fixed itself.
+     */
+    it("dispatchResolveConflictsJob still runs the validation fix loop", async () => {
+      mockResolveConflictsActor.mockResolvedValue({
+        status: "resolved",
+        conflicts: [],
+      });
+      mockCommitChangesActor.mockResolvedValue({ hash: "h" });
+      mockCheckUncommitted.mockResolvedValue({ hasChanges: true });
+      mockRunValidation
+        .mockRejectedValueOnce(remediableValidationFailure("lint errors"))
+        .mockResolvedValueOnce(undefined);
+      mockFixValidation.mockResolvedValue({ status: "fixed" as const });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "m",
+      });
+
+      dispatchResolveConflictsJob(BASE_RESOLVE_PARAMS);
+      await waitForJobCompletions();
+
+      expect(mockFixValidation).toHaveBeenCalled();
+      expect(mockRunValidation).toHaveBeenCalledTimes(2);
+      expect(lastBroadcast().status).toBe("completed");
+    });
+
     it("dispatchResolveConflictsJob threads resolutionContext to the resolveConflicts actor", async () => {
       mockResolveConflictsActor.mockResolvedValue({
         status: "resolved",
@@ -2104,6 +2865,55 @@ describe("background-jobs", () => {
           commitSha: "landed-sha",
           intent: "Session renamed SessionStore to SessionRepo.",
           source: "session-merge",
+        }),
+      ]);
+    });
+
+    /**
+     * One landed commit gets one intent row, attributed to the surface that
+     * dispatched the merge. The graph join's own recording used to run beside
+     * this one and write the same SHA twice under a different source.
+     */
+    it("records a graph-owned merge's intent once, as a graph join", async () => {
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "lane-sha",
+      });
+
+      await runRegisteredMergeJob({
+        machine: testMachine,
+        broadcast: mockBroadcast,
+        input: {
+          jobId: "graph-job-intent",
+          projectPath: BASE_MERGE_PARAMS.projectPath,
+          projectName: BASE_MERGE_PARAMS.projectName,
+          sessionName: BASE_MERGE_PARAMS.sessionName,
+          worktreePath: BASE_MERGE_PARAMS.worktreePath,
+          branchName: BASE_MERGE_PARAMS.branchName,
+          message: BASE_MERGE_PARAMS.message,
+          autoResolve: true,
+          validationMode: {
+            mode: "run",
+            source: "graph_lane_merge",
+            selection: { mode: "only", commands: ["typecheck"] },
+          },
+          targetBranch: "main",
+          finalizeSessionOnPublish: false,
+          resolutionContext: "Lane B rewrote the scheduler.",
+        },
+      });
+
+      expect(countMergeIntents()).toBe(1);
+      expect(
+        mergeIntentsRepo.getMergeIntents(BASE_MERGE_PARAMS.projectPath, [
+          "lane-sha",
+        ]),
+      ).toEqual([
+        expect.objectContaining({
+          commitSha: "lane-sha",
+          intent: "Lane B rewrote the scheduler.",
+          source: "graph-join",
         }),
       ]);
     });
@@ -2167,9 +2977,9 @@ describe("background-jobs", () => {
     it("returns only running jobs from the registry", async () => {
       // Dispatch a merge job (stays running because actors block)
       let resolveActor: (() => void) | undefined;
-      mockCheckUncommitted.mockReturnValue(
-        new Promise<{ hasChanges: boolean }>((resolve) => {
-          resolveActor = () => resolve({ hasChanges: false });
+      mockClassifyWorktree.mockReturnValue(
+        new Promise<{ kind: string }>((resolve) => {
+          resolveActor = () => resolve({ kind: "clean" });
         }),
       );
       mockAcquireSessionLock.mockReturnValue(() => {});
@@ -2189,10 +2999,10 @@ describe("background-jobs", () => {
   describe("trace context propagation", () => {
     it("dispatchMergeJob inherits parent traceId and overrides action to job:merge", async () => {
       const captured: TraceContext[] = [];
-      mockCheckUncommitted.mockImplementation(async () => {
+      mockClassifyWorktree.mockImplementation(async () => {
         const ctx = getTraceContext();
         if (ctx) captured.push(ctx);
-        return { hasChanges: false };
+        return { kind: "clean" };
       });
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
       mockPublishActor.mockResolvedValue({
@@ -2224,10 +3034,10 @@ describe("background-jobs", () => {
 
     it("dispatchMergeJob mints a fresh traceId when dispatched without parent scope", async () => {
       const captured: TraceContext[] = [];
-      mockCheckUncommitted.mockImplementation(async () => {
+      mockClassifyWorktree.mockImplementation(async () => {
         const ctx = getTraceContext();
         if (ctx) captured.push(ctx);
-        return { hasChanges: false };
+        return { kind: "clean" };
       });
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
       mockPublishActor.mockResolvedValue({
@@ -2244,6 +3054,127 @@ describe("background-jobs", () => {
       expect(ctx.action).toBe("job:merge");
       expect(ctx.traceId).toBeTypeOf("string");
       expect(ctx.traceId.length).toBeGreaterThan(0);
+    });
+  });
+
+  // ----------------------------------------------------------
+  // abortSessionJob
+  // ----------------------------------------------------------
+  describe("abortSessionJob", () => {
+    it("fails a running merge with the operator's reason and releases the session lock", async () => {
+      mockMergeMain.mockResolvedValue({
+        status: "conflicts",
+        conflictFiles: ["src/a.ts"],
+      });
+      // A resolver turn that only ends when the machine stops it.
+      mockResolveConflictsActor.mockImplementation(() => new Promise(() => {}));
+
+      const dispatched = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        autoResolve: true,
+      });
+      expect(dispatched.ok).toBe(true);
+      await waitForJobPhase("resolving-conflicts");
+
+      const aborted = abortSessionJob("/projects/foo", "my-session");
+      expect(aborted).toEqual({
+        ok: true,
+        jobId: dispatched.ok ? dispatched.value.jobId : "",
+        delivery: "stopping",
+      });
+
+      await waitForJobCompletions();
+
+      const event = lastBroadcast();
+      expect(event.status).toBe("failed");
+      expect(event.errorMessage).toBe("Aborted by operator");
+      expect(releaseSession).toHaveBeenCalledTimes(1);
+
+      const persisted = createJobsRepo(testDb).getJobRecord(
+        dispatched.ok ? dispatched.value.jobId : "",
+      );
+      expect(persisted?.status).toBe("failed");
+      expect(persisted?.errorMessage).toBe("Aborted by operator");
+    });
+
+    it("fails a running commit with the operator's reason", async () => {
+      mockCommitChangesActor.mockResolvedValue({ hash: "abc123" });
+      mockRunValidation.mockImplementation(() => new Promise(() => {}));
+
+      const dispatched = dispatchCommitJob(BASE_COMMIT_PARAMS);
+      expect(dispatched.ok).toBe(true);
+      await waitForJobPhase("validating");
+
+      expect(abortSessionJob("/projects/foo", "my-session")).toMatchObject({
+        ok: true,
+        delivery: "stopping",
+      });
+      await waitForJobCompletions();
+
+      const event = lastBroadcast();
+      expect(event.status).toBe("failed");
+      expect(event.errorMessage).toBe("Aborted by operator");
+      expect(releaseSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("reports a stop it could only record while the merge is publishing", async () => {
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      // The publish's CAS update and session finalization are exactly what
+      // cannot be recalled, so the job lands despite the accepted stop.
+      let publishStarted = false;
+      let landPublish!: (output: {
+        status: "completed";
+        mergeHash: string;
+      }) => void;
+      mockPublishActor.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            landPublish = resolve;
+            publishStarted = true;
+          }),
+      );
+
+      const dispatched = dispatchMergeJob(BASE_MERGE_PARAMS);
+      expect(dispatched.ok).toBe(true);
+
+      const deadline = Date.now() + 2_000;
+      while (!publishStarted) {
+        if (Date.now() > deadline) throw new Error("publish never started");
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+
+      expect(abortSessionJob("/projects/foo", "my-session")).toEqual({
+        ok: true,
+        jobId: dispatched.ok ? dispatched.value.jobId : "",
+        delivery: "deferred",
+      });
+
+      landPublish({ status: "completed", mergeHash: "landed-anyway" });
+      await waitForJobCompletions();
+      expect(lastBroadcast().status).toBe("completed");
+    });
+
+    it("reports nothing to abort when the session has no job", () => {
+      expect(abortSessionJob("/projects/foo", "my-session")).toEqual({
+        ok: false,
+        error: "NO_ABORTABLE_JOB",
+      });
+    });
+
+    it("reports nothing to abort once the job has finished", async () => {
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "abc123",
+      });
+
+      dispatchMergeJob(BASE_MERGE_PARAMS);
+      await waitForJobCompletions();
+
+      expect(abortSessionJob("/projects/foo", "my-session")).toEqual({
+        ok: false,
+        error: "NO_ABORTABLE_JOB",
+      });
     });
   });
 });

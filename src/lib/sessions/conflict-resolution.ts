@@ -11,9 +11,23 @@ import type {
 import { buildIncomingChangesSection as defaultBuildIncomingChangesSection } from "@/lib/merge-intents/incoming-changes";
 import type { IncomingChangesParams } from "@/lib/merge-intents/incoming-changes";
 import { validateStructuredOutput } from "@/lib/agent-backends/structured-output";
+import {
+  isAbortFailure,
+  type AgentFailureClassification,
+} from "@/lib/agent-backends/errors";
+import { containsConflictMarkers } from "@/lib/git/conflict-markers";
 import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("conflict-resolution");
+
+/**
+ * Wall-clock bound on a single resolver or analyzer turn. The turn holds the
+ * merge — and with it the session's git lock and a worktree left mid-merge —
+ * for as long as it runs, so an agent that never returns must be cut off
+ * rather than waited on. Generous enough that a legitimately large conflict
+ * set finishes inside it.
+ */
+export const DEFAULT_RESOLUTION_TIMEOUT_MS = 900_000;
 
 // Anthropic tool input_schema requires `type: "object"` at the root, so the
 // array of entries is wrapped under a `conflicts` property.
@@ -70,6 +84,12 @@ export interface ConflictResolutionDeps {
    */
   listUnmergedFiles?(worktreePath: string): Promise<string[]>;
   /**
+   * Tracked files whose change against HEAD carries conflict markers,
+   * regardless of whether anybody named them. Defaults to the git layer's
+   * scan — the same reading the commit guard refuses on.
+   */
+  listTrackedMarkerFiles?(worktreePath: string): Promise<string[]>;
+  /**
    * Reads a worktree file for the post-resolution marker scan. Null when the
    * file does not exist (or cannot be read) — such files are skipped.
    */
@@ -85,13 +105,32 @@ const defaultDeps: ConflictResolutionDeps = {};
 // Public Types
 // ============================================================
 
+/**
+ * Three-way outcome. `unresolved` and `infrastructure` are kept apart because
+ * they demand opposite responses: an unresolved conflict is file content a
+ * human or a re-dispatched agent must decide, while an infrastructure failure
+ * means the resolver never read the conflict at all — retrying it against the
+ * same wall (or blaming the files it never opened) is wrong on both counts.
+ */
 export type ConflictResolutionResult =
   | { status: "resolved"; conflicts: ConflictEntry[] }
-  | { status: "failed"; error: string; partialConflicts?: ConflictEntry[] };
+  | {
+      /** The resolver ran against the conflict and it is still unresolved:
+       *  ground-truth verification failed, or verification could not run. */
+      status: "unresolved";
+      error: string;
+      partialConflicts?: ConflictEntry[];
+    }
+  | {
+      /** The resolver never (or only partially) ran: backend error, quota,
+       *  abort, timeout, structured-output failure. */
+      status: "infrastructure";
+      failure: AgentFailureClassification;
+    };
 
 export type ConflictAnalysisResult =
   | { status: "analyzed"; conflicts: ConflictEntry[] }
-  | { status: "failed"; error: string };
+  | { status: "infrastructure"; failure: AgentFailureClassification };
 
 export interface ResolveConflictsParams {
   worktreePath: string;
@@ -111,6 +150,11 @@ export interface ResolveConflictsParams {
    *  file with markers clears git's unmerged state, so the unmerged-paths
    *  check alone cannot catch it. */
   conflictFiles?: string[];
+  /** Overrides {@link DEFAULT_RESOLUTION_TIMEOUT_MS} for this turn. */
+  resolutionTimeoutMs?: number;
+  /** Cancels the resolver turn when the caller's run is stopped, so the agent
+   *  stops editing a worktree nothing is waiting on. */
+  signal?: AbortSignal;
 }
 
 export interface AnalyzeConflictsParams {
@@ -122,6 +166,10 @@ export interface AnalyzeConflictsParams {
   resolutionContext?: string;
   /** See {@link ResolveConflictsParams.targetBranch}. */
   targetBranch?: string;
+  /** See {@link ResolveConflictsParams.resolutionTimeoutMs}. */
+  resolutionTimeoutMs?: number;
+  /** See {@link ResolveConflictsParams.signal}. */
+  signal?: AbortSignal;
 }
 
 // ============================================================
@@ -282,22 +330,18 @@ export function parseConflictEntries(
 // Post-resolution ground-truth verification
 // ============================================================
 
-/**
- * Whether text contains git conflict begin/end markers (`<<<<<<< `,
- * `>>>>>>> `, or the diff3 `||||||| ` base marker) at line start. The bare
- * `=======` separator is deliberately NOT matched — it appears standalone in
- * legitimate content (markdown setext headings, ini separators) and never
- * without a begin/end marker in a real conflict.
- */
-export function containsConflictMarkers(content: string): boolean {
-  return /^(<{7}|>{7}|\|{7}) /m.test(content);
-}
-
 async function defaultListUnmergedFiles(
   worktreePath: string,
 ): Promise<string[]> {
   const { listUnmergedFiles } = await import("@/lib/git/worktree");
   return listUnmergedFiles(worktreePath);
+}
+
+async function defaultListTrackedMarkerFiles(
+  worktreePath: string,
+): Promise<string[]> {
+  const { scanConflictArtifacts } = await import("@/lib/git/conflict-markers");
+  return (await scanConflictArtifacts(worktreePath)).markerFiles;
 }
 
 async function defaultReadWorktreeFile(
@@ -315,11 +359,14 @@ async function defaultReadWorktreeFile(
 
 /**
  * Verify a claimed resolution against git ground truth before the caller
- * commits it: no unmerged index entries may remain, and neither the files the
- * merge reported as conflicted nor the files the agent claims to have
- * resolved may still contain conflict markers. The agent's "resolved" signal
- * is never trusted on its own — a mis-dispatched or sloppy agent turn
- * otherwise gets its markers committed verbatim by the next machine state.
+ * commits it: no unmerged index entries may remain, and no marker may survive
+ * in the files the merge reported as conflicted, the files the agent claims to
+ * have resolved, or any tracked file the turn changed. The agent's "resolved"
+ * signal is never trusted on its own — a mis-dispatched or sloppy agent turn
+ * otherwise gets its markers committed verbatim by the next machine state —
+ * and the third reading is what makes the check independent of the entry path:
+ * a re-entry that lost the conflict list, or an agent that stages a
+ * marker-bearing file it never mentions, is caught by git's own scan.
  */
 async function verifyResolutionGroundTruth(
   resolution: { status: "resolved"; conflicts: ConflictEntry[] },
@@ -327,12 +374,16 @@ async function verifyResolutionGroundTruth(
   deps: ConflictResolutionDeps,
 ): Promise<ConflictResolutionResult> {
   const listUnmergedFiles = deps.listUnmergedFiles ?? defaultListUnmergedFiles;
+  const listTrackedMarkerFiles =
+    deps.listTrackedMarkerFiles ?? defaultListTrackedMarkerFiles;
   const readWorktreeFile = deps.readWorktreeFile ?? defaultReadWorktreeFile;
   const { worktreePath } = params;
 
   let unmerged: string[];
+  let trackedMarkerFiles: string[];
   try {
     unmerged = await listUnmergedFiles(worktreePath);
+    trackedMarkerFiles = await listTrackedMarkerFiles(worktreePath);
   } catch (err) {
     const errorMsg = getErrorMessage(err);
     logger.error("conflict-resolution.ground_truth_check_error", {
@@ -340,7 +391,7 @@ async function verifyResolutionGroundTruth(
       error: errorMsg,
     });
     return {
-      status: "failed",
+      status: "unresolved",
       error: `Could not verify conflict resolution in ${worktreePath}: ${errorMsg}`,
       partialConflicts: resolution.conflicts,
     };
@@ -352,19 +403,21 @@ async function verifyResolutionGroundTruth(
       unmerged,
     });
     return {
-      status: "failed",
+      status: "unresolved",
       error: `Conflict resolution reported success but ${unmerged.length} file(s) remain unresolved in ${worktreePath}: ${unmerged.join(", ")}`,
       partialConflicts: resolution.conflicts,
     };
   }
 
+  // Already confirmed against the marker regex by the git-layer scan, so the
+  // named files are the only ones this re-reads.
   const filesToScan = [
     ...new Set([
       ...params.conflictFiles,
       ...resolution.conflicts.map((entry) => entry.file),
     ]),
-  ];
-  const markerFiles: string[] = [];
+  ].filter((file) => !trackedMarkerFiles.includes(file));
+  const markerFiles: string[] = [...trackedMarkerFiles];
   for (const file of filesToScan) {
     const content = await readWorktreeFile(worktreePath, file);
     if (content !== null && containsConflictMarkers(content)) {
@@ -378,7 +431,7 @@ async function verifyResolutionGroundTruth(
       markerFiles,
     });
     return {
-      status: "failed",
+      status: "unresolved",
       error: `Conflict resolution left conflict markers in: ${markerFiles.join(", ")}`,
       partialConflicts: resolution.conflicts,
     };
@@ -386,7 +439,7 @@ async function verifyResolutionGroundTruth(
 
   logger.info("conflict-resolution.ground_truth_verified", {
     worktreePath,
-    scannedFiles: filesToScan.length,
+    namedFiles: filesToScan.length,
   });
   return resolution;
 }
@@ -442,6 +495,7 @@ async function resolveConflictsImpl(
   } = params;
   const executeWorkflowTaskRun =
     deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
+  const timeoutMs = params.resolutionTimeoutMs ?? DEFAULT_RESOLUTION_TIMEOUT_MS;
 
   logger.info("conflict-resolution.start", {
     worktreePath,
@@ -450,6 +504,7 @@ async function resolveConflictsImpl(
     conversationId,
     resolutionContextLength: resolutionContext?.length ?? 0,
     targetBranch: targetBranch ?? null,
+    timeoutMs,
   });
 
   let prompt =
@@ -477,6 +532,8 @@ async function resolveConflictsImpl(
       kind: "task_run",
       prompt,
       systemInstructions: CONFLICT_RESOLUTION_INSTRUCTIONS,
+      timeoutMs,
+      signal: params.signal,
       outputFormat: {
         type: "json_schema",
         schema: CONFLICT_ENTRIES_OUTPUT_SCHEMA as unknown as Record<
@@ -495,13 +552,70 @@ async function resolveConflictsImpl(
       deps,
     );
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : "Unknown error";
+    const failure = classifyThrownDispatchFailure(err);
     logger.error("conflict-resolution.runner_error", {
       worktreePath,
-      error: errorMsg,
+      error: failure.message,
+      failureKind: failure.kind,
     });
-    return { status: "failed", error: errorMsg };
+    return { status: "infrastructure", failure };
   }
+}
+
+/**
+ * Fallback classification for a failed turn the conversation layer did not
+ * classify. `aborted` is a turn fact rather than message text, so it decides
+ * before any message-shape reading; everything else is an unrecognized
+ * backend failure, which is never retried on the strength of a guess.
+ */
+function classifyTaskRunError(
+  result: Extract<TaskRunResult, { kind: "error" }>,
+): AgentFailureClassification {
+  if (result.failure) return applyResolutionRetryPolicy(result.failure);
+  return {
+    kind: result.aborted ? "aborted" : "backend_error",
+    message: result.error,
+    retryable: false,
+  };
+}
+
+/**
+ * Retryability of a resolver turn in the merge context, which differs from the
+ * backend's general answer for one kind.
+ *
+ * A backend classifier answers for an arbitrary conversation turn, where a
+ * timeout leaves a turn of unknown progress attached to a live conversation
+ * and re-dispatching it may duplicate whatever it did. The resolver's turn is
+ * different on both counts: the caller cut it off at a bound it chose, and the
+ * merge retry starts from an aborted merge and a re-created conflict, so a
+ * second attempt repeats nothing. A slow or stuck turn is precisely the
+ * transient failure the join's single clean retry exists for; every other kind
+ * keeps the backend's verdict.
+ */
+function applyResolutionRetryPolicy(
+  failure: AgentFailureClassification,
+): AgentFailureClassification {
+  if (failure.kind !== "timeout" || failure.retryable) return failure;
+  return { ...failure, retryable: true };
+}
+
+function classifyThrownDispatchFailure(
+  err: unknown,
+): AgentFailureClassification {
+  return {
+    kind: isAbortFailure(err) ? "aborted" : "backend_error",
+    message: getErrorMessage(err),
+    retryable: false,
+  };
+}
+
+/**
+ * A turn that came back but carried no schema-valid conflict payload. The
+ * agent may still have edited the files correctly, so this is a retryable
+ * infrastructure failure rather than a verdict about the conflict.
+ */
+function classifyParseFailure(error: string): AgentFailureClassification {
+  return { kind: "schema_validation", message: error, retryable: true };
 }
 
 function mapTaskRunResultToResolution(
@@ -509,12 +623,15 @@ function mapTaskRunResultToResolution(
   worktreePath: string,
 ): ConflictResolutionResult {
   if (result.kind === "error") {
+    const failure = classifyTaskRunError(result);
     logger.error("conflict-resolution.task_error", {
       worktreePath,
       error: result.error,
       aborted: result.aborted,
+      failureKind: failure.kind,
+      retryable: failure.retryable,
     });
-    return { status: "failed", error: result.error };
+    return { status: "infrastructure", failure };
   }
 
   const { text, structuredOutput } = extractTextAndStructured(result);
@@ -524,7 +641,10 @@ function mapTaskRunResultToResolution(
       worktreePath,
       error: parseResult.error,
     });
-    return { status: "failed", error: parseResult.error };
+    return {
+      status: "infrastructure",
+      failure: classifyParseFailure(parseResult.error),
+    };
   }
 
   logger.info("conflict-resolution.resolved", {
@@ -539,12 +659,15 @@ function mapTaskRunResultToAnalysis(
   worktreePath: string,
 ): ConflictAnalysisResult {
   if (result.kind === "error") {
+    const failure = classifyTaskRunError(result);
     logger.error("conflict-analysis.task_error", {
       worktreePath,
       error: result.error,
       aborted: result.aborted,
+      failureKind: failure.kind,
+      retryable: failure.retryable,
     });
-    return { status: "failed", error: result.error };
+    return { status: "infrastructure", failure };
   }
 
   const { text, structuredOutput } = extractTextAndStructured(result);
@@ -554,7 +677,10 @@ function mapTaskRunResultToAnalysis(
       worktreePath,
       error: parseResult.error,
     });
-    return { status: "failed", error: parseResult.error };
+    return {
+      status: "infrastructure",
+      failure: classifyParseFailure(parseResult.error),
+    };
   }
 
   logger.info("conflict-analysis.analyzed", {
@@ -606,6 +732,7 @@ async function analyzeConflictsImpl(
   } = params;
   const executeWorkflowTaskRun =
     deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
+  const timeoutMs = params.resolutionTimeoutMs ?? DEFAULT_RESOLUTION_TIMEOUT_MS;
 
   logger.info("conflict-analysis.start", {
     worktreePath,
@@ -614,6 +741,7 @@ async function analyzeConflictsImpl(
     conversationId,
     resolutionContextLength: resolutionContext?.length ?? 0,
     targetBranch: targetBranch ?? null,
+    timeoutMs,
   });
 
   let prompt =
@@ -637,6 +765,8 @@ async function analyzeConflictsImpl(
       kind: "task_run",
       prompt,
       systemInstructions: CONFLICT_ANALYSIS_INSTRUCTIONS,
+      timeoutMs,
+      signal: params.signal,
       outputFormat: {
         type: "json_schema",
         schema: CONFLICT_ENTRIES_OUTPUT_SCHEMA as unknown as Record<
@@ -649,11 +779,12 @@ async function analyzeConflictsImpl(
 
     return mapTaskRunResultToAnalysis(result, worktreePath);
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : "Unknown error";
+    const failure = classifyThrownDispatchFailure(err);
     logger.error("conflict-analysis.runner_error", {
       worktreePath,
-      error: errorMsg,
+      error: failure.message,
+      failureKind: failure.kind,
     });
-    return { status: "failed", error: errorMsg };
+    return { status: "infrastructure", failure };
   }
 }

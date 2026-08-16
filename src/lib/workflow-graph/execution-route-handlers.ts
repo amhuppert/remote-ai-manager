@@ -699,9 +699,12 @@ const planRepairSupervisor = createPlanRepairSupervisor({
       expectedExecutionId: executionId,
     });
     // The manager raises a transition conflict rather than resuming the
-    // successor, which the supervisor records as an unresumed round.
+    // successor, which the supervisor records as an unresumed round. No human
+    // is in this loop, so the resume declares itself automatic and the manager
+    // refuses halts only restored capacity can clear.
     const execution = await workflowManager.resume(projectPath, sessionName, {
       expectedExecutionId: executionId,
+      initiator: "system",
     });
     // Fire-and-forget like the RESUME route's kick: the loop owns its own
     // failure handling (recovery_error halts), so a rejection here is only

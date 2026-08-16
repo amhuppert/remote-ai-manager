@@ -31,3 +31,19 @@ export async function resolveLaneMergeRunValidationMode(input: {
     selection: { mode: "only", commands: [...commands] },
   };
 }
+
+/**
+ * What a lane-merge validation run identifies itself as in the join's evidence
+ * ledger: the `+`-joined command list, `""` for a selection that runs nothing.
+ *
+ * A `project-pre-merge` selection names a repo-config list resolved at
+ * submission rather than a list decided here, so it identifies itself by that
+ * name. Lane-merge resolution never produces one — it always resolves the
+ * project list into an explicit selection first.
+ */
+export function laneMergeCommandIdentity(mode: RunMergeValidationMode): string {
+  const selection = mode.selection;
+  return selection.mode === "only"
+    ? selection.commands.join("+")
+    : "project-pre-merge";
+}

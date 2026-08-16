@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
-import { createActor } from "xstate";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createActor, toPromise } from "xstate";
+import { defaultGitClient } from "@/lib/git/client";
 import type { PerRepoConfig } from "@/lib/config/schemas";
 import type {
   ValidationService,
@@ -9,6 +13,7 @@ import type {
 import type { ValidationRunResult } from "@/lib/validation/schemas";
 import { isTimeoutError } from "../utils";
 import {
+  commitChangesActor,
   createRunValidationActor,
   performMergeValidation,
   type MergeValidationDeps,
@@ -528,5 +533,68 @@ describe("performMergeValidation", () => {
       validationFailureClass: "infrastructure",
     });
     expect(harness.waitedRunIds).toHaveLength(0);
+  });
+});
+
+// ============================================================
+// commitChangesActor
+// ============================================================
+
+describe("commitChangesActor", () => {
+  const repos: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(
+      repos.splice(0).map((repo) => rm(repo, { recursive: true, force: true })),
+    );
+  });
+
+  async function git(repo: string, args: string[]): Promise<string> {
+    const { stdout } = await defaultGitClient.git(args, repo);
+    return stdout.trim();
+  }
+
+  /** A repo with one commit and an uncommitted edit waiting to be captured. */
+  async function createDirtyRepo(): Promise<string> {
+    const repo = await mkdtemp(path.join(tmpdir(), "cc-commit-actor-"));
+    repos.push(repo);
+    await git(repo, ["init", "--initial-branch=feature", "."]);
+    await git(repo, ["config", "user.email", "engine@command-center.test"]);
+    await git(repo, ["config", "user.name", "Command Center"]);
+    await writeFile(path.join(repo, "file.txt"), "base\n", "utf-8");
+    await git(repo, ["add", "file.txt"]);
+    await git(repo, ["commit", "-m", "base"]);
+    await writeFile(path.join(repo, "file.txt"), "edited\n", "utf-8");
+    return repo;
+  }
+
+  function startCommit(repo: string) {
+    const actor = createActor(commitChangesActor, {
+      input: { worktreePath: repo, message: "WIP", skipHooks: true },
+    });
+    actor.start();
+    return actor;
+  }
+
+  it("captures the worktree's changes", async () => {
+    const repo = await createDirtyRepo();
+
+    const actor = startCommit(repo);
+    const { hash } = await toPromise(actor);
+
+    expect(hash).toMatch(/^[0-9a-f]{7,40}$/);
+    expect(await git(repo, ["log", "-1", "--format=%s"])).toBe("WIP");
+    expect(await git(repo, ["status", "--porcelain"])).toBe("");
+  });
+
+  it("does not start a commit for a state the machine already left", async () => {
+    const repo = await createDirtyRepo();
+
+    const actor = startCommit(repo);
+    actor.stop();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    expect(await git(repo, ["log", "--format=%s"])).toBe("base");
+    expect(await git(repo, ["status", "--porcelain"])).toContain("file.txt");
   });
 });

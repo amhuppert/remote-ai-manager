@@ -103,6 +103,9 @@ function makeDeps(
       confirmationPersisted: true,
     })),
     getConversationRole: vi.fn(async () => null),
+    evaluateSessionMergeAdmission: vi.fn(async () => ({
+      admitted: true as const,
+    })),
     ...overrides,
   };
 }
@@ -369,6 +372,50 @@ describe("createConversationCommandService eligible path", () => {
     );
   });
 
+  /**
+   * The publish actor refuses this merge under the project lock anyway, so
+   * without the advisory pre-check the command pays for a generation turn and a
+   * full merge pipeline before learning the answer.
+   */
+  it("refuses /merge before any agent turn while a graph workflow holds the session lease", async () => {
+    const deps = makeDeps({
+      evaluateSessionMergeAdmission: vi.fn(async () => ({
+        admitted: false as const,
+        refusal: {
+          code: "GRAPH_WORKFLOW_ACTIVE" as const,
+          executionId: "execution-1",
+          status: "running" as const,
+          remedy: "inspect_or_pause" as const,
+          message:
+            "Graph workflow execution execution-1 is running. Complete or abort it before merging this session.",
+        },
+      })),
+    });
+    const service = createConversationCommandService(deps);
+
+    const outcome = await service.run(
+      makeInput({ parsed: { command: "merge", hint: "" } }),
+    );
+
+    expect(outcome).toEqual({ status: "rejected", reason: "workflow-active" });
+    expect(deps.executeWorkflowTaskRun).not.toHaveBeenCalled();
+    expect(deps.resolveMergeTarget).not.toHaveBeenCalled();
+    expect(deps.dispatchMergeJob).not.toHaveBeenCalled();
+    expect(vi.mocked(deps.appendNotice).mock.calls[0]?.[0]?.text).toContain(
+      "Complete or abort it before merging this session.",
+    );
+  });
+
+  it("does not consult the merge admission guard for /commit", async () => {
+    const deps = makeDeps();
+    const service = createConversationCommandService(deps);
+
+    await service.run(makeInput({ parsed: { command: "commit", hint: "" } }));
+
+    expect(deps.evaluateSessionMergeAdmission).not.toHaveBeenCalled();
+    expect(deps.dispatchCommitJob).toHaveBeenCalled();
+  });
+
   it("dispatches a merge job with autoResolve and the resolved target", async () => {
     const deps = makeDeps({
       resolveMergeTarget: vi.fn(async () => ({
@@ -391,7 +438,6 @@ describe("createConversationCommandService eligible path", () => {
       expect.objectContaining({
         autoResolve: true,
         targetBranch: "csm/parent",
-        targetWorktreePath: "/tmp/worktrees/parent",
         message: "Add eligibility checks",
       }),
     );

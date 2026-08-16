@@ -10,6 +10,14 @@
 import { assign } from "xstate";
 
 /**
+ * Terminal reason recorded when an operator stops a running job machine. One
+ * string across the merge and commit machines: the surfaces that render it (job
+ * notification, halt copy) read it as the same fact, not as a per-machine
+ * message.
+ */
+export const OPERATOR_ABORT_ERROR = "Aborted by operator";
+
+/**
  * Extract a human-readable error message from an unknown thrown value.
  *
  * Handles:

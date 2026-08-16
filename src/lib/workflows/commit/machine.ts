@@ -18,7 +18,17 @@
  */
 
 import { setup, assign, fromPromise } from "xstate";
-import type { CommitContext, CommitInput, CommitOutput } from "./types";
+import type {
+  CommitContext,
+  CommitEvent,
+  CommitInput,
+  CommitOutput,
+} from "./types";
+import type {
+  ClassifyWorktreeInput,
+  ClassifyWorktreeOutput,
+} from "../merge/actors";
+import { classifyWorktreeActor } from "../merge/actors";
 import type {
   CheckUncommittedInput,
   CheckUncommittedOutput,
@@ -36,7 +46,11 @@ import {
   fixValidation,
 } from "../validation-fix/actors";
 import { createValidationFixStates } from "../validation-fix/states";
-import { errorAssign, createTerminalStates } from "../utils";
+import {
+  errorAssign,
+  createTerminalStates,
+  OPERATOR_ABORT_ERROR,
+} from "../utils";
 
 const SCHEMA_VERSION = 1;
 
@@ -78,10 +92,14 @@ export type CommitMachineType = typeof commitMachine;
 export const commitMachine = setup({
   types: {
     context: {} as CommitContext,
+    events: {} as CommitEvent,
     input: {} as CommitInput,
     output: {} as CommitOutput,
   },
   actors: {
+    classifyWorktree: classifyWorktreeActor as ReturnType<
+      typeof fromPromise<ClassifyWorktreeOutput, ClassifyWorktreeInput>
+    >,
     checkUncommitted: checkUncommitted as ReturnType<
       typeof fromPromise<CheckUncommittedOutput, CheckUncommittedInput>
     >,
@@ -118,8 +136,59 @@ export const commitMachine = setup({
     maxFixAttempts: input.maxFixAttempts ?? 2,
     finalStatus: null,
   }),
-  initial: "committing",
+  initial: "classifyingWorktree",
+  // An operator can stop the run from any phase; the state exit stops the
+  // in-flight actor, whose AbortSignal cancels the validation run it started.
+  on: { ABORT: ".aborting" },
   states: {
+    /**
+     * Smart Commit has no merge to continue, so every merge-bearing worktree
+     * is somebody else's unfinished work: it refuses under both readings
+     * rather than sweeping a half-merged tree into a commit.
+     */
+    classifyingWorktree: {
+      invoke: {
+        src: "classifyWorktree",
+        input: ({ context }) => ({ worktreePath: context.worktreePath }),
+        onDone: [
+          {
+            guard: ({ event }) =>
+              event.output.kind === "clean" || event.output.kind === "dirty",
+            target: "committing",
+          },
+          {
+            target: "failed",
+            actions: [
+              assign({
+                error: ({ context, event }) => {
+                  if (event.output.kind === "mid-merge") {
+                    return event.output.unresolved
+                      ? `Worktree ${context.worktreePath} is mid-merge with unresolved conflicts. Resolve and commit the merge, or abort it (git merge --abort), before committing.`
+                      : `Worktree ${context.worktreePath} holds a merge whose conflicts are resolved but not committed. Conclude that merge (git commit) instead of starting a new commit.`;
+                  }
+                  if (event.output.kind !== "poisoned") {
+                    return `Worktree ${context.worktreePath} could not be classified before committing`;
+                  }
+                  const files = [
+                    ...new Set([
+                      ...event.output.artifacts.unmergedFiles,
+                      ...event.output.artifacts.markerFiles,
+                    ]),
+                  ];
+                  return `Worktree ${context.worktreePath} carries conflict artifacts with no merge in progress — ${files.length} file(s): ${files.join(", ")}. Restore or resolve them by hand; nothing may commit this state.`;
+                },
+              }),
+              assign({ phase: null }),
+            ],
+          },
+        ],
+        onError: {
+          target: "failed",
+          actions: [errorAssign(), assign({ phase: null })],
+        },
+      },
+    },
+
     committing: {
       entry: assign({ phase: "committing" as const }),
       invoke: {
@@ -144,6 +213,23 @@ export const commitMachine = setup({
 
     // Shared validate → fix → check → commit-fix → revalidate fragment
     ...validationFixStates,
+
+    /**
+     * Where an operator's stop lands. Smart Commit opens no merge of its own —
+     * a merge-bearing worktree is refused at classification — so there is
+     * nothing here to clean up, and a `git merge --abort` would discard a merge
+     * this run never started.
+     */
+    aborting: {
+      always: {
+        target: "failed",
+        actions: assign({
+          error: OPERATOR_ABORT_ERROR,
+          phase: null,
+          completedAt: () => new Date().toISOString(),
+        }),
+      },
+    },
 
     // Standard terminal states (completed, failed)
     ...terminals,

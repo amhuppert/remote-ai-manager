@@ -168,6 +168,163 @@ describe("getJobRecord", () => {
   });
 });
 
+/**
+ * A parked merge outlives the process that prepared it: after a restart the job
+ * registry is empty, so the durable row is the only thing that still knows a
+ * commit is waiting under `refs/cc-merges/` and what landing it would need.
+ */
+describe("findLatestJobRecordForSession and listParkedJobRecords", () => {
+  function parkJob(
+    jobId: string,
+    overrides: {
+      sessionName?: string;
+      preparedSha?: string;
+      finalizeSessionOnPublish?: boolean;
+      resolutionContext?: string;
+    } = {},
+  ): void {
+    repo.createJobRecord({
+      jobId,
+      jobType: "merge",
+      status: "running",
+      projectName: "my-project",
+      sessionName: overrides.sessionName ?? "feature",
+      branchName: "csm/feature",
+      startedAt: "2026-06-09 12:00:00",
+      ...(overrides.finalizeSessionOnPublish !== undefined
+        ? { finalizeSessionOnPublish: overrides.finalizeSessionOnPublish }
+        : {}),
+      ...(overrides.resolutionContext !== undefined
+        ? { resolutionContext: overrides.resolutionContext }
+        : {}),
+    });
+    repo.updateJobRecord(jobId, {
+      status: "ready-to-land",
+      parkedRef: `refs/cc-merges/${jobId}`,
+      preparedSha: overrides.preparedSha ?? `${jobId}-prepared`,
+      expectedTargetSha: "target-sha",
+    });
+  }
+
+  it("reconstructs the parked merge's bookkeeping for the session", () => {
+    parkJob("job-parked", {
+      finalizeSessionOnPublish: false,
+      resolutionContext: "kept the session's rename",
+    });
+
+    const record = repo.findLatestJobRecordForSession("my-project", "feature");
+
+    expect(record).toMatchObject({
+      jobId: "job-parked",
+      status: "ready-to-land",
+      parkedRef: "refs/cc-merges/job-parked",
+      preparedSha: "job-parked-prepared",
+      expectedTargetSha: "target-sha",
+      finalizeSessionOnPublish: false,
+      resolutionContext: "kept the session's rename",
+    });
+  });
+
+  it("returns the most recent parked merge when the session parked more than once", () => {
+    parkJob("job-parked-old");
+    parkJob("job-parked-new");
+
+    expect(
+      repo.findLatestJobRecordForSession("my-project", "feature")?.jobId,
+    ).toBe("job-parked-new");
+  });
+
+  it("ignores other sessions", () => {
+    parkJob("job-other-session", { sessionName: "other" });
+
+    expect(
+      repo.findLatestJobRecordForSession("my-project", "feature"),
+    ).toBeNull();
+  });
+
+  /**
+   * A land or discard runs as its own job for the session, so the candidate's
+   * row stops being the latest the moment it is acted on. Answering with it
+   * again would offer a merge that has already been landed or dropped.
+   */
+  it("answers with the job that took the session from a parked candidate", () => {
+    parkJob("job-parked");
+    repo.createJobRecord({
+      jobId: "job-land",
+      jobType: "merge",
+      status: "running",
+      projectName: "my-project",
+      sessionName: "feature",
+      branchName: "csm/feature",
+      startedAt: "2026-06-09 12:00:00",
+    });
+    repo.updateJobRecord("job-land", {
+      status: "completed",
+      mergeHash: "landed-sha",
+    });
+
+    expect(
+      repo.findLatestJobRecordForSession("my-project", "feature"),
+    ).toMatchObject({ jobId: "job-land", status: "completed" });
+  });
+
+  it("lists every parked candidate row the session still has on offer", () => {
+    parkJob("job-parked-old");
+    parkJob("job-parked-new");
+    parkJob("job-other-session", { sessionName: "other" });
+    parkJob("job-landed");
+    repo.updateJobRecord("job-landed", {
+      status: "completed",
+      mergeHash: "landed-sha",
+    });
+
+    expect(
+      repo
+        .listParkedJobRecords("my-project", "feature")
+        .map((record) => record.jobId),
+    ).toEqual(["job-parked-new", "job-parked-old"]);
+  });
+});
+
+/**
+ * Startup GC input: which job ids may still own a `refs/cc-merges/` ref. A
+ * `running` row survives the sweep only when its owner process is alive, so it
+ * may be a merge mid-prepare in another worker sharing this database.
+ */
+describe("listJobIdsHoldingParkedRefs", () => {
+  it("reports parked and in-flight jobs, not finished ones", () => {
+    for (const [jobId, status] of [
+      ["job-parked", "ready-to-land"],
+      ["job-discarded", "discarded"],
+      ["job-landed", "completed"],
+    ] as const) {
+      repo.createJobRecord({
+        jobId,
+        jobType: "merge",
+        status: "running",
+        projectName: "my-project",
+        sessionName: "feature",
+        branchName: "csm/feature",
+        startedAt: "2026-06-09 12:00:00",
+      });
+      repo.updateJobRecord(jobId, { status });
+    }
+    repo.createJobRecord({
+      jobId: "job-running",
+      jobType: "merge",
+      status: "running",
+      projectName: "my-project",
+      sessionName: "other",
+      branchName: "csm/other",
+      startedAt: "2026-06-09 12:00:00",
+    });
+
+    expect(new Set(repo.listJobIdsHoldingParkedRefs())).toEqual(
+      new Set(["job-parked", "job-running"]),
+    );
+  });
+});
+
 describe("findLatestPublishedMergeByExecutionId", () => {
   it("ignores completed linked merges that do not close a final publish join", () => {
     repo.createJobRecord({
@@ -246,6 +403,34 @@ describe("findLatestPublishedMergeByExecutionId", () => {
     expect(
       repo.findLatestPublishedMergeByExecutionId("workflow-execution-1"),
     ).toEqual({ mergeHash: "sha-retry", deliveryGatePassed: true });
+  });
+
+  /**
+   * A final publish that found the target already containing the branch landed
+   * no commit, so the row carries no merge hash — but the work reached the
+   * target, and the reconciliation read is the only thing left to say so after
+   * a crash between the job's terminal and its Delivered marking.
+   */
+  it("reconciles a completed final publish that had nothing to land", () => {
+    repo.createJobRecord({
+      jobId: "merge-no-op",
+      jobType: "merge",
+      status: "running",
+      projectName: "my-project",
+      sessionName: "feature",
+      branchName: "csm/feature",
+      startedAt: "2026-06-09 12:00:00",
+      executionId: "workflow-execution-noop",
+      finalPublish: true,
+    });
+    repo.updateJobRecord("merge-no-op", {
+      status: "completed",
+      expectedTargetSha: "target-tip-sha",
+    });
+
+    expect(
+      repo.findLatestPublishedMergeByExecutionId("workflow-execution-noop"),
+    ).toEqual({ mergeHash: "target-tip-sha", deliveryGatePassed: true });
   });
 
   it("ignores failed and ready-to-land jobs", () => {

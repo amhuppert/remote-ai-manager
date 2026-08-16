@@ -198,12 +198,22 @@ describe("commitChanges", () => {
     { stdout: "" },
     { stdout: "differenttree\n" },
   ];
-  /** Index of the first call `commitChanges` makes on its own. */
-  const AFTER_VERDICT = DIRTY_VERDICT.length;
+  /** The conflict-artifact guard's probes, all finding nothing: unmerged
+   *  entries, the changed-lines marker check, then the two candidate readings
+   *  `--check` cannot see (binary changes, untracked files). */
+  const CLEAN_GUARD = [
+    { stdout: "" },
+    { stdout: "" },
+    { stdout: "" },
+    { stdout: "" },
+  ];
+  /** Index of the first call `commitChanges` makes past verdict and guard. */
+  const AFTER_VERDICT = DIRTY_VERDICT.length + CLEAN_GUARD.length;
 
   it("stages all and commits, returning the hash", async () => {
     mockGitSequence([
       ...DIRTY_VERDICT,
+      ...CLEAN_GUARD,
       { stdout: "" },
       { stdout: "[csm/my-session abc1234] Add feature\n 1 file changed\n" },
     ]);
@@ -211,6 +221,16 @@ describe("commitChanges", () => {
     const result = await ops.commitChanges("/worktree", "Add feature");
     expect(result.hash).toBe("abc1234");
 
+    expect(gitMock.mock.calls[DIRTY_VERDICT.length]![0]).toEqual([
+      "diff",
+      "--name-only",
+      "--diff-filter=U",
+    ]);
+    expect(gitMock.mock.calls[DIRTY_VERDICT.length + 1]![0]).toEqual([
+      "diff",
+      "HEAD",
+      "--check",
+    ]);
     expect(gitMock.mock.calls[AFTER_VERDICT]![0]).toEqual(["add", "-A"]);
     expect(gitMock.mock.calls[AFTER_VERDICT + 1]![0]).toEqual([
       "commit",
@@ -249,6 +269,7 @@ describe("commitChanges", () => {
       { stdout: "" },
       { stdout: "" },
       { stdout: "abc1234def5678\n" },
+      ...CLEAN_GUARD,
       { stdout: "" },
       { stdout: "[csm/my-session abc1234] resolve merge conflicts\n" },
     ]);
@@ -265,7 +286,7 @@ describe("commitChanges", () => {
       "--verify",
       "MERGE_HEAD",
     ]);
-    expect(gitMock.mock.calls[5]![0]).toEqual([
+    expect(gitMock.mock.calls[9]![0]).toEqual([
       "commit",
       "-m",
       "resolve merge conflicts",
@@ -275,6 +296,7 @@ describe("commitChanges", () => {
   it("passes --no-verify when skipHooks is true", async () => {
     mockGitSequence([
       ...DIRTY_VERDICT,
+      ...CLEAN_GUARD,
       { stdout: "" },
       { stdout: "[csm/my-session abc1234] WIP commit\n 1 file changed\n" },
     ]);
@@ -295,6 +317,7 @@ describe("commitChanges", () => {
   it("does not pass --no-verify by default", async () => {
     mockGitSequence([
       ...DIRTY_VERDICT,
+      ...CLEAN_GUARD,
       { stdout: "" },
       { stdout: "[csm/my-session abc1234] Add feature\n 1 file changed\n" },
     ]);
@@ -311,6 +334,7 @@ describe("commitChanges", () => {
   it("returns empty hash when git output format is unexpected", async () => {
     mockGitSequence([
       ...DIRTY_VERDICT,
+      ...CLEAN_GUARD,
       { stdout: "" },
       { stdout: "Unexpected output format" },
     ]);
@@ -639,6 +663,167 @@ describe("commitChanges concludes an in-progress merge (real git repo)", () => {
       .trim()
       .split(" ");
     expect(parents).toHaveLength(3);
+  });
+});
+
+describe("commitChanges refuses conflict artifacts (real git repo)", () => {
+  let repoPath: string;
+
+  async function gitIn(args: string[]): Promise<string> {
+    const { stdout } = await execFileAsync("git", args, {
+      cwd: repoPath,
+      env: buildChildEnv(),
+    });
+    return stdout;
+  }
+
+  /** Leave the worktree mid-merge with markers in file.ts. */
+  async function startConflictingMerge(): Promise<void> {
+    await expect(gitIn(["merge", "main"])).rejects.toThrow();
+  }
+
+  async function headSha(): Promise<string> {
+    return (await gitIn(["rev-parse", "HEAD"])).trim();
+  }
+
+  beforeEach(async () => {
+    repoPath = await mkdtemp(join(tmpdir(), "cc-marker-guard-"));
+    await gitIn(["init", "-b", "main"]);
+    await gitIn(["config", "user.email", "test@example.com"]);
+    await gitIn(["config", "user.name", "Test"]);
+    await writeFile(join(repoPath, "file.ts"), "export const v = 'base';\n");
+    await gitIn(["add", "-A"]);
+    await gitIn(["commit", "-m", "base", "--no-verify"]);
+    await gitIn(["checkout", "-b", "feature"]);
+    await writeFile(join(repoPath, "file.ts"), "export const v = 'ours';\n");
+    await gitIn(["add", "-A"]);
+    await gitIn(["commit", "-m", "feature edit", "--no-verify"]);
+    await gitIn(["checkout", "main"]);
+    await writeFile(join(repoPath, "file.ts"), "export const v = 'theirs';\n");
+    await gitIn(["add", "-A"]);
+    await gitIn(["commit", "-m", "main edit", "--no-verify"]);
+    await gitIn(["checkout", "feature"]);
+  });
+
+  afterEach(async () => {
+    await rm(repoPath, { recursive: true, force: true });
+  });
+
+  it("refuses while unmerged index entries remain", async () => {
+    await startConflictingMerge();
+    const before = await headSha();
+
+    await expect(
+      realOps.commitChanges(repoPath, "WIP: uncommitted changes", {
+        skipHooks: true,
+      }),
+    ).rejects.toThrow(/Refusing to commit: 1 file\(s\).*file\.ts/s);
+
+    expect(await headSha()).toBe(before);
+  });
+
+  it("refuses on a marker-bearing tree whose merge state was already reset away", async () => {
+    await startConflictingMerge();
+    // What `resyncSharedIndexToHead` does to a mid-merge worktree: MERGE_HEAD
+    // and the unmerged entries are gone, the marker-bearing files remain.
+    await gitIn(["reset", "--mixed", "--quiet", "HEAD"]);
+    await expect(
+      gitIn(["rev-parse", "-q", "--verify", "MERGE_HEAD"]),
+    ).rejects.toThrow();
+    expect(
+      (await gitIn(["diff", "--name-only", "--diff-filter=U"])).trim(),
+    ).toBe("");
+    const before = await headSha();
+
+    await expect(
+      realOps.commitChanges(repoPath, "WIP: uncommitted changes", {
+        skipHooks: true,
+      }),
+    ).rejects.toThrow(/Refusing to commit.*file\.ts/s);
+
+    expect(await headSha()).toBe(before);
+  });
+
+  it("refuses an untracked marker-bearing file, which `git add -A` would stage", async () => {
+    await writeFile(
+      join(repoPath, "generated.ts"),
+      "<<<<<<< HEAD\nexport const v = 'ours';\n=======\nexport const v = 'theirs';\n>>>>>>> main\n",
+    );
+    const before = await headSha();
+
+    await expect(
+      realOps.commitChanges(repoPath, "WIP: uncommitted changes", {
+        skipHooks: true,
+      }),
+    ).rejects.toThrow(/Refusing to commit.*generated\.ts/s);
+
+    expect(await headSha()).toBe(before);
+  });
+
+  it("refuses a marker-bearing file git reads as binary", async () => {
+    // The NUL byte an auto-merge can leave alongside markers: git's own
+    // `--check` skips the file, so only the binary reading catches it.
+    await writeFile(
+      join(repoPath, "file.ts"),
+      "<<<<<<< HEAD\nexport const v = 'ours';\n=======\nexport const v = 'theirs';\n>>>>>>> main\n\0\n",
+    );
+    const before = await headSha();
+
+    await expect(
+      realOps.commitChanges(repoPath, "WIP: uncommitted changes", {
+        skipHooks: true,
+      }),
+    ).rejects.toThrow(/Refusing to commit.*file\.ts/s);
+
+    expect(await headSha()).toBe(before);
+  });
+
+  it("commits an ordinary dirty tree", async () => {
+    await writeFile(join(repoPath, "file.ts"), "export const v = 'edited';\n");
+    await writeFile(join(repoPath, "added.ts"), "export const w = 2;\n");
+
+    const { hash } = await realOps.commitChanges(repoPath, "ordinary work", {
+      skipHooks: true,
+    });
+
+    expect(hash).not.toBe("");
+    expect((await gitIn(["status", "--porcelain"])).trim()).toBe("");
+  });
+
+  it("commits a marker-free merge conclusion", async () => {
+    await startConflictingMerge();
+    await writeFile(join(repoPath, "file.ts"), "export const v = 'merged';\n");
+    await gitIn(["add", "file.ts"]);
+
+    const { hash } = await realOps.commitChanges(
+      repoPath,
+      "resolve merge conflicts",
+      { skipHooks: true },
+    );
+
+    expect(hash).not.toBe("");
+    const parents = (await gitIn(["rev-list", "--parents", "-n", "1", "HEAD"]))
+      .trim()
+      .split(" ");
+    expect(parents).toHaveLength(3);
+  });
+
+  it("commits a markdown setext heading that git's own --check flags as a marker", async () => {
+    await writeFile(
+      join(repoPath, "notes.md"),
+      "Release notes\n=======\nShipped.\n",
+    );
+    await gitIn(["add", "notes.md"]);
+    // git's heuristic counts the bare separator, so the guard cannot trust it
+    // without confirming the file against the strict marker regex.
+    await expect(gitIn(["diff", "HEAD", "--check"])).rejects.toThrow();
+
+    const { hash } = await realOps.commitChanges(repoPath, "add notes", {
+      skipHooks: true,
+    });
+
+    expect(hash).not.toBe("");
+    expect((await gitIn(["status", "--porcelain"])).trim()).toBe("");
   });
 });
 

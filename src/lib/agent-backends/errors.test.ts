@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   agentFailureClassificationSchema,
   continuationDispositionSchema,
+  extractRetryAfterHint,
+  isLikelyQuotaExhaustedMessage,
   isLikelyStaleResumeMessage,
   isPromptNotDeliveredFailure,
   markPromptNotDelivered,
@@ -21,6 +23,103 @@ describe("agentFailureClassificationSchema", () => {
       message: "Agent exceeded structured output retry limit",
       retryable: false,
     });
+  });
+
+  it("accepts a quota exhaustion carrying the provider's capacity hint", () => {
+    expect(
+      agentFailureClassificationSchema.parse({
+        kind: "quota_exhausted",
+        message: "You've hit your usage limit.",
+        retryable: false,
+        retryAfterHint: "Aug 19th, 2026 11:29 PM",
+      }),
+    ).toEqual({
+      kind: "quota_exhausted",
+      message: "You've hit your usage limit.",
+      retryable: false,
+      retryAfterHint: "Aug 19th, 2026 11:29 PM",
+    });
+  });
+
+  it("leaves the capacity hint optional", () => {
+    const parsed = agentFailureClassificationSchema.parse({
+      kind: "quota_exhausted",
+      message: "rate limit exceeded",
+      retryable: false,
+    });
+    expect(parsed.retryAfterHint).toBeUndefined();
+  });
+});
+
+describe("isLikelyQuotaExhaustedMessage", () => {
+  it("matches provider capacity-refusal shapes", () => {
+    for (const message of [
+      "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Aug 19th, 2026 11:29 PM.",
+      "You have reached your usage limit",
+      "Claude AI usage limit reached|1755559740",
+      "rate limit exceeded",
+      "429 Too Many Requests",
+      'API Error: 429 {"type":"error","error":{"type":"rate_limit_error"}}',
+      "HTTP 429",
+      "request failed with status code 429",
+      "Overloaded",
+      "overloaded_error: the model is overloaded",
+      "Your quota has been exhausted",
+      "You are out of credits",
+    ]) {
+      expect(isLikelyQuotaExhaustedMessage(message), message).toBe(true);
+    }
+  });
+
+  it("does not match ordinary failure text that merely mentions usage or numbers", () => {
+    for (const message of [
+      "usage: cctl validate run <name>",
+      "Codex Exec exited with code 1: Reading prompt from stdin...",
+      "limit reached: maximum file size",
+      "Error at src/lib/git/worktree.ts:429:12",
+      "processed 4290 rows",
+      "config file not found",
+      "OAuth token expired for this session",
+      // A bare 429 is a number, not a status: git prose quotes SHAs and the
+      // merge path reports byte counts and source coordinates.
+      "Merge failed at commit e429fa1: fatal: cannot merge",
+      "fatal: bad object a3e429b7c",
+      "wrote 429 bytes to socket",
+      "file src/foo.ts line 429 column 3",
+      "read 429.5 KB",
+    ]) {
+      expect(isLikelyQuotaExhaustedMessage(message), message).toBe(false);
+    }
+  });
+});
+
+describe("extractRetryAfterHint", () => {
+  it("captures the provider's own capacity-return text", () => {
+    expect(
+      extractRetryAfterHint(
+        "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Aug 19th, 2026 11:29 PM.",
+      ),
+    ).toBe("Aug 19th, 2026 11:29 PM");
+    expect(
+      extractRetryAfterHint(
+        "You've hit your usage limit. Try again in 4 hours",
+      ),
+    ).toBe("4 hours");
+    expect(
+      extractRetryAfterHint(
+        "Usage limit reached. Your limit will reset at 10pm (America/New_York).",
+      ),
+    ).toBe("10pm (America/New_York)");
+    expect(
+      extractRetryAfterHint("rate limit exceeded; retry-after: 3600s"),
+    ).toBe("3600s");
+  });
+
+  it("returns undefined when the message names no capacity-return text", () => {
+    expect(extractRetryAfterHint("429 Too Many Requests")).toBeUndefined();
+    expect(
+      extractRetryAfterHint("You've hit your usage limit."),
+    ).toBeUndefined();
   });
 });
 

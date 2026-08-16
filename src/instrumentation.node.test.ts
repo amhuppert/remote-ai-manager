@@ -432,4 +432,91 @@ describe("createStartupRegistrar", () => {
     await expect(register()).resolves.not.toThrow();
     expect(calls).toContain("rehydrate");
   });
+
+  /**
+   * The parked-ref sweep decides what to keep from the job rows, so it has to
+   * run after the stale-job sweep has failed the rows whose owner process is
+   * gone — otherwise a dead process's `running` row would still protect a ref
+   * nothing will ever land.
+   */
+  it("collects orphaned parked merge refs after the stale-job sweep", async () => {
+    const calls: string[] = [];
+    const register = createStartupRegistrar({
+      loadConversationRehydration: async () => ({
+        rehydrateConversationActors: async () => 0,
+      }),
+      runStateMigrations: async () => [],
+      initNotificationDb: () => {
+        calls.push("stale-jobs");
+      },
+      collectOrphanedParkedRefs: async () => {
+        calls.push("parked-ref-gc");
+        return { scannedProjects: 1, deleted: 2, retained: 1 };
+      },
+      setConfigReader: () => {},
+      readConfig: async () => ({}) as never,
+      ensureAgentToken: async () => "test-token",
+      installCli: async () =>
+        ({ installed: false, reason: "bundle_missing" }) as const,
+      publishManagedSkills: async () => null,
+      recordServerBaseUrl: () => "http://127.0.0.1:3000",
+      verifyServerBaseUrl: () => {},
+      recoverActiveWorkflowEnvelopes: async () => ({
+        scanned: 0,
+        failed: 0,
+        preservedPaused: 0,
+        preservedRunning: 0,
+        movedToPaused: 0,
+      }),
+      sweepInterruptedCompactions: () => 0,
+      recoverStaleAgentRuns: () => 0,
+      initializeValidationService: async () => {},
+      recoverInterruptedConversationSnapshots: async () => 0,
+    });
+
+    await register();
+
+    expect(calls).toEqual(["stale-jobs", "parked-ref-gc"]);
+  });
+
+  it("survives a failing parked-ref sweep without breaking startup", async () => {
+    const calls: string[] = [];
+    const register = createStartupRegistrar({
+      loadConversationRehydration: async () => ({
+        rehydrateConversationActors: async () => {
+          calls.push("rehydrate");
+          return 0;
+        },
+      }),
+      runStateMigrations: async () => [],
+      initNotificationDb: () => {},
+      collectOrphanedParkedRefs: async () => {
+        throw new Error("git exploded");
+      },
+      setConfigReader: () => {
+        calls.push("config-reader");
+      },
+      readConfig: async () => ({}) as never,
+      ensureAgentToken: async () => "test-token",
+      installCli: async () =>
+        ({ installed: false, reason: "bundle_missing" }) as const,
+      publishManagedSkills: async () => null,
+      recordServerBaseUrl: () => "http://127.0.0.1:3000",
+      verifyServerBaseUrl: () => {},
+      recoverActiveWorkflowEnvelopes: async () => ({
+        scanned: 0,
+        failed: 0,
+        preservedPaused: 0,
+        preservedRunning: 0,
+        movedToPaused: 0,
+      }),
+      sweepInterruptedCompactions: () => 0,
+      recoverStaleAgentRuns: () => 0,
+      initializeValidationService: async () => {},
+      recoverInterruptedConversationSnapshots: async () => 0,
+    });
+
+    await expect(register()).resolves.not.toThrow();
+    expect(calls).toEqual(["rehydrate", "config-reader"]);
+  });
 });

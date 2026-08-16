@@ -66,10 +66,12 @@ import type { BackendConversationCapabilities } from "@/lib/agent-backends/descr
 import {
   markPromptNotDelivered,
   type AgentFailureClassification,
-  type AgentFailureClassifier,
   type ContinuationDisposition,
 } from "@/lib/agent-backends/errors";
-import { getBackendDescriptor } from "@/lib/agent-backends/registry";
+import {
+  classifyFailureForBackend,
+  resolveFailureClassifierForBackend,
+} from "./failure-classification";
 import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
 import { withRuntimeReplacementRetry } from "./with-runtime-replacement-retry";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
@@ -856,45 +858,6 @@ function formatTurnStartMcpApplyFailure(
     parts.push(result.error);
   }
   return parts.join(". ");
-}
-
-/**
- * Resolve the backend descriptor's failure classifier. Falls back to a plain
- * `backend_error` classification when the backend is not registered (test
- * doubles outside the registry), preserving the classifier's never-throw
- * contract.
- */
-const fallbackFailureClassifier: AgentFailureClassifier = {
-  classify(error): AgentFailureClassification {
-    return {
-      kind: "backend_error",
-      message: getErrorMessage(error),
-      retryable: false,
-    };
-  },
-  classifyWithContinuation(error) {
-    return {
-      failure: this.classify(error),
-      continuationDisposition: "retain",
-    };
-  },
-};
-
-function resolveFailureClassifierForBackend(
-  backend: AgentBackendId,
-): AgentFailureClassifier {
-  try {
-    return getBackendDescriptor(backend).errors;
-  } catch {
-    return fallbackFailureClassifier;
-  }
-}
-
-function classifyFailureForBackend(
-  backend: AgentBackendId,
-  error: unknown,
-): AgentFailureClassification {
-  return resolveFailureClassifierForBackend(backend).classify(error);
 }
 
 // ============================================================
@@ -2685,6 +2648,21 @@ export async function runTaskRunTurnForMachine(
       failureKind === "schema_validation"
         ? readStructuredOutputGateRepair(result.outcome.error.backendDetails)
         : undefined;
+    // The classifier's verdict, whole. Reconstructing it downstream from the
+    // message is lossy — `retryable` was decided from the error value, which no
+    // longer exists here — so a failure the adapter classified travels with the
+    // result and one it did not carries nothing rather than a guess.
+    const failure: AgentFailureClassification | undefined =
+      result.outcome.error.retryable === undefined
+        ? undefined
+        : {
+            kind: failureKind,
+            message: errorMsg,
+            retryable: result.outcome.error.retryable,
+            ...(result.outcome.error.retryAfterHint !== undefined
+              ? { retryAfterHint: result.outcome.error.retryAfterHint }
+              : {}),
+          };
     deps.log.warn("task_run.failed", {
       ...scopeRef,
       backend: input.agentBackend,
@@ -2719,6 +2697,7 @@ export async function runTaskRunTurnForMachine(
       aborted: failureKind === "aborted",
       compacted: false,
       error: errorMsg,
+      ...(failure !== undefined ? { failure } : {}),
       continuationDisposition: result.continuationDisposition ?? "retain",
     };
   }

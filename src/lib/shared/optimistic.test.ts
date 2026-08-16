@@ -74,6 +74,9 @@ function createTestDeps(
       .mockReturnValue({ ok: true, value: { jobId: "job-1" } }),
     createNotification: vi.fn(),
     sleep: vi.fn().mockResolvedValue(undefined),
+    evaluateSessionMergeAdmission: vi.fn(async () => ({
+      admitted: true as const,
+    })),
     ...overrides,
   };
 }
@@ -152,6 +155,34 @@ describe("executeOptimisticWorkflow", () => {
       autoResolve: true,
       targetBranch: "main",
     });
+  });
+
+  it("does not dispatch the merge while a graph workflow holds the session lease", async () => {
+    const deps = createTestDeps({
+      evaluateSessionMergeAdmission: vi.fn(async () => ({
+        admitted: false as const,
+        refusal: {
+          code: "GRAPH_WORKFLOW_ACTIVE" as const,
+          executionId: "execution-1",
+          status: "running" as const,
+          remedy: "inspect_or_pause" as const,
+          message:
+            "Graph workflow execution execution-1 is running. Complete or abort it before merging this session.",
+        },
+      })),
+    });
+
+    await executeOptimisticWorkflow(baseParams, deps);
+
+    expect(deps.dispatchMergeJob).not.toHaveBeenCalled();
+    expect(deps.createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "merge-failed",
+        message: expect.stringContaining(
+          "Complete or abort it before merging this session.",
+        ),
+      }),
+    );
   });
 
   it("waits for state persistence before dispatching the merge job", async () => {

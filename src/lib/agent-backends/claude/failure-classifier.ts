@@ -4,8 +4,10 @@ import type {
 } from "../errors";
 import {
   createClassifierWithDefaultContinuation,
+  extractRetryAfterHint,
   failureMessage,
   isAbortFailure,
+  isLikelyQuotaExhaustedMessage,
   isLikelyStaleResumeMessage,
   isTimeoutFailure,
 } from "../errors";
@@ -37,8 +39,8 @@ function isStructuredOutputRetryExhaustion(message: string): boolean {
 
 /**
  * Claude failure classifier: normalizes QuerySession lifecycle errors, abort
- * and timeout shapes, and stale-`resume:` provider messages into the neutral
- * `AgentFailureClassification` vocabulary.
+ * and timeout shapes, stale-`resume:` provider messages and account capacity
+ * refusals into the neutral `AgentFailureClassification` vocabulary.
  *
  * Retryability encodes the QuerySession delivery contract: an undelivered
  * prompt (`promptNotDelivered`) is safe to re-dispatch on a fresh runtime,
@@ -77,6 +79,17 @@ export function createClaudeFailureClassifier(): AgentFailureClassifier {
     }
     if (isQuerySessionDeathMessage(message)) {
       return { kind: "session_died", message, retryable: false };
+    }
+    // Last: capacity refusals only reclaim messages that would otherwise fall
+    // through to `backend_error`, so no earlier verdict changes.
+    if (isLikelyQuotaExhaustedMessage(message)) {
+      const retryAfterHint = extractRetryAfterHint(message);
+      return {
+        kind: "quota_exhausted",
+        message,
+        retryable: false,
+        ...(retryAfterHint !== undefined ? { retryAfterHint } : {}),
+      };
     }
     return { kind: "backend_error", message, retryable: false };
   }

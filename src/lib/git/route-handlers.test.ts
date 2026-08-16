@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createGitRouteHandlers, type GitRouteDeps } from "./route-handlers";
 import { sessionStateSchema, type SessionState } from "@/lib/sessions/schemas";
-import type { BackgroundJob } from "@/lib/jobs/schemas";
+import { jobRecordSchema } from "@/lib/jobs/schemas";
+import type { BackgroundJob, JobRecord } from "@/lib/jobs/schemas";
 import type { SessionDiff } from "./schemas";
 
 const EMPTY_DIFF: SessionDiff = {
@@ -50,6 +51,38 @@ function makeJob(overrides: Partial<BackgroundJob> = {}): BackgroundJob {
   };
 }
 
+/**
+ * The durable half of {@link makeJob} — what survives a restart that emptied the
+ * in-memory job registry.
+ */
+function makeJobRecord(overrides: Partial<JobRecord> = {}): JobRecord {
+  return jobRecordSchema.parse({
+    jobId: "job-persisted",
+    jobType: "merge",
+    status: "ready-to-land",
+    projectName: "proj",
+    sessionName: "s1",
+    branchName: "csm/s1",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    completedAt: "2026-01-01T00:04:00.000Z",
+    parkedRef: "refs/cc-merges/job-persisted",
+    preparedSha: "prepared-sha",
+    expectedTargetSha: "target-sha",
+    resolutionContext: "intent notes",
+    executionId: "workflow-execution-1",
+    finalPublish: true,
+    finalizeSessionOnPublish: false,
+    candidateValidation: {
+      validationRef: "validation-1",
+      validatedSha: "validated-sha",
+      validatedTreeHash: "validated-tree",
+      commandIdentity: "./validate.sh",
+      outcome: "pass",
+    },
+    ...overrides,
+  });
+}
+
 function routeContext(params: Record<string, string>) {
   return { params: Promise.resolve(params) };
 }
@@ -83,6 +116,10 @@ function makeDeps(overrides: Partial<GitRouteDeps> = {}): GitRouteDeps {
       .fn()
       .mockReturnValue({ ok: true, value: { jobId: "job-1" } }),
     getJob: vi.fn().mockReturnValue(undefined),
+    findLatestJobRecordForSession: vi.fn().mockReturnValue(null),
+    abortSessionJob: vi
+      .fn()
+      .mockReturnValue({ ok: false, error: "NO_ABORTABLE_JOB" }),
     gitClient: {
       git: vi.fn().mockResolvedValue({ stdout: "prepared-sha\n", stderr: "" }),
     },
@@ -538,7 +575,6 @@ describe("mergeSession", () => {
       message: "Merge csm/s1 into csm/parent",
       autoResolve: true,
       targetBranch: "csm/parent",
-      targetWorktreePath: "/repo/.worktrees/parent",
     });
   });
 
@@ -627,8 +663,8 @@ describe("resolveSessionConflicts", () => {
       branchName: "csm/s1",
       mergeMessage: "Merge csm/s1 into main",
       decisions,
+      conflictFiles: undefined,
       targetBranch: "main",
-      targetWorktreePath: undefined,
       resolutionContext: "intent notes",
       executionId: "workflow-execution-1",
       finalPublish: true,
@@ -650,6 +686,32 @@ describe("resolveSessionConflicts", () => {
    * session-finalizing would false-block the engine's next launch and point the
    * session delivery gate at the workflow's own Current run.
    */
+  it("seeds the retry with the conflicted job's conflict files", async () => {
+    const dispatchResolveConflictsJob = vi
+      .fn()
+      .mockReturnValue({ ok: true, value: { jobId: "job-3" } });
+    const handlers = createGitRouteHandlers(
+      makeDeps({
+        dispatchResolveConflictsJob,
+        getJob: vi.fn().mockReturnValue(
+          makeJob({
+            status: "conflicts",
+            conflictFiles: ["src/a.ts", "src/b.ts"],
+          }),
+        ),
+      }),
+    );
+
+    await handlers.resolveSessionConflicts(
+      postRequest({ decisions: [] }),
+      routeContext(sessionParams),
+    );
+
+    expect(dispatchResolveConflictsJob).toHaveBeenCalledWith(
+      expect.objectContaining({ conflictFiles: ["src/a.ts", "src/b.ts"] }),
+    );
+  });
+
   it("carries a graph lane merge's non-finalizing fact into the retry", async () => {
     const dispatchResolveConflictsJob = vi
       .fn()
@@ -829,6 +891,141 @@ describe("landSession", () => {
     );
   });
 
+  /**
+   * A restart empties the job registry but leaves the parked commit under
+   * `refs/cc-merges/`, so the durable row is what the land re-entry rebuilds its
+   * merge input from.
+   */
+  it("reconstructs a land re-entry from the persisted parked merge when the registry is empty", async () => {
+    const dispatchMergeJob = vi
+      .fn()
+      .mockReturnValue({ ok: true, value: { jobId: "job-6" } });
+    const git = vi
+      .fn()
+      .mockResolvedValue({ stdout: "prepared-sha\n", stderr: "" });
+    const findLatestJobRecordForSession = vi
+      .fn()
+      .mockReturnValue(makeJobRecord());
+    const handlers = createGitRouteHandlers(
+      makeDeps({
+        gitClient: { git },
+        dispatchMergeJob,
+        getJob: vi.fn().mockReturnValue(undefined),
+        findLatestJobRecordForSession,
+      }),
+    );
+
+    const res = await handlers.landSession(
+      new Request("http://cc.test"),
+      routeContext(sessionParams),
+    );
+
+    expect(res.status).toBe(202);
+    expect(findLatestJobRecordForSession).toHaveBeenCalledWith("proj", "s1");
+    expect(git).toHaveBeenCalledWith(
+      ["rev-parse", "--verify", "refs/cc-merges/job-persisted"],
+      "/repo",
+    );
+    expect(dispatchMergeJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entryMode: "land",
+        preparedSha: "prepared-sha",
+        expectedTargetSha: "target-sha",
+        parkedRef: "refs/cc-merges/job-persisted",
+        resolutionContext: "intent notes",
+        executionId: "workflow-execution-1",
+        finalPublish: true,
+        finalizeSessionOnPublish: false,
+      }),
+    );
+  });
+
+  /**
+   * A land dispatches its own job, so the candidate's row is no longer the
+   * session's latest once it has been acted on. Offering it again after a
+   * restart would answer for a merge that already landed.
+   */
+  it("does not resurrect a candidate a later job took the session from", async () => {
+    const dispatchMergeJob = vi.fn();
+    const git = vi.fn();
+    const handlers = createGitRouteHandlers(
+      makeDeps({
+        gitClient: { git },
+        dispatchMergeJob,
+        getJob: vi.fn().mockReturnValue(undefined),
+        findLatestJobRecordForSession: vi.fn().mockReturnValue(
+          makeJobRecord({
+            jobId: "job-landed",
+            status: "completed",
+            mergeHash: "landed-sha",
+            parkedRef: undefined,
+            preparedSha: undefined,
+            expectedTargetSha: undefined,
+          }),
+        ),
+      }),
+    );
+
+    const res = await handlers.landSession(
+      new Request("http://cc.test"),
+      routeContext(sessionParams),
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("JOB_NOT_READY_TO_LAND");
+    expect(git).not.toHaveBeenCalled();
+    expect(dispatchMergeJob).not.toHaveBeenCalled();
+  });
+
+  it("409s when the persisted parked commit no longer exists", async () => {
+    const dispatchMergeJob = vi.fn();
+    const handlers = createGitRouteHandlers(
+      makeDeps({
+        gitClient: {
+          git: vi.fn().mockRejectedValue(new Error("bad revision")),
+        },
+        dispatchMergeJob,
+        getJob: vi.fn().mockReturnValue(undefined),
+        findLatestJobRecordForSession: vi.fn().mockReturnValue(makeJobRecord()),
+      }),
+    );
+
+    const res = await handlers.landSession(
+      new Request("http://cc.test"),
+      routeContext(sessionParams),
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error:
+        "Parked ref refs/cc-merges/job-persisted no longer resolves to prepared commit prepared-sha — the prepared merge is gone. Run the merge again to prepare a new candidate.",
+      code: "PARKED_REF_MISSING",
+    });
+    expect(dispatchMergeJob).not.toHaveBeenCalled();
+  });
+
+  /** The live job wins: a session with a merge running now is not landable. */
+  it("does not fall back to a persisted row while the registry holds a job", async () => {
+    const findLatestJobRecordForSession = vi
+      .fn()
+      .mockReturnValue(makeJobRecord());
+    const handlers = createGitRouteHandlers(
+      makeDeps({
+        getJob: vi.fn().mockReturnValue(makeJob({ status: "running" })),
+        findLatestJobRecordForSession,
+      }),
+    );
+
+    const res = await handlers.landSession(
+      new Request("http://cc.test"),
+      routeContext(sessionParams),
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("JOB_NOT_READY_TO_LAND");
+    expect(findLatestJobRecordForSession).not.toHaveBeenCalled();
+  });
+
   /** Landing a graph-owned parked candidate is still the workflow's own work. */
   it("carries a graph lane merge's non-finalizing fact into the land job", async () => {
     const dispatchMergeJob = vi
@@ -893,5 +1090,162 @@ describe("discardSession", () => {
     );
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("JOB_NOT_READY_TO_LAND");
+  });
+
+  it("discards a persisted parked merge after a restart emptied the registry", async () => {
+    const dispatchMergeJob = vi
+      .fn()
+      .mockReturnValue({ ok: true, value: { jobId: "job-7" } });
+    const handlers = createGitRouteHandlers(
+      makeDeps({
+        dispatchMergeJob,
+        getJob: vi.fn().mockReturnValue(undefined),
+        findLatestJobRecordForSession: vi.fn().mockReturnValue(makeJobRecord()),
+      }),
+    );
+
+    const res = await handlers.discardSession(
+      new Request("http://cc.test"),
+      routeContext(sessionParams),
+    );
+
+    expect(res.status).toBe(202);
+    expect(dispatchMergeJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entryMode: "discard",
+        preparedSha: "prepared-sha",
+        parkedRef: "refs/cc-merges/job-persisted",
+      }),
+    );
+  });
+
+  /**
+   * Discarding is idempotent cleanup: a vanished ref is the outcome the operator
+   * asked for, and refusing would strand the session showing a candidate that
+   * cannot be cleared.
+   */
+  it("still dispatches when the parked ref is already gone", async () => {
+    const dispatchMergeJob = vi
+      .fn()
+      .mockReturnValue({ ok: true, value: { jobId: "job-8" } });
+    const handlers = createGitRouteHandlers(
+      makeDeps({
+        gitClient: {
+          git: vi.fn().mockRejectedValue(new Error("bad revision")),
+        },
+        dispatchMergeJob,
+        getJob: vi.fn().mockReturnValue(makeJob()),
+      }),
+    );
+
+    const res = await handlers.discardSession(
+      new Request("http://cc.test"),
+      routeContext(sessionParams),
+    );
+
+    expect(res.status).toBe(202);
+    expect(dispatchMergeJob).toHaveBeenCalledWith(
+      expect.objectContaining({ entryMode: "discard" }),
+    );
+  });
+});
+
+describe("abortSessionMergeJob", () => {
+  it("stops the session's running job and reports the job it stopped", async () => {
+    const abortSessionJob = vi
+      .fn()
+      .mockReturnValue({ ok: true, jobId: "job-9", delivery: "stopping" });
+    const handlers = createGitRouteHandlers(makeDeps({ abortSessionJob }));
+
+    const res = await handlers.abortSessionMergeJob(
+      new Request("http://cc.test", { method: "POST" }),
+      routeContext(sessionParams),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      ok: true,
+      jobId: "job-9",
+      delivery: "stopping",
+    });
+    expect(abortSessionJob).toHaveBeenCalledWith("/repo", "s1");
+  });
+
+  it("says the stop was only recorded when the job is past recall", async () => {
+    // Answering "stopped" here would tell the operator a merge was cancelled
+    // that is at that moment updating the target branch.
+    const handlers = createGitRouteHandlers(
+      makeDeps({
+        abortSessionJob: vi
+          .fn()
+          .mockReturnValue({ ok: true, jobId: "job-9", delivery: "deferred" }),
+      }),
+    );
+
+    const res = await handlers.abortSessionMergeJob(
+      new Request("http://cc.test", { method: "POST" }),
+      routeContext(sessionParams),
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.delivery).toBe("deferred");
+    expect(body.message).toMatch(/cannot be recalled/i);
+  });
+
+  it("404s when the session has no running merge or commit job", async () => {
+    const handlers = createGitRouteHandlers(
+      makeDeps({
+        abortSessionJob: vi
+          .fn()
+          .mockReturnValue({ ok: false, error: "NO_ABORTABLE_JOB" }),
+      }),
+    );
+
+    const res = await handlers.abortSessionMergeJob(
+      new Request("http://cc.test", { method: "POST" }),
+      routeContext(sessionParams),
+    );
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      error: "No running merge or commit job for this session",
+    });
+  });
+
+  it("409s when the running job has no live actor to stop", async () => {
+    const handlers = createGitRouteHandlers(
+      makeDeps({
+        abortSessionJob: vi
+          .fn()
+          .mockReturnValue({ ok: false, error: "JOB_ACTOR_MISSING" }),
+      }),
+    );
+
+    const res = await handlers.abortSessionMergeJob(
+      new Request("http://cc.test", { method: "POST" }),
+      routeContext(sessionParams),
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("JOB_ACTOR_MISSING");
+  });
+
+  it("404s when the session is unknown", async () => {
+    const abortSessionJob = vi.fn();
+    const handlers = createGitRouteHandlers(
+      makeDeps({
+        getSession: vi.fn().mockResolvedValue(null),
+        abortSessionJob,
+      }),
+    );
+
+    const res = await handlers.abortSessionMergeJob(
+      new Request("http://cc.test", { method: "POST" }),
+      routeContext(sessionParams),
+    );
+
+    expect(res.status).toBe(404);
+    expect(abortSessionJob).not.toHaveBeenCalled();
   });
 });

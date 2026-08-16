@@ -32,7 +32,10 @@ import {
   deriveNotificationTitle,
 } from "./repo";
 import {
+  abortJobActor,
   dispatchMachineJob,
+  tearDownJobActor,
+  _resetJobActorRegistryForTesting,
   type JobDispatchError,
   type JobDispatchHost,
   type JobDispatchResult,
@@ -44,8 +47,12 @@ import {
 } from "../workflows/merge/machine";
 import { provideRegisteredDeliveryGate } from "../workflows/merge/delivery-gate-port";
 import { resolveRegisteredMergeAssociation } from "../workflows/merge/association-port";
-import { notifyRegisteredMergeDelivered } from "../workflows/merge/delivery-lifecycle-port";
+import {
+  notifyRegisteredMergeDelivered,
+  resolveDeliveredMergeSha,
+} from "../workflows/merge/delivery-lifecycle-port";
 import type {
+  MergeEntryMode,
   MergeInput,
   MergeContext,
   MergeOutput,
@@ -70,11 +77,16 @@ import type {
   RebaseOutput,
 } from "../workflows/rebase/types";
 import type { RebaseOnto } from "@/lib/git/rebase";
+import {
+  deleteParkedMergeRef,
+  PARKED_MERGE_REF_PREFIX,
+} from "@/lib/git/worktree";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { assertNever } from "../shared/assert-never";
 import type { ConflictAnalysis } from "@/lib/git/schemas";
 import type {
   BackgroundJob,
+  JobRecord,
   JobStatusEvent,
   ConflictDecisionInput,
 } from "./schemas";
@@ -86,8 +98,13 @@ const logger = createLogger("background-jobs");
 // Constants
 // ============================================================
 
-/** Jobs running longer than this are considered stale (10 minutes) */
-const JOB_TIMEOUT_MS = 10 * 60 * 1000;
+/**
+ * A running job that has reported nothing for this long is torn down (30
+ * minutes). Every stage that can take real time is individually bounded — the
+ * resolver turn, validation, the delivery gate — so this is the backstop for a
+ * job nothing is driving any more, not a ceiling on how long work may take.
+ */
+const STALE_INACTIVITY_MS = 30 * 60 * 1000;
 
 // ============================================================
 // Dependency Types
@@ -167,6 +184,64 @@ export function getFinalizingSessionMergeJob(
   return job.finalizeSessionOnPublish === true ? job : null;
 }
 
+/**
+ * Job types whose machines carry the operator ABORT wiring. A rebase job is
+ * deliberately absent: its machine ignores the event, and answering "stopped"
+ * for a run that keeps going would be worse than refusing.
+ */
+const ABORTABLE_JOB_TYPES: ReadonlySet<BackgroundJob["jobType"]> = new Set<
+  BackgroundJob["jobType"]
+>(["merge", "resolve-conflicts", "commit"]);
+
+export type AbortSessionJobResult =
+  | { ok: true; jobId: string; delivery: "stopping" | "deferred" }
+  | { ok: false; error: "NO_ABORTABLE_JOB" | "JOB_ACTOR_MISSING" };
+
+/**
+ * Stop the session's in-flight merge-family job. The machine's own terminal
+ * projection does the rest — broadcast, persist, notification, lock release —
+ * so an aborted job ends exactly like any other failure.
+ *
+ * `JOB_ACTOR_MISSING` separates "nothing is running" from "a record says
+ * running but this process holds no actor for it" (a restart orphan): the
+ * second is not a stop the caller may report as delivered. `delivery` carries
+ * the same honesty one level finer — a machine in an unrecallable phase (a
+ * merge already publishing) records the stop without ending the run, and the
+ * caller must not describe that as stopped.
+ */
+export function abortSessionJob(
+  projectPath: string,
+  sessionName: string,
+): AbortSessionJobResult {
+  const job = getJob(projectPath, sessionName);
+  if (
+    job === undefined ||
+    job.status !== "running" ||
+    !ABORTABLE_JOB_TYPES.has(job.jobType)
+  ) {
+    return { ok: false, error: "NO_ABORTABLE_JOB" };
+  }
+
+  const delivery = abortJobActor(job.jobId);
+  if (delivery === "no-actor") {
+    logger.warn("job.abort_actor_missing", {
+      jobId: job.jobId,
+      jobType: job.jobType,
+      sessionName,
+    });
+    return { ok: false, error: "JOB_ACTOR_MISSING" };
+  }
+
+  logger.info("job.abort_requested", {
+    jobId: job.jobId,
+    jobType: job.jobType,
+    sessionName,
+    phase: job.phase ?? null,
+    delivery,
+  });
+  return { ok: true, jobId: job.jobId, delivery };
+}
+
 /** Get the stored conflict analysis for a session, if any */
 export function getConflictAnalysis(
   projectPath: string,
@@ -183,10 +258,20 @@ export function getConflictAnalysis(
 
 const defaultJobBroadcast: PublishFn = publishEvent;
 
+/**
+ * Record that the job moved. Every status broadcast and every durable progress
+ * write is movement, and inactivity-based stale recovery reads nothing else —
+ * a job that stops stamping is a job nothing is driving any more.
+ */
+function markProgress(job: BackgroundJob): void {
+  job.lastProgressAt = new Date().toISOString();
+}
+
 function broadcastJobStatus(
   job: BackgroundJob,
   broadcast: PublishFn = defaultJobBroadcast,
 ): void {
+  markProgress(job);
   const event: JobStatusEvent = {
     type: "job-status",
     jobType: job.jobType,
@@ -205,7 +290,10 @@ function broadcastJobStatus(
     ...(job.preparedSha && { preparedSha: job.preparedSha }),
     ...(job.expectedTargetSha && { expectedTargetSha: job.expectedTargetSha }),
     ...(job.refreshWarning && { refreshWarning: job.refreshWarning }),
+    ...(job.upToDate && { upToDate: job.upToDate }),
     ...(job.haltReason && { haltReason: job.haltReason }),
+    ...(job.lastProgressAt && { lastProgressAt: job.lastProgressAt }),
+    ...(job.intentSource && { intentSource: job.intentSource }),
   };
   broadcast(event);
 
@@ -267,21 +355,28 @@ function persistTerminalState(job: BackgroundJob): void {
       conflictFiles: job.conflictFiles,
       errorMessage: job.errorMessage,
       executionId: job.executionId,
+      // A ready-to-land terminal parks a real commit and hands the operator a
+      // decision that can outlive this process, so its bookkeeping goes to the
+      // row a land re-entry reads after a restart.
+      parkedRef: job.parkedRef,
+      preparedSha: job.preparedSha,
+      expectedTargetSha: job.expectedTargetSha,
       candidateValidation: job.candidateValidation,
     });
 
     // A completed gate-passed final-publish merge IS the delivery: mark the
     // linked execution Delivered promptly rather than waiting for a status
-    // read to reconcile. The gate ran before publish, so completed + mergeHash
-    // + finalPublish implies gate-passed.
+    // read to reconcile. The gate ran before publish, so a completed delivering
+    // merge + finalPublish implies gate-passed.
+    const deliveredSha = resolveDeliveredMergeSha(job);
     if (
       (job.jobType === "merge" || job.jobType === "resolve-conflicts") &&
       job.status === "completed" &&
-      job.mergeHash !== undefined &&
+      deliveredSha !== null &&
       job.executionId !== undefined &&
       job.finalPublish === true
     ) {
-      notifyRegisteredMergeDelivered(job.executionId, job.mergeHash);
+      notifyRegisteredMergeDelivered(job.executionId, deliveredSha);
     }
 
     const notifType = deriveNotificationType(job.jobType, job.status);
@@ -317,6 +412,14 @@ function buildNotificationMessage(job: BackgroundJob): string {
   const target = job.targetBranch ?? "main";
   switch (job.status) {
     case "completed":
+      if (job.upToDate === true) {
+        // A no-op merge still ends the work it was asked to end, so the copy
+        // names the outcome the operator gets — but only a finalizing merge
+        // ends the session, and a graph lane's no-op does not.
+        return job.finalizeSessionOnPublish === false
+          ? `Branch ${branch} is already fully merged into ${target} (nothing new to merge)`
+          : `Branch ${branch} is already fully merged into ${target} — session finished (nothing new to merge)`;
+      }
       if (job.jobType === "merge")
         return `Branch ${branch} merged into ${target}${job.mergeHash ? ` (${job.mergeHash.slice(0, 7)})` : ""}`;
       if (job.jobType === "commit")
@@ -344,30 +447,227 @@ function buildNotificationMessage(job: BackgroundJob): string {
 // ============================================================
 
 /**
- * Check if a job is stale (running longer than JOB_TIMEOUT_MS).
- * If stale, force-transition to "failed" and return true.
+ * Close out a job that has stopped reporting progress: record the forced
+ * terminal state, stop whatever is still running for it, and broadcast and
+ * persist the verdict. Returns true when the job no longer holds the session's
+ * registry slot — the session lock itself is released by the stopped machine's
+ * own teardown, which is asynchronous, so a dispatch that triggers recovery may
+ * still be refused as busy and succeed on the operator's retry. Waiting would
+ * be worse: the next job would start in a worktree the previous machine is
+ * still aborting a merge in.
+ *
+ * The verdict is written before the teardown so the machine's own projection
+ * cannot answer for a job the host has already judged — a stopped actor that
+ * published a `completed` merge here would contradict the failure the operator
+ * was just shown.
+ *
+ * Inactivity is measured from the last progress stamp, falling back to
+ * `startedAt` for a job registered before the stamp existed (the registry
+ * outlives a module reload).
  */
-function recoverStaleJob(key: string, existing: BackgroundJob): boolean {
+function recoverStaleJob(
+  key: string,
+  existing: BackgroundJob,
+  broadcast: PublishFn,
+): boolean {
   if (existing.status !== "running") return false;
 
-  const elapsed = Date.now() - new Date(existing.startedAt).getTime();
-  if (elapsed < JOB_TIMEOUT_MS) return false;
+  const lastProgress = new Date(
+    existing.lastProgressAt ?? existing.startedAt,
+  ).getTime();
+  const inactiveMs = Date.now() - lastProgress;
+  if (inactiveMs < STALE_INACTIVITY_MS) return false;
 
-  logger.warn("background-jobs.stale_recovery", {
-    jobId: existing.jobId,
-    jobType: existing.jobType,
-    sessionName: existing.sessionName,
-    elapsedMs: elapsed,
-  });
-
+  const stalledPhase = existing.phase ?? null;
+  const inactiveMinutes = Math.round(inactiveMs / 60_000);
   existing.status = "failed";
-  existing.errorMessage = "Job timed out (stale recovery)";
+  existing.errorMessage = `Job reported no progress for ${inactiveMinutes} minutes and was stopped (stale recovery)`;
+  existing.phase = undefined;
   existing.completedAt = new Date().toISOString();
 
   // Remove the stale job entry so a new one can be registered
   getJobRegistry().delete(key);
 
+  const teardown = tearDownJobActor(existing.jobId);
+
+  logger.warn("background-jobs.stale_recovery", {
+    jobId: existing.jobId,
+    jobType: existing.jobType,
+    sessionName: existing.sessionName,
+    phase: stalledPhase,
+    inactiveMs,
+    elapsedMs: Date.now() - new Date(existing.startedAt).getTime(),
+    teardown,
+  });
+
+  broadcastJobStatus(existing, broadcast);
+
   return true;
+}
+
+// ============================================================
+// Superseded parked candidates
+// ============================================================
+
+/**
+ * Drop the parked candidate a new dispatch is taking the session's registry
+ * slot from.
+ *
+ * A `ready-to-land` job holds a real commit under `refs/cc-merges/` plus a
+ * durable row offering it to land. Once another job owns the session slot that
+ * offer is void — the operator's next Land would resolve to the new job — so
+ * leaving either behind means an unreachable commit accumulating in the
+ * repository and, after a restart, a persisted candidate the land route would
+ * happily publish. Both are ended here: the row is marked `discarded` (which
+ * also broadcasts and notifies, so a UI still showing "awaiting Land" learns
+ * the candidate is gone) and the ref is deleted.
+ *
+ * The delete is fire-and-forget because dispatch is synchronous; a failure is
+ * logged and left to the startup sweep, which collects any ref with no
+ * parked row.
+ */
+function discardSupersededParkedCandidate(params: {
+  projectPath: string;
+  existing: BackgroundJob;
+  continuesParkedRef: string | undefined;
+  broadcast: PublishFn;
+}): void {
+  const { projectPath, existing, continuesParkedRef, broadcast } = params;
+  // The same derivation the land/discard routes use, so a parked job whose
+  // record predates the stamped ref still names the ref prepare created.
+  const parkedRef =
+    existing.parkedRef ?? `${PARKED_MERGE_REF_PREFIX}${existing.jobId}`;
+  // A land or discard re-entry IS this candidate's job: deleting the ref would
+  // destroy the commit it exists to publish.
+  if (continuesParkedRef === parkedRef) return;
+
+  logger.info("merge.parked_candidate_superseded", {
+    jobId: existing.jobId,
+    jobType: existing.jobType,
+    sessionName: existing.sessionName,
+    parkedRef,
+    fromRegistry: true,
+  });
+
+  void deleteParkedMergeRef(projectPath, parkedRef)
+    .then((deleted) => {
+      if (deleted) return;
+      logger.warn("merge.parked_ref_delete_missing", {
+        jobId: existing.jobId,
+        parkedRef,
+      });
+    })
+    .catch((err: unknown) => {
+      logger.warn("merge.parked_ref_delete_failed", {
+        jobId: existing.jobId,
+        parkedRef,
+        error: getErrorMessage(err),
+      });
+    });
+
+  existing.status = "discarded";
+  existing.phase = undefined;
+  existing.completedAt = new Date().toISOString();
+  broadcastJobStatus(existing, broadcast);
+}
+
+/**
+ * End the parked candidates the registry no longer remembers.
+ *
+ * The registry entry dies with the process; the row and the commit it offers do
+ * not, so after a restart a new dispatch is the only thing left that can
+ * withdraw the offer — and until something does, the row keeps the startup
+ * sweep from ever collecting the ref it claims.
+ *
+ * How loud the withdrawal is depends on the ref: one that was still there was a
+ * live offer whose loss is news to whoever might land it, while one already
+ * consumed by a land leaves nothing but a row to close, and announcing that as
+ * a discard would describe a merge that landed as dropped.
+ */
+function discardPersistedParkedCandidates(params: {
+  projectPath: string;
+  projectName: string;
+  sessionName: string;
+  continuesParkedRef: string | undefined;
+  broadcast: PublishFn;
+}): void {
+  const { projectPath, projectName, sessionName, continuesParkedRef } = params;
+  let parked: JobRecord[];
+  try {
+    parked = createJobsRepo(getStateDb()).listParkedJobRecords(
+      projectName,
+      sessionName,
+    );
+  } catch (err) {
+    logger.error("merge.parked_candidate_lookup_failed", {
+      sessionName,
+      error: getErrorMessage(err),
+    });
+    return;
+  }
+
+  for (const record of parked) {
+    const parkedRef =
+      record.parkedRef ?? `${PARKED_MERGE_REF_PREFIX}${record.jobId}`;
+    if (parkedRef === continuesParkedRef) continue;
+    void endPersistedParkedCandidate({
+      projectPath,
+      record,
+      parkedRef,
+      broadcast: params.broadcast,
+    });
+  }
+}
+
+async function endPersistedParkedCandidate(params: {
+  projectPath: string;
+  record: JobRecord;
+  parkedRef: string;
+  broadcast: PublishFn;
+}): Promise<void> {
+  const { projectPath, record, parkedRef, broadcast } = params;
+  let refWasLive = false;
+  try {
+    refWasLive = await deleteParkedMergeRef(projectPath, parkedRef);
+  } catch (err) {
+    logger.warn("merge.parked_ref_delete_failed", {
+      jobId: record.jobId,
+      parkedRef,
+      error: getErrorMessage(err),
+    });
+  }
+
+  logger.info("merge.parked_candidate_superseded", {
+    jobId: record.jobId,
+    jobType: record.jobType,
+    sessionName: record.sessionName,
+    parkedRef,
+    fromRegistry: false,
+    refWasLive,
+  });
+
+  if (refWasLive) {
+    broadcastJobStatus(
+      {
+        ...record,
+        status: "discarded",
+        completedAt: new Date().toISOString(),
+      },
+      broadcast,
+    );
+    return;
+  }
+
+  try {
+    createJobsRepo(getStateDb()).updateJobRecord(record.jobId, {
+      status: "discarded",
+    });
+  } catch (err) {
+    logger.error("background-jobs.persist_terminal_failed", {
+      jobId: record.jobId,
+      error: getErrorMessage(err),
+    });
+  }
 }
 
 // ============================================================
@@ -390,6 +690,7 @@ function prepareDispatch(params: {
   broadcast?: PublishFn;
   acquireSessionLock?: AcquireSessionLockFn;
   jobId?: string;
+  continuesParkedRef?: string;
 }): JobDispatchResult<{ job: BackgroundJob; release: () => void }> {
   const {
     projectPath,
@@ -402,6 +703,7 @@ function prepareDispatch(params: {
     broadcast = defaultJobBroadcast,
     acquireSessionLock = defaultAcquireSessionLock,
     jobId,
+    continuesParkedRef,
   } = params;
   const key = sessionKey(projectPath, sessionName);
   const registry = getJobRegistry();
@@ -410,18 +712,39 @@ function prepareDispatch(params: {
   const existing = registry.get(key);
   if (existing && existing.status === "running") {
     // Check if stale
-    if (!recoverStaleJob(key, existing)) {
+    if (!recoverStaleJob(key, existing, broadcast)) {
       return { ok: false, error: "JOB_ALREADY_RUNNING" };
     }
   }
 
-  // Acquire session lock
+  // Acquire session lock. Nothing destructive may precede it: a dispatch the
+  // lock refuses replaces nothing, so the candidate it would have superseded
+  // has to still be landable afterwards.
   let release: () => void;
   try {
     release = acquireSessionLock(projectPath, sessionName);
   } catch {
     return { ok: false, error: "SESSION_BUSY" };
   }
+
+  if (existing && existing.status === "ready-to-land") {
+    discardSupersededParkedCandidate({
+      projectPath,
+      existing,
+      continuesParkedRef,
+      broadcast,
+    });
+  }
+  // The registry answered for this process only; the durable rows answer for
+  // every candidate parked before a restart, including the one just ended above
+  // (its row is already `discarded` by now, so it is not found twice).
+  discardPersistedParkedCandidates({
+    projectPath,
+    projectName,
+    sessionName,
+    continuesParkedRef,
+    broadcast,
+  });
 
   // Register the job
   const job: BackgroundJob = {
@@ -466,9 +789,30 @@ function createDispatchHost(
       broadcastJobStatus(job, broadcast);
     },
     persistProgress(job) {
+      markProgress(job);
       persistJobProgress(job);
     },
   };
+}
+
+/**
+ * Whether a merge-family dispatch's publish also finishes the session.
+ *
+ * One owner because two readers consult the answer for the same job — the
+ * workflow launch guard reads the job fact, the publish actor reads the machine
+ * context — and they must not be able to disagree. Omitted means the
+ * user-driven session merge, which is finalizing by definition; a re-entry
+ * (land, conflict retry) passes forward the fact of the job it continues,
+ * because a graph lane merge parked as ready-to-land is still the workflow's own
+ * work when an operator lands it. A discard publishes nothing and deletes the
+ * parked commit, so it finishes no session whatever it was asked for.
+ */
+function resolveFinalizeSessionOnPublish(input: {
+  entryMode?: MergeEntryMode;
+  requested?: boolean;
+}): boolean {
+  if (input.entryMode === "discard") return false;
+  return input.requested ?? true;
 }
 
 /** Merge-machine → BackgroundJob projection (merge and resolve-conflicts). */
@@ -498,6 +842,7 @@ const mergeSubscription: JobSubscriptionConfig<MergeContext, MergeOutput> = {
     job.expectedTargetSha = output.expectedTargetSha ?? undefined;
     job.parkedRef = output.parkedRef ?? undefined;
     job.refreshWarning = output.refreshWarning ?? undefined;
+    job.upToDate = output.upToDate === true ? true : undefined;
     job.executionId = context.executionId ?? undefined;
     job.candidateValidation = output.candidateValidation ?? undefined;
     job.haltReason = output.haltReason ?? undefined;
@@ -519,7 +864,9 @@ const mergeSubscription: JobSubscriptionConfig<MergeContext, MergeOutput> = {
     }
 
     // Attach the intent brief to the landed commit so future merges can
-    // explain this commit to their conflict resolvers. Non-throwing.
+    // explain this commit to their conflict resolvers. The one recording site
+    // for every merge-family host, attributed from the dispatch's own fact.
+    // Non-throwing.
     if (
       output.status === "completed" &&
       output.mergeHash &&
@@ -530,7 +877,7 @@ const mergeSubscription: JobSubscriptionConfig<MergeContext, MergeOutput> = {
           projectPath: context.projectPath,
           commitSha: output.mergeHash,
           intent: context.resolutionContext,
-          source: "session-merge",
+          source: job.intentSource ?? "session-merge",
         });
       } catch (err) {
         logger.error("background-jobs.record_merge_intent_failed", {
@@ -590,7 +937,6 @@ export interface DispatchMergeParams {
   message: string;
   autoResolve: boolean;
   targetBranch?: string;
-  targetWorktreePath?: string;
   broadcast?: PublishFn;
   acquireSessionLock?: AcquireSessionLockFn;
   machine?: MergeMachineType;
@@ -718,15 +1064,26 @@ export function runRegisteredMergeJob(
         () => () => {},
         input.jobId,
       ),
+      ...(input.parkedRef !== undefined
+        ? { continuesParkedRef: input.parkedRef }
+        : {}),
       decorateJob(job) {
         if (input.resolutionContext) {
           job.resolutionContext = input.resolutionContext;
         }
         if (input.executionId) job.executionId = input.executionId;
         if (input.finalPublish === true) job.finalPublish = true;
-        // Same `?? true` the machine applies to this very input, so the job
-        // fact and the machine context cannot disagree about one job.
-        job.finalizeSessionOnPublish = input.finalizeSessionOnPublish ?? true;
+        job.finalizeSessionOnPublish = resolveFinalizeSessionOnPublish({
+          ...(input.entryMode !== undefined
+            ? { entryMode: input.entryMode }
+            : {}),
+          ...(input.finalizeSessionOnPublish !== undefined
+            ? { requested: input.finalizeSessionOnPublish }
+            : {}),
+        });
+        // This host exists for graph-owned merges; the lane's intent brief is
+        // the join's, not a session merge's.
+        job.intentSource = "graph-join";
         if (input.candidateValidation) {
           job.candidateValidation = input.candidateValidation;
         }
@@ -779,7 +1136,6 @@ export function dispatchMergeJob(
     message,
     autoResolve,
     targetBranch,
-    targetWorktreePath,
     broadcast = defaultJobBroadcast,
     acquireSessionLock,
     machine: injectedMachine,
@@ -808,11 +1164,12 @@ export function dispatchMergeJob(
   const resolvedFinalPublish = provenance.finalPublish;
   // Decided once and threaded into BOTH the job fact and the machine input, so
   // the launch guard's reader and the publish actor's gate read one decision.
-  // A discard deletes the parked commit and publishes nothing, so it finishes
-  // no session; a land re-entry inherits the fact of the merge it resumes; a
-  // fresh user-driven session merge is finalizing by definition.
-  const finalizeSessionOnPublish =
-    entryMode === "discard" ? false : (params.finalizeSessionOnPublish ?? true);
+  const finalizeSessionOnPublish = resolveFinalizeSessionOnPublish({
+    ...(entryMode !== undefined ? { entryMode } : {}),
+    ...(params.finalizeSessionOnPublish !== undefined
+      ? { requested: params.finalizeSessionOnPublish }
+      : {}),
+  });
 
   return dispatchMachineJob<MergeContext, MergeOutput>({
     jobType: "merge",
@@ -824,11 +1181,15 @@ export function dispatchMergeJob(
       targetBranch,
     },
     host: createDispatchHost(broadcast, acquireSessionLock),
+    // A land or discard re-entry continues the parked candidate rather than
+    // superseding it, so the host must not drop the ref it is about to use.
+    ...(parkedRef !== undefined ? { continuesParkedRef: parkedRef } : {}),
     decorateJob(job) {
       if (resolutionContext) job.resolutionContext = resolutionContext;
       if (resolvedExecutionId) job.executionId = resolvedExecutionId;
       if (resolvedFinalPublish === true) job.finalPublish = true;
       job.finalizeSessionOnPublish = finalizeSessionOnPublish;
+      job.intentSource = "session-merge";
       if (candidateValidation) job.candidateValidation = candidateValidation;
     },
     logStart(job) {
@@ -860,7 +1221,6 @@ export function dispatchMergeJob(
         },
         jobType: "merge",
         targetBranch,
-        targetWorktreePath,
         finalizeSessionOnPublish,
         ...(entryMode && { entryMode }),
         ...(preparedSha && { preparedSha }),
@@ -954,8 +1314,13 @@ export function dispatchResolveConflictsJob(params: {
   branchName: string;
   mergeMessage: string;
   decisions?: ConflictDecisionInput[];
+  /**
+   * Files the conflicted merge this retry resumes reported. The retry's own
+   * run never sees that merge, so without them its post-resolution
+   * ground-truth check has no list of files to hold the agent to.
+   */
+  conflictFiles?: string[];
   targetBranch?: string;
-  targetWorktreePath?: string;
   resolutionContext?: string;
   broadcast?: PublishFn;
   acquireSessionLock?: AcquireSessionLockFn;
@@ -974,8 +1339,8 @@ export function dispatchResolveConflictsJob(params: {
     branchName,
     mergeMessage,
     decisions,
+    conflictFiles,
     targetBranch,
-    targetWorktreePath,
     resolutionContext,
     broadcast = defaultJobBroadcast,
     acquireSessionLock,
@@ -1001,7 +1366,11 @@ export function dispatchResolveConflictsJob(params: {
   // Conflict resolution continues a merge that already exists, so its publish
   // finalizes the session exactly as the merge it resumes would have — which is
   // not at all when the conflicted merge was a graph lane's.
-  const finalizeSessionOnPublish = params.finalizeSessionOnPublish ?? true;
+  const finalizeSessionOnPublish = resolveFinalizeSessionOnPublish({
+    ...(params.finalizeSessionOnPublish !== undefined
+      ? { requested: params.finalizeSessionOnPublish }
+      : {}),
+  });
 
   return dispatchMachineJob<MergeContext, MergeOutput>({
     jobType: "resolve-conflicts",
@@ -1018,6 +1387,7 @@ export function dispatchResolveConflictsJob(params: {
       if (resolvedExecutionId) job.executionId = resolvedExecutionId;
       if (resolvedFinalPublish === true) job.finalPublish = true;
       job.finalizeSessionOnPublish = finalizeSessionOnPublish;
+      job.intentSource = "session-merge";
       if (candidateValidation) job.candidateValidation = candidateValidation;
     },
     logStart(job) {
@@ -1038,7 +1408,11 @@ export function dispatchResolveConflictsJob(params: {
         worktreePath,
         branchName,
         message: mergeMessage,
+        // The conflicts are the operator's decision to re-run, not this job's
+        // to detect; the fix loop still belongs to it, because the merge it
+        // resumes was dispatched with one.
         autoResolve: false,
+        autoFixValidation: true,
         validationMode: {
           mode: "run",
           source: "smart_merge",
@@ -1046,8 +1420,8 @@ export function dispatchResolveConflictsJob(params: {
         },
         jobType: "resolve-conflicts",
         decisions,
+        ...(conflictFiles && { conflictFiles }),
         targetBranch,
-        targetWorktreePath,
         finalizeSessionOnPublish,
         ...(resolutionContext && { resolutionContext }),
         ...(resolvedExecutionId && { executionId: resolvedExecutionId }),
@@ -1167,6 +1541,7 @@ function storeConflictAnalysis(
 export function _resetForTesting(): void {
   getJobRegistry().clear();
   getConflictAnalysisRegistry().clear();
+  _resetJobActorRegistryForTesting();
 }
 
 export type { JobDispatchError };

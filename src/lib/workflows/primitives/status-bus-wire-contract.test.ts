@@ -52,6 +52,8 @@ import type {
   ResolveConflictsOutput,
   AnalyzeConflictsInput,
   AnalyzeConflictsOutput,
+  ClassifyWorktreeInput,
+  ClassifyWorktreeOutput,
 } from "@/lib/workflows/merge/actors";
 import type {
   CheckUncommittedInput,
@@ -228,6 +230,10 @@ describe("status-bus wire contract — job-status shapes, merge dispatch, optimi
     // subscribe path drives the broadcast pathway under test.
     const machine = mergeMachine.provide({
       actors: {
+        classifyWorktree: fromPromise<
+          ClassifyWorktreeOutput,
+          ClassifyWorktreeInput
+        >(async () => ({ kind: "clean" })),
         checkUncommitted: fromPromise<
           CheckUncommittedOutput,
           CheckUncommittedInput
@@ -358,6 +364,7 @@ describe("status-bus wire contract — job-status shapes, merge dispatch, optimi
         dispatchMergeJob: dispatchSpy,
         createNotification: notificationSpy,
         sleep: vi.fn().mockResolvedValue(undefined),
+        evaluateSessionMergeAdmission: async () => ({ admitted: true }),
       },
     );
 

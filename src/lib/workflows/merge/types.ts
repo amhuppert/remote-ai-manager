@@ -9,8 +9,9 @@ import type { BaseWorkflowContext } from "../types";
 import type {
   ConflictEntry,
   ConflictDecisionInput,
-  DeliveryGateHaltReason as PersistedDeliveryGateHaltReason,
+  MergeHaltReason as PersistedMergeHaltReason,
 } from "@/lib/jobs/schemas";
+import type { AgentFailureClassification } from "@/lib/agent-backends/errors";
 import type {
   MergeValidationMode,
   ValidationWorkflowRef,
@@ -82,6 +83,25 @@ export interface DeliveryGateHaltReason {
 }
 
 /**
+ * The conflict resolver could not run to a verdict: the turn failed on the
+ * backend (quota, transport), was aborted, timed out, or produced nothing
+ * schema-valid. Distinct from a delivery-gate refusal, which is a decision
+ * about work that did happen. `conflictFiles` is the merge's context — the
+ * files nothing examined — so a halt surface can say what was pending without
+ * attributing the failure to their content.
+ */
+export interface ResolutionInfrastructureHaltReason {
+  type: "resolution_infrastructure";
+  failure: AgentFailureClassification;
+  conflictFiles: string[];
+}
+
+/** Every machine-readable refusal a merge run can terminate with. */
+export type MergeHaltReason =
+  | DeliveryGateHaltReason
+  | ResolutionInfrastructureHaltReason;
+
+/**
  * Compile-level drift guard (do not export): the merge-domain interface above
  * and the persisted Zod shape in `@/lib/jobs/schemas` carry the same halt
  * payload across three contracts (evaluation, machine context/output, SSE +
@@ -90,12 +110,12 @@ export interface DeliveryGateHaltReason {
  * error here rather than a silently dropped field at the boundary.
  */
 type MutuallyAssignable<A extends B, B extends C, C = A> = [A, B, C];
-type _DeliveryGateHaltReasonSchemaParity = MutuallyAssignable<
-  DeliveryGateHaltReason,
-  PersistedDeliveryGateHaltReason
+type _MergeHaltReasonSchemaParity = MutuallyAssignable<
+  MergeHaltReason,
+  PersistedMergeHaltReason
 >;
 // Reference the guard so it is not an unused type alias.
-export type { _DeliveryGateHaltReasonSchemaParity as DeliveryGateHaltReasonSchemaParity };
+export type { _MergeHaltReasonSchemaParity as MergeHaltReasonSchemaParity };
 
 /** Phase tracking for SSE broadcast. */
 export type MergePhase =
@@ -113,6 +133,19 @@ export type MergePhase =
 /** Entry mode controlling which branch of the machine runs at start. */
 export type MergeEntryMode = "merge" | "land" | "discard";
 
+/**
+ * What the machine may do with a worktree it finds mid-merge with conflicts
+ * still unresolved.
+ *
+ * `"abort"` belongs to machinery re-entering a tree its own earlier run left
+ * behind (graph joins and fan-in merges); `"refuse"` belongs to every
+ * user-driven dispatch, where the unfinished merge may be a human's and
+ * discarding it without consent would destroy their work. Neither policy may
+ * abort a merge whose conflicts are already resolved — see the machine's
+ * `classifyingWorktree` routing.
+ */
+export type StaleMergePolicy = "refuse" | "abort";
+
 /** Machine context for the Smart Merge workflow. */
 export interface MergeContext extends BaseWorkflowContext {
   /** Unique job identifier for registry/notification tracking. */
@@ -127,8 +160,8 @@ export interface MergeContext extends BaseWorkflowContext {
   /** Path to the worktree. */
   worktreePath: string;
 
-  /** Job type (merge, commit, or resolve-conflicts). */
-  jobType: "merge" | "commit" | "resolve-conflicts";
+  /** Which merge-family job this run is. Smart Commit is a separate machine. */
+  jobType: "merge" | "resolve-conflicts";
 
   /**
    * Conversation the conflict-resolution / analysis / validation-fix agent
@@ -144,11 +177,34 @@ export interface MergeContext extends BaseWorkflowContext {
   /** Whether to auto-resolve conflicts via Claude. */
   autoResolve: boolean;
 
+  /**
+   * Whether a validation failure dispatches the fix agent. Independent of
+   * `autoResolve` because the two answer different questions: a re-entry that
+   * resumes a merge's conflicts carries no conflict-resolution mandate of its
+   * own, yet it still owes the merge it resumes the fix loop that merge had.
+   */
+  autoFixValidation: boolean;
+
   /** Whether to use squash merge. */
   squashMerge: boolean;
 
-  /** Conflict files detected during merge. */
+  /** How a stale unresolved merge in the worktree is handled at entry. */
+  staleMergePolicy: StaleMergePolicy;
+
+  /**
+   * Conflict files detected during merge. Seeded from the input on a
+   * resolve-conflicts re-entry, whose own run never sees the merge that
+   * produced them but must still verify they came back marker-free.
+   */
   conflictFiles: string[];
+
+  /**
+   * Whether this run ran the merge command in the worktree, and so owns
+   * whatever unconcluded merge is found there. A `resolve-conflicts` re-entry
+   * never does: it resumes a merge an earlier run opened, which it may finish
+   * but not discard.
+   */
+  openedMerge: boolean;
 
   /** Conflict analysis from resolution. */
   conflictAnalysis: ConflictEntry[] | null;
@@ -179,6 +235,13 @@ export interface MergeContext extends BaseWorkflowContext {
   /** Pre-merge validation timeout in ms. */
   validationTimeoutMs: number;
 
+  /**
+   * Wall-clock bound on each conflict resolution/analysis turn. Null takes the
+   * resolver module's own default (`DEFAULT_RESOLUTION_TIMEOUT_MS`), which
+   * owns the number — the merge only carries an override.
+   */
+  resolutionTimeoutMs: number | null;
+
   /** Per-run validation policy supplied by the owning merge surface. */
   validationMode: MergeValidationMode;
 
@@ -200,11 +263,16 @@ export interface MergeContext extends BaseWorkflowContext {
   /** Target branch for merge operations (default "main"). */
   targetBranch: string;
 
-  /** Parent worktree path for non-main squash merges (null when targeting main). */
-  targetWorktreePath: string | null;
-
   /** Whether the machine is running a merge, a Land, or a Discard. */
   entryMode: MergeEntryMode;
+
+  /**
+   * The prepare found the target already holding everything the branch
+   * carries. The run still goes through the delivery gate and the publish step
+   * — a no-op merge is a merge the operator asked for, and it finishes the
+   * session — but no commit is created and the target ref never moves.
+   */
+  upToDate: boolean;
 
   /** Prepared (but not yet published) squash commit SHA. */
   preparedSha: string | null;
@@ -217,6 +285,14 @@ export interface MergeContext extends BaseWorkflowContext {
 
   /** Best-effort warning when refreshing the target worktree failed after CAS. */
   refreshWarning: string | null;
+
+  /**
+   * An operator stop that arrived while the publish was in flight. The publish
+   * itself cannot be recalled, so the request is held until the run reaches a
+   * point where stopping still means something (a lost CAS, which would
+   * otherwise re-prepare and publish minutes after the stop was accepted).
+   */
+  abortRequested: boolean;
 
   /** Current CAS attempt number (1-based; incremented on each re-prepare). */
   casAttempt: number;
@@ -241,8 +317,15 @@ export interface MergeContext extends BaseWorkflowContext {
   /** Validation result for the candidate prepared by this merge job. */
   candidateValidation: CandidateValidationFact | null;
 
-  /** Machine-readable refusal emitted when the delivery gate blocks publish. */
-  haltReason: DeliveryGateHaltReason | null;
+  /** Machine-readable refusal emitted when a terminal state carries one. */
+  haltReason: MergeHaltReason | null;
+
+  /**
+   * Classification of the infrastructure failure that stopped the conflict
+   * resolver before it reached a verdict. Null when no resolver turn failed
+   * that way — a content-level unresolved conflict leaves it null.
+   */
+  resolutionFailure: AgentFailureClassification | null;
 }
 
 /** Input required to create a merge workflow actor. */
@@ -255,18 +338,25 @@ export interface MergeInput {
   branchName: string;
   message: string;
   autoResolve: boolean;
-  jobType?: "merge" | "commit" | "resolve-conflicts";
+  /** Defaults to `autoResolve`; see {@link MergeContext.autoFixValidation}. */
+  autoFixValidation?: boolean;
+  jobType?: "merge" | "resolve-conflicts";
   /** See {@link MergeContext.conversationId}. */
   conversationId?: string;
+  /** Defaults to "refuse"; see {@link StaleMergePolicy}. */
+  staleMergePolicy?: StaleMergePolicy;
+  /** Files the merge being resumed reported as conflicted. */
+  conflictFiles?: string[];
   decisions?: ConflictDecisionInput[];
   /** See {@link MergeContext.resolutionContext}. */
   resolutionContext?: string;
   /** Explicit per-run validation behavior selected by the owning surface. */
   validationMode: MergeValidationMode;
   validationTimeoutMs?: number;
+  /** See {@link MergeContext.resolutionTimeoutMs}. */
+  resolutionTimeoutMs?: number;
   maxFixAttempts?: number;
   targetBranch?: string;
-  targetWorktreePath?: string;
   /** Defaults to "merge". "land"/"discard" enter the machine on a parked prepared commit. */
   entryMode?: MergeEntryMode;
   /** Required when entryMode is "land" or "discard". */
@@ -295,6 +385,12 @@ export type MergeEvent = { type: "ABORT" };
 export interface MergeOutput {
   status: "completed" | "failed" | "conflicts" | "ready-to-land" | "discarded";
   mergeHash: string | null;
+  /**
+   * The prepare found nothing to merge — see {@link MergeContext.upToDate}. A
+   * `completed` run with this set published no commit, so `mergeHash` is null.
+   * Absent on outputs built outside the machine, which are ordinary merges.
+   */
+  upToDate?: boolean;
   commitHash: string | null;
   error: string | null;
   conflictFiles: string[];
@@ -304,7 +400,7 @@ export interface MergeOutput {
   parkedRef: string | null;
   refreshWarning: string | null;
   candidateValidation: CandidateValidationFact | null;
-  haltReason: DeliveryGateHaltReason | null;
+  haltReason: MergeHaltReason | null;
   /**
    * Phase to retain on the terminal job record. Null for terminal statuses
    * that clear phase (completed/failed/conflicts/discarded); "awaiting-land"

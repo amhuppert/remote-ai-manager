@@ -81,14 +81,15 @@ function setupLive(links?: Record<string, TicketLinkSummary>) {
   }
   const enqueueMergeDonePrompt =
     vi.fn<(prompt: MergeDoneTicketPrompt) => void>();
+  const addOrUpdateJob = vi.fn<(event: JobStatusEvent) => void>();
 
   registerJobSseReactions(fake as unknown as EventSource, {
     queryClient,
-    addOrUpdateJob: vi.fn(),
+    addOrUpdateJob,
     enqueueMergeDonePrompt,
   });
 
-  return { fake, enqueueMergeDonePrompt };
+  return { fake, enqueueMergeDonePrompt, addOrUpdateJob };
 }
 
 const linkedTicket: TicketLinkSummary = {
@@ -123,6 +124,33 @@ describe("registerJobSseReactions", () => {
     fake.emit("job-status", jobStatus({ status: "ready-to-land" }));
 
     expect(enqueueMergeDonePrompt).not.toHaveBeenCalled();
+  });
+
+  it("delivers a failed merge carrying a resolution-infrastructure halt reason", () => {
+    const { fake, addOrUpdateJob } = setupLive({});
+    const haltReason = {
+      type: "resolution_infrastructure" as const,
+      failure: {
+        kind: "quota_exhausted" as const,
+        message: "You've hit your usage limit.",
+        retryable: false,
+        retryAfterHint: "Aug 19th, 2026 11:29 PM",
+      },
+      conflictFiles: ["src/index.ts"],
+    };
+
+    fake.emit(
+      "job-status",
+      jobStatus({
+        status: "failed",
+        errorMessage:
+          "Conflict resolution could not run (quota_exhausted): You've hit your usage limit.",
+        haltReason,
+      }),
+    );
+
+    expect(addOrUpdateJob).toHaveBeenCalledTimes(1);
+    expect(addOrUpdateJob.mock.calls[0]![0]!.haltReason).toEqual(haltReason);
   });
 
   it("does not suggest Done for a merged session with no ticket link", () => {

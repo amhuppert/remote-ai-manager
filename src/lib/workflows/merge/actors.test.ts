@@ -110,6 +110,22 @@ describe("runPrepare", () => {
     });
   });
 
+  it("maps an up-to-date prepare to an up-to-date status carrying the target tip", async () => {
+    const prepareSquashMerge = vi.fn(
+      async (): Promise<PrepareResult> => ({
+        kind: "up-to-date",
+        expectedTargetSha: "tgt-sha",
+      }),
+    );
+
+    const out = await runPrepare(
+      makePrepareDeps({ prepareSquashMerge }),
+      baseInput,
+    );
+
+    expect(out).toEqual({ status: "up-to-date", expectedTargetSha: "tgt-sha" });
+  });
+
   it("maps conflicts kind to a conflicts status with files and expectedTargetSha", async () => {
     const prepareSquashMerge = vi.fn(
       async (): Promise<PrepareResult> => ({
@@ -411,6 +427,120 @@ describe("runPublish", () => {
     expect(release).toHaveBeenCalledTimes(1);
   });
 
+  it("fails once with the git error when the target ref never moved, instead of re-preparing", async () => {
+    const setFinished = vi.fn(async () => {});
+    const release = vi.fn();
+    const deps = makePublishDeps({
+      acquireProjectLock: vi.fn(() => release),
+      publishPreparedMerge: vi.fn(async () => ({
+        kind: "publish-failed" as const,
+        error: "cannot lock ref 'refs/heads/main': File exists",
+      })),
+      setSessionFinished: setFinished,
+    });
+
+    const out = await runPublish(deps, basePublishInput);
+
+    expect(out).toEqual({
+      status: "failed",
+      error: "cannot lock ref 'refs/heads/main': File exists",
+    });
+    expect(setFinished).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The pre-lock discovery answers a window that only the lock closes: a human
+   * can start editing the target checkout in between, and publishing would
+   * `reset --hard` over those tracked edits.
+   */
+  it("parks the merge when the target checkout turned dirty between the pre-lock read and the publish", async () => {
+    const events: string[] = [];
+    const publish = vi.fn(async () => ({
+      kind: "published" as const,
+      mergeHash: "merge-abc",
+    }));
+    const setFinished = vi.fn(async () => {});
+    const discoverTargetCheckout = vi
+      .fn<
+        (
+          projectPath: string,
+          targetBranch: string,
+        ) => Promise<TargetCheckoutState>
+      >()
+      .mockImplementationOnce(async () => {
+        events.push("pre-lock-read");
+        return { kind: "clean", worktreePath: "/proj/.worktrees/main" };
+      })
+      .mockImplementationOnce(async () => {
+        events.push("in-lock-read");
+        return {
+          kind: "dirty",
+          worktreePath: "/proj/.worktrees/main",
+          trackedDirtyPaths: [
+            { path: "src/edited.ts", statusCode: " M", tracked: true },
+          ],
+        };
+      });
+    const deps = makePublishDeps({
+      discoverTargetCheckout,
+      publishPreparedMerge: publish,
+      setSessionFinished: setFinished,
+      acquireProjectLock: vi.fn(() => {
+        events.push("lock-acquired");
+        return () => events.push("lock-released");
+      }),
+    });
+
+    const out = await runPublish(deps, basePublishInput);
+
+    expect(out).toEqual({
+      status: "ready-to-land",
+      parkedRef: "refs/cc-merges/job-1",
+      preparedSha: "prep-1",
+      targetWorktreePath: "/proj/.worktrees/main",
+    });
+    // Nothing publishes, so nothing resets the dirty checkout.
+    expect(publish).not.toHaveBeenCalled();
+    expect(setFinished).not.toHaveBeenCalled();
+    expect(events).toEqual([
+      "pre-lock-read",
+      "lock-acquired",
+      "in-lock-read",
+      "lock-released",
+    ]);
+  });
+
+  it("publishes against the checkout state read under the lock", async () => {
+    const publish = vi.fn(async () => ({
+      kind: "published" as const,
+      mergeHash: "merge-abc",
+    }));
+    const discoverTargetCheckout = vi
+      .fn<
+        (
+          projectPath: string,
+          targetBranch: string,
+        ) => Promise<TargetCheckoutState>
+      >()
+      .mockImplementationOnce(async () => ({
+        kind: "clean",
+        worktreePath: "/proj/.worktrees/main",
+      }))
+      .mockImplementationOnce(async () => ({ kind: "not-checked-out" }));
+    const deps = makePublishDeps({
+      discoverTargetCheckout,
+      publishPreparedMerge: publish,
+    });
+
+    const out = await runPublish(deps, basePublishInput);
+
+    expect(out).toEqual({ status: "completed", mergeHash: "merge-abc" });
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({ cleanTargetWorktreePath: null }),
+    );
+  });
+
   it("finalizes session lifecycle only when finalizeSession is true", async () => {
     const setFinished = vi.fn(async () => {});
     const stopAll = vi.fn(async () => {});
@@ -509,5 +639,96 @@ describe("runPublish", () => {
     const out = await runPublish(deps, basePublishInput);
     expect(out.status).toBe("completed");
     expect(setFinished).toHaveBeenCalledTimes(1);
+  });
+
+  describe("up-to-date publish", () => {
+    const upToDateInput: PublishActorInput = {
+      ...basePublishInput,
+      // Nothing was prepared: the candidate IS the target tip and no ref was
+      // parked.
+      preparedSha: "tgt-old",
+      parkedRef: "",
+      upToDate: true,
+    };
+
+    it("finishes the session without touching the target branch", async () => {
+      const discover = vi.fn(
+        async (): Promise<TargetCheckoutState> => ({
+          kind: "clean",
+          worktreePath: "/proj/.worktrees/main",
+        }),
+      );
+      const publish = vi.fn(async (): Promise<PublishResult> => {
+        throw new Error("publish must not run for an up-to-date merge");
+      });
+      const release = vi.fn();
+      const acquire = vi.fn(() => release);
+      const setFinished = vi.fn(async () => {});
+      const stopAll = vi.fn(async () => {});
+      const retarget = vi.fn(async () => {});
+      const deps = makePublishDeps({
+        discoverTargetCheckout: discover,
+        publishPreparedMerge: publish,
+        acquireProjectLock: acquire,
+        setSessionFinished: setFinished,
+        stopAllForSession: stopAll,
+        retargetOrphanedChildren: retarget,
+      });
+
+      const out = await runPublish(deps, upToDateInput);
+
+      expect(out).toEqual({ status: "up-to-date" });
+      expect(publish).not.toHaveBeenCalled();
+      expect(discover).not.toHaveBeenCalled();
+      expect(acquire).toHaveBeenCalledTimes(1);
+      expect(release).toHaveBeenCalledTimes(1);
+      expect(setFinished).toHaveBeenCalledWith("/proj", "feature");
+      expect(stopAll).toHaveBeenCalledWith({
+        projectPath: "/proj",
+        sessionName: "feature",
+      });
+      expect(retarget).toHaveBeenCalledWith("/proj", "feature");
+    });
+
+    it("leaves the session running for a lane no-op that does not finalize", async () => {
+      const setFinished = vi.fn(async () => {});
+      const stopAll = vi.fn(async () => {});
+      const retarget = vi.fn(async () => {});
+      const deps = makePublishDeps({
+        setSessionFinished: setFinished,
+        stopAllForSession: stopAll,
+        retargetOrphanedChildren: retarget,
+      });
+
+      const out = await runPublish(deps, {
+        ...upToDateInput,
+        finalizeSession: false,
+      });
+
+      expect(out).toEqual({ status: "up-to-date" });
+      expect(setFinished).not.toHaveBeenCalled();
+      expect(stopAll).not.toHaveBeenCalled();
+      expect(retarget).not.toHaveBeenCalled();
+    });
+
+    it("still refuses to finish a session whose graph workflow owns unfinished work", async () => {
+      const setFinished = vi.fn(async () => {});
+      const deps = makePublishDeps({
+        setSessionFinished: setFinished,
+        getActiveGraphWorkflowExecution: vi.fn().mockResolvedValue({
+          id: "execution-1",
+          status: "running",
+        }),
+      });
+
+      const out = await runPublish(deps, upToDateInput);
+
+      expect(out).toEqual({
+        status: "failed",
+        error:
+          "Graph workflow execution execution-1 is running. Complete or abort it before merging this session.",
+      });
+      expect(setFinished).not.toHaveBeenCalled();
+    });
   });
 });

@@ -62,6 +62,8 @@ import type {
   PrepareActorOutput,
   PublishActorInput,
   PublishActorOutput,
+  ClassifyWorktreeInput,
+  ClassifyWorktreeOutput,
 } from "@/lib/workflows/merge/actors";
 import { createRegisteredDeliveryGateEvaluator } from "@/lib/workflows/merge/delivery-gate-port";
 import {
@@ -1318,7 +1320,6 @@ export function createSpecSpineWorld(
       deliveryGate: createRegisteredDeliveryGateEvaluator(),
       markDelivered: lifecycle.markDelivered,
       runMachine: runRegisteredMergeJob,
-      recordMergeIntent: () => undefined,
     });
     return runner.run({
       jobId,
@@ -2062,6 +2063,10 @@ export function scenarioMachine(
 ): MergeMachineType {
   return mergeMachine.provide({
     actors: {
+      classifyWorktree: fromPromise<
+        ClassifyWorktreeOutput,
+        ClassifyWorktreeInput
+      >(async () => ({ kind: "clean" })),
       checkUncommitted: fromPromise<
         CheckUncommittedOutput,
         CheckUncommittedInput

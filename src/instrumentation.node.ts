@@ -32,6 +32,10 @@ import { getSharedWriteQueue } from "./lib/state-store/write-queue";
 import { recoverInterruptedConversationSnapshots as recoverInterruptedConversationSnapshotsForStartup } from "./lib/tickets/snapshot-refresh";
 import { registerProductionSpecWorkflowComposition } from "./lib/specs/production-workflow-composition";
 import { initializeValidationServiceAtStartup } from "./lib/validation/singleton";
+import {
+  collectOrphanedParkedRefs,
+  type ParkedRefGcSummary,
+} from "./lib/jobs/parked-ref-gc";
 
 const logger = createLogger("startup");
 
@@ -62,6 +66,11 @@ export interface StartupDeps {
   initializeValidationService(): Promise<void>;
   /** Marks orphaned pending conversation snapshots failed. */
   recoverInterruptedConversationSnapshots(): Promise<number>;
+  /**
+   * Deletes `refs/cc-merges/` refs no job row still holds. Optional so a test
+   * that is not about parked refs need not supply it.
+   */
+  collectOrphanedParkedRefs?(): Promise<ParkedRefGcSummary>;
   verifyServerBaseUrl(): void;
 }
 
@@ -105,6 +114,7 @@ const defaultStartupDeps: StartupDeps = {
       repo: createTicketsRepo(getStateDb(), getSharedWriteQueue()),
       now: () => new Date().toISOString(),
     }),
+  collectOrphanedParkedRefs: () => collectOrphanedParkedRefs(),
   verifyServerBaseUrl: () => {
     void verifyRecordedServerBaseUrl();
   },
@@ -325,6 +335,24 @@ export function createStartupRegistrar(
       logger.info("startup.notification_db_initialized");
     } catch (err) {
       logger.error("startup.notification_db_failed", {
+        error: getErrorMessage(err),
+      });
+    }
+
+    // A prepared merge commit is reachable only through its `refs/cc-merges/`
+    // ref, so a job that died before publishing or discarding leaves the commit
+    // parked forever. Runs after the stale-job sweep above: that sweep decides
+    // which `running` rows still belong to a live process, and a dead one's row
+    // must not go on protecting a ref nothing will ever land.
+    try {
+      const collected = await deps.collectOrphanedParkedRefs?.();
+      if (collected !== undefined && collected.deleted > 0) {
+        logger.info("startup.orphaned_parked_refs_collected", {
+          ...collected,
+        });
+      }
+    } catch (err) {
+      logger.error("startup.parked_ref_sweep_failed", {
         error: getErrorMessage(err),
       });
     }

@@ -54,6 +54,8 @@ import type {
   PrepareActorOutput,
   PublishActorInput,
   PublishActorOutput,
+  ClassifyWorktreeInput,
+  ClassifyWorktreeOutput,
 } from "@/lib/workflows/merge/actors";
 import {
   _resetDeliveryGateEvaluatorForTesting,
@@ -383,7 +385,6 @@ describe("candidate-proof closure over the wired merge bridge", () => {
           },
           markDelivered: lifecycle.markDelivered,
           runMachine: runRegisteredMergeJob,
-          recordMergeIntent: () => undefined,
         }).run(input);
       },
     };
@@ -604,7 +605,6 @@ describe("candidate-proof closure over the wired merge bridge", () => {
       deliveryGate: createRegisteredDeliveryGateEvaluator(),
       markDelivered: lifecycle.markDelivered,
       runMachine: runRegisteredMergeJob,
-      recordMergeIntent: () => undefined,
     });
     return runner.run({
       jobId,
@@ -655,6 +655,10 @@ function scenarioMachine(
 ): MergeMachineType {
   return mergeMachine.provide({
     actors: {
+      classifyWorktree: fromPromise<
+        ClassifyWorktreeOutput,
+        ClassifyWorktreeInput
+      >(async () => ({ kind: "clean" })),
       checkUncommitted: fromPromise<
         CheckUncommittedOutput,
         CheckUncommittedInput

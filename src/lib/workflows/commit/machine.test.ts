@@ -3,6 +3,10 @@ import { createActor, fromPromise, toPromise } from "xstate";
 import { commitMachine } from "./machine";
 import type { CommitInput } from "./types";
 import type {
+  ClassifyWorktreeInput,
+  ClassifyWorktreeOutput,
+} from "../merge/actors";
+import type {
   CheckUncommittedInput,
   CheckUncommittedOutput,
   CommitChangesInput,
@@ -29,6 +33,14 @@ function mockCheckUncommitted(
   );
 }
 
+function mockClassifyWorktree(
+  fn: (input: ClassifyWorktreeInput) => Promise<ClassifyWorktreeOutput>,
+) {
+  return fromPromise<ClassifyWorktreeOutput, ClassifyWorktreeInput>(
+    async ({ input }) => fn(input),
+  );
+}
+
 function mockCommitChanges(
   fn: (input: CommitChangesInput) => Promise<CommitChangesOutput>,
 ) {
@@ -51,6 +63,20 @@ function mockFixValidation(
   return fromPromise<FixValidationOutput, FixValidationInput>(
     async ({ input }) => fn(input),
   );
+}
+
+/** Poll until the machine reports the phase an out-of-band event targets. */
+async function waitForPhase(
+  actor: { getSnapshot(): { context: { phase: string | null } } },
+  phase: string,
+): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (actor.getSnapshot().context.phase !== phase) {
+    if (Date.now() > deadline) {
+      throw new Error(`Timed out waiting for phase ${phase}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
 }
 
 function validationFailure(message: string): Error {
@@ -85,6 +111,7 @@ const defaultInput: CommitInput = {
 };
 
 type ActorOverrides = {
+  classifyWorktree?: ReturnType<typeof mockClassifyWorktree>;
   checkUncommitted?: ReturnType<typeof mockCheckUncommitted>;
   commitChanges?: ReturnType<typeof mockCommitChanges>;
   runValidation?: ReturnType<typeof mockRunValidation>;
@@ -94,6 +121,9 @@ type ActorOverrides = {
 function createTestMachine(overrides: ActorOverrides = {}) {
   return commitMachine.provide({
     actors: {
+      classifyWorktree:
+        overrides.classifyWorktree ??
+        mockClassifyWorktree(async () => ({ kind: "dirty" })),
       checkUncommitted:
         overrides.checkUncommitted ??
         mockCheckUncommitted(async () => ({ hasChanges: false })),
@@ -114,6 +144,72 @@ function createTestMachine(overrides: ActorOverrides = {}) {
 // ============================================================
 
 describe("commitMachine", () => {
+  describe("worktree entry classification", () => {
+    it("refuses to commit a worktree that is mid-merge", async () => {
+      for (const unresolved of [true, false]) {
+        let commitCalls = 0;
+        const machine = createTestMachine({
+          classifyWorktree: mockClassifyWorktree(async () => ({
+            kind: "mid-merge",
+            unresolved,
+          })),
+          commitChanges: mockCommitChanges(async () => {
+            commitCalls += 1;
+            return { hash: "abc123" };
+          }),
+        });
+        const actor = createActor(machine, { input: defaultInput });
+        actor.start();
+
+        const output = await toPromise(actor);
+
+        expect(output.status).toBe("failed");
+        expect(commitCalls).toBe(0);
+        expect(output.error).toContain(defaultInput.worktreePath);
+      }
+    });
+
+    it("refuses to commit a poisoned worktree, naming the files", async () => {
+      let commitCalls = 0;
+      const machine = createTestMachine({
+        classifyWorktree: mockClassifyWorktree(async () => ({
+          kind: "poisoned",
+          artifacts: { unmergedFiles: ["src/a.ts"], markerFiles: [] },
+        })),
+        commitChanges: mockCommitChanges(async () => {
+          commitCalls += 1;
+          return { hash: "abc123" };
+        }),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("failed");
+      expect(commitCalls).toBe(0);
+      expect(output.error).toContain("src/a.ts");
+    });
+
+    it("commits a clean worktree so its own no-changes error still surfaces", async () => {
+      const machine = createTestMachine({
+        classifyWorktree: mockClassifyWorktree(async () => ({
+          kind: "clean",
+        })),
+        commitChanges: mockCommitChanges(async () => {
+          throw new Error("No uncommitted changes to commit");
+        }),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("failed");
+      expect(output.error).toBe("No uncommitted changes to commit");
+    });
+  });
+
   describe("happy path", () => {
     it("commit + validation passes → completed", async () => {
       const states: string[] = [];
@@ -613,6 +709,32 @@ describe("commitMachine", () => {
 
       expect(output.status).toBe("failed");
       expect(output.commitHash).toBe("user-commit-abc");
+    });
+  });
+
+  describe("operator abort", () => {
+    it("fails with the operator's reason while validation is in flight", async () => {
+      const signals: AbortSignal[] = [];
+      const machine = createTestMachine({
+        runValidation: fromPromise<RunValidationOutput, RunValidationInput>(
+          ({ signal }) =>
+            new Promise<RunValidationOutput>(() => {
+              signals.push(signal);
+            }),
+        ),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.start();
+
+      await waitForPhase(actor, "validating");
+      expect(signals[0]?.aborted).toBe(false);
+
+      actor.send({ type: "ABORT" });
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("failed");
+      expect(output.error).toBe("Aborted by operator");
+      expect(signals[0]?.aborted).toBe(true);
     });
   });
 });

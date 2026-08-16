@@ -58,6 +58,7 @@ import {
   type ScheduleEligibleContextsResult,
 } from "./workflow-manager";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { AgentFailureClassification } from "@/lib/agent-backends/errors";
 import type { TemplateTier } from "./template-library-service";
 import {
   createGraphWorkflowExecutionRepository,
@@ -6054,6 +6055,100 @@ describe("graph workflow manager", () => {
       conflictGuidance: guidance,
       // Per-lane progress survives the reset so already-merged lanes are skipped.
       mergedSourceLaneIds: ["lane-a"],
+    });
+  });
+
+  describe("resume against a resolver-infrastructure join halt", () => {
+    function createInfraHaltRepository(
+      failure: AgentFailureClassification,
+    ): ReturnType<typeof createRepository> {
+      const baseExecution = createWorkflowExecution();
+      return createRepository(
+        createWorkflowExecution({
+          ...baseExecution,
+          status: "halted",
+          haltReason: {
+            type: "join_failure",
+            joinId: "join-1",
+            joinKind: "context_merge",
+            contextId: null,
+            sourceLaneIds: ["lane-a", "lane-b"],
+            targetLaneId: "lane-a",
+            message: `Conflict resolution failed before reaching the conflict: ${failure.kind} — ${failure.message}`,
+            conflictFiles: ["src/binding.ts"],
+            resolutionFailure: failure,
+          },
+          activeContextIds: [],
+          completedAt: "2026-03-27T15:30:00.000Z",
+          joins: {
+            "join-1": {
+              joinId: "join-1",
+              kind: "context_merge",
+              contextId: null,
+              targetLaneId: "lane-a",
+              sourceLaneIds: ["lane-a", "lane-b"],
+              mergedSourceLaneIds: [],
+              validationDebtSourceLaneIds: [],
+              status: "failed",
+              errorMessage: "resolver failed",
+              conflicts: null,
+              conflictGuidance: null,
+              createdAt: "2026-03-27T15:00:00.000Z",
+              updatedAt: "2026-03-27T15:20:00.000Z",
+              completedAt: "2026-03-27T15:20:00.000Z",
+            },
+          },
+        }),
+      );
+    }
+
+    it("refuses a system-initiated resume when the resolver failure is not retryable, and still lets the operator retry", async () => {
+      // Incident 3edd5fd7: rescheduling the join nine seconds after a quota
+      // wall that resets in three days buys nothing and burns the attempt.
+      const repository = createInfraHaltRepository({
+        kind: "quota_exhausted",
+        message: "You've hit your usage limit.",
+        retryable: false,
+        retryAfterHint: "Aug 19th, 2026 11:29 PM",
+      });
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return null;
+        },
+      });
+
+      await expect(
+        manager.resume("/repo", "session-1", { initiator: "system" }),
+      ).rejects.toThrow(/quota_exhausted/);
+      expect(repository.read()?.status).toBe("halted");
+      expect(repository.read()?.joins["join-1"]?.status).toBe("failed");
+
+      // The operator may have restored capacity, so their resume proceeds.
+      const resumed = await manager.resume("/repo", "session-1");
+      expect(resumed.status).toBe("running");
+      expect(resumed.joins["join-1"]?.status).toBe("pending");
+    });
+
+    it("lets a system-initiated resume proceed when the resolver failure is retryable", async () => {
+      const repository = createInfraHaltRepository({
+        kind: "schema_validation",
+        message: "no schema-valid resolution survived",
+        retryable: true,
+      });
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return null;
+        },
+      });
+
+      const resumed = await manager.resume("/repo", "session-1", {
+        initiator: "system",
+      });
+
+      expect(resumed.status).toBe("running");
+      expect(resumed.joins["join-1"]?.status).toBe("pending");
     });
   });
 

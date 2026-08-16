@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { registerTrustedSchema } from "@/lib/shared/parse-trusted";
+import { agentFailureClassificationSchema } from "@/lib/agent-backends/errors";
+import { mergeIntentSourceSchema } from "@/lib/merge-intents/schemas";
 
 export const jobTypeSchema = z.enum([
   "commit",
@@ -67,6 +69,34 @@ export type DeliveryGateHaltReason = z.infer<
   typeof deliveryGateHaltReasonSchema
 >;
 
+/**
+ * The conflict resolver never reached the conflict: the backend failed, the
+ * quota was exhausted, the turn was aborted or timed out, or no schema-valid
+ * output survived. `conflictFiles` is the merge's context for the halt, not an
+ * accusation about their content — nothing read them.
+ */
+export const resolutionInfrastructureHaltReasonSchema = z.object({
+  type: z.literal("resolution_infrastructure"),
+  failure: agentFailureClassificationSchema,
+  conflictFiles: z.array(z.string()),
+});
+export type ResolutionInfrastructureHaltReason = z.infer<
+  typeof resolutionInfrastructureHaltReasonSchema
+>;
+
+/**
+ * Every machine-readable refusal a merge-family job can terminate with. New
+ * variants must land here and in the merge domain's twin
+ * (`workflows/merge/types.ts`) together — the SSE frame is parsed against this
+ * schema on the client, so a variant missing here is a dropped event, not a
+ * degraded one.
+ */
+export const mergeHaltReasonSchema = z.discriminatedUnion("type", [
+  deliveryGateHaltReasonSchema,
+  resolutionInfrastructureHaltReasonSchema,
+]);
+export type MergeHaltReason = z.infer<typeof mergeHaltReasonSchema>;
+
 // Documented phase strings (held as z.string() for forward compatibility):
 //   "committing-uncommitted" | "merging-main" | "analyzing-conflicts" |
 //   "resolving-conflicts" | "validating" | "fixing-validation" |
@@ -95,13 +125,29 @@ export const backgroundJobSchema = registerTrustedSchema(
     preparedSha: z.string().optional(),
     expectedTargetSha: z.string().optional(),
     refreshWarning: z.string().optional(),
+    /**
+     * The merge had nothing to land: the target already contained the branch,
+     * so the run completed without a commit and `mergeHash` stays absent.
+     * Optional because every other job kind — and every merge that did land —
+     * simply omits it.
+     */
+    upToDate: z.boolean().optional(),
     executionId: z.string().optional(),
     finalPublish: z.boolean().optional(),
     candidateValidation: candidateValidationFactSchema.optional(),
-    haltReason: deliveryGateHaltReasonSchema.optional(),
-    // Agent-written intent notes for the conflict resolver. Kept on the
-    // in-memory job (like parkedRef) so a resolve-conflicts retry after a
-    // conflicts terminal can reuse it; not part of the persisted JobRecord.
+    haltReason: mergeHaltReasonSchema.optional(),
+    /**
+     * When the job last reported movement — a status broadcast or a durable
+     * progress write. Stale recovery measures inactivity against it rather
+     * than total runtime, so a long merge that is still advancing is never
+     * torn down. Optional because the live job registry outlives a module
+     * reload: a job registered by an earlier build carries no stamp, and
+     * readers fall back to `startedAt`.
+     */
+    lastProgressAt: z.string().optional(),
+    // Agent-written intent notes for the conflict resolver, stamped at
+    // dispatch: a resolve-conflicts retry after a conflicts terminal and a land
+    // re-entry after a restart both reuse them.
     resolutionContext: z.string().optional(),
     /**
      * Whether this merge-family job's publish also finalizes the session
@@ -115,11 +161,27 @@ export const backgroundJobSchema = registerTrustedSchema(
      * work. Absent on commit and rebase jobs, which publish nothing.
      */
     finalizeSessionOnPublish: z.boolean().optional(),
+    /**
+     * Which surface dispatched this merge, stamped at dispatch. The intent
+     * brief a completed merge attaches to its landed commit is attributed from
+     * it, so the attribution follows the dispatch rather than being restated
+     * (and contradicted) by whoever hosts the machine. Absent on commit and
+     * rebase jobs, which land no merge.
+     */
+    intentSource: mergeIntentSourceSchema.optional(),
   }),
   "backgroundJobSchema",
 );
 export type BackgroundJob = z.infer<typeof backgroundJobSchema>;
 
+/**
+ * The durable half of a job. Jobs themselves stay ephemeral (plan D12) — no
+ * machine actor survives a restart — but a `ready-to-land` job parks a real
+ * commit under `refs/cc-merges/` and hands the operator a decision, so the
+ * bookkeeping a land or discard re-entry needs (`parkedRef`, `preparedSha`,
+ * `expectedTargetSha`, `finalizeSessionOnPublish`, `resolutionContext`) has to
+ * outlive the in-memory registry the decision would otherwise be read from.
+ */
 export const jobRecordSchema = registerTrustedSchema(
   backgroundJobSchema
     .pick({
@@ -138,6 +200,11 @@ export const jobRecordSchema = registerTrustedSchema(
       errorMessage: true,
       executionId: true,
       finalPublish: true,
+      parkedRef: true,
+      preparedSha: true,
+      expectedTargetSha: true,
+      finalizeSessionOnPublish: true,
+      resolutionContext: true,
       candidateValidation: true,
     })
     .strict(),
@@ -165,7 +232,10 @@ export const jobStatusEventSchema = z.object({
   preparedSha: z.string().optional(),
   expectedTargetSha: z.string().optional(),
   refreshWarning: z.string().optional(),
-  haltReason: deliveryGateHaltReasonSchema.optional(),
+  upToDate: z.boolean().optional(),
+  haltReason: mergeHaltReasonSchema.optional(),
+  lastProgressAt: z.string().optional(),
+  intentSource: mergeIntentSourceSchema.optional(),
 });
 export type JobStatusEvent = z.infer<typeof jobStatusEventSchema>;
 

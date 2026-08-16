@@ -76,6 +76,9 @@ export interface CommitInput {
   maxFixAttempts?: number;
 }
 
+/** Events the commit machine can receive. */
+export type CommitEvent = { type: "ABORT" };
+
 /** Output produced when the machine reaches a terminal state. */
 export interface CommitOutput {
   status: "completed" | "failed";

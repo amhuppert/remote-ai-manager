@@ -23,6 +23,12 @@ import type {
   MergeOutput,
 } from "./types";
 import type {
+  AbortMergeCleanupInput,
+  AbortMergeCleanupOutput,
+  AbortStaleMergeInput,
+  AbortStaleMergeOutput,
+  ClassifyWorktreeInput,
+  ClassifyWorktreeOutput,
   GetCurrentBranchInput,
   GetCurrentBranchOutput,
   MergeMainInput,
@@ -41,6 +47,9 @@ import type {
   DiscardParkedRefOutput,
 } from "./actors";
 import {
+  abortMergeCleanupActor,
+  abortStaleMergeActor,
+  classifyWorktreeActor,
   getCurrentBranchActor,
   mergeMain,
   resolveConflictsActor,
@@ -67,7 +76,7 @@ import {
   fixValidation,
 } from "../validation-fix/actors";
 import { createValidationFixStates } from "../validation-fix/states";
-import { errorAssign } from "../utils";
+import { errorAssign, OPERATOR_ABORT_ERROR } from "../utils";
 import type { RunMergeValidationMode } from "../validation-fix/types";
 
 const SCHEMA_VERSION = 1;
@@ -91,7 +100,7 @@ function formatDeliveryGateRefusal(
 /**
  * Shared validate → fix → check → commit-fix → revalidate fragment.
  * Success routes to `preparing`; a validation-script timeout short-circuits
- * to `failed`; only autoResolve merges dispatch the fix agent.
+ * to `failed`; only merges that opted into the fix loop dispatch the fix agent.
  */
 const validationFixStates = createValidationFixStates<MergeContext>({
   validateInput: (context) => {
@@ -122,7 +131,7 @@ const validationFixStates = createValidationFixStates<MergeContext>({
     ],
   },
   onTimeout: { target: "failed" },
-  shouldAttemptFix: (context) => context.autoResolve,
+  shouldAttemptFix: (context) => context.autoFixValidation,
 });
 
 /** Exported type alias so consumers can accept the machine or `.provide()` variants. */
@@ -136,6 +145,15 @@ export const mergeMachine = setup({
     output: {} as MergeOutput,
   },
   actors: {
+    classifyWorktree: classifyWorktreeActor as ReturnType<
+      typeof fromPromise<ClassifyWorktreeOutput, ClassifyWorktreeInput>
+    >,
+    abortStaleMerge: abortStaleMergeActor as ReturnType<
+      typeof fromPromise<AbortStaleMergeOutput, AbortStaleMergeInput>
+    >,
+    abortMergeCleanup: abortMergeCleanupActor as ReturnType<
+      typeof fromPromise<AbortMergeCleanupOutput, AbortMergeCleanupInput>
+    >,
     checkUncommitted: checkUncommitted as ReturnType<
       typeof fromPromise<CheckUncommittedOutput, CheckUncommittedInput>
     >,
@@ -188,6 +206,26 @@ export const mergeMachine = setup({
       const e = event as unknown as { output: CheckUncommittedOutput };
       return e.output.hasChanges;
     },
+    worktreeIsClean: ({ event }) => {
+      const e = event as unknown as { output: ClassifyWorktreeOutput };
+      return e.output.kind === "clean";
+    },
+    worktreeIsDirty: ({ event }) => {
+      const e = event as unknown as { output: ClassifyWorktreeOutput };
+      return e.output.kind === "dirty";
+    },
+    staleMergeMayBeAborted: ({ context, event }) => {
+      const e = event as unknown as { output: ClassifyWorktreeOutput };
+      return (
+        e.output.kind === "mid-merge" &&
+        e.output.unresolved &&
+        context.staleMergePolicy === "abort"
+      );
+    },
+    worktreeIsMidMerge: ({ event }) => {
+      const e = event as unknown as { output: ClassifyWorktreeOutput };
+      return e.output.kind === "mid-merge";
+    },
     mergeHadConflicts: ({ event }) => {
       const e = event as unknown as { output: MergeMainOutput };
       return e.output.status === "conflicts";
@@ -197,6 +235,10 @@ export const mergeMachine = setup({
       const e = event as unknown as { output: ResolveConflictsOutput };
       return e.output.status === "resolved";
     },
+    resolutionFailedOnInfrastructure: ({ event }) => {
+      const e = event as unknown as { output: ResolveConflictsOutput };
+      return e.output.status === "infrastructure";
+    },
     analysisSucceeded: ({ event }) => {
       const e = event as unknown as { output: AnalyzeConflictsOutput };
       return e.output.status === "analyzed";
@@ -205,9 +247,17 @@ export const mergeMachine = setup({
       const e = event as unknown as { output: PrepareActorOutput };
       return e.output.status === "conflicts";
     },
+    prepareFoundNothingToMerge: ({ event }) => {
+      const e = event as unknown as { output: PrepareActorOutput };
+      return e.output.status === "up-to-date";
+    },
     publishCompleted: ({ event }) => {
       const e = event as unknown as { output: PublishActorOutput };
       return e.output.status === "completed";
+    },
+    publishWasNoOp: ({ event }) => {
+      const e = event as unknown as { output: PublishActorOutput };
+      return e.output.status === "up-to-date";
     },
     publishReadyToLand: ({ event }) => {
       const e = event as unknown as { output: PublishActorOutput };
@@ -245,8 +295,11 @@ export const mergeMachine = setup({
     jobType: input.jobType ?? "merge",
     conversationId: input.conversationId ?? null,
     autoResolve: input.autoResolve,
+    autoFixValidation: input.autoFixValidation ?? input.autoResolve,
     squashMerge: true,
-    conflictFiles: [],
+    staleMergePolicy: input.staleMergePolicy ?? "refuse",
+    conflictFiles: input.conflictFiles ?? [],
+    openedMerge: false,
     conflictAnalysis: null,
     decisions: input.decisions ?? null,
     resolutionContext: input.resolutionContext ?? null,
@@ -255,17 +308,19 @@ export const mergeMachine = setup({
     mergeHash: null,
     commitHash: null,
     validationTimeoutMs: input.validationTimeoutMs ?? 300_000,
+    resolutionTimeoutMs: input.resolutionTimeoutMs ?? null,
     validationMode: input.validationMode,
     fixAttempt: 0,
     maxFixAttempts: input.maxFixAttempts ?? 2,
     finalStatus: null,
     targetBranch: input.targetBranch ?? "main",
-    targetWorktreePath: input.targetWorktreePath ?? null,
     entryMode: input.entryMode ?? "merge",
     preparedSha: input.preparedSha ?? null,
     expectedTargetSha: input.expectedTargetSha ?? null,
     parkedRef: input.parkedRef ?? null,
     refreshWarning: null,
+    upToDate: false,
+    abortRequested: false,
     casAttempt: 1,
     maxCasAttempts: input.maxCasAttempts ?? 3,
     finalizeSessionOnPublish: input.finalizeSessionOnPublish ?? true,
@@ -273,8 +328,13 @@ export const mergeMachine = setup({
     validationWorkflow: input.validationWorkflow ?? null,
     candidateValidation: input.candidateValidation ?? null,
     haltReason: null,
+    resolutionFailure: null,
   }),
   initial: "entryRouting",
+  // An operator can stop the run from any phase; every in-flight actor is
+  // stopped by the state exit, which is what cancels the agent turns that
+  // receive the invoke's AbortSignal.
+  on: { ABORT: ".aborting" },
   states: {
     /**
      * Transient initial state that routes to the right pipeline based on
@@ -324,8 +384,71 @@ export const mergeMachine = setup({
     routing: {
       always: [
         { guard: "isResolveConflictsJob", target: "resolvingConflicts" },
-        { target: "checkingUncommitted" },
+        { target: "classifyingWorktree" },
       ],
+    },
+
+    /**
+     * Decide what the worktree holds before anything stages or commits it.
+     * Only `clean` and `dirty` are the machine's to act on; the merge-bearing
+     * readings belong to whoever started that merge, and the policy decides
+     * whether this run may discard one it recognizes as its own machinery's.
+     */
+    classifyingWorktree: {
+      entry: assign({ phase: "committing-uncommitted" as const }),
+      invoke: {
+        src: "classifyWorktree",
+        input: ({ context }) => ({ worktreePath: context.worktreePath }),
+        onDone: [
+          { guard: "worktreeIsClean", target: "mergingMain" },
+          { guard: "worktreeIsDirty", target: "committingUncommitted" },
+          { guard: "staleMergeMayBeAborted", target: "abortingStaleMerge" },
+          {
+            guard: "worktreeIsMidMerge",
+            target: "failed",
+            actions: assign({
+              error: ({ context, event }) =>
+                event.output.kind === "mid-merge" && event.output.unresolved
+                  ? `Worktree ${context.worktreePath} is mid-merge from an earlier conflicted merge. Resolve the conflicts and commit, resume the conflict flow, or abort the merge (git merge --abort), then retry.`
+                  : `Worktree ${context.worktreePath} holds a merge whose conflicts are resolved but not committed. Commit your resolution, then retry or resume.`,
+              completedAt: () => new Date().toISOString(),
+            }),
+          },
+          {
+            target: "failed",
+            actions: assign({
+              error: ({ context, event }) => {
+                if (event.output.kind !== "poisoned") {
+                  return `Worktree ${context.worktreePath} could not be classified before merging`;
+                }
+                const files = [
+                  ...new Set([
+                    ...event.output.artifacts.unmergedFiles,
+                    ...event.output.artifacts.markerFiles,
+                  ]),
+                ];
+                return `Worktree ${context.worktreePath} carries conflict artifacts with no merge in progress — ${files.length} file(s): ${files.join(", ")}. Restore or resolve them by hand; nothing may commit this state.`;
+              },
+              completedAt: () => new Date().toISOString(),
+            }),
+          },
+        ],
+        onError: { target: "failed", actions: errorAssign() },
+      },
+    },
+
+    /**
+     * The classified-unresolved merge is discarded so the run starts from the
+     * branch tip. The tree can still hold ordinary uncommitted work the abort
+     * did not touch, so the pre-existing uncommitted check runs next.
+     */
+    abortingStaleMerge: {
+      invoke: {
+        src: "abortStaleMerge",
+        input: ({ context }) => ({ worktreePath: context.worktreePath }),
+        onDone: "checkingUncommitted",
+        onError: { target: "failed", actions: errorAssign() },
+      },
     },
 
     checkingUncommitted: {
@@ -358,7 +481,13 @@ export const mergeMachine = setup({
     },
 
     mergingMain: {
-      entry: assign({ phase: "merging-main" as const }),
+      // Recorded on entry, not on the conflicted outcome: a stop that lands
+      // while the merge command itself is running leaves the same MERGE_HEAD,
+      // and this run still owns it.
+      entry: assign({
+        phase: "merging-main" as const,
+        openedMerge: true,
+      }),
       invoke: {
         src: "mergeMain",
         input: ({ context }) => ({
@@ -397,16 +526,35 @@ export const mergeMachine = setup({
           conversationId: context.conversationId ?? undefined,
           resolutionContext: context.resolutionContext ?? undefined,
           targetBranch: context.targetBranch,
+          resolutionTimeoutMs: context.resolutionTimeoutMs ?? undefined,
         }),
         onDone: [
           {
             guard: "analysisSucceeded",
             actions: assign({
-              conflictAnalysis: ({ event }) => event.output.conflicts,
+              conflictAnalysis: ({ event }) =>
+                event.output.status === "analyzed"
+                  ? event.output.conflicts
+                  : null,
             }),
             target: "conflicts",
           },
-          { target: "conflicts" },
+          {
+            // The conflict itself is real and still awaits a human, so this
+            // stays a `conflicts` halt — but an empty analysis must say why it
+            // is empty rather than read as "nothing to describe".
+            target: "conflicts",
+            actions: assign({
+              resolutionFailure: ({ event }) =>
+                event.output.status === "infrastructure"
+                  ? event.output.failure
+                  : null,
+              error: ({ event }) =>
+                event.output.status === "infrastructure"
+                  ? `Conflict analysis could not run (${event.output.failure.kind}): ${event.output.failure.message}`
+                  : null,
+            }),
+          },
         ],
         onError: { target: "conflicts" },
       },
@@ -425,19 +573,56 @@ export const mergeMachine = setup({
           decisions: context.decisions ?? undefined,
           resolutionContext: context.resolutionContext ?? undefined,
           targetBranch: context.targetBranch,
+          resolutionTimeoutMs: context.resolutionTimeoutMs ?? undefined,
         }),
         onDone: [
           {
             guard: "resolutionSucceeded",
             actions: assign({
-              conflictAnalysis: ({ event }) => event.output.conflicts,
+              conflictAnalysis: ({ event }) =>
+                event.output.status === "resolved"
+                  ? event.output.conflicts
+                  : null,
             }),
             target: "committingResolution",
           },
           {
+            // The resolver never reached the conflict, so the run failed on
+            // infrastructure: naming these files as the blocker (a `conflicts`
+            // halt) would blame content nothing examined, and would spend the
+            // conflict-retry budget on a backend that is still down.
+            guard: "resolutionFailedOnInfrastructure",
+            target: "failed",
+            actions: assign({
+              resolutionFailure: ({ event }) =>
+                event.output.status === "infrastructure"
+                  ? event.output.failure
+                  : null,
+              haltReason: ({ context, event }) =>
+                event.output.status === "infrastructure"
+                  ? {
+                      type: "resolution_infrastructure" as const,
+                      failure: event.output.failure,
+                      conflictFiles: context.conflictFiles,
+                    }
+                  : null,
+              error: ({ event }) =>
+                event.output.status === "infrastructure"
+                  ? `Conflict resolution could not run (${event.output.failure.kind}): ${event.output.failure.message}`
+                  : "Conflict resolution could not run",
+              completedAt: () => new Date().toISOString(),
+            }),
+          },
+          {
             actions: assign({
               conflictAnalysis: ({ event }) =>
-                event.output.partialConflicts ?? null,
+                event.output.status === "unresolved"
+                  ? (event.output.partialConflicts ?? null)
+                  : null,
+              error: ({ event }) =>
+                event.output.status === "unresolved"
+                  ? event.output.error
+                  : null,
             }),
             target: "conflicts",
           },
@@ -496,6 +681,30 @@ export const mergeMachine = setup({
                 return `Prepare produced conflicts in ${out.conflictFiles.length} file(s): ${out.conflictFiles.join(", ")}`;
               },
               completedAt: () => new Date().toISOString(),
+            }),
+          },
+          {
+            // Nothing to land, but the merge still has to be delivered: the
+            // gate evaluates the target tip as the candidate (a workflow-linked
+            // no-op owes the same proof) and the publish step finishes the
+            // session without moving a ref.
+            guard: "prepareFoundNothingToMerge",
+            target: "publishing",
+            actions: assign({
+              upToDate: true,
+              preparedSha: ({ event }) => {
+                const out = event.output;
+                return out.status === "up-to-date"
+                  ? out.expectedTargetSha
+                  : null;
+              },
+              expectedTargetSha: ({ event }) => {
+                const out = event.output;
+                return out.status === "up-to-date"
+                  ? out.expectedTargetSha
+                  : null;
+              },
+              parkedRef: null,
             }),
           },
           {
@@ -574,6 +783,14 @@ export const mergeMachine = setup({
     },
 
     publishingCandidate: {
+      // The one phase an operator cannot stop: the publish actor's CAS update,
+      // parked-ref delete, and session finalization are already in flight and
+      // cannot be recalled, so abandoning the run here would report a failure
+      // for a merge that landed. The overriding transition keeps the root ABORT
+      // from reaching this state, but records it: if the publish comes back
+      // having lost CAS, the run is recallable again and honors the stop
+      // instead of re-preparing.
+      on: { ABORT: { actions: assign({ abortRequested: true }) } },
       invoke: {
         src: "publish",
         input: ({ context }) => ({
@@ -584,8 +801,13 @@ export const mergeMachine = setup({
           expectedTargetSha: context.expectedTargetSha ?? "",
           parkedRef: context.parkedRef ?? "",
           finalizeSession: context.finalizeSessionOnPublish,
+          upToDate: context.upToDate,
         }),
         onDone: [
+          {
+            guard: "publishWasNoOp",
+            target: "completed",
+          },
           {
             guard: "publishCompleted",
             target: "completed",
@@ -605,6 +827,15 @@ export const mergeMachine = setup({
           {
             guard: "publishReadyToLand",
             target: "readyToLand",
+          },
+          {
+            // Nothing landed, and the operator's stop is still outstanding:
+            // this is the first moment it can be honored.
+            guard: ({ context, event }) => {
+              const e = event as unknown as { output: PublishActorOutput };
+              return e.output.status === "cas-lost" && context.abortRequested;
+            },
+            target: "aborting",
           },
           {
             // CAS lost + retries remaining + merge mode → re-prepare
@@ -665,6 +896,35 @@ export const mergeMachine = setup({
         onError: {
           target: "failed",
           actions: [errorAssign(), assign({ phase: null })],
+        },
+      },
+    },
+
+    /**
+     * Where an operator's stop lands. The cleanup is best-effort and its
+     * outcome does not change the verdict: the run ends as the operator's
+     * failure either way, and a cleanup error would otherwise replace the
+     * reason they can act on with one they cannot.
+     */
+    aborting: {
+      invoke: {
+        src: "abortMergeCleanup",
+        input: ({ context }) => ({
+          worktreePath: context.worktreePath,
+          openedMerge: context.openedMerge,
+        }),
+        onDone: {
+          target: "failed",
+          actions: assign({
+            error: ({ event }) =>
+              event.output.preservedMerge
+                ? `${OPERATOR_ABORT_ERROR}. The worktree still holds an in-progress merge that was not this run's to discard — commit it or abort it (git merge --abort) before merging again.`
+                : OPERATOR_ABORT_ERROR,
+          }),
+        },
+        onError: {
+          target: "failed",
+          actions: assign({ error: OPERATOR_ABORT_ERROR }),
         },
       },
     },
@@ -745,6 +1005,7 @@ export const mergeMachine = setup({
   output: ({ context }) => ({
     status: context.finalStatus ?? ("completed" as const),
     mergeHash: context.mergeHash,
+    upToDate: context.upToDate,
     commitHash: context.commitHash,
     error: context.error,
     conflictFiles: context.conflictFiles,

@@ -33,6 +33,7 @@ import { graphWorkflowPendingArtifacts } from "./0025-graph-workflow-pending-art
 import { retireReleaseSlotCleanupPhase } from "./0026-retire-release-slot-cleanup-phase";
 import { workflowResultNotifications } from "./0027-workflow-result-notifications";
 import { workflowResultEffectReceipts } from "./0028-workflow-result-effect-receipts";
+import { jobRecordParkedMerge } from "./0029-job-record-parked-merge";
 
 /**
  * Ordered registry of state-store migrations. Append new migrations here in
@@ -75,6 +76,7 @@ export const migrations: readonly StateMigration[] = [
   retireReleaseSlotCleanupPhase,
   workflowResultNotifications,
   workflowResultEffectReceipts,
+  jobRecordParkedMerge,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

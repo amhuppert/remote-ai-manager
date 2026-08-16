@@ -439,12 +439,23 @@ export const checkUncommitted = fromPromise<
   return { hasChanges };
 });
 
-/** Commit changes in a worktree. */
+/**
+ * Commit changes in a worktree.
+ *
+ * A commit git has begun cannot be recalled, so the abort the invoking state's
+ * exit fires is honored at the only point that can honor it: before the staging
+ * and commit run at all.
+ */
 export const commitChangesActor = fromPromise<
   CommitChangesOutput,
   CommitChangesInput
->(async ({ input }) => {
+>(async ({ input, signal }) => {
   const { commitChanges } = await import("@/lib/git/commits");
+  if (signal.aborted) {
+    throw new Error(
+      `Commit in ${input.worktreePath} was stopped before it started`,
+    );
+  }
   const { hash } = await commitChanges(input.worktreePath, input.message, {
     skipHooks: input.skipHooks,
   });

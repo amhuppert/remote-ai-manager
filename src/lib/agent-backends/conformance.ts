@@ -788,5 +788,35 @@ export function describeBackendConformance(
       expect(typeof classification.message).toBe("string");
       expect(classification.retryable).toBe(false);
     });
+
+    it("does not read ordinary failure text as a capacity refusal", () => {
+      // A quota_exhausted verdict halts the caller instead of retrying, so an
+      // over-eager recognizer converts a retryable transient into a hard stop.
+      for (const message of [
+        "usage: cctl validate run <name>",
+        "limit reached: maximum file size",
+        "Error at src/lib/git/worktree.ts:429:12",
+        "config file not found",
+        // The merge path this classification serves quotes SHAs and byte
+        // counts, either of which can spell 429 without being a status code.
+        "Merge failed at commit e429fa1: fatal: cannot merge",
+        "wrote 429 bytes to socket",
+      ]) {
+        expect(descriptor.errors.classify(message).kind, message).not.toBe(
+          "quota_exhausted",
+        );
+      }
+    });
+
+    it("never reports a capacity refusal as retryable", () => {
+      // Retrying a quota wall on a tight loop is the incident behavior ticket
+      // #71 removed; the classification, not the caller, must forbid it.
+      const classification = descriptor.errors.classify(
+        "You've hit your usage limit. Try again at Aug 19th, 2026 11:29 PM.",
+      );
+      if (classification.kind === "quota_exhausted") {
+        expect(classification.retryable).toBe(false);
+      }
+    });
   });
 }

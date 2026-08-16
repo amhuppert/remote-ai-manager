@@ -18,6 +18,7 @@ import {
   planContextJoin,
   planFinalPublishJoin,
   remainingSourceLanes,
+  resolveContextConversationId,
   resolveLaneConversationId,
 } from "./lane-join";
 import { applyJoinProgress, resetJoinForRetry } from "./context-transitions";
@@ -2002,6 +2003,78 @@ describe("resolveLaneConversationId", () => {
 
     expect(resolveLaneConversationId(execution, "lane-a")).toBeNull();
     expect(resolveLaneConversationId(execution, "lane-missing")).toBeNull();
+  });
+});
+
+describe("resolveContextConversationId", () => {
+  it("prefers the context's implementer conversation over its task conversations", () => {
+    const execution = createWorkflowExecution();
+    execution.laneStates = {
+      "ctx-1": {
+        implementer: {
+          lane: "implementer",
+          contextId: "ctx-1",
+          backend: "claude",
+          refKind: "conversation",
+          workflowConversationId: "conv-implementer",
+          sessionRef: { backend: "claude", ref: "conv-implementer" },
+          metrics: { rotateBeforeNextTurn: false },
+          limitEvaluation: "supported",
+          lastUsedAt: t0,
+        },
+      },
+    };
+    execution.taskStates = {
+      "task-1": {
+        taskId: "task-1",
+        contextId: "ctx-1",
+        order: 1,
+        status: "completed",
+        summary: null,
+        startedAt: null,
+        completedAt: null,
+        lastConversationId: "conv-task",
+        failureMessage: null,
+        failureHistory: [],
+      },
+    };
+
+    expect(resolveContextConversationId(execution, "ctx-1")).toBe(
+      "conv-implementer",
+    );
+  });
+
+  it("falls back to the context's most recent task conversation, and null for an unknown context", () => {
+    const execution = createWorkflowExecution();
+    execution.taskStates = {
+      "task-1": {
+        taskId: "task-1",
+        contextId: "ctx-1",
+        order: 1,
+        status: "completed",
+        summary: null,
+        startedAt: null,
+        completedAt: null,
+        lastConversationId: "conv-early",
+        failureMessage: null,
+        failureHistory: [],
+      },
+      "task-2": {
+        taskId: "task-2",
+        contextId: "ctx-1",
+        order: 2,
+        status: "completed",
+        summary: null,
+        startedAt: null,
+        completedAt: null,
+        lastConversationId: "conv-late",
+        failureMessage: null,
+        failureHistory: [],
+      },
+    };
+
+    expect(resolveContextConversationId(execution, "ctx-1")).toBe("conv-late");
+    expect(resolveContextConversationId(execution, "ctx-missing")).toBeNull();
   });
 });
 

@@ -15,6 +15,7 @@
 import { captureTraceContext, createLogger, runAsTrace } from "../logging";
 import type { BackgroundJob } from "./schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { getGlobalSingleton } from "../shared/global-singleton";
 
 const logger = createLogger("background-jobs");
 
@@ -41,17 +42,104 @@ export interface PhaseObservableActor<TContext> {
   }): unknown;
 }
 
+/** The one event a hosted job machine accepts from outside its own pipeline. */
+export type JobControlEvent = { type: "ABORT" };
+
+/** What an operator abort needs from a running job's actor. */
+export interface JobControlHandle {
+  send(event: JobControlEvent): void;
+  /** The machine's current state value, read before and after the event to
+   *  see whether it acted on the stop. */
+  currentStateValue(): unknown;
+  /** End the actor without waiting for the machine to agree. */
+  stop(): void;
+}
+
 /** The slice of an XState actor job hosting consumes. */
 export interface JobMachineActor<
   TContext,
   TOutput,
 > extends PhaseObservableActor<TContext> {
+  send(event: JobControlEvent): void;
   getSnapshot(): {
     status: string;
+    value: unknown;
     context: TContext;
     output: TOutput | undefined;
   };
   start(): unknown;
+  stop(): unknown;
+}
+
+// ============================================================
+// Actor handle registry (HMR-safe)
+// ============================================================
+
+const ACTOR_REGISTRY_KEY = "__cc_job_actor_handles" as const;
+
+function getActorRegistry(): Map<string, JobControlHandle> {
+  return getGlobalSingleton(
+    ACTOR_REGISTRY_KEY,
+    () => new Map<string, JobControlHandle>(),
+  );
+}
+
+/**
+ * What an operator's ABORT did to a job.
+ *
+ * `deferred` is the honest answer for a phase that overrides the root ABORT to
+ * record it without leaving the state (a merge whose publish is already in
+ * flight): the request is held, but the operation running now still completes.
+ */
+export type JobAbortDelivery = "stopping" | "deferred" | "no-actor";
+
+/**
+ * Ask the job's running machine to stop. `no-actor` means the job has no live
+ * actor in this process — it already reached a terminal state, or a restart
+ * orphaned its record — which is a different answer than "stopped", and callers
+ * must not report an abort they could not deliver.
+ *
+ * The delivery reading is the state value before and after the event: job
+ * machines keep their phases flat, so a machine that acted on the stop is in a
+ * different state by the time `send` returns.
+ */
+export function abortJobActor(jobId: string): JobAbortDelivery {
+  const handle = getActorRegistry().get(jobId);
+  if (handle === undefined) return "no-actor";
+  return deliverAbort(handle);
+}
+
+function deliverAbort(handle: JobControlHandle): "stopping" | "deferred" {
+  const before = handle.currentStateValue();
+  handle.send({ type: "ABORT" });
+  return handle.currentStateValue() === before ? "deferred" : "stopping";
+}
+
+/** What a host-initiated teardown did to a job's machine. */
+export type JobTeardownOutcome = "aborted" | "stopped" | "no-actor";
+
+/**
+ * End a job's machine on the host's own initiative, for a job the host has
+ * already given up on and recorded a verdict for.
+ *
+ * The machine is asked first, so a machine that can stop itself runs its own
+ * cleanup; one that stays where it was — no abort wiring, or a phase that only
+ * records the request — is stopped outright, because a teardown that leaves the
+ * actor running is what produced the ghost this closes. The caller owns the
+ * job's terminal record: teardown deliberately projects none, and the
+ * subscription keeps whatever verdict the caller already wrote.
+ */
+export function tearDownJobActor(jobId: string): JobTeardownOutcome {
+  const handle = getActorRegistry().get(jobId);
+  if (handle === undefined) return "no-actor";
+  if (deliverAbort(handle) === "stopping") return "aborted";
+  handle.stop();
+  return "stopped";
+}
+
+/** Reset the handle registry — for test isolation only. */
+export function _resetJobActorRegistryForTesting(): void {
+  getActorRegistry().clear();
 }
 
 // ============================================================
@@ -153,6 +241,31 @@ export function createJobActorSubscription<TContext, TOutput>(
       onPhaseSnapshot(snapshot);
     },
     complete() {
+      // A job the host already closed out keeps that verdict: the actor is
+      // being torn down on the host's initiative, so its projection would
+      // contradict a terminal state the UI and the durable record carry. The
+      // callbacks still fire — the host closed the job RECORD, not the promise
+      // an in-process caller (a graph join) is waiting on.
+      if (job.completedAt !== undefined) {
+        const closedOut = actor.getSnapshot();
+        logger.info("job.terminal_projection_skipped", {
+          jobId: job.jobId,
+          jobType: job.jobType,
+          status: job.status,
+        });
+        host.release();
+        if (closedOut.output === undefined) {
+          callbacks.onError?.(
+            new Error(
+              job.errorMessage ??
+                "Job actor was stopped before producing an outcome",
+            ),
+          );
+        } else {
+          callbacks.onComplete?.(closedOut.output, closedOut.context);
+        }
+        return;
+      }
       const snapshot = actor.getSnapshot();
       if (snapshot.output === undefined) {
         logger.error("job.machine_completed_without_output", {
@@ -212,6 +325,7 @@ export interface JobDispatchHost {
     params: JobDispatchSession & {
       jobType: BackgroundJob["jobType"];
       decorateJob?(job: BackgroundJob): void;
+      continuesParkedRef?: string;
     },
   ): JobDispatchResult<{ job: BackgroundJob; release(): void }>;
   /** Broadcast the job's current state (and persist on terminal statuses). */
@@ -228,6 +342,12 @@ export interface DispatchMachineJobParams<TContext, TOutput> {
   createJobActor(jobId: string): JobMachineActor<TContext, TOutput>;
   /** Stamp job-type-specific fields before the job is registered and persisted. */
   decorateJob?(job: BackgroundJob): void;
+  /**
+   * The parked ref this dispatch continues (a land or discard re-entry). Any
+   * other dispatch supersedes a parked candidate holding the session's registry
+   * slot, and the host drops that candidate rather than orphaning its commit.
+   */
+  continuesParkedRef?: string;
   /** Emit the job type's start log line. */
   logStart(job: BackgroundJob): void;
   subscription: JobSubscriptionConfig<TContext, TOutput>;
@@ -260,6 +380,9 @@ function dispatchMachineJobImpl<TContext, TOutput>(
     ...session,
     jobType,
     decorateJob: params.decorateJob,
+    ...(params.continuesParkedRef !== undefined
+      ? { continuesParkedRef: params.continuesParkedRef }
+      : {}),
   });
   if (!prepared.ok) {
     logger.info("job.dispatch_rejected", {
@@ -274,13 +397,27 @@ function dispatchMachineJobImpl<TContext, TOutput>(
   params.logStart(job);
 
   const actor = params.createJobActor(job.jobId);
+  // The handle lives exactly as long as the machine can still act: registered
+  // before start so an abort racing the first phase finds it, and dropped on
+  // the same terminal signal that releases the session lock, so a finished job
+  // id can never resolve to a stopped actor.
+  getActorRegistry().set(job.jobId, {
+    send: (event) => actor.send(event),
+    currentStateValue: () => actor.getSnapshot().value,
+    stop: () => {
+      actor.stop();
+    },
+  });
   createJobActorSubscription(
     actor,
     job,
     {
       publishStatus: (j) => host.publishStatus(j),
       persistProgress: (j) => host.persistProgress(j),
-      release,
+      release: () => {
+        getActorRegistry().delete(job.jobId);
+        release();
+      },
     },
     params.subscription,
     params.callbacks,

@@ -1401,6 +1401,9 @@ describe("conversation command interception", () => {
         confirmationPersisted: true,
       })),
       getConversationRole: vi.fn(async () => null),
+      evaluateSessionMergeAdmission: vi.fn(async () => ({
+        admitted: true as const,
+      })),
       ...overrides,
     };
   }

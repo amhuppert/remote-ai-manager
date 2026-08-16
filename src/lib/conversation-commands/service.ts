@@ -19,6 +19,10 @@ import { hasUncommittedChanges, collectChangeSummary } from "@/lib/git/commits";
 import { resolveMergeTarget, type MergeTarget } from "@/lib/git/merge-target";
 import type { RebaseOnto } from "@/lib/git/rebase";
 import { parseRebaseArgs } from "./rebase-args";
+import {
+  evaluateSessionMergeAdmission,
+  type SessionMergeAdmission,
+} from "@/lib/workflow-graph/session-merge-admission";
 import { executeWorkflowTaskRun } from "@/lib/workflows/conversation/execute-workflow-task-run";
 import type {
   ExecuteWorkflowTaskRunInput,
@@ -93,7 +97,6 @@ export interface DispatchMergeParams {
   message: string;
   autoResolve: boolean;
   targetBranch?: string;
-  targetWorktreePath?: string;
   /** Agent-written intent notes for a later conflict-resolution turn. */
   resolutionContext?: string;
 }
@@ -164,6 +167,15 @@ export interface ConversationCommandDeps {
     sessionName: string | null,
     conversationId: string,
   ): Promise<ConversationRole>;
+  /**
+   * Whether a session merge may start at all. Asked before the generation turn
+   * so `/merge` does not spend an agent turn and a merge pipeline on work the
+   * publish would refuse.
+   */
+  evaluateSessionMergeAdmission(input: {
+    projectPath: string;
+    sessionName: string;
+  }): Promise<SessionMergeAdmission>;
 }
 
 export interface RunCommandInput {
@@ -189,6 +201,7 @@ export type RejectionReason =
   | "no-changes"
   | "alignment-unavailable"
   | "workflow-lane"
+  | "workflow-active"
   | "dispatch-failed";
 
 export type RunCommandOutcome =
@@ -206,8 +219,10 @@ export type RunCommandOutcome =
     }
   | { status: "rejected"; reason: RejectionReason };
 
+// "dispatch-failed" and "workflow-active" carry a refusal sentence from the
+// refuser, so their notices are written at the site that holds it.
 const REJECTION_NOTICES: Record<
-  Exclude<RejectionReason, "dispatch-failed">,
+  Exclude<RejectionReason, "dispatch-failed" | "workflow-active">,
   (command: ParsedConversationCommand["command"]) => string
 > = {
   "no-session": (command) =>
@@ -229,7 +244,7 @@ export function createConversationCommandService(
 ) {
   async function reject(
     input: RunCommandInput,
-    reason: Exclude<RejectionReason, "dispatch-failed">,
+    reason: Exclude<RejectionReason, "dispatch-failed" | "workflow-active">,
   ): Promise<RunCommandOutcome> {
     logger.info("command.rejected", {
       command: input.parsed.command,
@@ -387,6 +402,20 @@ export function createConversationCommandService(
 
     let target: MergeTarget | null = null;
     if (parsed.command === "merge") {
+      const admission = await deps.evaluateSessionMergeAdmission({
+        projectPath: input.projectPath,
+        sessionName: session.sessionName,
+      });
+      if (!admission.admitted) {
+        await deps.appendNotice({
+          conversationId: input.conversationId,
+          text: `Cannot run /merge: ${admission.refusal.message}`,
+          projectName: input.projectName,
+          storeSessionName: session.sessionName,
+        });
+        return { status: "rejected", reason: "workflow-active" };
+      }
+
       try {
         target = await deps.resolveMergeTarget(input.projectPath, session);
       } catch (err) {
@@ -446,7 +475,6 @@ export function createConversationCommandService(
             message,
             autoResolve: true,
             targetBranch: target?.targetBranch,
-            targetWorktreePath: target?.targetWorktreePath ?? undefined,
             resolutionContext,
           })
         : deps.dispatchCommitJob({
@@ -756,6 +784,12 @@ const productionDeps: ConversationCommandDeps = {
     });
   },
   enqueueAuthoringTurn: enqueueConversationMessage,
+  evaluateSessionMergeAdmission(input) {
+    return evaluateSessionMergeAdmission({
+      ...input,
+      surface: "merge-command",
+    });
+  },
   // Dynamic so the tickets/compaction graph stays off this module's static
   // import graph (mirrors the dispatch.ts isolation rationale).
   async runTicketCommand(input) {

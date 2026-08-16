@@ -67,6 +67,49 @@ describe("createCodexFailureClassifier", () => {
     }
   });
 
+  it("classifies the usage-limit refusal as non-retryable quota_exhausted carrying the capacity hint", () => {
+    // Verbatim message from the ticket #71 incident: four resolution attempts
+    // reported this and were folded into "unresolvable conflict", then retried
+    // against a wall that does not lift until Aug 19.
+    const message =
+      "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Aug 19th, 2026 11:29 PM.";
+
+    expect(classifier.classify(message)).toEqual({
+      kind: "quota_exhausted",
+      message,
+      retryable: false,
+      retryAfterHint: "Aug 19th, 2026 11:29 PM",
+    });
+    expect(classifier.classify(new Error(message))).toEqual({
+      kind: "quota_exhausted",
+      message,
+      retryable: false,
+      retryAfterHint: "Aug 19th, 2026 11:29 PM",
+    });
+  });
+
+  it("keeps the continuation on a quota refusal — the thread is still resumable", () => {
+    const message = "You've hit your usage limit.";
+
+    expect(classifier.classifyWithContinuation(message)).toEqual({
+      failure: { kind: "quota_exhausted", message, retryable: false },
+      continuationDisposition: "retain",
+    });
+  });
+
+  it("omits the capacity hint when the refusal names no return time", () => {
+    for (const message of [
+      "You've hit your usage limit.",
+      "rate limit exceeded",
+    ]) {
+      expect(classifier.classify(message)).toEqual({
+        kind: "quota_exhausted",
+        message,
+        retryable: false,
+      });
+    }
+  });
+
   it("does not classify a codex exec failure without continuity markers as stale", () => {
     expect(
       classifier.classify(
@@ -85,6 +128,31 @@ describe("createCodexFailureClassifier", () => {
       failure: { kind: "backend_error", message, retryable: false },
       continuationDisposition: "retain",
     });
+  });
+
+  it("leaves every pre-quota classification untouched", () => {
+    const abortError = new Error("This operation was aborted");
+    abortError.name = "AbortError";
+    const cases: Array<[unknown, string]> = [
+      [abortError, "aborted"],
+      ["Task timed out", "timeout"],
+      [
+        "Failed to resume Codex thread t-1: no rollout found",
+        "stale_resume_ref",
+      ],
+      ["thread thread-abc not found", "stale_resume_ref"],
+      [
+        "Codex Exec exited with code 1: Reading prompt from stdin...",
+        "backend_error",
+      ],
+      ["OAuth token expired for this session", "backend_error"],
+      ["usage: cctl validate run <name>", "backend_error"],
+      ["boom", "backend_error"],
+    ];
+
+    for (const [input, kind] of cases) {
+      expect(classifier.classify(input).kind, String(input)).toBe(kind);
+    }
   });
 
   it("never throws and always returns a schema-valid classification", () => {
