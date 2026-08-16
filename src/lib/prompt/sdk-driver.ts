@@ -63,7 +63,7 @@ const logger = createLogger("prompt");
 
 /** Appended to the system prompt when session.tddEnabled is true. */
 export const TDD_INSTRUCTIONS =
-  "<methodology>Use red-green TDD. Write a failing test first, run it to confirm it fails, then write the minimum code to make it pass.</methodology>";
+  "<methodology>Use red-green-refactor TDD. Write a failing behavior-level test first and run it to confirm it fails for the right reason — the assertion on the missing behavior, not an import error or broken setup; scaffold the minimal module skeleton first when the test could only fail on a missing import. Make it pass with the minimum code, then refactor with tests green. Bug fixes always start from a failing reproduction test. Skip test-first only where there is no behavior to pin — pure scaffolding, type or config changes, mechanical renames or wiring, throwaway spikes, visual-only UI tweaks — and say so when you skip. In the TDD loop, run the registered test command scoped explicitly to the single test file you are iterating on (e.g. `cctl validate run test --wait -- path/to/file.test.ts`) — a file path, never a directory path. Wider runs such as `--scope changed` remain available but are not part of the TDD loop; use them strategically at checkpoints.</methodology>";
 
 /**
  * Appended to the system prompt when a conversation is in debug mode.

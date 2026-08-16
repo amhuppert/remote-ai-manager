@@ -18,12 +18,14 @@ cctl validate run test --wait
 cctl validate run test --wait -- scripts/instruction-docs.test.ts
 cctl validate run test --scope full --wait
 cctl validate run typecheck --wait
+cctl validate run seams --wait
+cctl validate run build --wait
 cctl validate run lint --wait
 ```
 
 `test` defaults to `--scope changed`, narrowing to the diff against the target branch, so a green run speaks for the changed files rather than the branch; pass `--scope full` when the claim is that the whole branch passes. A changed-scope run passes when zero files match, so a mistyped path after `--` is a silent green.
 
-`typecheck` is the full-project gate: it runs `tsc`, the architecture seam ratchet, and the production build. There is no separate `build` or `seams` command.
+`typecheck` runs the full-project `tsc` check only — it is the fast in-loop check during implementation. The architecture seam ratchet is the `seams` command and the production build (Next.js + CLI bundle) is the `build` command. Merge gates (`preMerge`, `laneMerge`) run `typecheck`, `seams`, and `test` but not `build`; the client bundle can break on changes `tsc` accepts, so run `build` at checkpoints and before claiming a branch is merge-ready, not every iteration.
 
 Registered command names are project configuration; use `cctl validate list` when a name above is absent. Run registered validation only through `cctl validate run <name>`. Do not invoke Vitest, ESLint, TypeScript, formatters, builds, their package-script aliases, or registered validation scripts directly. Never bypass the wrapper to avoid a queue or an execution-context policy. A direct invocation is allowed only for a narrow diagnostic the registered commands cannot express — state the reason first and use the smallest possible scope. If it is resource-intensive or repeatable, register a command instead.
 
@@ -36,7 +38,7 @@ bun run typecheck
 bun run build
 ```
 
-`bun run lint` also runs the architecture seam ratchet; the registered `lint` command does not, because `typecheck` owns it. Database migrations run during server startup; before changing persistence, follow `.kiro/steering/tech.md` and `src/lib/state-store/migrations/README.md`.
+`bun run lint` also runs the architecture seam ratchet; the registered `lint` command does not, because `seams` owns it. Database migrations run during server startup; before changing persistence, follow `.kiro/steering/tech.md` and `src/lib/state-store/migrations/README.md`.
 
 In Command Center sessions, run `cctl dev ensure` before browser, Playwright, Storybook, or Next.js diagnostics. Use the returned session-scoped URL; never assume a port.
 
@@ -50,7 +52,7 @@ In Command Center sessions, run `cctl dev ensure` before browser, Playwright, St
 
 ## Development process
 
-- Use red-green TDD: add a failing behavior-level test, confirm the failure, implement the minimum fix, then run proportionate regression checks.
+- Use red-green-refactor TDD: add a failing behavior-level test, confirm it fails for the right reason (the assertion, not an import error or broken setup — scaffold the minimal skeleton first when needed), implement the minimum fix, refactor with tests green, then run proportionate regression checks. Skip test-first only where there is no behavior to pin — pure scaffolding, type/config changes, mechanical renames or wiring, throwaway spikes, visual-only UI tweaks — and say so; bug fixes always start from a failing reproduction test. In the TDD loop, scope the test command to the single test file you are iterating on (`cctl validate run test --wait -- <test-file>`) — a file path, never a directory path. Changed-scope runs are not part of the TDD loop; use them strategically at checkpoints.
 - For work governed by `.kiro/specs/`, preserve the Requirements → Design → Tasks → Implementation approvals. Check the active spec before implementation and write spec artifacts in the language declared by its `spec.json`.
 - Prefer small, focused changes. When a request is an audit or diagnosis, report findings without mutating external state or implementing an unrequested fix.
 
@@ -62,7 +64,7 @@ In Command Center sessions, run `cctl dev ensure` before browser, Playwright, St
 - Server events publish through `src/lib/events/publication.ts`; never import the raw broadcaster from domain code. Read `.kiro/steering/data-fetching-and-sse.md` before adding mutations, query hooks, or SSE behavior.
 - API handlers compose `RouteResolution` and domain route adapters rather than rebuilding project/session/ticket 404 ladders. See `.kiro/steering/structure.md`.
 - New UI uses existing primitives and Tailwind utilities. Tone-coded lifecycle/status pills use `src/components/ui/StatusChip.tsx`; `layoutClassName` is for external layout only. Read `docs/tailwind-conventions.md` before authoring or migrating UI.
-- Run the registered `typecheck` validation command, which carries the seam ratchet, when touching any architecture boundary above. Do not raise a seam ceiling to make a failure disappear; migrate the new site or document an approved survivor and deletion condition.
+- Run the registered `seams` validation command (alongside `typecheck`) when touching any architecture boundary above. Do not raise a seam ceiling to make a failure disappear; migrate the new site or document an approved survivor and deletion condition.
 
 ## TypeScript, schemas, and persistence
 

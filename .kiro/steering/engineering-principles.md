@@ -12,13 +12,15 @@
 
 ### Red-Green-Refactor TDD by default
 
-1. Failing test pinning the desired behavior.
+1. Failing behavior-level test pinning the desired behavior, confirmed to fail for the right reason — the assertion, not an import error or broken setup. Scaffold the minimal skeleton first when the test could only fail on a missing import.
 2. Smallest implementation that passes.
 3. Refactor with tests green.
 
-Bug fixes: failing repro test first, fix second.
+Run loop tests scoped to the single test file being iterated on (`cctl validate run test --wait -- <test-file>`), never a directory path. Changed-scope runs are strategic checkpoints, not part of the loop.
 
-Skip TDD only for: Storybook prototyping, throwaway experiments, trivial wiring (rename/thread). Otherwise surface the reason.
+Bug fixes: failing repro test first, fix second — always.
+
+Skip test-first only where there is no behavior to pin: pure scaffolding, type/config changes, mechanical renames/wiring, throwaway spikes and Storybook prototyping, visual-only UI tweaks. Say so when you skip.
 
 ### Dependency injection — never `vi.mock()` internal modules
 

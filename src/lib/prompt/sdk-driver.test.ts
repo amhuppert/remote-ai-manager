@@ -35,6 +35,7 @@ import {
   ModelEffortValidationError,
   ConversationCommandDispatcherUnavailableError,
   DEBUG_MODE_INSTRUCTIONS,
+  TDD_INSTRUCTIONS,
   ASK_QUESTION_INSTRUCTIONS,
   ASK_QUESTION_INSTRUCTIONS_ENABLED,
   selectAskQuestionInstructions,
@@ -328,6 +329,50 @@ describe("DEBUG_MODE_INSTRUCTIONS", () => {
     if (!DEBUG_MODE_INSTRUCTIONS.includes("X-CC-Debug-Log")) return;
     expect(DEBUG_MODE_INSTRUCTIONS).toMatch(
       /Command Center itself|self-debug|debugging CC/i,
+    );
+  });
+});
+
+describe("TDD_INSTRUCTIONS", () => {
+  it("teaches the full red-green-refactor cycle on behavior-level tests", () => {
+    expect(TDD_INSTRUCTIONS).toMatch(/red-green-refactor TDD/i);
+    expect(TDD_INSTRUCTIONS).toMatch(/failing behavior-level test/i);
+    expect(TDD_INSTRUCTIONS).toMatch(/refactor with tests green/i);
+  });
+
+  // A red run that dies on an import error or broken setup clears a naive
+  // "must fail" gate while proving nothing about the assertion. The right-
+  // reason rule is also what makes scaffold-first safe: the skeleton exists
+  // so the red can fail on the behavior instead of on module resolution.
+  it("requires the red run to fail for the right reason, with scaffold-first allowed", () => {
+    expect(TDD_INSTRUCTIONS).toMatch(/right reason/i);
+    expect(TDD_INSTRUCTIONS).toMatch(/not an import error or broken setup/i);
+    expect(TDD_INSTRUCTIONS).toMatch(/scaffold/i);
+  });
+
+  // Test-first is scoped by behavior, not universal: changes with no behavior
+  // to pin skip the ceremony (announced, so skips stay auditable), while bug
+  // fixes keep the mandatory failing reproduction.
+  it("scopes test-first to behavior: announced skips, mandatory bug-fix repro", () => {
+    expect(TDD_INSTRUCTIONS).toMatch(/no behavior to pin/i);
+    expect(TDD_INSTRUCTIONS).toMatch(/say so when you skip/i);
+    expect(TDD_INSTRUCTIONS).toMatch(/failing reproduction test/i);
+  });
+
+  // Ticket #68: changed-scope runs against a broad accumulated diff dominated
+  // validation wall time. The TDD inner loop must submit the cheapest possible
+  // scope — exactly one test file — and leave wider scopes to deliberate
+  // checkpoints.
+  it("scopes TDD-loop test runs to a single test file path, never a directory", () => {
+    expect(TDD_INSTRUCTIONS).toMatch(/single test file/i);
+    expect(TDD_INSTRUCTIONS).toMatch(/never a directory/i);
+  });
+
+  it("permits changed-scope runs only strategically, outside the TDD loop", () => {
+    expect(TDD_INSTRUCTIONS).toContain("--scope changed");
+    expect(TDD_INSTRUCTIONS).toMatch(/strategic/i);
+    expect(TDD_INSTRUCTIONS).toMatch(
+      /not (part of|as part of|in) the TDD loop/i,
     );
   });
 });

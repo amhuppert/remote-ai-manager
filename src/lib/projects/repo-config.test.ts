@@ -47,9 +47,24 @@ describe("readRepoConfig", () => {
         },
         typecheck: {
           command: { full: "scripts/validate/typecheck.sh" },
+          cost: 2,
+          timeoutMs: 600_000,
+          description: "Full-project TypeScript check (tsc --noEmit)",
+          pathArgs: "forbid",
+        },
+        seams: {
+          command: { full: "scripts/validate/seams.sh" },
+          cost: 1,
+          timeoutMs: 600_000,
+          description: "Architecture seam ratchet",
+          pathArgs: "forbid",
+        },
+        build: {
+          command: { full: "scripts/validate/build.sh" },
           cost: 4,
           timeoutMs: 3_600_000,
-          description: "Run full-project static and build checks",
+          description:
+            "Production build (Next.js + CLI bundle); run at checkpoints and before merge readiness, not per iteration",
           pathArgs: "forbid",
         },
         test: {
@@ -64,8 +79,8 @@ describe("readRepoConfig", () => {
           pathArgs: "paths",
         },
       },
-      preMerge: ["format", "lint", "typecheck", "test"],
-      laneMerge: ["typecheck", "test"],
+      preMerge: ["format", "lint", "typecheck", "seams", "test"],
+      laneMerge: ["typecheck", "seams", "test"],
     });
     expect(result).not.toHaveProperty("preMergeCommand");
     expect(result).not.toHaveProperty("preMergeTimeoutMs");
