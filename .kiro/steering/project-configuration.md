@@ -29,6 +29,8 @@ Per-project config at repo root. Optional — all fields nullable. Read on deman
 ### `validation` — Registered validation commands
 
 - `validation.commands` maps stable command names to `{ command: { full, changed? }, cost, timeoutMs?, description?, pathArgs? }`.
+- `cost` is either a positive integer charged for every scope, or a table `{ full, changed?, paths?: { base, perPath } }` pricing each narrower execution separately. Three refinements: a `paths` block requires `pathArgs: "paths"`, `changed` must not exceed `full`, and `paths.base` must not exceed the changed weight (`changed ?? full`).
+- `resolveSubmissionCost()` in `validation/cost-resolution.ts` collapses the table into one weight at submission: `full` scope charges `full`; changed with no explicit paths charges `changed ?? full`; N explicit paths charge `min(base + perPath * N, changed ?? full)`, so narrowing can never cost more than not narrowing. The resolved number is snapshotted onto the run record, and every stage after admission (scheduler, ledger, SSE, run-row APIs) still sees a plain integer.
 - `validation.preMerge` selects the ordered commands used by Smart Merge and Smart Commit.
 - `validation.laneMerge` optionally selects graph lane-merge commands and falls back to `preMerge` when absent.
 - Graph context `scriptValidator.commands` is an independent ordered selection. An empty list disables the deterministic context gate.
@@ -67,6 +69,6 @@ Per-project config at repo root. Optional — all fields nullable. Read on deman
 ## Navigation
 
 - Init logic: search `initScriptPath` in `sessions/service.ts` and `workflow-graph/parallel-worktrees.ts` (not `repo-config.ts`)
-- Validation entry point: `validation/singleton.ts`; command configuration: `validation/schemas.ts`
+- Validation entry point: `validation/singleton.ts`; command configuration: `validation/schemas.ts`; executable resolution: `validation/command-resolution.ts`; cost projection: `validation/cost-resolution.ts` (kept free of `node:` builtins because browser-reachable preflight consumers import it)
 - Dev server lifecycle: `dev-server/registry.ts` (spawn/stop), `dev-server/port-selection.ts` (port scan/ownership), `dev-server/liveness.ts` (polling)
 - Timeouts: init = none (script self-bounds), validation = command `timeoutMs` or global `validation.defaultTimeoutMs`, dev server readiness = `READINESS_TIMEOUT_MS` in `dev-server/config.ts`

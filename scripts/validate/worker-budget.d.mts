@@ -9,3 +9,9 @@ export declare function resolveWorkerBudget(input: {
   totalMemoryBytes: number;
   availableParallelism: number;
 }): number;
+
+export declare function resolveScopedWorkerRequest(input: {
+  mode: "full" | "changed" | "paths";
+  pathTokenCount: number;
+  configuredWorkers: number;
+}): number;

@@ -67,11 +67,13 @@ export default defineConfig({
 | `onStackTrace` filter | Strip `node_modules` frames from stack traces. |
 | `diff.truncateThreshold: 2000` | Truncate large object diffs. |
 
-Register this four-worker wrapper with cost `4`. If the project chooses another fixed count, change the wrapper constants and declared cost together, then update the worker mirror to match.
+Register this four-worker profile with the cost table `{ "full": 4, "paths": { "base": 1, "perPath": 1 } }`: full and changed runs both reserve the four-worker maximum (an omitted `changed` inherits `full`), while a TDD run reserves one unit for the Vitest parent plus one per forwarded path, capped at the changed weight. The `paths` price is honest here because the launcher's `paths` mode never falls back to the merge base or the whole tree, and because it clamps its fork pool to the number of forwarded tokens. Vitest matches each token as a substring against every test file, so one token naming a directory can select hundreds of them; the clamp keeps a one-token run at one fork whatever it matches, so a broad token runs slower instead of outspending its price. If the project chooses another fixed count, change the wrapper constants and declared cost together, then update the worker mirror to match.
 
 ## Canonical launcher
 
 Generate `scripts/validate/vitest-launcher.mjs` beside the registered wrapper. The launcher reads only environment values that the wrapper overwrites, snapshots them before Vitest loads candidate code, and passes fixed programmatic options to `startVitest`. Vitest merges these programmatic options after the candidate configuration, so a candidate `poolOptions.forks.execArgv` such as `--max-old-space-size=8192` is replaced by the canonical 2048 MB value.
+
+The launcher is also where the `paths` price is enforced: in `paths` mode it clamps the fork pool to the number of forwarded tokens, so the run cannot occupy more workers than the `perPath` charge admitted it for.
 
 ```javascript
 import { startVitest } from "vitest/node";
@@ -97,6 +99,14 @@ if (mode === "paths") {
   throw new Error("expected full, changed <merge-base>, or paths <path...>");
 }
 
+// A `paths` run is charged base + perPath * tokens, and each token is a
+// substring filter that can select far more files than it names. Cap the pool
+// at the token count so the run cannot occupy more workers than it paid for.
+const workers =
+  mode === "paths"
+    ? Math.max(1, Math.min(filters.length, testWorkers))
+    : testWorkers;
+
 await startVitest(
   "test",
   filters,
@@ -108,11 +118,11 @@ await startVitest(
     passWithNoTests: mode !== "full",
     ...(changed ? { changed } : {}),
     pool: "forks",
-    maxWorkers: testWorkers,
+    maxWorkers: workers,
     minWorkers: 1,
     poolOptions: {
       forks: {
-        maxForks: testWorkers,
+        maxForks: workers,
         minForks: 1,
         execArgv: [`--max-old-space-size=${testHeapMb}`],
       },
@@ -163,7 +173,7 @@ run_quiet env NODE_ENV=test node "$SCRIPT_DIR/vitest-launcher.mjs" full
 | Mechanism | Purpose |
 |---|---|
 | `changed "$merge_base"` | Makes the launcher set Vitest's `changed` option to the merge base. |
-| `paths "$@"` | Passes only server-validated relative paths as narrower test filters. |
+| `paths "$@"` | Passes only server-validated relative paths as narrower test filters, and caps the fork pool at the number of forwarded tokens. |
 | `passWithNoTests` for changed/path modes | Allows a branch that touches only untested files to pass. |
 | `color: false` plus `run_quiet` | Produces no color, discards success output, and replays complete failure output. |
 | Final `poolOptions.forks` | Prevents candidate configuration from increasing fan-out or worker heap. |

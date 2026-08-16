@@ -88,7 +88,7 @@ Always load `references/commandcenter-json.md`. When any validation tool is dete
 
 ## Register Validation Commands
 
-Register one logical command per tool or fixed resource profile in `CommandCenter.json`. Each profile has a required full wrapper and may have a separate changed wrapper under `scripts/validate/`; every wrapper implements one fixed mode. Typical names are `format`, `lint`, `typecheck`, `test`, and `build`. A low-cost and high-cost test profile remains two logical commands because scope variants share cost and timeout.
+Register one logical command per tool or fixed resource profile in `CommandCenter.json`. Each profile has a required full wrapper and may have a separate changed wrapper under `scripts/validate/`; every wrapper implements one fixed mode. Typical names are `format`, `lint`, `typecheck`, `test`, and `build`. Scope variants of one logical command share a timeout but need not share a cost: `cost` accepts a table that prices full, changed, and explicit-path executions separately. Two genuinely different resource profiles — a different pinned worker count or heap cap — still remain two logical commands, because a cost table prices the scopes of one wrapper pair, not two wrapper pairs.
 
 Every wrapper must:
 
@@ -119,6 +119,10 @@ Register the affected-work wrapper as `command.changed` and an unconditional who
 ### Declare honest costs
 
 `cost` is a reservation weight, not measured usage. Use about one unit per configured worker for worker-pool tools and one unit for an ordinary single-process tool, adjusting upward for an honestly heavier fixed profile. For example, a wrapper pinned to four Vitest workers should normally declare cost `4`. Apply the same convention across all projects on a machine so the global budget compares like resource profiles.
+
+A scalar `cost` charges that weight for every scope. Where a narrower execution genuinely uses fewer resources, declare the table form instead: `{ "full": 4, "changed": 4, "paths": { "base": 1, "perPath": 1 } }`. `full` is the required honest maximum, `changed` defaults to `full` when omitted, and `paths` charges `base + perPath * N` for N forwarded paths — `base` covering the runner's fixed coordinator process and `perPath` one worker's worth of fan-out, with `perPath: 0` declaring a flat scoped weight. Command Center caps the scoped charge at the changed weight, so narrowing can never cost more than not narrowing and there is no need to hand-clamp. The schema rejects a `paths` block without `pathArgs: "paths"`, a `changed` above `full`, and a `paths.base` above the changed weight.
+
+**Declare a `paths` cost only when the wrapper's explicit-paths branch cannot escalate scope.** The price must describe the worst case of the code path that actually receives the paths: it must run exactly what was forwarded and never widen to a merge-base or whole-tree run when the list is unhelpful, and it must not expand into related or dependent files. A branch that can fall back to a broader run is honestly worth the changed weight — leave that command scalar, or use a table without a `paths` block. A forwarded path may still name a directory, so `perPath` prices one path's worth of fan-out rather than one file's, and `base` must carry the coordinator's real weight so a one-path run is never underpriced to nothing. Where the runner decides its own fan-out — expanding a directory, or treating a path as a pattern that matches unrelated files — do not leave `perPath` as a hope: the wrapper should enforce it by clamping the worker pool to the number of forwarded paths, so a scoped run can never occupy more workers than it was charged for. A broad path then runs slower on fewer workers, which is the correct pressure toward narrower scopes.
 
 Do not derive worker counts from CPU count or available memory at execution time: the declared cost must continue to describe the maximum configured fan-out. The canonical wrapper must own both limits. Declare fixed worker and heap constants in each test wrapper, pass the worker constant through non-forwarded runner flags or wrapper-owned environment variables, and overwrite `NODE_OPTIONS` with the heap constant before invoking the runner. If a runner gives configured worker `execArgv` precedence over inherited `NODE_OPTIONS`, generate a canonical launcher that applies the same heap constant as the final worker `execArgv` after loading candidate configuration. Show both constants next to the proposed cost.
 
@@ -188,7 +192,10 @@ For `CommandCenter.json`, use this shape and include only detected commands:
           "full": "scripts/validate/test-full.sh",
           "changed": "scripts/validate/test-changed.sh"
         },
-        "cost": 4,
+        "cost": {
+          "full": 4,
+          "paths": { "base": 1, "perPath": 1 }
+        },
         "timeoutMs": 900000,
         "pathArgs": "paths"
       }
@@ -199,7 +206,9 @@ For `CommandCenter.json`, use this shape and include only detected commands:
 }
 ```
 
-Set `initScriptPath` to `null` when no init script is needed. `command.full` and `cost` are required; `command.changed`, `pathArgs`, `timeoutMs`, and `description` are optional. Omitted `pathArgs` defaults to `"forbid"`. Do not add `devServers`; preserve an existing array and use `dev-server-setup` for additions.
+The `test` table keeps the honest four-worker weight for both full and changed runs — the omitted `changed` defaults to `full` — while `cctl validate run test --scope changed -- a.test.ts b.test.ts` reserves `1 + 1 * 2 = 3`, and a longer path list is capped back at 4.
+
+Set `initScriptPath` to `null` when no init script is needed. `command.full` and `cost` are required; `command.changed`, `pathArgs`, `timeoutMs`, and `description` are optional. `cost` is a scalar or a `{ full, changed?, paths? }` table, and only `cost.full` is required inside it. Omitted `pathArgs` defaults to `"forbid"`. Do not add `devServers`; preserve an existing array and use `dev-server-setup` for additions.
 
 Use the matching tool reference to build each wrapper. The wrapper is authoritative: it must set the fixed worker count and inherited heap cap before invoking the runner, and its launcher must reapply a final worker `execArgv` when the runner gives that field precedence over the inherited cap. Test-runner config may mirror values only below that final override; do not present a cost that assumes fewer workers than the wrapper permits.
 
@@ -226,7 +235,7 @@ After writing:
 1. Read back every created or modified file.
 2. Verify wrapper shebangs and executable permissions.
 3. Verify every `preMerge` and `laneMerge` name is registered and every command has `command.full`.
-4. Verify each shared cost matches the maximum fixed worker/resource profile of both variants.
+4. Verify each declared cost is honest for the scope it prices: a scalar or `cost.full` matches the maximum fixed worker/resource profile of both variants, `cost.changed` matches the changed wrapper's profile, and a `paths` block appears only where the explicit-paths branch cannot widen beyond the forwarded files.
 5. Verify every test wrapper pins workers and overwrites `NODE_OPTIONS` with its inherited per-process heap cap; for Vitest, verify the canonical launcher supplies the final `poolOptions.forks.execArgv` after candidate configuration resolution.
 6. Verify each wrapper is silent on success, complete on failure, and colorless.
 

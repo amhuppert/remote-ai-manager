@@ -5,6 +5,7 @@ import {
   validationPollResponseSchema,
   validationSubmitResponseSchema,
   VALIDATION_LEASE_HEADER,
+  type ValidationListCommand,
   type ValidationListResponse,
   type ValidationPollResponse,
 } from "@/lib/validation/api-schemas";
@@ -158,6 +159,31 @@ async function requestList(
   return { kind: "ok", value: parsed.data };
 }
 
+// A scope-aware registration is rendered with every omitted weight resolved,
+// so the line states what each execution actually reserves rather than what
+// the project happened to spell out. A command with no changed executable
+// resolves every request to full, so quoting a scoped weight there would
+// advertise a reservation that can never happen; the scoped weight is likewise
+// shown only where paths may be forwarded.
+function formatRegisteredCost(command: ValidationListCommand): string {
+  const cost = command.cost;
+  if (typeof cost === "number") return `cost ${cost}`;
+  if (command.changedScope !== "native") return `cost ${cost.full}`;
+  const changed = cost.changed ?? cost.full;
+  const detail = [`changed ${changed}`];
+  if (command.pathArgs === "paths") {
+    if (cost.paths === undefined) {
+      detail.push(`paths ${changed} flat`);
+    } else if (cost.paths.perPath === 0) {
+      detail.push(`paths ${cost.paths.base} flat`);
+    } else {
+      // The charged unit is a forwarded path, which may be a directory.
+      detail.push(`paths ${cost.paths.base}+${cost.paths.perPath}/path`);
+    }
+  }
+  return `cost ${cost.full} (${detail.join(", ")})`;
+}
+
 function renderList(listed: ValidationListResponse, json: boolean): CliResult {
   const capacity = `${listed.capacity.inUse} of ${listed.capacity.limit} capacity units in use; queue depth ${listed.capacity.queueDepth}`;
   const commandLines = listed.commands.map((command) => {
@@ -165,7 +191,7 @@ function renderList(listed: ValidationListResponse, json: boolean): CliResult {
     const changed =
       command.changedScope === "native" ? "changed native" : "changed → full";
     const paths = command.pathArgs === "paths" ? "  paths" : "";
-    return `${command.name}  cost ${command.cost}  ${changed}${paths}  ${command.enabled ? "enabled" : "disabled"}${description}`;
+    return `${command.name}  ${formatRegisteredCost(command)}  ${changed}${paths}  ${command.enabled ? "enabled" : "disabled"}${description}`;
   });
   return {
     exitCode: EXIT_OK,

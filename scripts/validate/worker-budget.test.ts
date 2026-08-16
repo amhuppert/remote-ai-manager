@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveWorkerBudget } from "./worker-budget.mjs";
+import {
+  resolveScopedWorkerRequest,
+  resolveWorkerBudget,
+} from "./worker-budget.mjs";
 
 const GB = 1024 ** 3;
 
@@ -94,5 +97,70 @@ describe("resolveWorkerBudget", () => {
         availableParallelism: 16,
       }),
     ).toBe(2);
+  });
+});
+
+/** Worker count the `test` wrapper asks for on this machine. */
+const CONFIGURED_WORKERS = 8;
+
+describe("resolveScopedWorkerRequest", () => {
+  it("asks for one worker per forwarded path token", () => {
+    // A `paths` run is charged base + perPath * tokens. Path tokens are
+    // substring filters, so one token can match hundreds of files; without this
+    // clamp a one-token run charged three units would still open the whole fork
+    // pool beside other admitted work.
+    expect(
+      resolveScopedWorkerRequest({
+        mode: "paths",
+        pathTokenCount: 1,
+        configuredWorkers: CONFIGURED_WORKERS,
+      }),
+    ).toBe(1);
+    expect(
+      resolveScopedWorkerRequest({
+        mode: "paths",
+        pathTokenCount: 5,
+        configuredWorkers: CONFIGURED_WORKERS,
+      }),
+    ).toBe(5);
+  });
+
+  it("never asks for more than the wrapper's configured pool", () => {
+    expect(
+      resolveScopedWorkerRequest({
+        mode: "paths",
+        pathTokenCount: 12,
+        configuredWorkers: CONFIGURED_WORKERS,
+      }),
+    ).toBe(CONFIGURED_WORKERS);
+  });
+
+  it("leaves full and changed runs at the configured pool", () => {
+    // Only the paths scope is priced per token; the other scopes are charged
+    // the wrapper's full weight and may use the whole pool.
+    expect(
+      resolveScopedWorkerRequest({
+        mode: "full",
+        pathTokenCount: 0,
+        configuredWorkers: CONFIGURED_WORKERS,
+      }),
+    ).toBe(CONFIGURED_WORKERS);
+    expect(
+      resolveScopedWorkerRequest({
+        mode: "changed",
+        pathTokenCount: 0,
+        configuredWorkers: CONFIGURED_WORKERS,
+      }),
+    ).toBe(CONFIGURED_WORKERS);
+  });
+
+  it("keeps at least one worker when no token survives", () => {
+    expect(
+      resolveScopedWorkerRequest({
+        mode: "paths",
+        pathTokenCount: 0,
+        configuredWorkers: CONFIGURED_WORKERS,
+      }),
+    ).toBe(1);
   });
 });

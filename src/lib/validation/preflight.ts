@@ -1,3 +1,4 @@
+import { maxDeclaredCost } from "./cost-resolution";
 import {
   globalValidationConfigSchema,
   type GlobalValidationConfig,
@@ -22,7 +23,7 @@ export interface ValidationCommandPreflight {
 export interface ValidationCostExceedsLimit {
   code: typeof VALIDATION_COST_EXCEEDS_LIMIT_CODE;
   name: string;
-  cost: ValidationCommandConfig["cost"];
+  cost: number;
   limit: GlobalValidationConfig["concurrencyLimit"];
   message: string;
 }
@@ -52,14 +53,25 @@ export function validationCostExceedsLimit(
   name: string,
   preflight: ValidationCommandPreflight,
 ): ValidationCostExceedsLimit | null {
-  const cost = preflight.commandCosts[name];
-  if (cost === undefined || cost <= preflight.concurrencyLimit) return null;
+  const declared = preflight.commandCosts[name];
+  if (declared === undefined) return null;
+
+  // Admissibility must hold for every scope the caller could ask for, so a
+  // table is judged by its heaviest reading rather than by a narrowing it may
+  // never get.
+  const cost = maxDeclaredCost(declared);
+  if (cost <= preflight.concurrencyLimit) return null;
+
+  const costPhrase =
+    typeof declared === "number"
+      ? `configured cost ${cost}`
+      : `maximum configured cost ${cost} (cost.full)`;
 
   return {
     code: VALIDATION_COST_EXCEEDS_LIMIT_CODE,
     name,
     cost,
     limit: preflight.concurrencyLimit,
-    message: `Validation command "${name}" has configured cost ${cost}, exceeding the global limit ${preflight.concurrencyLimit}. Register a lower-worker command profile, reduce its worker cap and honest cost together, or raise the machine limit.`,
+    message: `Validation command "${name}" has ${costPhrase}, exceeding the global limit ${preflight.concurrencyLimit}. Register a lower-worker command profile, reduce its worker cap and honest cost together, or raise the machine limit.`,
   };
 }

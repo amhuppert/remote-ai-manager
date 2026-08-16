@@ -717,6 +717,107 @@ describe("submission lifecycle", () => {
   });
 });
 
+describe("cost table resolution at submission", () => {
+  const TABLE_VALIDATION = repoValidationConfigSchema.parse({
+    commands: {
+      test: {
+        command: {
+          full: "scripts/validate/test-full-suite.sh",
+          changed: "scripts/validate/test.sh",
+        },
+        cost: { full: 8, changed: 5, paths: { base: 2, perPath: 1 } },
+        timeoutMs: 900_000,
+        pathArgs: "paths",
+      },
+    },
+    preMerge: ["test"],
+  });
+
+  beforeEach(() => {
+    service = buildService({
+      readRepoValidation: async () => TABLE_VALIDATION,
+    });
+  });
+
+  it("snapshots the scoped weight for an agent submission with forwarded paths", async () => {
+    const submission = await service.submit(
+      request({ commandName: "test", scopePaths: ["src/a.test.ts"] }),
+    );
+
+    expect(submission).toMatchObject({ kind: "accepted", status: "running" });
+    if (submission.kind !== "accepted") return;
+    expect(runner.spawns[0]).toMatchObject({
+      commandName: "test",
+      command: "scripts/validate/test.sh",
+      cost: 3,
+      scopePaths: ["src/a.test.ts"],
+    });
+    const row = repo.findById(submission.runId);
+    expect(row?.cost).toBe(3);
+    expect(row?.scopedPathCount).toBe(1);
+  });
+
+  it("caps the scoped weight at the changed weight as path count grows", async () => {
+    const submission = await service.submit(
+      request({
+        commandName: "test",
+        scopePaths: [
+          "src/a.test.ts",
+          "src/b.test.ts",
+          "src/c.test.ts",
+          "src/d.test.ts",
+          "src/e.test.ts",
+        ],
+      }),
+    );
+
+    expect(submission.kind).toBe("accepted");
+    if (submission.kind !== "accepted") return;
+    expect(repo.findById(submission.runId)?.cost).toBe(5);
+  });
+
+  it("snapshots the full weight for a pathless full submission", async () => {
+    const submission = await service.submit(
+      request({ commandName: "test", scope: "full" }),
+    );
+
+    expect(submission).toMatchObject({ kind: "accepted", status: "running" });
+    if (submission.kind !== "accepted") return;
+    expect(runner.spawns[0]).toMatchObject({
+      command: "scripts/validate/test-full-suite.sh",
+      cost: 8,
+    });
+    expect(repo.findById(submission.runId)?.cost).toBe(8);
+  });
+
+  it("snapshots the changed weight for a pathless system submission", async () => {
+    const changed = await service.submitSystem(
+      systemRequest({
+        command: { kind: "registered", name: "test" },
+        scope: "changed",
+      }),
+    );
+
+    expect(changed).toMatchObject({ kind: "accepted", status: "running" });
+    if (changed.kind !== "accepted") return;
+    expect(runner.spawns[0]).toMatchObject({
+      command: "scripts/validate/test.sh",
+      cost: 5,
+    });
+    expect(repo.findById(changed.runId)?.cost).toBe(5);
+
+    const full = await service.submitSystem(
+      systemRequest({
+        command: { kind: "registered", name: "test" },
+        scope: "full",
+      }),
+    );
+    expect(full).toMatchObject({ kind: "accepted", status: "queued" });
+    if (full.kind !== "accepted") return;
+    expect(repo.findById(full.runId)?.cost).toBe(8);
+  });
+});
+
 describe("durable timing by validation source", () => {
   it("records the exact timing and scope tuple for every execution source", async () => {
     let clockMs = Date.parse("2026-08-05T10:00:00.000Z");

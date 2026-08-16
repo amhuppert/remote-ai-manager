@@ -78,6 +78,37 @@ describe("resolveValidationPromptSelections — frozen seed snapshot", () => {
     });
   });
 
+  it("annotates a scope-aware cost table with its maximum declared weight", () => {
+    const selections = resolveValidationPromptSelections({
+      role: "implementer",
+      context: contextConfig(),
+      registry: {
+        kind: "loaded",
+        commands: {
+          ...REGISTRY_COMMANDS,
+          test: {
+            command: {
+              full: "scripts/validate/test-full-suite.sh",
+              changed: "scripts/validate/test.sh",
+            },
+            cost: { full: 5, changed: 4, paths: { base: 2, perPath: 1 } },
+            pathArgs: "paths" as const,
+          },
+        },
+      },
+    });
+    expect(selections.enabled).toEqual({
+      kind: "commands",
+      commands: [
+        { name: "typecheck", cost: 2 },
+        { name: "test", cost: 5 },
+      ],
+    });
+    expect(buildValidationCommandsSection(selections)).toContain(
+      "Enabled for you in this context: typecheck (cost 2), test (cost 5).",
+    );
+  });
+
   it("does not let a command registered after the freeze into a mode:all selection", () => {
     const selections = resolveValidationPromptSelections({
       role: "implementer",

@@ -29,6 +29,7 @@ import {
 import type {
   GlobalValidationConfig,
   RepoValidationConfig,
+  ValidationCommandCost,
   ValidationLease,
   ValidationRunEventPhase,
   ValidationRunRecord,
@@ -39,6 +40,7 @@ import type {
   ValidationWorkflowRole,
 } from "./schemas";
 import { resolveValidationExecution } from "./command-resolution";
+import { resolveSubmissionCost } from "./cost-resolution";
 
 const defaultLogger = createLogger("validation");
 
@@ -226,7 +228,8 @@ export type ValidationSubmission =
 
 export interface ValidationListCommand {
   name: string;
-  cost: number;
+  /** The registration as declared; reservation weights resolve at submission. */
+  cost: ValidationCommandCost;
   description: string | null;
   pathArgs: "forbid" | "paths";
   changedScope: "native" | "full_fallback";
@@ -952,11 +955,16 @@ export function createValidationService(
     const nonce = ids.nonce();
     const lease: ValidationLease | null =
       request.source === "agent_cli" ? { runId, ...leases.issue() } : null;
+    const cost = resolveSubmissionCost({
+      cost: command.cost,
+      effectiveScope: execution.effectiveScope,
+      scopedPathCount: execution.scopePaths.length,
+    });
     const submission: ValidationRunSubmission = {
       runId,
       source: request.source,
       commandName: request.commandName,
-      cost: command.cost,
+      cost,
       nonce,
       leaseToken: lease?.token ?? null,
       leaseExpiresAt: lease?.expiresAt ?? null,
@@ -978,7 +986,7 @@ export function createValidationService(
       nonce,
       commandName: request.commandName,
       command: execution.executable,
-      cost: command.cost,
+      cost,
       projectPath: request.caller.projectPath,
       worktreePath: resolved.worktreePath,
       sessionName: resolved.sessionName ?? "",
@@ -1013,7 +1021,7 @@ export function createValidationService(
         logger.warn("validation.run_rejected", {
           name: request.commandName,
           reason: "cost_exceeds_limit",
-          cost: command.cost,
+          cost,
           limit: global.concurrencyLimit,
         });
         publishPhase("rejected", {
@@ -1026,7 +1034,7 @@ export function createValidationService(
           result: {
             kind: "cost_exceeds_limit",
             name: request.commandName,
-            cost: command.cost,
+            cost,
             limit: global.concurrencyLimit,
           },
         };
@@ -1041,7 +1049,7 @@ export function createValidationService(
           kind: "not_started",
           result: {
             kind: "capacity_unavailable",
-            cost: command.cost,
+            cost,
             inUse: decision.inUse,
             limit: decision.limit,
             queueDepth: decision.queueDepth,
@@ -1233,7 +1241,13 @@ export function createValidationService(
       };
     }
     effectiveScope = execution.effectiveScope;
-    const cost = registeredCommand.cost;
+    // System gates never forward paths, so a scope-aware registration charges
+    // its full or changed weight and never the scoped one.
+    const cost = resolveSubmissionCost({
+      cost: registeredCommand.cost,
+      effectiveScope: execution.effectiveScope,
+      scopedPathCount: 0,
+    });
     const timeoutMs = registeredCommand.timeoutMs ?? global.defaultTimeoutMs;
 
     const runId = ids.runId();

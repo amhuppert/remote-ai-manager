@@ -31,12 +31,53 @@ export const validationCommandExecutablesSchema = z
   })
   .strict();
 
+const validationCostWeightSchema = z.number().int().positive();
+
+// Reservation weight against the global budget. Required with no default. The
+// scalar form is one honest maximum for every scope; the table form declares a
+// cheaper weight per narrower execution (full > changed > scoped paths), where
+// `paths` charges base + perPath * N and never exceeds the changed weight.
+export const validationCommandCostSchema = z.union([
+  validationCostWeightSchema,
+  z
+    .object({
+      full: validationCostWeightSchema,
+      changed: validationCostWeightSchema.optional(),
+      paths: z
+        .object({
+          base: validationCostWeightSchema,
+          // Zero declares a flat scoped weight: path count does not move it.
+          perPath: z.number().int().nonnegative(),
+        })
+        .strict()
+        .optional(),
+    })
+    .strict()
+    .superRefine((cost, ctx) => {
+      const changedCeiling = cost.changed ?? cost.full;
+      if (cost.changed !== undefined && cost.changed > cost.full) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["changed"],
+          message: "cost.changed must not exceed cost.full",
+        });
+      }
+      if (cost.paths !== undefined && cost.paths.base > changedCeiling) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["paths", "base"],
+          message:
+            "cost.paths.base must not exceed the changed weight (cost.changed, or cost.full when changed is absent)",
+        });
+      }
+    }),
+]);
+export type ValidationCommandCost = z.infer<typeof validationCommandCostSchema>;
+
 export const validationCommandConfigSchema = z
   .object({
     command: validationCommandExecutablesSchema,
-    // Reservation weight against the global budget. Required with no default:
-    // both variants share one honest maximum resource profile.
-    cost: z.number().int().positive(),
+    cost: validationCommandCostSchema,
     timeoutMs: z.number().int().positive().optional(),
     description: z.string().trim().min(1).optional(),
     // Paths are a narrower changed execution, never arbitrary tool options.
@@ -44,6 +85,30 @@ export const validationCommandConfigSchema = z
   })
   .strict()
   .superRefine((profile, ctx) => {
+    if (
+      typeof profile.cost === "object" &&
+      profile.cost.paths !== undefined &&
+      profile.pathArgs !== "paths"
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["cost", "paths"],
+        message: 'cost.paths requires pathArgs "paths"',
+      });
+    }
+    // Without a changed executable every request resolves to a full run, so a
+    // declared changed weight could never be reserved.
+    if (
+      typeof profile.cost === "object" &&
+      profile.cost.changed !== undefined &&
+      profile.command.changed === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["cost", "changed"],
+        message: "cost.changed requires command.changed",
+      });
+    }
     if (profile.pathArgs !== "paths" || profile.command.changed !== undefined) {
       return;
     }

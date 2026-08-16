@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { runCli } from "../core";
 import type { CliEnv, CliHost, FetchInit } from "../shared";
+import { validateHelpEntries } from "./validate.help";
 
 const env: CliEnv = {
   CC_SERVER_URL: "http://127.0.0.1:3000",
@@ -118,6 +119,58 @@ const listBody = {
   runs: [],
 };
 
+const costTableListBody = {
+  commands: [
+    {
+      name: "per-file",
+      cost: { full: 5, paths: { base: 2, perPath: 1 } },
+      description: null,
+      pathArgs: "paths",
+      changedScope: "native",
+      timeoutMs: null,
+      enabled: true,
+    },
+    {
+      name: "no-paths-block",
+      cost: { full: 6, changed: 4 },
+      description: null,
+      pathArgs: "paths",
+      changedScope: "native",
+      timeoutMs: null,
+      enabled: true,
+    },
+    {
+      name: "flat-scoped",
+      cost: { full: 9, changed: 5, paths: { base: 2, perPath: 0 } },
+      description: null,
+      pathArgs: "paths",
+      changedScope: "native",
+      timeoutMs: null,
+      enabled: true,
+    },
+    {
+      name: "no-path-args",
+      cost: { full: 8, changed: 3 },
+      description: null,
+      pathArgs: "forbid",
+      changedScope: "native",
+      timeoutMs: null,
+      enabled: true,
+    },
+    {
+      name: "full-only",
+      cost: { full: 7 },
+      description: null,
+      pathArgs: "forbid",
+      changedScope: "full_fallback",
+      timeoutMs: null,
+      enabled: true,
+    },
+  ],
+  capacity: { limit: 8, inUse: 0, queueDepth: 0 },
+  runs: [],
+};
+
 describe("cctl validate list", () => {
   it("renders policy enablement and capacity without exposing executables", async () => {
     const host = hostWith(() => json(listBody));
@@ -135,6 +188,49 @@ describe("cctl validate list", () => {
     expect(host.requests[0]?.path).toBe(
       "/api/projects/cc/sessions/feature/conversations/conv-1/validation",
     );
+  });
+
+  it("renders a scope-aware cost table with omitted weights resolved", async () => {
+    const host = hostWith(() => json(costTableListBody));
+
+    const result = await runCli(["validate", "list"], env, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("cost 5 (changed 5, paths 2+1/path)");
+    expect(result.stdout).toContain("cost 6 (changed 4, paths 4 flat)");
+    expect(result.stdout).toContain("cost 9 (changed 5, paths 2 flat)");
+    expect(result.stdout).toContain("cost 8 (changed 3)");
+  });
+
+  it("omits a scoped weight for a command with no changed variant", async () => {
+    const host = hostWith(() => json(costTableListBody));
+
+    const result = await runCli(["validate", "list"], env, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("full-only  cost 7  changed → full");
+    expect(result.stdout).not.toContain("cost 7 (");
+  });
+
+  // The help text teaches the cost line by quoting a sample rendering, so the
+  // sample is pinned to renderer output rather than to a second copy of the
+  // format that can drift from what the command actually prints.
+  it("quotes a rendering the renderer actually produces in its help text", async () => {
+    const host = hostWith(() => json(costTableListBody));
+
+    const result = await runCli(["validate", "list"], env, host);
+
+    const rendered = /cost 5 \([^)]*\)/.exec(result.stdout)?.[0];
+    if (rendered === undefined) {
+      throw new Error(`no scope-aware cost line rendered: ${result.stdout}`);
+    }
+    const listHelp = validateHelpEntries.find(
+      (entry) => entry.path.join(" ") === "validate list",
+    );
+    if (listHelp === undefined) {
+      throw new Error("missing help entry for `validate list`");
+    }
+    expect(listHelp.description).toContain(rendered);
   });
 });
 

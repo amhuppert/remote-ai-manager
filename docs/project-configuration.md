@@ -177,7 +177,7 @@ validation service, which enforces the global weighted concurrency budget.
 | `commands` | Yes | Map of command names to command registrations |
 | `commands.<name>.command.full` | Yes | Full-run executable path relative to the canonical project root, or an absolute path |
 | `commands.<name>.command.changed` | No | Native changed-run executable; changed requests fall back to `full` when omitted |
-| `commands.<name>.cost` | Yes | Positive integer reservation weight |
+| `commands.<name>.cost` | Yes | Positive integer reservation weight, or a `{ full, changed?, paths? }` table pricing each scope |
 | `commands.<name>.timeoutMs` | No | Per-command timeout; falls back to the global validation default |
 | `commands.<name>.description` | No | Description shown by validation tooling |
 | `commands.<name>.pathArgs` | No | `"forbid"` (default) or `"paths"` to allow safe path-only narrowing of native changed runs |
@@ -194,6 +194,14 @@ A changed request uses `command.changed` when present and otherwise reports an
 effective full run using `command.full`. Explicit paths are accepted only when
 the request is changed, a changed executable exists, and `pathArgs` is
 `"paths"`. Wrappers implement one fixed behavior and do not parse scope.
+
+A scalar `cost` charges that weight for every scope. The table form declares
+`full` (required), an optional `changed` that defaults to `full`, and an
+optional `paths` block charging `base + perPath * N` for N forwarded paths.
+A scoped charge never exceeds the changed weight, `changed` may not exceed
+`full`, `paths.base` may not exceed the changed weight, and a `paths` block
+requires `pathArgs: "paths"`. The weight is resolved once at submission, so a
+run always reserves and reports a single integer.
 
 Validation scripts run with the target worktree as their working directory.
 They receive `PROJECT_ROOT`, `CLAUDE_PROJECT_DIR`, `WORKTREE_PATH`,

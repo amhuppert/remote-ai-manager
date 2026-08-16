@@ -70,7 +70,15 @@ Projects register granular wrappers under `validation.commands` in `CommandCente
 
 Every execution goes through Command Center's server-owned validation service. The service resolves the registered command and requested scope, enforces the allowed-command policy and global weighted budget, targets the correct worktree, and records queue and execution timing. Scope defaults to `changed`; when a command has no changed executable, Command Center selects its full executable and reports effective scope `full`. A command whose configured cost exceeds the global limit is rejected rather than clamped.
 
-Give each wrapper one fixed behavior and register its full and changed paths under one logical command. Both variants share `cost` and `timeoutMs`; keep the cost honest for the more expensive variant. Use `pathArgs: "paths"` only when the changed wrapper safely accepts forwarded repository-relative paths. Full requests and changed-to-full fallbacks never accept paths.
+Give each wrapper one fixed behavior and register its full and changed paths under one logical command. Both variants share `timeoutMs`. `cost` is either a scalar shared by every scope — keep it honest for the more expensive variant — or a table that prices the scopes separately:
+
+| Field | Required | Charge |
+|---|---|---|
+| `full` | Yes | Weight reserved by a full run; the honest maximum for the profile |
+| `changed` | No | Weight reserved by a changed run; defaults to `full` |
+| `paths.base` + `paths.perPath` | No | `base + perPath * N` for N forwarded paths, capped at the changed weight |
+
+Three refinements keep a table honest: a `paths` block requires `pathArgs: "paths"`, `changed` may not exceed `full`, and `paths.base` may not exceed the changed weight (`changed`, or `full` when `changed` is absent). Command Center resolves one integer from the table at submission and snapshots it onto the run, so narrowing a run can never reserve more than not narrowing it. Use `pathArgs: "paths"` only when the changed wrapper safely accepts forwarded repository-relative paths. Full requests and changed-to-full fallbacks never accept paths.
 
 The selected commands run in order. A non-zero exit aborts the gate and preserves the full failure output. Successful wrappers should emit nothing.
 
@@ -89,7 +97,7 @@ CC passes these environment variables to registered wrappers:
 | `CONTEXT_ID` | Graph execution context when applicable |
 | `CC_VALIDATION_RUN_ID` | Durable validation run identifier |
 | `CC_VALIDATION_COMMAND` | Registered command name |
-| `CC_VALIDATION_COST` | Configured reservation cost |
+| `CC_VALIDATION_COST` | Reservation weight resolved for this run's scope |
 
 `CLAUDECODE` is a Claude Code process signal, not part of Command Center's backend-neutral validation contract. Projects should expose explicit `:ai` scripts or accept `AI_OUTPUT=1` so the same low-noise path works for Claude, Codex, CI, and direct operator runs.
 
@@ -470,7 +478,7 @@ scripts/validate/test-full.sh
 scripts/validate/test-changed.sh
 ```
 
-Each wrapper should use the AI-quiet pattern above: no output on success and complete, colorless diagnostics on failure. Pin test workers and register the same number as the command cost. Changed wrappers can use `TARGET_BRANCH`; full wrappers must cover the whole project. When the changed test wrapper accepts path arguments, use them only as test-file filters and set `pathArgs` to `"paths"`.
+Each wrapper should use the AI-quiet pattern above: no output on success and complete, colorless diagnostics on failure. Pin test workers and declare that number as the full weight — a scalar `cost`, or `cost.full` when a table prices the narrower scopes. Changed wrappers can use `TARGET_BRANCH`; full wrappers must cover the whole project. When the changed test wrapper accepts path arguments, use them only as test-file filters, set `pathArgs` to `"paths"`, and price that branch with `cost.paths` only if it can never widen beyond the forwarded files.
 
 ### 3. Set Up the Pre-Commit Hook
 

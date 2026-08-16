@@ -38,7 +38,7 @@ export default {
 | `workerIdleMemoryLimit: "2GB"` | Mirrors the wrapper profile with a worker-restart threshold; it does not replace the inherited Node heap cap. |
 | `reporters: [["summary", { summaryThreshold: 0 }]]` (AI) | Eliminates per-file PASS/FAIL lines while preserving failure details. |
 
-Register this four-worker wrapper with cost `4`. If the project chooses another fixed count, change the wrapper constants and declared cost together, then update config mirrors to match.
+Register this four-worker profile with the cost table `{ "full": 4, "paths": { "base": 1, "perPath": 1 } }`: full and changed runs both reserve the four-worker maximum (an omitted `changed` inherits `full`), while a TDD run reserves one unit for the Jest parent plus one per forwarded file, capped at the changed weight. The `paths` price is honest here because `--runTestsByPath` runs exactly the forwarded files and never falls back to `--changedSince` or the whole tree. If the project chooses another fixed count, change the wrapper constants and declared cost together, then update config mirrors to match.
 
 ## Validation wrapper invocation
 

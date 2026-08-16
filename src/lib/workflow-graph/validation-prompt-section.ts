@@ -1,3 +1,4 @@
+import { maxDeclaredCost } from "@/lib/validation/cost-resolution";
 import type { RepoValidationConfig } from "@/lib/validation/schemas";
 import { DEFAULT_AGENT_VALIDATION_CONFIG } from "./config-schemas";
 import type { GraphWorkflowResolvedContext } from "./definition-schemas";
@@ -17,7 +18,10 @@ export type ValidationPromptRole = "implementer" | "contextValidator";
 
 export interface ValidationPromptCommand {
   name: string;
-  /** Configured reservation weight; null if the registry no longer lists it. */
+  /**
+   * Maximum configured reservation weight (a scope-aware declaration can charge
+   * less for a narrowed run); null if the registry no longer lists it.
+   */
   cost: number | null;
 }
 
@@ -91,10 +95,13 @@ export function resolveValidationPromptSelections(
 ): ValidationPromptSelections {
   const registryCommands =
     input.registry.kind === "loaded" ? input.registry.commands : {};
-  const annotate = (name: string): ValidationPromptCommand => ({
-    name,
-    cost: registryCommands[name]?.cost ?? null,
-  });
+  const annotate = (name: string): ValidationPromptCommand => {
+    const declared = registryCommands[name]?.cost;
+    return {
+      name,
+      cost: declared === undefined ? null : maxDeclaredCost(declared),
+    };
+  };
 
   // Contexts resolved before the selector snapshot existed carry no
   // agentValidation; policy treats absence as the seeded defaults.

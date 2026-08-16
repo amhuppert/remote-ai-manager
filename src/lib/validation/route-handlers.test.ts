@@ -407,6 +407,39 @@ describe("GET /api/validation-commands", () => {
     });
   });
 
+  it("projects a scope-aware cost table to its maximum declared weight", async () => {
+    const { GET } = createValidationCommandsRouteHandlers({
+      discoverProjects: async () => [project("alpha")],
+      readRepoConfig: async () => ({
+        validation: {
+          commands: {
+            test: {
+              command: {
+                full: "scripts/test-full.sh",
+                changed: "scripts/test.sh",
+              },
+              cost: { full: 5, changed: 4, paths: { base: 2, perPath: 1 } },
+              pathArgs: "paths",
+            },
+          },
+          preMerge: [],
+        },
+      }),
+    });
+
+    const response = await GET();
+    const rawBody: unknown = await response.json();
+    const body = validationCommandsResponseSchema.parse(rawBody);
+    expect(body.projects[0]?.commands).toEqual([
+      {
+        name: "test",
+        cost: 5,
+        pathArgs: "paths",
+        changedScope: "native",
+      },
+    ]);
+  });
+
   it("omits a project whose CommandCenter.json cannot be read", async () => {
     const { GET } = createValidationCommandsRouteHandlers({
       discoverProjects: async () => [project("broken"), project("ok")],

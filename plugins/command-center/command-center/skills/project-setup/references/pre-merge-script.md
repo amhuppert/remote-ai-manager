@@ -34,7 +34,7 @@ For each detected tool, also load its reference:
 | `CONTEXT_ID` | Graph context id, when applicable | Owning execution context |
 | `CC_VALIDATION_RUN_ID` | Validation run id | Correlation identifier and recursion guard |
 | `CC_VALIDATION_COMMAND` | Registered command name | Active resource profile |
-| `CC_VALIDATION_COST` | Declared cost | Reserved global-budget weight |
+| `CC_VALIDATION_COST` | Weight resolved for this run's scope | Reserved global-budget weight |
 
 ## Shared Wrapper Prelude
 
@@ -119,7 +119,7 @@ Runner configuration may mirror these limits but must not own enforcement. It lo
 
 Declare about one cost unit per configured worker; an ordinary single-process wrapper normally costs one. Use the same convention for every project sharing the machine.
 
-If a project needs both a two-worker and an eight-worker resource profile, register two logical command names with costs `2` and `8`. Full and changed scope variants within one logical profile share the same fixed cost and timeout.
+If a project needs both a two-worker and an eight-worker resource profile, register two logical command names with costs `2` and `8`. Full and changed scope variants within one logical profile share a timeout; they share a cost only when `cost` is a scalar, since the table form prices each scope separately.
 
 ## Merge-Gate Ordering
 

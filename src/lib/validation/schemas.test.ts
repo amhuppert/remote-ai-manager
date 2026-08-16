@@ -3,6 +3,7 @@ import {
   globalValidationConfigSchema,
   repoValidationConfigSchema,
   validationCommandConfigSchema,
+  validationCommandCostSchema,
   validationLeaseSchema,
   validationRunRecordSchema,
   validationRunResultSchema,
@@ -105,6 +106,62 @@ describe("validationCommandConfigSchema", () => {
     ).toBe(false);
   });
 
+  it("parses a scope-aware cost table", () => {
+    const parsed = validationCommandConfigSchema.parse({
+      command: {
+        full: "scripts/validate/test-full.sh",
+        changed: "scripts/validate/test.sh",
+      },
+      cost: { full: 8, changed: 4, paths: { base: 1, perPath: 1 } },
+      pathArgs: "paths",
+    });
+
+    expect(parsed.cost).toEqual({
+      full: 8,
+      changed: 4,
+      paths: { base: 1, perPath: 1 },
+    });
+  });
+
+  it("rejects a cost table with paths when pathArgs forbids paths", () => {
+    const result = validationCommandConfigSchema.safeParse({
+      command: {
+        full: "scripts/validate/test-full.sh",
+        changed: "scripts/validate/test.sh",
+      },
+      cost: { full: 8, changed: 4, paths: { base: 1, perPath: 1 } },
+      pathArgs: "forbid",
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues).toContainEqual(
+      expect.objectContaining({ path: ["cost", "paths"] }),
+    );
+  });
+
+  it("rejects a changed cost weight without a native changed executable", () => {
+    const result = validationCommandConfigSchema.safeParse({
+      command: { full: "scripts/x-full.sh" },
+      cost: { full: 8, changed: 3 },
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues).toContainEqual(
+      expect.objectContaining({ path: ["cost", "changed"] }),
+    );
+  });
+
+  it("accepts a full-only cost table on a command with no changed executable", () => {
+    const parsed = validationCommandConfigSchema.parse({
+      command: { full: "scripts/x-full.sh" },
+      cost: { full: 8 },
+    });
+
+    expect(parsed.cost).toEqual({ full: 8 });
+  });
+
   it("rejects path support without a native changed executable", () => {
     const result = validationCommandConfigSchema.safeParse({
       command: { full: "scripts/x-full.sh" },
@@ -117,6 +174,77 @@ describe("validationCommandConfigSchema", () => {
     expect(result.error.issues).toContainEqual(
       expect.objectContaining({ path: ["pathArgs"] }),
     );
+  });
+});
+
+describe("validationCommandCostSchema", () => {
+  it("parses the scalar form unchanged", () => {
+    expect(validationCommandCostSchema.parse(3)).toBe(3);
+  });
+
+  it("parses a table with only full", () => {
+    expect(validationCommandCostSchema.parse({ full: 8 })).toEqual({ full: 8 });
+  });
+
+  it("parses a table with changed and a paths block", () => {
+    expect(
+      validationCommandCostSchema.parse({
+        full: 8,
+        changed: 8,
+        paths: { base: 2, perPath: 0 },
+      }),
+    ).toEqual({ full: 8, changed: 8, paths: { base: 2, perPath: 0 } });
+  });
+
+  it("rejects a table whose changed exceeds full", () => {
+    const result = validationCommandCostSchema.safeParse({
+      full: 4,
+      changed: 5,
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a paths base above the changed ceiling", () => {
+    expect(
+      validationCommandCostSchema.safeParse({
+        full: 8,
+        changed: 4,
+        paths: { base: 5, perPath: 1 },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a paths base above full when changed is absent", () => {
+    expect(
+      validationCommandCostSchema.safeParse({
+        full: 4,
+        paths: { base: 5, perPath: 1 },
+      }).success,
+    ).toBe(false);
+  });
+
+  it.each([
+    [{ full: 0 }],
+    [{ full: 1.5 }],
+    [{ changed: 1 }],
+    [{ full: 4, changed: 0 }],
+    [{ full: 4, paths: { base: 0, perPath: 1 } }],
+    [{ full: 4, paths: { base: 1, perPath: -1 } }],
+    [{ full: 4, paths: { base: 1 } }],
+    [{ full: 4, focused: 2 }],
+  ])("rejects the malformed table %j", (cost) => {
+    expect(validationCommandCostSchema.safeParse(cost).success).toBe(false);
+  });
+
+  it("allows a zero perPath as a flat scoped weight", () => {
+    expect(
+      validationCommandCostSchema.parse({
+        full: 8,
+        changed: 4,
+        paths: { base: 2, perPath: 0 },
+      }),
+    ).toEqual({ full: 8, changed: 4, paths: { base: 2, perPath: 0 } });
   });
 });
 

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  validationCommandCostSchema,
   validationLeaseSchema,
   validationRunResultSchema,
   validationRunSourceSchema,
@@ -98,7 +99,10 @@ export type ValidationCancelResponse = z.infer<
 
 export const validationListCommandSchema = z.object({
   name: z.string().min(1),
-  cost: z.number().int().positive(),
+  // The registration as declared, not a resolved reservation: a scope-aware
+  // table travels whole so the caller can see what narrowing would charge
+  // before submitting.
+  cost: validationCommandCostSchema,
   description: z.string().nullable(),
   pathArgs: z.enum(["forbid", "paths"]),
   changedScope: z.enum(["native", "full_fallback"]),

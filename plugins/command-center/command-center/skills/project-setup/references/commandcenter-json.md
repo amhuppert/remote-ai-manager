@@ -67,12 +67,12 @@ Every name selected by `preMerge` or `laneMerge` must exist in `validation.comma
 |---|---|---|---|
 | `command.full` | `string` | Yes | Full-run wrapper path, normally under `scripts/validate/` |
 | `command.changed` | `string` | No | Native changed-run wrapper; changed requests fall back to full when omitted |
-| `cost` | positive integer | Yes | Fixed reservation weight against the global validation budget |
+| `cost` | positive integer, or `{ full, changed?, paths? }` | Yes | Reservation weight against the global validation budget |
 | `timeoutMs` | positive integer | No | Command-specific execution timeout |
 | `description` | `string` | No | Human-readable text surfaced by validation discovery |
 | `pathArgs` | `"forbid" \| "paths"` | No | Whether validated relative paths may narrow a native changed run; defaults to `"forbid"` |
 
-`cost` and `timeoutMs` are shared by both variants. Cost must describe their maximum fixed resource profile. Every invocation requests changed or full; changed is the default and falls back to `command.full` when `command.changed` is absent. Paths require changed scope, a changed wrapper, and `pathArgs: "paths"`.
+`timeoutMs` is shared by both variants. A scalar `cost` is also shared and must describe their maximum fixed resource profile. The table form prices scopes separately: `full` is the required honest maximum, `changed` defaults to `full`, and `paths` charges `base + perPath * N` for N forwarded paths, capped at the changed weight. The schema rejects a `paths` block without `pathArgs: "paths"`, a `changed` above `full`, and a `paths.base` above the changed weight. Every invocation requests changed or full; changed is the default and falls back to `command.full` when `command.changed` is absent. Paths require changed scope, a changed wrapper, and `pathArgs: "paths"`.
 
 ## Path Resolution and Execution
 

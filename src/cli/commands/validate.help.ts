@@ -26,7 +26,7 @@ export const validateHelpEntries: CommandHelpEntry[] = [
     path: ["validate", "list"],
     summary: "list commands, policy enablement, and current capacity",
     description:
-      "List registered command names, declared costs, descriptions, scope support, and whether each command is enabled for this caller. Also reports current global capacity. The underlying executable is intentionally never shown.",
+      "List registered command names, declared costs, descriptions, scope support, and whether each command is enabled for this caller. A command may declare one cost for every scope (`cost 4`) or a scope-aware table rendered with omitted weights resolved (`cost 5 (changed 5, paths 2+1/path)` reserves 5 for a full run, 5 for a changed run, and 2 plus 1 per forwarded path — never above the changed weight). Also reports current global capacity. The underlying executable is intentionally never shown.",
     usage: ["cctl validate list [--json]"],
     flags: [],
     examples: [
@@ -77,7 +77,7 @@ export const validateHelpEntries: CommandHelpEntry[] = [
       {
         invocation: "cctl validate run test --scope full --wait",
         explanation:
-          "run the full variant of the same logical test command under its shared cost and timeout",
+          "run the full variant of the same logical test command; full scope reserves the command's full weight under the same shared timeout",
       },
     ],
     domainContext: VALIDATION_CONTEXT,

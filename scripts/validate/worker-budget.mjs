@@ -54,3 +54,29 @@ export function resolveWorkerBudget({
   if (requestedWorkers === undefined) return ceiling;
   return Math.max(1, Math.min(requestedWorkers, ceiling));
 }
+
+/**
+ * How many workers a run may ASK for, given the scope it was admitted under.
+ *
+ * A `paths` run is charged `base + perPath * tokens` by the validation
+ * scheduler, while path tokens reach Vitest as substring filters: one token
+ * such as `src/lib` can select hundreds of files. Running the wrapper's whole
+ * fork pool for a one-token run would therefore oversubscribe RAM beside other
+ * work admitted against that cheap price. Clamping the request to the token
+ * count makes the declared price true by construction — a broad filter runs
+ * slower on fewer forks instead of exceeding what it paid for.
+ *
+ * @param {object} input
+ * @param {"full" | "changed" | "paths"} input.mode Scope the launcher runs.
+ * @param {number} input.pathTokenCount Path tokens forwarded in `paths` mode.
+ * @param {number} input.configuredWorkers Wrapper-owned pool size.
+ * @returns {number} Workers to request from the machine budget.
+ */
+export function resolveScopedWorkerRequest({
+  mode,
+  pathTokenCount,
+  configuredWorkers,
+}) {
+  if (mode !== "paths") return configuredWorkers;
+  return Math.max(1, Math.min(pathTokenCount, configuredWorkers));
+}

@@ -582,4 +582,157 @@ describe("ValidationService shared global budget", () => {
       fixture.close();
     }
   });
+
+  it("admits a paths-scoped run under a budget that still queues the full run", async () => {
+    const fixture = createPersistenceFixture();
+    try {
+      const repo = createValidationRunsRepo(fixture.db);
+      const transact = <T>(_label: string, fn: () => T): T =>
+        fixture.db.transaction(fn)();
+      let nowMs = Date.parse("2026-08-05T12:00:00.000Z");
+      const now = () => new Date(nowMs);
+      const scheduler = createValidationScheduler({ repo, transact, now });
+      const activeCostSnapshots: number[] = [];
+      const runner = createControllableRunner(() => {
+        activeCostSnapshots.push(scheduler.snapshot().inUse);
+      });
+      const repoValidation = repoValidationConfigSchema.parse({
+        commands: {
+          heavy: {
+            command: { full: "scripts/validate/heavy.sh" },
+            cost: 3,
+            pathArgs: "forbid",
+          },
+          test: {
+            command: {
+              full: "scripts/validate/test-full-suite.sh",
+              changed: "scripts/validate/test.sh",
+            },
+            cost: { full: 8, changed: 6, paths: { base: 1, perPath: 1 } },
+            pathArgs: "paths",
+          },
+        },
+        preMerge: ["test"],
+      });
+      const sessionCaller: ResolvedValidationCaller = {
+        kind: "session",
+        worktreePath: "/projects/app/.worktrees/session-1",
+        sessionName: "session-1",
+        branchName: "csm/session-1",
+        targetBranch: "main",
+      };
+      const identity: ValidationProcessIdentity = {
+        classifyGroup: async () => "not_ours",
+        killGroup: async () => {},
+      };
+      let id = 0;
+      const service = createValidationService({
+        repo,
+        transact,
+        scheduler,
+        runner: { spawn: (params) => runner.spawn(params) },
+        resolver: { resolveCaller: async () => sessionCaller },
+        config: {
+          readRepoValidation: async () => repoValidation,
+          readGlobal: async () => ({
+            concurrencyLimit: 8,
+            defaultTimeoutMs: 600_000,
+          }),
+        },
+        identity,
+        publish: () => ({ delivered: true }),
+        now,
+        ids: {
+          runId: () => `scoped-run-${++id}`,
+          nonce: () => `scoped-nonce-${id}`,
+        },
+      });
+
+      const heavyRunIds: string[] = [];
+      for (const conversationId of ["conv-heavy-1", "conv-heavy-2"]) {
+        const heavy = await service.submit({
+          source: "agent_cli",
+          commandName: "heavy",
+          caller: {
+            projectPath: "/projects/app",
+            sessionName: "session-1",
+            conversationId,
+          },
+        });
+        expect(heavy).toMatchObject({ kind: "accepted", status: "running" });
+        if (heavy.kind !== "accepted") return;
+        heavyRunIds.push(heavy.runId);
+      }
+      expect(scheduler.snapshot()).toEqual({ inUse: 6, queueDepth: 0 });
+
+      const scoped = await service.submit({
+        source: "agent_cli",
+        commandName: "test",
+        scopePaths: ["src/a.test.ts"],
+        wait: true,
+        caller: {
+          projectPath: "/projects/app",
+          sessionName: "session-1",
+          conversationId: "conv-scoped",
+        },
+      });
+      expect(scoped).toMatchObject({ kind: "accepted", status: "running" });
+      if (scoped.kind !== "accepted") return;
+      expect(repo.findById(scoped.runId)?.cost).toBe(2);
+      expect(scheduler.snapshot()).toEqual({ inUse: 8, queueDepth: 0 });
+
+      const full = await service.submit({
+        source: "agent_cli",
+        commandName: "test",
+        scope: "full",
+        wait: true,
+        caller: {
+          projectPath: "/projects/app",
+          sessionName: "session-1",
+          conversationId: "conv-full",
+        },
+      });
+      expect(full).toMatchObject({
+        kind: "accepted",
+        status: "queued",
+        position: 0,
+      });
+      if (full.kind !== "accepted") return;
+      expect(repo.findById(full.runId)?.cost).toBe(8);
+      expect(runner.spawns.map((spawn) => spawn.runId)).toEqual([
+        ...heavyRunIds,
+        scoped.runId,
+      ]);
+      expect(
+        runner.spawns.find((spawn) => spawn.runId === scoped.runId)?.cost,
+      ).toBe(2);
+
+      const scopedDone = service.waitForCompletion(scoped.runId);
+      const fullStarted = runner.whenStarted(4);
+      nowMs += 1_000;
+      for (const runId of [...heavyRunIds, scoped.runId]) {
+        runner.runs.get(runId)?.complete({
+          kind: "exited",
+          exitCode: 0,
+          output: "passed",
+        });
+      }
+      await expect(scopedDone).resolves.toMatchObject({ kind: "passed" });
+      await fullStarted;
+
+      expect(scheduler.snapshot()).toEqual({ inUse: 8, queueDepth: 0 });
+      const fullDone = service.waitForCompletion(full.runId);
+      nowMs += 1_000;
+      runner.runs.get(full.runId)?.complete({
+        kind: "exited",
+        exitCode: 0,
+        output: "full passed",
+      });
+      await expect(fullDone).resolves.toMatchObject({ kind: "passed" });
+      expect(Math.max(...activeCostSnapshots)).toBeLessThanOrEqual(8);
+      expect(scheduler.snapshot()).toEqual({ inUse: 0, queueDepth: 0 });
+    } finally {
+      fixture.close();
+    }
+  });
 });

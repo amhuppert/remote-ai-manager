@@ -23,6 +23,7 @@ import {
   type ValidationPollResponse,
   type ValidationSubmitResponse,
 } from "./api-schemas";
+import { maxDeclaredCost } from "./cost-resolution";
 import { getValidationService } from "./singleton";
 import type {
   ValidationCallerRef,
@@ -457,7 +458,7 @@ export function createValidationCommandsRouteHandlers(
         )
           .map(([name, command]) => ({
             name,
-            cost: command.cost,
+            cost: maxDeclaredCost(command.cost),
             pathArgs: command.pathArgs,
             changedScope:
               command.command.changed === undefined
