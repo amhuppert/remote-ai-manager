@@ -1640,6 +1640,74 @@ describe("0030 native-SDD v2 cutover hardening", () => {
     }
   });
 
+  // `next build` opens the live database, so the synchronous floor routinely
+  // runs against a legacy database BEFORE the pre-open cutover does — and the
+  // floor drops the compiled-candidate table this migration inventories. Every
+  // other case here reaches the cutover with that table still present, so the
+  // ordering a build actually produces is only covered by this one.
+  it("cuts over a legacy database whose floor already dropped the compiled-candidate table", async () => {
+    const fixture = createFrozenUpgradeFixture("completed");
+    fixture.db.close();
+
+    const buildOpen = _createTestDbAtPath(fixture.dbPath);
+    const candidateTableAfterFloor = buildOpen
+      .prepare(
+        `SELECT name FROM sqlite_master
+          WHERE type = 'table' AND name = 'spec_delivery_plan_candidates'`,
+      )
+      .get();
+    const legacyAttemptsAfterFloor = buildOpen
+      .prepare("SELECT COUNT(*) AS count FROM spec_delivery_plan_attempts")
+      .get();
+    buildOpen.close();
+    expect(candidateTableAfterFloor).toBeUndefined();
+    expect(legacyAttemptsAfterFloor).toEqual({ count: 1 });
+
+    const preFloor = await runNativeSddV2CutoverBeforeStateDbOpen(
+      fixture.configDir,
+    );
+    expect(preFloor?.completed).toBe(true);
+    expect(preFloor?.inventory.counts).toEqual(
+      expect.objectContaining({ candidates: 0, legacyAttempts: 1 }),
+    );
+
+    const current = _createTestDbAtPath(fixture.dbPath);
+    try {
+      const applied = await runMigrations(
+        { db: current, configDir: fixture.configDir },
+        migrations,
+      );
+      expect(applied).toContain(nativeSddV2Cutover.name);
+      expect(
+        inspectNativeSddV2Cutover({
+          db: current,
+          configDir: fixture.configDir,
+        }).counts,
+      ).toEqual(EMPTY_COUNTS);
+      expect(current.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+      expect(
+        current
+          .prepare(
+            "SELECT COUNT(*) AS count FROM spec_delivery_plan_attempts",
+          )
+          .get(),
+      ).toEqual({ count: 0 });
+      // Losing the table also loses candidate identity as a classifier, so the
+      // attempt and execution rules have to carry every compiled-era event on
+      // their own — otherwise the purge would strand events citing rows it
+      // deleted.
+      expect(
+        current
+          .prepare(
+            "SELECT COUNT(*) AS count FROM spec_events WHERE payload_json LIKE '%candidate-legacy%'",
+          )
+          .get(),
+      ).toEqual({ count: 0 });
+    } finally {
+      current.close();
+    }
+  });
+
   // The operator's real recovery path, which no other case covers: the refusal
   // and the purge are asserted here against ONE on-disk database rather than
   // two fixtures, so a refusal that left the stores subtly unusable — a

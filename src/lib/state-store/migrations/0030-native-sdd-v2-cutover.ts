@@ -708,13 +708,26 @@ function buildInventory(context: MigrationContext): InventoryWithTargets {
   );
   const linkedWorkflowIds = sortedUnique(linkedWorkflowExecutionIds);
 
-  const candidateIds = idsByIds(
+  // This migration runs before the state database is opened, but it is not the
+  // first thing to open it: `next build` evaluates modules that open the live
+  // database, so the synchronous floor can drop the compiled-candidate table
+  // before this inventory ever reads it. A fresh install never creates it
+  // either. Absence means there is nothing left to compile-identify — the
+  // classification below falls back to attempt and execution identity — so it
+  // must not strand startup.
+  const candidatesTablePresent = tableExists(
     context,
     "spec_delivery_plan_candidates",
-    "id",
-    "attempt_id",
-    legacyAttemptIds,
   );
+  const candidateIds = candidatesTablePresent
+    ? idsByIds(
+        context,
+        "spec_delivery_plan_candidates",
+        "id",
+        "attempt_id",
+        legacyAttemptIds,
+      )
+    : [];
   const affectedEventRows = rowsByIds<{
     id: number;
     event_type: string;
@@ -907,12 +920,14 @@ function buildInventory(context: MigrationContext): InventoryWithTargets {
   const counts: NativeSddV2CutoverCounts = {
     activeGraphExecutions: activeGraphExecutionIds.length,
     archivedGraphExecutions: archivedGraphExecutionIds.length,
-    candidates: countByIds(
-      context,
-      "spec_delivery_plan_candidates",
-      "attempt_id",
-      legacyAttemptIds,
-    ),
+    candidates: candidatesTablePresent
+      ? countByIds(
+          context,
+          "spec_delivery_plan_candidates",
+          "attempt_id",
+          legacyAttemptIds,
+        )
+      : 0,
     compiledDefinitions: definitionFiles.filter((file) =>
       file.classifications.includes("compiled"),
     ).length,
@@ -1319,12 +1334,16 @@ function purgeRelationalArtifacts(
     "attempt_id",
     targets.legacyAttemptIds,
   );
-  deleteIds(
-    context,
-    "spec_delivery_plan_candidates",
-    "attempt_id",
-    targets.legacyAttemptIds,
-  );
+  // Absent whenever the floor reached this database first, and on every fresh
+  // install; `dropRetiredDeliveryPlanStorage` removes the shape either way.
+  if (tableExists(context, "spec_delivery_plan_candidates")) {
+    deleteIds(
+      context,
+      "spec_delivery_plan_candidates",
+      "attempt_id",
+      targets.legacyAttemptIds,
+    );
+  }
   deleteIds(
     context,
     "spec_delivery_plan_snapshots",
