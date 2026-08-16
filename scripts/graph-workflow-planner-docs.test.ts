@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -11,6 +11,7 @@ import {
   graphWorkflowContextRoutingPolicySchema,
   graphWorkflowExecutionContextDefinitionSchema,
   graphWorkflowLoopGroupSchema,
+  workflowSemanticDefinitionSchema,
 } from "../src/lib/workflow-graph/definition-schemas";
 import { EXPANSION_CAPS } from "../src/lib/workflow-graph/expansion-caps";
 import { graphExpansionRequestSchema } from "../src/lib/workflow-graph/expansion-service";
@@ -20,6 +21,7 @@ import {
   LOOP_HISTORY_MAX_SECTION_BYTES,
 } from "../src/lib/workflow-graph/loop-history";
 import { SEEDED_WORKFLOW_DEFAULTS } from "../src/lib/workflow-graph/resolve-config";
+import { charterInvariantSchema } from "../src/lib/workflows/charter-schemas";
 
 /**
  * The D4 R16.3 documentation contract. Two halves, both checked against the
@@ -27,6 +29,11 @@ import { SEEDED_WORKFLOW_DEFAULTS } from "../src/lib/workflow-graph/resolve-conf
  * must TEACH the dynamic primitives, and every schema field name, engine bound,
  * and `cctl` verb they cite must EXIST at the tip. A rename or a cap change that
  * lands without a doc update fails here instead of misleading the next planner.
+ *
+ * The skill is a PACKAGE: a core SKILL.md covering the ordinary planning path,
+ * plus read-on-demand reference files under `references/`. Content assertions
+ * run over the whole package; the structural assertions keep the core small and
+ * every reference discoverable from it.
  */
 
 const REPO_ROOT = path.resolve(
@@ -39,16 +46,43 @@ const REPO_ROOT = path.resolve(
  * agents (Claude Code, Codex, the shipped CC plugin), so guidance that lands in
  * one and not the others is guidance most of the fleet never sees.
  */
-const SKILL_COPIES = [
-  ".claude/skills/graph-workflow-planning/SKILL.md",
-  ".agents/skills/graph-workflow-planning/SKILL.md",
-  "plugins/command-center/command-center/skills/graph-workflow-planning/SKILL.md",
+const SKILL_DIRS = [
+  ".claude/skills/graph-workflow-planning",
+  ".agents/skills/graph-workflow-planning",
+  "plugins/command-center/command-center/skills/graph-workflow-planning",
 ] as const;
 
 const STEERING = ".kiro/steering/workflows.md";
 
+/**
+ * The core must stay a readable single pass over the ordinary planning path.
+ * When new guidance pushes it past this cap, move a section into a reference
+ * file instead of raising the number — regrowing a monolithic skill is the
+ * documented failure mode this structure exists to prevent (ticket #69).
+ */
+const CORE_SKILL_MAX_LINES = 400;
+
 function read(relativePath: string): string {
   return readFileSync(path.resolve(REPO_ROOT, relativePath), "utf8");
+}
+
+/** Relative markdown paths of one skill copy: the core plus its references. */
+function skillFiles(dir: string): string[] {
+  const referencesDir = path.resolve(REPO_ROOT, dir, "references");
+  const references = existsSync(referencesDir)
+    ? readdirSync(referencesDir)
+        .filter((name) => name.endsWith(".md"))
+        .sort()
+        .map((name) => `references/${name}`)
+    : [];
+  return ["SKILL.md", ...references];
+}
+
+/** The whole package's prose, for assertions that may live in any file. */
+function readPackage(dir: string): string {
+  return skillFiles(dir)
+    .map((file) => read(`${dir}/${file}`))
+    .join("\n");
 }
 
 /**
@@ -149,6 +183,21 @@ const DOCUMENTED_FIELDS: ReadonlyArray<{
     owner: "graphExpansionRequestSchema.contexts[]",
     keys: shapeKeys(graphExpansionRequestSchema.shape.contexts.element),
   },
+  {
+    term: "appliesTo",
+    owner: "charterInvariantSchema",
+    keys: shapeKeys(charterInvariantSchema),
+  },
+  {
+    term: "parameters",
+    owner: "workflowSemanticDefinitionSchema",
+    keys: shapeKeys(workflowSemanticDefinitionSchema),
+  },
+  {
+    term: "prerequisites",
+    owner: "workflowSemanticDefinitionSchema",
+    keys: shapeKeys(workflowSemanticDefinitionSchema),
+  },
 ];
 
 const REGISTRY_KEYS = new Set(
@@ -189,10 +238,10 @@ function citedCctlCommands(markdown: string): string[] {
 }
 
 describe("graph-workflow planner docs (D4 R16.3)", () => {
-  it.each(SKILL_COPIES)(
+  it.each(SKILL_DIRS)(
     "%s documents guard, cardinality, and else authoring",
-    (copy) => {
-      const skill = read(copy);
+    (dir) => {
+      const skill = readPackage(dir);
       const why = "guard authoring";
 
       expectDocuments(skill, "## Conditional Edges", why);
@@ -211,10 +260,10 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
     },
   );
 
-  it.each(SKILL_COPIES)(
+  it.each(SKILL_DIRS)(
     "%s documents loop groups with a worker+judge body",
-    (copy) => {
-      const skill = read(copy);
+    (dir) => {
+      const skill = readPackage(dir);
       const why = "loop authoring";
 
       expectDocuments(skill, "## Loop Groups", why);
@@ -234,10 +283,10 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
     },
   );
 
-  it.each(SKILL_COPIES)(
+  it.each(SKILL_DIRS)(
     "%s documents expansion authoring with the real caps",
-    (copy) => {
-      const skill = read(copy);
+    (dir) => {
+      const skill = readPackage(dir);
       const why = "expansion authoring";
 
       expectDocuments(skill, "## Runtime Graph Expansion", why);
@@ -265,10 +314,10 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
     },
   );
 
-  it.each(SKILL_COPIES)(
+  it.each(SKILL_DIRS)(
     "%s documents the handoff-field convention with a worked example",
-    (copy) => {
-      const skill = read(copy);
+    (dir) => {
+      const skill = readPackage(dir);
       const why = "the handoff convention";
 
       // A worked example needs both halves of a worker+judge body: the schema
@@ -290,10 +339,42 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
     },
   );
 
-  it.each(SKILL_COPIES)(
+  it.each(SKILL_DIRS)(
+    "%s documents charter invariant scoping as the engine enforces it",
+    (dir) => {
+      const skill = readPackage(dir);
+      const why = "invariant scoping";
+
+      // The structured scope and its accept-time refusal: an invariant may name
+      // the authored contexts it binds, and a scope naming an unknown context
+      // is refused rather than silently never matching.
+      expectDocuments(skill, "contextIds", why);
+      expectDocuments(skill, "unknown-invariant-scope-context", why);
+    },
+  );
+
+  it.each(SKILL_DIRS)(
+    "%s documents launch parameters and the one-off run path",
+    (dir) => {
+      const skill = readPackage(dir);
+      const why = "launch mechanics";
+
+      // The only substitution token the lint admits, and both launch verbs.
+      expectDocuments(skill, "{{inputs.", why);
+      const cited = new Set(citedCctlCommands(readPackage(dir)));
+      expect(cited, `${why} — \`cctl workflow run\` is not cited`).toContain(
+        "workflow run",
+      );
+      expect(cited, `${why} — \`cctl workflow status\` is not cited`).toContain(
+        "workflow status",
+      );
+    },
+  );
+
+  it.each(SKILL_DIRS)(
     "%s only cites schema fields that exist at the tip",
-    (copy) => {
-      const skill = read(copy);
+    (dir) => {
+      const skill = readPackage(dir);
 
       for (const { term, owner, keys } of DOCUMENTED_FIELDS) {
         expect(keys, `${owner} no longer declares \`${term}\``).toContain(term);
@@ -302,7 +383,7 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
     },
   );
 
-  it.each([...SKILL_COPIES, STEERING])(
+  it.each([...SKILL_DIRS.map((dir) => `${dir}/SKILL.md`), STEERING])(
     "%s only cites cctl commands the help registry resolves",
     (doc) => {
       const cited = citedCctlCommands(read(doc));
@@ -317,21 +398,63 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
     },
   );
 
+  it.each(
+    SKILL_DIRS.flatMap((dir) =>
+      skillFiles(dir)
+        .filter((file) => file !== "SKILL.md")
+        .map((file) => `${dir}/${file}`),
+    ),
+  )("%s only cites cctl commands the help registry resolves", (doc) => {
+    for (const command of citedCctlCommands(read(doc))) {
+      expect(
+        REGISTRY_KEYS.has(command),
+        `\`cctl ${command}\` is cited but has no help-registry entry`,
+      ).toBe(true);
+    }
+  });
+
   it("cites the D4 lane and read verbs the primitives are driven through", () => {
-    const cited = new Set(citedCctlCommands(read(SKILL_COPIES[0])));
+    const cited = new Set(citedCctlCommands(readPackage(SKILL_DIRS[0])));
 
     expect(cited).toContain("workflow graph expand");
     expect(cited).toContain("workflow live ledger");
     expect(cited).toContain("workflow live edit");
   });
 
-  it("keeps the skill copies in sync apart from the Claude-only tool mention", () => {
-    const canonical = read(SKILL_COPIES[0]);
+  it("keeps the core SKILL.md a bounded single pass with discoverable references", () => {
+    const core = read(`${SKILL_DIRS[0]}/SKILL.md`);
+    const coreLines = core.split("\n").length;
+    expect(
+      coreLines,
+      `SKILL.md is ${coreLines} lines (cap ${CORE_SKILL_MAX_LINES}) — move a section to references/ instead of growing the core`,
+    ).toBeLessThanOrEqual(CORE_SKILL_MAX_LINES);
 
-    expect(read(SKILL_COPIES[1])).toBe(canonical);
-    expect(read(SKILL_COPIES[2])).toBe(
-      canonical.replace(" file with the Write tool —", " file —"),
+    // Progressive disclosure only works when the references exist and the core
+    // names each one: a reference file SKILL.md never mentions is guidance no
+    // planner will ever load.
+    const references = skillFiles(SKILL_DIRS[0]).filter(
+      (file) => file !== "SKILL.md",
     );
+    expect(references.length).toBeGreaterThan(0);
+    for (const reference of references) {
+      expectDocuments(core, reference, "the read-on-demand reference index");
+    }
+  });
+
+  it("keeps the skill copies in sync file by file", () => {
+    const canonicalFiles = skillFiles(SKILL_DIRS[0]);
+
+    for (const dir of SKILL_DIRS.slice(1)) {
+      expect(skillFiles(dir), `${dir} ships a different file set`).toEqual(
+        canonicalFiles,
+      );
+      for (const file of canonicalFiles) {
+        expect(
+          read(`${dir}/${file}`),
+          `${dir}/${file} diverges from ${SKILL_DIRS[0]}/${file}`,
+        ).toBe(read(`${SKILL_DIRS[0]}/${file}`));
+      }
+    }
   });
 
   it("steering carries every cascade block, the D4 seeded defaults, and the new rows", () => {
