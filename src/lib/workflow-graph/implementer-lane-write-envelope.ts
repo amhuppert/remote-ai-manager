@@ -34,8 +34,10 @@
  * `allowWrite` order is the backend contract, not incidental: the first entry
  * is the run's writable working root (per-context scratch — the repository
  * target is threaded to the prompt and tooling separately) and the last is its
- * temp. Read-only contexts therefore have exactly those two entries. See
- * `fsWritePolicySchema`.
+ * temp — a short digest-named directory outside the scratch tree, because the
+ * temp becomes the run's `$TMPDIR` and carries the AF_UNIX byte budget
+ * `lane-tmp-dir.ts` explains. Read-only contexts therefore have exactly those
+ * two entries. See `fsWritePolicySchema`.
  *
  * That working root is load-bearing rather than cosmetic, and it is why this
  * envelope does NOT deny the worktree the way the validator's does. Both native
@@ -62,12 +64,14 @@ import {
   isInsideOrEqualLanePath,
   toLanePathSegment,
 } from "./lane-path-segments";
+import {
+  DEFAULT_LANE_TMP_ROOT_DIR,
+  laneTmpDirBudgetViolation,
+  laneTmpDirName,
+} from "./lane-tmp-dir";
 
 /** Root for every implementer scratch directory CC creates. */
 const SCRATCH_ROOT_DIR_NAME = "cc-implementer-contexts";
-
-/** The context-temp directory's name beneath its context's scratch directory. */
-const CONTEXT_TMP_DIR_NAME = "tmp";
 
 /**
  * The git-ignored namespace inside the worktree where write-capable contexts
@@ -86,7 +90,12 @@ export interface ImplementerLaneWriteEnvelope {
   worktreeRoot: string;
   /** The context's own scratch root — the sandbox's writable working root. */
   contextScratchDir: string;
-  /** The context's private temp directory, beneath {@link contextScratchDir}. */
+  /**
+   * The context's private temp directory: a fixed-width digest name under the
+   * lane temp root, NOT beneath {@link contextScratchDir} — the run's `$TMPDIR`
+   * hosts the sandbox's AF_UNIX bridge sockets, so its length must stay
+   * independent of authored ids. See `lane-tmp-dir.ts`.
+   */
   contextTmpDir: string;
   /** Effective payload location: repository `.cc/temp` or private scratch. */
   payloadDir: string;
@@ -108,6 +117,7 @@ export interface ComposeImplementerLaneWriteEnvelopeInput {
 
 export interface ImplementerLaneWriteEnvelopeDeps {
   scratchRootDir?: string;
+  tmpRootDir?: string;
   ensureDir?(dir: string): void;
   realpath?(target: string): string;
   exists?(target: string): boolean;
@@ -186,7 +196,10 @@ export function composeImplementerLaneWriteEnvelope(
       `context scratch directory "${rawScratchDir}" escapes "${scratchRootDir}"`,
     );
   }
-  const rawTmpDir = path.join(rawScratchDir, CONTEXT_TMP_DIR_NAME);
+  const rawTmpDir = path.join(
+    deps.tmpRootDir ?? DEFAULT_LANE_TMP_ROOT_DIR,
+    laneTmpDirName("implementer", [input.executionId, input.contextId]),
+  );
 
   // The worktree root is resolved directly rather than through
   // `canonicalizeUnderExisting`: a root that is not on disk means lane
@@ -207,6 +220,9 @@ export function composeImplementerLaneWriteEnvelope(
   } catch (error) {
     fail(getErrorMessage(error));
   }
+
+  const tmpBudgetViolation = laneTmpDirBudgetViolation(contextTmpDir);
+  if (tmpBudgetViolation !== null) fail(tmpBudgetViolation);
 
   const deniedGitDir = canonicalizeUnderExisting(
     path.join(worktreeRoot, GIT_METADATA_DIR),

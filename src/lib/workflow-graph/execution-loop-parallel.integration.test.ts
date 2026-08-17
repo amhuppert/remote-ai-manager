@@ -1561,9 +1561,17 @@ describe("execution loop — parallel integration", () => {
 
       const policy = capturedPolicies.get(readerId);
       expect(policy?.allowWrite).toHaveLength(2);
-      expect(policy?.allowWrite[1]).toBe(
-        path.join(policy?.allowWrite[0] ?? "", "tmp"),
+      // The temp entry is a fixed-width digest path outside the scratch dir:
+      // it becomes the run's `$TMPDIR`, whose byte length the sandbox's
+      // AF_UNIX bridge sockets cap. See lane-tmp-dir.ts.
+      expect(path.basename(policy?.allowWrite[1] ?? "")).toMatch(
+        /^[0-9a-f]{32}$/,
       );
+      expect(
+        policy?.allowWrite[1]?.startsWith(
+          `${policy?.allowWrite[0] ?? ""}${path.sep}`,
+        ),
+      ).toBe(false);
       expect(
         policy?.allowWrite.some(
           (allowed) =>

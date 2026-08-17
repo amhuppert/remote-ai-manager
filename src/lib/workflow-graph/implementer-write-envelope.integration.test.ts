@@ -242,9 +242,17 @@ describe("the implementer dispatch path composes the envelope before dispatching
 
     const canonicalRoot = realpathSync(worktreePath);
     expect(fsWritePolicy?.allowWrite).toHaveLength(2);
-    expect(fsWritePolicy?.allowWrite[1]).toBe(
-      path.join(fsWritePolicy?.allowWrite[0] ?? "", "tmp"),
+    // The temp entry is a fixed-width digest path outside the scratch dir: it
+    // becomes the run's `$TMPDIR`, whose byte length the sandbox's AF_UNIX
+    // bridge sockets cap. See lane-tmp-dir.ts.
+    expect(path.basename(fsWritePolicy?.allowWrite[1] ?? "")).toMatch(
+      /^[0-9a-f]{32}$/,
     );
+    expect(
+      fsWritePolicy?.allowWrite[1]?.startsWith(
+        `${fsWritePolicy?.allowWrite[0] ?? ""}${path.sep}`,
+      ),
+    ).toBe(false);
     for (const allowed of fsWritePolicy?.allowWrite ?? []) {
       const insideRepo =
         allowed.startsWith(`${canonicalRoot}${path.sep}`) ||

@@ -29,18 +29,25 @@ import path from "node:path";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import { isInsideLanePath, toLanePathSegment } from "./lane-path-segments";
+import {
+  DEFAULT_LANE_TMP_ROOT_DIR,
+  laneTmpDirBudgetViolation,
+  laneTmpDirName,
+} from "./lane-tmp-dir";
 
 /** Root for every lane scratch directory CC creates. */
 const SCRATCH_ROOT_DIR_NAME = "cc-validator-lanes";
-
-/** The lane-temp directory's name beneath its lane's scratch directory. */
-const LANE_TMP_DIR_NAME = "tmp";
 
 export interface ValidatorLaneWriteEnvelope {
   policy: FsWritePolicy;
   /** The lane's per-assignment scratch/report directory. */
   laneScratchDir: string;
-  /** The lane's private temp directory, beneath {@link laneScratchDir}. */
+  /**
+   * The lane's private temp directory: a fixed-width digest name under the
+   * lane temp root, NOT beneath {@link laneScratchDir} — the run's `$TMPDIR`
+   * hosts the sandbox's AF_UNIX bridge sockets, so its length must stay
+   * independent of authored ids. See `lane-tmp-dir.ts`.
+   */
   laneTmpDir: string;
 }
 
@@ -55,6 +62,7 @@ export interface ComposeValidatorLaneWriteEnvelopeInput {
 
 export interface LaneWriteEnvelopeDeps {
   scratchRootDir?: string;
+  tmpRootDir?: string;
   ensureDir?(dir: string): void;
   realpath?(target: string): string;
 }
@@ -80,7 +88,14 @@ export function composeValidatorLaneWriteEnvelope(
       `Cannot establish the validator write envelope: lane scratch directory "${rawScratchDir}" escapes "${scratchRootDir}"`,
     );
   }
-  const rawTmpDir = path.join(rawScratchDir, LANE_TMP_DIR_NAME);
+  const rawTmpDir = path.join(
+    deps.tmpRootDir ?? DEFAULT_LANE_TMP_ROOT_DIR,
+    laneTmpDirName("validator", [
+      input.executionId,
+      input.contextId,
+      input.assignmentId,
+    ]),
+  );
 
   let laneScratchDir: string;
   let laneTmpDir: string;
@@ -100,6 +115,13 @@ export function composeValidatorLaneWriteEnvelope(
   } catch (error) {
     throw new Error(
       `Cannot establish the validator write envelope: ${getErrorMessage(error)}`,
+    );
+  }
+
+  const tmpBudgetViolation = laneTmpDirBudgetViolation(laneTmpDir);
+  if (tmpBudgetViolation !== null) {
+    throw new Error(
+      `Cannot establish the validator write envelope: ${tmpBudgetViolation}`,
     );
   }
 

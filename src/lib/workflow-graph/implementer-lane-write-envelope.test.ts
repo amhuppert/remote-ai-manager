@@ -23,6 +23,7 @@ import os from "node:os";
 import path from "node:path";
 import { ownedPathSchema } from "./definition-schemas";
 import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-envelope";
+import { MAX_LANE_TMP_DIR_BYTES } from "./lane-tmp-dir";
 
 let fixtureRoot: string;
 let worktreePath: string;
@@ -34,6 +35,7 @@ function compose(
     executionId?: string;
     worktreePath?: string;
     ownedPaths?: readonly string[];
+    tmpRootDir?: string;
   } = {},
 ) {
   return composeImplementerLaneWriteEnvelope(
@@ -43,7 +45,10 @@ function compose(
       worktreePath: overrides.worktreePath ?? worktreePath,
       ownedPaths: overrides.ownedPaths ?? [],
     },
-    { scratchRootDir },
+    {
+      scratchRootDir,
+      ...(overrides.tmpRootDir ? { tmpRootDir: overrides.tmpRootDir } : {}),
+    },
   );
 }
 
@@ -243,13 +248,60 @@ describe("composeImplementerLaneWriteEnvelope", () => {
     );
   });
 
-  it("nests the context tmp directory beneath the context scratch directory", () => {
+  // The temp lives OUTSIDE the scratch directory at a fixed-width digest name:
+  // the run's `$TMPDIR` hosts the sandbox's AF_UNIX bridge sockets, so its
+  // length must not grow with authored ids the way the scratch path does.
+  it("places the context temp at a canonical fixed-width digest path outside the scratch directory", () => {
     const envelope = compose();
 
-    expect(path.dirname(envelope.contextTmpDir)).toBe(
-      envelope.contextScratchDir,
-    );
+    expect(path.basename(envelope.contextTmpDir)).toMatch(/^[0-9a-f]{32}$/);
+    expect(
+      envelope.contextTmpDir.startsWith(
+        `${envelope.contextScratchDir}${path.sep}`,
+      ),
+    ).toBe(false);
     expect(realpathSync(envelope.contextTmpDir)).toBe(envelope.contextTmpDir);
+    // Uniqueness must not come from randomness: the same context has to find
+    // its own temp again on its next turn.
+    expect(compose().contextTmpDir).toBe(envelope.contextTmpDir);
+  });
+
+  it("refuses composition when the canonical temp entry would exceed the AF_UNIX budget", () => {
+    const deepTmpRoot = path.join(fixtureRoot, "t".repeat(80));
+
+    expect(() => compose({ tmpRootDir: deepTmpRoot })).toThrow(
+      /AF_UNIX budget/i,
+    );
+  });
+
+  // Incident regression (ticket #5): the Claude sandbox on Linux creates its
+  // socat bridge sockets inside the run's `$TMPDIR`, which the adapters point
+  // at the policy's temp entry. With the temp nested under the default scratch
+  // root, a UUID execution id alone pushed the socket path past the AF_UNIX
+  // 108-byte cap, so the sandbox could never initialize and every Bash call in
+  // every implementer context failed closed. The claim is about the PRODUCTION
+  // path shape, so this test composes with the default roots rather than the
+  // fixture's.
+  it("keeps the temp entry inside the AF_UNIX byte budget the sandbox's bridge sockets need", () => {
+    const executionId = "00000000-0000-4000-8000-000000000000";
+    const envelope = composeImplementerLaneWriteEnvelope({
+      executionId,
+      contextId: "context-implement-long-name",
+      worktreePath,
+      ownedPaths: [],
+    });
+    try {
+      expect(Buffer.byteLength(envelope.contextTmpDir)).toBeLessThanOrEqual(
+        MAX_LANE_TMP_DIR_BYTES,
+      );
+      expect(envelope.policy.allowWrite.at(-1)).toBe(envelope.contextTmpDir);
+    } finally {
+      rmSync(path.join(path.dirname(envelope.contextScratchDir)), {
+        recursive: true,
+        force: true,
+      });
+      rmSync(envelope.contextTmpDir, { recursive: true, force: true });
+    }
   });
 
   it("composes a read-only context's envelope from scratch, payload, and tmp alone", () => {

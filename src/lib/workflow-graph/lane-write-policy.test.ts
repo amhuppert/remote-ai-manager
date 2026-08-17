@@ -9,6 +9,7 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { composeValidatorLaneWriteEnvelope } from "./lane-write-policy";
+import { MAX_LANE_TMP_DIR_BYTES } from "./lane-tmp-dir";
 
 const SCRATCH_ROOT = "/tmp/cc-lane-scratch";
 
@@ -57,13 +58,61 @@ describe("composeValidatorLaneWriteEnvelope", () => {
     });
   });
 
-  it("nests the lane temp directory beneath the per-assignment scratch directory", () => {
+  // The temp lives OUTSIDE the scratch directory at a fixed-width digest name:
+  // the run's `$TMPDIR` hosts the sandbox's AF_UNIX bridge sockets, so its
+  // length must not grow with authored ids the way the scratch path does.
+  it("places the lane temp at a stable fixed-width digest path outside the scratch directory", () => {
     const envelope = composeWith();
 
-    expect(path.dirname(envelope.laneTmpDir)).toBe(envelope.laneScratchDir);
+    expect(path.basename(envelope.laneTmpDir)).toMatch(/^[0-9a-f]{32}$/);
+    expect(
+      envelope.laneTmpDir.startsWith(`${envelope.laneScratchDir}${path.sep}`),
+    ).toBe(false);
     expect(envelope.laneScratchDir.startsWith(`/private${SCRATCH_ROOT}/`)).toBe(
       true,
     );
+    // Uniqueness must not come from randomness: the same assignment has to
+    // find its own temp again on a later turn, and a different assignment must
+    // never land on it.
+    expect(composeWith().laneTmpDir).toBe(envelope.laneTmpDir);
+    expect(composeWith({ assignmentId: "perf-reviewer" }).laneTmpDir).not.toBe(
+      envelope.laneTmpDir,
+    );
+  });
+
+  it("refuses composition when the canonical temp entry would exceed the AF_UNIX budget", () => {
+    expect(() =>
+      composeValidatorLaneWriteEnvelope(
+        {
+          executionId: "exec-1",
+          contextId: "context-build",
+          assignmentId: "reviewer",
+          worktreePath: "/repo/worktree",
+        },
+        {
+          scratchRootDir: SCRATCH_ROOT,
+          tmpRootDir: `/tmp/${"t".repeat(80)}`,
+          ensureDir: () => {},
+          realpath: fakeRealpath,
+        },
+      ),
+    ).toThrow(/AF_UNIX budget/i);
+  });
+
+  // Incident regression (ticket #5): the run's `$TMPDIR` is the policy's temp
+  // entry and hosts the Claude sandbox's AF_UNIX bridge sockets on Linux, so
+  // its byte length must stay inside the socket budget however long the
+  // authored ids are — a validator lane's scratch path grows with THREE ids.
+  it("keeps the temp entry inside the AF_UNIX byte budget whatever the ids' length", () => {
+    const envelope = composeWith({
+      contextId: "context-".concat("c".repeat(52)),
+      assignmentId: "adversarial-security-reviewer",
+    });
+
+    expect(Buffer.byteLength(envelope.laneTmpDir)).toBeLessThanOrEqual(
+      MAX_LANE_TMP_DIR_BYTES,
+    );
+    expect(envelope.policy.allowWrite.at(-1)).toBe(envelope.laneTmpDir);
   });
 
   it("gives each cohort member in one context a disjoint scratch directory", () => {
@@ -90,7 +139,7 @@ describe("composeValidatorLaneWriteEnvelope", () => {
     expect(created[0]).toBe(
       `${SCRATCH_ROOT}/exec-1/context-build/security-reviewer`,
     );
-    expect(created[1]).toBe(`${created[0]}/tmp`);
+    expect(created[1]).toMatch(/^\/tmp\/cc-lane-tmp\/[0-9a-f]{32}$/);
     expect(envelope.laneScratchDir).toBe(`/private${created[0]}`);
   });
 
