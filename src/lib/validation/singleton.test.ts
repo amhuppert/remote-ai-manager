@@ -17,6 +17,7 @@ import {
 import { createValidationRunsRepo } from "@/lib/state-store/validation-runs-repo";
 import type { SpawnValidationParams } from "@/lib/validation/process-runner";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
+import { resolveValidationPromptSelections } from "@/lib/workflow-graph/validation-prompt-section";
 import type {
   GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
@@ -203,6 +204,118 @@ describe("createProductionValidationCallerResolver", () => {
     expect(resolved.kind).toBe("graph_lane");
     if (resolved.kind !== "graph_lane") return;
     expect(resolved.allowedCommands).toEqual(["typecheck"]);
+  });
+
+  it("keeps an enveloped context's frozen agent allowlist while deferring its script gate", async () => {
+    const base = activeLaneExecution();
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      workingDefinition: {
+        ...base.workingDefinition,
+        executionContexts: base.workingDefinition.executionContexts.map(
+          (context) =>
+            context.id === "context-implement" && context.agentValidation
+              ? {
+                  ...context,
+                  placement: {
+                    lane: "implement",
+                    mode: "owned" as const,
+                    ownedPaths: ["src"],
+                  },
+                  scriptValidator: { commands: ["test"] },
+                  agentValidation: {
+                    ...context.agentValidation,
+                    implementer: {
+                      value: { mode: "all" as const, except: [] },
+                      source: "workflow" as const,
+                      commands: ["typecheck", "test"],
+                    },
+                  },
+                }
+              : context,
+        ),
+      },
+    };
+    const resolver = createProductionValidationCallerResolver(
+      resolverDeps({ session: session(), execution }),
+    );
+
+    const resolved = await resolver.resolveCaller({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      conversationId: "conv-lane",
+    });
+
+    expect(resolved.kind).toBe("graph_lane");
+    if (resolved.kind !== "graph_lane") return;
+    // The write envelope defers WHOLE-REPO gating to the lane's join barrier —
+    // it does not revoke the agent's own configured verification.
+    expect(resolved.allowedCommands).toEqual(["typecheck", "test"]);
+    expect(resolved.scriptGateCommands).toEqual([]);
+  });
+
+  // The defect this pins: an agent was told one set was enabled and refused
+  // every member of it. What the prompt advertises and what the policy gate
+  // admits are the same snapshot, so they must never disagree.
+  it("admits exactly the commands an enveloped context's prompt advertises", async () => {
+    const base = activeLaneExecution();
+    const envelopedContext = {
+      ...base.workingDefinition.executionContexts.find(
+        (context) => context.id === "context-implement",
+      )!,
+      placement: {
+        lane: "implement",
+        mode: "owned" as const,
+        ownedPaths: ["src"],
+      },
+      scriptValidator: { commands: [] },
+      agentValidation: {
+        implementer: {
+          value: { mode: "all" as const, except: ["test"] },
+          source: "workflow" as const,
+          commands: ["typecheck"],
+        },
+        contextValidator: {
+          value: { mode: "only" as const, commands: [] },
+          source: "global" as const,
+          commands: [],
+        },
+      },
+    };
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      workingDefinition: {
+        ...base.workingDefinition,
+        executionContexts: base.workingDefinition.executionContexts.map(
+          (context) =>
+            context.id === "context-implement" ? envelopedContext : context,
+        ),
+      },
+    };
+    const deps = resolverDeps({ session: session(), execution });
+
+    const resolved = await createProductionValidationCallerResolver(
+      deps,
+    ).resolveCaller({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      conversationId: "conv-lane",
+    });
+    const registry = await deps.readRepoValidation("/repo");
+    const prompt = resolveValidationPromptSelections({
+      role: "implementer",
+      context: envelopedContext,
+      registry: { kind: "loaded", commands: registry!.commands },
+    });
+
+    expect(resolved.kind).toBe("graph_lane");
+    if (resolved.kind !== "graph_lane") return;
+    expect(prompt.enabled.kind).toBe("commands");
+    if (prompt.enabled.kind !== "commands") return;
+    expect(prompt.enabled.commands.map(({ name }) => name)).toEqual(
+      resolved.allowedCommands,
+    );
+    expect(prompt.disabled).not.toContain("typecheck");
   });
 
   it("fails closed when the context's lane assignment is inconsistent with execution state", async () => {
@@ -517,7 +630,85 @@ function createPersistedPolicyService(
 }
 
 describe("persisted graph policy through ValidationService", () => {
-  it("turns every registered command into a no-op for every role of an enveloped context", async () => {
+  it("honors each role's snapshot in an enveloped context rather than disabling both", async () => {
+    const fixture = createPersistenceFixture();
+    try {
+      fixture.seedProject(POLICY_PROJECT_PATH);
+      fixture.seedSession(POLICY_PROJECT_PATH, GRAPH_SESSION, {
+        targetBranch: "main",
+      });
+      const execution = policyExecution();
+      execution.workingDefinition.executionContexts =
+        execution.workingDefinition.executionContexts.map((context) =>
+          context.id === "context-implement"
+            ? {
+                ...context,
+                placement: {
+                  lane: "lane-1",
+                  mode: "owned" as const,
+                  ownedPaths: ["src"],
+                },
+              }
+            : context,
+        );
+      fixture.graphWorkflowExecutions.setActive(
+        POLICY_PROJECT_PATH,
+        GRAPH_SESSION,
+        execution,
+        T,
+      );
+      const spawns: SpawnValidationParams[] = [];
+      const service = createPersistedPolicyService(fixture, spawns);
+
+      // The implementer's snapshot grants `typecheck`; the envelope defers the
+      // whole-repo gate to the lane barrier but does not revoke that grant.
+      const result = await service.submit({
+        source: "agent_cli",
+        commandName: "typecheck",
+        caller: {
+          projectPath: POLICY_PROJECT_PATH,
+          sessionName: GRAPH_SESSION,
+          conversationId: "conv-implementer",
+        },
+      });
+
+      expect(result.kind).toBe("accepted");
+      expect(spawns).toHaveLength(1);
+      expect(spawns[0]).toMatchObject({
+        commandName: "typecheck",
+        contextId: "context-implement",
+        worktreePath: `${POLICY_PROJECT_PATH}/.worktrees/${GRAPH_SESSION}.lane-1`,
+      });
+      expect(
+        createValidationRunsRepo(fixture.db).findById("policy-run-1"),
+      ).toMatchObject({
+        workflowContextId: "context-implement",
+        workflowRole: "implementer",
+      });
+
+      // The policy gate still bites where a role's snapshot is empty — the
+      // context validator selects nothing, enveloped or not.
+      const validatorResult = await service.submit({
+        source: "agent_cli",
+        commandName: "typecheck",
+        caller: {
+          projectPath: POLICY_PROJECT_PATH,
+          sessionName: GRAPH_SESSION,
+          conversationId: "conv-validator",
+        },
+      });
+
+      expect(validatorResult).toMatchObject({
+        kind: "not_started",
+        result: { kind: "skipped_by_policy" },
+      });
+      expect(spawns).toHaveLength(1);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("admits an enveloped context validator the commands its snapshot grants", async () => {
     const fixture = createPersistenceFixture();
     try {
       fixture.seedProject(POLICY_PROJECT_PATH);
@@ -538,11 +729,8 @@ describe("persisted graph policy through ValidationService", () => {
                 agentValidation: {
                   ...context.agentValidation!,
                   contextValidator: {
-                    value: {
-                      mode: "only" as const,
-                      commands: ["typecheck"],
-                    },
-                    source: "per-node" as const,
+                    value: { mode: "only" as const, commands: ["typecheck"] },
+                    source: "workflow" as const,
                     commands: ["typecheck"],
                   },
                 },
@@ -564,37 +752,18 @@ describe("persisted graph policy through ValidationService", () => {
         caller: {
           projectPath: POLICY_PROJECT_PATH,
           sessionName: GRAPH_SESSION,
-          conversationId: "conv-implementer",
-        },
-      });
-
-      expect(result).toMatchObject({
-        kind: "not_started",
-        result: { kind: "skipped_by_policy" },
-      });
-      expect(spawns).toEqual([]);
-      expect(
-        createValidationRunsRepo(fixture.db).findById("policy-run-1"),
-      ).toBeNull();
-
-      const validatorResult = await service.submit({
-        source: "agent_cli",
-        commandName: "typecheck",
-        caller: {
-          projectPath: POLICY_PROJECT_PATH,
-          sessionName: GRAPH_SESSION,
           conversationId: "conv-validator",
         },
       });
 
-      expect(validatorResult).toMatchObject({
-        kind: "not_started",
-        result: { kind: "skipped_by_policy" },
-      });
-      expect(spawns).toEqual([]);
+      expect(result.kind).toBe("accepted");
+      expect(spawns).toHaveLength(1);
       expect(
         createValidationRunsRepo(fixture.db).findById("policy-run-1"),
-      ).toBeNull();
+      ).toMatchObject({
+        workflowContextId: "context-implement",
+        workflowRole: "context_validator",
+      });
     } finally {
       fixture.close();
     }

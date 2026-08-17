@@ -354,9 +354,7 @@ export function buildContextValidationPrompt(
     "- **Require a production call path for wiring criteria.** When a criterion requires a capability to exist or be wired — an event publication, route, notification, adapter, or control — it is satisfied only by a production call path that reaches it. An exported, unit-tested function with no production caller does not satisfy it. Deferral is valid only to a graph-downstream owner, and only when this context's acceptance criteria explicitly name that downstream owner for the obligation, or the downstream owner's acceptance criteria contain the matching obligation. A graph relationship or ownership claim alone cannot invent the handoff. With valid deferral evidence, record it in your `summary` instead of failing; without it, raise an issue.",
     ...invariantGuidanceLines,
     "- **Defer to the higher-ranked source on a charter conflict.** When an acceptance criterion conflicts with a higher-ranked source of truth and the implementation follows that higher-ranked source, do not fail the context solely for that acceptance-criterion mismatch — the higher-ranked source prevails. Instead, record the conflict in your `summary`, naming the affected acceptance criterion, the prevailing source, and the resolution. Evaluate each source's precedence within that source's declared applicability scope (`appliesTo`).",
-    buildValidatorDeterministicChecksGuidance(
-      input.validationSelections.scriptGate,
-    ),
+    buildValidatorDeterministicChecksGuidance(input.validationSelections),
     "",
     ...validationSectionLines,
     "## Acceptance Criteria",

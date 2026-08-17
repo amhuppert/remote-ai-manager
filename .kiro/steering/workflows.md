@@ -447,11 +447,14 @@ validation and writes failures to
 `.cc/workflow/<executionId>/<command>-<timestamp>-<runId>.log`. An unknown
 registered command halts with `script_validator_unknown_command`.
 
-For an enveloped context the script gate does not run and agent-facing
-registered validation resolves as a no-op: verification for that context is its
-lane's join barrier (see "Lane placement and file ownership"). Definition
-validation refuses such a context's command selection unless it is empty or a
-subset of the barrier set, so commands are never silently discarded.
+For an enveloped context the script gate does not run: the automatic whole-repo
+gate for that context is its lane's join barrier (see "Lane placement and file
+ownership"). Definition validation refuses such a context's `scriptValidator`
+selection unless it is empty or a subset of the barrier set, so commands are
+never silently discarded. Placement does not narrow the AGENT tier — the two
+cascade separately, so an enveloped implementer still runs whatever its
+`agentValidation` snapshot grants and can verify its own work before the
+barrier ever runs.
 
 Per-context validator overrides:
 
@@ -584,7 +587,7 @@ Consequences to hold when touching lane code:
 - A lane hosts N members for one worktree and one fan-in join. Nothing may assume `laneId === contextId`, and no surface may infer a lane from a context id.
 - The write envelope is mechanical and fail-closed, not prompt discipline. `<worktree>/.git` is denied, so an agent cannot commit, branch, or reset; landing is the engine's, scoped to the member's frozen prefixes. Any hop that cannot carry or natively establish a present policy fails the turn — it never dispatches unrestricted.
 - `.cc` is reserved from authored ownership. The writable set is the member's per-context scratch root, its owned prefixes, its payload directory under the worktree's `.cc` namespace, and tmp; a session reader gets scratch and tmp only.
-- Whole-repo verification is a per-lane barrier at the join (`laneMergeValidation`), not a per-context gate. For an enveloped context, registered validation resolves as a no-op and automatic script validation is skipped, and definition validation refuses a `scriptValidator` command selection that is neither empty nor a subset of the barrier set rather than discarding it. Barrier coverage is recorded against the lane's member set frozen at join intent, so evidence names exactly which members one run covered.
+- Whole-repo *gating* is a per-lane barrier at the join (`laneMergeValidation`), not a per-context gate. For an enveloped context automatic script validation is skipped, and definition validation refuses a `scriptValidator` command selection that is neither empty nor a subset of the barrier set rather than discarding it. Barrier coverage is recorded against the lane's member set frozen at join intent, so evidence names exactly which members one run covered. The agent allowlist is a separate tier: placement never revokes it, so a lane member still runs the commands its `agentValidation` snapshot grants.
 - A post-landing write in a shared worktree that no member's ownership or reserved namespace covers raises `ownership_violation` — resumable, and accepted by the plan-repair trigger.
 
 ## Land-gate invariant

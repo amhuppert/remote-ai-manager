@@ -306,10 +306,16 @@ export function createProductionValidationCallerResolver(
         (lane.lane === "implementer"
           ? DEFAULT_AGENT_VALIDATION_CONFIG.implementer
           : DEFAULT_AGENT_VALIDATION_CONFIG.contextValidator);
-      const isEnvelopedContext = context.placement.mode !== "full";
-      const scriptGateCommands = isEnvelopedContext
-        ? []
-        : (context.scriptValidator.commands ?? []);
+      // An enveloped context's whole-repo GATE is its lane's join barrier, so
+      // the per-context script gate reports nothing here. The agent allowlist
+      // is a separate tier and is unaffected: script-gate selection and agent
+      // permissions cascade independently so an implementer doing TDD can
+      // still verify its own work, and silently discarding a resolved
+      // selection would strand a configured command as a runtime no-op.
+      const scriptGateCommands =
+        context.placement.mode === "full"
+          ? (context.scriptValidator.commands ?? [])
+          : [];
 
       return {
         kind: "graph_lane",
@@ -320,9 +326,8 @@ export function createProductionValidationCallerResolver(
         executionId: execution.id,
         contextId: lane.contextId,
         role: lane.lane,
-        allowedCommands: isEnvelopedContext
-          ? []
-          : (rolePolicy?.commands ?? expandLanePolicy(selector, registryNames)),
+        allowedCommands:
+          rolePolicy?.commands ?? expandLanePolicy(selector, registryNames),
         scriptGateCommands,
       };
     },

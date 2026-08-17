@@ -51,6 +51,13 @@ export type ValidationPromptScriptGate =
       kind: "commands";
       commands: string[];
     }
+  /**
+   * Selected, but skipped for this context because its placement is enveloped:
+   * `processScriptValidation` defers it to the lane's join barrier. Distinct
+   * from `off` — the commands do run, just not here and not on completion —
+   * and from `commands`, which would misattribute the timing and the owner.
+   */
+  | { kind: "deferred"; commands: string[] }
   | { kind: "off" };
 
 export interface ValidationPromptSelections {
@@ -66,7 +73,14 @@ export interface ResolveValidationPromptSelectionsInput {
   context: Pick<
     GraphWorkflowResolvedContext,
     "scriptValidator" | "agentValidation"
-  >;
+  > & {
+    /**
+     * Optional for the same reason `candidateScopeForPlacement` tolerates it: a
+     * context seeded before placement existed has none, and whole-tree/full is
+     * what it ran under. Absent is therefore read as `full`.
+     */
+    placement?: GraphWorkflowResolvedContext["placement"];
+  };
   registry: ValidationPromptRegistry;
 }
 
@@ -143,10 +157,17 @@ export function resolveValidationPromptSelections(
       : [];
 
   const scriptValidator = input.context.scriptValidator;
+  const placement = input.context.placement;
   const scriptGate: ValidationPromptScriptGate =
-    scriptValidator.commands.length > 0
-      ? { kind: "commands", commands: [...scriptValidator.commands] }
-      : { kind: "off" };
+    scriptValidator.commands.length === 0
+      ? { kind: "off" }
+      : {
+          kind:
+            placement === undefined || placement.mode === "full"
+              ? "commands"
+              : "deferred",
+          commands: [...scriptValidator.commands],
+        };
 
   return { registry: input.registry.kind, enabled, disabled, scriptGate };
 }
@@ -155,6 +176,8 @@ function scriptGateLine(scriptGate: ValidationPromptScriptGate): string {
   switch (scriptGate.kind) {
     case "commands":
       return `Script gate for this context (runs separately when the context completes): ${scriptGate.commands.join(", ")}.`;
+    case "deferred":
+      return `Script gate for this context: ${scriptGate.commands.join(", ")} — deferred to your lane's join barrier because this context shares its worktree, so it does not run when this context completes.`;
     case "off":
       return "No script gate is selected for this context.";
   }
@@ -214,24 +237,35 @@ export function buildValidationCommandsSection(
 
 /**
  * The context validator's "do not enforce deterministic checks" bullet,
- * selection-aware per design §7: it names the actual script-gate commands when
- * a selection exists and otherwise attributes the absence to workflow policy
- * instead of claiming another component runs it.
+ * selection-aware per design §7: it may claim another component runs a check
+ * only when one actually will, and it may claim policy forbids the validator
+ * from running a check only when the validator's own selection excludes it.
+ * Both halves are read from the same snapshot the prompt's enabled list is
+ * rendered from, so the two can never contradict each other.
  */
 export function buildValidatorDeterministicChecksGuidance(
-  scriptGate: ValidationPromptScriptGate,
+  selections: Pick<ValidationPromptSelections, "scriptGate" | "enabled">,
 ): string {
+  const scriptGate = selections.scriptGate;
   const base =
     "- **Do not enforce deterministic checks.** You must not fail the context for failing tests, type errors, lint violations, build failures, or compile errors.";
   const close = "Focus on judgments that only a reviewing agent can make.";
+  const names = (commands: readonly string[]): string =>
+    commands.map((name) => `\`${name}\``).join(", ");
+  // A legacy `all except` selection is enumerable only against a registry the
+  // prompt could not read; it still grants commands, so it counts as granted.
+  const roleMayRunCommands =
+    selections.enabled.kind === "legacy-all-except" ||
+    selections.enabled.commands.length > 0;
+
   switch (scriptGate.kind) {
     case "commands":
-      return `${base} The script gate for this context runs ${scriptGate.commands
-        .map((name) => `\`${name}\``)
-        .join(
-          ", ",
-        )} separately; those checks are not your responsibility. ${close}`;
+      return `${base} The script gate for this context runs ${names(scriptGate.commands)} separately; those checks are not your responsibility. ${close}`;
+    case "deferred":
+      return `${base} This context shares a lane worktree, so its script gate runs ${names(scriptGate.commands)} at the lane's join barrier rather than for this context; those checks are not your responsibility. ${close}`;
     case "off":
-      return `${base} No script gate is selected for this context — where such a check does not run, workflow policy disables it rather than delegating it to you. Do not attempt to run those checks yourself. ${close}`;
+      return roleMayRunCommands
+        ? `${base} No script gate is selected for this context, so no automatic gate enforces them here. You may run the commands enabled for you above when their result informs your judgment, but report what you find in your summary — do not fail the context on it. ${close}`
+        : `${base} No script gate is selected for this context — where such a check does not run, workflow policy disables it rather than delegating it to you. Do not attempt to run those checks yourself. ${close}`;
   }
 }

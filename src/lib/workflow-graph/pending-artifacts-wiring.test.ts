@@ -16,7 +16,6 @@ import { describe, expect, it } from "vitest";
 const PRODUCTION_COMPOSITION_ROOTS = [
   "src/lib/conversations/answer-route-handlers.ts",
   "src/lib/conversations/ask-route-handlers.ts",
-  "src/lib/workflow-graph/amend-route-handlers.ts",
   "src/lib/workflow-graph/execution-route-handlers.ts",
   "src/lib/workflow-graph/expansion-production.ts",
   "src/lib/workflow-graph/lane-tool-context-loader.ts",

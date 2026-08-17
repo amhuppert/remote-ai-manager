@@ -4,9 +4,9 @@ import {
   buildValidatorDeterministicChecksGuidance,
   loadValidationPromptRegistry,
   resolveValidationPromptSelections,
+  type ResolveValidationPromptSelectionsInput,
   type ValidationPromptRegistry,
 } from "./validation-prompt-section";
-import type { GraphWorkflowResolvedContext } from "./definition-schemas";
 
 const REGISTRY_COMMANDS = {
   typecheck: {
@@ -34,12 +34,11 @@ const LOADED: ValidationPromptRegistry = {
   commands: REGISTRY_COMMANDS,
 };
 
-function contextConfig(
-  overrides: Partial<
-    Pick<GraphWorkflowResolvedContext, "scriptValidator" | "agentValidation">
-  > = {},
-): Pick<GraphWorkflowResolvedContext, "scriptValidator" | "agentValidation"> {
+type PromptContext = ResolveValidationPromptSelectionsInput["context"];
+
+function contextConfig(overrides: Partial<PromptContext> = {}): PromptContext {
   return {
+    placement: { lane: "implement", mode: "full" },
     scriptValidator: { commands: ["typecheck", "test"] },
     agentValidation: {
       implementer: {
@@ -275,9 +274,7 @@ describe("resolveValidationPromptSelections — legacy pre-freeze rows", () => {
   });
 
   it("classifies the script gate from its command selection", () => {
-    const gateOf = (
-      scriptValidator: GraphWorkflowResolvedContext["scriptValidator"],
-    ) =>
+    const gateOf = (scriptValidator: PromptContext["scriptValidator"]) =>
       resolveValidationPromptSelections({
         role: "implementer",
         context: contextConfig({ scriptValidator }),
@@ -289,6 +286,41 @@ describe("resolveValidationPromptSelections — legacy pre-freeze rows", () => {
       commands: ["test"],
     });
     expect(gateOf({ commands: [] })).toEqual({ kind: "off" });
+  });
+
+  // An enveloped context's gate is skipped by processScriptValidation and
+  // deferred to the lane's join barrier, so the prompt must not describe it as
+  // running when this context completes.
+  it("marks an enveloped context's script gate as deferred to the lane barrier", () => {
+    const selections = resolveValidationPromptSelections({
+      role: "contextValidator",
+      context: contextConfig({
+        scriptValidator: { commands: ["test"] },
+        placement: { lane: "engine", mode: "owned", ownedPaths: ["src"] },
+      }),
+      registry: LOADED,
+    });
+
+    expect(selections.scriptGate).toEqual({
+      kind: "deferred",
+      commands: ["test"],
+    });
+  });
+
+  it("treats a context with no placement as full so legacy rows keep their gate", () => {
+    const selections = resolveValidationPromptSelections({
+      role: "contextValidator",
+      context: contextConfig({
+        scriptValidator: { commands: ["test"] },
+        placement: undefined,
+      }),
+      registry: LOADED,
+    });
+
+    expect(selections.scriptGate).toEqual({
+      kind: "commands",
+      commands: ["test"],
+    });
   });
 });
 
@@ -354,6 +386,23 @@ describe("buildValidationCommandsSection", () => {
     expect(section).toContain(
       "Script gate for this context (runs separately when the context completes): typecheck, test.",
     );
+  });
+
+  it("tells both roles an enveloped gate runs at the barrier, not on completion", () => {
+    const section = buildValidationCommandsSection(
+      resolveValidationPromptSelections({
+        role: "implementer",
+        context: contextConfig({
+          scriptValidator: { commands: ["typecheck"] },
+          placement: { lane: "engine", mode: "owned", ownedPaths: ["src"] },
+        }),
+        registry: LOADED,
+      }),
+    );
+
+    expect(section).toContain("typecheck");
+    expect(section).toContain("join barrier");
+    expect(section).not.toContain("runs separately when the context completes");
   });
 
   it("reports explicit empty enabled, disabled, and script-gate state", () => {
@@ -434,10 +483,15 @@ describe("buildValidationCommandsSection", () => {
 });
 
 describe("buildValidatorDeterministicChecksGuidance", () => {
+  const NO_COMMANDS_ENABLED = {
+    kind: "commands" as const,
+    commands: [],
+  };
+
   it("names the actual script-gate commands when a selection exists", () => {
     const line = buildValidatorDeterministicChecksGuidance({
-      kind: "commands",
-      commands: ["typecheck", "test"],
+      scriptGate: { kind: "commands", commands: ["typecheck", "test"] },
+      enabled: NO_COMMANDS_ENABLED,
     });
     expect(line).toContain("**Do not enforce deterministic checks.**");
     expect(line).toContain(
@@ -445,9 +499,41 @@ describe("buildValidatorDeterministicChecksGuidance", () => {
     );
   });
 
-  it("attributes an absent gate to workflow policy instead of another component", () => {
-    const line = buildValidatorDeterministicChecksGuidance({ kind: "off" });
+  it("attributes an absent gate to workflow policy when the role may run nothing", () => {
+    const line = buildValidatorDeterministicChecksGuidance({
+      scriptGate: { kind: "off" },
+      enabled: NO_COMMANDS_ENABLED,
+    });
     expect(line).toContain("workflow policy disables it");
     expect(line).not.toContain("pre-merge validation script");
+  });
+
+  // The defect: this bullet was derived from the script gate alone, so a
+  // validator holding `seams` was told in one breath that seams was enabled
+  // for it and that policy disabled it and it must not run it.
+  it("does not claim policy disables checks the role is actually granted", () => {
+    const line = buildValidatorDeterministicChecksGuidance({
+      scriptGate: { kind: "off" },
+      enabled: { kind: "commands", commands: [{ name: "seams", cost: 1 }] },
+    });
+
+    expect(line).toContain("**Do not enforce deterministic checks.**");
+    expect(line).not.toContain("workflow policy disables it");
+    expect(line).not.toContain("Do not attempt to run those checks yourself");
+    // It may run what it holds; it still may not fail the context on results.
+    expect(line).toContain("do not fail the context");
+  });
+
+  it("points an enveloped context's deferred gate at the lane barrier", () => {
+    const line = buildValidatorDeterministicChecksGuidance({
+      scriptGate: { kind: "deferred", commands: ["typecheck"] },
+      enabled: NO_COMMANDS_ENABLED,
+    });
+
+    expect(line).toContain("`typecheck`");
+    expect(line).toContain("join barrier");
+    expect(line).not.toContain("workflow policy disables it");
+    // False for an enveloped context: the gate is skipped, not run on completion.
+    expect(line).not.toContain("runs `typecheck` separately");
   });
 });

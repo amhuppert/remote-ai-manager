@@ -67,7 +67,7 @@ Implementer test access stays enabled even when the script gate also runs tests.
 
 `strategy` is `final-only` by default, which defers validation until the last merge in a serial join; `every-merge` validates each source-lane merge. `{ "mode": "project" }` uses the project's `validation.laneMerge` selection or falls back to `validation.preMerge`. `{ "mode": "only", "commands": [...] }` supplies a workflow-specific selection, and an empty `commands` list disables lane-merge validation.
 
-This selection is also the **barrier** for every enveloped context: those contexts run no whole-repo checks of their own, so the lane's join is where the plan's deterministic verification actually happens. An enveloped context's `scriptValidator.commands` must be empty or a subset of it — see [placement-and-parallelism.md](placement-and-parallelism.md).
+This selection is also the **barrier** for every enveloped context: those contexts run no automatic whole-repo gate of their own (their agents may still run their granted commands), so the lane's join is where the plan's deterministic gate actually fires. An enveloped context's `scriptValidator.commands` must be empty or a subset of it — see [placement-and-parallelism.md](placement-and-parallelism.md).
 
 Set `laneMergeValidation` only at the workflow tier when the project-level lane-merge policy is not appropriate; it is never a per-context override.
 
