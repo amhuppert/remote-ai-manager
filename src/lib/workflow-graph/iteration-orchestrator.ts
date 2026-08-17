@@ -1898,6 +1898,14 @@ export function createGraphWorkflowIterationOrchestrator(
         specialist.attempts = update.attempts;
         if (update.summary !== undefined) specialist.summary = update.summary;
         if (update.issues !== undefined) specialist.issues = [...update.issues];
+        // Written with the verdict that raised them, not derived later from the
+        // round's outcome: the halt an operator resumes and the plan-repair
+        // round that answers it both read the finding itself, and a round
+        // reloaded after a crash would otherwise say a seat refused the
+        // contract without saying what it refused.
+        if (update.planDefects !== undefined) {
+          specialist.planDefects = [...update.planDefects];
+        }
         // Identity is stamped HERE, at the only write that knows all three of
         // its components: the round this lane answered into (fenced above), the
         // seat that answered, and the position of each advisory in that seat's
@@ -2173,6 +2181,34 @@ export function createGraphWorkflowIterationOrchestrator(
       // than an uninterrupted one's, and silently unprice its retained lanes.
       const sessionRef = specialist.sessionRef;
       const reviewArtifact = specialist.reviewArtifact;
+      // A defect-carrying record is a rejection of the CONTRACT, and it is the
+      // stored defects — not the lane state, which a plan defect shares with an
+      // ordinary rejection — that say so. Rebuilding it as a plain `fail` would
+      // hand the resumed round a reopen list derived from evidence, which is
+      // the one reaction the response exists to prevent.
+      const planDefects = specialist.planDefects ?? [];
+      if (planDefects.length > 0) {
+        retained[seat.assignmentId] = {
+          assignmentId: seat.assignmentId,
+          attempts: specialist.attempts,
+          settlement: {
+            kind: "plan_defect",
+            summary,
+            feedback: `Context validation reported a plan defect.\n${summary}`,
+            // Re-stamped from the seat for the same reason the issues are: the
+            // record groups findings by assignment, so the key is where the
+            // attribution lives.
+            planDefects: planDefects.map((defect) => ({
+              ...defect,
+              assignmentId: seat.assignmentId,
+            })),
+            issues,
+            sessionRef,
+            reviewArtifact,
+          },
+        };
+        continue;
+      }
       retained[seat.assignmentId] =
         specialist.state === "verdict_pass"
           ? {
@@ -3040,6 +3076,59 @@ export function createGraphWorkflowIterationOrchestrator(
       // Nothing parked and nothing owed: the question was withdrawn under this
       // pass. The caller falls through to the normal finalize path.
       return null;
+    }
+
+    // A blocking seat refused the CONTRACT rather than the work. The round
+    // concluded — every seat reported — but on a finding no task here can
+    // answer, so neither of the two conclusions below applies: reopening tasks
+    // would hand an implementer a contract it has no authority over, and
+    // falling through to the pass path would clear the failure counter and
+    // finish a context a reviewer just called unsatisfiable.
+    //
+    // The whole reaction is a durable, resumable halt: nothing is reopened and
+    // nothing is charged (the reopen loop is what this response exists to
+    // escape), and the round is left OPEN so the frozen candidate and every
+    // seat's verdict stay readable to the recovery that answers it. The halt
+    // carries the aggregated findings themselves, because plan repair and the
+    // operator both act on the finding rather than on a count of findings.
+    //
+    // It is recorded and then RETURNED, not thrown. Both loops treat a returned
+    // result as a park — no finalize, no failure accounting — where a thrown
+    // `IterationHaltedError` is swallowed and still finalizes; production
+    // signal-halt records a PENDING reason and leaves the execution running, so
+    // that finalize would find no remaining tasks and write `completed` over
+    // the context this halt just stopped. `completed` is terminal.
+    if (validation.kind === "plan_defect") {
+      journal.leaveOpen = round !== null;
+      const haltReason: GraphWorkflowHaltReason = {
+        type: "plan_defect",
+        contextId: input.contextId,
+        planDefects: validation.planDefects.map((defect) => ({ ...defect })),
+        roundSeq: round?.seq ?? null,
+        summary: null,
+      };
+      execLogger?.validation(input.contextId, "validation_round.plan_defect", {
+        roundSeq: round?.seq ?? null,
+        planDefectCount: validation.planDefects.length,
+        assignmentIds: validation.planDefects.map(
+          (defect) => defect.assignmentId,
+        ),
+      });
+      logger.warn("graph-workflow.context_validation.plan_defect", {
+        executionId: preContextValidationExecution.id,
+        contextId: input.contextId,
+        roundSeq: round?.seq ?? null,
+        planDefectCount: validation.planDefects.length,
+      });
+      await onHalt(haltReason);
+      return {
+        conversationId,
+        execution: await loadCurrentExecution(
+          input.projectPath,
+          input.sessionName,
+        ),
+        shouldContinueInContext: false,
+      };
     }
 
     // The last identity check, immediately before anything about this round

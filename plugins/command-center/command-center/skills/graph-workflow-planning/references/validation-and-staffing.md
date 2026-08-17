@@ -138,6 +138,18 @@ Unknown command names and costs above the global limit fail preflight rather tha
 
 Validators also actively check every charter invariant rendered into their prompt — global invariants plus those scoped to the context under review — and cite invariant ids in issues. Scope invariants honestly at planning time so validators are never asked to hold a mid-migration context to an end-state rule (see [The Charter](../SKILL.md#the-charter)).
 
+### The third blocking response: `planDefects`
+
+A blocking seat has three responses, not two. Beside a pass (empty `issues`) and a fail (issues that reopen the named tasks), it may return `planDefects` — the verdict for a contract the reviewed context **cannot satisfy at all**: contradictory, requiring work owned by a downstream context, or omitting ownership its criteria require.
+
+- A plan defect carries **no** `taskId`. Every entry must state why the defect is not locally remediable and name the criterion clause, boundary, dependency, or governance rule it conflicts with. Both are required — a classification nobody can review is rejected.
+- **It reopens no task and charges no failure.** The context halts with a `plan_defect` reason carrying the finding, and the engine sends it straight to plan repair; the reviewed work is untouched. See [revising-and-recovery.md](revising-and-recovery.md).
+- **Its bound is the seat's mandate.** A concern the seat's mandate does not clearly cover is an advisory, exactly as before — never a plan defect. The third response exists for a mandate this context cannot satisfy, not as a route around a mandate the seat would rather not judge.
+- A seat may report both; the plan defect decides the outcome and its issues travel with it as evidence.
+- Plan repair may reject the classification and rule the work ordinary implementation, so the response is for a contract that cannot be satisfied — not one that is merely difficult, unfamiliar, or larger than the validator expected.
+
+Planner consequence: a plan defect is the honest report of a **planning** error, so read it as feedback on the plan rather than on the implementer. The shapes that produce them are contexts whose criteria name work no task in that context owns, and deferrals with no receiving criterion — which is exactly what the alignment checklist below prevents at authoring time.
+
 ## Validator alignment checklist
 
 Before creating or replacing a workflow, check every context:

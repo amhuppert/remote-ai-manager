@@ -254,8 +254,10 @@ describe("charter floor/round conflict behavioral fixture", () => {
     expect(executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
     const prompt = capturedPrompt!;
 
-    // The prompt opens with the charter digest, before the validation header.
-    expect(prompt.startsWith("# Workflow Charter")).toBe(true);
+    // The charter digest opens the builder's section, ahead of the validation
+    // header. The composer's acceptance-criteria deferral cohort precedes it on
+    // every dispatched validator prompt.
+    expect(prompt.indexOf("# Workflow Charter")).toBeGreaterThan(-1);
     expect(prompt.indexOf("# Workflow Charter")).toBeLessThan(
       prompt.indexOf("# Context Validation"),
     );

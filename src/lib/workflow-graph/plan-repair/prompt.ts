@@ -339,6 +339,29 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
     sections.push(["## Tasks in the tripped context", ...taskLines].join("\n"));
   }
 
+  // Ahead of the round history on purpose: a plan-defect halt arrives already
+  // classified — a blocking seat named the contract and said why no task can
+  // answer it — and that reading is what this round acts on. The verdicts below
+  // are the surroundings of the finding, not the finding.
+  if (haltReason.type === "plan_defect") {
+    sections.push(
+      [
+        "## Plan defect reported by a blocking reviewer",
+        "",
+        "The round concluded and a blocking seat refused the CONTRACT rather than the work: no task in the reviewed context can remedy what it found, so nothing was reopened and nothing was retried. Each finding names the contract it conflicts with and why the context cannot answer it locally.",
+        "",
+        ...haltReason.planDefects.map((defect) =>
+          [
+            `- [${defect.assignmentId}] ${defect.title}`,
+            `    ${defect.description}`,
+            `    not locally remediable: ${defect.whyNotLocallyRemediable}`,
+            `    conflicting contract: ${defect.conflictingContract}`,
+          ].join("\n"),
+        ),
+      ].join("\n"),
+    );
+  }
+
   const history = input.validationHistory.slice(-VALIDATION_HISTORY_LIMIT);
   if (history.length > 0) {
     const rendered = history.map((verdict, index) => {

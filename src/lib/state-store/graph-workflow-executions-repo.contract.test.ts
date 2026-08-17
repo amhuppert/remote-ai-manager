@@ -104,8 +104,59 @@ function maximalExecution(): GraphWorkflowExecution {
     limitEvaluation,
     lastUsedAt: "2026-01-02T02:30:00Z",
   });
+  // The first specialist of the round additionally carries a plan defect: the
+  // blocking seat's third response, which no other fixture field reaches. It is
+  // superimposed on a seat that also holds issues and advisories for the same
+  // reason the round fixture superimposes a verdict and a question token — the
+  // durability harness descends into the FIRST entry of a record, so every
+  // persisted key path has to be reachable there rather than spread across
+  // states a real round would keep apart.
+  const round = base.contextStates["ctx-1"]?.validationRound;
+  if (!round) throw new Error("the maximal fixture has no validation round");
+  const generalSpecialist = round.specialists["general"];
+  if (!generalSpecialist) {
+    throw new Error("the maximal fixture's round has no `general` seat");
+  }
+  const planDefect = {
+    title: "The rollback criterion names a downstream context",
+    description:
+      "Criterion 3 requires the publisher to change, which nothing in this context owns.",
+    whyNotLocallyRemediable:
+      "Every task here is scoped to the migration; the publisher lands in ctx-2.",
+    conflictingContract: "Acceptance criterion 3",
+  };
   return graphWorkflowExecutionSchema.parse({
     ...base,
+    // The halt that same defect produces, carried beside the round that raised
+    // it. The halt is the WHOLE reaction to a refused contract — nothing is
+    // reopened and nothing is charged — so its aggregated, seat-attributed
+    // findings need a persisted path of their own: the round record attributes
+    // a defect by the seat's key, and a flattened halt payload cannot.
+    secondaryHaltReasons: [
+      ...base.secondaryHaltReasons,
+      {
+        type: "plan_defect",
+        contextId: "ctx-1",
+        planDefects: [{ ...planDefect, assignmentId: "general" }],
+        roundSeq: 4,
+        // Maximal: the plan-repair supervisor has already spoken on this halt,
+        // so the field the halt UI explains a decline with is proven durable.
+        summary: "Plan repair declined: the criterion is assigned correctly.",
+      },
+    ],
+    contextStates: {
+      ...base.contextStates,
+      "ctx-1": {
+        ...base.contextStates["ctx-1"],
+        validationRound: {
+          ...round,
+          specialists: {
+            ...round.specialists,
+            general: { ...generalSpecialist, planDefects: [planDefect] },
+          },
+        },
+      },
+    },
     laneStates: {
       ...base.laneStates,
       "ctx-1": {
@@ -361,6 +412,91 @@ describe("graph-workflow-executions-repo durability contract", () => {
     } finally {
       fixture.close();
     }
+  });
+
+  // A plan defect is what a blocking seat says about the CONTRACT, and the
+  // reaction to it outlives the process that read it: the halt an operator
+  // resumes and the plan-repair round that answers it both read the finding
+  // itself. A round reloaded with the seat's rejection but not what it rejected
+  // would leave that recovery with nothing to act on.
+  it("reloads a defecting seat's plan defects, and leaves its siblings without any", () => {
+    const fixture = createPersistenceFixture();
+    try {
+      fixture.seedProject(PROJECT_PATH);
+      fixture.seedSession(PROJECT_PATH, SESSION_NAME);
+      fixture.graphWorkflowExecutions.setActive(
+        PROJECT_PATH,
+        SESSION_NAME,
+        maximalExecution(),
+        "2026-03-01T00:00:00Z",
+      );
+
+      const reloaded = createGraphWorkflowExecutionsRepo(fixture.db).getActive(
+        PROJECT_PATH,
+        SESSION_NAME,
+      );
+
+      const round = reloaded?.contextStates["ctx-1"]?.validationRound;
+      expect(round?.specialists["general"]?.planDefects).toEqual([
+        {
+          title: "The rollback criterion names a downstream context",
+          description:
+            "Criterion 3 requires the publisher to change, which nothing in this context owns.",
+          whyNotLocallyRemediable:
+            "Every task here is scoped to the migration; the publisher lands in ctx-2.",
+          conflictingContract: "Acceptance criterion 3",
+        },
+      ]);
+      // Absence is the answer for a seat that raised none — not an empty array
+      // invented on read, which would be indistinguishable from a seat whose
+      // defects the write dropped.
+      expect(
+        round?.specialists["security-reviewer"]?.planDefects,
+      ).toBeUndefined();
+    } finally {
+      fixture.close();
+    }
+  });
+
+  // The halt a plan defect produces is the whole reaction to it: nothing is
+  // reopened and nothing is charged, so a halt reloaded without its aggregated
+  // findings — or without the seat that raised each one — leaves the operator
+  // and the plan repair that answers it with a stopped run and no finding to
+  // act on.
+  it("carries the aggregated, seat-attributed plan-defect halt in the maximal SQLite fixture", () => {
+    const execution = maximalExecution();
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      execution,
+      "2026-03-01T00:00:00Z",
+    );
+
+    const reloaded = createGraphWorkflowExecutionsRepo(db).getActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(
+      reloaded?.secondaryHaltReasons.find(
+        (reason) => reason.type === "plan_defect",
+      ),
+    ).toEqual({
+      type: "plan_defect",
+      contextId: "ctx-1",
+      planDefects: [
+        {
+          assignmentId: "general",
+          title: "The rollback criterion names a downstream context",
+          description:
+            "Criterion 3 requires the publisher to change, which nothing in this context owns.",
+          whyNotLocallyRemediable:
+            "Every task here is scoped to the migration; the publisher lands in ctx-2.",
+          conflictingContract: "Acceptance criterion 3",
+        },
+      ],
+      roundSeq: 4,
+      summary: "Plan repair declined: the criterion is assigned correctly.",
+    });
   });
 
   it("reloads the execution-level advisory index across both indexed kinds", () => {

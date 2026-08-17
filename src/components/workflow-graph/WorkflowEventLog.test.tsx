@@ -569,3 +569,76 @@ describe("WorkflowEventLog canonical compact Markdown", () => {
     expect(hostTitle.className.length).toBeGreaterThan(0);
   });
 });
+
+describe("WorkflowEventLog rendering of a plan-defect halt", () => {
+  it("names the context and the contract each finding conflicts with, without the event enum", async () => {
+    const user = userEvent.setup();
+    const { execution, events } = executionWithHistory([
+      {
+        occurredAt: "2026-04-02T08:00:00.000Z",
+        event: {
+          type: "graph-workflow-plan-defect-halted",
+          ...EVENT_BASE,
+          contextId: "context-plan",
+          roundSeq: 2,
+          defects: [
+            {
+              assignmentId: "seat-contract",
+              title: "Criterion 3 requires a schema this context never owns",
+              conflictingContract: "acceptance criterion 3",
+            },
+            {
+              assignmentId: "seat-scope",
+              title: "The charter's non-goals exclude a migration task 2 needs",
+              conflictingContract: "charter non-goal 1",
+            },
+          ],
+        },
+      },
+    ]);
+
+    render(<WorkflowEventLog execution={execution} events={events} />);
+
+    // The context's title, not its id, and the round the defect concluded on.
+    const row = screen.getByText("Plan defect halted · Plan · round 2");
+    expect(row).toBeInTheDocument();
+    expect(
+      screen.queryByText(/graph-workflow-plan-defect-halted/),
+    ).not.toBeInTheDocument();
+
+    await user.click(row);
+    expect(
+      await screen.findByText(
+        /acceptance criterion 3: Criterion 3 requires a schema this context never owns/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/charter non-goal 1: The charter's non-goals exclude/),
+    ).toBeInTheDocument();
+  });
+
+  it("drops the round suffix when the defect concluded with no round open", () => {
+    const { execution, events } = executionWithHistory([
+      {
+        occurredAt: "2026-04-02T08:00:00.000Z",
+        event: {
+          type: "graph-workflow-plan-defect-halted",
+          ...EVENT_BASE,
+          contextId: "context-plan",
+          roundSeq: null,
+          defects: [
+            {
+              assignmentId: "seat-contract",
+              title: "Criterion 3 requires a schema this context never owns",
+              conflictingContract: "acceptance criterion 3",
+            },
+          ],
+        },
+      },
+    ]);
+
+    render(<WorkflowEventLog execution={execution} events={events} />);
+
+    expect(screen.getByText("Plan defect halted · Plan")).toBeInTheDocument();
+  });
+});

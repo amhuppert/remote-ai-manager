@@ -1,7 +1,31 @@
 import { describe, expect, it } from "vitest";
 import { createWorkflowExecution } from "../test-fixtures";
-import type { GraphWorkflowExecution, PlanRepairRound } from "../schemas";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowHaltReason,
+  PlanRepairRound,
+} from "../schemas";
 import { evaluatePlanRepairTrigger } from "./trigger";
+
+/** A blocking seat's contract refusal, as the engine records the halt. */
+function planDefectHalt(): GraphWorkflowHaltReason {
+  return {
+    type: "plan_defect",
+    contextId: "context-implement",
+    planDefects: [
+      {
+        assignmentId: "general",
+        title: "The criterion names work this context does not own",
+        description: "Criterion 2 requires the downstream publisher to change.",
+        whyNotLocallyRemediable:
+          "Every task here is scoped to the reader; the publisher is a later context.",
+        conflictingContract: "Acceptance criterion 2",
+      },
+    ],
+    roundSeq: 1,
+    summary: null,
+  };
+}
 
 function round(
   contextId: string,
@@ -88,6 +112,70 @@ describe("evaluatePlanRepairTrigger", () => {
     if (!verdict.eligible) return;
     expect(verdict.haltType).toBe("ownership_violation");
     expect(verdict.contextId).toBe("context-implement");
+  });
+
+  it("fires on a plan_defect halt, so the classified defect reaches repair with no breaker rounds spent first", () => {
+    const verdict = evaluatePlanRepairTrigger(
+      haltedExecution({ haltReason: planDefectHalt() }),
+    );
+
+    expect(verdict.eligible).toBe(true);
+    if (!verdict.eligible) return;
+    expect(verdict.haltType).toBe("plan_defect");
+    expect(verdict.contextId).toBe("context-implement");
+    // A context halt, not a loop one: the defect names a contract, and the
+    // remedy is an edit to the context that carries it.
+    expect(verdict.loopGroupId).toBeNull();
+    expect(verdict.loopScope).toBeNull();
+    expect(verdict.attempt).toBe(1);
+  });
+
+  it("gates a plan_defect halt on the tripped context's planRepair policy", () => {
+    const base = haltedExecution({ haltReason: planDefectHalt() });
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      workingDefinition: {
+        ...base.workingDefinition,
+        executionContexts: base.workingDefinition.executionContexts.map((ctx) =>
+          ctx.id === "context-implement"
+            ? {
+                ...ctx,
+                planRepair: { enabled: false, maxAttemptsPerContext: 2 },
+              }
+            : ctx,
+        ),
+      },
+    };
+
+    expect(evaluatePlanRepairTrigger(execution)).toEqual({
+      eligible: false,
+      reason: "disabled",
+    });
+  });
+
+  it("exhausts a plan_defect halt on the same per-context and per-execution budgets", () => {
+    expect(
+      evaluatePlanRepairTrigger(
+        haltedExecution({
+          haltReason: planDefectHalt(),
+          planRepairRounds: [
+            round("context-implement", 1, { haltType: "plan_defect" }),
+            round("context-implement", 2, { haltType: "plan_defect" }),
+          ],
+        }),
+      ),
+    ).toEqual({ eligible: false, reason: "context_attempts_exhausted" });
+
+    expect(
+      evaluatePlanRepairTrigger(
+        haltedExecution({
+          haltReason: planDefectHalt(),
+          planRepairRounds: [1, 2, 3, 4, 5].map((seq) =>
+            round("context-verify", seq),
+          ),
+        }),
+      ),
+    ).toEqual({ eligible: false, reason: "execution_rounds_exhausted" });
   });
 
   it("counts prior rounds for the context toward the attempt number", () => {

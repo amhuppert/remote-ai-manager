@@ -251,4 +251,90 @@ describe("projectTypedEvent", () => {
       detail: "context_merge:succeeded",
     });
   });
+
+  // A plan-defect halt reopens no task and publishes no verdict, so a recording
+  // that lost WHICH seat refused, or lost the round it refused on, would show
+  // two materially different runs as the same one.
+  it("separates one plan-defect halt from another by round and refusing seat", () => {
+    const base = {
+      projectName: "repo",
+      sessionName: "session-1",
+      executionId: "execution-1",
+      contextId: "ctx-plan",
+    } as const;
+    const defect = {
+      assignmentId: "general",
+      title: "The criterion names work this context does not own",
+      conflictingContract: "Acceptance criterion 2",
+    } as const;
+
+    expect(
+      projectTypedEvent({
+        type: "graph-workflow-plan-defect-halted",
+        roundSeq: 3,
+        defects: [defect],
+        ...base,
+      }),
+    ).toEqual({
+      kind: "graph-workflow-plan-defect-halted",
+      subject: "ctx-plan",
+      detail: "3:general",
+    });
+    expect(
+      projectTypedEvent({
+        type: "graph-workflow-plan-defect-halted",
+        roundSeq: 4,
+        defects: [defect],
+        ...base,
+      }),
+    ).not.toEqual(
+      projectTypedEvent({
+        type: "graph-workflow-plan-defect-halted",
+        roundSeq: 3,
+        defects: [defect],
+        ...base,
+      }),
+    );
+    expect(
+      projectTypedEvent({
+        type: "graph-workflow-plan-defect-halted",
+        roundSeq: 3,
+        defects: [{ ...defect, assignmentId: "spec-owner" }],
+        ...base,
+      }),
+    ).not.toEqual(
+      projectTypedEvent({
+        type: "graph-workflow-plan-defect-halted",
+        roundSeq: 3,
+        defects: [defect],
+        ...base,
+      }),
+    );
+  });
+
+  // The halt can land with no round open (the verdict arrives after the round
+  // closes), and `null` must still project to something a recording can compare.
+  it("projects a roundless plan-defect halt without collapsing into round 0", () => {
+    expect(
+      projectTypedEvent({
+        type: "graph-workflow-plan-defect-halted",
+        projectName: "repo",
+        sessionName: "session-1",
+        executionId: "execution-1",
+        contextId: "ctx-plan",
+        roundSeq: null,
+        defects: [
+          {
+            assignmentId: "general",
+            title: "The criterion names work this context does not own",
+            conflictingContract: "Acceptance criterion 2",
+          },
+        ],
+      }),
+    ).toEqual({
+      kind: "graph-workflow-plan-defect-halted",
+      subject: "ctx-plan",
+      detail: "no-round:general",
+    });
+  });
 });

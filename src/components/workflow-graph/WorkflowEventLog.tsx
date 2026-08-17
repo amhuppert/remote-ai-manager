@@ -647,6 +647,28 @@ function normalizeEvent(
       };
     }
 
+    case "graph-workflow-plan-defect-halted": {
+      const contextTitle =
+        contextLookup.get(event.contextId) ?? event.contextId;
+      return {
+        key,
+        occurredAt,
+        contextId: event.contextId,
+        dot: "task-failed",
+        title: `Plan defect halted · ${contextTitle}${
+          event.roundSeq === null ? "" : ` · round ${event.roundSeq}`
+        }`,
+        detail: (
+          <span>
+            {event.defects
+              .map((defect) => `${defect.conflictingContract}: ${defect.title}`)
+              .join(" · ")}
+          </span>
+        ),
+        expandable: null,
+      };
+    }
+
     case "graph-workflow-lane-commit": {
       const contextTitle =
         contextLookup.get(event.contextId) ?? event.contextId;

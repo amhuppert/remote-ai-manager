@@ -18,7 +18,10 @@ import type {
   GraphWorkflowValidationSpecialist,
 } from "@/lib/workflow-graph/schemas";
 import type { SeededValidatorAssignment } from "@/lib/workflow-graph/config-schemas";
-import type { WorkflowValidatorAdvisory } from "@/lib/workflow-graph/definition-schemas";
+import type {
+  WorkflowValidatorAdvisory,
+  WorkflowValidatorPlanDefect,
+} from "@/lib/workflow-graph/definition-schemas";
 import type {
   GraphWorkflowAdvisoryResponseInput,
   GraphWorkflowAdvisoryResponseOutcome,
@@ -52,6 +55,7 @@ import {
   type ValidationCandidateTreeResolution,
 } from "@/lib/workflow-graph/validation-round";
 import { createGraphWorkflowManager } from "@/lib/workflow-graph/workflow-manager";
+import { createGraphWorkflowSignalHaltHandler } from "@/lib/workflow-graph/graph-workflow-signal-halt";
 import type { ScriptValidatorOutcome } from "@/lib/workflow-graph/script-validator-runner";
 import type {
   ResumeUserInputContext,
@@ -315,6 +319,41 @@ export function failResult(
   };
 }
 
+/**
+ * One plan defect as a blocking seat reports it, before the engine stamps the
+ * seat that raised it.
+ */
+export const PLAN_DEFECT: WorkflowValidatorPlanDefect = {
+  title: "The criterion names work this context does not own",
+  description:
+    "Criterion 2 requires the downstream publisher to change, and nothing here may touch it.",
+  whyNotLocallyRemediable:
+    "Every task in this context is scoped to the reader; the publisher belongs to a later context.",
+  conflictingContract: "Acceptance criterion 2",
+};
+
+/**
+ * A blocking seat's third response. `taskIds` produce the findings the same
+ * verdict also raised — evidence of what the seat saw, and never a reopen list.
+ */
+export function planDefectResult(
+  assignmentId: string,
+  taskIds: string[] = [],
+): ValidatorRunResult["result"] {
+  return {
+    kind: "plan_defect",
+    summary: `${assignmentId} cannot satisfy the assigned contract.`,
+    planDefects: [PLAN_DEFECT],
+    issues: taskIds.map((taskId) => ({
+      taskId,
+      title: `${assignmentId} on ${taskId}`,
+      description: `${assignmentId} saw a problem in ${taskId}.`,
+    })),
+    advisories: [],
+    engine: "claude",
+  };
+}
+
 /** One advisory as a lane would report it, before the engine stamps identity. */
 export function advisoryItem(
   overrides: Partial<WorkflowValidatorAdvisory> = {},
@@ -348,6 +387,13 @@ export interface Harness {
   /** The operator pausing to edit — the real `workflowManager.send({pause})`. */
   pause(): Promise<void>;
   /**
+   * The settle every execution loop performs once a pending halt has drained:
+   * the real `workflowManager.drainAndHalt`, which is what turns the pending
+   * reason the engine recorded into the halted execution anything downstream —
+   * the plan-repair supervisor above all — actually reads.
+   */
+  drainAndHalt(): Promise<void>;
+  /**
    * The operator clearing the halt — the real `workflowManager.resume`, not a
    * copy of it, so a test cannot pass here on a reset the production resume
    * never performs.
@@ -363,6 +409,8 @@ export interface Harness {
   runContextValidator: ReturnType<typeof vi.fn>;
   /** The advisory-response turn, when the test wired one. */
   runAdvisoryResponse: ReturnType<typeof vi.fn>;
+  /** Every halt the engine signalled, in order. */
+  signalHalt: ReturnType<typeof vi.fn>;
   incidents(): GraphWorkflowExecutionEvent[];
   results(): GraphWorkflowExecutionEvent[];
   specialistResults(): GraphWorkflowExecutionEvent[];
@@ -397,6 +445,19 @@ export function createHarness(params: {
   advisoryResponse?: (
     input: GraphWorkflowAdvisoryResponseInput,
   ) => Promise<GraphWorkflowAdvisoryResponseOutcome>;
+  /**
+   * Record halts through the REAL signal-halt handler instead of the default
+   * one-write fake.
+   *
+   * The two differ in exactly the way that matters to a test whose subject is
+   * what the engine does AFTER it halts: production records a PENDING halt and
+   * leaves `execution.status` on "running" for the loop to drain, so the
+   * iteration keeps running and every mutation it still owes — finalize above
+   * all — lands over a context the halt has already moved. The fake flips the
+   * execution to "halted" in one write, which short-circuits finalize and hides
+   * that whole window.
+   */
+  productionSignalHalt?: boolean;
 }): Harness {
   const repository = createRepository(params.execution);
   const eventPublisher = createGraphWorkflowExecutionEventPublisher({
@@ -408,16 +469,6 @@ export function createHarness(params: {
   const validationService = createGraphWorkflowValidationService({
     runContextValidator,
   });
-
-  const signalHalt = vi.fn(
-    async (halt: { reason: GraphWorkflowExecution["haltReason"] }) => {
-      const current = structuredClone(repository.read());
-      current.status = "halted";
-      current.haltReason = halt.reason;
-      await repository.mutateActive("/repo", "session-1", () => current);
-      return current;
-    },
-  );
 
   // The real recovery paths, over the same repository the orchestrator writes
   // through: resume and restart-normalization are production decisions about a
@@ -434,6 +485,26 @@ export function createHarness(params: {
     eventPublisher,
     now: () => NOW,
   });
+
+  const productionHalt = createGraphWorkflowSignalHaltHandler(manager);
+  const signalHalt = vi.fn(
+    async (halt: {
+      projectPath: string;
+      sessionName: string;
+      contextId?: string;
+      reason: GraphWorkflowExecution["haltReason"];
+    }) => {
+      if (halt.reason === null) throw new Error("a halt needs a reason");
+      if (params.productionSignalHalt) {
+        return await productionHalt({ ...halt, reason: halt.reason });
+      }
+      const current = structuredClone(repository.read());
+      current.status = "halted";
+      current.haltReason = halt.reason;
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return current;
+    },
+  );
 
   // Unwired means the service is never passed to the orchestrator at all, so
   // this default exists only to keep the spy's type honest. It throws rather
@@ -487,6 +558,7 @@ export function createHarness(params: {
     repository,
     runContextValidator,
     runAdvisoryResponse,
+    signalHalt,
     async run(overrides) {
       return await orchestrator.runIteration({
         projectPath: "/repo",
@@ -500,6 +572,12 @@ export function createHarness(params: {
     },
     async pause() {
       await manager.send("/repo", "session-1", { type: "pause" });
+    },
+    async drainAndHalt() {
+      await manager.drainAndHalt({
+        projectPath: "/repo",
+        sessionName: "session-1",
+      });
     },
     async resumeHalt() {
       await manager.resume("/repo", "session-1");

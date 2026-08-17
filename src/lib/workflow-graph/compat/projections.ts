@@ -221,6 +221,14 @@ export function projectTypedEvent(
         subject: event.laneId,
         detail: `${event.contextId}:${event.unattributedPaths.join(",")}`,
       };
+    case "graph-workflow-plan-defect-halted":
+      return {
+        kind: event.type,
+        subject: event.contextId,
+        detail: `${event.roundSeq ?? "no-round"}:${event.defects
+          .map((defect) => defect.assignmentId)
+          .join(",")}`,
+      };
     case "graph-workflow-lane-commit":
       return {
         kind: event.type,

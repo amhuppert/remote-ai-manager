@@ -47,6 +47,7 @@ import type {
   GraphWorkflowResultRecordedEvent,
   GraphWorkflowMergeStatusEvent,
   GraphWorkflowPendingHaltReasonEvent,
+  GraphWorkflowPlanDefectHaltedEvent,
   GraphWorkflowSharedDocumentsUpdatedEvent,
   GraphWorkflowStatusEvent,
   GraphWorkflowTaskStatusEvent,
@@ -249,6 +250,7 @@ export type SSEEvent =
   | GraphWorkflowValidationSpecialistResultEvent
   | GraphWorkflowValidationIncidentEvent
   | GraphWorkflowCircuitBreakerEvent
+  | GraphWorkflowPlanDefectHaltedEvent
   | GraphWorkflowSharedDocumentsUpdatedEvent
   | GraphWorkflowPendingHaltReasonEvent
   | GraphWorkflowMergeStatusEvent

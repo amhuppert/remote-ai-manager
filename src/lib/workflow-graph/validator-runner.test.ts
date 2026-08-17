@@ -381,6 +381,31 @@ describe("buildValidatorOutputSchema", () => {
     },
   };
 
+  // `minLength: 1` on every field is the Zod contract's non-emptiness reaching
+  // the provider's gate — the plan-defect items are projected from
+  // `workflowValidatorPlanDefectSchema` rather than hand-written, so a blank
+  // justification is refused before the verdict is ever parsed.
+  const NON_EMPTY_STRING = { type: "string", minLength: 1 };
+  const PLAN_DEFECT_ITEMS = {
+    type: "array",
+    items: {
+      type: "object",
+      properties: {
+        title: NON_EMPTY_STRING,
+        description: NON_EMPTY_STRING,
+        whyNotLocallyRemediable: NON_EMPTY_STRING,
+        conflictingContract: NON_EMPTY_STRING,
+      },
+      required: [
+        "title",
+        "description",
+        "whyNotLocallyRemediable",
+        "conflictingContract",
+      ],
+      additionalProperties: false,
+    },
+  };
+
   /** The whole blocking schema, parameterized by the one field under test. */
   function blockingSchema(taskId: Record<string, unknown>) {
     return {
@@ -401,6 +426,7 @@ describe("buildValidatorOutputSchema", () => {
           },
         },
         advisories: ADVISORY_ITEMS,
+        planDefects: PLAN_DEFECT_ITEMS,
       },
       required: ["summary", "issues", "advisories"],
       additionalProperties: false,
@@ -419,12 +445,15 @@ describe("buildValidatorOutputSchema", () => {
     ).toEqual(blockingSchema({ type: "string", enum: ["task-1", "task-2"] }));
   });
 
-  it("gives an advisory validator no issues field at all", () => {
+  it("gives an advisory validator neither an issues nor a planDefects field", () => {
     const schema = buildValidatorOutputSchema({
       authority: "advisory",
       taskIds: ["task-1"],
     });
 
+    // Both blocking responses are withheld the same way and for the same
+    // reason: an advisory seat cannot fail a context, and routing one to plan
+    // repair fails it harder than reopening a task does.
     expect(schema).toEqual({
       type: "object",
       properties: {
@@ -434,6 +463,18 @@ describe("buildValidatorOutputSchema", () => {
       required: ["summary", "advisories"],
       additionalProperties: false,
     });
+  });
+
+  it("makes planDefects optional on a blocking seat, so a clean verdict omits it", () => {
+    // Required would force every passing validator to emit an empty array for
+    // the rarest of the three responses; `issues` stays required because its
+    // empty array is the pass signal itself.
+    const schema = buildValidatorOutputSchema({
+      authority: "blocking",
+      taskIds: ["task-1"],
+    });
+
+    expect(schema.required).toEqual(["summary", "issues", "advisories"]);
   });
 
   it("leaves taskId free-form when the context has no tasks to enumerate", () => {
@@ -1270,6 +1311,14 @@ describe("parseValidatorResponse verdict shape is the dispatched schema", () => 
     title: "Coverage gap",
     description: "Add missing tests.",
   };
+  const PLAN_DEFECT = {
+    title: "Criterion 3 requires downstream-owned wiring",
+    description:
+      "The route this context must call is created by `wire-routes`, two contexts later.",
+    whyNotLocallyRemediable:
+      "No task here owns the route module, and creating it would take this context's scope.",
+    conflictingContract: "Acceptance criterion 3 vs. the `wire-routes` boundary",
+  };
 
   function fenced(payload: unknown): string {
     return ["```json", JSON.stringify(payload), "```"].join("\n");
@@ -1357,6 +1406,61 @@ describe("parseValidatorResponse verdict shape is the dispatched schema", () => 
         advisories: [],
       },
     },
+    {
+      // The advisory schema has no planDefects field, so a seat with no
+      // blocking authority cannot route a context to plan repair either.
+      label: "advisory verdict carrying planDefects",
+      authority: "advisory",
+      payload: {
+        summary: "Observation.",
+        advisories: [],
+        planDefects: [PLAN_DEFECT],
+      },
+    },
+    {
+      label: "plan defect omitting whyNotLocallyRemediable",
+      authority: "blocking",
+      payload: {
+        summary: "Contract is unsatisfiable.",
+        issues: [],
+        advisories: [],
+        planDefects: [
+          {
+            title: PLAN_DEFECT.title,
+            description: PLAN_DEFECT.description,
+            conflictingContract: PLAN_DEFECT.conflictingContract,
+          },
+        ],
+      },
+    },
+    {
+      label: "plan defect omitting conflictingContract",
+      authority: "blocking",
+      payload: {
+        summary: "Contract is unsatisfiable.",
+        issues: [],
+        advisories: [],
+        planDefects: [
+          {
+            title: PLAN_DEFECT.title,
+            description: PLAN_DEFECT.description,
+            whyNotLocallyRemediable: PLAN_DEFECT.whyNotLocallyRemediable,
+          },
+        ],
+      },
+    },
+    {
+      // A plan defect names no task by construction — one that could would
+      // reintroduce exactly the misrouting the response exists to replace.
+      label: "plan defect carrying a taskId",
+      authority: "blocking",
+      payload: {
+        summary: "Contract is unsatisfiable.",
+        issues: [],
+        advisories: [],
+        planDefects: [{ ...PLAN_DEFECT, taskId: "task-1" }],
+      },
+    },
   ];
 
   it.each(REFUSED)(
@@ -1418,6 +1522,108 @@ describe("parseValidatorResponse verdict shape is the dispatched schema", () => 
         allowedTaskIds: ["task-1", "task-2"],
       }).result.kind,
     ).toBe("pass");
+  });
+});
+
+describe("parseValidatorResponse plan defects", () => {
+  const PLAN_DEFECT = {
+    title: "Criterion 3 requires downstream-owned wiring",
+    description:
+      "The route this context must call is created by `wire-routes`, two contexts later.",
+    whyNotLocallyRemediable:
+      "No task here owns the route module, and creating it would take this context's scope.",
+    conflictingContract: "Acceptance criterion 3 vs. the `wire-routes` boundary",
+  };
+  const ISSUE = {
+    taskId: "task-2",
+    title: "Coverage gap",
+    description: "Add missing tests.",
+  };
+  const ADVISORY = {
+    kind: "plan" as const,
+    title: "Two contexts describe the same module",
+    description: "Worth reconciling before the next round.",
+  };
+
+  function parseBlocking(payload: unknown): ValidatorOutcome {
+    return parseValidatorResponse({
+      text: ["```json", JSON.stringify(payload), "```"].join("\n"),
+      engine: "claude",
+      authority: "blocking",
+      allowedTaskIds: ["task-1", "task-2"],
+    }).result;
+  }
+
+  it("concludes plan_defect and carries the findings when a blocking seat reports one", () => {
+    const outcome = parseBlocking({
+      summary: "The assigned contract cannot be satisfied here.",
+      issues: [],
+      advisories: [ADVISORY],
+      planDefects: [PLAN_DEFECT],
+    });
+
+    expect(outcome.kind).toBe("plan_defect");
+    if (outcome.kind !== "plan_defect") return;
+    expect(outcome.planDefects).toEqual([PLAN_DEFECT]);
+    expect(outcome.summary).toBe(
+      "The assigned contract cannot be satisfied here.",
+    );
+    expect(outcome.advisories).toEqual([ADVISORY]);
+    expect(outcome.engine).toBe("claude");
+  });
+
+  it("takes precedence over issues, preserving them as evidence", () => {
+    // A defect and a reopen are not both actionable: reopening a task cannot
+    // remedy a contract no task owns, so the round routes to plan repair and
+    // the issues travel with it as what the seat also saw.
+    const outcome = parseBlocking({
+      summary: "Contradictory contract, plus a test gap.",
+      issues: [ISSUE],
+      advisories: [],
+      planDefects: [PLAN_DEFECT],
+    });
+
+    expect(outcome.kind).toBe("plan_defect");
+    if (outcome.kind !== "plan_defect") return;
+    expect(outcome.issues).toEqual([ISSUE]);
+    expect(outcome.planDefects).toEqual([PLAN_DEFECT]);
+  });
+
+  it("cannot reopen a task: the outcome has no reopenTaskIds to carry one", () => {
+    const outcome = parseBlocking({
+      summary: "Contradictory contract, plus a test gap.",
+      issues: [ISSUE],
+      advisories: [],
+      planDefects: [PLAN_DEFECT],
+    });
+
+    expect(outcome.kind).toBe("plan_defect");
+    if (outcome.kind !== "plan_defect") return;
+    expectTypeOf(outcome).not.toHaveProperty("reopenTaskIds");
+    expect(outcome).not.toHaveProperty("reopenTaskIds");
+  });
+
+  it("leaves the two-response behaviour unchanged when planDefects is absent or empty", () => {
+    expect(
+      parseBlocking({ summary: "Criteria met.", issues: [], advisories: [] })
+        .kind,
+    ).toBe("pass");
+    expect(
+      parseBlocking({
+        summary: "Criteria met.",
+        issues: [],
+        advisories: [],
+        planDefects: [],
+      }).kind,
+    ).toBe("pass");
+    expect(
+      parseBlocking({
+        summary: "One blocker.",
+        issues: [ISSUE],
+        advisories: [],
+        planDefects: [],
+      }).kind,
+    ).toBe("fail");
   });
 });
 
@@ -1955,7 +2161,7 @@ describe("createValidatorRunner", () => {
     }
   });
 
-  it("runContextValidator passes the context charter into the prompt so it begins with the digest", async () => {
+  it("runContextValidator passes the context charter into the prompt ahead of the validation header", async () => {
     const agentResponse = JSON.stringify({
       summary: "Context completed correctly",
       issues: [],
@@ -1991,11 +2197,72 @@ describe("createValidatorRunner", () => {
 
     expect(executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
     const [input] = executeWorkflowTaskRun.mock.calls[0]!;
-    expect(input.prompt.startsWith("# Workflow Charter")).toBe(true);
+    // The composer prepends the acceptance-criteria deferral cohort to every
+    // dispatched validator prompt, so the charter digest opens the builder's
+    // section rather than the whole prompt — it still precedes the validation
+    // header, which is the ordering the charter contract asserts.
+    expect(input.prompt.indexOf("# Workflow Charter")).toBeGreaterThan(-1);
+    expect(input.prompt.indexOf("# Workflow Charter")).toBeLessThan(
+      input.prompt.indexOf("# Context Validation"),
+    );
     expect(input.prompt).toContain(
       "Ship the widget that adheres to the published API contract.",
     );
     expect(input.prompt).toContain(".cc/graph-workflow-docs/charter.md");
+  });
+
+  /**
+   * The deferral cohort derives from the working definition alone, so it must
+   * reach a PLAIN graph run — no spec binding, therefore no prompt projection.
+   * Asserting on the renderer alone would pass even if dispatch never composed
+   * it, which is exactly the gap this pins: the base validator prompt states
+   * the two-route deferral rule unconditionally, so route 2 (the downstream
+   * owner's criteria carry the obligation) is uncheckable without the cohort.
+   */
+  it("runContextValidator renders the deferral cohort on a non-spec run with no prompt projection", async () => {
+    const executeWorkflowTaskRun = vi.fn(
+      async (_input: ExecuteWorkflowTaskRunInput) =>
+        textTaskRun(verdictJson("Context completed correctly")),
+    );
+    const runner = createValidatorRunner({
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
+    });
+
+    const execution = buildExecutionWithContextValidation();
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+
+    await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: soleAssignment(contextDef),
+    });
+
+    expect(executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.prompt).toContain(
+      "## Acceptance-criteria cohort for deferral checks",
+    );
+    expect(input.prompt).toContain(
+      "### `context-plan` — Plan (current context)",
+    );
+    // Both graph-downstream contexts, verbatim — the route-2 evidence.
+    expect(input.prompt).toContain("### `context-implement` — Implement");
+    expect(input.prompt).toContain("Feature implemented");
+    expect(input.prompt).toContain("### `context-verify` — Verify");
+    expect(input.prompt).toContain("Verification passes");
+    expect(input.prompt).toContain(
+      "Ownership alone never authorizes a production-capability deferral",
+    );
+    // No projection on a plain run, so nothing may point at a section the
+    // validator was never given.
+    expect(input.prompt).not.toContain("Spec ownership");
   });
 
   it("runContextValidator returns infra_error unparseable when the agent produces no JSON", async () => {

@@ -158,6 +158,51 @@ describe("buildValidatorRoleContract selected by authority (R3.1)", () => {
     expect(blocking).toMatch(/advisory, never an issue/i);
   });
 
+  it("gives a blocking validator a third response for a contract no task here can satisfy", () => {
+    const blocking = buildValidatorRoleContract(BLOCKING_CONTRACT_INPUT);
+
+    // The three admitting conditions are named individually: a contract that
+    // contradicts itself, one that demands downstream-owned work, and one that
+    // omits ownership the criteria require. A rewrite that keeps the response
+    // but blurs when it applies turns it into a general-purpose escape hatch.
+    expect(blocking).toContain("planDefects");
+    expect(blocking).toMatch(/contradictory/i);
+    expect(blocking).toMatch(/downstream/i);
+    expect(blocking).toMatch(/omits/i);
+    expect(blocking).toMatch(/no task in this context can remedy/i);
+  });
+
+  it("requires a plan defect to justify itself and name what it conflicts with", () => {
+    const blocking = buildValidatorRoleContract(BLOCKING_CONTRACT_INPUT);
+
+    // Without both, the classification is unfalsifiable — and plan repair's
+    // authority to reject it has nothing to judge.
+    expect(blocking).toMatch(/not locally remediable/i);
+    expect(blocking).toMatch(
+      /criterion clause, boundary, dependency, or governance rule/i,
+    );
+  });
+
+  it("keeps a concern outside the mandate an advisory rather than a plan defect", () => {
+    const blocking = buildValidatorRoleContract(BLOCKING_CONTRACT_INPUT);
+
+    // The guardrail against the obvious misuse: a seat that finds its mandate
+    // uninteresting cannot promote that into a halt by calling it a plan
+    // defect. Both halves are pinned so a rewrite cannot keep the third
+    // response and drop the bound on it.
+    expect(blocking).toMatch(/advisory, never an issue/i);
+    expect(blocking).toMatch(/advisory, never a plan defect/i);
+  });
+
+  it("gives an advisory validator no plan-defect response at all", () => {
+    const advisory = buildValidatorRoleContract(ADVISORY_CONTRACT_INPUT);
+
+    // Structural, exactly as with issues: an advisory seat's dispatched schema
+    // has no planDefects field, so describing one would only produce verdicts
+    // that fail the output gate.
+    expect(advisory).not.toMatch(/plan defect|planDefects/i);
+  });
+
   it("forbids an advisory validator from failing the context or reopening a task", () => {
     const advisory = buildValidatorRoleContract(ADVISORY_CONTRACT_INPUT);
 

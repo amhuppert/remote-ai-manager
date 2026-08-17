@@ -43,6 +43,7 @@ import {
   workflowSemanticDefinitionSchema,
   workflowValidatorAdvisorySchema,
   workflowValidatorIssueSchema,
+  workflowValidatorPlanDefectSchema,
 } from "./definition-schemas";
 import { agentProfileRefSchema } from "@/lib/agent-profiles/schemas";
 
@@ -133,6 +134,47 @@ export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
     contextId: z.string().trim().min(1),
     commandName: z.string().trim().min(1),
     message: z.string(),
+  }),
+  /**
+   * A blocking validator seat refused the CONTRACT rather than the work: the
+   * round concluded, every seat reported, and no task in the reviewed context
+   * can remedy what was found.
+   *
+   * Deliberately NOT a failure of the context. Nothing is reopened and nothing
+   * is charged (the reopen loop is exactly what this halt exists to escape), so
+   * the halt itself is the whole reaction — it carries the defects because the
+   * plan repair that answers it, and the operator who reads it, both act on the
+   * finding rather than on a count of findings.
+   *
+   * Resumable by construction: the remedy is a repair of the contract the
+   * defect names, followed by resume. The reviewed work is untouched, and the
+   * round stays open with its frozen candidate and every seat's verdict intact.
+   */
+  z.object({
+    type: z.literal("plan_defect"),
+    contextId: z.string().trim().min(1),
+    /**
+     * Every defecting seat's defects, aggregated in cohort order and stamped
+     * with the seat that raised them. Attribution rides on the finding here
+     * because a defect names no task: the seat is the only handle anything
+     * downstream has on it, and two seats' defects would otherwise read as one
+     * reviewer restating itself.
+     */
+    planDefects: z
+      .array(
+        workflowValidatorPlanDefectSchema.extend({
+          assignmentId: z.string().trim().min(1),
+        }),
+      )
+      .min(1),
+    /** The round that concluded on the defect; null when none was open. */
+    roundSeq: z.number().int().positive().nullable().default(null),
+    /**
+     * The plan-repair supervisor's verdict on this halt, once it has spoken —
+     * the same role `circuit_breaker.summary` plays, so the halt UI explains an
+     * automated repair that declined, failed, or gave up.
+     */
+    summary: z.string().nullable().default(null),
   }),
   z.object({
     type: z.literal("merge_failure"),
@@ -1064,6 +1106,23 @@ export const graphWorkflowValidationSpecialistSchema = z
     summary: z.string().nullable().default(null),
     issues: z.array(workflowValidatorIssueSchema).default([]),
     /**
+     * This lane's plan defects: what it says the assigned CONTRACT gets wrong,
+     * in the order it reported them. Stored beside the issues because they are
+     * the same kind of fact — one seat's reading of this candidate — and the
+     * round record is where both are grouped by the seat that produced them.
+     *
+     * Durable because the reaction to a defect outlives the process that read
+     * it: the halt an operator resumes, and the plan-repair round that answers
+     * it, both need the finding itself rather than a count of findings.
+     *
+     * Optional rather than defaulted, unlike `issues`: nearly every seat raises
+     * none, absence and an empty array say exactly the same thing here (there
+     * is no "considered and found nothing" signal to preserve, the way an empty
+     * `issues` array IS the pass), and every round record written before this
+     * field reads back unchanged.
+     */
+    planDefects: z.array(workflowValidatorPlanDefectSchema).optional(),
+    /**
      * This lane's non-blocking observations, in the order it reported them.
      * Written when the lane's verdict is accepted, so a round resumed after a
      * crash carries forward the advisories of every lane that already settled
@@ -1594,6 +1653,10 @@ export const planRepairRoundSchema = z.object({
     // other two context halts — the reporting member is the subject whose
     // ownership the repair widens.
     "ownership_violation",
+    // A blocking seat's typed contract refusal. Accounted per CONTEXT: the
+    // defect names a contract, and the context that carries it is what an
+    // `update-context` or charter amendment repairs.
+    "plan_defect",
   ]),
   /** The loop a `loop_limit_reached` round repairs; null for context halts. */
   loopGroupId: z.string().trim().min(1).nullable().default(null),

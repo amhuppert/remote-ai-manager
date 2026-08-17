@@ -325,6 +325,104 @@ describe("cctl workflow status", () => {
     }
   });
 
+  // A plan-defect halt reopens nothing and charges no attempt, so the halt row
+  // is the ONLY place `status` says why the run stopped — the bare reason type
+  // would leave an operator with a verdict and no finding.
+  const planDefectHalt = {
+    type: "plan_defect",
+    contextId: "phase-b",
+    roundSeq: 2,
+    summary: null,
+    planDefects: [
+      {
+        assignmentId: "seat-contract",
+        title: "Criterion 3 requires a schema this context never owns",
+        description: "The criterion names src/lib/foo/schemas.ts.",
+        whyNotLocallyRemediable: "No task in phase-b may write that module.",
+        conflictingContract: "acceptance criterion 3",
+      },
+      {
+        assignmentId: "seat-scope",
+        title: "The charter's non-goals exclude the migration task 2 assumes",
+        description: "Task 2 assumes a migration the charter forbids.",
+        whyNotLocallyRemediable: "The exclusion is a charter clause.",
+        conflictingContract: "charter non-goal 1",
+      },
+    ],
+  };
+
+  it("renders a plan_defect halt with the first finding and the repair-round outcome", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        execution: {
+          ...execution,
+          status: "halted",
+          haltReason: planDefectHalt,
+          planRepairRounds: [
+            {
+              seq: 4,
+              contextId: "phase-b",
+              haltType: "plan_defect",
+              outcome: "declined",
+            },
+          ],
+        },
+      }),
+    );
+    const result = await runCli(["workflow", "status"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("plan defect: phase-b");
+    expect(result.stdout).toContain(
+      "finding: Criterion 3 requires a schema this context never owns",
+    );
+    expect(result.stdout).toContain("contract: acceptance criterion 3");
+    expect(result.stdout).toContain("repair: round 4 declined");
+    // The omission is explicit and names the command that reveals the rest
+    // (steering: a cap without disclosure is a defect).
+    expect(result.stdout).toContain("findings: 2 total, 1 shown");
+    expect(result.stdout).toContain("cctl workflow status --json");
+    // The contexts table still renders beneath the halt block.
+    expect(result.stdout).toContain("phase-b");
+    expect(result.stdout).toContain("1/3");
+  });
+
+  it("omits the repair line when no plan-repair round answered the halt", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        execution: {
+          ...execution,
+          status: "halted",
+          haltReason: {
+            ...planDefectHalt,
+            planDefects: [planDefectHalt.planDefects[0]],
+            summary: "plan repair is disabled for this project",
+          },
+          planRepairRounds: [
+            // A round for a DIFFERENT halt on the same context must not be
+            // reported as this halt's repair outcome.
+            {
+              seq: 1,
+              contextId: "phase-b",
+              haltType: "circuit_breaker",
+              outcome: "repaired",
+            },
+          ],
+        },
+      }),
+    );
+    const result = await runCli(["workflow", "status"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("plan defect: phase-b");
+    expect(result.stdout).toContain("findings: 1 total, 1 shown");
+    expect(result.stdout).not.toContain("1 shown —");
+    expect(result.stdout).not.toContain("repair: round");
+    expect(result.stdout).toContain(
+      "summary: plan repair is disabled for this project",
+    );
+  });
+
   it("reports no active execution plainly", async () => {
     const host = makeHost(() => jsonResponse({ execution: null }));
     const result = await runCli(["workflow", "status"], baseEnv, host);
@@ -904,6 +1002,49 @@ describe("cctl workflow wait", () => {
       });
     });
   }
+
+  it("renders the plan_defect finding on a halt boundary rather than the bare kind", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        result: {
+          ...boundary("completion"),
+          boundaryKind: "halt",
+          status: "halted",
+          contextId: "context-review",
+          completedAt: null,
+          haltReason: {
+            type: "plan_defect",
+            contextId: "context-review",
+            roundSeq: 2,
+            summary: null,
+            planDefects: [
+              {
+                assignmentId: "seat-contract",
+                title: "Criterion 3 requires a schema this context never owns",
+                description: "The criterion names src/lib/foo/schemas.ts.",
+                whyNotLocallyRemediable:
+                  "No task in context-review may write that module.",
+                conflictingContract: "acceptance criterion 3",
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    const result = await runCli(
+      ["workflow", "wait", "exec-wait-1"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("plan defect: context-review");
+    expect(result.stdout).toContain(
+      "finding: Criterion 3 requires a schema this context never owns",
+    );
+    expect(result.stdout).toContain("contract: acceptance criterion 3");
+  });
 
   it("passes an opaque cursor through and returns a boundary that already fired without sleeping", async () => {
     const sleeps: number[] = [];

@@ -11,8 +11,10 @@ import {
   graphWorkflowContextRoutingPolicySchema,
   graphWorkflowExecutionContextDefinitionSchema,
   graphWorkflowLoopGroupSchema,
+  workflowBlockingValidatorResultSchema,
   workflowSemanticDefinitionSchema,
 } from "../src/lib/workflow-graph/definition-schemas";
+import { planRepairRoundSchema } from "../src/lib/workflow-graph/schemas";
 import { EXPANSION_CAPS } from "../src/lib/workflow-graph/expansion-caps";
 import { graphExpansionRequestSchema } from "../src/lib/workflow-graph/expansion-service";
 import {
@@ -189,6 +191,11 @@ const DOCUMENTED_FIELDS: ReadonlyArray<{
     keys: shapeKeys(charterInvariantSchema),
   },
   {
+    term: "planDefects",
+    owner: "workflowBlockingValidatorResultSchema",
+    keys: shapeKeys(workflowBlockingValidatorResultSchema),
+  },
+  {
     term: "parameters",
     owner: "workflowSemanticDefinitionSchema",
     keys: shapeKeys(workflowSemanticDefinitionSchema),
@@ -340,6 +347,29 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
   );
 
   it.each(SKILL_DIRS)(
+    "%s documents the plan-defect blocking response and the bound on it",
+    (dir) => {
+      const skill = readPackage(dir);
+      const why = "the third blocking response";
+
+      // The halt type, pinned to the enum plan repair accounts rounds under, so
+      // a rename fails here instead of leaving planners a dead vocabulary.
+      expect(
+        planRepairRoundSchema.shape.haltType.options,
+        "planRepairRoundSchema no longer admits `plan_defect`",
+      ).toContain("plan_defect");
+      expectDocuments(skill, "plan_defect", why);
+      // The two properties that make this outcome different from a fail: it
+      // reopens nothing, and repair answers it at first detection.
+      expectDocuments(skill, "reopens no task", why);
+      expectDocuments(skill, "first detection", why);
+      // And the bound — without it the response reads as a way out of any
+      // mandate a seat would rather not judge.
+      expectDocuments(skill, "never a plan defect", why);
+    },
+  );
+
+  it.each(SKILL_DIRS)(
     "%s documents charter invariant scoping as the engine enforces it",
     (dir) => {
       const skill = readPackage(dir);
@@ -487,6 +517,13 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
       "loop-settlement.ts",
     ]) {
       expectDocuments(steering, canonicalModule, "the adoption matrix");
+    }
+
+    // The plan-defect outcome (ticket #69 change 1): the response a blocking
+    // seat emits, and the halt it raises — steering is where an engine reader
+    // learns that this one reopens nothing and routes straight to repair.
+    for (const term of ["planDefects", "plan_defect"]) {
+      expectDocuments(steering, term, "the plan-defect outcome");
     }
 
     // The staging seam and both of its repository-owned fences.

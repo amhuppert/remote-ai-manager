@@ -1937,6 +1937,119 @@ describe("graph workflow execution event publisher", () => {
     ).toEqual([]);
   });
 
+  // A plan-defect halt is the ENTIRE reaction to a refused contract — no task
+  // reopens, no failure is charged, no aggregate verdict is published — so this
+  // event is the only thing that announces it as it happens. It must arrive
+  // exactly once: the halt is recorded as PENDING and drained to `haltReason`
+  // one write later, and plan repair may then stamp its verdict onto the same
+  // standing halt. Neither is a second halt to announce.
+  it("announces a plan-defect halt once, across the drain and the repair verdict", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-08-17T09:00:00.000Z",
+    });
+    const haltReason = {
+      type: "plan_defect" as const,
+      contextId: "context-plan",
+      planDefects: [
+        {
+          assignmentId: "general",
+          title: "The criterion names work this context does not own",
+          description: "Criterion 2 requires the downstream publisher to change.",
+          whyNotLocallyRemediable:
+            "Every task here is scoped to the reader; the publisher lands later.",
+          conflictingContract: "Acceptance criterion 2",
+        },
+      ],
+      roundSeq: 3,
+      summary: null,
+    };
+    const running = createWorkflowExecution({
+      status: "running",
+      activeContextIds: ["context-plan"],
+    });
+    const signalled = createWorkflowExecution({
+      ...running,
+      activeContextIds: [],
+      pendingHaltReason: haltReason,
+    });
+    const drained = createWorkflowExecution({
+      ...signalled,
+      status: "halted",
+      pendingHaltReason: null,
+      haltReason,
+    });
+    const repairDeclined = createWorkflowExecution({
+      ...drained,
+      haltReason: { ...haltReason, summary: "Plan repair declined." },
+    });
+
+    const planDefectEvents = (delivery: GraphWorkflowEventDelivery) =>
+      delivery.events.filter(
+        (row) => row.event.type === "graph-workflow-plan-defect-halted",
+      );
+
+    const signalledDelivery = publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution: running,
+      nextExecution: signalled,
+    });
+    publisher.deliver(signalledDelivery);
+
+    expect(planDefectEvents(signalledDelivery).map((row) => row.event)).toEqual([
+      {
+        type: "graph-workflow-plan-defect-halted",
+        projectName: "repo",
+        sessionName: "session-1",
+        executionId: signalled.id,
+        contextId: "context-plan",
+        roundSeq: 3,
+        defects: [
+          {
+            assignmentId: "general",
+            title: "The criterion names work this context does not own",
+            conflictingContract: "Acceptance criterion 2",
+          },
+        ],
+      },
+    ]);
+    // Registered in the SSE envelope: a strict union that did not know this
+    // type would drop the event silently on the way to every consumer.
+    expect(
+      planDefectEvents(signalledDelivery).map((row) =>
+        graphWorkflowExecutionEventSchema.parse(JSON.parse(JSON.stringify(row))),
+      ),
+    ).toEqual(planDefectEvents(signalledDelivery));
+    expect(
+      broadcast.mock.calls
+        .map(([event]) => event.type)
+        .filter((type) => type === "graph-workflow-plan-defect-halted"),
+    ).toEqual(["graph-workflow-plan-defect-halted"]);
+
+    expect(
+      planDefectEvents(
+        publisher.publishExecutionUpdate({
+          projectPath: "/projects/repo",
+          sessionName: "session-1",
+          previousExecution: signalled,
+          nextExecution: drained,
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      planDefectEvents(
+        publisher.publishExecutionUpdate({
+          projectPath: "/projects/repo",
+          sessionName: "session-1",
+          previousExecution: drained,
+          nextExecution: repairDeclined,
+        }),
+      ),
+    ).toEqual([]);
+  });
+
   it("emits a graph-workflow-join-status event when a join is newly created (pending)", () => {
     const broadcast = vi.fn();
     const publisher = createGraphWorkflowExecutionEventPublisher({

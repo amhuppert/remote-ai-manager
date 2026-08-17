@@ -40,6 +40,7 @@ import {
   graphWorkflowLiveEditAppliedEventSchema,
   graphWorkflowMergeStatusEventSchema,
   graphWorkflowPendingHaltReasonEventSchema,
+  graphWorkflowPlanDefectHaltedEventSchema,
   graphWorkflowPlanRepairEventSchema,
   graphWorkflowResultRecordedEventSchema,
   graphWorkflowSharedDocumentsUpdatedEventSchema,
@@ -330,6 +331,14 @@ export function registerWorkflowSseReactions(
     queryClient,
     "graph-workflow-circuit-breaker",
     graphWorkflowCircuitBreakerEventSchema,
+  );
+  // A plan-defect halt reopens no task and publishes no verdict, so nothing
+  // else in the stream tells the open detail view that this context stopped.
+  registerDetailAndEventsInvalidation(
+    es,
+    queryClient,
+    "graph-workflow-plan-defect-halted",
+    graphWorkflowPlanDefectHaltedEventSchema,
   );
   registerDetailInvalidation(
     es,

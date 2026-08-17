@@ -466,6 +466,29 @@ export function formatGraphWorkflowHaltReason(
         action: `Found while "${reason.contextId}" landed — the lane cannot say which member wrote them. Widen a member's ownership to cover these paths, or remove the writes, then resume.`,
         tone: "attention",
       };
+    case "plan_defect":
+      // The defect is against the CONTRACT, not the work, so the card leads
+      // with the clause in conflict and never suggests a bare re-run: resuming
+      // before the plan changes reproduces the same refusal.
+      return {
+        headline: `Plan defect in "${reason.contextId}" — ${reason.planDefects.length} blocking finding(s)`,
+        // Same amber `<code>` locator list the path halts use — here the
+        // locator is the contract clause the finding names.
+        detail: (
+          <ul className={haltPathsClass}>
+            {reason.planDefects.map((defect) => (
+              <li key={`${defect.assignmentId}:${defect.title}`}>
+                <code>{defect.conflictingContract}</code> {defect.title} —{" "}
+                {defect.whyNotLocallyRemediable}
+              </li>
+            ))}
+          </ul>
+        ),
+        action:
+          reason.summary ??
+          "Repair the plan the finding names — the contract, not the work — then resume. Nothing was reopened and no attempt was charged.",
+        tone: "attention",
+      };
   }
 }
 
