@@ -9,6 +9,7 @@ import {
 import { projectRowSchema } from "@/lib/projects/schemas";
 import { PersistenceError, getErrorMessage } from "../shared/errors";
 import { parseTrusted, registerTrustedSchema } from "../shared/parse-trusted";
+import { stableStringify } from "./serialization";
 import type { ProjectRow } from "@/lib/projects/schemas";
 type Db = InstanceType<typeof Database>;
 
@@ -79,24 +80,6 @@ interface SqlBindRow {
   agent_capability_overrides: string | null;
   created_at: string;
   updated_at: string;
-}
-
-function stableStringify(value: unknown): string {
-  if (value === null || value === undefined) return "null";
-  if (typeof value === "string") return JSON.stringify(value);
-  if (typeof value === "number" || typeof value === "boolean") {
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return "[" + value.map(stableStringify).join(",") + "]";
-  }
-  const obj = value as Record<string, unknown>;
-  const keys = Object.keys(obj).sort();
-  const parts: string[] = [];
-  for (const k of keys) {
-    parts.push(JSON.stringify(k) + ":" + stableStringify(obj[k]));
-  }
-  return "{" + parts.join(",") + "}";
 }
 
 /**

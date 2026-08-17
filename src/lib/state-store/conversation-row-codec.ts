@@ -28,6 +28,7 @@ import {
   agentCapabilityRuntimeApplicationStateSchema,
 } from "@/lib/agent-capabilities/schemas";
 import { PersistenceError, getErrorMessage } from "../shared/errors";
+import { jsonOrNull, stableStringify } from "./serialization";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type {
   ConversationState,
@@ -36,33 +37,7 @@ import type {
 
 const logger = createLogger("state-store.conversation-codec");
 
-/**
- * Deterministic JSON serialization with sorted object keys, so two domain
- * values that are deep-equal after a Zod parse always produce identical bytes
- * (used for canonical-row comparison and JSON column storage).
- */
-export function stableStringify(value: unknown): string {
-  if (value === null || value === undefined) return "null";
-  if (typeof value === "string") return JSON.stringify(value);
-  if (typeof value === "number" || typeof value === "boolean") {
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return "[" + value.map(stableStringify).join(",") + "]";
-  }
-  const obj = value as Record<string, unknown>;
-  const keys = Object.keys(obj).sort();
-  const parts: string[] = [];
-  for (const k of keys) {
-    parts.push(JSON.stringify(k) + ":" + stableStringify(obj[k]));
-  }
-  return "{" + parts.join(",") + "}";
-}
-
-export function jsonOrNull(value: unknown): string | null {
-  if (value === undefined || value === null) return null;
-  return stableStringify(value);
-}
+export { stableStringify, jsonOrNull };
 
 interface JsonParseSuccess<T> {
   ok: true;

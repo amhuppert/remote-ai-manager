@@ -4,6 +4,7 @@ import { createLogger } from "@/lib/logging";
 import { referenceDocumentSchema } from "@/lib/reference-documents/schemas";
 import { PersistenceError } from "../shared/errors";
 import { parseTrusted, registerTrustedSchema } from "../shared/parse-trusted";
+import { stableStringify } from "./serialization";
 import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
 type Db = InstanceType<typeof Database>;
 
@@ -47,24 +48,6 @@ interface SqlBindRow {
   file_path: string;
   description: string;
   created_at: string;
-}
-
-function stableStringify(value: unknown): string {
-  if (value === null || value === undefined) return "null";
-  if (typeof value === "string") return JSON.stringify(value);
-  if (typeof value === "number" || typeof value === "boolean") {
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return "[" + value.map(stableStringify).join(",") + "]";
-  }
-  const obj = value as Record<string, unknown>;
-  const keys = Object.keys(obj).sort();
-  const parts: string[] = [];
-  for (const k of keys) {
-    parts.push(JSON.stringify(k) + ":" + stableStringify(obj[k]));
-  }
-  return "{" + parts.join(",") + "}";
 }
 
 function referenceDocumentToSqlBind(

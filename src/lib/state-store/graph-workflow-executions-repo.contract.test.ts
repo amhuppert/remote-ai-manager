@@ -301,6 +301,96 @@ describe("graph-workflow-executions-repo durability contract", () => {
     });
   });
 
+  // The join halt is built with `resolutionFailure: result.resolutionFailure ??
+  // undefined`, so the key is present and undefined whenever the resolver never
+  // failed. Serialized as `null`, that value fails its own `.optional()` schema
+  // on the next read and every load of the execution throws — the row the engine
+  // wrote to record a halt becomes the row that hides it.
+  it("round-trips a join halt whose resolution failure is an explicitly undefined key", () => {
+    const execution: GraphWorkflowExecution = {
+      ...maximalExecution(),
+      pendingHaltReason: {
+        type: "join_failure",
+        joinId: "join-1",
+        joinKind: "final_publish",
+        contextId: null,
+        sourceLaneIds: ["lane-2"],
+        targetLaneId: "lane-1",
+        message:
+          "Join merge prepared but target worktree was dirty; cannot land autonomously",
+        conflictFiles: [],
+        resolutionFailure: undefined,
+      },
+    };
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      execution,
+      "2026-03-01T00:00:00Z",
+    );
+
+    const reloaded = createGraphWorkflowExecutionsRepo(db).getActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(reloaded?.pendingHaltReason).toEqual({
+      type: "join_failure",
+      joinId: "join-1",
+      joinKind: "final_publish",
+      contextId: null,
+      sourceLaneIds: ["lane-2"],
+      targetLaneId: "lane-1",
+      message:
+        "Join merge prepared but target worktree was dirty; cannot land autonomously",
+      conflictFiles: [],
+    });
+  });
+
+  // Rows written before the serializer stopped coercing undefined to null are on
+  // disk already, and a halted execution nobody can read is a workflow nobody can
+  // resume. Reading one has to keep working, not require a hand-edited database.
+  it("reloads a join halt stored with a null resolution failure", () => {
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      maximalExecution(),
+      "2026-03-01T00:00:00Z",
+    );
+    const stored = db
+      .prepare(
+        `SELECT runtime_json FROM graph_workflow_executions
+          WHERE project_path = ? AND session_name = ?`,
+      )
+      .get(PROJECT_PATH, SESSION_NAME) as { runtime_json: string };
+    const runtime = JSON.parse(stored.runtime_json) as Record<string, unknown>;
+    runtime.pendingHaltReason = {
+      type: "join_failure",
+      joinId: "join-1",
+      joinKind: "final_publish",
+      contextId: null,
+      sourceLaneIds: ["lane-2"],
+      targetLaneId: "lane-1",
+      message: "Join merge failed",
+      conflictFiles: [],
+      resolutionFailure: null,
+    };
+    db.prepare(
+      `UPDATE graph_workflow_executions SET runtime_json = ?
+        WHERE project_path = ? AND session_name = ?`,
+    ).run(JSON.stringify(runtime), PROJECT_PATH, SESSION_NAME);
+
+    const reloaded = createGraphWorkflowExecutionsRepo(db).getActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(reloaded?.pendingHaltReason?.type).toBe("join_failure");
+    expect(
+      reloaded?.pendingHaltReason?.type === "join_failure"
+        ? reloaded.pendingHaltReason.resolutionFailure
+        : "unreachable",
+    ).toBeUndefined();
+  });
+
   // R9: advisories and their dispositions are durable per specialist and per
   // round, and the long-lived kinds are additionally readable from the execution
   // without opening a round. The durability harness above proves every key path

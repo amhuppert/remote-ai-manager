@@ -155,7 +155,11 @@ export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
     // anything but a human restoring capacity can change the outcome. Optional
     // rather than defaulted: a join that failed on content carries no
     // classification, and neither does a halt recorded before this field.
-    resolutionFailure: agentFailureClassificationSchema.optional(),
+    // `null` is accepted for rows the state store wrote while it still encoded
+    // an undefined key as null; both spellings read back as absent.
+    resolutionFailure: agentFailureClassificationSchema
+      .optional()
+      .or(z.null().transform(() => undefined)),
   }),
   z.object({
     type: z.literal("merge_precondition_failed"),
