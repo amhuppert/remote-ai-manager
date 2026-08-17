@@ -678,6 +678,53 @@ describe("buildContextValidationPrompt", () => {
     expect(prompt).not.toContain("`reopenTaskIds`");
   });
 
+  it("describes `planDefects` to a blocking seat, whose dispatched schema admits it", () => {
+    // The section enumerates the fields the seat's authority admits, so it has
+    // to name the third response too — a seat told only about issues and
+    // advisories reads the response this ticket added as one it may not use.
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: seedAssignment(validatorConfig),
+    });
+
+    expect(prompt).toContain("`planDefects`");
+    expect(prompt).toContain("`whyNotLocallyRemediable`");
+    expect(prompt).toContain("`conflictingContract`");
+  });
+
+  it("does not tell a blocking seat that an empty `issues` array alone is a pass", () => {
+    // It is not: a verdict carrying plan defects concludes the round as a plan
+    // defect however empty `issues` is, so the unqualified equivalence would
+    // describe a pass the engine never renders.
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: seedAssignment(validatorConfig),
+    });
+
+    expect(prompt).not.toContain(
+      "An empty `issues` array means the context passes validation.",
+    );
+  });
+
+  it("tells an advisory seat about neither, matching its dispatched schema", () => {
+    // Withheld for the reason `issues` is: the advisory schema has no such
+    // field, so describing one only produces verdicts that fail the output gate
+    // and burn the lane's attempts.
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: seedAssignment({ ...validatorConfig, authority: "advisory" }),
+    });
+
+    expect(prompt).not.toContain("`planDefects`");
+    expect(prompt).not.toContain("`issues`");
+  });
+
   it("frames validation as intent-based judgment rather than literal matching", () => {
     const prompt = buildContextValidationPrompt({
       context,

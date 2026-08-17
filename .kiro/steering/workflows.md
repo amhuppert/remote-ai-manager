@@ -560,9 +560,10 @@ remedy is a repair of the contract the defect names.
 
 Routing is immediate rather than post-exhaustion — plan repair runs at first
 detection with the typed finding and the preserved candidate. Repaired resumes
-automatically; a decline, a failure, or `planRepair` disabled leaves the run
-halted with the supervisor's diagnosis in `haltReason.summary` (see "Plan repair"
-above).
+automatically; a decline or a failure leaves the run halted with the
+supervisor's diagnosis in `haltReason.summary`. With `planRepair` disabled the
+trigger refuses before any round is appended, so no agent runs and `summary`
+stays null — the halt stands for the operator (see "Plan repair" above).
 
 ### The advisory loop
 

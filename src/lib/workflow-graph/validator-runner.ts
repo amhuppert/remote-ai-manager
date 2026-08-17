@@ -295,8 +295,15 @@ function formatTaskBlock(
 /**
  * The output fields this seat's authority actually admits, described in the
  * prompt exactly as the dispatched schema enforces them. An advisory seat is
- * never told about `issues`: its schema has no such field, so describing one
- * would only produce verdicts that fail the output gate and burn retries.
+ * never told about `issues` or `planDefects`: its schema has neither field, so
+ * describing one would only produce verdicts that fail the output gate and burn
+ * retries.
+ *
+ * The blocking branch names all three responses because the enumeration is what
+ * a seat reads as the list of things it may say. Leaving `planDefects` out —
+ * and calling an empty `issues` array a pass without qualification — would
+ * describe a two-response contract the schema and the round conclusion no
+ * longer implement.
  */
 function requiredOutputFieldLines(authority: ValidatorAuthority): string[] {
   const advisories =
@@ -313,8 +320,9 @@ function requiredOutputFieldLines(authority: ValidatorAuthority): string[] {
   return [
     "- `issues` (array of `{ taskId, title, description }`): Each issue must reference the `taskId` of the task that needs to be reopened to address it. If the same problem touches multiple tasks in this context, include one issue entry per affected task (duplicate the entry with each distinct `taskId`).",
     advisories,
+    "- `planDefects` (optional array of `{ title, description, whyNotLocallyRemediable, conflictingContract }`): The contract itself is the defect — no task in this context can remedy it. A plan defect carries no `taskId` and reopens nothing; `whyNotLocallyRemediable` states why the remedy is not local, and `conflictingContract` names the criterion clause, boundary, dependency, or governance rule in conflict. Omit the field entirely when you have none. Your role contract above says when this response is the right one.",
     "",
-    "An empty `issues` array means the context passes validation. A non-empty `issues` array means every referenced task will be reopened. Advisories never reopen anything, whatever the `issues` array holds.",
+    "An empty `issues` array is a pass only when you report no plan defect: a plan defect stops this context whatever `issues` holds, and your issues travel with it as evidence rather than as reopens. Otherwise a non-empty `issues` array means every referenced task will be reopened. Advisories never reopen anything, whatever the other arrays hold.",
   ];
 }
 
