@@ -183,6 +183,7 @@ function turnCompleted(
   usage: Usage = {
     input_tokens: 100,
     cached_input_tokens: 10,
+    cache_write_input_tokens: 0,
     output_tokens: 50,
     reasoning_output_tokens: 0,
   },
@@ -1081,6 +1082,7 @@ describe("CodexConversationRuntime", () => {
         turnCompleted({
           input_tokens: 200,
           cached_input_tokens: 50,
+          cache_write_input_tokens: 0,
           output_tokens: 100,
           reasoning_output_tokens: 0,
         }),
@@ -1731,6 +1733,7 @@ describe("CodexConversationRuntime", () => {
     const cumulativeUsage1: Usage = {
       input_tokens: 100,
       cached_input_tokens: 10,
+      cache_write_input_tokens: 0,
       output_tokens: 50,
       reasoning_output_tokens: 0,
     };
@@ -1738,6 +1741,7 @@ describe("CodexConversationRuntime", () => {
     const cumulativeUsage2: Usage = {
       input_tokens: 300,
       cached_input_tokens: 30,
+      cache_write_input_tokens: 0,
       output_tokens: 120,
       reasoning_output_tokens: 0,
     };
