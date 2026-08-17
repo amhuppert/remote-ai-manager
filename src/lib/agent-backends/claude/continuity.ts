@@ -2,11 +2,15 @@
  * Claude continuity adapter.
  *
  * Handle spaces, both opaque to callers:
- * - `start`/`validate`/`resumeOrRecover` operate on CC conversation ids —
- *   Claude SDK session ids rotate every turn, so the CC conversation (whose
- *   actor owns the live QuerySession) is the durable resume anchor. The
- *   adapter composes the conversation-creation service via injected deps:
- *   CC-level bookkeeping stays above the seam, SDK lifecycle below.
+ * - `start`/`validate`/`resumeOrRecover` operate on SDK session ids. Every
+ *   caller of these is a HEADLESS lane (graph task-strategy validators,
+ *   collaboration lanes) whose turns run outside any CC conversation actor —
+ *   conversation-anchored lanes carry `refKind: "conversation"` and never
+ *   consult this adapter at all. So `start` mints a placeholder, exactly as
+ *   Codex does: the real session id is only known after the first turn, which
+ *   is why no caller resumes a `sessionAction: "create"` handle. Minting a CC
+ *   conversation here instead produced one permanently empty conversation per
+ *   headless lane, listed in the conversations panel and never used.
  * - `fork` operates on the persisted SDK session ref (`conversation.backendRef`)
  *   because the SDK forks sessions, not conversations. An anchored fork goes
  *   native via `forkSession`; a missing anchor or a native failure falls back
@@ -14,6 +18,7 @@
  *   fail does the fork error — callers must not persist a fork artifact then.
  */
 
+import crypto from "node:crypto";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
@@ -21,7 +26,6 @@ import {
   assertRefOwnedBy,
   ContinuityForkError,
   type BackendContinuityAdapter,
-  type ContinuityStartInput,
   type ForkInput,
   type ForkOutcome,
 } from "../continuity";
@@ -29,13 +33,6 @@ import {
 const logger = createLogger("claude:continuity");
 
 export interface ClaudeContinuityDeps {
-  /** Composes the conversation-creation service; returns the new CC conversation. */
-  createConversation(input: ContinuityStartInput): Promise<{ id: string }>;
-  getConversation(
-    projectPath: string,
-    sessionName: string,
-    conversationId: string,
-  ): Promise<{ id: string } | null>;
   /** Anthropic SDK `forkSession` port. */
   forkSession(
     sessionId: string,
@@ -49,25 +46,12 @@ export interface ClaudeContinuityDeps {
 }
 
 /**
- * Production ports. Resolved lazily via dynamic import: the conversation
- * service resolves its continuity adapter from the backend registry, so a
- * static import here would be circular at module-load time.
+ * Production ports. Resolved lazily via dynamic import so the registry's
+ * module-load bootstrap never pulls the SDK or the transcript-reading chain
+ * eagerly.
  */
 export function createProductionClaudeContinuityDeps(): ClaudeContinuityDeps {
   return {
-    async createConversation(input) {
-      const { createConversation } =
-        await import("@/lib/conversations/service");
-      const conversation = await createConversation(
-        input.projectPath,
-        input.sessionName,
-      );
-      return { id: conversation.id };
-    },
-    async getConversation(projectPath, sessionName, conversationId) {
-      const { getConversation } = await import("@/lib/conversations/service");
-      return getConversation(projectPath, sessionName, conversationId);
-    },
     async forkSession(sessionId, options) {
       const { forkSession } = await import("@anthropic-ai/claude-agent-sdk");
       return forkSession(sessionId, options);
@@ -102,54 +86,29 @@ export function createClaudeContinuityAdapter(
     backend: "claude",
 
     async start(input) {
-      const conversation = await deps.createConversation(input);
+      const ref = crypto.randomUUID();
       logger.info("continuity.start", {
         projectPath: input.projectPath,
         sessionName: input.sessionName,
-        conversationId: conversation.id,
+        sessionRef: ref,
       });
-      return { backend: "claude", ref: conversation.id };
+      return { backend: "claude", ref } satisfies AgentSessionRef;
     },
 
-    async validate(ref, input) {
+    async validate(ref) {
       assertRefOwnedBy("claude", ref);
-      const conversation = await deps.getConversation(
-        input.projectPath,
-        input.sessionName,
-        ref.ref,
-      );
-      if (!conversation) {
-        logger.warn("continuity.validate.stale", {
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-          conversationId: ref.ref,
-        });
-        return { status: "stale", reason: "conversation_not_found" };
-      }
       return { status: "valid" };
     },
 
-    async resumeOrRecover(ref, input) {
+    /**
+     * Owned refs are durable: the SDK offers no cheap session probe, so
+     * staleness surfaces at resume time inside the turn, where the failure
+     * classifier's `ContinuationDisposition` and the caller's
+     * stale-backend-ref recovery already handle it.
+     */
+    async resumeOrRecover(ref) {
       assertRefOwnedBy("claude", ref);
-      const conversation = await deps.getConversation(
-        input.projectPath,
-        input.sessionName,
-        ref.ref,
-      );
-      if (conversation) {
-        return { ref, recovered: false };
-      }
-      const fresh = await deps.createConversation(input);
-      logger.warn("continuity.recovered", {
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        staleConversationId: ref.ref,
-        conversationId: fresh.id,
-      });
-      return {
-        ref: { backend: "claude", ref: fresh.id } satisfies AgentSessionRef,
-        recovered: true,
-      };
+      return { ref, recovered: false };
     },
 
     async fork(ref, input) {

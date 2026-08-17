@@ -124,20 +124,9 @@ const claudeTaskPort = createFakeClaudeTaskPort({
   structuredOutput: STRUCTURED_OUTPUT_VALUE,
 });
 
-const liveConversationIds = new Set<string>();
-let mintedConversations = 0;
-
 const claudeDescriptor = createClaudeBackendDescriptor({
   conversationFactory: claudeConversationBackendFactory,
   continuity: createClaudeContinuityAdapter({
-    createConversation: async () => {
-      mintedConversations += 1;
-      const id = `conformance-conv-${mintedConversations}`;
-      liveConversationIds.add(id);
-      return { id };
-    },
-    getConversation: async (_projectPath, _sessionName, conversationId) =>
-      liveConversationIds.has(conversationId) ? { id: conversationId } : null,
     forkSession: async () => ({ sessionId: "conformance-forked-session" }),
     buildSyntheticForkSeed: async () => "conformance seed",
   }),

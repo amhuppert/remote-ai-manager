@@ -25,8 +25,6 @@ function makeDeps(overrides: Partial<ClaudeContinuityDeps> = {}) {
     options: { dir?: string; upToMessageId?: string };
   }> = [];
   const deps: ClaudeContinuityDeps = {
-    createConversation: async () => ({ id: "conv-fresh" }),
-    getConversation: async () => ({ id: "conv-existing" }),
     forkSession: async (sessionId, options) => {
       forkCalls.push({ sessionId, options });
       return { sessionId: "forked-session-id" };
@@ -76,62 +74,42 @@ describe("createClaudeContinuityAdapter", () => {
   });
 
   describe("start / validate / resumeOrRecover", () => {
-    it("start composes the conversation-creation service and returns its id as the handle", async () => {
-      const createConversation = vi
-        .fn<ClaudeContinuityDeps["createConversation"]>()
-        .mockResolvedValue({ id: "conv-42" });
-      const { deps } = makeDeps({ createConversation });
+    // The adapter's deps carry no conversation ports at all, so "start mints a
+    // placeholder rather than a CC conversation" is enforced by the type — what
+    // is left to pin is that each call yields its own fresh owned handle.
+    it("start mints a fresh owned handle per call", async () => {
+      const { deps } = makeDeps();
       const adapter = createClaudeContinuityAdapter(deps);
 
-      const ref = await adapter.start(context);
+      const first = await adapter.start(context);
+      const second = await adapter.start(context);
 
-      expect(ref).toEqual({ backend: "claude", ref: "conv-42" });
-      expect(createConversation).toHaveBeenCalledWith(context);
+      expect(first.backend).toBe("claude");
+      expect(first.ref.length).toBeGreaterThan(0);
+      expect(second.ref).not.toBe(first.ref);
     });
 
-    it("validate reports valid when the conversation exists, stale when it does not", async () => {
-      const { deps } = makeDeps({
-        getConversation: async (_p, _s, conversationId) =>
-          conversationId === "conv-live" ? { id: "conv-live" } : null,
-      });
+    it("validate treats an owned ref as durable — a headless handle has no cheap probe", async () => {
+      const { deps } = makeDeps();
       const adapter = createClaudeContinuityAdapter(deps);
 
       await expect(
-        adapter.validate({ backend: "claude", ref: "conv-live" }, context),
+        adapter.validate({ backend: "claude", ref: "sdk-session-9" }, context),
       ).resolves.toEqual({ status: "valid" });
-      await expect(
-        adapter.validate({ backend: "claude", ref: "conv-gone" }, context),
-      ).resolves.toEqual({
-        status: "stale",
-        reason: "conversation_not_found",
-      });
     });
 
-    it("resumeOrRecover echoes a live handle and recovers a stale one with a fresh conversation", async () => {
-      const { deps } = makeDeps({
-        getConversation: async (_p, _s, conversationId) =>
-          conversationId === "conv-live" ? { id: "conv-live" } : null,
-        createConversation: async () => ({ id: "conv-recovered" }),
-      });
+    it("resumeOrRecover echoes the owned ref instead of recovering a replacement", async () => {
+      const { deps } = makeDeps();
       const adapter = createClaudeContinuityAdapter(deps);
 
       await expect(
         adapter.resumeOrRecover(
-          { backend: "claude", ref: "conv-live" },
+          { backend: "claude", ref: "sdk-session-9" },
           context,
         ),
       ).resolves.toEqual({
-        ref: { backend: "claude", ref: "conv-live" },
+        ref: { backend: "claude", ref: "sdk-session-9" },
         recovered: false,
-      });
-      await expect(
-        adapter.resumeOrRecover(
-          { backend: "claude", ref: "conv-gone" },
-          context,
-        ),
-      ).resolves.toEqual({
-        ref: { backend: "claude", ref: "conv-recovered" },
-        recovered: true,
       });
     });
   });
