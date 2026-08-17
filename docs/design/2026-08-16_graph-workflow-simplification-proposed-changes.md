@@ -2,7 +2,7 @@
 
 Date: 2026-08-16
 Ticket: command-center#69
-Status: **Approved 2026-08-16** (change 0 implemented on this branch; changes 1–6 approved for implementation). **Change 7 added 2026-08-17** after execution `d007fb79`'s `ownership_violation` false positive — accepted in direction, to be implemented after that execution publishes.
+Status: **Approved 2026-08-16** (change 0 implemented on this branch; changes 1–6 approved for implementation). **Change 7 added 2026-08-17** after execution `d007fb79`'s `ownership_violation` false positive — accepted in direction, to be implemented after that execution publishes. **Change 8 and the owned-landing index bug added 2026-08-17** after the same execution's third incident (a 174-round, budget-invisible `candidate_mismatch` loop) — proposed, awaiting approval.
 Basis: the ticket's investigation and working-proposal attachments, the D7 mid-flight audit (`docs/reports/workflow-audits/2026-08-14-d7-ephemeral-workflows-midflight.md`), and code-verified current state after the #66 (direct-authored delivery plans) merge.
 
 ## Evaluation rubric
@@ -26,6 +26,8 @@ An honest evaluation includes costs: several changes shift work *onto* the plann
 | 5 | Hash-bound plan review with dual lenses | proposed | slight process cost | formalized | indirect | indirect | indirect |
 | 6 | Semantic authoring lints (warning tier) | proposed | easier | easier | indirect | indirect | indirect |
 | 7 | Ephemeral-byproducts declaration for the lane drift audit | accepted 2026-08-17 | easier | easier | **easier** | neutral | easier |
+| 8 | Consecutive candidate-mismatch budget → typed halt | proposed | neutral | neutral | indirect | indirect | easier |
+| — | Bug fix: owned-landing leaves the lane index rewound | proposed | n/a | n/a | n/a | n/a | n/a |
 
 Deliberately **not** proposed: a new `WorkflowIntent` authoring schema, a specialist-lens registry, and full charter removal (rationale at the end).
 
@@ -185,6 +187,23 @@ Together with change 1 this completes the uniform rule the working proposal sket
 
 **Verdict.** Small, mechanical, and directly on-mission: it deletes a recurring false-positive halt class plus the human remediation and governance noise it generates.
 
+## Change 8 — Consecutive candidate-mismatch budget wired to a typed halt
+
+**What.** A validation round that concludes `candidate_mismatch` increments no counter today: not `consecutiveFailureCount`, not the iteration budget, nothing the circuit breaker or `max_iterations` can see. The engine re-opens the next round immediately. Add a small consecutive-mismatch budget (on the order of 5) tracked per context; exhausting it records a resumable typed halt (`candidate_unstable` or similar) carrying the last drift component and stage, so the failure becomes loud, diagnosable, and — where the cause is plan- or config-shaped — reachable by plan repair like any other halt.
+
+**Evidence.** Execution `d007fb79`, incident 3: after `plan-defect-repair-routing`'s round 1 *passed* and its work *landed*, a poisoned lane index made every subsequent diff render fail ("working tree is dirty but no diff could be produced" → tree hash null → mismatch). The engine spun **174 rounds in 40 minutes at ~14-second intervals**, invisible to every existing budget, and would have spun indefinitely had the operator not noticed and paused. This is the same unfenced-loop class as the earlier zombie-loop RCA, in a new location.
+
+- **Planner / plan reviewer: neutral.** No authoring change.
+- **Implementer / validator: indirect.** Neither agent participates in mismatch rounds (the validator never dispatches); they benefit only from the execution failing fast instead of silently stalling their downstream contexts.
+- **Repair: easier.** A typed halt with drift evidence replaces a stall that no automated recovery path could even observe.
+- **Operator: the real beneficiary.** Today the only signals are a quietly growing round counter and wall-clock silence.
+
+**Verdict.** Small, mechanical, closes an unbounded-loop class. The budget is deliberately generous — legitimate transient drift (an agent finishing a write mid-freeze) settles in one or two rounds; 174 identical drifts is only ever a defect.
+
+## Bug fix (tracked here): owned-landing leaves the lane index rewound
+
+Not a simplification change — a straight engine bug surfaced by the same incident, tracked on this ticket for sequencing. After `plan-defect-repair-routing`'s owned landing committed (correctly — the landing commit's content was verified complete), the lane worktree's **git index** was left rewound to the pre-lane base: ~2,470 lines of already-landed work staged as reverted, the context's new files staged as deleted, while the on-disk worktree remained byte-identical to HEAD. Every subsequent status probe then read "dirty", and every scoped diff produced nothing — the direct trigger for the mismatch loop above. This was the first landing on the lane that swept **pre-existing accounted sibling dirt** (the stray UI files inherited from incident 2's remediation) into an owned commit, which is the likely trigger condition. Fix: the owned-landing path must leave the lane index equal to the new HEAD (and a regression test should land a commit from a tree carrying accounted-but-unowned sibling dirt, then assert index == HEAD == worktree for the landed scope). Recovery, for the record, was index-only: `git restore --staged .` in the lane worktree, then resume — no content was lost.
+
 ## Deliberately not proposed
 
 - **A new `WorkflowIntent` authoring schema.** #66 just eliminated the plan→workflow compilation seam by having agents author the execution dialect directly; introducing a second, smaller authoring dialect would recreate that seam with fresh translation-defect surface. The proposal document's goals (small semantic graph, engine-owned bookkeeping) are being reached incrementally inside the existing schema — changes 3, 4, and 6 — and the new prompt-composer/projection port shows compiled role-specific packs work without a schema rewrite. Revisit only if authoring size remains the bottleneck after those land.
@@ -198,6 +217,7 @@ Together with change 1 this completes the uniform rule the working proposal sket
 3. **Change 5** — advisory-first review record; protocol text ships with the same skill revision.
 4. **Change 6** — continuous; each lint lands with the incident that earned it. Density and locator lints can land any time; the density lint gets sharper after change 4.
 5. **Change 7** — directly in-session with TDD as soon as execution `d007fb79` publishes (it touches `execution-loop.ts`/`lane-drift.ts`, which that execution's engine lane is actively editing — sequencing after the merge avoids same-file coupling). Too small for a workflow of its own; independent of changes 3–6.
+6. **Change 8 + the owned-landing index bug** — same batch as change 7 (all three are small engine fixes in adjacent files, earned by the same execution's incidents, and all want the published tree). The bug fix goes first: it removes the trigger; change 8 is the backstop that makes any future trigger loud.
 
 ## Measures
 
