@@ -140,6 +140,24 @@ describe("BackendsSection", () => {
     expect(getState().agentBackends.codex.model).toBe("custom-codex-model");
   });
 
+  it("selects Spark and keeps its effort field, which it supports", () => {
+    const { controller, getState } = makeController();
+    const view = renderWithQuery(<BackendsSection controller={controller} />);
+
+    const codexField = screen
+      .getByText("Codex model")
+      .closest('[data-field="agentBackends.codex.model"]')!;
+    const sparkButton = [...codexField.querySelectorAll("button")].find(
+      (button) => button.textContent === "GPT-5.3 Codex Spark",
+    )!;
+    fireEvent.click(sparkButton);
+    view.unmount();
+    renderWithQuery(<BackendsSection controller={controller} />);
+
+    expect(getState().agentBackends.codex.model).toBe("gpt-5.3-codex-spark");
+    expect(screen.getByText("Codex effort")).toBeVisible();
+  });
+
   it("omits Claude effort for Haiku and restores high for an effort-capable model", () => {
     const { controller, getState } = makeController();
     const view = renderWithQuery(<BackendsSection controller={controller} />);

@@ -8,6 +8,7 @@ import {
   effortLevelSchema,
   getCodexReasoningLevelsForModel,
   getEffortLevelsForModel,
+  isCodexReasoningEffortSupported,
   clampEffortToModel,
 } from "@/lib/agent-backends/schemas";
 
@@ -113,6 +114,12 @@ describe("codexModelSchema", () => {
     expect(codexModelSchema.parse("gpt-5.6-luna")).toBe("gpt-5.6-luna");
   });
 
+  it("accepts the GPT-5.3 Codex Spark model", () => {
+    expect(codexModelSchema.parse("gpt-5.3-codex-spark")).toBe(
+      "gpt-5.3-codex-spark",
+    );
+  });
+
   it("still accepts the GPT-5.5 and GPT-5.4 family", () => {
     expect(codexModelSchema.parse("gpt-5.5")).toBe("gpt-5.5");
     expect(codexModelSchema.parse("gpt-5.4")).toBe("gpt-5.4");
@@ -161,6 +168,26 @@ describe("getCodexReasoningLevelsForModel (GPT-5.6)", () => {
   });
 });
 
+describe("getCodexReasoningLevelsForModel (GPT-5.3 Codex Spark)", () => {
+  // Read off the Codex CLI's own reasoning-level picker for this model.
+  it("gives Spark the standard low→xhigh range", () => {
+    expect(getCodexReasoningLevelsForModel("gpt-5.3-codex-spark")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
+
+  it("withholds minimal, max, and ultra from Spark", () => {
+    for (const effort of ["minimal", "max", "ultra"] as const) {
+      expect(
+        isCodexReasoningEffortSupported("gpt-5.3-codex-spark", effort),
+      ).toBe(false);
+    }
+  });
+});
+
 describe("getEffortLevelsForBackend (codex)", () => {
   it("surfaces max and ultra for the Sol model", () => {
     const levels = getEffortLevelsForBackend("codex", "gpt-5.6-sol");
@@ -174,6 +201,17 @@ describe("getEffortLevelsForBackend (codex)", () => {
       expect(levels).not.toContain("max");
       expect(levels).not.toContain("ultra");
     }
+  });
+
+  // An unknown model id falls back to the full cross-backend vocabulary, so the
+  // narrowed list proves Spark reached the catalog rather than missing it.
+  it("surfaces exactly the four supported levels for Spark", () => {
+    expect(getEffortLevelsForBackend("codex", "gpt-5.3-codex-spark")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
   });
 });
 

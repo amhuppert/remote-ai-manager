@@ -961,6 +961,66 @@ describe("validateResolvedWorkflow", () => {
     ).toBe(true);
   });
 
+  it("accepts an implementer on Spark at a level the model supports", () => {
+    const base = createResolvedWorkflowDefinition();
+    const resolved = createResolvedWorkflowDefinition({
+      executionContexts: base.executionContexts.map((ctx, index) =>
+        index === 0
+          ? {
+              ...ctx,
+              implementer: {
+                id: "implementer",
+                profile: { tier: "builtin", id: "general-implementer" },
+                profileSnapshot: makeProfileSnapshot(),
+                agent: {
+                  backend: "codex",
+                  model: "gpt-5.3-codex-spark",
+                  reasoningEffort: "xhigh",
+                },
+              },
+            }
+          : ctx,
+      ),
+    });
+
+    const result = validateResolvedWorkflow(resolved);
+    expect(
+      result.errors.filter((e) => e.code === "implementer-effort-unsupported"),
+    ).toEqual([]);
+  });
+
+  it("flags implementer-effort-unsupported for Spark at a level it does not offer", () => {
+    const base = createResolvedWorkflowDefinition();
+    const resolved = createResolvedWorkflowDefinition({
+      executionContexts: base.executionContexts.map((ctx, index) =>
+        index === 0
+          ? {
+              ...ctx,
+              implementer: {
+                id: "implementer",
+                profile: { tier: "builtin", id: "general-implementer" },
+                profileSnapshot: makeProfileSnapshot(),
+                agent: {
+                  backend: "codex",
+                  model: "gpt-5.3-codex-spark",
+                  reasoningEffort: "ultra",
+                },
+              },
+            }
+          : ctx,
+      ),
+    });
+
+    const result = validateResolvedWorkflow(resolved);
+    expect(
+      result.errors.some(
+        (e) =>
+          e.code === "implementer-effort-unsupported" &&
+          e.contextId === resolved.executionContexts[0]?.id,
+      ),
+    ).toBe(true);
+  });
+
   it("flags validator-effort-unsupported for a codex-type validator whose effort the model rejects", () => {
     const base = createResolvedWorkflowDefinition();
     const resolved = createResolvedWorkflowDefinition({

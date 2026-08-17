@@ -89,6 +89,14 @@ describe("estimateCodexCostUsd", () => {
     );
   });
 
+  it("prices GPT-5.3 Codex Spark from the defaults", () => {
+    // gpt-5.3-codex-spark: $1.75 / $0.175 / $14.00 per 1M
+    expect(estimateCodexCostUsd(usage, "gpt-5.3-codex-spark")).toBeCloseTo(
+      (90 * 1.75 + 10 * 0.175 + 50 * 14) / 1_000_000,
+      10,
+    );
+  });
+
   it("overrides can price a model absent from the defaults", () => {
     const overrides = {
       "gpt-6-preview": {

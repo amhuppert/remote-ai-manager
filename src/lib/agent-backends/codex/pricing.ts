@@ -56,6 +56,13 @@ export const DEFAULT_CODEX_PRICING: CodexPricingTable = {
     cachedInputPerMillion: 0.02,
     outputPerMillion: 1.25,
   },
+  // Spark shipped as a Codex research preview, so its rates come from public
+  // rate listings rather than the standard-tier API price table above.
+  "gpt-5.3-codex-spark": {
+    inputPerMillion: 1.75,
+    cachedInputPerMillion: 0.175,
+    outputPerMillion: 14,
+  },
 };
 
 /** Token counts as reported by the Codex SDK's per-turn `Usage`. */

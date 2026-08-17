@@ -49,6 +49,11 @@ export const codexBackendMetadata: AgentBackendMetadata = {
     codexModel("gpt-5.4", "GPT-5.4", "Previous generation"),
     codexModel("gpt-5.4-mini", "GPT-5.4 Mini", "Balanced"),
     codexModel("gpt-5.4-nano", "GPT-5.4 Nano", "Fastest"),
+    codexModel(
+      "gpt-5.3-codex-spark",
+      "GPT-5.3 Codex Spark",
+      "Ultra-fast coding model",
+    ),
   ],
   defaultModelId: getDefaultCodexModel(),
   defaultTimeoutMs: null,

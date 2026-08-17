@@ -115,6 +115,7 @@ export const codexModelSchema = z.enum([
   "gpt-5.4",
   "gpt-5.4-mini",
   "gpt-5.4-nano",
+  "gpt-5.3-codex-spark",
 ]);
 export type CodexModel = z.infer<typeof codexModelSchema>;
 
@@ -156,6 +157,11 @@ export type CodexPricingTable = z.infer<typeof codexPricingTableSchema>;
 // and Luna expose only the standard low→xhigh range (verified against OpenAI's
 // GPT-5.6 model docs, 2026-07). "minimal" is omitted from every model — Codex
 // does not accept it for these models.
+//
+// Codex Spark's range was read off the Codex CLI's own reasoning-level picker
+// (v0.147.0): Low / Medium / High (default) / Extra high, with no minimal and
+// no max/ultra. Third-party write-ups claiming Spark takes no reasoning effort
+// at all are wrong.
 const CODEX_MODEL_REASONING_LEVELS: Record<string, CodexReasoningEffort[]> = {
   "gpt-5.6-sol": ["low", "medium", "high", "xhigh", "max", "ultra"],
   "gpt-5.6-terra": ["low", "medium", "high", "xhigh"],
@@ -164,6 +170,7 @@ const CODEX_MODEL_REASONING_LEVELS: Record<string, CodexReasoningEffort[]> = {
   "gpt-5.4": ["low", "medium", "high", "xhigh"],
   "gpt-5.4-mini": ["low", "medium", "high", "xhigh"],
   "gpt-5.4-nano": ["low", "medium", "high", "xhigh"],
+  "gpt-5.3-codex-spark": ["low", "medium", "high", "xhigh"],
 };
 
 /**
