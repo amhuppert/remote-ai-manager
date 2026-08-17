@@ -2,7 +2,7 @@
 
 Date: 2026-08-16
 Ticket: command-center#69
-Status: **Proposal** — change 0 is implemented on this branch; changes 1–6 are recommendations awaiting approval.
+Status: **Approved 2026-08-16** (change 0 implemented on this branch; changes 1–6 approved for implementation). **Change 7 added 2026-08-17** after execution `d007fb79`'s `ownership_violation` false positive — accepted in direction, to be implemented after that execution publishes.
 Basis: the ticket's investigation and working-proposal attachments, the D7 mid-flight audit (`docs/reports/workflow-audits/2026-08-14-d7-ephemeral-workflows-midflight.md`), and code-verified current state after the #66 (direct-authored delivery plans) merge.
 
 ## Evaluation rubric
@@ -25,6 +25,7 @@ An honest evaluation includes costs: several changes shift work *onto* the plann
 | 4 | Structured acceptance criteria (`[{id, statement}]`) | proposed | slightly harder mechanically | easier | easier | easier | easier |
 | 5 | Hash-bound plan review with dual lenses | proposed | slight process cost | formalized | indirect | indirect | indirect |
 | 6 | Semantic authoring lints (warning tier) | proposed | easier | easier | indirect | indirect | indirect |
+| 7 | Ephemeral-byproducts declaration for the lane drift audit | accepted 2026-08-17 | easier | easier | **easier** | neutral | easier |
 
 Deliberately **not** proposed: a new `WorkflowIntent` authoring schema, a specialist-lens registry, and full charter removal (rationale at the end).
 
@@ -166,6 +167,24 @@ Together with change 1 this completes the uniform rule the working proposal sket
 
 ---
 
+## Change 7 — Ephemeral-byproducts declaration for the lane drift audit
+
+**What.** Add a project-level declaration — `validation.ephemeralByproducts: string[]` in `CommandCenter.json` — of worktree-relative toolchain byproduct roots (for this project: `node_modules`, `tsconfig.tsbuildinfo`, `src/lib/build-info/build-info.generated.ts`, `.next`, `next-env.d.ts`, `dist`). The D8 lane-drift audit (`lane-drift.ts`, invoked from the enveloped-landing path in `execution-loop.ts`) treats declared roots as accounted: changes under them never enter `unattributedPaths`, so they cannot raise `ownership_violation`. Path syntax and normalization follow the `ownedPaths` rules (literal, repo-relative, segment-boundary matching, no globs). Two companions ship with it: when every unattributed path in a violation is gitignored, the halt message names the config key — the durable fix taught at the failure moment — and the docs are updated in the same change (the placement reference's write-envelope section and the project-configuration steering).
+
+**Evidence.** Execution `d007fb79` (this proposal's changes 1+2) halted `ownership_violation` on its first engine-lane landing: the audit flagged `node_modules`, `tsconfig.tsbuildinfo`, and the generated build-info file — byproducts of the implementer's own registered validation runs (incremental tsc writes `tsbuildinfo`; `postinstall` regenerates build-info). The audit digest-compares gitignored paths against a provisioning-time baseline *by design* (credential drops live in ignored paths), but it cannot distinguish the engine's own toolchain churn from a foreign write — so **any** enveloped lane that runs typecheck, test, or install will eventually halt. Plan repair engaged and correctly declined (`planningDefect: false`); a human then live-edited all four pending contexts' `ownedPaths` to include the byproduct paths. That workaround is exactly the defensive-governance noise this proposal exists to remove — left unfixed, every future plan will cargo-cult toolchain paths into its ownership declarations.
+
+**Alternatives rejected.** Auto-re-baselining the ignored manifest after every engine-mediated validation run: re-digesting `node_modules` per file on every scoped TDD test run is expensive (in tension with #68), and since TDD lanes run validation constantly it degenerates into a blanket exemption anyway. A hardcoded engine exemption list: violates the no-project-special-casing rule. The declaration keeps D8's threat model intact everywhere except roots a human explicitly named in reviewed project config — and an *undeclared* byproduct still halts once, with a one-line permanent fix instead of a per-run live-edit.
+
+**Boundary kept.** This narrows only the post-landing audit. The write envelope is untouched: agents still cannot write declared roots through their tools unless ownership covers them. The accepted trade — a server-mediated write hidden *inside* a declared root goes uncaught — is documented at the declaration site; the audit remains defense-in-depth, with the envelope as the primary control.
+
+- **Planner: easier.** `ownedPaths` describes the work again, not the toolchain. No defensive padding, and no reviewing plans for whether they remembered the padding.
+- **Plan reviewer: easier (marginal).** One less cargo-culted convention to check for.
+- **Implementer: easier.** The TDD loop can no longer halt its own lane by running the validation commands its instructions require.
+- **Validator: neutral.** The audit is engine-side; no validator judgment changes.
+- **Repair: easier.** No more non-defect invocations from this class — the incident burned repair round 1 of the execution's 5-round backstop on a correct decline.
+
+**Verdict.** Small, mechanical, and directly on-mission: it deletes a recurring false-positive halt class plus the human remediation and governance noise it generates.
+
 ## Deliberately not proposed
 
 - **A new `WorkflowIntent` authoring schema.** #66 just eliminated the plan→workflow compilation seam by having agents author the execution dialect directly; introducing a second, smaller authoring dialect would recreate that seam with fresh translation-defect surface. The proposal document's goals (small semantic graph, engine-owned bookkeeping) are being reached incrementally inside the existing schema — changes 3, 4, and 6 — and the new prompt-composer/projection port shows compiled role-specific packs work without a schema rewrite. Revisit only if authoring size remains the bottleneck after those land.
@@ -178,7 +197,8 @@ Together with change 1 this completes the uniform rule the working proposal sket
 2. **Changes 3 + 4 together**, coordinated with the second planning-skill revision pass (they change what planners author, so the skill updates once).
 3. **Change 5** — advisory-first review record; protocol text ships with the same skill revision.
 4. **Change 6** — continuous; each lint lands with the incident that earned it. Density and locator lints can land any time; the density lint gets sharper after change 4.
+5. **Change 7** — directly in-session with TDD as soon as execution `d007fb79` publishes (it touches `execution-loop.ts`/`lane-drift.ts`, which that execution's engine lane is actively editing — sequencing after the merge avoids same-file coupling). Too small for a workflow of its own; independent of changes 3–6.
 
 ## Measures
 
-From the working proposal's list, the ones these changes should visibly move: governance tokens per implementer/validator prompt (changes 2–4); implementation-remediation rounds later classified as plan defects (change 1 — should approach zero); first-pass context acceptance rate (2, 3); contexts whose scope expands during execution (1, 2); percentage of blocking findings citing an explicit criterion or rule basis (4); percentage of plan reviews terminal against the exact final revision (5); plan defects caught at validate/review time versus during execution (5, 6).
+From the working proposal's list, the ones these changes should visibly move: governance tokens per implementer/validator prompt (changes 2–4); implementation-remediation rounds later classified as plan defects (change 1 — should approach zero); first-pass context acceptance rate (2, 3); contexts whose scope expands during execution (1, 2); percentage of blocking findings citing an explicit criterion or rule basis (4); percentage of plan reviews terminal against the exact final revision (5); plan defects caught at validate/review time versus during execution (5, 6); ownership_violation halts caused by toolchain byproducts, and plan-repair rounds consumed by non-defect halts (7 — both should reach zero).
