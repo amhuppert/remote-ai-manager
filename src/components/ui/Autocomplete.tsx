@@ -21,20 +21,24 @@ import { useEffect, useRef } from "react";
 import { cn } from "@/lib/ui/cn";
 
 // ── Shared popup recipes (command / file / conversation families) ──
-// Translucent surface backgrounds (--cc-surface-a85/a95), skill-badge green
-// (--cc-green-a12), and cyan badge fills (--cc-cyan-a12/a08) are all token-backed.
+// Skill-badge green (--cc-green-a12) and cyan badge fills (--cc-cyan-a12/a08)
+// are token-backed, as is the upward menu shadow (--cc-shadow-dropdown-up).
 
 /**
  * Floating popup shell: anchored above the prompt input, cyan accent line on top.
  * Callers append their own `max-h-[…]` (340px for command/file, 380px for
  * conversation) via {@link AutocompleteListbox}'s `maxHeightClassName` — a single
  * max-height utility avoids a same-property collision.
+ *
+ * The surface is opaque and carries the upward menu shadow: these popups sit
+ * directly over the transcript, and a translucent surface let message text bleed
+ * through the rows.
  */
 export const autocompletePopupClass =
-  "absolute inset-x-0 bottom-full z-header flex flex-col overflow-hidden rounded-t-lg border border-b-0 border-solid border-border-default bg-[var(--cc-surface-a85)] font-mono backdrop-blur-[20px] backdrop-saturate-150 animate-[cmdReveal_0.18s_ease] before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-[linear-gradient(90deg,transparent,var(--cyan)_20%,var(--cyan)_80%,transparent)] before:opacity-60 before:content-['']";
+  "absolute inset-x-0 bottom-full z-header flex flex-col overflow-hidden rounded-t-lg border border-b-0 border-solid border-border-default bg-bg-surface font-mono shadow-[var(--cc-shadow-dropdown-up)] animate-[cmdReveal_0.18s_ease] before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-[linear-gradient(90deg,transparent,var(--cyan)_20%,var(--cyan)_80%,transparent)] before:opacity-60 before:content-['']";
 
 export const autocompleteHeaderClass =
-  "sticky top-0 z-raised flex items-center justify-between border-x-0 border-t-0 border-b border-solid border-border-subtle bg-[var(--cc-surface-a95)] px-sm py-xs text-[0.7rem] text-text-tertiary";
+  "sticky top-0 z-raised flex items-center justify-between border-x-0 border-t-0 border-b border-solid border-border-subtle bg-bg-raised px-sm py-xs text-[0.7rem] text-text-tertiary";
 
 export const autocompleteHeaderCountClass = "text-text-secondary";
 
@@ -50,7 +54,7 @@ export const conversationItemClass =
   "relative flex min-h-[40px] cursor-pointer flex-col gap-[2px] border-y-0 border-r-0 border-l-2 border-solid border-l-transparent px-sm py-xs transition-[background] duration-100 ease-[ease] hover:bg-bg-hover data-[active=true]:border-l-cyan data-[active=true]:bg-bg-hover data-[active=true]:after:pointer-events-none data-[active=true]:after:absolute data-[active=true]:after:inset-0 data-[active=true]:after:bg-[linear-gradient(90deg,var(--cyan-glow)_0%,transparent_60%)] data-[active=true]:after:content-[''] data-[archived=true]:opacity-50 max-768:min-h-[44px] max-768:py-sm";
 
 export const autocompleteFooterClass =
-  "sticky bottom-0 z-raised flex items-center gap-md border-x-0 border-b-0 border-t border-solid border-border-subtle bg-[var(--cc-surface-a95)] px-sm py-xs text-[0.7rem] text-text-tertiary";
+  "sticky bottom-0 z-raised flex items-center gap-md border-x-0 border-b-0 border-t border-solid border-border-subtle bg-bg-raised px-sm py-xs text-[0.7rem] text-text-tertiary";
 
 export const autocompleteFooterKbdClass =
   "inline-block rounded-sm border border-solid border-border-default bg-bg-raised px-[4px] py-0 font-mono text-[0.7rem] leading-[1.4] text-text-secondary";

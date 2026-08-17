@@ -17,12 +17,24 @@ export interface ScoredTicketItem {
 
 export interface TicketFilterContext {
   currentProjectName: string | null;
+  /**
+   * Include tickets that have been finished. Reference pickers default to
+   * active work, so `done` and `closed` are withheld unless a caller opts in.
+   */
+  includeDone?: boolean;
 }
 
 export interface TicketFilterResult {
   items: ScoredTicketItem[];
   totalCount: number;
+  /** Query matches withheld only because they are done or closed. */
+  hiddenDoneCount: number;
 }
+
+const FINISHED_STATUSES: ReadonlySet<TicketStatus> = new Set([
+  "done",
+  "closed",
+]);
 
 interface TicketMatch {
   result: FuzzyResult;
@@ -36,10 +48,16 @@ export function filterAndScoreTickets(
   options?: { maxDisplayItems?: number },
 ): TicketFilterResult {
   const scored: ScoredTicketItem[] = [];
+  const includeDone = context.includeDone ?? false;
+  let hiddenDoneCount = 0;
 
   for (const item of items) {
     const match = bestTicketMatch(query, item);
     if (!match.result.match || match.result.tier === null) continue;
+    if (!includeDone && FINISHED_STATUSES.has(item.status)) {
+      hiddenDoneCount += 1;
+      continue;
+    }
     scored.push({
       item,
       tier: match.result.tier,
@@ -50,7 +68,11 @@ export function filterAndScoreTickets(
 
   scored.sort((a, b) => compareScoredTickets(a, b, query, context));
   const cap = options?.maxDisplayItems ?? MAX_DISPLAY_TICKETS;
-  return { items: scored.slice(0, cap), totalCount: scored.length };
+  return {
+    items: scored.slice(0, cap),
+    totalCount: scored.length,
+    hiddenDoneCount,
+  };
 }
 
 function bestTicketMatch(query: string, item: TicketListItem): TicketMatch {

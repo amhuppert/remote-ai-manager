@@ -26,11 +26,16 @@ import {
   messageRefAttrsSchema,
   type ConversationListItem,
 } from "@/lib/conversations/schemas";
-import { buildTicketRefXml } from "@/lib/tickets/references";
+import {
+  buildTicketRefXml,
+  formatTicketIdentifier,
+} from "@/lib/tickets/references";
 import { filterAndScoreTickets } from "@/lib/tickets/ticket-autocomplete-filter";
+import { TICKET_WORK_TYPE_LABELS } from "@/lib/tickets/ticket-visuals";
 import {
   ticketRefAttrsSchema,
   type TicketListItem,
+  type TicketStatus,
 } from "@/lib/tickets/schemas";
 import { conversationRefAttrsToMentionAttrs } from "./conversation-mention-node";
 import { messageRefAttrsToMentionAttrs } from "./message-mention-node";
@@ -91,6 +96,10 @@ export interface ReferencePickerContext {
   tickets: readonly TicketListItem[];
   specs: readonly SpecPickerSpec[];
   selectedSpec: SpecPickerSpec | null;
+  /** Offer tickets that are `done` or `closed` (the Alt+D filter). */
+  includeFinishedTickets: boolean;
+  /** Offer archived conversations (the Alt+A filter). */
+  includeArchivedConversations: boolean;
 }
 
 export interface SpecPickerElement {
@@ -110,6 +119,50 @@ export interface SpecPickerSpec {
   elements: readonly SpecPickerElement[];
 }
 
+export type ReferenceStatusTone =
+  | "cyan"
+  | "amber"
+  | "green"
+  | "red"
+  | "neutral";
+
+/** A small trailing fact on a row (attachment counts, an active session). */
+export interface ReferenceItemFact {
+  label: string;
+  tone: "accent" | "muted";
+}
+
+/**
+ * The right-hand meta cell. Relative time is carried as its instant rather
+ * than a formatted string so the picker sources stay pure — the popup does the
+ * clock-dependent formatting at render time.
+ */
+export type ReferenceItemMeta =
+  | { kind: "text"; value: string }
+  | { kind: "relative-time"; iso: string };
+
+/**
+ * How one row presents itself in the reference picker. Every kind fills the
+ * same slots, which is what lets a single row component render files,
+ * conversations, specs, tickets, and spec elements without branching on type.
+ */
+export interface ReferenceItemPresentation {
+  /** Accent identifier shown before the label (a ticket id, an element handle). */
+  idLabel: string | null;
+  /** Right-aligned meta cell (extension, project, revision, last activity). */
+  meta: ReferenceItemMeta | null;
+  /** Status dot plus its label. */
+  status: { label: string; tone: ReferenceStatusTone } | null;
+  /** Leading characters of `label` rendered dim — a file's directory prefix. */
+  dimPrefixLength: number;
+  /** Facts rendered after the status. */
+  facts: readonly ReferenceItemFact[];
+  /** Dim the whole row because the item is finished or archived. */
+  muted: boolean;
+  /** What `→` writes into the input, without the trigger character. */
+  completion: string;
+}
+
 export interface ReferencePickerItem {
   type: ReferenceType;
   id: string;
@@ -117,6 +170,7 @@ export interface ReferencePickerItem {
   description: string;
   matchIndices: number[];
   attrs: Record<string, unknown>;
+  presentation: ReferenceItemPresentation;
 }
 
 type EditorChipComponent = ComponentType<ReactNodeViewProps<HTMLElement>>;
@@ -190,6 +244,119 @@ function stringAttr(attrs: Record<string, unknown>, key: string): string {
   return typeof raw === "string" ? raw : "";
 }
 
+const TICKET_STATUS_PRESENTATION: Record<
+  TicketStatus,
+  { label: string; tone: ReferenceStatusTone }
+> = {
+  in_progress: { label: "in progress", tone: "cyan" },
+  blocked: { label: "blocked", tone: "red" },
+  not_started: { label: "not started", tone: "neutral" },
+  done: { label: "done", tone: "green" },
+  closed: { label: "closed", tone: "neutral" },
+};
+
+const FINISHED_TICKET_STATUSES: ReadonlySet<TicketStatus> = new Set([
+  "done",
+  "closed",
+]);
+
+function conversationStatusPresentation(
+  status: ConversationListItem["status"],
+): { label: string; tone: ReferenceStatusTone } | null {
+  if (status === "running") return { label: "running", tone: "cyan" };
+  if (status === "waiting_for_input") {
+    return { label: "waiting", tone: "amber" };
+  }
+  return null;
+}
+
+function ticketPickerItems(
+  query: string,
+  context: ReferencePickerContext,
+): ReferencePickerItem[] {
+  return filterAndScoreTickets(query, context.tickets, {
+    currentProjectName: context.currentProjectName,
+    includeDone: context.includeFinishedTickets,
+  }).items.map(({ item, titleMatchIndices }) => {
+    const identifier = formatTicketIdentifier(item.projectName, item.number);
+    return {
+      type: "ticket",
+      id: `ticket:${item.id}`,
+      label: item.title,
+      description: TICKET_WORK_TYPE_LABELS[item.workType],
+      matchIndices: titleMatchIndices,
+      attrs: {
+        projectName: item.projectName,
+        ticketNumber: String(item.number),
+        identifier,
+        title: item.title,
+      },
+      presentation: {
+        idLabel: identifier,
+        meta: {
+          kind: "text",
+          value:
+            item.projectName === context.currentProjectName
+              ? "current"
+              : item.projectName,
+        },
+        status: TICKET_STATUS_PRESENTATION[item.status],
+        dimPrefixLength: 0,
+        facts: [
+          { label: `${item.attachmentCount} context`, tone: "muted" },
+          ...(item.activeSessionName === null
+            ? []
+            : ([{ label: "active session", tone: "accent" }] as const)),
+        ],
+        muted: FINISHED_TICKET_STATUSES.has(item.status),
+        completion: identifier,
+      },
+    };
+  });
+}
+
+function conversationPickerItems(
+  query: string,
+  context: ReferencePickerContext,
+): ReferencePickerItem[] {
+  const visible = context.includeArchivedConversations
+    ? context.conversations
+    : context.conversations.filter((item) => !item.archived);
+  return filterAndScoreConversations(query, visible, {
+    currentProjectName: context.currentProjectName,
+    currentConversationId: context.currentConversationId,
+  }).items.map(({ item, indices }) => {
+    const label = resolveDisplayLabel({
+      conversationName: item.conversationName,
+      summary: item.summary,
+      firstPromptSnippet: item.firstPromptSnippet,
+      conversationId: item.conversationId,
+    });
+    return {
+      type: "conversation",
+      id: `conversation:${item.conversationId}`,
+      label,
+      description: [
+        item.projectName,
+        conversationTargetScopeLabel(conversationListItemTarget(item)),
+      ].join(" · "),
+      matchIndices: indices,
+      attrs: { ...conversationListItemToMentionAttrs(item) },
+      presentation: {
+        idLabel: null,
+        meta: item.archived
+          ? { kind: "text", value: "archived" }
+          : { kind: "relative-time", iso: item.lastActivityAt },
+        status: conversationStatusPresentation(item.status),
+        dimPrefixLength: 0,
+        facts: [],
+        muted: item.archived,
+        completion: label,
+      },
+    };
+  });
+}
+
 function specPickerItems(
   query: string,
   context: ReferencePickerContext,
@@ -213,15 +380,29 @@ function specPickerItems(
     .map(({ spec }) => ({
       type: "spec",
       id: `spec:${spec.projectName}:${spec.specId}`,
-      label: spec.name,
-      description: `${spec.slug} · ${spec.projectName}`,
-      matchIndices: matchingIndices(spec.name, normalizedQuery),
+      label: spec.slug,
+      description: spec.name,
+      matchIndices: matchingIndices(spec.slug, normalizedQuery),
       attrs: {
         projectName: spec.projectName,
         slug: spec.slug,
         name: spec.name,
         revision: String(spec.revision),
         readCommand: buildSpecReadCommand(spec.projectName, spec.slug),
+      },
+      presentation: {
+        idLabel: null,
+        // `/` after an exact slug drills into the spec's elements, so the row
+        // advertises the affordance next to the revision it would drill into.
+        meta: { kind: "text", value: `rev ${spec.revision} · / drill` },
+        status: null,
+        dimPrefixLength: 0,
+        facts:
+          spec.projectName === context.currentProjectName
+            ? []
+            : [{ label: spec.projectName, tone: "muted" }],
+        muted: false,
+        completion: spec.slug,
       },
     }));
 }
@@ -245,11 +426,18 @@ function specElementPickerItems(
     .map((element) => ({
       type,
       id: `${type}:${spec.projectName}:${spec.specId}:${element.elementId}`,
-      label: `${spec.slug}/${element.handle}`,
-      description: element.name,
-      matchIndices: matchingIndices(element.handle, normalizedQuery).map(
-        (index) => spec.slug.length + 1 + index,
-      ),
+      label: element.name,
+      description: "",
+      matchIndices: matchingIndices(element.name, normalizedQuery),
+      presentation: {
+        idLabel: element.handle,
+        meta: null,
+        status: null,
+        dimPrefixLength: 0,
+        facts: [],
+        muted: false,
+        completion: `${spec.slug}/${element.handle}`,
+      },
       attrs: {
         projectName: spec.projectName,
         slug: spec.slug,
@@ -295,26 +483,7 @@ export const REFERENCE_REGISTRY = [
     pickerSource: {
       groupLabel: "Conversations",
       queryAliases: ["conversation", "conversations"],
-      getItems: (query, context) =>
-        filterAndScoreConversations(query, context.conversations, {
-          currentProjectName: context.currentProjectName,
-          currentConversationId: context.currentConversationId,
-        }).items.map(({ item, indices }) => ({
-          type: "conversation",
-          id: `conversation:${item.conversationId}`,
-          label: resolveDisplayLabel({
-            conversationName: item.conversationName,
-            summary: item.summary,
-            firstPromptSnippet: item.firstPromptSnippet,
-            conversationId: item.conversationId,
-          }),
-          description: [
-            item.projectName,
-            conversationTargetScopeLabel(conversationListItemTarget(item)),
-          ].join(" · "),
-          matchIndices: indices,
-          attrs: { ...conversationListItemToMentionAttrs(item) },
-        })),
+      getItems: conversationPickerItems,
     },
   },
   {
@@ -331,25 +500,7 @@ export const REFERENCE_REGISTRY = [
     pickerSource: {
       groupLabel: "Tickets",
       queryAliases: ["ticket", "tickets"],
-      getItems: (query, context) =>
-        filterAndScoreTickets(query, context.tickets, {
-          currentProjectName: context.currentProjectName,
-        }).items.map(({ item }) => {
-          const identifier = `${item.projectName}#${item.number}`;
-          return {
-            type: "ticket",
-            id: `ticket:${item.id}`,
-            label: identifier,
-            description: item.title,
-            matchIndices: [],
-            attrs: {
-              projectName: item.projectName,
-              ticketNumber: String(item.number),
-              identifier,
-              title: item.title,
-            },
-          };
-        }),
+      getItems: ticketPickerItems,
     },
   },
   {

@@ -52,21 +52,38 @@ export { deserializePromptDoc } from "./deserializer";
 export { ImagePasteHandler } from "./paste-handler-extension";
 export { SlashCommand } from "./slash-command-extension";
 export type { SlashCommandTrigger } from "./slash-command-extension";
-export { FileMention } from "./file-mention-extension";
 export {
-  UnifiedMention,
-  getUnifiedMentionGroups,
+  ReferencePicker,
+  REFERENCE_PICKER_TRIGGERS,
+} from "./reference-picker-extension";
+export type {
+  ReferencePickerExtensionOptions,
+  ReferencePickerSuggestion,
+} from "./reference-picker-extension";
+export {
+  buildPickerView,
   parseSpecDrillInQuery,
-} from "./unified-mention-extension";
+  pickerHasAnyMatch,
+  scopeForTrigger,
+  PICKER_ELEMENT_ORDER,
+  PICKER_KIND_ORDER,
+  PICKER_SCOPE_CYCLE,
+  PICKER_SECTION_CAP,
+} from "./reference-picker";
 export type {
-  UnifiedMentionExtensionOptions,
-  UnifiedMentionGroup,
-} from "./unified-mention-extension";
-export { TicketShortcut } from "./ticket-shortcut-extension";
-export type {
-  TicketShortcutExtensionOptions,
-  TicketShortcutItem,
-} from "./ticket-shortcut-extension";
+  PickerDrillScope,
+  PickerGlyph,
+  PickerItemRow,
+  PickerMoreRow,
+  PickerRow,
+  PickerScope,
+  PickerSection,
+  PickerSelection,
+  PickerTab,
+  PickerTrigger,
+  PickerView,
+  PickerViewInput,
+} from "./reference-picker";
 export { TerminalHotkeys } from "./terminal-hotkeys-extension";
 export {
   REFERENCE_REGISTRY,
@@ -75,11 +92,15 @@ export {
   getReferenceByXmlTag,
 } from "./reference-registry";
 export type {
+  ReferenceItemFact,
+  ReferenceItemMeta,
+  ReferenceItemPresentation,
   ReferenceNodeName,
   ReferencePickerContext,
   ReferencePickerItem,
   ReferencePickerSource,
   ReferenceRegistryEntry,
+  ReferenceStatusTone,
   SpecPickerElement,
   SpecPickerSpec,
   ReferenceType,

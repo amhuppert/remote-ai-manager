@@ -2,6 +2,7 @@
 
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useId,
   useImperativeHandle,
@@ -20,7 +21,6 @@ import {
   CodeFormatting,
   ConversationMentionNode,
   deserializePromptDoc,
-  FileMention,
   FileMentionNode,
   ImageMarker,
   ImagePasteHandler,
@@ -28,19 +28,18 @@ import {
   DecisionMentionNode,
   QuestionMentionNode,
   RefPasteHandler,
+  ReferencePicker,
   RequirementMentionNode,
   serializePromptDoc,
   SlashCommand,
   SlashCommandMarker,
   TerminalHotkeys,
-  TicketShortcut,
   TicketMentionNode,
   SpecMentionNode,
   TaskMentionNode,
-  UnifiedMention,
-  getUnifiedMentionGroups,
-  type ReferencePickerContext,
-  type ReferencePickerItem,
+  pickerHasAnyMatch,
+  type PickerSelection,
+  type PickerTrigger,
   type SerializedPromptDoc,
   type SlashCommandTrigger,
 } from "@/lib/prompt-editor";
@@ -53,19 +52,10 @@ import {
   type SlashCommandSelection,
 } from "@/components/session/prompt/PromptEditorSlashCommandPopup";
 import {
-  PromptEditorFileMentionPopup,
-  type FileMentionPopupHandle,
-  type FileMentionSelection,
-} from "@/components/session/prompt/PromptEditorFileMentionPopup";
-import {
-  PromptEditorTicketMentionPopup,
-  type TicketMentionPopupHandle,
-  type TicketMentionSelection,
-} from "@/components/session/prompt/PromptEditorTicketMentionPopup";
-import {
-  UnifiedMentionPopup,
-  type UnifiedMentionPopupHandle,
-} from "@/components/session/prompt/UnifiedMentionPopup";
+  ReferencePickerPopup,
+  type ReferencePickerData,
+  type ReferencePickerPopupHandle,
+} from "@/components/session/prompt/ReferencePickerPopup";
 import { HotkeyAwaitingHUD } from "@/components/hotkeys/HotkeyAwaitingHUD";
 import {
   useHotkeyDispatcher,
@@ -130,19 +120,12 @@ interface SlashSuggestionState {
   command: (item: SlashCommandSelection) => void;
 }
 
-interface FileSuggestionState {
+interface ReferencePickerSuggestionState {
+  trigger: PickerTrigger;
   query: string;
-  command: (item: FileMentionSelection) => void;
-}
-
-interface UnifiedMentionSuggestionState {
-  query: string;
-  command: (item: ReferencePickerItem) => void;
-}
-
-interface TicketSuggestionState {
-  query: string;
-  command: (item: TicketMentionSelection) => void;
+  select: (selection: PickerSelection) => void;
+  complete: (text: string) => void;
+  isCaretAtQueryEnd: () => boolean;
 }
 
 /**
@@ -330,34 +313,23 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
     // slash-command triggers can read the live value without recreating it.
     const backendRef = useRef(backend);
     backendRef.current = backend;
-    const pickerContextRef = useRef<ReferencePickerContext>({
-      currentProjectName: projectName ?? null,
-      currentConversationId: conversationId ?? null,
-      conversations: [],
-      tickets: [],
-      specs: [],
-      selectedSpec: null,
-    });
-    pickerContextRef.current = {
-      ...pickerContextRef.current,
-      currentProjectName: projectName ?? null,
-      currentConversationId: conversationId ?? null,
-    };
+    // The picker publishes what it filtered over so the suggestion plugins can
+    // ask, mid-keystroke, whether a query that grew a space still matches
+    // anything. Null means nothing has loaded yet — never suppress on no data.
+    const pickerDataRef = useRef<ReferencePickerData | null>(null);
+    // Stable so the popup's publish effect fires on real data changes rather
+    // than once per keystroke of the parent.
+    const capturePickerData = useCallback((data: ReferencePickerData) => {
+      pickerDataRef.current = data;
+    }, []);
 
     const [slashState, setSlashState] = useState<SlashSuggestionState | null>(
       null,
     );
-    const [fileState, setFileState] = useState<FileSuggestionState | null>(
-      null,
-    );
-    const [unifiedMentionState, setUnifiedMentionState] =
-      useState<UnifiedMentionSuggestionState | null>(null);
-    const [ticketState, setTicketState] =
-      useState<TicketSuggestionState | null>(null);
+    const [pickerState, setPickerState] =
+      useState<ReferencePickerSuggestionState | null>(null);
     const slashPopupRef = useRef<SlashCommandPopupHandle>(null);
-    const filePopupRef = useRef<FileMentionPopupHandle>(null);
-    const unifiedMentionPopupRef = useRef<UnifiedMentionPopupHandle>(null);
-    const ticketPopupRef = useRef<TicketMentionPopupHandle>(null);
+    const pickerPopupRef = useRef<ReferencePickerPopupHandle>(null);
 
     useEffect(() => {
       if (
@@ -367,9 +339,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
         return;
       }
       setSlashState(null);
-      setFileState(null);
-      setUnifiedMentionState(null);
-      setTicketState(null);
+      setPickerState(null);
     }, [hotkeySnapshot.mode, hotkeySnapshot.promptId, shortcutPromptId]);
 
     useEffect(
@@ -436,73 +406,27 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
             slashPopupRef,
           }),
         }),
-        FileMention.configure({
-          items: () => [],
-          render: () => ({
-            onStart: (props) => {
-              setFileState({
-                query: props.query,
-                command: props.command as (item: FileMentionSelection) => void,
-              });
-            },
-            onUpdate: (props) => {
-              setFileState({
-                query: props.query,
-                command: props.command as (item: FileMentionSelection) => void,
-              });
-            },
-            onExit: () => {
-              setFileState(null);
-            },
+        ReferencePicker.configure({
+          hasAnyMatch: (query) => {
+            const data = pickerDataRef.current;
+            if (data === null) return true;
+            return pickerHasAnyMatch({
+              query,
+              trigger: "#",
+              scope: "all",
+              drillScope: "all",
+              context: data.context,
+              files: data.files,
+              canOpenDocuments: data.canOpenDocuments,
+            });
+          },
+          render: (trigger) => ({
+            onStart: (suggestion) => setPickerState({ ...suggestion, trigger }),
+            onUpdate: (suggestion) =>
+              setPickerState({ ...suggestion, trigger }),
+            onExit: () => setPickerState(null),
             onKeyDown: ({ event }) =>
-              filePopupRef.current?.handleKeyDown(event) ?? false,
-          }),
-        }),
-        UnifiedMention.configure({
-          items: ({ query }) =>
-            getUnifiedMentionGroups(query, pickerContextRef.current),
-          render: () => ({
-            onStart: (props) => {
-              setUnifiedMentionState({
-                query: props.query,
-                command: props.command,
-              });
-            },
-            onUpdate: (props) => {
-              setUnifiedMentionState({
-                query: props.query,
-                command: props.command,
-              });
-            },
-            onExit: () => {
-              setUnifiedMentionState(null);
-            },
-            onKeyDown: ({ event }) =>
-              unifiedMentionPopupRef.current?.handleKeyDown(event) ?? false,
-          }),
-        }),
-        TicketShortcut.configure({
-          items: () => [],
-          render: () => ({
-            onStart: (props) => {
-              setTicketState({
-                query: props.query,
-                command: props.command as (
-                  item: TicketMentionSelection,
-                ) => void,
-              });
-            },
-            onUpdate: (props) => {
-              setTicketState({
-                query: props.query,
-                command: props.command as (
-                  item: TicketMentionSelection,
-                ) => void,
-              });
-            },
-            onExit: () => setTicketState(null),
-            onKeyDown: ({ event }) =>
-              ticketPopupRef.current?.handleKeyDown(event) ?? false,
+              pickerPopupRef.current?.handleKeyDown(event) ?? false,
           }),
         }),
         TerminalHotkeys.configure({
@@ -518,7 +442,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
           "data-testid": "prompt-input",
           "data-cc-prompt-id": shortcutPromptId,
           "aria-keyshortcuts":
-            "Control+; Control+. Control+Shift+. Meta+Enter Control+Enter Control+A Control+E Control+U Control+K Control+W Alt+B Alt+F Alt+D",
+            "Control+; Control+. Control+Shift+. Meta+Enter Control+Enter Control+A Control+E Control+U Control+K Control+W Alt+B Alt+F Alt+D Alt+A",
           ...(id ? { id } : {}),
           ...(ariaLabel ? { "aria-label": ariaLabel } : {}),
         },
@@ -611,36 +535,22 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
             onClose={() => setSlashState(null)}
           />
         ) : null}
-        {fileState && projectName ? (
-          <PromptEditorFileMentionPopup
-            ref={filePopupRef}
-            query={fileState.query}
-            projectName={projectName}
+        {pickerState && projectName ? (
+          <ReferencePickerPopup
+            // Remounting per trigger is what makes the prefix key preselect a
+            // scope: a fresh `!` starts on Tickets even after a Tab to Files.
+            key={pickerState.trigger}
+            ref={pickerPopupRef}
+            trigger={pickerState.trigger}
+            query={pickerState.query}
+            currentProjectName={projectName}
             scopeRef={scopeRef}
-            onSelect={(selection) => fileState.command(selection)}
-            onClose={() => setFileState(null)}
-          />
-        ) : null}
-        {unifiedMentionState && projectName ? (
-          <UnifiedMentionPopup
-            ref={unifiedMentionPopupRef}
-            query={unifiedMentionState.query}
-            currentProjectName={projectName}
             currentConversationId={conversationId ?? null}
-            onSelect={(selection) => unifiedMentionState.command(selection)}
-            onClose={() => setUnifiedMentionState(null)}
-            onPickerContextChange={(context) => {
-              pickerContextRef.current = context;
-            }}
-          />
-        ) : null}
-        {ticketState && projectName ? (
-          <PromptEditorTicketMentionPopup
-            ref={ticketPopupRef}
-            query={ticketState.query}
-            currentProjectName={projectName}
-            onSelect={(selection) => ticketState.command(selection)}
-            onClose={() => setTicketState(null)}
+            onSelect={(selection) => pickerState.select(selection)}
+            onComplete={(text) => pickerState.complete(text)}
+            isCaretAtQueryEnd={() => pickerState.isCaretAtQueryEnd()}
+            onClose={() => setPickerState(null)}
+            onDataChange={capturePickerData}
           />
         ) : null}
         <EditorContent

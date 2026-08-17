@@ -343,13 +343,11 @@
   --cc-black-a20: rgba(0, 0, 0, 0.2); /* toast drop-shadow 2nd layer */
   --cc-black-a40: rgba(0, 0, 0, 0.4); /* dev-server mobile backdrop scrim */
   --cc-green-a12: rgba(0, 230, 118, 0.12); /* autocomplete skill-badge fill */
-  --cc-surface-a85: rgba(
-    17,
-    24,
-    37,
-    0.85
-  ); /* autocomplete popup translucent surface */
-  --cc-surface-a95: rgba(17, 24, 37, 0.95); /* autocomplete header/footer bg */
+  /* Translucent surface pair, unreferenced since the autocomplete popups went
+     opaque (transcript text bled through the rows). Retained as the named
+     values for a translucent surface over --bg-base. */
+  --cc-surface-a85: rgba(17, 24, 37, 0.85);
+  --cc-surface-a95: rgba(17, 24, 37, 0.95);
   --cc-white-a04: rgba(
     255,
     255,

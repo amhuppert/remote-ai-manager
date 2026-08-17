@@ -80,6 +80,54 @@ describe("filterAndScoreTickets", () => {
     expect(result.items[0]?.titleMatchIndices).toEqual([7, 8, 9, 10]);
   });
 
+  it("withholds done and closed tickets by default and counts them", () => {
+    const items = [
+      ticket({ id: "active", title: "Match live", status: "in_progress" }),
+      ticket({ id: "blocked", title: "Match stuck", status: "blocked" }),
+      ticket({ id: "done", title: "Match shipped", status: "done" }),
+      ticket({ id: "closed", title: "Match dropped", status: "closed" }),
+    ];
+
+    const result = filterAndScoreTickets("match", items, {
+      currentProjectName: "alpha",
+    });
+
+    expect(result.items.map(({ item }) => item.id)).toEqual([
+      "active",
+      "blocked",
+    ]);
+    expect(result.totalCount).toBe(2);
+    expect(result.hiddenDoneCount).toBe(2);
+  });
+
+  it("includes done and closed tickets when asked, ranked last", () => {
+    const items = [
+      ticket({ id: "done", title: "Match shipped", status: "done" }),
+      ticket({ id: "active", title: "Match live", status: "in_progress" }),
+    ];
+
+    const result = filterAndScoreTickets("match", items, {
+      currentProjectName: "alpha",
+      includeDone: true,
+    });
+
+    expect(result.items.map(({ item }) => item.id)).toEqual(["active", "done"]);
+    expect(result.hiddenDoneCount).toBe(0);
+  });
+
+  it("counts only tickets the query matched as hidden", () => {
+    const result = filterAndScoreTickets(
+      "shipped",
+      [
+        ticket({ id: "done-match", title: "Match shipped", status: "done" }),
+        ticket({ id: "done-other", title: "Unrelated", status: "done" }),
+      ],
+      { currentProjectName: "alpha" },
+    );
+
+    expect(result.hiddenDoneCount).toBe(1);
+  });
+
   it("caps displayed results while preserving the total match count", () => {
     const items = Array.from({ length: MAX_DISPLAY_TICKETS + 5 }, (_, index) =>
       ticket({ id: `t-${index}`, title: `Match ${index}`, number: index + 1 }),

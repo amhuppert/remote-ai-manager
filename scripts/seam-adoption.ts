@@ -813,7 +813,7 @@ export const SEAMS: readonly SeamDefinition[] = [
   {
     id: "internal-vi-mocks",
     title: "Internal non-infrastructure vi.mock calls",
-    reviewedCeiling: 68,
+    reviewedCeiling: 67,
     unit: "vi.mock calls on internal modules outside the infra allowlist",
     corpus:
       "src/**/*.test.{ts,tsx}. Infrastructure allowlist (steering): @/lib/logging and the sdk-env module (@/lib/sdk-env, located at src/lib/shared/sdk-env). External-package mocks do not count. Migration-only survivor floor (ceiling > 0 while unmigrated tests remain; target 0): per D20 the ~100+ internal vi.mock sites are not sloppiness but the signal of a MISSING client-test seam — engineering-principles forbids mocking internal modules, and the sanctioned replacement is fetch-level fakes + an injectable query client (installFetchFixture / renderWithQuery). Every surviving count is migration-only debt: a test still replacing an internal module instead of running the real hook/store over the fetch fixture. Deletion condition (per test file): a mock drops when its test is rewritten onto the sanctioned client-test seam (D20) — real React Query, real fetcher validation, real Zod schemas, real Zustand store — faking only the network boundary. The floor reaches 0 (and the seam retires) when the last non-infrastructure vi.mock is migrated; until then the reviewed count is the migration-only backlog, ratcheted down as each test moves. The allowlist is empty by design: only the two module-load-time infrastructure prefixes (encoded in VI_MOCK_INFRA_PREFIXES) are ever exempt, so any NEW internal vi.mock still fails the ratchet.",

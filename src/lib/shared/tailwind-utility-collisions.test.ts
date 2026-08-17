@@ -189,7 +189,6 @@ const UTILITY_FIRST_PATHS = [
   // render through — utility-first by design, like the two host files above.
   `${path.sep}components${path.sep}FileAutocompleteListView.tsx`,
   `${path.sep}components${path.sep}ConversationAutocompleteList.tsx`,
-  `${path.sep}components${path.sep}TicketAutocompleteList.tsx`,
   // DevServerDrawer + DevServersButton are utility-first; their only CSS is the
   // ds-panel-in/ds-sheet-in entry keyframes in globals.css (preserved-CSS).
   `${path.sep}components${path.sep}DevServerDrawer.tsx`,

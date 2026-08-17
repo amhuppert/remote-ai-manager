@@ -13,9 +13,42 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, act, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PromptEditorSlashCommandPopup } from "@/components/session/prompt/PromptEditorSlashCommandPopup";
-import { PromptEditorFileMentionPopup } from "@/components/session/prompt/PromptEditorFileMentionPopup";
+import { createReferencePickerPopup } from "@/components/session/prompt/ReferencePickerPopup";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { useProjectFilesQuery } from "@/lib/files/queries";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
+
+/**
+ * The file scan is the subject, so it keeps its real query hook; the picker's
+ * other sources are stubbed to keep unrelated networks out of the assertions.
+ */
+const idle = { isLoading: false, isError: false, error: null } as const;
+const FilesPicker = createReferencePickerPopup({
+  useAllConversations: () => ({ data: { items: [], totalCount: 0 }, ...idle }),
+  useTickets: () => ({ data: [], ...idle }),
+  useSpecs: () => ({ data: [], ...idle }),
+  useFiles: ({ projectName, scopeRef }) =>
+    useProjectFilesQuery(
+      scopeRef.scope === "project"
+        ? { projectName }
+        : { projectName, sessionName: scopeRef.sessionName },
+    ),
+});
+
+function filesPicker() {
+  return (
+    <FilesPicker
+      trigger="@"
+      query=""
+      currentProjectName="proj"
+      scopeRef={PROJECT_SCOPE}
+      currentConversationId="plc-1"
+      onSelect={vi.fn()}
+      onComplete={vi.fn()}
+      isCaretAtQueryEnd={() => true}
+    />
+  );
+}
 
 // The composer is handed the session-keyed storage name; for a project
 // conversation that name IS the sentinel.
@@ -107,21 +140,12 @@ describe("project conversation composer discovery", () => {
 
   it("requests the project-root file scan and renders its results", async () => {
     await act(async () => {
-      render(
-        withQuery(
-          <PromptEditorFileMentionPopup
-            query=""
-            projectName="proj"
-            scopeRef={PROJECT_SCOPE}
-            onSelect={vi.fn()}
-          />,
-        ),
-      );
+      render(withQuery(filesPicker()));
     });
 
     await waitFor(() => {
       expect(
-        screen.getByText((_, el) => el?.textContent === "src/app/page.tsx"),
+        screen.getByRole("row", { name: /src\/app\/page\.tsx/ }),
       ).toBeInTheDocument();
     });
     expect(requested).toContain("/api/projects/proj/files");
@@ -170,12 +194,7 @@ describe("project conversation composer discovery", () => {
               backend="claude"
               onSelect={vi.fn()}
             />
-            <PromptEditorFileMentionPopup
-              query=""
-              projectName="proj"
-              scopeRef={PROJECT_SCOPE}
-              onSelect={vi.fn()}
-            />
+            {filesPicker()}
           </>,
         ),
       );
