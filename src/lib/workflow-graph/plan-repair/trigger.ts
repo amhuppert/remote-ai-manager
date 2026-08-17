@@ -26,7 +26,14 @@ export type PlanRepairHaltType =
   // Drift on a shared lane (lightweight parallelism R8). Repairable for the
   // same reason it is resumable: the fix is an ownership widening on a context
   // through `update-context`, which is already in the repair agent's vocabulary.
-  | "ownership_violation";
+  | "ownership_violation"
+  // A blocking validator seat refused the CONTRACT rather than the work. The
+  // only halt here that is not retry exhaustion: nothing was retried, because
+  // the reviewed context has no task that could remedy what was found. It is
+  // admitted under the SAME gates as the rest — a defect the plan cannot
+  // answer would otherwise re-trip on every resume, and the caps are what stop
+  // a repair→resume→trip cycle.
+  | "plan_defect";
 
 export type PlanRepairTriggerVerdict =
   | {
@@ -139,7 +146,8 @@ export function evaluatePlanRepairTrigger(
     haltReason.type !== "circuit_breaker" &&
     haltReason.type !== "max_iterations" &&
     haltReason.type !== "loop_limit_reached" &&
-    haltReason.type !== "ownership_violation"
+    haltReason.type !== "ownership_violation" &&
+    haltReason.type !== "plan_defect"
   ) {
     return { eligible: false, reason: "halt_kind" };
   }

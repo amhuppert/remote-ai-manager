@@ -33,6 +33,7 @@ import type { ValidatorAuthority } from "@/lib/workflow-graph/config-schemas";
 import type {
   WorkflowValidatorAdvisory,
   WorkflowValidatorIssue,
+  WorkflowValidatorPlanDefect,
 } from "@/lib/workflow-graph/definition-schemas";
 import type {
   GraphWorkflowValidationReviewArtifact,
@@ -53,6 +54,19 @@ import type { GraphWorkflowContextValidationOutcome } from "./execution-validati
  * (R5.4).
  */
 export type CohortFinding = WorkflowValidatorIssue & { assignmentId: string };
+
+/**
+ * A plan defect, carrying WHO raised it — stamped for the same reason a finding
+ * is, at the same point.
+ *
+ * Attribution matters more here than for a finding, not less: a defect names no
+ * task, so the seat that raised it is the only handle anything downstream has on
+ * it. Plan repair reads the assignment to judge the claim, and an aggregate of
+ * two seats' defects would otherwise read as one reviewer restating itself.
+ */
+export type CohortPlanDefect = WorkflowValidatorPlanDefect & {
+  assignmentId: string;
+};
 
 /** A lane waiting on a human answer, and the batch it is waiting on. */
 export interface CohortParkedLane {
@@ -107,7 +121,7 @@ export type CohortDispatchOutcome =
 /** What a lane can report that is not infrastructure noise. */
 type CohortVerdictOutcome = Extract<
   GraphWorkflowContextValidationOutcome,
-  { kind: "pass" | "fail" | "candidate_mismatch" }
+  { kind: "pass" | "fail" | "candidate_mismatch" | "plan_defect" }
 >;
 
 /**
@@ -178,6 +192,12 @@ export interface CohortLaneProgress {
    * this progress into a round it knows the `seq` of.
    */
   advisories?: WorkflowValidatorAdvisory[];
+  /**
+   * This lane's plan defects, as it reported them. Written beside the issues
+   * because a defect is the same kind of fact — what one seat said about this
+   * candidate — and the record groups both by the seat that said it.
+   */
+  planDefects?: WorkflowValidatorPlanDefect[];
   questionToken?: string | null;
   /**
    * The verdict's provenance, carried alongside the state change so the write
@@ -248,7 +268,14 @@ function settlementState(
   switch (settlement.kind) {
     case "pass":
       return "verdict_pass";
+    // A plan defect is a REVIEW outcome, and the seat that raised it refused
+    // this candidate — so it records as the rejection it is rather than as an
+    // infrastructure failure the round would retry. It is told apart from an
+    // ordinary rejection by the defects stored beside it, not by a state of its
+    // own: a lane state no existing surface could render would show an operator
+    // an enum name where a verdict belongs.
     case "fail":
+    case "plan_defect":
       return "verdict_fail";
     case "asked_user":
       return "parked";
@@ -275,6 +302,26 @@ function progressForSettlement(
       advisories: settlement.advisories ?? [],
       verdict: {
         pass: settlement.kind === "pass",
+        sessionRef: settlement.sessionRef ?? null,
+        reviewArtifact: settlement.reviewArtifact ?? null,
+      },
+    };
+  }
+  if (settlement.kind === "plan_defect") {
+    // The defects travel with the same write that accepts the verdict, so a
+    // round reloaded after a crash still says WHAT the seat refused rather than
+    // only that it refused something. `pass: false` for the same reason the
+    // state is `verdict_fail`: the seat did not certify this candidate.
+    return {
+      assignmentId,
+      attempts,
+      state,
+      summary: settlement.summary,
+      issues: settlement.issues,
+      advisories: settlement.advisories ?? [],
+      planDefects: settlement.planDefects,
+      verdict: {
+        pass: false,
         sessionRef: settlement.sessionRef ?? null,
         reviewArtifact: settlement.reviewArtifact ?? null,
       },
@@ -414,6 +461,27 @@ export type CohortConclusion =
       verdicts: CohortLane[];
     }
   /**
+   * A blocking seat refused the CONTRACT rather than the work: no task in this
+   * context can remedy what it found.
+   *
+   * There is no `reopenTaskIds` field, and that absence is the design. The
+   * round's issues are here as EVIDENCE of what the cohort saw; deriving a
+   * reopen from them would hand an implementer the unfair turn — fix a
+   * contract you have no authority over — that this conclusion exists to stop.
+   */
+  | {
+      kind: "plan_defect";
+      summary: string;
+      /** Every defecting seat's defects, contiguous and in cohort order. */
+      planDefects: CohortPlanDefect[];
+      /** Every blocking seat's findings, evidence only, in cohort order. */
+      issues: CohortFinding[];
+      sessionRef: CohortRef["sessionRef"];
+      reviewArtifact: CohortRef["reviewArtifact"];
+      /** The lanes that rendered ordinary verdicts, in cohort order. */
+      verdicts: CohortLane[];
+    }
+  /**
    * At least one lane is waiting on a human answer. The round does not
    * conclude: a parked lane has not reported, so nothing may be recorded for
    * the round yet. Every parked lane is named — answers are routed per lane, so
@@ -472,13 +540,23 @@ interface CohortRef {
  *  2. a parked specialist has not reported, so "every non-infra-failed
  *     specialist has reported" is false and no verdict can conclude yet — the
  *     round stays open around the wait rather than ending on the siblings;
- *  3. any rejection concludes the round semantically — the infra-failed
+ *  3. a plan defect outranks a rejection, because the two prescribe opposite
+ *     reactions and only one of them can be right: reopening tasks for a
+ *     sibling's issues while the contract those tasks answer to is itself
+ *     defective is the loop this response exists to escape. The issues are kept
+ *     as evidence of what the cohort saw, never as an instruction;
+ *  4. any rejection concludes the round semantically — the infra-failed
  *     specialists simply run again next round, because remediation does not
  *     need their opinion to know the work is going back;
- *  4. no rejection plus an exhausted required specialist cannot conclude;
- *  5. otherwise every specialist passed.
+ *  5. no rejection plus an exhausted required specialist cannot conclude;
+ *  6. otherwise every specialist passed.
  *
- * Authority partitions rules 3 and 4 and nothing else. Steps 1 and 2 are about
+ * A defect also outranks an unheard specialist (rule 5): nothing a silent
+ * reviewer could have said would make a defective contract satisfiable, so
+ * holding the round open for it would buy an answer that cannot change the
+ * outcome.
+ *
+ * Authority partitions rules 3, 4 and 5 and nothing else. Steps 1 and 2 are about
  * the CANDIDATE and about a human being waited on — neither becomes untrue
  * because the lane that surfaced it cannot reject work — so every lane still
  * counts there. An advisory lane contributes its verdict, its summary, and its
@@ -525,6 +603,45 @@ export function concludeCohort(lanes: readonly CohortLane[]): CohortConclusion {
   const blockingVerdicts = verdicts.filter(
     (lane) => lane.authority === "blocking",
   );
+  const defected = blocking.filter(
+    (lane) => lane.settlement.kind === "plan_defect",
+  );
+
+  if (defected.length > 0) {
+    const planDefects: CohortPlanDefect[] = [];
+    const evidence: CohortFinding[] = [];
+    // Grouped by assignment exactly as findings are: contiguous, in cohort
+    // order, each carrying the seat that raised it. A defect names no task, so
+    // its seat is the only handle plan repair has on where it came from.
+    for (const lane of blocking) {
+      if (lane.settlement.kind === "plan_defect") {
+        planDefects.push(...lane.settlement.planDefects);
+      }
+      if (
+        lane.settlement.kind === "plan_defect" ||
+        lane.settlement.kind === "fail"
+      ) {
+        // A rejection's findings ride along with the defect rather than
+        // deciding the round: they say what the cohort saw, and while the
+        // contract stands accused nothing may turn them into a reopen.
+        evidence.push(...lane.settlement.issues);
+      }
+    }
+    const last = lastRef(defected, "plan_defect");
+    return {
+      kind: "plan_defect",
+      // Every lane that reported, defecting ones included: a reader of the
+      // halt needs the whole round's reading of the candidate, not only the
+      // seats that rendered an ordinary verdict.
+      summary: joinSummaries(lanes),
+      planDefects,
+      issues: evidence,
+      sessionRef: last.sessionRef,
+      reviewArtifact: last.reviewArtifact,
+      verdicts,
+    };
+  }
+
   const rejected = blockingVerdicts.some(
     (lane) => lane.settlement.kind === "fail",
   );
@@ -590,11 +707,13 @@ export function concludeCohort(lanes: readonly CohortLane[]): CohortConclusion {
   };
 }
 
-/** Every verdict's summary, in cohort order. */
+/** Every reported summary, in cohort order. */
 function joinSummaries(lanes: readonly CohortLane[]): string {
   return lanes
     .map((lane) =>
-      lane.settlement.kind === "pass" || lane.settlement.kind === "fail"
+      lane.settlement.kind === "pass" ||
+      lane.settlement.kind === "fail" ||
+      lane.settlement.kind === "plan_defect"
         ? lane.settlement.summary
         : "",
     )
@@ -609,7 +728,7 @@ function joinSummaries(lanes: readonly CohortLane[]): string {
  */
 function lastRef(
   lanes: readonly CohortLane[],
-  kind: "pass" | "fail",
+  kind: "pass" | "fail" | "plan_defect",
 ): CohortRef {
   for (let index = lanes.length - 1; index >= 0; index -= 1) {
     const settlement = lanes[index]!.settlement;

@@ -225,6 +225,10 @@ const HALT_RESUMABILITY: Record<GraphWorkflowHaltReason["type"], boolean> = {
   // write, or removal of the write, and then resume. Nothing about the halt is
   // terminal — the lane worktree and every member's work are intact.
   ownership_violation: true,
+  // A refused CONTRACT is resumable for the same reason it reopens nothing: the
+  // reviewed work is intact and the remedy is a repair of the plan the defect
+  // names — plan repair's edit, or an operator's — followed by resume.
+  plan_defect: true,
   aborted: false,
   recovery_error: false,
 };

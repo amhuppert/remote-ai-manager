@@ -26,6 +26,7 @@ import {
   type CohortLane,
   type CohortLaneProgress,
   type CohortParkedLane,
+  type CohortPlanDefect,
   type RetainedCohortLane,
 } from "./validation-cohort";
 import type { ValidatorOutcome, ValidatorRunResult } from "./validator-runner";
@@ -251,6 +252,26 @@ export type GraphWorkflowContextValidationOutcome =
       /** Each member's own verdict, in cohort order. */
       specialists?: CohortSpecialistVerdict[];
     } & LaneAdvisories)
+  // A blocking seat refused the CONTRACT rather than the work: it found
+  // something no task in this context can remedy. Deliberately absent here —
+  // and absent on the lane settlement it is built from — is any reopen list:
+  // the engine's reaction is to preserve the candidate and route the finding to
+  // plan repair, and an outcome that could name tasks would let the reopen loop
+  // this response exists to escape start again from the same verdict.
+  //
+  // `issues` rides along as EVIDENCE of what the cohort saw. Nothing derives a
+  // reopen from it while the defect stands.
+  | ({
+      kind: "plan_defect";
+      summary: string;
+      feedback: string;
+      planDefects: CohortPlanDefect[];
+      issues: CohortFinding[];
+      sessionRef?: GraphWorkflowValidationSessionRef | null;
+      reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
+      /** Each member's own ordinary verdict, in cohort order. */
+      specialists?: CohortSpecialistVerdict[];
+    } & LaneAdvisories)
   // One specialist spent every admitted attempt on infrastructure failures. Not
   // a verdict: the round it belongs to cannot conclude on it, so the engine
   // halts resumably with the settled verdicts retained rather than publishing an
@@ -351,6 +372,36 @@ function formatFeedback(
 }
 
 /**
+ * A plan defect in the words a halt shows an operator: what the seat refused,
+ * why it says no task here can fix it, and which contract it conflicts with.
+ *
+ * The reopen block that `formatFeedback` renders is absent by construction —
+ * there is no task list to render, and the findings that follow are labelled
+ * evidence so nobody reads them as one.
+ */
+function formatPlanDefectFeedback(
+  summary: string,
+  planDefects: readonly CohortPlanDefect[],
+  issues: readonly WorkflowValidatorIssue[],
+): string {
+  return [
+    "Context validation reported a plan defect; no task was reopened.",
+    summary,
+    ...planDefects.flatMap((defect) => [
+      `- ${defect.title}: ${defect.description}`,
+      `  Not locally remediable: ${defect.whyNotLocallyRemediable}`,
+      `  Conflicting contract: ${defect.conflictingContract}`,
+    ]),
+    ...(issues.length > 0
+      ? [
+          "Findings raised alongside the defect (evidence, not remediation):",
+          ...issues.map((issue) => `- ${issue.title}: ${issue.description}`),
+        ]
+      : []),
+  ].join("\n");
+}
+
+/**
  * The verdict lanes as publishable entries, in the cohort order the conclusion
  * assembled them in. Non-verdict lanes are absent by construction — the
  * conclusion only ever collects lanes that actually reported.
@@ -434,6 +485,32 @@ function mapRunnerOutcomeToContextOutcome(
       kind: "queue_admission_timeout",
       message: outcome.message,
       engine: outcome.engine,
+    };
+  }
+
+  if (outcome.kind === "plan_defect") {
+    const summary = attributeSummary(outcome.summary, assignmentId, cohortSize);
+    // Both stamped HERE, at the only point that knows which assignment
+    // produced them, for the reason a finding is: a validator writes about the
+    // work rather than about itself (R5.4). A defect needs it more than a
+    // finding does — it names no task, so the seat is the only handle plan
+    // repair has on where the claim came from.
+    const planDefects: CohortPlanDefect[] = outcome.planDefects.map(
+      (defect) => ({ ...defect, assignmentId }),
+    );
+    const issues: CohortFinding[] = outcome.issues.map((issue) => ({
+      ...issue,
+      assignmentId,
+    }));
+    return {
+      kind: "plan_defect",
+      summary,
+      feedback: formatPlanDefectFeedback(summary, planDefects, issues),
+      planDefects,
+      issues,
+      advisories: outcome.advisories,
+      sessionRef: metadata.sessionRef,
+      reviewArtifact: metadata.reviewArtifact,
     };
   }
 
@@ -642,6 +719,23 @@ export function createGraphWorkflowValidationService(
       };
     }
 
+    if (conclusion.kind === "plan_defect") {
+      return {
+        kind: "plan_defect",
+        summary: conclusion.summary,
+        feedback: formatPlanDefectFeedback(
+          conclusion.summary,
+          conclusion.planDefects,
+          conclusion.issues,
+        ),
+        planDefects: conclusion.planDefects,
+        issues: conclusion.issues,
+        sessionRef: conclusion.sessionRef ?? null,
+        reviewArtifact: conclusion.reviewArtifact ?? null,
+        specialists: toSpecialistVerdicts(conclusion.verdicts),
+      };
+    }
+
     if (conclusion.kind === "unconcluded") {
       return {
         kind: "infra_exhausted",
@@ -796,6 +890,25 @@ export function createGraphWorkflowValidationService(
         assignmentId: validator.id,
         kind: outcome.kind,
         questionBatchId: outcome.questionBatchId,
+      });
+    } else if (outcome.kind === "plan_defect") {
+      execLogger?.validation(input.contextId, "context_validation.completed", {
+        assignmentId: validator.id,
+        kind: outcome.kind,
+        summary: outcome.summary,
+        planDefectCount: outcome.planDefects.length,
+        issueCount: outcome.issues.length,
+        // Stated rather than omitted: this is the one verdict shape that
+        // reopens nothing, and a reader of the log should not have to infer it
+        // from a missing field.
+        reopenTaskIds: [],
+      });
+      validationLogger.warn("graph-workflow.context_validation.completed", {
+        executionId: input.execution.id,
+        contextId: input.contextId,
+        assignmentId: validator.id,
+        kind: outcome.kind,
+        planDefectCount: outcome.planDefects.length,
       });
     } else if (outcome.kind === "pass" || outcome.kind === "fail") {
       execLogger?.validation(input.contextId, "context_validation.completed", {

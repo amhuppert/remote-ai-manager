@@ -302,3 +302,83 @@ describe("ContextHaltCard circuit-breaker conditions", () => {
     expect(onEditSchema).toHaveBeenCalledWith("context-build");
   });
 });
+
+describe("ContextHaltCard plan-defect presentation", () => {
+  const planDefectHalt: GraphWorkflowHaltReason = {
+    type: "plan_defect",
+    contextId: "context-plan",
+    roundSeq: 2,
+    summary: null,
+    planDefects: [
+      {
+        assignmentId: "seat-contract",
+        title: "Criterion 3 requires a schema this context never owns",
+        description: "The criterion names src/lib/foo/schemas.ts.",
+        whyNotLocallyRemediable:
+          "No task in context-plan may write that module.",
+        conflictingContract: "acceptance criterion 3",
+      },
+      {
+        assignmentId: "seat-scope",
+        title: "The charter's non-goals exclude the migration task 2 assumes",
+        description: "Task 2 assumes a migration the charter forbids.",
+        whyNotLocallyRemediable: "The exclusion is a charter clause.",
+        conflictingContract: "charter non-goal 1",
+      },
+    ],
+  };
+
+  it("leads with the finding and never leaks the halt-reason enum", () => {
+    render(<ContextHaltCard primary={planDefectHalt} />);
+
+    expect(
+      screen.getByText(
+        /Plan defect in "context-plan" — 2 blocking finding\(s\)/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Criterion 3 requires a schema this context never owns/,
+      ),
+    ).toBeInTheDocument();
+    // The contract clause is the locator, and it takes the same amber `<code>`
+    // recipe the path halts use.
+    const locator = screen.getByText("acceptance criterion 3");
+    expect(locator.tagName).toBe("CODE");
+    expect(screen.getByText("charter non-goal 1").tagName).toBe("CODE");
+    expect(screen.queryByText(/plan_defect/)).not.toBeInTheDocument();
+  });
+
+  it("names the plan as the thing to repair and says nothing was reopened", () => {
+    render(<ContextHaltCard primary={planDefectHalt} />);
+
+    // A plan defect charges no attempt and reopens no task, so an action that
+    // reads like the retry halts would send the operator to re-run the work.
+    expect(
+      screen.getByText(
+        /Repair the plan the finding names — the contract, not the work/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert").dataset["tone"]).toBe("attention");
+  });
+
+  it("replaces the generic remedy with the plan-repair supervisor's verdict once it has spoken", () => {
+    render(
+      <ContextHaltCard
+        primary={{
+          ...planDefectHalt,
+          summary: "Plan repair declined: the defect is locally remediable.",
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "Plan repair declined: the defect is locally remediable.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Repair the plan the finding names/),
+    ).not.toBeInTheDocument();
+  });
+});

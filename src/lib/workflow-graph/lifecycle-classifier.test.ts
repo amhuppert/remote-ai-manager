@@ -605,6 +605,27 @@ describe("halt resumability and the lease it decides", () => {
       attempts: 2,
       message: "could not read the candidate tree",
     },
+    // A blocking seat refused the CONTRACT. Resumable by construction: the
+    // remedy is a plan repair (or an operator's own edit) of the contract the
+    // defect names, followed by resume — the reviewed work is untouched and
+    // every seat's verdict is still on the open round.
+    plan_defect: {
+      type: "plan_defect",
+      contextId: "ctx-1",
+      roundSeq: 4,
+      planDefects: [
+        {
+          assignmentId: "general",
+          title: "The criterion names work this context does not own",
+          description:
+            "Criterion 2 requires the downstream publisher to change, and nothing here may touch it.",
+          whyNotLocallyRemediable:
+            "Every task in this context is scoped to the reader; the publisher belongs to a later context.",
+          conflictingContract: "Acceptance criterion 2",
+        },
+      ],
+      summary: null,
+    },
     validator_infra_error: {
       type: "validator_infra_error",
       contextId: "ctx-1",

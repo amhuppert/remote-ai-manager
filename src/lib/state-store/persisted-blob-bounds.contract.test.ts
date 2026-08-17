@@ -153,7 +153,7 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
       "contextStates.*.pendingUserInputs.**":
         "bounded: at most one in-flight AskUserQuestion set per LANE of the context (keyed by lane key: the one implementer plus the context's author-fixed validator cohort), each snapshotted at park with its recorded answers and cleared on resume or withdraw. In graph_workflow_executions.runtime_json.",
       "contextStates.*.validationRound.**":
-        "bounded: exactly one latest validation round per context; a concluded round is retained for monotonic sequence numbering until the next round replaces it. Its roster and per-assignment specialist map are sized by the context's author-fixed validator cohort, and each specialist's issues, session ref, and review artifact come from one validator turn — none of it is a series that grows across rounds. In graph_workflow_executions.runtime_json.",
+        "bounded: exactly one latest validation round per context; a concluded round is retained for monotonic sequence numbering until the next round replaces it. Its roster and per-assignment specialist map are sized by the context's author-fixed validator cohort, and each specialist's issues, plan defects, session ref, and review artifact come from one validator turn — none of it is a series that grows across rounds. In graph_workflow_executions.runtime_json.",
       "contextStates.*.validationRound.specialists.*.sessionRef.backend":
         "tracked: opaque only to this walker — the backend id of the lane that rendered the verdict, shape-validated (a non-empty registry key) because backend membership is resolved by the registry rather than by this schema. A short token, not a payload and not a series. In graph_workflow_executions.runtime_json.",
       "contextStates.*.validationRound.specialists.*.reviewArtifact.backend":
@@ -274,6 +274,8 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: a single pending halt descriptor, same shape and same one-halt bound as haltReason.",
       "event.secondaryHaltReasons.**":
         "bounded: one halt descriptor per halted secondary lane, so at most the execution-lane count.",
+      "event.defects":
+        "bounded: the plan defects of ONE halt, written once when that halt is raised and never appended to — the seats that can raise one are the reviewed context's author-fixed blocking validator assignments, each reporting once per round. Only the seat, title, and conflicting contract are carried; the defect's full reasoning stays on the halt descriptor above.",
       // --- routing verdicts (D4) ---
       "event.edgeEvaluations":
         "bounded: one verdict per incoming edge of the skipped context, written once when the skip settles; `skipped` is terminal, so the row is never revised.",

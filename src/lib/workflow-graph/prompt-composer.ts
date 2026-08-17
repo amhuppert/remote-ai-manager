@@ -48,9 +48,17 @@ function downstreamContextIds(
   return downstream;
 }
 
+/**
+ * The cohort derives from the working definition alone, so it renders for every
+ * context validation. Only its first paragraph is projection-conditional: it
+ * cites the Spec ownership section, which exists solely under a spec claims
+ * projection, and a plain run must not carry a reference to a section it was
+ * never given.
+ */
 function renderValidatorDeferralCohort(
   execution: GraphWorkflowExecution,
   contextId: string,
+  hasPromptProjection: boolean,
 ): string {
   const authoredContexts = execution.workingDefinition.executionContexts;
   if (!authoredContexts.some((context) => context.id === contextId)) {
@@ -65,8 +73,12 @@ function renderValidatorDeferralCohort(
 
   return [
     "## Acceptance-criteria cohort for deferral checks",
-    "The authoritative Spec ownership section above decides criterion assignment. Do not fail this context for criterion work assigned only to another claimant. A stable authored claimant may be a dynamic orchestrator accountable for generated or loop work; honor that ownership without tracing generated children or loop instances.",
-    "",
+    ...(hasPromptProjection
+      ? [
+          "The authoritative Spec ownership section above decides criterion assignment. Do not fail this context for criterion work assigned only to another claimant. A stable authored claimant may be a dynamic orchestrator accountable for generated or loop work; honor that ownership without tracing generated children or loop instances.",
+          "",
+        ]
+      : []),
     "Ownership alone never authorizes a production-capability deferral. Missing production wiring may be deferred only to a graph-downstream owner, and only when either the current context's acceptance criteria explicitly name that downstream owner for the obligation, or the downstream owner's acceptance criteria below contain the matching obligation. A claim, context title, graph edge, or vague downstream reference is not enough. If neither route is present, raise an issue for the missing production call path.",
     "",
     "This is the current and graph-downstream authored acceptance-criteria cohort, not a wiring table. Upstream or unrelated claimants remain ownership-visible but cannot authorize a future production handoff:",
@@ -89,11 +101,11 @@ export async function composeGraphRolePrompt(
     input.executionContract ?? createRegisteredGraphExecutionContract();
   const projection =
     (await contract.loadPromptProjection?.(input.execution)) ?? null;
-  if (projection === null) return input.prompt;
+  const projected =
+    projection === null ? null : renderGraphRolePromptProjection(projection);
 
-  const projected = renderGraphRolePromptProjection(projection);
   if (input.role !== "context-validator") {
-    return `${projected}\n\n${input.prompt}`;
+    return projected === null ? input.prompt : `${projected}\n\n${input.prompt}`;
   }
   if (input.contextId === undefined) {
     throw new Error(
@@ -101,5 +113,12 @@ export async function composeGraphRolePrompt(
     );
   }
 
-  return `${projected}\n\n${renderValidatorDeferralCohort(input.execution, input.contextId)}\n\n${input.prompt}`;
+  const cohort = renderValidatorDeferralCohort(
+    input.execution,
+    input.contextId,
+    projected !== null,
+  );
+  return projected === null
+    ? `${cohort}\n\n${input.prompt}`
+    : `${projected}\n\n${cohort}\n\n${input.prompt}`;
 }

@@ -540,6 +540,40 @@ export type GraphWorkflowCircuitBreakerEvent = z.infer<
   typeof graphWorkflowCircuitBreakerEventSchema
 >;
 
+/**
+ * A blocking validator seat refused the CONTRACT and the engine halted on it
+ * (ticket #69 change 1). The only announcement this outcome makes: a plan
+ * defect reopens no task, charges no failure, and publishes no aggregate
+ * verdict, so every surface that would otherwise learn about a stopped context
+ * from a reopen or a rejection learns it here.
+ *
+ * Carries the defects in their SHORT form — who raised it, what it is, and the
+ * contract clause in conflict. The reasoning behind each one is on the halt
+ * record itself, which the operator and plan repair both read; an event log is
+ * not the place to reprint it.
+ */
+export const graphWorkflowPlanDefectHaltedEventSchema = z.object({
+  type: z.literal("graph-workflow-plan-defect-halted"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  contextId: z.string().trim().min(1),
+  /** The round that concluded on the defect; null when none was open. */
+  roundSeq: z.number().int().positive().nullable(),
+  defects: z
+    .array(
+      z.object({
+        assignmentId: z.string().trim().min(1),
+        title: z.string(),
+        conflictingContract: z.string(),
+      }),
+    )
+    .min(1),
+});
+export type GraphWorkflowPlanDefectHaltedEvent = z.infer<
+  typeof graphWorkflowPlanDefectHaltedEventSchema
+>;
+
 export const graphWorkflowSharedDocumentsUpdatedEventSchema = z.object({
   type: z.literal("graph-workflow-shared-documents-updated"),
   projectName: z.string(),
@@ -817,6 +851,9 @@ export const graphWorkflowPlanRepairEventSchema = z.object({
     // Lightweight parallelism R8: lane drift is repaired by widening a
     // member's ownership.
     "ownership_violation",
+    // A blocking validator seat's typed contract refusal, routed to repair at
+    // first detection rather than after a retry budget runs out.
+    "plan_defect",
   ]),
   /** The loop a `loop_limit_reached` round repaired; null for context halts. */
   loopGroupId: z.string().nullable().default(null),
@@ -931,6 +968,7 @@ const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
   graphWorkflowValidationSpecialistResultEventSchema,
   graphWorkflowValidationIncidentEventSchema,
   graphWorkflowCircuitBreakerEventSchema,
+  graphWorkflowPlanDefectHaltedEventSchema,
   graphWorkflowSharedDocumentsUpdatedEventSchema,
   graphWorkflowPendingHaltReasonEventSchema,
   graphWorkflowMergeStatusEventSchema,

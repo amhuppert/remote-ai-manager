@@ -25,6 +25,7 @@ import type {
   GraphWorkflowLaneCreatedEvent,
   GraphWorkflowLaneCommitEvent,
   GraphWorkflowLaneDriftHaltedEvent,
+  GraphWorkflowPlanDefectHaltedEvent,
   GraphWorkflowLaneLandedEvent,
   GraphWorkflowLaneStatusEvent,
   GraphWorkflowGraphExpandedEvent,
@@ -62,6 +63,7 @@ import { projectGraphWorkflowResultOutputs } from "@/lib/workflow-graph/context-
 
 const liveEditLogger = createLogger("workflow.live-edit");
 const laneLogger = createLogger("workflow.lanes");
+const validationLogger = createLogger("workflow.validation");
 
 function defaultBroadcast(event: GraphWorkflowSSEEvent): void {
   publishEvent(event);
@@ -477,6 +479,19 @@ function haltReasonsEqual(
         previous.attempts === next.attempts &&
         previous.message === next.message
       );
+    case "plan_defect":
+      return (
+        next.type === "plan_defect" &&
+        previous.contextId === next.contextId &&
+        previous.roundSeq === next.roundSeq &&
+        // The defects themselves are the identity: the same context can be
+        // halted again on a different finding after a repair, and only the
+        // finding tells the two apart. `summary` is excluded on purpose —
+        // plan repair writing its verdict onto a standing halt is bookkeeping
+        // about that halt (the `loop_limit_reached` precedent), never a second
+        // one to announce.
+        deepEqualJson(previous.planDefects, next.planDefects)
+      );
     case "merge_failure":
       return (
         next.type === "merge_failure" &&
@@ -657,6 +672,29 @@ function ownershipViolationReasons(
       GraphWorkflowHaltReason,
       { type: "ownership_violation" }
     > => reason?.type === "ownership_violation",
+  );
+}
+
+/**
+ * Every plan-defect halt an execution is carrying, wherever it sits in the
+ * halt lifecycle. Read from all three slots for the reason the ownership-drift
+ * reader is: signal-halt writes a PENDING reason and the loop drains it to
+ * `haltReason` one write later, so a reader that watched only one slot would
+ * either announce the halt twice or announce it a write late.
+ */
+function planDefectReasons(
+  execution: GraphWorkflowExecution | null,
+): Extract<GraphWorkflowHaltReason, { type: "plan_defect" }>[] {
+  if (!execution) return [];
+  return [
+    execution.haltReason,
+    execution.pendingHaltReason,
+    ...execution.secondaryHaltReasons,
+  ].filter(
+    (
+      reason,
+    ): reason is Extract<GraphWorkflowHaltReason, { type: "plan_defect" }> =>
+      reason?.type === "plan_defect",
   );
 }
 
@@ -889,6 +927,17 @@ export function deliverGraphWorkflowEvents(
         laneId: event.laneId,
         contextId: event.contextId,
         unattributedPaths: event.unattributedPaths,
+      });
+    }
+    if (event.type === "graph-workflow-plan-defect-halted") {
+      validationLogger.warn("validation.plan_defect_halted", {
+        executionId: event.executionId,
+        contextId: event.contextId,
+        roundSeq: event.roundSeq,
+        assignmentIds: event.defects.map((defect) => defect.assignmentId),
+        conflictingContracts: event.defects.map(
+          (defect) => defect.conflictingContract,
+        ),
       });
     }
   }
@@ -1381,6 +1430,30 @@ export function createGraphWorkflowExecutionEventPublisher(
           summary: haltReason.summary ?? null,
         } satisfies GraphWorkflowCircuitBreakerEvent);
       }
+    }
+
+    const previousPlanDefects = planDefectReasons(previousExecution);
+    for (const reason of planDefectReasons(nextExecution)) {
+      if (
+        previousPlanDefects.some((previousReason) =>
+          haltReasonsEqual(previousReason, reason),
+        )
+      ) {
+        continue;
+      }
+      events.push({
+        type: "graph-workflow-plan-defect-halted",
+        projectName,
+        sessionName: input.sessionName,
+        executionId: nextExecution.id,
+        contextId: reason.contextId,
+        roundSeq: reason.roundSeq,
+        defects: reason.planDefects.map((defect) => ({
+          assignmentId: defect.assignmentId,
+          title: defect.title,
+          conflictingContract: defect.conflictingContract,
+        })),
+      } satisfies GraphWorkflowPlanDefectHaltedEvent);
     }
 
     const previousOwnershipViolations =

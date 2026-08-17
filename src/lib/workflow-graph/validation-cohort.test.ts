@@ -120,6 +120,50 @@ function parked(
   };
 }
 
+/**
+ * A blocking seat's third response: the assigned CONTRACT, not the work, is
+ * what it refused.
+ *
+ * `taskIds` produce the findings the same verdict also raised. They ride along
+ * as evidence of what the seat saw and are deliberately not a reopen list — the
+ * whole claim is that no task in this context can remedy the defect.
+ */
+function planDefect(
+  assignmentId: string,
+  taskIds: string[] = [],
+  summary = `${assignmentId}: the contract cannot be satisfied here`,
+  authority: ValidatorAuthority = "blocking",
+): CohortLane {
+  return {
+    assignmentId,
+    authority,
+    attempts: 0,
+    settlement: {
+      kind: "plan_defect",
+      summary,
+      feedback: `Context validation reported a plan defect.\n${summary}`,
+      planDefects: [
+        {
+          assignmentId,
+          title: "The criterion names work this context does not own",
+          description: "The acceptance criteria require a downstream change.",
+          whyNotLocallyRemediable:
+            "No task here can touch the module the criterion names.",
+          conflictingContract: "Acceptance criterion 2",
+        },
+      ],
+      issues: taskIds.map((taskId) => ({
+        assignmentId,
+        taskId,
+        title: `Unfinished work in ${taskId}`,
+        description: `${taskId} needs another pass.`,
+      })),
+      sessionRef: null,
+      reviewArtifact: null,
+    },
+  };
+}
+
 function mismatched(
   assignmentId: string,
   authority: ValidatorAuthority = "blocking",
@@ -247,6 +291,116 @@ describe("concludeCohort: precedence", () => {
     expect(conclusion.kind).toBe("candidate_mismatch");
     if (conclusion.kind !== "candidate_mismatch") return;
     expect(conclusion.assignmentId).toBe("security-reviewer");
+  });
+});
+
+describe("concludeCohort: a plan defect outranks a rejection", () => {
+  it("concludes plan_defect rather than failed when a blocking seat reports one", () => {
+    // The precedence the typed response exists for: when the contract itself is
+    // defective, reopening tasks for a sibling's issues is the wrong loop —
+    // those issues ride along as evidence instead.
+    const conclusion = concludeCohort([
+      fail("general", ["task-plan-1"], "general: rejected"),
+      planDefect(
+        "security-reviewer",
+        ["task-plan-2"],
+        "security-reviewer: the contract is unsatisfiable",
+      ),
+    ]);
+
+    expect(conclusion.kind).toBe("plan_defect");
+    if (conclusion.kind !== "plan_defect") return;
+    // Nothing here may be read as an instruction to reopen a task: the shape
+    // carries no reopen list at all, so no consumer can derive one from it.
+    expect("reopenTaskIds" in conclusion).toBe(false);
+    expect(
+      conclusion.issues.map((issue) => [issue.assignmentId, issue.taskId]),
+    ).toEqual([
+      ["general", "task-plan-1"],
+      ["security-reviewer", "task-plan-2"],
+    ]);
+    expect(conclusion.summary).toBe(
+      "general: rejected\nsecurity-reviewer: the contract is unsatisfiable",
+    );
+  });
+
+  it("aggregates every defecting seat's findings, grouped by the assignment that raised them", () => {
+    const conclusion = concludeCohort([
+      planDefect("general", [], "general: unsatisfiable"),
+      pass("perf-reviewer", "perf-reviewer: fine"),
+      planDefect("security-reviewer", [], "security-reviewer: unsatisfiable"),
+    ]);
+
+    expect(conclusion.kind).toBe("plan_defect");
+    if (conclusion.kind !== "plan_defect") return;
+    expect(
+      conclusion.planDefects.map((defect) => defect.assignmentId),
+    ).toEqual(["general", "security-reviewer"]);
+    // Every lane that reported is still summarized, in cohort order: the
+    // passing sibling reviewed the same candidate and its review is evidence.
+    expect(conclusion.summary).toBe(
+      "general: unsatisfiable\nperf-reviewer: fine\nsecurity-reviewer: unsatisfiable",
+    );
+  });
+
+  it("outranks an exhausted blocking sibling too", () => {
+    // An unheard specialist cannot make a defective contract satisfiable, so
+    // the round concludes on the defect rather than staying open for a review
+    // that could not change it.
+    const conclusion = concludeCohort([
+      planDefect("general"),
+      exhausted("security-reviewer", 3),
+    ]);
+
+    expect(conclusion.kind).toBe("plan_defect");
+  });
+
+  it("stays behind a candidate mismatch", () => {
+    // A round that cannot prove what it reviewed may record nothing at all —
+    // not a rejection, and not a claim about the plan either.
+    const conclusion = concludeCohort([
+      planDefect("general"),
+      mismatched("security-reviewer"),
+    ]);
+
+    expect(conclusion.kind).toBe("candidate_mismatch");
+  });
+
+  it("stays behind a parked lane", () => {
+    // The human's answer may be the thing that decides whether the contract is
+    // defective at all, so the round waits rather than concluding around it.
+    const conclusion = concludeCohort([
+      planDefect("general"),
+      parked("security-reviewer"),
+    ]);
+
+    expect(conclusion.kind).toBe("parked");
+  });
+
+  it("never lets an advisory lane's plan-defect-shaped settlement conclude the round", () => {
+    // An advisory seat's dispatched schema has no `planDefects` field (pinned
+    // upstream in validator-runner.test.ts), so this settlement should be
+    // unreachable — which is why the partition, not the shape that arrived,
+    // decides here too.
+    const conclusion = concludeCohort([
+      pass("general", "general: fine"),
+      planDefect("advisor", [], "advisor: unsatisfiable", "advisory"),
+    ]);
+
+    expect(conclusion.kind).toBe("passed");
+  });
+
+  it("leaves a round of passes and advisories concluding exactly as before", () => {
+    // The regression pin for the untouched half of the precedence rule: adding
+    // a response nobody used must not move a round that used none of it.
+    const conclusion = concludeCohort([
+      pass("general", "general: fine"),
+      pass("advisor", "advisor: nothing blocking", "advisory"),
+    ]);
+
+    expect(conclusion.kind).toBe("passed");
+    if (conclusion.kind !== "passed") return;
+    expect(conclusion.summary).toBe("general: fine\nadvisor: nothing blocking");
   });
 });
 

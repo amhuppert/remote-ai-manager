@@ -933,6 +933,47 @@ const workflowValidatorOutputIssueSchema =
   workflowValidatorIssueSchema.strict();
 
 /**
+ * A plan defect as a blocking validator may EMIT it: the third response, for an
+ * assigned contract that no task in the reviewed context can satisfy.
+ *
+ * It carries no `taskId` by construction. The whole claim is that no
+ * current-context task owns the remedy, so a field able to name one would
+ * reintroduce the misrouting this shape exists to replace — a defect filed
+ * against whichever task looked closest, reopened, and handed back to an
+ * implementer who cannot fix it.
+ *
+ * The two justification fields are required rather than optional prose because
+ * they are what makes the classification falsifiable: plan repair's existing
+ * authority to reject it (`planningDefect: false`) needs a stated reason the
+ * work is not local and a named conflicting contract to judge against.
+ *
+ * Open, for the reason `workflowValidatorIssueSchema` is: this base is also the
+ * PERSISTED shape, stored per seat on the round record with the engine's
+ * assignment stamp riding along on the way in, and on a row read back an
+ * unknown key is something to read past rather than a verdict to refuse. The
+ * emit contract is the closed twin below.
+ */
+export const workflowValidatorPlanDefectSchema = z.object({
+  title: z.string().trim().min(1),
+  description: z.string().trim().min(1),
+  /** Why no task in the reviewed context can remedy it. */
+  whyNotLocallyRemediable: z.string().trim().min(1),
+  /** The criterion clause, boundary, dependency, or governance rule in conflict. */
+  conflictingContract: z.string().trim().min(1),
+});
+export type WorkflowValidatorPlanDefect = z.infer<
+  typeof workflowValidatorPlanDefectSchema
+>;
+
+/**
+ * The plan-defect shape as a validator may EMIT it, closed to anything else —
+ * the dispatched output schema is projected from this twin, and the parse-side
+ * result schema below reads it back.
+ */
+export const workflowValidatorOutputPlanDefectSchema =
+  workflowValidatorPlanDefectSchema.strict();
+
+/**
  * The two parse-side twins of the dispatched output schemas, split by
  * authority.
  *
@@ -951,6 +992,11 @@ export const workflowBlockingValidatorResultSchema = z
     summary: z.string(),
     issues: z.array(workflowValidatorOutputIssueSchema),
     advisories: z.array(workflowValidatorAdvisorySchema),
+    // Optional where `issues` and `advisories` are required, matching the
+    // dispatched schema: an empty `issues` array is the pass signal and so must
+    // be stated, while a plan defect is the rare third response and an absent
+    // key says the same thing an empty array would.
+    planDefects: z.array(workflowValidatorOutputPlanDefectSchema).optional(),
   })
   .strict();
 

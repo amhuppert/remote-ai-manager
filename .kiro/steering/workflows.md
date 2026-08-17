@@ -312,12 +312,13 @@ operational authority, not graph shape. It resolves `false` on every
 expansion-generated child regardless of inheritance source, so authority cannot
 propagate down a generated subgraph.
 
-## Plan repair (retry-exhaustion halts)
+## Plan repair (retry-exhaustion and plan-defect halts)
 
 After any execution-loop settlement, the plan-repair supervisor
 (`workflow-graph/plan-repair/`) re-reads the ACTIVE execution and, when it is
-halted on `circuit_breaker` or `max_iterations` with `planRepair` enabled for
-the tripped context and attempts remaining, runs one bounded repair round: a
+halted on `circuit_breaker`, `max_iterations`, or `plan_defect` with `planRepair`
+enabled for the tripped context and attempts remaining, runs one bounded repair
+round: a
 one-shot repair agent (validator-style ephemeral conversation in the session
 worktree) diagnoses the failure and either declines (diagnosis persisted in
 `haltReason.summary`, run stays halted) or emits repair operations that are
@@ -331,6 +332,13 @@ append-only `execution.planRepairRounds` log (appended before the agent runs;
 never reset by resume) with a hard per-execution backstop of 5 rounds. Every
 round conclusion emits a `graph-workflow-plan-repair` event (+ outcome push via
 the `planRepair` trigger).
+
+`plan_defect` is the one entry here that is not retry exhaustion: nothing was
+retried, because the reviewed context has no task that could remedy what was
+found (see "The third blocking response" below). It is admitted under the SAME
+gates as the rest and accounted per CONTEXT — a defect the plan cannot answer
+would otherwise re-trip on every resume, and the caps are what stop a
+repair→resume→trip cycle.
 
 ## Structural mutation and the prepare/finalize staging seam
 
@@ -494,8 +502,9 @@ Authority selects three things:
   byte-identical either way; per-assignment divergence lives entirely in
   `systemInstructions`, which already differs per assignment through profiles.
 - **The verdict schema it is dispatched with** (`validator-runner.ts`). Blocking:
-  `{summary, issues, advisories}`. Advisory: `{summary, advisories}` — `issues`
-  does not exist on it, so an advisory seat cannot emit a blocking finding at
+  `{summary, issues, advisories, planDefects?}`. Advisory: `{summary, advisories}`
+  — neither `issues` nor `planDefects` exists on it, so an advisory seat cannot
+  emit a blocking finding at
   all; an attempt fails the structured-output gate and takes the normal retry.
   The parse-side twins in `definition-schemas.ts` split identically, so a backend
   without native structured output has no laxer path either.
@@ -521,6 +530,43 @@ reviewer writes about the work, never about itself.
 an enabled cohort with zero blocking seats is a valid authoring choice: a context
 may already run with no validator at all, so advisory-only oversight is strictly
 more than an allowed baseline.
+
+### The third blocking response: `planDefects`
+
+A blocking seat has a third response beside pass and fail: `planDefects`
+(`workflowValidatorPlanDefectSchema` in `definition-schemas.ts`), for a contract
+the reviewed context cannot satisfy at all — contradictory, requiring work owned
+by a downstream context, or omitting ownership its criteria require. It carries
+no `taskId` by construction, and each entry must state why the defect is not
+locally remediable and name the criterion clause, boundary, dependency, or
+governance rule in conflict. Those two fields are what make the classification
+falsifiable, since plan repair's existing authority to reject it
+(`planningDefect: false`) judges against them.
+
+The bound is the seat's mandate: a concern the mandate does not clearly cover is
+an advisory, never a plan defect (`role-instructions.ts`). This response is for a
+mandate the context cannot satisfy, not a route around a mandate the seat would
+rather not judge. A seat that reports both keeps its issues as evidence; the plan
+defect decides the outcome.
+
+The engine's reaction is the halt, and nothing else. `concludeCohort` still
+concludes the round with every seat's verdict and the frozen candidate intact,
+then the context halts with the typed `plan_defect` reason
+(`schemas.ts`) carrying every defecting seat's defects in cohort order, each
+stamped with its `assignmentId`. **No task is reopened, no failure is charged,
+and no aggregate verdict is published** — the reopen loop is exactly what this
+outcome exists to escape, which also makes it the only announcement the outcome
+makes, so the halt emits `graph-workflow-plan-defect-halted`
+(`event-schemas.ts`) for the surfaces that would otherwise learn about a stopped
+context from a reopen or a rejection. The halt is resumable by construction: the
+remedy is a repair of the contract the defect names.
+
+Routing is immediate rather than post-exhaustion — plan repair runs at first
+detection with the typed finding and the preserved candidate. Repaired resumes
+automatically; a decline or a failure leaves the run halted with the
+supervisor's diagnosis in `haltReason.summary`. With `planRepair` disabled the
+trigger refuses before any round is appended, so no agent runs and `summary`
+stays null — the halt stands for the operator (see "Plan repair" above).
 
 ### The advisory loop
 

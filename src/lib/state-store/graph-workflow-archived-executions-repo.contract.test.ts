@@ -1139,6 +1139,19 @@ function buildMaximalExecution(): unknown {
                   },
                 },
               ],
+              // The blocking seat's third response, superimposed on the same
+              // entry under the rule above: what it says the assigned CONTRACT
+              // gets wrong, which no other key path on this record reaches.
+              planDefects: [
+                {
+                  title: "The rollback criterion names a downstream context",
+                  description:
+                    "Criterion 3 requires the publisher to change, which nothing in this context owns.",
+                  whyNotLocallyRemediable:
+                    "Every task here is scoped to the migration; the publisher lands in ctx-2.",
+                  conflictingContract: "Acceptance criterion 3",
+                },
+              ],
               questionToken: "qb-general-1",
               sessionRef: {
                 backend: "claude",

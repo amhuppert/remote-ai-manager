@@ -298,6 +298,10 @@ const executionSchema = z.object({
   // haltReason is a structured discriminated union server-side; keep it lenient
   // here and derive a short label for display (see haltLabel).
   haltReason: z.unknown().nullish(),
+  // Read leniently for the same reason: the halt block reports the repair round
+  // that answered a plan-defect halt, and one unreadable row must not cost the
+  // caller the whole status table.
+  planRepairRounds: z.array(z.unknown()).default([]),
   workingDefinition: z.object({
     executionContexts: z.array(
       z.object({
@@ -1006,6 +1010,88 @@ async function runWorkflowStatus(
   };
 }
 
+/**
+ * The plan-defect halt as the halt block needs to read it. Deliberately lenient
+ * and open: the persisted reason carries fields this renderer has no vocabulary
+ * for (and a newer server adds more), and dropping the block over one of them
+ * would leave the caller with a reason type and nothing to act on.
+ */
+const planDefectHaltReasonSchema = z.object({
+  type: z.literal("plan_defect"),
+  contextId: z.string(),
+  planDefects: z
+    .array(z.object({ title: z.string(), conflictingContract: z.string() }))
+    .min(1),
+  summary: z.string().nullish(),
+});
+
+/** The plan-repair round fields the halt block reports. */
+const planRepairRoundRowSchema = z.object({
+  seq: z.number(),
+  contextId: z.string(),
+  haltType: z.string(),
+  outcome: z.string().nullish(),
+});
+
+/**
+ * The halt block for the reasons whose type name is not, on its own, an account
+ * of what stopped the run.
+ *
+ * `plan_defect` is the first: it reopens no task and charges no attempt, so the
+ * finding it carries is the only thing that says what to repair, and the
+ * automatic repair round that already answered it is the difference between "go
+ * read the plan" and "repair already declined — decide yourself". Explicit
+ * vocabulary rather than a generic dump: a reason type with no entry here keeps
+ * the bare `(halted: <type>)` header it has always had.
+ */
+function formatHaltDetail(
+  haltReason: unknown,
+  planRepairRounds: readonly unknown[],
+): string[] {
+  const parsed = planDefectHaltReasonSchema.safeParse(haltReason);
+  if (!parsed.success) return [];
+  const reason = parsed.data;
+  const first = reason.planDefects[0];
+  if (first === undefined) return [];
+
+  // Only the first finding is shown, so the omission states total/shown and
+  // names the command that reveals the rest (steering: a cap without
+  // disclosure is a defect). `status --json` returns the unstripped execution.
+  const total = reason.planDefects.length;
+  const disclosure =
+    total > 1 ? " — cctl workflow status --json for the rest" : "";
+
+  // The latest plan-defect round on this context. Repair may run more than once
+  // against one halt and the log is append-only, so the highest seq is the live
+  // verdict; a round for a different halt type on the same context is not this
+  // halt's answer.
+  const repair = planRepairRounds
+    .flatMap((round) => {
+      const row = planRepairRoundRowSchema.safeParse(round);
+      return row.success ? [row.data] : [];
+    })
+    .filter(
+      (round) =>
+        round.haltType === "plan_defect" && round.contextId === reason.contextId,
+    )
+    .reduce<z.infer<typeof planRepairRoundRowSchema> | null>(
+      (latest, round) =>
+        latest === null || round.seq > latest.seq ? round : latest,
+      null,
+    );
+
+  return [
+    `plan defect: ${reason.contextId} — the plan, not the work`,
+    `  findings: ${total} total, 1 shown${disclosure}`,
+    `  finding: ${first.title}`,
+    `  contract: ${first.conflictingContract}`,
+    ...(repair === null
+      ? []
+      : [`  repair: round ${repair.seq} ${repair.outcome ?? "in flight"}`]),
+    ...(reason.summary ? [`  summary: ${reason.summary}`] : []),
+  ];
+}
+
 /** Short display label for the structured haltReason (or null when not halted). */
 function haltLabel(haltReason: unknown): string | null {
   if (haltReason === null || haltReason === undefined) return null;
@@ -1056,7 +1142,12 @@ function formatStatusTable(execution: z.infer<typeof executionSchema>): string {
         `  ${r.id.padEnd(idWidth)}  ${r.status.padEnd(statusWidth)}  ${r.tasks}`,
     )
     .join("\n");
+  const haltDetail = formatHaltDetail(
+    execution.haltReason,
+    execution.planRepairRounds,
+  );
   const sections = [
+    haltDetail.length > 0 ? haltDetail.join("\n") : null,
     lanes.length > 0 ? `lanes:\n${laneBody}` : null,
     rows.length > 0 ? `contexts:\n${contextBody}` : null,
   ].filter((section): section is string => section !== null);
@@ -1330,10 +1421,17 @@ function formatWorkflowBoundaryResult(result: WorkflowBoundaryResult): string {
   const actions = result.pendingActions.map(
     (action, index) => `  action[${index + 1}]: ${JSON.stringify(action)}`,
   );
+  // A halt boundary carries the reason the run stopped; without the block a
+  // `halt` line says only that something did. The boundary projection has no
+  // repair log, so the round outcome is a `status` detail only.
+  const halt = formatHaltDetail(result.haltReason, []).map(
+    (line) => `  ${line}`,
+  );
   return [
     `${result.executionId}  ${result.boundaryKind}`,
     `  status: ${result.status}`,
     `  cursor: ${String(result.cursor)}`,
+    ...halt,
     ...(result.contextId === null ? [] : [`  context: ${result.contextId}`]),
     `  origin: ${formatWorkflowOrigin(result.origin)}`,
     `  origin conversation: ${result.originConversationId ?? "-"}`,

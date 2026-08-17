@@ -1,6 +1,8 @@
+import { z } from "zod";
 import {
   workflowAdvisoryValidatorResultSchema,
   workflowBlockingValidatorResultSchema,
+  workflowValidatorOutputPlanDefectSchema,
 } from "@/lib/workflow-graph/definition-schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type {
@@ -44,6 +46,7 @@ import type {
   GraphWorkflowTaskDefinition,
   WorkflowValidatorAdvisory,
   WorkflowValidatorIssue,
+  WorkflowValidatorPlanDefect,
 } from "@/lib/workflow-graph/definition-schemas";
 import { isQuerySlotAdmissionTimeout } from "@/lib/shared/query-semaphore";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
@@ -131,16 +134,39 @@ const ADVISORY_ITEMS_OUTPUT_SCHEMA = {
 } as const;
 
 /**
+ * The plan-defect item only a blocking seat may emit: the contract itself is
+ * unsatisfiable here, so there is nothing to reopen.
+ *
+ * Projected from the Zod contract rather than hand-written, so the gate the
+ * provider enforces and the twin the runner parses cannot drift: the four
+ * fields, their non-emptiness, and the closed object all have one source. The
+ * absence of a `taskId` property is what makes this response structurally
+ * distinct from an issue rather than a differently-worded one.
+ *
+ * `$schema` is dropped because this is embedded as a SUBSCHEMA of the dispatched
+ * validator schema, where a nested dialect declaration is a keyword the
+ * provider's schema validator never asked for.
+ */
+const { $schema: _planDefectDialect, ...PLAN_DEFECT_ITEMS_OUTPUT_SCHEMA } =
+  z.toJSONSchema(z.array(workflowValidatorOutputPlanDefectSchema));
+
+/**
  * The structured-output schema for one validator dispatch, selected by the
  * seat's authority and bound to the context it is reviewing.
  *
- * Two properties are load-bearing. Authority is STRUCTURAL: `issues` is absent
- * from the advisory schema, so a validator with no blocking authority cannot
- * emit a blocking finding at all — the attempt fails the output gate and
- * retries rather than reaching the engine as a verdict. And `taskId` is an enum
- * of this context's task ids, so an id the validator invented is caught at the
- * same gate, where a retry can fix it, instead of arriving as a well-formed
- * verdict the runner can only reject as an infrastructure failure.
+ * Two properties are load-bearing. Authority is STRUCTURAL: neither `issues`
+ * nor `planDefects` appears in the advisory schema, so a validator with no
+ * blocking authority can neither fail a context nor route one to plan repair —
+ * the attempt fails the output gate and retries rather than reaching the engine
+ * as a verdict. And `taskId` is an enum of this context's task ids, so an id the
+ * validator invented is caught at the same gate, where a retry can fix it,
+ * instead of arriving as a well-formed verdict the runner can only reject as an
+ * infrastructure failure.
+ *
+ * `planDefects` is the one optional field: `issues` and `advisories` stay
+ * required because their empty arrays carry meaning (a pass, and a considered
+ * absence of observations), while requiring the rare third response would make
+ * every clean verdict declare it.
  */
 export function buildValidatorOutputSchema(input: {
   authority: ValidatorAuthority;
@@ -182,6 +208,7 @@ export function buildValidatorOutputSchema(input: {
         },
       },
       advisories: ADVISORY_ITEMS_OUTPUT_SCHEMA,
+      planDefects: PLAN_DEFECT_ITEMS_OUTPUT_SCHEMA,
     },
     required: ["summary", "issues", "advisories"],
     additionalProperties: false,
@@ -268,8 +295,15 @@ function formatTaskBlock(
 /**
  * The output fields this seat's authority actually admits, described in the
  * prompt exactly as the dispatched schema enforces them. An advisory seat is
- * never told about `issues`: its schema has no such field, so describing one
- * would only produce verdicts that fail the output gate and burn retries.
+ * never told about `issues` or `planDefects`: its schema has neither field, so
+ * describing one would only produce verdicts that fail the output gate and burn
+ * retries.
+ *
+ * The blocking branch names all three responses because the enumeration is what
+ * a seat reads as the list of things it may say. Leaving `planDefects` out —
+ * and calling an empty `issues` array a pass without qualification — would
+ * describe a two-response contract the schema and the round conclusion no
+ * longer implement.
  */
 function requiredOutputFieldLines(authority: ValidatorAuthority): string[] {
   const advisories =
@@ -286,8 +320,9 @@ function requiredOutputFieldLines(authority: ValidatorAuthority): string[] {
   return [
     "- `issues` (array of `{ taskId, title, description }`): Each issue must reference the `taskId` of the task that needs to be reopened to address it. If the same problem touches multiple tasks in this context, include one issue entry per affected task (duplicate the entry with each distinct `taskId`).",
     advisories,
+    "- `planDefects` (optional array of `{ title, description, whyNotLocallyRemediable, conflictingContract }`): The contract itself is the defect — no task in this context can remedy it. A plan defect carries no `taskId` and reopens nothing; `whyNotLocallyRemediable` states why the remedy is not local, and `conflictingContract` names the criterion clause, boundary, dependency, or governance rule in conflict. Omit the field entirely when you have none. Your role contract above says when this response is the right one.",
     "",
-    "An empty `issues` array means the context passes validation. A non-empty `issues` array means every referenced task will be reopened. Advisories never reopen anything, whatever the `issues` array holds.",
+    "An empty `issues` array is a pass only when you report no plan defect: a plan defect stops this context whatever `issues` holds, and your issues travel with it as evidence rather than as reopens. Otherwise a non-empty `issues` array means every referenced task will be reopened. Advisories never reopen anything, whatever the other arrays hold.",
   ];
 }
 
@@ -396,6 +431,24 @@ export type ValidatorOutcome =
       advisories: WorkflowValidatorAdvisory[];
       reopenTaskIds: string[];
     }
+  // The assigned contract, not the work, is what failed: a blocking seat found
+  // something no task in this context can remedy. It has no `reopenTaskIds`
+  // field at all, which is the point — the engine's reaction is to preserve the
+  // candidate and route the finding to plan repair, and an outcome that could
+  // carry reopen ids would let the reopen loop this response exists to escape
+  // start again from the same verdict.
+  //
+  // `issues` rides along when the same verdict also raised some. They are
+  // evidence of what the seat saw, not instructions: nothing derives a reopen
+  // from them while the defect stands.
+  | {
+      kind: "plan_defect";
+      summary: string;
+      planDefects: WorkflowValidatorPlanDefect[];
+      issues: WorkflowValidatorIssue[];
+      advisories: WorkflowValidatorAdvisory[];
+      engine: AgentBackendId;
+    }
   | {
       kind: "infra_error";
       reason: "exception" | "unparseable" | "schema_mismatch";
@@ -467,6 +520,11 @@ function validatorOutcomeLogFields(outcome: ValidatorOutcome): {
       reopenTaskIds: outcome.reopenTaskIds,
     };
   }
+  // A plan defect reopens nothing, so the reopen list is empty as a fact about
+  // the outcome rather than as the absence of one.
+  if (outcome.kind === "plan_defect") {
+    return { issueCount: outcome.issues.length, reopenTaskIds: [] };
+  }
   return { issueCount: 0, reopenTaskIds: [] };
 }
 
@@ -486,21 +544,39 @@ function wireResultToOutcome(
     summary: string;
     issues?: WorkflowValidatorIssue[];
     advisories: WorkflowValidatorAdvisory[];
+    planDefects?: WorkflowValidatorPlanDefect[];
   },
   engine: AgentBackendId,
   allowedTaskIds: Set<string> | null,
 ): ValidatorOutcome {
-  // Absent for an advisory assignment, whose schema has no `issues` at all.
+  // Both absent for an advisory assignment, whose schema has neither field.
   const issues = result.issues ?? [];
-  // Only issues are checked against the context's task set. Advisories pass
-  // through untouched, which is what keeps an out-of-context observation from
-  // taking the infra_error path and spending one of the lane's attempts.
+  const planDefects = result.planDefects ?? [];
+  // Only issues are checked against the context's task set. Advisories and plan
+  // defects pass through untouched — neither names a task — which is what keeps
+  // an out-of-context observation from taking the infra_error path and spending
+  // one of the lane's attempts.
   const invalidIssueTaskIds = validateIssueTaskIds(issues, allowedTaskIds);
   if (invalidIssueTaskIds) {
     return {
       kind: "infra_error",
       reason: "schema_mismatch",
       message: invalidIssueTaskIds,
+      engine,
+    };
+  }
+
+  // Precedence over issues, not coexistence with them: a task reopened to
+  // satisfy a contract the same verdict calls unsatisfiable is the unfair work
+  // this outcome exists to stop, so the defect decides the round and the issues
+  // travel with it as evidence.
+  if (planDefects.length > 0) {
+    return {
+      kind: "plan_defect",
+      summary: result.summary,
+      planDefects,
+      issues,
+      advisories: result.advisories,
       engine,
     };
   }

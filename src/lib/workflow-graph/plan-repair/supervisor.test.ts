@@ -507,6 +507,70 @@ describe("plan-repair supervisor", () => {
     ]);
   });
 
+  // A plan-defect halt is where the exhaustion announcement matters most: the
+  // context cannot remedy the finding itself, so a halt whose summary stayed
+  // null reads to an operator as an unexplained stop rather than as "repair
+  // looked at this twice and gave up".
+  it("announces exhaustion on a plan_defect halt", async () => {
+    const spentRound = (seq: number): PlanRepairRound => ({
+      seq,
+      contextId: "context-implement",
+      haltType: "plan_defect",
+      loopGroupId: null,
+      startedAt: "2026-07-29T00:00:00.000Z",
+      settledAt: "2026-07-29T00:05:00.000Z",
+      outcome: "declined",
+      planningDefect: false,
+      diagnosis: `round ${seq} declined`,
+      operationCount: 0,
+      resumed: false,
+      conversationId: `c${seq}`,
+    });
+    const harness = makeHarness({
+      initial: haltedExecution({
+        haltReason: {
+          type: "plan_defect",
+          contextId: "context-implement",
+          planDefects: [
+            {
+              assignmentId: "general",
+              title: "Criterion 2 names a context this one cannot touch",
+              description: "The publisher belongs to a later context.",
+              whyNotLocallyRemediable:
+                "Every task here is scoped to the reader.",
+              conflictingContract: "Acceptance criterion 2",
+            },
+          ],
+          roundSeq: 4,
+          summary: null,
+        },
+        planRepairRounds: [spentRound(1), spentRound(2)],
+      }),
+    });
+    const supervisor = createPlanRepairSupervisor(harness.deps);
+
+    const result = await supervisor.maybeRunPlanRepair(RUN_INPUT);
+
+    expect(result).toEqual({
+      ran: false,
+      reason: "context_attempts_exhausted",
+    });
+    expect(harness.agentCalls).toHaveLength(0);
+    const current = harness.current();
+    expect(
+      current?.haltReason?.type === "plan_defect"
+        ? current.haltReason.summary
+        : null,
+    ).toContain("exhausted");
+    expect(harness.published).toEqual([
+      expect.objectContaining({
+        outcome: "exhausted",
+        haltType: "plan_defect",
+        attempt: 2,
+      }),
+    ]);
+  });
+
   it("fires on a loop_limit_reached halt, accounting the round on the loop (R12.1)", async () => {
     const harness = makeHarness({
       initial: loopHaltedExecution(),

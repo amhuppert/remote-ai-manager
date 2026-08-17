@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createWorkflowExecution } from "../test-fixtures";
 import type {
   GraphWorkflowExecution,
+  GraphWorkflowHaltReason,
   GraphWorkflowValidationAdvisory,
 } from "../schemas";
 import {
@@ -65,6 +66,34 @@ function makeInput(
       },
     ],
     ...overrides,
+  };
+}
+
+/** Two blocking seats refusing the contract, as the engine records the halt. */
+function planDefectHalt(): GraphWorkflowHaltReason {
+  return {
+    type: "plan_defect",
+    contextId: "context-implement",
+    planDefects: [
+      {
+        assignmentId: "general",
+        title: "Criterion 2 names a context this one cannot touch",
+        description: "The publisher belongs to a later context in the graph.",
+        whyNotLocallyRemediable:
+          "Every task here is scoped to the reader; none may edit the publisher.",
+        conflictingContract: "Acceptance criterion 2",
+      },
+      {
+        assignmentId: "security",
+        title: "The charter forbids the only viable approach",
+        description: "The criterion can only be met by writing to the DB.",
+        whyNotLocallyRemediable:
+          "No task can satisfy the criterion without breaking the invariant.",
+        conflictingContract: "Charter invariant no-direct-db-writes",
+      },
+    ],
+    roundSeq: 3,
+    summary: null,
   };
 }
 
@@ -150,6 +179,41 @@ describe("buildPlanRepairPrompt", () => {
     expect(buildPlanRepairPrompt(makeInput())).not.toContain(
       "output-contract failure",
     );
+  });
+
+  // A plan-defect halt arrives pre-classified: a blocking seat already said
+  // WHAT is wrong with the contract and WHY no task can fix it. Rendering that
+  // after the round history would bury the one reading this round exists to
+  // answer under the verdicts that merely surrounded it.
+  it("renders every plan-defect finding ahead of the validation history", () => {
+    const prompt = buildPlanRepairPrompt(
+      makeInput({ haltReason: planDefectHalt() }),
+    );
+
+    const section = prompt.indexOf("## Plan defect");
+    expect(section).toBeGreaterThan(-1);
+    expect(section).toBeLessThan(prompt.indexOf("## Validation history"));
+
+    const defects = prompt.slice(section, prompt.indexOf("## Validation"));
+    // Every field the seat is required to supply, attributed to the seat —
+    // two reviewers refusing the same contract is a different reading from one
+    // reviewer refusing it twice.
+    expect(defects).toContain("general");
+    expect(defects).toContain("Criterion 2 names a context this one cannot touch");
+    expect(defects).toContain(
+      "The publisher belongs to a later context in the graph.",
+    );
+    expect(defects).toContain(
+      "Every task here is scoped to the reader; none may edit the publisher.",
+    );
+    expect(defects).toContain("Acceptance criterion 2");
+    expect(defects).toContain("security");
+    expect(defects).toContain("The charter forbids the only viable approach");
+    expect(defects).toContain("Charter invariant no-direct-db-writes");
+  });
+
+  it("renders no plan-defect section for a halt that carries no defect", () => {
+    expect(buildPlanRepairPrompt(makeInput())).not.toContain("## Plan defect");
   });
 
   it("caps the validation history at the five most recent verdicts", () => {
