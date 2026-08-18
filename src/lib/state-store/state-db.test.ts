@@ -971,8 +971,8 @@ describe("state-db forward-only schema_migrations conflict policy", () => {
 });
 
 describe("state-db breaking-cutover versions", () => {
-  it("this build understands schema version 9 after the native-SDD v2 cutover", () => {
-    expect(KNOWN_SCHEMA_VERSION).toBe(9);
+  it("this build understands schema version 10 after the candidate-unstable halt vocabulary", () => {
+    expect(KNOWN_SCHEMA_VERSION).toBe(10);
   });
 
   it("opens a DB stamped at this build's version but refuses one stamped above it (an older build's DB advanced past this)", () => {

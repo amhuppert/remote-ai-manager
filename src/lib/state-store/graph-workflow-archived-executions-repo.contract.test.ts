@@ -1005,6 +1005,9 @@ function buildMaximalExecution(): unknown {
         completedTaskCount: 2,
         iterationCount: 3,
         consecutiveFailureCount: 1,
+        // Non-default: a zero would round-trip identically whether the archive
+        // carried the field or dropped it.
+        consecutiveCandidateMismatchCount: 2,
         worktreePath: "/wt/ctx-1",
         branchName: "csm/ctx-1",
         isolation: "worktree",
@@ -1474,18 +1477,6 @@ function buildMaximalExecution(): unknown {
             committedAt: "2026-01-02T03:00:00Z",
           },
         ],
-        ignoredBaseline: [
-          {
-            path: "node_modules",
-            digest: "digest-node-modules",
-            excluded: ["node_modules/.cache/generated"],
-          },
-          {
-            path: "dist/bundle.js",
-            digest: "digest-dist-bundle",
-            excluded: [],
-          },
-        ],
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-02T03:00:00Z",
       },
@@ -1667,6 +1658,20 @@ function buildMaximalExecution(): unknown {
         assignmentId: "security-reviewer",
         attempts: 3,
         roundSeq: 4,
+      },
+      // Maximal candidate-instability halt: the drift evidence, the incident
+      // kind the halt copy branches on, and the plan-repair verdict. The
+      // halt-reason union is a leaf to the durability harness, so this parked
+      // variant is the only backstop its payload has through archival.
+      {
+        type: "candidate_unstable",
+        contextId: "ctx-1",
+        stage: "specialist_result",
+        driftedComponents: "candidateTreeHash, headSha",
+        lastIncident: "stale_result_rejected",
+        consecutiveCount: 5,
+        message: "the rounds never certified a candidate",
+        summary: "plan repair declined: a dev server writes into the lane",
       },
     ],
     pendingCollaborations: {

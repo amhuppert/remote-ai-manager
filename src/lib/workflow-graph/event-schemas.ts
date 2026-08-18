@@ -24,6 +24,7 @@ import {
   graphWorkflowHaltReasonSchema,
   graphWorkflowRouteEdgeEvaluationSchema,
   graphWorkflowValidationAdvisorySchema,
+  graphWorkflowValidationIncidentStageSchema,
   graphWorkflowValidationReviewArtifactSchema,
   graphWorkflowValidationSessionRefSchema,
   type GraphWorkflowValidationReviewArtifact,
@@ -505,12 +506,7 @@ export const graphWorkflowValidationIncidentEventSchema = z.object({
   ]),
   roundSeq: z.number().int().positive(),
   /** Which re-verification point caught it. */
-  stage: z.enum([
-    "post_script",
-    "diff_render",
-    "specialist_result",
-    "aggregate",
-  ]),
+  stage: graphWorkflowValidationIncidentStageSchema,
   /** The specialist whose result was rejected; null for round-level checks. */
   assignmentId: z.string().nullable().default(null),
   /**
@@ -854,6 +850,9 @@ export const graphWorkflowPlanRepairEventSchema = z.object({
     // A blocking validator seat's typed contract refusal, routed to repair at
     // first detection rather than after a retry budget runs out.
     "plan_defect",
+    // A context whose rounds kept concluding on a candidate that had already
+    // moved; the placement or scope behind that churn is what repair looks at.
+    "candidate_unstable",
   ]),
   /** The loop a `loop_limit_reached` round repaired; null for context halts. */
   loopGroupId: z.string().nullable().default(null),

@@ -15,8 +15,8 @@
  *
  *  - a PRIVATE index (`GIT_INDEX_FILE`) seeded from HEAD, so the only entries
  *    that can differ from HEAD are the ones this call stages, and the shared
- *    index is neither read nor written — whatever a sibling staged stays staged,
- *    exactly as it was;
+ *    index is neither read nor written while the commit is built — whatever a
+ *    sibling staged stays staged, exactly as it was;
  *  - LITERAL pathspecs (`--literal-pathspecs`), so an authored path containing
  *    `*`, `?`, or a leading `:(`  names that path rather than being interpreted
  *    as a glob or as pathspec magic. Ownership is a set of literal repo paths;
@@ -34,24 +34,30 @@
  * Callers hold the session git lock; the compare-and-swap is the backstop for
  * the case where they do not, and for a HEAD that moved while this call ran.
  *
- * The shared index is left exactly as it was found — not as a convenience, but
- * because a sibling is using it, and there is no moment in a concurrent lane
- * when writing it is safe. The consequence is that it keeps the pre-landing
- * blobs for paths now in HEAD, so `git status` reads them back as `MM`: git
- * reporting committed work as work in progress. That staleness is permanent and
- * expected, which makes it the READER's problem to be immune to, not this
- * module's problem to paper over. `hasUncommittedChanges` answers "would `git
- * add -A && git commit` produce a commit" by comparing the worktree against
- * HEAD rather than trusting the index, which is true whatever the index holds.
- * A post-publication refresh here would also reintroduce a crash window: a
- * process dying between the ref update and the refresh would leave exactly the
- * stale index the refresh existed to prevent, and trailer replay classifies the
- * landing as already complete and never re-runs it (R7.3).
+ * Once the ref update publishes, the shared index's entries for the paths this
+ * landing committed describe a tree that no longer exists: a pre-landing blob
+ * for a modified path, no entry at all for an added one, a lingering entry for a
+ * deleted one. Every ordinary probe reads through those entries, so `git status`
+ * calls committed work pending while a diff against HEAD finds nothing to show
+ * for it — the shape a validation round reads as an unresolvable candidate and
+ * re-opens forever. So the last step points those entries at what was just
+ * published. It is scoped to the landing's own prefixes, which keeps the D7
+ * guarantee intact where it matters: no entry a sibling owns is read or
+ * rewritten, and ownership is what makes that safe — no other member may write
+ * these paths, so there is no concurrent state here to clobber.
+ *
+ * The resync is best-effort by construction. It happens after publication, so a
+ * process dying in between leaves a stale index rather than a partial landing,
+ * and trailer replay classifies the landing as complete and never re-runs it
+ * (R7.3); the next landing on the same prefixes repairs it. Readers stay
+ * index-independent regardless: `hasUncommittedChanges` answers "would `git add
+ * -A && git commit` produce a commit" by comparing the worktree against HEAD.
  */
 
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import path from "node:path";
+import { getErrorMessage } from "@/lib/shared/errors";
 import { defaultGitClient, type GitClient } from "./client";
 import { createLogger } from "../logging";
 
@@ -150,14 +156,14 @@ export function createOwnedLandingOperations(
    * "would `git add -A && git commit` produce a commit" asked in reverse.
    *
    * This is the reader half of the same contract {@link commitOwnedPaths}
-   * writes under. Because a landing publishes through a private index, the
-   * shared index in a lane worktree routinely disagrees with HEAD: it holds
-   * pre-landing blobs for modified paths, no entry at all for added ones, and a
-   * lingering entry for deleted ones. Every ordinary probe reads through that
-   * index, so `git status` reports committed work as pending and `git diff
-   * HEAD` reports a landed-but-unindexed file as deleted. Believing either one
-   * sends a whole-tree commit into `git add -A` followed by "nothing to
-   * commit".
+   * writes under, and it holds however far the shared index has drifted from
+   * HEAD — a landing's write-back is best-effort, and nothing constrains what
+   * else touched the index. A drifted index holds pre-landing blobs for
+   * modified paths, no entry at all for added ones, and a lingering entry for
+   * deleted ones. Every ordinary probe reads through it, so `git status`
+   * reports committed work as pending and `git diff HEAD` reports a
+   * landed-but-unindexed file as deleted. Believing either one sends a
+   * whole-tree commit into `git add -A` followed by "nothing to commit".
    *
    * So the probes are used only to NOMINATE paths, and the verdict comes from
    * a private index seeded from HEAD: stage the nominees into it, write the
@@ -212,6 +218,43 @@ export function createOwnedLandingOperations(
       return tree === headTree;
     } finally {
       await rm(indexFile, { force: true });
+    }
+  }
+
+  /**
+   * Point the shared index's entries for `prefixes` at `commit`, leaving the
+   * working tree and every entry outside those prefixes alone.
+   *
+   * A path-scoped `git reset` is the only form that does this: `read-tree`
+   * replaces the whole index, and a plain `add` would stage whatever the
+   * worktree currently holds rather than what was published.
+   *
+   * Swallows its own failure — the commit is already on the branch, so raising
+   * here would fail a landing that succeeded and halt the run over an index
+   * that the next landing repairs.
+   */
+  async function resyncOwnedIndexEntries(
+    worktreePath: string,
+    commit: string,
+    prefixes: readonly string[],
+  ): Promise<void> {
+    if (prefixes.length === 0) return;
+    try {
+      await git(worktreePath, [
+        "--literal-pathspecs",
+        "reset",
+        "--quiet",
+        commit,
+        "--",
+        ...prefixes,
+      ]);
+    } catch (error) {
+      logger.warn("git.ownedLanding.indexResyncFailed", {
+        worktreePath,
+        commit,
+        prefixCount: prefixes.length,
+        error: getErrorMessage(error),
+      });
     }
   }
 
@@ -289,6 +332,8 @@ export function createOwnedLandingOperations(
         hash,
         headSha,
       ]);
+
+      await resyncOwnedIndexEntries(worktreePath, hash, stageable);
 
       logger.info("git.ownedLanding.committed", {
         worktreePath,

@@ -112,8 +112,19 @@ const DB_FILE_NAME = "command-center.db";
  * legacy-linked graph execution before direct-authored attempt activation.
  * Older builds retain the retired plan/compiler runtime and could recreate
  * artifacts for which the version-2 build deliberately has no reader.
+ *
+ * Version 10 is the candidate-unstable halt vocabulary: migration
+ * `0031-graph-workflow-candidate-unstable-halt` stamps the gate for the
+ * `candidate_unstable` halt reason (consecutive candidate-mismatch budget, #69
+ * change 8) and its `planRepairRounds[].haltType` counterpart. The values are
+ * persisted in `graph_workflow_executions` `runtime_json`, and the repository
+ * throws on a halt type its enum does not admit — for the whole `listActive()`
+ * result rather than the one row — so an older build sharing the database
+ * would lose every execution's workflow state, not just the halted run's.
+ * Nothing is rewritten: the migration exists only to publish the barrier and
+ * stamp the version.
  */
-export const KNOWN_SCHEMA_VERSION = 9;
+export const KNOWN_SCHEMA_VERSION = 10;
 
 /**
  * Marker id for the one-time legacy graph-workflow purge. Tracked in the

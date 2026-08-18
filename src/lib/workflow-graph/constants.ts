@@ -15,6 +15,22 @@ export const DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD = 3;
 export const EXECUTION_TOTAL_PASS_BACKSTOP = 25;
 
 /**
+ * How many rounds in a row may conclude `candidate_mismatch` before the context
+ * halts as unstable.
+ *
+ * A mismatch charges nothing and returns the context to `ready`, so the engine
+ * re-opens a round at once — the right response to drift that settles (a write
+ * landing while the tree freezes) and an unbounded loop when it cannot. The
+ * number is deliberately generous: legitimate transient drift clears in a round
+ * or two, so a run of this length is only ever a defect.
+ *
+ * A HARD CONSTANT rather than a policy field, for the same reason as the pass
+ * backstop above: it exists to bound a loop no other budget can see, and a
+ * raisable ceiling would restore the loop it removes.
+ */
+export const CONSECUTIVE_CANDIDATE_MISMATCH_BUDGET = 5;
+
+/**
  * The threshold the breaker actually enforces for a context.
  *
  * The policy field is optional, so "no threshold declared" is a valid and

@@ -615,9 +615,6 @@ export function materializeSessionLane(
     includedContextIds: [],
     lastCommittingContextId: null,
     commitSnapshots: [],
-    // The session lane admits only read-only members, which write nothing and
-    // land nothing, so no drift check ever consults this.
-    ignoredBaseline: [],
     createdAt: timestamp,
     updatedAt: timestamp,
   };

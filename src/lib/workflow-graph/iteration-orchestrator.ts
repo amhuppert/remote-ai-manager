@@ -34,7 +34,10 @@ import {
   type CohortLaneProgress,
   type RetainedCohortLane,
 } from "@/lib/workflow-graph/validation-cohort";
-import { resolveConsecutiveFailureThreshold } from "./constants";
+import {
+  CONSECUTIVE_CANDIDATE_MISMATCH_BUDGET,
+  resolveConsecutiveFailureThreshold,
+} from "./constants";
 import type { ConversationTelemetrySummary } from "./conversation-telemetry";
 import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
 import type {
@@ -78,6 +81,7 @@ import type {
   GraphWorkflowExecutionContextState,
   GraphWorkflowValidationAdvisory,
   GraphWorkflowValidationCandidate,
+  GraphWorkflowValidationIncidentStage,
   GraphWorkflowValidationRound,
 } from "@/lib/workflow-graph/schemas";
 import type { WorkflowAdvisoryIdentity } from "@/lib/workflow-graph/definition-schemas";
@@ -1783,6 +1787,13 @@ export function createGraphWorkflowIterationOrchestrator(
        * without the clear would be re-opened as a re-certification forever.
        */
       clearAdvisoryResponse?: boolean;
+      /**
+       * Charges this write's round outcome against the consecutive-mismatch
+       * budget. Opt-in because the same helper writes an OPENING round: settling
+       * the budget there would clear the very run of mismatches the next round
+       * is about to add to.
+       */
+      settleCandidateMismatchBudget?: boolean;
     } = {},
   ): Promise<void> {
     await deps.executionRepository.mutateActive(
@@ -1795,6 +1806,9 @@ export function createGraphWorkflowIterationOrchestrator(
           contextState.validationRound = round;
           if (options.clearAdvisoryResponse) {
             contextState.advisoryResponse = null;
+          }
+          if (options.settleCandidateMismatchBudget) {
+            settleCandidateMismatchBudget(contextState, round?.outcome ?? null);
           }
         }
         return next;
@@ -2309,10 +2323,41 @@ export function createGraphWorkflowIterationOrchestrator(
   }
 
   /**
+   * The consecutive candidate-mismatch budget, settled against one round
+   * conclusion. Returns the count the conclusion leaves behind.
+   *
+   * A mismatch is the one outcome that charges nothing — not an iteration, not a
+   * consecutive failure — and returns the context to `ready`, so the engine
+   * re-opens a round at once. Correct for drift that settles; an unbounded loop
+   * when it cannot, which is why the run of them needs a count of its own. Any
+   * other conclusion clears it: the candidate held still long enough to be
+   * judged, so whatever was moving it is no longer moving it.
+   *
+   * Keyed on the round OUTCOME, so a rejected stale token counts with a moved
+   * tree: the two publish different incidents but leave the round in the same
+   * state — concluded on nothing, reopened at once, charged nowhere else.
+   */
+  function settleCandidateMismatchBudget(
+    contextState: GraphWorkflowExecutionContextState,
+    outcome: ValidationRoundOutcome | null,
+  ): number {
+    const next =
+      outcome === "candidate_mismatch"
+        ? (contextState.consecutiveCandidateMismatchCount ?? 0) + 1
+        : 0;
+    contextState.consecutiveCandidateMismatchCount = next;
+    return next;
+  }
+
+  /**
    * Close the round out and publish the incident that explains why, for the two
    * outcomes where nobody judged the work. Neither charges an iteration nor a
    * consecutive failure: an infrastructure outcome that fed the circuit breaker
    * would eventually halt a workflow for a reason no reviewer ever raised.
+   *
+   * A mismatch does charge the consecutive-mismatch budget, which is not the
+   * same claim: it counts rounds that reached no verdict at all, and only to
+   * bound a loop that nothing else can see.
    */
   async function concludeRoundOnIncident(params: {
     input: GraphWorkflowIterationInput;
@@ -2320,12 +2365,13 @@ export function createGraphWorkflowIterationOrchestrator(
     conversationId: string;
     round: GraphWorkflowValidationRound;
     incident: "candidate_mismatch" | "roster_drift" | "stale_result_rejected";
-    stage: "post_script" | "diff_render" | "specialist_result" | "aggregate";
+    stage: GraphWorkflowValidationIncidentStage;
     assignmentId: string | null;
     /** What diverged: the moved candidate components, or the drifted seats. */
     drifted: string;
     message: string;
     journal: RoundJournal;
+    onHalt: (reason: GraphWorkflowHaltReason) => Promise<void>;
   }): Promise<GraphWorkflowIterationResult> {
     const {
       input,
@@ -2337,6 +2383,7 @@ export function createGraphWorkflowIterationOrchestrator(
       drifted,
       message,
       journal,
+      onHalt,
     } = params;
 
     execLogger?.validation(input.contextId, `validation_round.${incident}`, {
@@ -2356,6 +2403,7 @@ export function createGraphWorkflowIterationOrchestrator(
     journal.outcome =
       incident === "roster_drift" ? "roster_drift" : "candidate_mismatch";
 
+    let mismatchCount = 0;
     const concluded = await deps.executionRepository.mutateActive(
       input.projectPath,
       input.sessionName,
@@ -2365,6 +2413,10 @@ export function createGraphWorkflowIterationOrchestrator(
         if (contextState) {
           contextState.validationRound = concludeValidationRound(
             round,
+            journal.outcome,
+          );
+          mismatchCount = settleCandidateMismatchBudget(
+            contextState,
             journal.outcome,
           );
         }
@@ -2398,6 +2450,64 @@ export function createGraphWorkflowIterationOrchestrator(
 
     logRoundConcluded(input, execLogger, round, journal.outcome);
 
+    if (mismatchCount >= CONSECUTIVE_CANDIDATE_MISMATCH_BUDGET) {
+      // The context is already back at `ready` above, exactly as it would be for
+      // a mismatch inside the budget — the halt is what stops the scheduler from
+      // handing it another round, so nothing about the reviewed work is undone.
+      const lastIncident =
+        incident === "stale_result_rejected"
+          ? "stale_result_rejected"
+          : "candidate_mismatch";
+      const haltReason: GraphWorkflowHaltReason = {
+        type: "candidate_unstable",
+        contextId: input.contextId,
+        stage,
+        driftedComponents: drifted,
+        lastIncident,
+        consecutiveCount: mismatchCount,
+        // Two causes, one count, and only one of them is about the worktree.
+        // Claiming movement for a rejection that observed none would send the
+        // operator hunting a writer that does not exist.
+        message:
+          drifted === ""
+            ? `Validation of execution context "${input.contextId}" concluded without a verdict ${mismatchCount} times in a row, and no candidate movement was observed (last incident at ${stage}: ${
+                lastIncident === "stale_result_rejected"
+                  ? "a validator answered for a round that was already over — a stale round token"
+                  : "the candidate read back unchanged, so nothing could be named as having moved"
+              }). Rounds that reach no verdict charge nothing, so the run would repeat indefinitely.`
+            : `Validation of execution context "${input.contextId}" concluded without a verdict ${mismatchCount} times in a row because the reviewed candidate kept moving (drifted components at ${stage}: ${drifted}). Rounds that cannot certify a candidate charge nothing, so the run would repeat indefinitely.`,
+        summary: null,
+      };
+      execLogger?.validation(
+        input.contextId,
+        "validation_round.candidate_unstable",
+        {
+          roundSeq: round.seq,
+          stage,
+          consecutiveCount: mismatchCount,
+          driftedComponents: drifted,
+          lastIncident,
+        },
+      );
+      logger.error("graph-workflow.validation_round.candidate_unstable", {
+        contextId: input.contextId,
+        roundSeq: round.seq,
+        stage,
+        consecutiveCount: mismatchCount,
+        driftedComponents: drifted,
+        lastIncident,
+      });
+      await onHalt(haltReason);
+      return {
+        conversationId: params.conversationId,
+        execution: await loadCurrentExecution(
+          input.projectPath,
+          input.sessionName,
+        ),
+        shouldContinueInContext: false,
+      };
+    }
+
     return {
       conversationId: params.conversationId,
       execution: concluded,
@@ -2415,7 +2525,7 @@ export function createGraphWorkflowIterationOrchestrator(
     observed:
       | { kind: "resolved"; candidate: GraphWorkflowValidationCandidate }
       | { kind: "unavailable"; reason: string };
-    stage: "post_script" | "diff_render" | "specialist_result" | "aggregate";
+    stage: GraphWorkflowValidationIncidentStage;
     assignmentId: string | null;
     /**
      * What diverged, when the caller knows something a re-observation cannot
@@ -2426,6 +2536,7 @@ export function createGraphWorkflowIterationOrchestrator(
     /** The narrower incident, when the caller knows nothing actually moved. */
     incidentOverride?: "stale_result_rejected";
     journal: RoundJournal;
+    onHalt: (reason: GraphWorkflowHaltReason) => Promise<void>;
   }): Promise<GraphWorkflowIterationResult> {
     const drifted =
       params.driftOverride ??
@@ -2674,6 +2785,14 @@ export function createGraphWorkflowIterationOrchestrator(
           await writeValidationRound(
             input,
             concludeValidationRound(stillOpen, journal.outcome),
+            // Every conclusion that is NOT a mismatch passes through here — a
+            // verdict, a failed script gate, or a round the caller threw out of
+            // — because the mismatch path concludes its own round before
+            // returning. That makes this the one place the budget has to be
+            // cleared from, and it is cleared even on the thrown-error exit: a
+            // round that died mid-flight is not evidence that the candidate is
+            // moving.
+            { settleCandidateMismatchBudget: true },
           );
         }
       } catch (releaseError) {
@@ -2762,6 +2881,7 @@ export function createGraphWorkflowIterationOrchestrator(
           stage: "post_script",
           assignmentId: null,
           journal,
+          onHalt,
         });
       }
 
@@ -2795,6 +2915,7 @@ export function createGraphWorkflowIterationOrchestrator(
           drifted: reconciled.detail,
           message: `The cohort configured for execution context "${input.contextId}" is no longer the roster validation round ${round.seq} froze (${reconciled.detail}); the round concluded without a verdict.`,
           journal,
+          onHalt,
         });
       }
 
@@ -2899,6 +3020,7 @@ export function createGraphWorkflowIterationOrchestrator(
             }
           : {}),
         journal,
+        onHalt,
       });
     }
 
@@ -3156,6 +3278,7 @@ export function createGraphWorkflowIterationOrchestrator(
           stage: "aggregate",
           assignmentId: null,
           journal,
+          onHalt,
         });
       }
     }

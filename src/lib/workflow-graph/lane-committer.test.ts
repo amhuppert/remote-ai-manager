@@ -45,7 +45,6 @@ function withLane(
         includedContextIds: [],
         lastCommittingContextId: null,
         commitSnapshots: [],
-        ignoredBaseline: [],
         createdAt: "2026-04-02T09:00:00.000Z",
         updatedAt: "2026-04-02T09:00:00.000Z",
       },

@@ -382,3 +382,75 @@ describe("ContextHaltCard plan-defect presentation", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("ContextHaltCard candidate-unstable presentation", () => {
+  const candidateUnstableHalt: GraphWorkflowHaltReason = {
+    type: "candidate_unstable",
+    contextId: "context-engine",
+    stage: "diff_render",
+    driftedComponents: "candidateTreeHash",
+    lastIncident: "candidate_mismatch",
+    consecutiveCount: 5,
+    message:
+      'Validation of execution context "context-engine" concluded without a verdict 5 times in a row because the reviewed candidate kept moving.',
+    summary: null,
+  };
+
+  /**
+   * The same count reached with nothing moving: every round's result belonged
+   * to a round that was already over.
+   */
+  const staleTokenHalt: GraphWorkflowHaltReason = {
+    type: "candidate_unstable",
+    contextId: "context-engine",
+    stage: "specialist_result",
+    driftedComponents: "",
+    lastIncident: "stale_result_rejected",
+    consecutiveCount: 5,
+    message:
+      'Validation of execution context "context-engine" concluded without a verdict 5 times in a row, and no candidate movement was observed.',
+    summary: null,
+  };
+
+  it("leads with the drift the rounds kept hitting and never leaks the halt-reason enum", () => {
+    render(<ContextHaltCard primary={candidateUnstableHalt} />);
+
+    expect(
+      screen.getByText(
+        /"context-engine" could not be reviewed — the candidate moved 5 rounds in a row/,
+      ),
+    ).toBeInTheDocument();
+    // The stage and the moved component are what an operator diagnoses from;
+    // the raw enum name tells them nothing they can act on.
+    expect(screen.getByText(/diff_render/)).toBeInTheDocument();
+    expect(screen.queryByText(/candidate_unstable/)).not.toBeInTheDocument();
+  });
+
+  it("points at the churn rather than at the reviewed work", () => {
+    render(<ContextHaltCard primary={candidateUnstableHalt} />);
+
+    // No verdict was rendered, so an action that read like the retry halts
+    // would send the operator to re-run work nobody rejected.
+    expect(
+      screen.getByText(/Find what keeps changing the worktree/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert").dataset["tone"]).toBe("attention");
+  });
+
+  // Same halt type, opposite diagnosis. Copy about a moving tree would send the
+  // operator to look for churn that provably did not happen.
+  it("claims no movement when the rounds were rejected for stale round tokens", () => {
+    render(<ContextHaltCard primary={staleTokenHalt} />);
+
+    expect(
+      screen.getByText(
+        /"context-engine" could not be reviewed — 5 rounds in a row reached no verdict/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/stale round token/)).toBeInTheDocument();
+    expect(screen.queryByText(/the candidate moved/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Find what keeps changing the worktree/),
+    ).not.toBeInTheDocument();
+  });
+});

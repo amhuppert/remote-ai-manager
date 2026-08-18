@@ -248,6 +248,33 @@ describe("buildPlanRepairPrompt", () => {
     expect(prompt).toContain("re-halt immediately");
   });
 
+  // The trigger admits this halt on the claim that its remedies are
+  // `update-context` repairs — placement above all. An agent shown neither the
+  // halt's mechanics nor a placement field can only decline.
+  it("frames a candidate_unstable halt around placement and scope, and offers placement in the vocabulary", () => {
+    const prompt = buildPlanRepairPrompt(
+      makeInput({
+        haltReason: {
+          type: "candidate_unstable",
+          contextId: "context-implement",
+          stage: "post_script",
+          driftedComponents: "candidateTreeHash",
+          consecutiveCount: 5,
+          lastIncident: "candidate_mismatch",
+          message: "the reviewed candidate never held still",
+          summary: null,
+        },
+      }),
+    );
+
+    expect(prompt).toContain("placement");
+    expect(prompt).toContain("never reached a verdict");
+    const updateContextShape = prompt
+      .split("\n")
+      .find((line) => line.includes('"type": "update-context"'));
+    expect(updateContextShape).toContain('"placement"');
+  });
+
   it("renders prior repair rounds so the agent sees what already failed", () => {
     const prompt = buildPlanRepairPrompt(
       makeInput({

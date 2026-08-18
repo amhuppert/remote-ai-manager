@@ -626,6 +626,16 @@ describe("halt resumability and the lease it decides", () => {
       ],
       summary: null,
     },
+    candidate_unstable: {
+      type: "candidate_unstable",
+      contextId: "ctx-1",
+      stage: "diff_render",
+      driftedComponents: "candidateTreeHash",
+      lastIncident: "candidate_mismatch",
+      consecutiveCount: 5,
+      message: "the reviewed candidate kept moving",
+      summary: null,
+    },
     validator_infra_error: {
       type: "validator_infra_error",
       contextId: "ctx-1",

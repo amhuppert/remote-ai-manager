@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest";
 import { allHelpEntries } from "../src/cli/help-registry";
 import { pathKey } from "../src/cli/help-types";
 import { graphWorkflowMutabilityPolicySchema } from "../src/lib/workflow-graph/config-schemas";
-import { EXECUTION_TOTAL_PASS_BACKSTOP } from "../src/lib/workflow-graph/constants";
+import {
+  CONSECUTIVE_CANDIDATE_MISMATCH_BUDGET,
+  EXECUTION_TOTAL_PASS_BACKSTOP,
+} from "../src/lib/workflow-graph/constants";
 import {
   graphWorkflowContextEdgeSchema,
   graphWorkflowContextRoutingPolicySchema,
@@ -366,6 +369,31 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
       // And the bound — without it the response reads as a way out of any
       // mandate a seat would rather not judge.
       expectDocuments(skill, "never a plan defect", why);
+    },
+  );
+
+  it.each(SKILL_DIRS)(
+    "%s documents the consecutive candidate-mismatch budget and its halt",
+    (dir) => {
+      const skill = readPackage(dir);
+      const why = "the bound on rounds that never reach a verdict";
+
+      // The halt type, pinned to the enum plan repair accounts rounds under, so
+      // a rename fails here instead of leaving planners a dead vocabulary.
+      expect(
+        planRepairRoundSchema.shape.haltType.options,
+        "planRepairRoundSchema no longer admits `candidate_unstable`",
+      ).toContain("candidate_unstable");
+      expectDocuments(skill, "candidate_unstable", why);
+      // The number, from the engine constant rather than a second copy of it.
+      expectDocuments(
+        skill,
+        `${CONSECUTIVE_CANDIDATE_MISMATCH_BUDGET} in a row`,
+        why,
+      );
+      // And the planning lever, without which the halt reads as unactionable:
+      // the churn is a placement problem, not a defect in the reviewed work.
+      expectDocuments(skill, "does not share a worktree", why);
     },
   );
 

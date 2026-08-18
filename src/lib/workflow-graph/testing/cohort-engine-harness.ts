@@ -47,7 +47,11 @@ export type ResolveCandidateTreeInput = Parameters<
   IterationOrchestratorValidationRoundService["resolveCandidateTree"]
 >[0];
 import { createGraphWorkflowValidationService } from "@/lib/workflow-graph/execution-validation";
-import type { GraphWorkflowContextValidatorInput } from "@/lib/workflow-graph/execution-validation";
+import type {
+  GraphWorkflowContextValidatorInput,
+  RenderRoundCommonSectionsInput,
+  ValidationRoundCommonSections,
+} from "@/lib/workflow-graph/execution-validation";
 import type { ValidatorRunResult } from "@/lib/workflow-graph/validator-runner";
 import {
   buildValidationRoundRoster,
@@ -432,6 +436,15 @@ export function createHarness(params: {
     input: ResolveCandidateTreeInput,
   ) => ValidationCandidateTreeResolution;
   /**
+   * The round's shared inputs, rendered once before the first specialist runs.
+   * Wired only by a test whose subject is that render — the tree it was read
+   * from is the one input a round can disagree with its own freeze about.
+   * Absent leaves every validator to derive its own, the cohort-of-one shape.
+   */
+  renderRoundCommonSections?: (
+    input: RenderRoundCommonSectionsInput,
+  ) => Promise<ValidationRoundCommonSections>;
+  /**
    * The user-input gate the orchestrator AND the manager share. Injected when a
    * test needs to observe the parked-question lifecycle (withdrawals, machine
    * dispatches); otherwise each builds its own default over this repository.
@@ -468,6 +481,9 @@ export function createHarness(params: {
   const runContextValidator = vi.fn(params.runContextValidator);
   const validationService = createGraphWorkflowValidationService({
     runContextValidator,
+    ...(params.renderRoundCommonSections
+      ? { renderRoundCommonSections: params.renderRoundCommonSections }
+      : {}),
   });
 
   // The real recovery paths, over the same repository the orchestrator writes

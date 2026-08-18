@@ -101,7 +101,6 @@ function activeLaneExecution(
         includedContextIds: [],
         lastCommittingContextId: null,
         commitSnapshots: [],
-        ignoredBaseline: [],
         createdAt: T,
         updatedAt: T,
       },

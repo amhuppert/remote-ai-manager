@@ -3,7 +3,11 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { defaultGitClient } from "./client";
-import { commitOwnedPaths, worktreeMatchesHead } from "./owned-landing";
+import {
+  commitOwnedPaths,
+  createOwnedLandingOperations,
+  worktreeMatchesHead,
+} from "./owned-landing";
 
 async function git(repo: string, args: string[]): Promise<string> {
   const { stdout } = await defaultGitClient.git(args, repo);
@@ -103,14 +107,13 @@ describe("commitOwnedPaths", () => {
     expect(await git(repo, ["show", "--name-only", "--format=", "HEAD"])).toBe(
       "src/api/handler.ts",
     );
-    // The commit was built without reading the shared index and without
-    // writing it, so the sibling's staged blobs are byte-identical to what it
-    // staged. The landed path joins the list only because the index still
-    // holds its pre-landing blob — that is the untouched index, not a write.
+    // The commit was built without reading the shared index, so the sibling's
+    // staged blobs are byte-identical to what it staged and still staged. The
+    // landed path is absent from the list: the only entries the landing wrote
+    // back are its own, and those now match the commit it published.
     const staged = await git(repo, ["diff", "--cached", "--name-only", "HEAD"]);
     expect(staged.split("\n").sort()).toEqual([
       "README.md",
-      "src/api/handler.ts",
       "src/ui/panel.tsx",
     ]);
     expect(await git(repo, ["show", ":src/ui/panel.tsx"])).toBe(
@@ -119,12 +122,12 @@ describe("commitOwnedPaths", () => {
     expect(await git(repo, ["show", ":README.md"])).toBe("staged root");
   });
 
-  it("leaves the shared index untouched, so the landed content is reachable only through the new HEAD", async () => {
+  it("points the shared index at the new HEAD for the paths it landed, and at nothing else", async () => {
     await write(repo, "src/api/handler.ts", "export const a = 8;\n");
     await write(repo, "src/api/added.ts", "export const added = true;\n");
     await rm(path.join(repo, "src/api/legacy.ts"));
     await write(repo, "src/ui/panel.tsx", "export const Panel = 'wip';\n");
-    const indexBefore = await git(repo, ["ls-files", "-s"]);
+    const siblingEntryBefore = await git(repo, ["ls-files", "-s", "src/ui"]);
 
     await commitOwnedPaths({
       worktreePath: repo,
@@ -132,11 +135,18 @@ describe("commitOwnedPaths", () => {
       ownedPaths: ["src/api"],
     });
 
-    // Not one entry moved: every path the landing committed still has the
-    // index entry it had beforehand. Writing them back would be a write to the
-    // one index a concurrent sibling is also using.
-    expect(await git(repo, ["ls-files", "-s"])).toBe(indexBefore);
-    // The work is on the branch regardless — HEAD is what the landing publishes.
+    // All three staleness shapes are gone: the modified path's entry holds the
+    // landed blob, the added path has an entry at all, the deleted path has
+    // none. Left as they were, git would describe committed work as pending
+    // and produce no diff to go with it.
+    expect(await git(repo, ["diff", "--cached", "--name-only", "HEAD"])).toBe(
+      "",
+    );
+    // Outside the landing's own prefixes not one entry moved — those belong to
+    // a sibling using the same index.
+    expect(await git(repo, ["ls-files", "-s", "src/ui"])).toBe(
+      siblingEntryBefore,
+    );
     expect(
       (await git(repo, ["show", "--name-only", "--format=", "HEAD"]))
         .split("\n")
@@ -145,6 +155,7 @@ describe("commitOwnedPaths", () => {
   });
 
   it("leaves the tree reading as HEAD's once the landing is the only thing that happened, added and deleted paths included", async () => {
+    const base = await git(repo, ["rev-parse", "HEAD"]);
     await write(repo, "src/api/handler.ts", "export const a = 8;\n");
     await write(repo, "src/api/added.ts", "export const added = true;\n");
     await rm(path.join(repo, "src/api/legacy.ts"));
@@ -155,10 +166,42 @@ describe("commitOwnedPaths", () => {
       ownedPaths: ["src/api"],
     });
 
-    // The stale index says otherwise for all three shapes — a modified path
-    // whose blob it still holds, an added path it has no entry for, a deleted
-    // path it still lists — and the whole point is that this does not consult
-    // it. A whole-tree committer running next has nothing to do.
+    // A whole-tree committer running next has nothing to do.
+    expect(await worktreeMatchesHead(repo)).toBe(true);
+
+    // Same answer with the index rewound behind HEAD the way a failed resync
+    // would leave it, in all three shapes at once — a modified path whose old
+    // blob it holds, an added path it has no entry for, a deleted path it
+    // still lists. The reader compares the worktree against HEAD instead of
+    // trusting the index, which is what makes the resync safe to be
+    // best-effort.
+    await git(repo, ["reset", "--quiet", base, "--", "src/api"]);
+    expect(await worktreeMatchesHead(repo)).toBe(true);
+  });
+
+  it("keeps the landing published when the index resync fails", async () => {
+    const landing = createOwnedLandingOperations({
+      git: (args, cwd, options) =>
+        args.includes("reset")
+          ? Promise.reject(
+              new Error("Unable to create index.lock: File exists"),
+            )
+          : defaultGitClient.git(args, cwd, options),
+    });
+    await write(repo, "src/api/handler.ts", "export const a = 10;\n");
+
+    const result = await landing.commitOwnedPaths({
+      worktreePath: repo,
+      message: "Graph workflow context ctx-api",
+      ownedPaths: ["src/api"],
+    });
+
+    // The resync runs after the ref update, so its failure can only leave an
+    // index to repair later — never a landing the caller has to treat as
+    // failed and halt on, over work that is already on the branch.
+    expect(result.status).toBe("committed");
+    if (result.status !== "committed") return;
+    expect(await git(repo, ["rev-parse", "HEAD"])).toBe(result.hash);
     expect(await worktreeMatchesHead(repo)).toBe(true);
   });
 

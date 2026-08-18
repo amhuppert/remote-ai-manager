@@ -345,6 +345,7 @@ describe("workflow graph execution schemas", () => {
           completedTaskCount: 0,
           iterationCount: 1,
           consecutiveFailureCount: 0,
+          consecutiveCandidateMismatchCount: 0,
         },
         "context-2": {
           contextId: "context-2",
@@ -353,6 +354,7 @@ describe("workflow graph execution schemas", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
+          consecutiveCandidateMismatchCount: 0,
         },
       },
       taskStates: {
@@ -2289,6 +2291,7 @@ describe("graphWorkflowExecutionSchema parallel-execution fields", () => {
           completedTaskCount: 0,
           iterationCount: 1,
           consecutiveFailureCount: 0,
+          consecutiveCandidateMismatchCount: 0,
           worktreePath: "/tmp/.worktrees/session.ctx-1",
           branchName: "csm/session-ctx-1",
           isolation: "worktree" as const,
@@ -2304,6 +2307,7 @@ describe("graphWorkflowExecutionSchema parallel-execution fields", () => {
           completedTaskCount: 0,
           iterationCount: 1,
           consecutiveFailureCount: 0,
+          consecutiveCandidateMismatchCount: 0,
           worktreePath: "/tmp/.worktrees/session.ctx-2",
           branchName: "csm/session-ctx-2",
           isolation: "worktree" as const,

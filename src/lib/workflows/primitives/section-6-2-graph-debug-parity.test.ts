@@ -289,6 +289,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
         "context-plan": {
           ...previousExecution.contextStates["context-plan"]!,
           consecutiveFailureCount: 3,
+          consecutiveCandidateMismatchCount: 0,
         },
       },
     };
@@ -956,6 +957,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
           ...previousExecution.contextStates["context-plan"]!,
           status: "halted",
           consecutiveFailureCount: 3,
+          consecutiveCandidateMismatchCount: 0,
           iterationCount: 1,
         },
       },

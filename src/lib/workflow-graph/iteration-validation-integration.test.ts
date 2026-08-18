@@ -175,6 +175,7 @@ function createContextValidatorExecution(
         completedTaskCount: 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
+        consecutiveCandidateMismatchCount: 0,
       },
     },
     taskStates: {

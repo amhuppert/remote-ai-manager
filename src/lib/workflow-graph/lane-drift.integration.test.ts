@@ -4,48 +4,21 @@
  * reports.
  *
  * The classifier's unit tests fix the attribution rules; this fixes the part
- * only git can answer — which paths a worktree reports as dirty after a landing,
- * how it names ignored and renamed ones, and that a sibling's legitimate
- * in-progress work is among them. The ignored cases matter most here, because
- * the way git collapses ignored directories is exactly what a hand-written fake
- * would get wrong.
+ * only git can answer — which paths a worktree reports as dirty after a
+ * landing, how it names renamed ones, which of them it leaves out because the
+ * ignore rules cover them, and that a sibling's legitimate in-progress work is
+ * among them.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  utimes,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { defaultGitClient } from "@/lib/git/client";
-import {
-  readIgnoredContents,
-  type IgnoredEntry,
-  type IgnoredWorktreeContents,
-} from "@/lib/git/worktree";
 import { commitOwnedPaths } from "@/lib/git/owned-landing";
-import { createLaneDriftAuditor, summarizeIgnoredContents } from "./lane-drift";
-import type {
-  GraphWorkflowCanonicalOwnership,
-  GraphWorkflowIgnoredBaselineEntry,
-} from "./schemas";
+import { createLaneDriftAuditor } from "./lane-drift";
+import type { GraphWorkflowCanonicalOwnership } from "./schemas";
 
-const MEMBER_CONTEXT_IDS = ["context-api", "context-ui"];
-const provisionedEntries = new WeakMap<
-  readonly GraphWorkflowIgnoredBaselineEntry[],
-  readonly IgnoredEntry[]
->();
-
-function captureIgnoredBaseline(contents: IgnoredWorktreeContents) {
-  const baseline = summarizeIgnoredContents(contents);
-  provisionedEntries.set(baseline, contents.entries);
-  return baseline;
-}
 
 async function git(repo: string, args: string[]): Promise<string> {
   const { stdout } = await defaultGitClient.git(args, repo);
@@ -75,7 +48,11 @@ describe("lane drift audit after a real owned landing (R8.1)", () => {
     await git(lane, ["config", "user.name", "Command Center"]);
     // `.cc/` matches what `ensureCcArtifactsExcluded` establishes for every
     // real worktree, so CC's artifacts are ignored here exactly as in production.
-    await write(lane, ".gitignore", "*.log\nnode_modules/\n.cc/\n");
+    await write(
+      lane,
+      ".gitignore",
+      "*.log\nnode_modules/\n.cc/\n*.tsbuildinfo\n",
+    );
     await write(lane, "src/api/handler.ts", "api v1\n");
     await write(lane, "src/ui/panel.tsx", "ui v1\n");
     await git(lane, ["add", "-A"]);
@@ -108,17 +85,9 @@ describe("lane drift audit after a real owned landing (R8.1)", () => {
   }
 
   function audit(overrides: Partial<Parameters<typeof auditor.audit>[0]> = {}) {
-    const ignoredBaseline = overrides.ignoredBaseline ?? [];
     return auditor.audit({
       laneWorktreePath: lane,
       memberOwnerships: overrides.memberOwnerships ?? members,
-      memberContextIds: overrides.memberContextIds ?? MEMBER_CONTEXT_IDS,
-      ignoredBaseline,
-      ignoredBaselineEntries:
-        overrides.ignoredBaselineEntries !== undefined
-          ? overrides.ignoredBaselineEntries
-          : (provisionedEntries.get(ignoredBaseline) ??
-            (ignoredBaseline.length === 0 ? [] : null)),
     });
   }
 
@@ -131,39 +100,27 @@ describe("lane drift audit after a real owned landing (R8.1)", () => {
     await expect(audit()).resolves.toEqual({ unattributedPaths: [] });
   });
 
-  it("accepts a baselined install that nobody touched", async () => {
-    await write(
-      lane,
-      "node_modules/pkg/index.js",
-      "installed at provisioning\n",
-    );
-    const ignoredBaseline = captureIgnoredBaseline(
-      await readIgnoredContents(lane),
-    );
+  it("reports nothing when the toolchain rewrites gitignored content around a landing", async () => {
+    await write(lane, "node_modules/pkg/index.js", "installed\n");
+    await write(lane, "tsconfig.tsbuildinfo", '{"version":1}\n');
     await write(lane, "src/api/handler.ts", "api v2\n");
     await landApi();
+    // What a validation run does to a lane worktree: an install adds a package
+    // file, an incremental typecheck rewrites its build info in place.
+    await write(lane, "node_modules/pkg/postinstall.js", "generated\n");
+    await write(lane, "tsconfig.tsbuildinfo", '{"version":2}\n');
 
-    await expect(audit({ ignoredBaseline })).resolves.toEqual({
-      unattributedPaths: [],
-    });
+    await expect(audit()).resolves.toEqual({ unattributedPaths: [] });
   });
 
-  it("reports an overwrite that keeps the file's exact size", async () => {
-    await write(lane, "node_modules/pkg/index.js", "aaaaaaaa\n");
-    const ignoredBaseline = captureIgnoredBaseline(
-      await readIgnoredContents(lane),
-    );
-
+  it("still reports an unattributed tracked change while gitignored content churns around it", async () => {
     await write(lane, "src/api/handler.ts", "api v2\n");
-    await write(lane, "node_modules/pkg/index.js", "bbbbbbbb\n");
-    // Pinned rather than raced: the sizes match by construction, so this does
-    // not depend on filesystem timestamp granularity between two writes.
-    const touched = path.join(lane, "node_modules/pkg/index.js");
-    await utimes(touched, new Date(90_000_000), new Date(90_000_000));
+    await write(lane, "scripts/deploy.sh", "#!/bin/sh\n");
     await landApi();
+    await write(lane, "node_modules/pkg/postinstall.js", "generated\n");
 
-    await expect(audit({ ignoredBaseline })).resolves.toEqual({
-      unattributedPaths: ["node_modules"],
+    await expect(audit()).resolves.toEqual({
+      unattributedPaths: ["scripts/deploy.sh"],
     });
   });
 

@@ -133,6 +133,7 @@ function buildParkedExecution(input: {
       completedTaskCount: 0,
       iterationCount: isParked ? 1 : 0,
       consecutiveFailureCount: 0,
+      consecutiveCandidateMismatchCount: 0,
       pendingUserInputs: record === null ? {} : { implementer: record },
     };
     execution.taskStates[taskIdFor(contextId)] = {

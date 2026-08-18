@@ -1,13 +1,4 @@
-import {
-  appendFile,
-  lstat,
-  mkdir,
-  open,
-  readFile,
-  readlink,
-} from "node:fs/promises";
-import type { BigIntStats } from "node:fs";
-import { createHash, randomUUID } from "node:crypto";
+import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { defaultGitClient, type GitClient } from "./client";
 import { isMergeInProgress } from "./conflict-markers";
@@ -18,14 +9,6 @@ import { getErrorMessage } from "@/lib/shared/errors";
 const logger = createLogger("git-worktree");
 
 const MAX_BUFFER = 10 * 1024 * 1024;
-
-/**
- * Per-file ignored listings are sized by the repo's dependency and build output
- * rather than by anything CC did: a `node_modules` alone runs to tens of
- * thousands of paths. Truncating that listing would read as "nothing new here",
- * so it gets headroom the ordinary git reads do not need.
- */
-const IGNORED_LISTING_MAX_BUFFER = 128 * 1024 * 1024;
 
 /**
  * Worktree-relative namespace CC and its agents use for ephemeral artifacts:
@@ -202,11 +185,11 @@ export function parseWorktreeStatusV2(stdout: string): WorktreeStatusEntry[] {
  * default reports a new directory as a single entry, and a directory is not
  * something ownership can be judged against.
  *
- * Ignored paths are NOT included. `git status` can only name them as the
- * matching pattern does — `node_modules/` collapses to a single entry however
- * many files are inside it — and a collapsed directory cannot answer whether
- * something new appeared under it. {@link readIgnoredContents} answers that
- * question separately, at the grain it needs.
+ * Ignored paths are NOT included, and no caller asks for them: `git status`
+ * can only name them as the matching pattern does — `node_modules/` collapses
+ * to a single entry however many files are inside it — so the report cannot
+ * distinguish an appearance inside an ignored directory from the directory
+ * standing still.
  */
 export async function readWorktreeStatusV2(
   worktreePath: string,
@@ -218,245 +201,6 @@ export async function readWorktreeStatusV2(
     { maxBuffer: MAX_BUFFER },
   );
   return parseWorktreeStatusV2(stdout);
-}
-
-/**
- * One ignored file and enough of its identity to tell "still what was here" from
- * "written since".
- *
- * A path alone cannot answer that: overwriting a file in place adds no new name,
- * so a name-only record reads an injected credential and the original install as
- * the same content. The fingerprint includes a SHA-256 of regular-file bytes or
- * a symlink's literal target as well as filesystem identity. Metadata alone is
- * insufficient: a same-size copy can restore the original modification time,
- * and no collection of stat fields proves what bytes are in the file.
- */
-export interface IgnoredEntry {
-  /** Repo-relative path. */
-  readonly path: string;
-  /** File kind, filesystem identity, and verified content or unreadable token. */
-  readonly fingerprint: string;
-}
-
-/** Concurrent stats. Bounded so a huge ignored tree cannot exhaust file handles. */
-const IGNORED_STAT_CONCURRENCY = 32;
-
-/** Stream ignored files in bounded chunks instead of buffering dependency trees. */
-const IGNORED_HASH_BUFFER_BYTES = 64 * 1024;
-
-/**
- * How a worktree's ignored content reads at two different grains at once.
- *
- * Both are needed because neither alone can decide whether an ignored path is
- * new. `roots` is the shape the ignore rules describe — a wholly-ignored
- * directory is one entry — which is the only summary small enough to persist as
- * a provisioning baseline. `entries` is every ignored file individually, which
- * is the only grain that can show a write INTO an already-ignored directory. A
- * baseline of roots compared against roots would call `node_modules/leak.env`
- * pre-existing state, because git reports it as the same `node_modules` entry
- * either way.
- */
-export interface IgnoredWorktreeContents {
-  /** Every ignored file, repo-relative, one entry per file. */
-  readonly entries: readonly IgnoredEntry[];
-  /** The same content as the ignore rules name it; directories collapsed. */
-  readonly roots: readonly string[];
-}
-
-/**
- * Enumerate a worktree's ignored content.
- *
- * `ls-files` rather than `git status --ignored`: it answers this exact question
- * without also diffing the index and the tree, and its `--directory` mode gives
- * the collapsed form from the same walk semantics as the per-file one, so the
- * two results describe one content set rather than two.
- *
- * The per-file listing is the expensive half — it walks every file inside every
- * ignored directory, `node_modules` included, and a large repo's output runs to
- * megabytes. That cost buys the only signal that catches a server-mediated
- * write into ignored space, and it is paid once per landing rather than per
- * turn.
- */
-async function listIgnored(
-  worktreePath: string,
-  client: GitClient,
-  extra: readonly string[],
-): Promise<string[]> {
-  const { stdout } = await client.git(
-    ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", ...extra],
-    worktreePath,
-    { maxBuffer: IGNORED_LISTING_MAX_BUFFER },
-  );
-  return stdout
-    .split("\0")
-    .filter((entry) => entry.length > 0)
-    .map(stripDirectoryMarker);
-}
-
-/**
- * A file's byte and filesystem identity, or a fail-closed unreadable
- * observation that retains every identity field obtained before the failure.
- *
- * Regular files are streamed only through the size observed by `lstat`; a
- * second stat identity in the fingerprint exposes a concurrent truncate or
- * append. Symlinks hash the link text rather than following it, so an ignored
- * link can never make the audit read outside the canonical worktree.
- */
-async function hashRegularFile(
-  absolutePath: string,
-  expectedSize: bigint,
-): Promise<string> {
-  const handle = await open(absolutePath, "r");
-  const hash = createHash("sha256");
-  const buffer = Buffer.allocUnsafe(IGNORED_HASH_BUFFER_BYTES);
-  let remaining = expectedSize;
-
-  try {
-    while (remaining > 0n) {
-      const requested = Number(
-        remaining > BigInt(buffer.length) ? BigInt(buffer.length) : remaining,
-      );
-      const { bytesRead } = await handle.read(buffer, 0, requested, null);
-      if (bytesRead === 0) break;
-      hash.update(buffer.subarray(0, bytesRead));
-      remaining -= BigInt(bytesRead);
-    }
-    return hash.digest("hex");
-  } finally {
-    await handle.close();
-  }
-}
-
-function fileKind(stat: BigIntStats): "file" | "symlink" | "special" {
-  if (stat.isFile()) return "file";
-  if (stat.isSymbolicLink()) return "symlink";
-  return "special";
-}
-
-function filesystemIdentity(stat: BigIntStats): readonly (string | bigint)[] {
-  return [
-    fileKind(stat),
-    stat.size,
-    stat.mtimeNs,
-    stat.ctimeNs,
-    stat.ino,
-    stat.dev,
-    stat.mode,
-    stat.uid,
-    stat.gid,
-  ];
-}
-
-function unreadableFingerprint(
-  stage: "initial-stat" | "content" | "final-stat",
-  observed: BigIntStats | null,
-): string {
-  // No deterministic metadata signature can prove unreadable bytes stayed the
-  // same: a privileged writer can restore size, timestamps, mode, and even
-  // write through the same inode. A per-observation nonce makes unknown never
-  // compare equal to unknown, while the available identity remains attached
-  // for diagnosis and exposes ordinary unlink-and-replace cases directly.
-  return [
-    "unreadable",
-    stage,
-    ...(observed === null ? ["no-stat"] : filesystemIdentity(observed)),
-    randomUUID(),
-  ].join(":");
-}
-
-async function fingerprintOf(absolutePath: string): Promise<string> {
-  let before: BigIntStats;
-  try {
-    before = await lstat(absolutePath, { bigint: true });
-  } catch {
-    return unreadableFingerprint("initial-stat", null);
-  }
-
-  let contentDigest: string;
-  try {
-    contentDigest = before.isFile()
-      ? await hashRegularFile(absolutePath, before.size)
-      : before.isSymbolicLink()
-        ? createHash("sha256")
-            .update(await readlink(absolutePath, { encoding: "buffer" }))
-            .digest("hex")
-        : "not-a-regular-file";
-  } catch {
-    return unreadableFingerprint("content", before);
-  }
-
-  try {
-    const after = await lstat(absolutePath, { bigint: true });
-    return [
-      ...filesystemIdentity(before),
-      after.size,
-      after.mtimeNs,
-      after.ctimeNs,
-      after.ino,
-      contentDigest,
-    ].join(":");
-  } catch {
-    return unreadableFingerprint("final-stat", before);
-  }
-}
-
-/**
- * Stat every listed file, a bounded number at a time.
- *
- * This is the second walk of the same tree — git's listing already stat'ed
- * everything to decide file from directory — and it is paid once per landing
- * rather than per turn. File reads are streaming and file-handle concurrency is
- * bounded; byte identity is required because a metadata-only baseline can be
- * forged by a same-size, timestamp-preserving overwrite.
- */
-async function fingerprintFiles(
-  worktreePath: string,
-  files: readonly string[],
-): Promise<IgnoredEntry[]> {
-  const entries: IgnoredEntry[] = new Array(files.length);
-  let cursor = 0;
-  const worker = async (): Promise<void> => {
-    for (;;) {
-      const index = cursor;
-      cursor += 1;
-      const file = files[index];
-      if (file === undefined) return;
-      entries[index] = {
-        path: file,
-        fingerprint: await fingerprintOf(path.join(worktreePath, file)),
-      };
-    }
-  };
-  await Promise.all(
-    Array.from(
-      { length: Math.min(IGNORED_STAT_CONCURRENCY, files.length) },
-      () => worker(),
-    ),
-  );
-  return entries;
-}
-
-/** Every ignored file individually. See {@link IgnoredWorktreeContents}. */
-export async function readIgnoredEntries(
-  worktreePath: string,
-  client: GitClient = defaultGitClient,
-): Promise<IgnoredEntry[]> {
-  return fingerprintFiles(
-    worktreePath,
-    await listIgnored(worktreePath, client, []),
-  );
-}
-
-/** Both grains at once, for the callers that build a baseline from them. */
-export async function readIgnoredContents(
-  worktreePath: string,
-  client: GitClient = defaultGitClient,
-): Promise<IgnoredWorktreeContents> {
-  const [entries, roots] = await Promise.all([
-    readIgnoredEntries(worktreePath, client),
-    listIgnored(worktreePath, client, ["--directory"]),
-  ]);
-  return { entries, roots };
 }
 
 /**

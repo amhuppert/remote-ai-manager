@@ -31,6 +31,14 @@ async function git(repo: string, args: string[]): Promise<string> {
   return stdout.trim();
 }
 
+/**
+ * A landed lane worktree whose shared index describes the pre-landing tree.
+ *
+ * A landing points its own entries back at what it published, so the drift is
+ * induced here rather than left behind: what the join has to survive is an
+ * index that disagrees with HEAD at all — an interrupted write-back, another
+ * tool, an operator — not one particular way of getting there.
+ */
 async function createPrivateIndexResidueRepo(
   prefix: string,
   branchName: string,
@@ -44,6 +52,7 @@ async function createPrivateIndexResidueRepo(
   await writeFile(path.join(repo, "README.md"), "base\n", "utf-8");
   await git(repo, ["add", "README.md"]);
   await git(repo, ["commit", "-m", "base"]);
+  const preLandingHead = await git(repo, ["rev-parse", "HEAD"]);
 
   await mkdir(path.join(repo, "owned"), { recursive: true });
   await writeFile(
@@ -59,6 +68,7 @@ async function createPrivateIndexResidueRepo(
   if (landed.status !== "committed") {
     throw new Error(`Expected private-index landing in ${repo}`);
   }
+  await git(repo, ["reset", "--quiet", preLandingHead, "--", "owned"]);
   return repo;
 }
 
@@ -120,7 +130,6 @@ function makeLane(
     includedContextIds: [],
     lastCommittingContextId: null,
     commitSnapshots: [],
-    ignoredBaseline: [],
     createdAt: t0,
     updatedAt: t0,
     ...overrides,

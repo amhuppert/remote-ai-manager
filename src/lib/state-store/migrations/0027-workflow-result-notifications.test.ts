@@ -72,11 +72,11 @@ describe("0027-workflow-result-notifications", () => {
     expect(db.prepare("SELECT id, source FROM notifications").all()).toEqual([
       { id: "notification-1", source: "job" },
     ]);
-    // This migration's own breaking version is 8; the native-SDD v2 cutover
-    // (migration 0030) later raises the application constant to 9.
+    // This migration's own breaking version is 8; later cutovers (0030, 0031)
+    // raise the application constant past it.
     expect(
       db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get(),
     ).toEqual({ version: 8 });
-    expect(KNOWN_SCHEMA_VERSION).toBe(9);
+    expect(KNOWN_SCHEMA_VERSION).toBe(10);
   });
 });

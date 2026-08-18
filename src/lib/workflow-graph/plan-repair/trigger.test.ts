@@ -114,6 +114,33 @@ describe("evaluatePlanRepairTrigger", () => {
     expect(verdict.contextId).toBe("context-implement");
   });
 
+  it("fires on a candidate_unstable halt, so repair can look at the placement behind the churn", () => {
+    const verdict = evaluatePlanRepairTrigger(
+      haltedExecution({
+        haltReason: {
+          type: "candidate_unstable",
+          contextId: "context-implement",
+          stage: "diff_render",
+          driftedComponents: "candidateTreeHash",
+          lastIncident: "candidate_mismatch",
+          consecutiveCount: 5,
+          message:
+            'Validation of execution context "context-implement" concluded without a verdict 5 times in a row',
+          summary: null,
+        },
+      }),
+    );
+
+    expect(verdict.eligible).toBe(true);
+    if (!verdict.eligible) return;
+    expect(verdict.haltType).toBe("candidate_unstable");
+    expect(verdict.contextId).toBe("context-implement");
+    // A context halt: the placement or scope a repair would narrow belongs to
+    // the context whose rounds could never certify anything.
+    expect(verdict.loopGroupId).toBeNull();
+    expect(verdict.loopScope).toBeNull();
+  });
+
   it("fires on a plan_defect halt, so the classified defect reaches repair with no breaker rounds spent first", () => {
     const verdict = evaluatePlanRepairTrigger(
       haltedExecution({ haltReason: planDefectHalt() }),

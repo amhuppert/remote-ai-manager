@@ -642,3 +642,44 @@ describe("WorkflowEventLog rendering of a plan-defect halt", () => {
     expect(screen.getByText("Plan defect halted · Plan")).toBeInTheDocument();
   });
 });
+
+describe("WorkflowEventLog rendering of a candidate-unstable halt", () => {
+  it("shows the drift headline rather than the halt-reason enum", async () => {
+    const { execution, events } = executionWithHistory([
+      {
+        occurredAt: "2026-04-02T08:00:00.000Z",
+        event: {
+          type: "graph-workflow-status",
+          ...EVENT_BASE,
+          workflowStatus: "halted",
+          activeContextIds: [],
+          activeBatchIds: [],
+          activeJoinIds: [],
+          haltReason: {
+            type: "candidate_unstable",
+            contextId: "context-plan",
+            stage: "diff_render",
+            driftedComponents: "candidateTreeHash",
+            lastIncident: "candidate_mismatch",
+            consecutiveCount: 5,
+            message: "the reviewed candidate kept moving",
+            summary: null,
+          },
+          pendingHaltReason: null,
+          secondaryHaltReasons: [],
+        },
+      },
+    ]);
+
+    render(<WorkflowEventLog execution={execution} events={events} />);
+
+    await userEvent.click(screen.getByText("Workflow halted"));
+
+    expect(
+      screen.getByText(
+        /"context-plan" could not be reviewed — the candidate moved 5 rounds in a row/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/candidate_unstable/)).not.toBeInTheDocument();
+  });
+});

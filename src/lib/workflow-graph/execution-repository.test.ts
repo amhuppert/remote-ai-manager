@@ -1078,6 +1078,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         completedTaskCount: 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
+        consecutiveCandidateMismatchCount: 0,
         worktreePath: null,
         branchName: null,
         batchId: null,

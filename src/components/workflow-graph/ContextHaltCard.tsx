@@ -466,6 +466,38 @@ export function formatGraphWorkflowHaltReason(
         action: `Found while "${reason.contextId}" landed — the lane cannot say which member wrote them. Widen a member's ownership to cover these paths, or remove the writes, then resume.`,
         tone: "attention",
       };
+    case "candidate_unstable": {
+      // One count, two diagnoses. When something moved, the tree is the story
+      // and the card leads with it. When nothing did — a validator answering
+      // for a round that was already over — the same copy would send the
+      // operator hunting churn that never happened, so the card says which of
+      // the two it is. Neither ever suggests a bare resume: resuming before the
+      // cause is addressed reproduces the same run of rounds.
+      const moved = reason.driftedComponents !== "";
+      return {
+        headline: moved
+          ? `"${reason.contextId}" could not be reviewed — the candidate moved ${reason.consecutiveCount} rounds in a row`
+          : `"${reason.contextId}" could not be reviewed — ${reason.consecutiveCount} rounds in a row reached no verdict`,
+        detail: (
+          <>
+            <p>{reason.message}</p>
+            <pre className={haltPreClass}>
+              {moved
+                ? `stage: ${reason.stage}\ndrifted: ${reason.driftedComponents}`
+                : `stage: ${reason.stage}\nlast incident: ${
+                    reason.lastIncident === "stale_result_rejected"
+                      ? "stale round token"
+                      : "candidate read back unchanged"
+                  }`}
+            </pre>
+          </>
+        ),
+        action: moved
+          ? "Find what keeps changing the worktree between the freeze and the review — a sibling writing into a shared lane, or a stale index under it — then resume. No verdict was rendered, so no work was reopened and no attempt was charged."
+          : "Nothing was seen to move, so the worktree is not the place to look: the rounds kept being discarded before a verdict could land. Check the validator's own runs for results arriving after their round closed, then resume. No verdict was rendered, so no work was reopened and no attempt was charged.",
+        tone: "attention",
+      };
+    }
     case "plan_defect":
       // The defect is against the CONTRACT, not the work, so the card leads
       // with the clause in conflict and never suggests a bare re-run: resuming

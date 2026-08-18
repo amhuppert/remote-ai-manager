@@ -340,6 +340,7 @@ function createExecutionWithPlanTasks(
         completedTaskCount: statuses["task-plan-1"] === "completed" ? 1 : 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
+        consecutiveCandidateMismatchCount: 0,
         worktreePath: null,
         branchName: null,
         isolation: "session",
@@ -361,6 +362,7 @@ function createExecutionWithPlanTasks(
         completedTaskCount: 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
+        consecutiveCandidateMismatchCount: 0,
         worktreePath: null,
         branchName: null,
         isolation: "session",
@@ -382,6 +384,7 @@ function createExecutionWithPlanTasks(
         completedTaskCount: 0,
         iterationCount: 0,
         consecutiveFailureCount: 0,
+        consecutiveCandidateMismatchCount: 0,
         worktreePath: null,
         branchName: null,
         isolation: "session",
@@ -3460,6 +3463,7 @@ describe("codex implementer continuity", () => {
           completedTaskCount: 0,
           iterationCount: 0,
           consecutiveFailureCount: 0,
+          consecutiveCandidateMismatchCount: 0,
           worktreePath: null,
           branchName: null,
           isolation: "session",
@@ -4734,6 +4738,7 @@ describe("runIteration when all tasks are already completed on entry", () => {
       status: "completed",
       completedTaskCount: 2,
       consecutiveFailureCount: 0,
+      consecutiveCandidateMismatchCount: 0,
     });
 
     const validationEvent = repository.appendedEvents.find(

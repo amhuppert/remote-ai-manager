@@ -492,6 +492,19 @@ function haltReasonsEqual(
         // one to announce.
         deepEqualJson(previous.planDefects, next.planDefects)
       );
+    case "candidate_unstable":
+      return (
+        next.type === "candidate_unstable" &&
+        previous.contextId === next.contextId &&
+        previous.stage === next.stage &&
+        previous.driftedComponents === next.driftedComponents &&
+        // A run that stopped moving and started answering late is a different
+        // diagnosis, so it is a different halt to announce. `summary` stays out
+        // for the reason it does everywhere else: a repair verdict written onto
+        // a standing halt is bookkeeping about it, not a second one.
+        previous.lastIncident === next.lastIncident &&
+        previous.consecutiveCount === next.consecutiveCount
+      );
     case "merge_failure":
       return (
         next.type === "merge_failure" &&

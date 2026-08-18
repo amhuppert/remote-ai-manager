@@ -2199,11 +2199,12 @@ export function createGraphWorkflowExecutionLoop(
      * Repair the lane's shared index before a full-access member's first turn
      * (R7.2).
      *
-     * An owned landing never touches that index (D7), so a path a sibling
-     * ADDED is in HEAD with no index entry — and `git commit -a`, which an
-     * agent may legitimately run, builds its commit from the index and would
-     * publish the file's deletion. Only a whole-tree member needs this: an
-     * enveloped member cannot write outside its prefixes, so it cannot run git.
+     * An owned landing writes back only the entries for the paths it committed
+     * (D7), so any entry that drifted from HEAD another way is still wrong here
+     * — and `git commit -a`, which an agent may legitimately run, builds its
+     * commit from the index and would publish the deletion of a path the index
+     * has no entry for. Only a whole-tree member needs this: an enveloped
+     * member cannot write outside its prefixes, so it cannot run git.
      *
      * Under the session git lock, the same lock a landing holds, so a sibling
      * landing cannot interleave with the reset. A failed resync must prevent the
@@ -2795,11 +2796,11 @@ export function createGraphWorkflowExecutionLoop(
       laneId: string,
       laneWorktreePath: string,
     ): Promise<void> {
-      const lane = execution.executionLanes[laneId];
-      if (!lane) return;
+      // A lane the execution no longer tracks has no member set to judge
+      // against, and the halt this can raise names it.
+      if (!execution.executionLanes[laneId]) return;
 
       const memberOwnerships: GraphWorkflowCanonicalOwnership[] = [];
-      const memberContextIds: string[] = [];
       for (const state of Object.values(execution.contextStates)) {
         if (state.laneId !== laneId) continue;
         // A member that never reached admission wrote nothing, and its
@@ -2807,7 +2808,6 @@ export function createGraphWorkflowExecutionLoop(
         // against — including it would widen the union on a guess.
         if (!state.reservedOwnership) continue;
         memberOwnerships.push(state.reservedOwnership);
-        memberContextIds.push(state.contextId);
       }
 
       let verdict: LaneDriftVerdict;
@@ -2815,8 +2815,6 @@ export function createGraphWorkflowExecutionLoop(
         verdict = await laneDriftAuditor.audit({
           laneWorktreePath,
           memberOwnerships,
-          memberContextIds,
-          ignoredBaseline: lane.ignoredBaseline,
         });
       } catch (error) {
         logger.warn("graph-workflow.lane_drift.audit_failed", {

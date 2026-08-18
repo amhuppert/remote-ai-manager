@@ -1,17 +1,12 @@
 import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
 import {
-  chmod,
-  lstat,
   mkdtemp,
   mkdir,
   readFile,
-  symlink,
-  utimes,
   writeFile,
   rm,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { createHash } from "node:crypto";
 import path from "node:path";
 import { defaultGitClient, type GitClient } from "./client";
 import {
@@ -19,8 +14,6 @@ import {
   parseDirtyPaths,
   parseWorktreeStatusV2,
   readWorktreeStatusV2,
-  readIgnoredContents,
-  readIgnoredEntries,
   ensureCcArtifactsExcluded,
   CC_ARTIFACTS_IGNORE_PATTERN,
 } from "./worktree";
@@ -1164,7 +1157,7 @@ describe("readWorktreeStatusV2 (real git)", () => {
     });
   });
 
-  it("omits ignored paths, which have their own enumeration", async () => {
+  it("omits ignored paths, which ownership is never judged against", async () => {
     await writeStatusFile(statusRepo, "build/out.js", "built\n");
     await writeStatusFile(statusRepo, "debug.log", "log\n");
 
@@ -1189,109 +1182,6 @@ describe("readWorktreeStatusV2 (real git)", () => {
     ]);
   });
 
-  it("enumerates ignored content at both grains, so a file inside a wholly-ignored directory is visible even though the collapsed form names only the directory", async () => {
-    await writeStatusFile(statusRepo, "build/out.js", "built\n");
-    await writeStatusFile(statusRepo, "build/nested/chunk.js", "chunk\n");
-    await writeStatusFile(statusRepo, "debug.log", "log\n");
-
-    const contents = await readIgnoredContents(statusRepo);
-
-    // The collapsed grain is what a baseline can afford to store, and it cannot
-    // tell `build` with one file from `build` with three.
-    expect(contents.roots).toEqual(["build", "debug.log"]);
-    expect(contents.entries.map((entry) => entry.path)).toEqual([
-      "build/nested/chunk.js",
-      "build/out.js",
-      "debug.log",
-    ]);
-    expect(await readIgnoredEntries(statusRepo)).toEqual(contents.entries);
-  });
-
-  it("fingerprints each ignored file so a rewrite in place is visible, though the path list is unchanged", async () => {
-    await writeStatusFile(statusRepo, "build/out.js", "built\n");
-    const before = await readIgnoredEntries(statusRepo);
-
-    await writeStatusFile(statusRepo, "build/out.js", "rebuilt, differently\n");
-    const after = await readIgnoredEntries(statusRepo);
-
-    expect(after.map((entry) => entry.path)).toEqual(
-      before.map((entry) => entry.path),
-    );
-    expect(after[0]?.fingerprint).not.toBe(before[0]?.fingerprint);
-  });
-
-  it("fingerprints an overwrite that restores the file's exact size AND modification time, as a metadata-preserving copy leaves it", async () => {
-    // The adversarial shape: `cp -p` (or `touch -r`) writes new bytes and then
-    // puts the old size and mtime back, so metadata alone does not prove which
-    // bytes are present. The fingerprint must carry the byte digest itself.
-    // Pinned to a whole millisecond so the restore is exact at NANOSECOND
-    // precision: `utimes` cannot express the sub-millisecond part of a natural
-    // mtime, and a restore that misses by nanoseconds would prove nothing.
-    const pinned = new Date("2020-01-02T03:04:05.000Z");
-    await writeStatusFile(statusRepo, "build/out.js", "aaaaaa\n");
-    const target = path.join(statusRepo, "build/out.js");
-    await utimes(target, pinned, pinned);
-    const original = await lstat(target, { bigint: true });
-    const before = await readIgnoredEntries(statusRepo);
-    const originalDigest = createHash("sha256")
-      .update("aaaaaa\n")
-      .digest("hex");
-    expect(before[0]?.fingerprint).toContain(originalDigest);
-
-    await writeFile(target, "bbbbbb\n", "utf-8");
-    await utimes(target, pinned, pinned);
-    const restored = await lstat(target, { bigint: true });
-    expect(restored.size).toBe(original.size);
-    expect(restored.mtimeNs).toBe(original.mtimeNs);
-
-    const after = await readIgnoredEntries(statusRepo);
-    const replacementDigest = createHash("sha256")
-      .update("bbbbbb\n")
-      .digest("hex");
-
-    expect(after[0]?.fingerprint).toContain(replacementDigest);
-    expect(after[0]?.fingerprint).not.toBe(before[0]?.fingerprint);
-  });
-
-  it("makes unreadable content fail closed while retaining the filesystem identity that was observable", async () => {
-    const target = path.join(statusRepo, "build/private.bin");
-    await writeStatusFile(statusRepo, "build/private.bin", "before\n");
-    await chmod(target, 0o000);
-    const original = await lstat(target, { bigint: true });
-    const before = await readIgnoredEntries(statusRepo);
-
-    await rm(target);
-    await writeStatusFile(statusRepo, "build/private.bin", "after!\n");
-    await chmod(target, 0o000);
-    const replacement = await lstat(target, { bigint: true });
-    const after = await readIgnoredEntries(statusRepo);
-
-    expect(before[0]?.fingerprint).toContain(`:${original.ino}:`);
-    expect(after[0]?.fingerprint).toContain(`:${replacement.ino}:`);
-    expect(after[0]?.fingerprint).not.toBe(before[0]?.fingerprint);
-  });
-
-  it("fingerprints a dangling symlink from its literal target without following it", async () => {
-    await writeStatusFile(statusRepo, "build/out.js", "built\n");
-    const target = path.join(statusRepo, "build/missing-target");
-    await symlink(target, path.join(statusRepo, "build/dangling.js"));
-
-    const entries = await readIgnoredEntries(statusRepo);
-    const dangling = entries.find(
-      (entry) => entry.path === "build/dangling.js",
-    );
-
-    expect(dangling?.fingerprint).toContain(
-      createHash("sha256").update(target).digest("hex"),
-    );
-  });
-
-  it("reports no ignored content for a worktree that has none", async () => {
-    expect(await readIgnoredContents(statusRepo)).toEqual({
-      entries: [],
-      roots: [],
-    });
-  });
 });
 
 describe("parked merge refs (real git)", () => {

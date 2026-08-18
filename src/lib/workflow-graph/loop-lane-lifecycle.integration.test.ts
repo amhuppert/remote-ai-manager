@@ -103,7 +103,6 @@ function lane(laneId: string): GraphWorkflowExecutionLaneState {
     includedContextIds: [],
     lastCommittingContextId: null,
     commitSnapshots: [],
-    ignoredBaseline: [],
     createdAt: NOW,
     updatedAt: NOW,
   };

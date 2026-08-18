@@ -1947,7 +1947,7 @@ describe("0030 native-SDD v2 cutover hardening", () => {
     const fixture = createFixture("completed");
     const context = { db: fixture.db, configDir: fixture.configDir };
 
-    expect(migrations.at(-1)?.name).toBe(nativeSddV2Cutover.name);
+    expect(migrations.map((m) => m.name)).toContain(nativeSddV2Cutover.name);
     const first = await runMigrations(context, [nativeSddV2Cutover]);
     const databaseAfterFirst = fixture.db.serialize();
     const workflowsAfterFirst = snapshotWorkflowStore(fixture.configDir);

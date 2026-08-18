@@ -162,7 +162,6 @@ function createWorktreesStub(
     return {
       worktreePath,
       branchName: `csm/${SESSION_DIR}-${input.laneId}`,
-      ignoredBaseline: [],
     };
   }
 
@@ -253,7 +252,6 @@ function makeFixture(input: {
       includedContextIds: ["context-plan"],
       lastCommittingContextId: "context-plan",
       commitSnapshots: [],
-      ignoredBaseline: [],
       createdAt: timestamp,
       updatedAt: timestamp,
     },
@@ -270,7 +268,6 @@ function makeFixture(input: {
       includedContextIds: ["context-plan"],
       lastCommittingContextId: "context-plan",
       commitSnapshots: [],
-      ignoredBaseline: [],
       createdAt: timestamp,
       updatedAt: timestamp,
     };

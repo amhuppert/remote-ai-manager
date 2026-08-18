@@ -3,18 +3,19 @@
  * in it.
  *
  * This is the counterpart to the landing primitive, NOT a part of it. An owned
- * landing publishes through a private index and deliberately leaves the shared
- * one untouched (decision D7), because a sibling is using it and there is no
- * moment during a concurrent landing when writing it is safe. The cost is that
- * the shared index keeps describing the pre-landing tree.
+ * landing publishes through a private index and writes back only the entries
+ * for the paths it committed (decision D7), because those are the only entries
+ * ownership guarantees no sibling is also using. Everything else in the index
+ * is out of its reach: a sibling's staged state, drift from any other source,
+ * and its own best-effort write-back when that fails.
  *
- * `hasUncommittedChanges` is immune to that staleness, so nothing the ENGINE
- * does is affected. An AGENT is a different matter: `git commit -a` builds its
- * commit from the shared index, and for a path a sibling's landing ADDED the
- * index holds no entry at all. Committing that index publishes the file's
- * deletion — a self-commit silently reverting work another context landed. A
- * stale blob or a lingering entry survives `commit -a` as an ordinary
- * modification; only the added-path shape destroys content.
+ * `hasUncommittedChanges` is immune to whatever the index holds, so nothing the
+ * ENGINE does is affected. An AGENT is a different matter: `git commit -a`
+ * builds its commit from the shared index, and for a path the index holds no
+ * entry for, committing publishes the file's deletion — a self-commit silently
+ * reverting work another context landed. A stale blob or a lingering entry
+ * survives `commit -a` as an ordinary modification; only the missing-entry
+ * shape destroys content.
  *
  * So the index is resynced only at moments the engine has made safe: when it
  * hands the lane to a full-access member before the first turn, or when a

@@ -652,6 +652,7 @@ function createCodexExecutionWithRunningTask() {
         completedTaskCount: 0,
         iterationCount: 1,
         consecutiveFailureCount: 0,
+        consecutiveCandidateMismatchCount: 0,
         worktreePath: null,
         branchName: null,
         isolation: "session",

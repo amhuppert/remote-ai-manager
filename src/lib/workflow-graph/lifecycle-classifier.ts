@@ -229,6 +229,11 @@ const HALT_RESUMABILITY: Record<GraphWorkflowHaltReason["type"], boolean> = {
   // reviewed work is intact and the remedy is a repair of the plan the defect
   // names — plan repair's edit, or an operator's — followed by resume.
   plan_defect: true,
+  // A candidate that would not hold still is resumable on the same terms as
+  // `ownership_violation`: nothing about the reviewed work is terminal, the
+  // remedy lives outside it (the lane, the worktree, or the placement that
+  // keeps moving the tree), and resume starts the budget fresh.
+  candidate_unstable: true,
   aborted: false,
   recovery_error: false,
 };

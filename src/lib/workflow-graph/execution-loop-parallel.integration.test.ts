@@ -210,7 +210,6 @@ function createParallelWorktreesStub(): ParallelWorktreesStub {
     return {
       worktreePath: `${input.projectPath}/.worktrees/${input.sessionDir}.${input.contextId}`,
       branchName: `csm/${input.sessionDir}-${input.contextId}`,
-      ignoredBaseline: [],
     };
   }
 
@@ -348,6 +347,7 @@ function createInitialExecution(
       completedTaskCount: 0,
       iterationCount: 0,
       consecutiveFailureCount: 0,
+      consecutiveCandidateMismatchCount: 0,
       worktreePath: null,
       branchName: null,
       isolation: "session",
@@ -3086,7 +3086,6 @@ describe("execution loop — parallel integration", () => {
         includedContextIds: [contextId],
         lastCommittingContextId: contextId,
         commitSnapshots: [],
-        ignoredBaseline: [],
         createdAt: "2026-03-27T12:00:00.000Z",
         updatedAt: "2026-03-27T12:01:00.000Z",
       };
@@ -3100,7 +3099,6 @@ describe("execution loop — parallel integration", () => {
       includedContextIds: [],
       lastCommittingContextId: null,
       commitSnapshots: [],
-      ignoredBaseline: [],
       createdAt: "2026-03-27T12:00:00.000Z",
       updatedAt: "2026-03-27T12:00:00.000Z",
     };

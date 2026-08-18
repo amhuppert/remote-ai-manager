@@ -130,6 +130,7 @@ function createCohortExecution(
     completedTaskCount: 1,
     iterationCount: 2,
     consecutiveFailureCount: 1,
+    consecutiveCandidateMismatchCount: 0,
   };
   execution.taskStates["task-plan-1"] = {
     ...execution.taskStates["task-plan-1"]!,
@@ -812,6 +813,7 @@ describe("validation round: script-first short-circuit", () => {
     execution.contextStates["context-plan"] = {
       ...execution.contextStates["context-plan"]!,
       consecutiveFailureCount: 2,
+      consecutiveCandidateMismatchCount: 0,
     };
     const harness = createHarness({
       execution,

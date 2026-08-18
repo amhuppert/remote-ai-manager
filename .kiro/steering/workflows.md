@@ -316,7 +316,8 @@ propagate down a generated subgraph.
 
 After any execution-loop settlement, the plan-repair supervisor
 (`workflow-graph/plan-repair/`) re-reads the ACTIVE execution and, when it is
-halted on `circuit_breaker`, `max_iterations`, or `plan_defect` with `planRepair`
+halted on `circuit_breaker`, `max_iterations`, `plan_defect`, or
+`candidate_unstable` with `planRepair`
 enabled for the tripped context and attempts remaining, runs one bounded repair
 round: a
 one-shot repair agent (validator-style ephemeral conversation in the session
@@ -463,6 +464,22 @@ never silently discarded. Placement does not narrow the AGENT tier — the two
 cascade separately, so an enveloped implementer still runs whatever its
 `agentValidation` snapshot grants and can verify its own work before the
 barrier ever runs.
+
+A round that concludes `candidate_mismatch` charges NOTHING — not an iteration,
+not a consecutive failure — and returns the context to `ready`, so the engine
+re-opens a round at once. That is right for drift that settles and an unbounded
+loop when it cannot, so the conclusion also charges
+`contextStates[id].consecutiveCandidateMismatchCount`; any other conclusion
+clears it, and so does resume. The budget is keyed on the round OUTCOME, so a
+result rejected for a stale round token charges it alongside a moved tree — the
+same no-verdict loop, reached without anything moving. At
+`CONSECUTIVE_CANDIDATE_MISMATCH_BUDGET` (`constants.ts`, 5) the context halts
+with the typed `candidate_unstable` reason carrying the last round's stage,
+moved components, and `lastIncident` — which keeps those two causes apart, so
+only the moved-tree shape is ever presented as worktree churn. Resumable, and
+accepted by the plan-repair trigger, whose verdict lands in the halt's
+`summary`, because the usual repairable cause is a placement or scope that keeps
+the tree moving rather than anything in the reviewed work.
 
 Per-context validator overrides:
 
@@ -634,7 +651,7 @@ Consequences to hold when touching lane code:
 - The write envelope is mechanical and fail-closed, not prompt discipline. `<worktree>/.git` is denied, so an agent cannot commit, branch, or reset; landing is the engine's, scoped to the member's frozen prefixes. Any hop that cannot carry or natively establish a present policy fails the turn — it never dispatches unrestricted.
 - `.cc` is reserved from authored ownership. The writable set is the member's per-context scratch root, its owned prefixes, its payload directory under the worktree's `.cc` namespace, and tmp; a session reader gets scratch and tmp only.
 - Whole-repo *gating* is a per-lane barrier at the join (`laneMergeValidation`), not a per-context gate. For an enveloped context automatic script validation is skipped, and definition validation refuses a `scriptValidator` command selection that is neither empty nor a subset of the barrier set rather than discarding it. Barrier coverage is recorded against the lane's member set frozen at join intent, so evidence names exactly which members one run covered. The agent allowlist is a separate tier: placement never revokes it, so a lane member still runs the commands its `agentValidation` snapshot grants.
-- A post-landing write in a shared worktree that no member's ownership or reserved namespace covers raises `ownership_violation` — resumable, and accepted by the plan-repair trigger.
+- A post-landing TRACKED change in a shared worktree that no member's ownership or reserved namespace covers raises `ownership_violation` — resumable, and accepted by the plan-repair trigger. `lane-drift.ts` judges `git status` only: gitignored content is out of scope, because toolchain churn there (installs, incremental build info) is indistinguishable from the foreign write such a check would hunt for, while an unattributed tracked change is a merge-integrity problem the next landing would sweep up or lose.
 
 ## Land-gate invariant
 
