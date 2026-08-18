@@ -2534,3 +2534,44 @@ describe("graph expansion — whole-batch rejoin admission (R6.4)", () => {
     expect(harness.current().liveRevision).toBe(before.liveRevision);
   });
 });
+
+// #69 change 4 stage 1: the expansion payload carries the prose-or-records
+// acceptanceCriteria union; the compiler copies the value verbatim onto the
+// generated add-context operation (whole-value semantics, no per-criterion ops).
+describe("acceptance-criterion records on expansion payloads", () => {
+  it("carries records-shaped criteria onto the runtime-added context verbatim", async () => {
+    const harness = makeHarness(runningExecution());
+
+    const outcome = await expandWith(
+      harness,
+      makeRequest({
+        contexts: [
+          {
+            handle: "candidate-a",
+            title: "Candidate A",
+            acceptanceCriteria: [
+              { id: "a-implemented", statement: "Candidate A is implemented." },
+              {
+                id: "a-self-checked",
+                statement: "Candidate A is self-checked.",
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    const addedId = outcome.createdContextIds[0] ?? "";
+    const added = harness
+      .current()
+      .workingDefinition.executionContexts.find(
+        (context) => context.id === addedId,
+      );
+    expect(added?.acceptanceCriteria).toEqual([
+      { id: "a-implemented", statement: "Candidate A is implemented." },
+      { id: "a-self-checked", statement: "Candidate A is self-checked." },
+    ]);
+  });
+});

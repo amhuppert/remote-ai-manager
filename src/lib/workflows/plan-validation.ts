@@ -11,6 +11,7 @@ import type {
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 import { workflowDefinitionMutationSchema } from "@/lib/workflow-graph/definition-schemas";
+import { criterionRecordsOf } from "@/lib/workflow-graph/criteria/criterion-records";
 import { escapeDiagnosticValue } from "@/lib/shared/diagnostic-text";
 import {
   formatAssignmentUseSite,
@@ -346,7 +347,20 @@ export function validateWorkflowPlan(
     draft: {
       name: parsed.data.name,
       description: parsed.data.description ?? null,
-      definition: parsed.data.definition,
+      // This is the ONE place prose acceptance criteria become records (#69
+      // change 4 stage 1): the accepted draft is what create/replace persist
+      // and what a launch seeds from, while stored/working-definition parses
+      // stay tolerant unions so a reload never rewrites a stored shape
+      // (no-read-renormalization).
+      definition: {
+        ...parsed.data.definition,
+        executionContexts: parsed.data.definition.executionContexts.map(
+          (context) => ({
+            ...context,
+            acceptanceCriteria: criterionRecordsOf(context.acceptanceCriteria),
+          }),
+        ),
+      },
       layout: parsed.data.layout,
     },
     warnings: lintGuardEnumCoverage(

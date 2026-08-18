@@ -5,6 +5,7 @@ import type {
   WorkflowDefaults,
 } from "@/lib/config/schemas";
 import type { AgentAuth } from "@/lib/agent-gateway/token";
+import { criterionRecordsOf } from "@/lib/workflow-graph/criteria/criterion-records";
 import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/storage";
 import {
   createWorkflowDefinitionRecord,
@@ -87,7 +88,20 @@ describe("admitAuthoredWorkflowLaunch", () => {
 
     expect(result).toMatchObject({ ok: true });
     if (!result.ok) return;
-    expect(result.launch).toEqual(launch);
+    // Admission canonicalizes prose acceptance criteria to records (#69
+    // change 4 stage 1) and changes nothing else about the launch.
+    expect(result.launch).toEqual({
+      ...launch,
+      definition: {
+        ...launch.definition,
+        executionContexts: launch.definition.executionContexts.map(
+          (context) => ({
+            ...context,
+            acceptanceCriteria: criterionRecordsOf(context.acceptanceCriteria),
+          }),
+        ),
+      },
+    });
     expect(launch).toEqual(original);
     expect(Object.keys(result).sort()).toEqual([
       "accountabilityGroupAnalysis",

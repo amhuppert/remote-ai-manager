@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import { acceptanceCriteriaText } from "@/lib/workflow-graph/criteria/criterion-records";
 import { validateWorkflowPlan } from "@/lib/workflows/plan-validation";
 import { runEngineScenario } from "../compat/engine-harness";
 import type {
@@ -220,7 +221,7 @@ describe("Fanout-And-Synthesize + Adversarial Verification composite (D6 R2.7)",
     const criteria =
       definition.executionContexts.find((context) => context.id === SYNTHESIZE)
         ?.acceptanceCriteria ?? "";
-    expect(criteria).toContain(ARTIFACT_PATH);
+    expect(acceptanceCriteriaText(criteria)).toContain(ARTIFACT_PATH);
   });
 
   it("preserves the artifact path and every reader's provenance in captured output", () => {

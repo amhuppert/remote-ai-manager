@@ -5,6 +5,7 @@ import {
   workflowValidatorOutputPlanDefectSchema,
 } from "@/lib/workflow-graph/definition-schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { acceptanceCriteriaText } from "@/lib/workflow-graph/criteria/criterion-records";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import { renderCharterPromptSection } from "@/lib/workflow-graph/charter/render";
 import {
@@ -401,7 +402,7 @@ export function buildContextValidationPrompt(
     ...validationSectionLines,
     "## Acceptance Criteria",
     "",
-    input.context.acceptanceCriteria,
+    acceptanceCriteriaText(input.context.acceptanceCriteria),
     "",
     ...(input.diffScopeSection ? [input.diffScopeSection, ""] : []),
     "## Context",

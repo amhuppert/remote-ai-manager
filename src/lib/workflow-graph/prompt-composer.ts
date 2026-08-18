@@ -1,4 +1,5 @@
 import type { GraphWorkflowExecution } from "./schemas";
+import { acceptanceCriteriaText } from "./criteria/criterion-records";
 import {
   createRegisteredGraphExecutionContract,
   type GraphExecutionContract,
@@ -85,7 +86,7 @@ function renderValidatorDeferralCohort(
     "",
     ...contexts.flatMap((context) => [
       `### \`${context.id}\` — ${context.title}${context.id === contextId ? " (current context)" : ""}`,
-      context.acceptanceCriteria,
+      acceptanceCriteriaText(context.acceptanceCriteria),
       "",
     ]),
   ]

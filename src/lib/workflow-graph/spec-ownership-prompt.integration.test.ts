@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { acceptanceCriteriaText } from "@/lib/workflow-graph/criteria/criterion-records";
 import type { SpecExecutionBindingReader } from "@/lib/specs/execution-binding";
 import {
   createSpecExecutionBindingGraphContract,
@@ -217,7 +218,9 @@ describe("native SDD ownership prompt projection", () => {
         taskStates: execution.taskStates,
         sharedDocuments: [],
         allowAgentTaskAdd: false,
-        contextValidationAcceptanceCriteria: context.acceptanceCriteria,
+        contextValidationAcceptanceCriteria: acceptanceCriteriaText(
+          context.acceptanceCriteria,
+        ),
         validationSelections: EMPTY_VALIDATION_SELECTIONS,
       }),
     });

@@ -26,6 +26,7 @@ import {
   resolvedCollaborationConfigSchema,
   workflowCollaborationConfigOverrideSchema,
 } from "./collaboration-schemas";
+import { acceptanceCriteriaSchema } from "./criteria/criterion-records";
 
 export const workflowConfigOverrideSchema = z.object({
   implementer: agentAssignmentSchema.optional(),
@@ -229,7 +230,11 @@ export const graphWorkflowExecutionContextDefinitionSchema = z.object({
     (val) => (typeof val === "string" && val.trim() === "" ? undefined : val),
     z.string().trim().min(1).optional(),
   ),
-  acceptanceCriteria: z.string().trim().min(1),
+  // Prose or ordered criterion records (#69 change 4 stage 1). A tolerant
+  // union on purpose: the accept paths (validate/create/replace) canonicalize
+  // prose to records AFTER this parse, so this schema also serves surfaces
+  // that must carry a stored prose value through unchanged.
+  acceptanceCriteria: acceptanceCriteriaSchema,
   // Required, with no runtime default: deterministic seed-time lane assignment
   // is fully replaced by authored placement (locked fork F1), and an optional
   // field would silently resurrect it. Stored definitions written before
@@ -560,7 +565,11 @@ export const graphWorkflowResolvedContextSchema = z.object({
   id: z.string().trim().min(1),
   title: z.string().trim().min(1),
   description: z.string().trim().min(1).optional(),
-  acceptanceCriteria: z.string().trim().min(1),
+  // Same tolerant union as the authored context. A working definition seeded
+  // from a prose-criteria plan must reload with the prose intact — read-time
+  // wrapping would rewrite the stored shape and move workingDefinitionHash
+  // (no-read-renormalization).
+  acceptanceCriteria: acceptanceCriteriaSchema,
   origin: workflowOriginSchema.optional(),
   // Mirrored verbatim from the authored context, and REQUIRED here for the same
   // reason it is required there: placement is the only lane authority, so an

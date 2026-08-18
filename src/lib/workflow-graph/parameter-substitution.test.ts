@@ -100,6 +100,30 @@ describe("substituteContent", () => {
       expect(source?.appliesTo).toBe("all of auth");
     });
 
+    it("substitutes into criterion record statements but never their ids", () => {
+      const def = definition({
+        executionContexts: [
+          {
+            id: "ctx-1",
+            title: "Context one",
+            acceptanceCriteria: [
+              // The id spells the token grammar on purpose: an id is
+              // structural (validators cite it) and must survive verbatim.
+              { id: "feature-shipped", statement: "{{inputs.feature}} works" },
+              { id: "docs-updated", statement: "Docs cover {{inputs.feature}}" },
+            ],
+            placement: { lane: "ctx-1", mode: "full" },
+          },
+        ],
+      });
+
+      const result = substituteContent(def, { feature: "auth" });
+      expect(result.executionContexts[0]?.acceptanceCriteria).toEqual([
+        { id: "feature-shipped", statement: "auth works" },
+        { id: "docs-updated", statement: "Docs cover auth" },
+      ]);
+    });
+
     it("replaces every occurrence of a token within a single field", () => {
       const def = definition({
         tasks: [

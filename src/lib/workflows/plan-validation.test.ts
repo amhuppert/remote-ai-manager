@@ -345,6 +345,70 @@ describe("validateWorkflowPlan", () => {
     });
   });
 
+  describe("acceptance-criteria canonicalization (#69 change 4 stage 1)", () => {
+    it("wraps prose as exactly one ac-1 record in the returned draft", () => {
+      const definition = createWorkflowDefinition();
+      const proseByContextId = new Map(
+        definition.executionContexts.map((ctx) => [
+          ctx.id,
+          ctx.acceptanceCriteria,
+        ]),
+      );
+
+      const result = validateWorkflowPlan(makePlan(definition));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      for (const context of result.draft.definition.executionContexts) {
+        expect(context.acceptanceCriteria).toEqual([
+          { id: "ac-1", statement: proseByContextId.get(context.id) },
+        ]);
+      }
+    });
+
+    it("passes authored records through with their ids intact", () => {
+      const records = [
+        { id: "first-outcome", statement: "The first outcome holds." },
+        { id: "second-outcome", statement: "The second outcome holds." },
+      ];
+      const definition = createWorkflowDefinition();
+      definition.executionContexts = definition.executionContexts.map(
+        (ctx, index) =>
+          index === 0 ? { ...ctx, acceptanceCriteria: records } : ctx,
+      );
+
+      const result = validateWorkflowPlan(makePlan(definition));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(
+        result.draft.definition.executionContexts[0]?.acceptanceCriteria,
+      ).toEqual(records);
+    });
+
+    it("refuses duplicate criterion ids with a located path and use site", () => {
+      const definition = createWorkflowDefinition();
+      definition.executionContexts = definition.executionContexts.map(
+        (ctx, index) =>
+          index === 0
+            ? {
+                ...ctx,
+                acceptanceCriteria: [
+                  { id: "same-id", statement: "First." },
+                  { id: "same-id", statement: "Second." },
+                ],
+              }
+            : ctx,
+      );
+
+      const result = validateWorkflowPlan(makePlan(definition));
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.issues).toContainEqual({
+        path: "definition.executionContexts.0.acceptanceCriteria.1.id",
+        message: expect.stringContaining("duplicate criterion id 'same-id'"),
+      });
+    });
+  });
+
   it("reports a Zod field error with its JSON path", () => {
     const definition = createWorkflowDefinition();
     // A type error the Zod schema rejects (title must be a string).

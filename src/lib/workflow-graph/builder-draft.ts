@@ -9,6 +9,10 @@ import {
   validateWorkflowDefinition,
   type WorkflowGraphValidationError,
 } from "./validation";
+import {
+  criterionRecordsOf,
+  type CriterionRecord,
+} from "./criteria/criterion-records";
 
 export type ContextOverrideBlock =
   | "implementer"
@@ -121,6 +125,11 @@ export function addExecutionContext(
   definition.executionContexts.push({
     id: contextId,
     title: `Execution Context ${contextNumber}`,
+    // Empty prose, not an empty record list — the inspector panel still renders
+    // this value as a string, and flipping the seed belongs to the same
+    // builder-cli-surfaces slice that teaches the panel to render records. The
+    // criterion mutators below normalize it to records on first edit, so the
+    // EDITED draft is records-shaped either way (#69 change 4 stage 1).
     acceptanceCriteria: "",
     // A single-member lane of its own: the safest placement to hand a context
     // nobody has scoped yet, and the one that matches what the builder produced
@@ -155,6 +164,137 @@ export function updateExecutionContext(
       context.id === contextId ? { ...context, ...definedUpdates } : context,
     ),
   };
+}
+
+/**
+ * Draft-tier view of a context's acceptance criteria as records (#69 change 4
+ * stage 1). Legacy prose wraps through the canonical helper (one `ac-1`
+ * record); the builder's empty-prose seed ("" — nothing authored yet) becomes
+ * the empty list rather than one empty record, so a list editor starts with no
+ * rows instead of a phantom row.
+ */
+function draftCriterionRecords(
+  criteria: string | readonly CriterionRecord[],
+): CriterionRecord[] {
+  if (criteria === "") return [];
+  return criterionRecordsOf(criteria);
+}
+
+/**
+ * Deterministic id for a builder-added criterion: the next `ac-N` above every
+ * numeric `ac-N` already in the list, in the same grammar the prose wrap uses —
+ * so appending after a wrap yields `ac-2`, never a second `ac-1`, and
+ * author-chosen non-numeric ids are simply skipped over.
+ */
+function nextCriterionId(records: readonly CriterionRecord[]): string {
+  const explicitNumbers = records
+    .map((record) => /^ac-(\d+)$/.exec(record.id)?.[1])
+    .filter((value): value is string => value != null)
+    .map((value) => Number.parseInt(value, 10));
+  const maxExplicit =
+    explicitNumbers.length > 0 ? Math.max(...explicitNumbers) : 0;
+  return `ac-${maxExplicit + 1}`;
+}
+
+function setAcceptanceCriteria(
+  definition: WorkflowSemanticDefinition,
+  contextId: string,
+  records: CriterionRecord[],
+): WorkflowSemanticDefinition {
+  return {
+    ...cloneValue(definition),
+    executionContexts: definition.executionContexts.map((context) =>
+      context.id === contextId
+        ? { ...context, acceptanceCriteria: records }
+        : context,
+    ),
+  };
+}
+
+export function addAcceptanceCriterion(
+  definition: WorkflowSemanticDefinition,
+  contextId: string,
+  statement = "",
+): { definition: WorkflowSemanticDefinition; criterionId: string } {
+  const context = definition.executionContexts.find(
+    (entry) => entry.id === contextId,
+  );
+  if (!context) {
+    return { definition: cloneValue(definition), criterionId: "" };
+  }
+  const records = draftCriterionRecords(context.acceptanceCriteria);
+  const criterionId = nextCriterionId(records);
+  return {
+    definition: setAcceptanceCriteria(definition, contextId, [
+      ...records,
+      { id: criterionId, statement },
+    ]),
+    criterionId,
+  };
+}
+
+export function updateAcceptanceCriterionStatement(
+  definition: WorkflowSemanticDefinition,
+  contextId: string,
+  criterionId: string,
+  statement: string,
+): WorkflowSemanticDefinition {
+  const context = definition.executionContexts.find(
+    (entry) => entry.id === contextId,
+  );
+  if (!context) return cloneValue(definition);
+  return setAcceptanceCriteria(
+    definition,
+    contextId,
+    draftCriterionRecords(context.acceptanceCriteria).map((record) =>
+      record.id === criterionId ? { ...record, statement } : record,
+    ),
+  );
+}
+
+export function removeAcceptanceCriterion(
+  definition: WorkflowSemanticDefinition,
+  contextId: string,
+  criterionId: string,
+): WorkflowSemanticDefinition {
+  const context = definition.executionContexts.find(
+    (entry) => entry.id === contextId,
+  );
+  if (!context) return cloneValue(definition);
+  return setAcceptanceCriteria(
+    definition,
+    contextId,
+    draftCriterionRecords(context.acceptanceCriteria).filter(
+      (record) => record.id !== criterionId,
+    ),
+  );
+}
+
+export function moveAcceptanceCriterion(
+  definition: WorkflowSemanticDefinition,
+  contextId: string,
+  criterionId: string,
+  direction: "up" | "down",
+): WorkflowSemanticDefinition {
+  const context = definition.executionContexts.find(
+    (entry) => entry.id === contextId,
+  );
+  if (!context) return cloneValue(definition);
+  const records = draftCriterionRecords(context.acceptanceCriteria);
+  const currentIndex = records.findIndex(
+    (record) => record.id === criterionId,
+  );
+  if (currentIndex === -1) return cloneValue(definition);
+
+  const nextIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+  if (nextIndex < 0 || nextIndex >= records.length) {
+    return cloneValue(definition);
+  }
+
+  const reordered = [...records];
+  const [record] = reordered.splice(currentIndex, 1);
+  reordered.splice(nextIndex, 0, record!);
+  return setAcceptanceCriteria(definition, contextId, reordered);
 }
 
 export function deleteExecutionContext(

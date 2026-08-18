@@ -1,4 +1,5 @@
 import { createLogger } from "@/lib/logging";
+import { acceptanceCriteriaText } from "@/lib/workflow-graph/criteria/criterion-records";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import type {
   GraphWorkflowExecution,
@@ -781,7 +782,9 @@ export function createGraphWorkflowValidationService(
       strategy: validator.strategy,
       cohortSize,
       attempt,
-      acceptanceCriteriaPreview: context.acceptanceCriteria.slice(0, 200),
+      acceptanceCriteriaPreview: acceptanceCriteriaText(
+        context.acceptanceCriteria,
+      ).slice(0, 200),
     });
     validationLogger.info("graph-workflow.context_validation.started", {
       executionId: input.execution.id,

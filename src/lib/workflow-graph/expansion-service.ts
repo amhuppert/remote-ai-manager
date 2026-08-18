@@ -44,6 +44,7 @@ import {
   contextPlacementSchema,
 } from "@/lib/workflow-graph/definition-schemas";
 import type { WorkflowGraphValidationError } from "@/lib/workflow-graph/definition-schemas";
+import { acceptanceCriteriaSchema } from "./criteria/criterion-records";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import type {
   GraphWorkflowEventDelivery,
@@ -114,7 +115,9 @@ const expansionContextSchema = z
   .object({
     handle: expansionHandleSchema,
     title: z.string().trim().min(1).max(200),
-    acceptanceCriteria: z.string().trim().min(1),
+    // Prose or {id, statement} records (#69 change 4 stage 1); the compiler
+    // copies the value verbatim onto the generated add-context operation.
+    acceptanceCriteria: acceptanceCriteriaSchema,
     description: z.string().trim().min(1).optional(),
     outputSchema: contextOutputSchemaSchema.optional(),
     /**

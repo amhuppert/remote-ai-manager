@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { workflowDefinitionMutationSchema } from "./definition-schemas";
 import { admitAuthoredWorkflowLaunch } from "./authored-launch-admission";
+import { criterionRecordsOf } from "./criteria/criterion-records";
 import {
   MAXIMAL_AUTHORED_LAUNCH_ACCOUNTABILITY_GROUPS,
   MAXIMAL_GRAPH_AFTER_ENVELOPE_CANARY,
@@ -50,7 +51,20 @@ describe("maximal authored launch contract", () => {
 
     expect(admitted.ok, JSON.stringify(admitted)).toBe(true);
     if (!admitted.ok) return;
-    expect(admitted.launch).toEqual(launch);
+    // Admission canonicalizes prose acceptance criteria to records (#69
+    // change 4 stage 1) and changes nothing else about the launch.
+    expect(admitted.launch).toEqual({
+      ...launch,
+      definition: {
+        ...launch.definition,
+        executionContexts: launch.definition.executionContexts.map(
+          (context) => ({
+            ...context,
+            acceptanceCriteria: criterionRecordsOf(context.acceptanceCriteria),
+          }),
+        ),
+      },
+    });
     expect(admitted.stableAccountabilityContextIds).toContain(
       "context-spawner",
     );

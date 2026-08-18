@@ -3,6 +3,7 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowLoopState,
 } from "@/lib/workflow-graph/schemas";
+import { acceptanceCriteriaText } from "@/lib/workflow-graph/criteria/criterion-records";
 import { projectExecutionRoutes } from "@/lib/workflow-graph/execution-routes";
 import type {
   ResolvedRouteEdge,
@@ -780,7 +781,9 @@ function contextSection(
     id: context.id,
     title: context.title,
     description: context.description ?? null,
-    acceptanceCriteria: context.acceptanceCriteria,
+    // Rendered text, not the raw union: the outline is a CLI-facing contract
+    // whose consumers parse this field as a plain string.
+    acceptanceCriteria: acceptanceCriteriaText(context.acceptanceCriteria),
     status: row.status,
     editability: row.editability,
     deps: row.deps,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { GlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
+import { acceptanceCriteriaText } from "@/lib/workflow-graph/criteria/criterion-records";
 import type { GraphWorkflowTaskState } from "@/lib/workflow-graph/schemas";
 import type { ValidatorAssignment } from "@/lib/workflow-graph/config-schemas";
 import type {
@@ -248,7 +249,9 @@ describe("charter prompt injection (cross-builder integration)", () => {
       tasks: TASKS,
       taskStates: TASK_STATES,
       allowAgentTaskAdd: false,
-      contextValidationAcceptanceCriteria: context.acceptanceCriteria,
+      contextValidationAcceptanceCriteria: acceptanceCriteriaText(
+        context.acceptanceCriteria,
+      ),
       validationSelections: EMPTY_VALIDATION_SELECTIONS,
     });
 

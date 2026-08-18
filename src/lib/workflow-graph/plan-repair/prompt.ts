@@ -7,6 +7,7 @@
 
 import { resolveLogicalAuthoredContextId } from "../charter/invariant-scope";
 import { renderCharterPromptSection } from "../charter/render";
+import { acceptanceCriteriaText } from "../criteria/criterion-records";
 import type { GraphWorkflowValidationIssue } from "../definition-schemas";
 import type {
   GraphWorkflowExecution,
@@ -292,7 +293,7 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
             .map((task) => `    - ${task.id}: ${task.title}`);
           return [
             `- \`${entry.id}\` — ${entry.title}`,
-            `    AC: ${entry.acceptanceCriteria}`,
+            `    AC: ${acceptanceCriteriaText(entry.acceptanceCriteria)}`,
             ...templateTasks,
           ].join("\n");
         }),
@@ -307,7 +308,7 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
         ...(context.description ? ["", context.description] : []),
         "",
         "### Acceptance criteria",
-        context.acceptanceCriteria,
+        acceptanceCriteriaText(context.acceptanceCriteria),
         // Without the declared contract in view, an `output_schema_validation`
         // trip reads as a work failure and the agent repairs the wrong thing.
         ...(context.outputSchema

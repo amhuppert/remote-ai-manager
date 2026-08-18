@@ -17,6 +17,7 @@ import {
   sourceScopeContextIds,
   type WorkflowCharter,
 } from "@/lib/workflows/charter-schemas";
+import { acceptanceCriteriaText } from "./criteria/criterion-records";
 import { validateEdgeGuards } from "./edge-guard-validation";
 import {
   isContextOutputCommittedToLane,
@@ -267,7 +268,7 @@ export function validateWorkflowDefinition(
       });
     }
 
-    if (!context.acceptanceCriteria.trim()) {
+    if (!acceptanceCriteriaText(context.acceptanceCriteria).trim()) {
       errors.push({
         code: "empty-context-acceptance-criteria",
         message: `Context "${context.id}" has empty acceptance criteria`,

@@ -28,6 +28,11 @@ import {
   prerequisiteSchema,
   resolvedAgentValidationConfigSchema,
 } from "@/lib/workflow-graph/definition-schemas";
+// The prose-or-records union (#69 change 4 stage 1). Every edit vocabulary
+// replaces the WHOLE value — there are no per-criterion operations at this
+// stage, so records arrive already-complete and duplicate ids are refused by
+// the union itself at the operation boundary.
+import { acceptanceCriteriaSchema } from "@/lib/workflow-graph/criteria/criterion-records";
 
 // ============================================================
 // Shared edge-edit shape (D4 R1)
@@ -208,7 +213,7 @@ export const workflowDefinitionEditOperationSchema = z.discriminatedUnion(
       type: z.literal("add-context"),
       id: z.string().trim().min(1),
       title: z.string().trim().min(1),
-      acceptanceCriteria: z.string().trim().min(1),
+      acceptanceCriteria: acceptanceCriteriaSchema,
       description: z.string().trim().min(1).optional(),
       // Context identity, not a config override — so it sits beside `title`
       // rather than in the cascade block above, and carries no `null` clear
@@ -227,7 +232,7 @@ export const workflowDefinitionEditOperationSchema = z.discriminatedUnion(
       contextId: z.string().trim().min(1),
       title: z.string().trim().min(1).optional(),
       description: z.string().trim().min(1).nullable().optional(),
-      acceptanceCriteria: z.string().trim().min(1).optional(),
+      acceptanceCriteria: acceptanceCriteriaSchema.optional(),
       // Present replaces the declaration wholesale (a JSON Schema document has
       // no meaningful partial merge), `null` drops it and returns the context
       // to free-form output, absent leaves it untouched.
@@ -394,7 +399,7 @@ const loopTemplateContentOperationSchema = z.discriminatedUnion("type", [
       contextId: z.string().trim().min(1),
       title: z.string().trim().min(1).optional(),
       description: z.string().trim().min(1).nullable().optional(),
-      acceptanceCriteria: z.string().trim().min(1).optional(),
+      acceptanceCriteria: acceptanceCriteriaSchema.optional(),
     })
     .refine(
       (value) =>
@@ -473,7 +478,7 @@ export const workflowLiveEditOperationSchema = z.discriminatedUnion("type", [
       contextId: z.string().trim().min(1),
       title: z.string().trim().min(1).optional(),
       description: z.string().trim().min(1).nullable().optional(),
-      acceptanceCriteria: z.string().trim().min(1).optional(),
+      acceptanceCriteria: acceptanceCriteriaSchema.optional(),
       // Same replace/clear semantics as the saved tier: an output schema is an
       // authored identity field mirrored onto the resolved context, so it is
       // one of the few fields whose live vocabulary matches doc 05 exactly.
@@ -500,7 +505,7 @@ export const workflowLiveEditOperationSchema = z.discriminatedUnion("type", [
     type: z.literal("add-context"),
     id: z.string().trim().min(1),
     title: z.string().trim().min(1),
-    acceptanceCriteria: z.string().trim().min(1),
+    acceptanceCriteria: acceptanceCriteriaSchema,
     description: z.string().trim().min(1).optional(),
     outputSchema: contextOutputSchemaSchema.optional(),
     routing: graphWorkflowContextRoutingPolicySchema.optional(),
