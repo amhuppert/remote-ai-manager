@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import { admitAuthoredWorkflowLaunch } from "@/lib/workflow-graph/authored-launch-admission";
+import { criterionRecordsOf } from "@/lib/workflow-graph/criteria/criterion-records";
 import { createMaximalAuthoredWorkflowLaunchFixture } from "@/lib/workflow-graph/testing/maximal-authored-launch";
 
 import {
   canonicalDeliveryPlanCandidateBytes,
   deliveryPlanCandidateRecordSchema,
+  deliveryPlanDocumentSchema,
   type DeliveryPlanCandidateRecord,
 } from "./delivery-plan";
 import { finalizeDeliveryPlanLaunch } from "./delivery-plan-finalization";
@@ -196,5 +198,92 @@ describe("canonical delivery-plan candidate", () => {
     expect(specProposal.ok, JSON.stringify(specProposal)).toBe(true);
     if (!ordinary.ok || !specProposal.ok) return;
     expect(specProposal).toEqual(ordinary);
+  });
+
+  it("authors acceptance criteria as records or prose and canonicalizes on the propose path exactly like a graph plan", async () => {
+    const authored = createMaximalAuthoredWorkflowLaunchFixture();
+    // The fixture is a finalized launch; the authored dialect reserves these
+    // for server finalization, so an author's document omits them.
+    const {
+      origin: _origin,
+      lockedRegions: _lockedRegions,
+      approvalRequired: _approvalRequired,
+      ...authoredDefinition
+    } = authored.definition;
+    const mixedLaunch = {
+      ...authored,
+      definition: {
+        ...authoredDefinition,
+        executionContexts: authored.definition.executionContexts.map(
+          (context) =>
+            context.id === "context-integrate"
+              ? {
+                  ...context,
+                  acceptanceCriteria: [
+                    {
+                      id: "integrate-selected-work",
+                      statement: "All selected work is integrated.",
+                    },
+                    {
+                      id: "integrate-audit-trail",
+                      statement: "The integration leaves an audit trail.",
+                    },
+                  ],
+                }
+              : context,
+        ),
+      },
+    };
+
+    // The direct-authored dialect (the schema `plan edit` bodies parse)
+    // accepts the records shape alongside the untouched prose contexts.
+    const document = deliveryPlanDocumentSchema.parse({
+      schemaVersion: 2,
+      launch: mixedLaunch,
+      binding: {
+        dispositions: [
+          {
+            criterionElementId: "criterion-one",
+            disposition: "in_scope",
+            deliveredByExecutionId: null,
+          },
+        ],
+        claims: [
+          {
+            contextId: "context-integrate",
+            criterionElementIds: ["criterion-one"],
+          },
+        ],
+      },
+    });
+
+    const admitted = await admitAuthoredWorkflowLaunch(
+      finalizeDeliveryPlanLaunch({
+        specId: "spec-candidate",
+        specSlug: "candidate-spec",
+        attemptId: "attempt-candidate",
+        candidateId: "candidate-one",
+        launch: document.launch,
+      }),
+      {
+        caller: "spec-proposal",
+        documentScope: { kind: "project", projectPath: "/repo" },
+        workflowDefaults: undefined,
+      },
+    );
+
+    expect(admitted.ok, JSON.stringify(admitted)).toBe(true);
+    if (!admitted.ok) return;
+    expect(
+      admitted.launch.definition.executionContexts.map((context) => [
+        context.id,
+        context.acceptanceCriteria,
+      ]),
+    ).toEqual(
+      document.launch.definition.executionContexts.map((context) => [
+        context.id,
+        criterionRecordsOf(context.acceptanceCriteria),
+      ]),
+    );
   });
 });
