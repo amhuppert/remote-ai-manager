@@ -31,9 +31,7 @@
           "label": "Candidate brief",
           "type": "document",
           "locator": ".cc/temp/candidate-brief.md",
-          "description": "The problem statement every candidate implements and the filter judges against: what has to be true of a solution, and what the tradeoff axes are.",
-          "appliesTo": "all execution contexts",
-          "accessPolicy": "worktree-relative"
+          "description": "The problem statement every candidate implements and the filter judges against: what has to be true of a solution, and what the tradeoff axes are."
         },
         {
           "rank": 2,
@@ -41,9 +39,7 @@
           "label": "Repository engineering contract",
           "type": "document",
           "locator": "AGENTS.md",
-          "description": "The engineering contract every candidate's implementation has to satisfy — typing, testing, and architecture boundaries.",
-          "appliesTo": "all execution contexts",
-          "accessPolicy": "worktree-relative"
+          "description": "The engineering contract every candidate's implementation has to satisfy — typing, testing, and architecture boundaries."
         }
       ]
     },

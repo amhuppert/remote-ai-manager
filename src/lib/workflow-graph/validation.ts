@@ -13,7 +13,10 @@ import type {
   WorkflowGraphValidationError,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
-import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
+import {
+  sourceScopeContextIds,
+  type WorkflowCharter,
+} from "@/lib/workflows/charter-schemas";
 import { validateEdgeGuards } from "./edge-guard-validation";
 import {
   isContextOutputCommittedToLane,
@@ -91,6 +94,87 @@ export function validateCharterInvariantScopes(
         field: `charter.invariants.${invariantIndex}.appliesTo.contextIds.${contextIdIndex}`,
       });
     });
+  });
+
+  return errors;
+}
+
+/**
+ * The source-scope twin of {@link validateCharterInvariantScopes}: a charter
+ * source whose structured `appliesTo` names a context id the definition does
+ * not declare is refused at accept time. A legacy prose `appliesTo` (persisted
+ * pre-structured definitions) carries no context ids and is skipped — it is
+ * rendered as global, never resolved against the graph. Duplicate ids within
+ * one scope are already refused by the shared scope schema.
+ */
+export function validateCharterSourceScopes(
+  charter: WorkflowCharter,
+  contextIds: Iterable<string>,
+): WorkflowGraphValidationError[] {
+  const authoredContextIds = new Set(contextIds);
+  const errors: WorkflowGraphValidationError[] = [];
+
+  charter.sourcesOfTruth.forEach((source, sourceIndex) => {
+    const scopedContextIds = sourceScopeContextIds(source);
+    if (scopedContextIds === null) return;
+    scopedContextIds.forEach((contextId, contextIdIndex) => {
+      if (authoredContextIds.has(contextId)) return;
+      errors.push({
+        code: "unknown-source-scope-context",
+        message: `Charter source "${source.id}" scopes to unknown authored context "${contextId}"`,
+        contextId,
+        field: `charter.sourcesOfTruth.${sourceIndex}.appliesTo.contextIds.${contextIdIndex}`,
+      });
+    });
+  });
+
+  return errors;
+}
+
+// Source ids delivery-plan finalization injects into every spec-candidate
+// launch (src/lib/specs/delivery-plan-finalization.ts), still stamped with the
+// legacy accessPolicy field. Server-seeded, not authored — the spec-side
+// document schema refuses these reserved ids in any user-submitted plan — so
+// the authored gate exempts them. Delete this exemption when the finalizer
+// stops writing the field.
+const SERVER_SEEDED_SOURCE_IDS = new Set([
+  "native-sdd-pinned-spec",
+  "native-sdd-claims",
+]);
+
+/**
+ * The authored-shape gate for charter sources: stored definitions tolerate the
+ * pre-structured shapes (the parse surfaces are deliberately tolerant so
+ * persisted records — including delivery-plan documents that embed a launch —
+ * keep loading verbatim), but a plan submitted for validate/create/replace
+ * must not author them. The retired `accessPolicy` is refused because external
+ * material is materialized into the worktree at plan time instead of
+ * permission-gated per agent; prose `appliesTo` is refused because only a
+ * structured scope can be resolved against the graph.
+ */
+export function validateCharterSourceAuthoredShapes(
+  charter: WorkflowCharter,
+): WorkflowGraphValidationError[] {
+  const errors: WorkflowGraphValidationError[] = [];
+
+  charter.sourcesOfTruth.forEach((source, sourceIndex) => {
+    if (
+      source.accessPolicy !== undefined &&
+      !SERVER_SEEDED_SOURCE_IDS.has(source.id)
+    ) {
+      errors.push({
+        code: "retired-source-access-policy",
+        message: `Charter source "${source.id}" carries the retired accessPolicy field; external material is materialized into the worktree at plan time instead of permission-gated per agent`,
+        field: `charter.sourcesOfTruth.${sourceIndex}.accessPolicy`,
+      });
+    }
+    if (typeof source.appliesTo === "string") {
+      errors.push({
+        code: "legacy-source-applies-to",
+        message: `Charter source "${source.id}" uses legacy prose appliesTo; author a structured scope ({ contextIds: [...] }) or omit the field for a global source`,
+        field: `charter.sourcesOfTruth.${sourceIndex}.appliesTo`,
+      });
+    }
   });
 
   return errors;
@@ -366,6 +450,11 @@ export function validateAuthoredDefinition(
       definition.charter,
       definition.executionContexts.map((context) => context.id),
     ),
+    ...validateCharterSourceScopes(
+      definition.charter,
+      definition.executionContexts.map((context) => context.id),
+    ),
+    ...validateCharterSourceAuthoredShapes(definition.charter),
     ...validateWorkflowDefinition(definition, deps).errors,
   ];
 

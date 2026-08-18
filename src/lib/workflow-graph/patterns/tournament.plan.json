@@ -35,9 +35,7 @@
           "label": "Tournament brief",
           "type": "document",
           "locator": ".cc/temp/tournament-brief.md",
-          "description": "The problem every contender proposes against and the tradeoff axes every judge decides on: what has to be true of a good approach, and what is being traded against what.",
-          "appliesTo": "all execution contexts",
-          "accessPolicy": "worktree-relative"
+          "description": "The problem every contender proposes against and the tradeoff axes every judge decides on: what has to be true of a good approach, and what is being traded against what."
         },
         {
           "rank": 2,
@@ -45,9 +43,7 @@
           "label": "Repository engineering contract",
           "type": "document",
           "locator": "AGENTS.md",
-          "description": "The engineering contract any winning approach would have to be implementable under — typing, testing, and architecture boundaries.",
-          "appliesTo": "all execution contexts",
-          "accessPolicy": "worktree-relative"
+          "description": "The engineering contract any winning approach would have to be implementable under — typing, testing, and architecture boundaries."
         }
       ]
     },

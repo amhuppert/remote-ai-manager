@@ -517,7 +517,6 @@ describe("applyDefinitionEdits", () => {
             type: "document",
             locator: "a.md",
             description: "d",
-            accessPolicy: "worktree-relative",
           },
           {
             rank: 1,
@@ -526,7 +525,6 @@ describe("applyDefinitionEdits", () => {
             type: "document",
             locator: "b.md",
             description: "d",
-            accessPolicy: "worktree-relative",
           },
         ],
       }),

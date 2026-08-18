@@ -5,12 +5,12 @@ import {
   workflowValidatorOutputPlanDefectSchema,
 } from "@/lib/workflow-graph/definition-schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
-import type {
-  CharterAmendment,
-  WorkflowCharter,
-} from "@/lib/workflows/charter-schemas";
+import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import { renderCharterPromptSection } from "@/lib/workflow-graph/charter/render";
-import { resolveScopedCharterForContext } from "@/lib/workflow-graph/charter/invariant-scope";
+import {
+  resolveLogicalAuthoredContextId,
+  resolveScopedCharterForContext,
+} from "@/lib/workflow-graph/charter/invariant-scope";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import {
@@ -223,8 +223,13 @@ export interface BuildContextValidationPromptInput {
   // Optional because the resolved context carries an optional charter; when
   // present the digest is prepended so the prompt opens with it (4.2).
   charter?: WorkflowCharter;
-  /** Live amendment history (doc 07) — the validator judges the amended rules. */
-  charterAmendments?: CharterAmendment[];
+  /**
+   * The LOGICAL authored context id the charter section renders for — scoped
+   * sources bind authored ids, so a loop-instance validation (context id like
+   * `group__p2__ctx`) passes its authored template id here. Defaults to
+   * `context.id`, which is correct for every non-expanded context.
+   */
+  charterContextId?: string;
   // Pre-rendered "Changes under review" section anchoring the validator on the
   // context's diff. Inserted after the acceptance criteria. Omitted when scope
   // computation is disabled or fails to produce a section.
@@ -273,9 +278,9 @@ export function resolveValidatorAskUserQuestionsEnabled(
 
 function buildCharterSection(
   charter: WorkflowCharter,
-  amendments: readonly CharterAmendment[] = [],
+  contextId: string,
 ): string {
-  return renderCharterPromptSection(charter, [], amendments);
+  return renderCharterPromptSection(charter, contextId);
 }
 
 function formatTaskBlock(
@@ -337,7 +342,10 @@ export function buildContextValidationPrompt(
     .join("\n");
 
   const charterSection = input.charter
-    ? `${buildCharterSection(input.charter, input.charterAmendments ?? [])}\n\n`
+    ? `${buildCharterSection(
+        input.charter,
+        input.charterContextId ?? input.context.id,
+      )}\n\n`
     : "";
 
   // A validator resume opens with the answers so the re-run validator reads them
@@ -388,7 +396,6 @@ export function buildContextValidationPrompt(
     "- **Respect context scope boundaries.** This execution context is one step in a larger graph workflow. Work that is explicitly out of scope for this context — for example, type updates or cleanup handled by a downstream context, or integration work reserved for another context — must not cause this context to fail. If the current context produced the intermediate state it is responsible for, treat that as success even if the wider codebase is not yet fully consistent.",
     "- **Require a production call path for wiring criteria.** When a criterion requires a capability to exist or be wired — an event publication, route, notification, adapter, or control — it is satisfied only by a production call path that reaches it. An exported, unit-tested function with no production caller does not satisfy it. Deferral is valid only to a graph-downstream owner, and only when this context's acceptance criteria explicitly name that downstream owner for the obligation, or the downstream owner's acceptance criteria contain the matching obligation. A graph relationship or ownership claim alone cannot invent the handoff. With valid deferral evidence, record it in your `summary` instead of failing; without it, raise an issue.",
     ...invariantGuidanceLines,
-    "- **Defer to the higher-ranked source on a charter conflict.** When an acceptance criterion conflicts with a higher-ranked source of truth and the implementation follows that higher-ranked source, do not fail the context solely for that acceptance-criterion mismatch — the higher-ranked source prevails. Instead, record the conflict in your `summary`, naming the affected acceptance criterion, the prevailing source, and the resolution. Evaluate each source's precedence within that source's declared applicability scope (`appliesTo`).",
     buildValidatorDeterministicChecksGuidance(input.validationSelections),
     "",
     ...validationSectionLines,
@@ -1934,7 +1941,13 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       validator: input.validator,
       validationSelections,
       ...(scopedCharter ? { charter: scopedCharter } : {}),
-      charterAmendments: input.execution.charterAmendments,
+      // Scoped sources bind authored ids: a loop-instance context renders the
+      // charter section under its authored template id, same as invariants.
+      charterContextId:
+        resolveLogicalAuthoredContextId({
+          execution: input.execution,
+          contextId: input.context.id,
+        }) ?? input.context.id,
       diffScopeSection,
       askUserQuestionsEnabled: resolveValidatorAskUserQuestionsEnabled(
         input.validator,

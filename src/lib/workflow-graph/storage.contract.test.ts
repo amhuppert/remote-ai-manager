@@ -194,6 +194,31 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
           appliesTo: { contextIds: ["ctx-1", "ctx-loop-worker"] },
         },
       ],
+      // Authored-shaped sources: create is an accept path, so the legacy
+      // shapes (prose appliesTo, retired accessPolicy) are refused here — their
+      // read-tolerance durability is proven against a stored record instead.
+      // The structured source scope is itself a persisted field this contract
+      // must round-trip.
+      sourcesOfTruth: [
+        {
+          rank: 1,
+          id: "design-doc",
+          label: "Approved design document",
+          type: "document",
+          locator: ".kiro/specs/workflow-charter/design.md",
+          description: "The authoritative architecture for this workflow",
+          appliesTo: { contextIds: ["ctx-1"] },
+        },
+        {
+          rank: 2,
+          id: "scoped-reference",
+          label: "Scoped durable reference",
+          type: "spec",
+          locator: "docs/scoped-reference.md",
+          description: "A reference scoped to the durable contexts.",
+          appliesTo: { contextIds: ["ctx-1", "ctx-loop-worker"] },
+        },
+      ],
     }),
     parameters: [
       {
@@ -504,6 +529,13 @@ describe("workflow-graph storage durability contract", () => {
         createdAt: "derived-on-write",
         updatedAt: "derived-on-write",
         "layout.workflowId": "derived-on-write",
+        // `accessPolicy` survives ONLY on legacy stored records (the tolerant
+        // persisted schema preserves it verbatim); the authored accept path
+        // this contract persists through refuses it, so a maximal CREATABLE
+        // fixture cannot carry it. Its read-path preservation is proven by the
+        // legacy-frozen-charter tolerance test instead.
+        "definition.charter.sourcesOfTruth[0].accessPolicy": "not-persisted",
+        "definition.charter.sourcesOfTruth[1].accessPolicy": "not-persisted",
       },
     });
   });
@@ -533,6 +565,10 @@ describe("workflow-graph storage durability contract", () => {
         createdAt: "derived-on-write",
         updatedAt: "derived-on-write",
         "layout.workflowId": "derived-on-write",
+        // See the project-scope contract above: refused by the authored accept
+        // path, preserved only on legacy stored records.
+        "definition.charter.sourcesOfTruth[0].accessPolicy": "not-persisted",
+        "definition.charter.sourcesOfTruth[1].accessPolicy": "not-persisted",
       },
     });
   });

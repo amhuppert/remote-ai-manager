@@ -215,9 +215,9 @@ function resolveSharedContext(): GraphWorkflowCascadeContext {
 // The role-specific instruction block that `renderCharterPromptSection`
 // appends after the digest opens with this fixed pointer line. The digest is
 // the shared charter content; everything from this line on is role-specific
-// (the implementer adds a citation requirement + external-source note, the
-// validator adds nothing), so the charter region to compare for 4.5 is the
-// slice that precedes this pointer.
+// (the implementer adds a citation requirement, the validator adds nothing),
+// so the charter region to compare for 4.5 is the slice that precedes this
+// pointer.
 const CHARTER_POINTER_LINE = "Full charter: read";
 
 /**
@@ -322,8 +322,9 @@ describe("charter prompt injection (cross-builder integration)", () => {
       validationSelections: EMPTY_VALIDATION_SELECTIONS,
     });
 
-    // The shared digest both roles embed, computed from the SAME snapshot.
-    const digest = renderCharterDigest(context.charter);
+    // The shared digest both roles embed, computed from the SAME snapshot for
+    // the SAME rendering context.
+    const digest = renderCharterDigest(context.charter, context.id);
     expect(digest).toContain("# Workflow Charter");
     expect(digest).toContain("Resolve every source conflict identically");
     expect(implementerPrompt).toContain(digest);
@@ -339,5 +340,101 @@ describe("charter prompt injection (cross-builder integration)", () => {
     expect(implementerDigestRegion).toBe(validatorDigestRegion);
     // Guard: the compared region is the real digest, not an empty/stub slice.
     expect(implementerDigestRegion).toBe(digest);
+  });
+
+  it("renders a scoped source only in the prompts of its own context, for both roles", () => {
+    // Two-context definition with one source scoped to ctx-1: the resolver
+    // passes the charter through to both contexts, and each role's production
+    // builder renders the charter section for ITS context id — so ctx-2's
+    // implementer and validator prompts must omit the scoped source.
+    const definition: WorkflowSemanticDefinition = {
+      ...makeDefinition(),
+      charter: makeTestCharter({
+        sourcesOfTruth: [
+          {
+            rank: 1,
+            id: "design-doc",
+            label: "Approved design document",
+            type: "document",
+            locator: ".kiro/specs/workflow-charter/design.md",
+            description: "The authoritative architecture for this workflow",
+          },
+          {
+            rank: 2,
+            id: "feature-notes",
+            label: "Feature-context notes",
+            type: "document",
+            locator: "docs/feature-notes.md",
+            description: "References that only concern the feature context",
+            appliesTo: { contextIds: ["ctx-1"] },
+          },
+        ],
+      }),
+      executionContexts: [
+        {
+          id: "ctx-1",
+          title: "Build the feature",
+          description: "Implement the core behavior",
+          acceptanceCriteria: "The feature works and is covered by tests.",
+          placement: { lane: "ctx-1", mode: "full" },
+        },
+        {
+          id: "ctx-2",
+          title: "Integrate the feature",
+          description: "Wire the feature into the app",
+          acceptanceCriteria: "The feature is reachable in production code.",
+          placement: { lane: "ctx-2", mode: "full" },
+        },
+      ],
+      edges: [
+        {
+          id: "edge-1",
+          sourceContextId: "ctx-1",
+          targetContextId: "ctx-2",
+        },
+      ],
+    };
+
+    const resolved = resolveWorkflowDefinition(GLOBAL_CONFIG, definition);
+    const byId = new Map(
+      resolved.executionContexts.map((ctx) => [ctx.id, ctx]),
+    );
+    const prompts = ["ctx-1", "ctx-2"].map((id) => {
+      const ctx = byId.get(id);
+      if (!ctx?.charter) {
+        throw new Error(`resolved context ${id} must carry a charter`);
+      }
+      return {
+        implementer: buildIterationPrompt({
+          context: ctx,
+          charter: ctx.charter,
+          sharedDocuments: [],
+          tasks: TASKS,
+          taskStates: TASK_STATES,
+          allowAgentTaskAdd: false,
+          validationSelections: EMPTY_VALIDATION_SELECTIONS,
+        }),
+        validator: buildContextValidationPrompt({
+          context: ctx,
+          charter: ctx.charter,
+          tasks: TASKS,
+          taskStates: TASK_STATES,
+          validator: VALIDATOR,
+          validationSelections: EMPTY_VALIDATION_SELECTIONS,
+        }),
+      };
+    });
+    const [inScope, outOfScope] = prompts as [
+      (typeof prompts)[number],
+      (typeof prompts)[number],
+    ];
+
+    for (const role of ["implementer", "validator"] as const) {
+      expect(inScope[role]).toContain("Feature-context notes");
+      expect(outOfScope[role]).not.toContain("Feature-context notes");
+      // The global source renders for every context.
+      expect(inScope[role]).toContain("Approved design document");
+      expect(outOfScope[role]).toContain("Approved design document");
+    }
   });
 });

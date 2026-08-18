@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   charterAmendmentSchema,
   sourceOfTruthSchema,
+  sourceScopeContextIds,
   workflowCharterSchema,
   type CharterInvariant,
   type SourceOfTruth,
@@ -17,8 +18,7 @@ function makeSource(overrides: Partial<SourceOfTruth> = {}): SourceOfTruth {
     type: "code",
     locator: "src/lib/aerotrainer/floor-round.ts",
     description: "The reference implementation of the floor/round conversion.",
-    appliesTo: "src/lib/aerotrainer/**",
-    accessPolicy: "worktree-relative",
+    appliesTo: { contextIds: ["context-implement"] },
     ...overrides,
   };
 }
@@ -60,7 +60,6 @@ function makeMaximalCharter(): WorkflowCharter {
         locator: ".kiro/specs/aerotrainer/requirements.md",
         description: "The AC prose blocks.",
         appliesTo: undefined,
-        accessPolicy: "worktree-relative",
       }),
       makeSource({
         rank: 3,
@@ -68,21 +67,39 @@ function makeMaximalCharter(): WorkflowCharter {
         label: "Upstream Standard",
         type: "spec",
         locator: "https://example.test/spec",
-        description: "An external authority outside the worktree.",
-        accessPolicy: "external-readonly",
+        description: "An external authority materialized into the worktree.",
+        appliesTo: undefined,
       }),
     ],
   };
 }
 
+/**
+ * A source entry as persisted before structured scoping: prose `appliesTo`
+ * and an `accessPolicy` — the exact stored shape the tolerant read path must
+ * carry through unchanged.
+ */
+function makeLegacySource(): Record<string, unknown> {
+  return {
+    rank: 1,
+    id: "legacy-standard",
+    label: "Legacy Standard",
+    type: "spec",
+    locator: "https://example.test/spec",
+    description: "An external authority outside the worktree.",
+    appliesTo: "all execution contexts",
+    accessPolicy: "external-readonly",
+  };
+}
+
 describe("sourceOfTruthSchema", () => {
-  it("parses a fully populated source entry", () => {
+  it("parses a fully populated source entry with a structured scope", () => {
     const parsed = sourceOfTruthSchema.parse(makeSource());
     expect(parsed.rank).toBe(1);
-    expect(parsed.accessPolicy).toBe("worktree-relative");
+    expect(parsed.appliesTo).toEqual({ contextIds: ["context-implement"] });
   });
 
-  it("accepts an omitted optional appliesTo", () => {
+  it("accepts an omitted optional appliesTo (global)", () => {
     const result = sourceOfTruthSchema.safeParse(
       makeSource({ appliesTo: undefined }),
     );
@@ -114,15 +131,120 @@ describe("sourceOfTruthSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects an unknown access policy", () => {
-    const result = sourceOfTruthSchema.safeParse(
-      makeSource({
-        accessPolicy: "anywhere" as SourceOfTruth["accessPolicy"],
-      }),
-    );
+  it("refuses an authored accessPolicy field", () => {
+    const result = sourceOfTruthSchema.safeParse({
+      ...makeSource(),
+      accessPolicy: "worktree-relative",
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const message = result.error.issues.map((i) => i.message).join(" ");
+    expect(message).toContain("accessPolicy");
+  });
+
+  it("refuses legacy prose appliesTo on the authored path", () => {
+    const result = sourceOfTruthSchema.safeParse({
+      ...makeSource(),
+      appliesTo: "src/lib/aerotrainer/**",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it.each([
+    {
+      label: "an empty context id list",
+      appliesTo: { contextIds: [] },
+      path: ["appliesTo", "contextIds"],
+    },
+    {
+      label: "an empty context id",
+      appliesTo: { contextIds: [""] },
+      path: ["appliesTo", "contextIds", 0],
+    },
+    {
+      label: "a duplicate context id",
+      appliesTo: { contextIds: ["context-plan", "context-plan"] },
+      path: ["appliesTo", "contextIds", 1],
+    },
+    {
+      label: "an unknown scope property",
+      appliesTo: { contextIds: ["context-plan"], extra: true },
+      path: ["appliesTo"],
+    },
+  ])(
+    "rejects $label at its authored location (shared scope schema)",
+    ({ appliesTo, path }) => {
+      const result = sourceOfTruthSchema.safeParse({
+        ...makeSource(),
+        appliesTo,
+      });
+      expect(result.success).toBe(false);
+      if (result.success) return;
+      expect(
+        result.error.issues.some(
+          (issue) => JSON.stringify(issue.path) === JSON.stringify(path),
+        ),
+      ).toBe(true);
+    },
+  );
+});
+
+describe("sourceScopeContextIds", () => {
+  it("returns the scoped context ids for a structured appliesTo", () => {
+    expect(sourceScopeContextIds(makeSource())).toEqual(["context-implement"]);
+  });
+
+  it("returns null for a global source (no appliesTo)", () => {
+    expect(
+      sourceScopeContextIds(makeSource({ appliesTo: undefined })),
+    ).toBeNull();
+  });
+
+  it("returns null for a legacy prose appliesTo (treated as global)", () => {
+    const legacy = workflowCharterSchema.parse({
+      mission: "Legacy mission.",
+      sourcesOfTruth: [makeLegacySource()],
+    });
+    const source = legacy.sourcesOfTruth[0];
+    if (!source) throw new Error("fixture must have a source");
+    expect(sourceScopeContextIds(source)).toBeNull();
+  });
+});
+
+describe("workflowCharterSchema — tolerant persisted read", () => {
+  it("accepts a stored charter carrying legacy prose appliesTo and accessPolicy", () => {
+    const result = workflowCharterSchema.safeParse({
+      mission: "Legacy mission.",
+      sourcesOfTruth: [makeLegacySource()],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("preserves the legacy fields verbatim so recomputed hashes stay stable", () => {
+    const parsed = workflowCharterSchema.parse({
+      mission: "Legacy mission.",
+      sourcesOfTruth: [makeLegacySource()],
+    });
+    expect(parsed.sourcesOfTruth[0]).toEqual(makeLegacySource());
+  });
+
+  it("still refuses duplicate ranks on the persisted path", () => {
+    const result = workflowCharterSchema.safeParse({
+      mission: "Legacy mission.",
+      sourcesOfTruth: [
+        makeLegacySource(),
+        { ...makeLegacySource(), id: "second" },
+      ],
+    });
     expect(result.success).toBe(false);
   });
 });
+
+// The authored refusal of the legacy shapes (retired accessPolicy, prose
+// appliesTo) is enforced at plan accept by validateCharterSourceAuthoredShapes
+// — covered in src/lib/workflow-graph/validation.test.ts — and at the edit-op
+// surface by the strict sourceOfTruthSchema above. Parse surfaces stay
+// tolerant so persisted documents keep loading verbatim.
 
 describe("workflowCharterSchema", () => {
   it("parses a maximal valid charter", () => {

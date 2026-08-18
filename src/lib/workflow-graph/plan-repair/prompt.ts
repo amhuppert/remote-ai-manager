@@ -5,6 +5,7 @@
  * invocation.
  */
 
+import { resolveLogicalAuthoredContextId } from "../charter/invariant-scope";
 import { renderCharterPromptSection } from "../charter/render";
 import type { GraphWorkflowValidationIssue } from "../definition-schemas";
 import type {
@@ -240,11 +241,12 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
   );
 
   if (execution.charter) {
+    // The halted context's logical authored id: scoped sources bind authored
+    // ids, so a halted loop instance renders under its template id.
     sections.push(
       renderCharterPromptSection(
         execution.charter,
-        [],
-        execution.charterAmendments,
+        resolveLogicalAuthoredContextId({ execution, contextId }) ?? contextId,
       ),
     );
   }

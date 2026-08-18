@@ -345,7 +345,11 @@ function buildScannedFieldAccessors(
       stringFieldAccessor(
         `${prefix}.appliesTo`,
         owner,
-        (source) => source.appliesTo,
+        // Only the legacy prose form is a substitutable string; a structured
+        // scope holds context ids, which are graph structure, not template
+        // prose.
+        (source) =>
+          typeof source.appliesTo === "string" ? source.appliesTo : undefined,
         (source, value) => {
           source.appliesTo = value;
         },

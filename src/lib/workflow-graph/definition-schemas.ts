@@ -773,7 +773,11 @@ export type GraphWorkflowVisualLayout = z.infer<
  * The create/replace request body: a named, laid-out workflow definition. This
  * is the single schema both the persisting routes (create/replace) and the
  * non-persisting `graph-workflow/validate` endpoint parse, so a plan that
- * validates is guaranteed to be acceptable to create.
+ * validates is guaranteed to be acceptable to create. It also rides inside
+ * PERSISTED documents (a delivery plan embeds its launch verbatim), so the
+ * parse stays tolerant of legacy charter source shapes; the authored-shape
+ * refusals (retired `accessPolicy`, prose `appliesTo`) are enforced by
+ * `validateAuthoredDefinition` on every accept path instead.
  */
 export const workflowDefinitionMutationSchema = z.object({
   name: z.string().trim().min(1),

@@ -46,7 +46,6 @@ const PLACEHOLDER_PLANNER_CHARTER: WorkflowCharter = {
       type: "document",
       locator: "objective",
       description: "The stated objective for this workflow",
-      accessPolicy: "worktree-relative",
     },
   ],
 };

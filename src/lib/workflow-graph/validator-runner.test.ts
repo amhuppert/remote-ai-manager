@@ -891,27 +891,63 @@ describe("buildContextValidationPrompt", () => {
     expect(prompt).toContain("server-side-enforcement");
   });
 
-  it("renders the charter amendment log so the validator judges against the amended rules", () => {
+  it("renders no amendment log or access-policy text in the charter section", () => {
+    // The prompt diet (change 3): the validator reads the current rules from
+    // its prompt; amendment history and access bookkeeping live only in
+    // charter.md and the durable record.
     const prompt = buildContextValidationPrompt({
       context,
       tasks,
       taskStates,
       validator: seedAssignment(validatorConfig),
       charter,
-      charterAmendments: [
-        {
-          seq: 1,
-          amendedAt: "2026-07-29T10:00:00.000Z",
-          source: "cli",
-          rationale: "Invariant inv-old retracted; it contradicted the API",
-          fieldsChanged: ["invariants"],
-          charterHash: "hash-1",
-        },
-      ],
     });
 
-    expect(prompt).toContain("## Amendment log");
-    expect(prompt).toContain("Invariant inv-old retracted");
+    expect(prompt).not.toContain("Amendment log");
+    expect(prompt).not.toContain("Access:");
+    expect(prompt).not.toContain("permission-gated");
+  });
+
+  it("renders only global sources plus sources scoped to the validated context", () => {
+    const scopedCharter: WorkflowCharter = {
+      ...charter,
+      sourcesOfTruth: [
+        ...charter.sourcesOfTruth,
+        {
+          rank: 3,
+          id: "verify-notes",
+          label: "Verification Notes",
+          type: "document",
+          locator: "docs/verify-notes.md",
+          description: "Notes that only concern the verification context.",
+          appliesTo: { contextIds: ["context-verify"] },
+        },
+      ],
+    };
+
+    const outOfScope = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: seedAssignment(validatorConfig),
+      charter: scopedCharter,
+    });
+    const inScope = buildContextValidationPrompt({
+      context,
+      charterContextId: "context-verify",
+      tasks,
+      taskStates,
+      validator: seedAssignment(validatorConfig),
+      charter: scopedCharter,
+    });
+
+    // The validated context is `context-implement`; the rank-3 source is scoped
+    // to `context-verify`, so it renders only when that id is the rendering
+    // context (charterContextId overrides context.id for loop instances).
+    expect(outOfScope).not.toContain("Verification Notes");
+    expect(inScope).toContain("Verification Notes");
+    expect(outOfScope).toContain("Published API Contract");
+    expect(inScope).toContain("Published API Contract");
   });
 
   it("omits the invariant-check instruction when the charter declares no invariants", () => {
@@ -967,7 +1003,10 @@ describe("buildContextValidationPrompt", () => {
     expect(prompt).not.toContain("# Workflow Charter");
   });
 
-  it("instructs the validator to defer to a higher-ranked source and record the conflict in the summary", () => {
+  it("carries no charter-conflict deferral rule (conflicts are resolved at plan time)", () => {
+    // Change 3 retired the runtime deferral judgment: the validator judges the
+    // contract, and unresolved source conflicts are plan defects, not per-round
+    // reconciliation work.
     const prompt = buildContextValidationPrompt({
       context,
       tasks,
@@ -979,18 +1018,9 @@ describe("buildContextValidationPrompt", () => {
     const guidance = prompt.slice(prompt.indexOf("## Evaluation Guidance"));
     const lowered = guidance.toLowerCase();
 
-    // 5.1 / 5.2: higher-ranked source prevails; do not fail the context for
-    // the acceptance-criterion mismatch when the implementation follows it.
-    expect(lowered).toContain("higher-ranked source");
-    expect(lowered).toMatch(/do not|don't|must not/);
-    expect(lowered).toContain("acceptance criterion");
-    // 5.3: record the conflict (criterion, prevailing source, resolution) in
-    // the existing summary field.
-    expect(lowered).toContain("summary");
-    expect(lowered).toContain("prevailing source");
-    expect(lowered).toContain("resolution");
-    // 5.5: precedence is evaluated within each source's applicability scope.
-    expect(lowered).toMatch(/applicability scope|appliesto|applies to/);
+    expect(lowered).not.toContain("higher-ranked source");
+    expect(lowered).not.toContain("prevailing source");
+    expect(lowered).not.toContain("charter conflict");
   });
 
   it("embeds the framed answers block on a validator resume", () => {

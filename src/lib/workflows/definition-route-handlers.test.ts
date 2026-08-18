@@ -6,6 +6,24 @@ import {
   createWorkflowLayout,
 } from "@/lib/workflow-graph/test-fixtures";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
+
+// The POST bodies below are authored plans: create refuses the legacy source
+// shapes makeTestCharter still carries (prose appliesTo, retired accessPolicy),
+// so the authored requests override them with the authored shape.
+function makeAuthoredCharter() {
+  return makeTestCharter({
+    sourcesOfTruth: [
+      {
+        rank: 1,
+        id: "design-doc",
+        label: "Approved design document",
+        type: "document",
+        locator: ".kiro/specs/workflow-charter/design.md",
+        description: "The authoritative architecture for this workflow",
+      },
+    ],
+  });
+}
 import { workflowDefinitionGetResponseSchema } from "@/lib/workflow-definitions/schemas";
 import { createWorkflowDefinitionRouteHandlers } from "./definition-route-handlers";
 import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
@@ -449,7 +467,7 @@ describe("workflow definition route handlers", () => {
         definition: {
           schemaVersion: 1,
           workflowConfig: {},
-          charter: makeTestCharter(),
+          charter: makeAuthoredCharter(),
           executionContexts: [
             {
               id: "context-plan",
@@ -527,7 +545,7 @@ describe("workflow definition route handlers", () => {
           definition: {
             schemaVersion: 1,
             workflowConfig: {},
-            charter: makeTestCharter(),
+            charter: makeAuthoredCharter(),
             executionContexts: [context],
             tasks: [],
             edges: [],

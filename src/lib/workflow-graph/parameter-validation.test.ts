@@ -964,7 +964,7 @@ describe("SUBSTITUTION_FIELD_SET drift guard", () => {
     const { charter: sentineledCharter, sentinelByField } =
       maximalSentineledCharter();
 
-    const rendered = `${renderCharterDigest(sentineledCharter)}\n${renderCharterMarkdown(
+    const rendered = `${renderCharterDigest(sentineledCharter, "context-main")}\n${renderCharterMarkdown(
       sentineledCharter,
     )}`;
 
@@ -994,7 +994,7 @@ describe("SUBSTITUTION_FIELD_SET drift guard", () => {
     // exclusion is load-bearing, not dead).
     const { charter: sentineledCharter, sentinelByField } =
       maximalSentineledCharter();
-    const rendered = `${renderCharterDigest(sentineledCharter)}\n${renderCharterMarkdown(
+    const rendered = `${renderCharterDigest(sentineledCharter, "context-main")}\n${renderCharterMarkdown(
       sentineledCharter,
     )}`;
 
