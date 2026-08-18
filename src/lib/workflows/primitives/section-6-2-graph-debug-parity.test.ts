@@ -1092,6 +1092,8 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
           schema: buildValidatorOutputSchema({
             authority: contextDef.contextValidator.assignments[0]!.authority,
             taskIds: ["task-plan-1"],
+            criterionIds: ["ac-1"],
+            issueCriterionCitation: "required",
           }),
         },
       });
