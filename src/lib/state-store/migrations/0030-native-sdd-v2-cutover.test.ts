@@ -1687,9 +1687,7 @@ describe("0030 native-SDD v2 cutover hardening", () => {
       expect(current.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
       expect(
         current
-          .prepare(
-            "SELECT COUNT(*) AS count FROM spec_delivery_plan_attempts",
-          )
+          .prepare("SELECT COUNT(*) AS count FROM spec_delivery_plan_attempts")
           .get(),
       ).toEqual({ count: 0 });
       // Losing the table also loses candidate identity as a classifier, so the

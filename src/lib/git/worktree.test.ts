@@ -1,11 +1,5 @@
 import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  writeFile,
-  rm,
-} from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { defaultGitClient, type GitClient } from "./client";
@@ -1181,7 +1175,6 @@ describe("readWorktreeStatusV2 (real git)", () => {
       { path: "src/one.txt", originalPath: null, kind: "changed" },
     ]);
   });
-
 });
 
 describe("parked merge refs (real git)", () => {

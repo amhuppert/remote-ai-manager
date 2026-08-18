@@ -45,9 +45,9 @@ describe("0031-graph-workflow-candidate-unstable-halt", () => {
 
       // The point of the fence: a build that only knows version 9 must refuse
       // to open, while this build (whose known version the stamp equals) opens.
-      expect(() => enforceCurrentSchemaCompatibility(db, ":memory:", 9)).toThrow(
-        /schema/i,
-      );
+      expect(() =>
+        enforceCurrentSchemaCompatibility(db, ":memory:", 9),
+      ).toThrow(/schema/i);
       expect(() =>
         enforceCurrentSchemaCompatibility(db, ":memory:", KNOWN_SCHEMA_VERSION),
       ).not.toThrow();

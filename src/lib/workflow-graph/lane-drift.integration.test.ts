@@ -19,7 +19,6 @@ import { commitOwnedPaths } from "@/lib/git/owned-landing";
 import { createLaneDriftAuditor } from "./lane-drift";
 import type { GraphWorkflowCanonicalOwnership } from "./schemas";
 
-
 async function git(repo: string, args: string[]): Promise<string> {
   const { stdout } = await defaultGitClient.git(args, repo);
   return stdout.trim();

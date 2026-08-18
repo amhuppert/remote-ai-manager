@@ -1958,7 +1958,8 @@ describe("graph workflow execution event publisher", () => {
         {
           assignmentId: "general",
           title: "The criterion names work this context does not own",
-          description: "Criterion 2 requires the downstream publisher to change.",
+          description:
+            "Criterion 2 requires the downstream publisher to change.",
           whyNotLocallyRemediable:
             "Every task here is scoped to the reader; the publisher lands later.",
           conflictingContract: "Acceptance criterion 2",
@@ -2000,28 +2001,32 @@ describe("graph workflow execution event publisher", () => {
     });
     publisher.deliver(signalledDelivery);
 
-    expect(planDefectEvents(signalledDelivery).map((row) => row.event)).toEqual([
-      {
-        type: "graph-workflow-plan-defect-halted",
-        projectName: "repo",
-        sessionName: "session-1",
-        executionId: signalled.id,
-        contextId: "context-plan",
-        roundSeq: 3,
-        defects: [
-          {
-            assignmentId: "general",
-            title: "The criterion names work this context does not own",
-            conflictingContract: "Acceptance criterion 2",
-          },
-        ],
-      },
-    ]);
+    expect(planDefectEvents(signalledDelivery).map((row) => row.event)).toEqual(
+      [
+        {
+          type: "graph-workflow-plan-defect-halted",
+          projectName: "repo",
+          sessionName: "session-1",
+          executionId: signalled.id,
+          contextId: "context-plan",
+          roundSeq: 3,
+          defects: [
+            {
+              assignmentId: "general",
+              title: "The criterion names work this context does not own",
+              conflictingContract: "Acceptance criterion 2",
+            },
+          ],
+        },
+      ],
+    );
     // Registered in the SSE envelope: a strict union that did not know this
     // type would drop the event silently on the way to every consumer.
     expect(
       planDefectEvents(signalledDelivery).map((row) =>
-        graphWorkflowExecutionEventSchema.parse(JSON.parse(JSON.stringify(row))),
+        graphWorkflowExecutionEventSchema.parse(
+          JSON.parse(JSON.stringify(row)),
+        ),
       ),
     ).toEqual(planDefectEvents(signalledDelivery));
     expect(

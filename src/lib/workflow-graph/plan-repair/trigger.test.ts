@@ -163,13 +163,14 @@ describe("evaluatePlanRepairTrigger", () => {
       ...base,
       workingDefinition: {
         ...base.workingDefinition,
-        executionContexts: base.workingDefinition.executionContexts.map((ctx) =>
-          ctx.id === "context-implement"
-            ? {
-                ...ctx,
-                planRepair: { enabled: false, maxAttemptsPerContext: 2 },
-              }
-            : ctx,
+        executionContexts: base.workingDefinition.executionContexts.map(
+          (ctx) =>
+            ctx.id === "context-implement"
+              ? {
+                  ...ctx,
+                  planRepair: { enabled: false, maxAttemptsPerContext: 2 },
+                }
+              : ctx,
         ),
       },
     };

@@ -199,7 +199,9 @@ describe("buildPlanRepairPrompt", () => {
     // two reviewers refusing the same contract is a different reading from one
     // reviewer refusing it twice.
     expect(defects).toContain("general");
-    expect(defects).toContain("Criterion 2 names a context this one cannot touch");
+    expect(defects).toContain(
+      "Criterion 2 names a context this one cannot touch",
+    );
     expect(defects).toContain(
       "The publisher belongs to a later context in the graph.",
     );

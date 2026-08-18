@@ -337,9 +337,7 @@ describe("ContextHaltCard plan-defect presentation", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        /Criterion 3 requires a schema this context never owns/,
-      ),
+      screen.getByText(/Criterion 3 requires a schema this context never owns/),
     ).toBeInTheDocument();
     // The contract clause is the locator, and it takes the same amber `<code>`
     // recipe the path halts use.
