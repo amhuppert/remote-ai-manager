@@ -29,6 +29,7 @@ import type {
   RunValidationInput,
 } from "./actors";
 import { isRemediableValidationFailure } from "./actors";
+import type { AgentTurnDispatch } from "@/lib/workflows/conversation/execute-fresh-task-run";
 
 const logger = createLogger("validation-fix-states");
 
@@ -42,6 +43,8 @@ export interface ValidationFixHostContext {
    *  omit it and the fix actor falls back to the session's
    *  most-recently-active conversation. */
   conversationId?: string | null;
+  /** How the fix turn executes; absent/null means `conversation`. */
+  agentTurnDispatch?: AgentTurnDispatch | null;
   resolutionContext?: string | null;
   error: string | null;
   completedAt: string | null;
@@ -208,6 +211,7 @@ export function createValidationFixStates<
           projectPath: context.projectPath,
           sessionName: context.sessionName,
           conversationId: context.conversationId ?? undefined,
+          agentTurnDispatch: context.agentTurnDispatch ?? undefined,
           resolutionContext: context.resolutionContext ?? undefined,
           branchName: context.branchName,
           isRetry: context.fixAttempt > 1,

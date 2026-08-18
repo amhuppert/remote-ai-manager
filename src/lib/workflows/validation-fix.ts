@@ -16,6 +16,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createLogger } from "../logging";
 import { executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import { executeFreshTaskRun as defaultExecuteFreshTaskRun } from "@/lib/workflows/conversation/execute-fresh-task-run";
+import type {
+  AgentTurnDispatch,
+  ExecuteFreshTaskRunInput,
+} from "@/lib/workflows/conversation/execute-fresh-task-run";
 import type {
   ExecuteWorkflowTaskRunInput,
   TaskRunResult,
@@ -35,6 +40,11 @@ export interface ValidationFixDeps {
    */
   executeWorkflowTaskRun?(
     input: ExecuteWorkflowTaskRunInput,
+  ): Promise<TaskRunResult>;
+  /** One-shot entrypoint for the `fresh-run` dispatch (graph joins — see
+   *  {@link AgentTurnDispatch}); same result contract, no conversation. */
+  executeFreshTaskRun?(
+    input: ExecuteFreshTaskRunInput,
   ): Promise<TaskRunResult>;
 }
 
@@ -193,10 +203,20 @@ export interface FixValidationErrorsParams {
   validationOutput: string;
   projectPath: string;
   sessionName: string;
-  conversationId: string;
+  /** Required for `conversation` dispatch; for `fresh-run` it is only the
+   *  preferred identity source and may be absent. */
+  conversationId?: string;
   branchName: string;
   validationCommand?: string;
   resolutionContext?: string;
+  /**
+   * How the fix turn executes. `conversation` (default) routes through the
+   * conversation actor. `fresh-run` executes a one-shot backend task in the
+   * merge worktree — required for graph joins, whose enveloped implementer
+   * conversations are filed under scratch cwds that a resume from the merge
+   * worktree can never find (command-center#78).
+   */
+  agentTurnDispatch?: AgentTurnDispatch;
   /**
    * True after the first attempt failed and the merge machine is retrying.
    * The conversation actor itself preserves the backend runtime across calls,
@@ -246,6 +266,7 @@ async function fixValidationErrorsImpl(
     conversationId,
     isRetry,
   } = params;
+  const dispatch = params.agentTurnDispatch ?? "conversation";
   const executeWorkflowTaskRun =
     deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
 
@@ -254,6 +275,7 @@ async function fixValidationErrorsImpl(
     projectPath,
     sessionName,
     conversationId,
+    dispatch,
     isRetry: isRetry === true,
   });
 
@@ -287,6 +309,48 @@ async function fixValidationErrorsImpl(
           validationCommand,
           resolutionContext,
         });
+
+  if (dispatch === "fresh-run") {
+    const executeFreshTaskRun =
+      deps.executeFreshTaskRun ?? defaultExecuteFreshTaskRun;
+    try {
+      const result = await executeFreshTaskRun({
+        projectPath,
+        sessionName,
+        ...(conversationId !== undefined
+          ? { identityConversationId: conversationId }
+          : {}),
+        worktreePath,
+        prompt,
+        systemInstructions: VALIDATION_FIX_INSTRUCTIONS,
+      });
+      if (result.kind === "error") {
+        logger.error("validation-fix.fresh_run_error", {
+          worktreePath,
+          error: result.error,
+          aborted: result.aborted,
+        });
+        return { status: "failed", error: result.error };
+      }
+      logger.info("validation-fix.complete", { worktreePath, dispatch });
+      return { status: "fixed" };
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Unknown error";
+      logger.error("validation-fix.fresh_run_dispatch_error", {
+        worktreePath,
+        error: errorMsg,
+      });
+      return { status: "failed", error: errorMsg };
+    }
+  }
+
+  if (conversationId === undefined) {
+    return {
+      status: "failed",
+      error:
+        "Conversation dispatch requires a conversationId; callers without one must use the fresh-run dispatch",
+    };
+  }
 
   try {
     const result = await executeWorkflowTaskRun({

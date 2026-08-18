@@ -12,6 +12,7 @@ import type {
   MergeHaltReason as PersistedMergeHaltReason,
 } from "@/lib/jobs/schemas";
 import type { AgentFailureClassification } from "@/lib/agent-backends/errors";
+import type { AgentTurnDispatch } from "@/lib/workflows/conversation/execute-fresh-task-run";
 import type {
   MergeValidationMode,
   ValidationWorkflowRef,
@@ -173,6 +174,13 @@ export interface MergeContext extends BaseWorkflowContext {
    * Smart Merge, where every conversation shares the session worktree).
    */
   conversationId: string | null;
+
+  /**
+   * How every merge agent sub-turn (validation fixes, conflict analysis and
+   * resolution) executes; see {@link AgentTurnDispatch}. Null means
+   * `conversation` (the user-driven hosts). Graph joins pass `fresh-run`.
+   */
+  agentTurnDispatch: AgentTurnDispatch | null;
 
   /** Whether to auto-resolve conflicts via Claude. */
   autoResolve: boolean;
@@ -343,6 +351,8 @@ export interface MergeInput {
   jobType?: "merge" | "resolve-conflicts";
   /** See {@link MergeContext.conversationId}. */
   conversationId?: string;
+  /** See {@link MergeContext.agentTurnDispatch}. */
+  agentTurnDispatch?: AgentTurnDispatch;
   /** Defaults to "refuse"; see {@link StaleMergePolicy}. */
   staleMergePolicy?: StaleMergePolicy;
   /** Files the merge being resumed reported as conflicted. */

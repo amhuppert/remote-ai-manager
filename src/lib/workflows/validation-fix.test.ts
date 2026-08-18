@@ -297,3 +297,76 @@ describe("validation-fix (executeWorkflowTaskRun)", () => {
     expect(input.prompt).toContain("Covered lane lane-c implemented it");
   });
 });
+
+describe("validation-fix (fresh-run dispatch, #78)", () => {
+  it("runs a fresh task in the merge worktree and never resumes a conversation", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn()
+      .mockResolvedValue(textOk("unused"));
+    const executeFreshTaskRun = vi
+      .fn()
+      .mockResolvedValue(textOk("fixes applied"));
+    const deps = createTestDeps({
+      executeWorkflowTaskRun,
+      executeFreshTaskRun,
+    });
+
+    const { fixValidationErrors } = createValidationFixer(deps);
+    const result = await fixValidationErrors({
+      worktreePath: "/worktrees/merge-target",
+      validationOutput: "src/thing.ts(3,1): error TS2304",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      branchName: BRANCH_NAME,
+      agentTurnDispatch: "fresh-run",
+    });
+
+    expect(result).toEqual({ status: "fixed" });
+    expect(executeWorkflowTaskRun).not.toHaveBeenCalled();
+    expect(executeFreshTaskRun).toHaveBeenCalledTimes(1);
+    const [input] = executeFreshTaskRun.mock.calls[0]!;
+    // The lane conversation is an identity source only — never resumed.
+    expect(input.identityConversationId).toBe(CONVERSATION_ID);
+    expect(input.worktreePath).toBe("/worktrees/merge-target");
+    expect(input.prompt).toContain("error TS2304");
+    expect(input.systemInstructions).toContain("fix validation errors");
+  });
+
+  it("maps a fresh-run error result to a failed fix", async () => {
+    const deps = createTestDeps({
+      executeFreshTaskRun: vi.fn().mockResolvedValue(errResult("agent exploded")),
+    });
+    const { fixValidationErrors } = createValidationFixer(deps);
+    const result = await fixValidationErrors({
+      worktreePath: "/worktrees/merge-target",
+      validationOutput: "boom",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      branchName: BRANCH_NAME,
+      agentTurnDispatch: "fresh-run",
+    });
+    expect(result).toEqual({ status: "failed", error: "agent exploded" });
+  });
+
+  it("fails loudly when the fresh dispatch cannot resolve an identity", async () => {
+    const deps = createTestDeps({
+      executeFreshTaskRun: vi
+        .fn()
+        .mockRejectedValue(new Error("No conversation found for session")),
+    });
+    const { fixValidationErrors } = createValidationFixer(deps);
+    const result = await fixValidationErrors({
+      worktreePath: "/worktrees/merge-target",
+      validationOutput: "boom",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      branchName: BRANCH_NAME,
+      agentTurnDispatch: "fresh-run",
+    });
+    expect(result.status).toBe("failed");
+    expect(result.status === "failed" && result.error).toContain(
+      "No conversation found",
+    );
+  });
+});

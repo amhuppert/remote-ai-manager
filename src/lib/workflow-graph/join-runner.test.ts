@@ -1437,6 +1437,11 @@ describe("join-runner", () => {
     expect(result.status).toBe("succeeded");
     expect(observed).toHaveLength(1);
     expect(observed[0]?.conversationId).toBe("conv-source-implementer");
+    // The conversation is an identity/conflict-guidance source only; the
+    // validation-fix turn must run fresh — an enveloped implementer's
+    // conversation is filed under its scratch cwd and cannot be resumed from
+    // the merge worktree (command-center#78).
+    expect(observed[0]?.agentTurnDispatch).toBe("fresh-run");
   });
 
   it("omits conversationId when the source lane recorded no conversation", async () => {
@@ -1487,6 +1492,7 @@ describe("join-runner", () => {
     expect(result.status).toBe("succeeded");
     expect(observed).toHaveLength(1);
     expect(observed[0]?.conversationId).toBeUndefined();
+    expect(observed[0]?.agentTurnDispatch).toBe("fresh-run");
   });
 
   it("merges each remaining source lane into target and marks join succeeded", async () => {

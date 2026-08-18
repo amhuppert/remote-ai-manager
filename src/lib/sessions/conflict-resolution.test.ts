@@ -1148,3 +1148,66 @@ describe("conflict-resolution invalid-native fall-through (F5 pin)", () => {
     expect("error" in result).toBe(true);
   });
 });
+
+describe("fresh-run dispatch (#78)", () => {
+  it("analyzes via a fresh task run in the merge worktree, never the conversation", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+    const executeFreshTaskRun = vi
+      .fn()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+    const resolver = createConflictResolver({
+      executeWorkflowTaskRun,
+      executeFreshTaskRun,
+      buildIncomingChangesSection: vi.fn().mockResolvedValue(null),
+    });
+
+    const result = await resolver.analyzeConflicts({
+      worktreePath: "/worktrees/merge-target",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      agentTurnDispatch: "fresh-run",
+    });
+
+    expect(result.status).toBe("analyzed");
+    expect(executeWorkflowTaskRun).not.toHaveBeenCalled();
+    expect(executeFreshTaskRun).toHaveBeenCalledTimes(1);
+    const [input] = executeFreshTaskRun.mock.calls[0]!;
+    expect(input.worktreePath).toBe("/worktrees/merge-target");
+    expect(input.identityConversationId).toBe(CONVERSATION_ID);
+    expect(input.outputFormat?.type).toBe("json_schema");
+    expect(input.prompt).toContain("Analyze all merge conflicts");
+  });
+
+  it("resolves via a fresh task run and keeps the ground-truth verification", async () => {
+    const executeWorkflowTaskRun = vi.fn();
+    const executeFreshTaskRun = vi
+      .fn()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+    const resolver = createConflictResolver({
+      executeWorkflowTaskRun,
+      executeFreshTaskRun,
+      buildIncomingChangesSection: vi.fn().mockResolvedValue(null),
+      listUnmergedFiles: vi.fn().mockResolvedValue([]),
+      listTrackedMarkerFiles: vi.fn().mockResolvedValue([]),
+      readWorktreeFile: vi.fn().mockResolvedValue("clean content"),
+    });
+
+    const result = await resolver.resolveConflicts({
+      worktreePath: "/worktrees/merge-target",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      conflictFiles: ["src/a.ts"],
+      agentTurnDispatch: "fresh-run",
+    });
+
+    expect(result.status).toBe("resolved");
+    expect(executeWorkflowTaskRun).not.toHaveBeenCalled();
+    expect(executeFreshTaskRun).toHaveBeenCalledTimes(1);
+    const [input] = executeFreshTaskRun.mock.calls[0]!;
+    expect(input.prompt).toContain("Resolve all merge conflicts");
+  });
+});
