@@ -60,6 +60,10 @@ import type {
 } from "@/lib/workflow-graph/definition-schemas";
 import type { ValidationCommandSummary } from "@/lib/validation/schemas";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
+import {
+  criterionRecordsOf,
+  type CriterionRecord,
+} from "@/lib/workflow-graph/criteria/criterion-records";
 
 const BLOCK = "rounded-md border border-solid border-border-subtle bg-bg-base";
 const BLOCK_HEADER = "flex items-center gap-[10px] px-[14px] py-[10px]";
@@ -170,7 +174,12 @@ const AGENT_VALIDATION_SOURCE_LABEL: Record<CollaborationConfigSource, string> =
 interface ConfigDraft {
   title: string;
   description: string;
-  acceptanceCriteria: string;
+  /** Always records in the draft (#69 change 4 stage 1): a stored prose value
+   * normalizes through the canonical helper at seed time, so the editor is
+   * shape-uniform and an edit submits WHOLE-ARRAY replacement — the approved
+   * stage-1 live-edit semantics. An untouched value never re-shapes: the diff
+   * compares normalized draft to normalized base and emits nothing. */
+  acceptanceCriteria: CriterionRecord[];
   /** RAW editor text, never a parsed document: a half-typed schema has to
    * survive a re-render and an SSE rebase, and only a text draft can hold one.
    * Parsed to object-or-null at diff time (D8/R7.5). */
@@ -247,7 +256,7 @@ function toDraft(context: ResolvedContext): ConfigDraft {
   return {
     title: context.title,
     description: context.description ?? "",
-    acceptanceCriteria: context.acceptanceCriteria,
+    acceptanceCriteria: criterionRecordsOf(context.acceptanceCriteria),
     outputSchema: serializeOutputSchemaText(context.outputSchema),
     placement: context.placement ?? null,
     implementer: toAuthoredAssignment(context.implementer),
@@ -270,6 +279,17 @@ function toDraft(context: ResolvedContext): ConfigDraft {
   };
 }
 
+/** One record's statement replaced, identity and order untouched. */
+function withCriterionStatement(
+  records: readonly CriterionRecord[],
+  criterionId: string,
+  statement: string,
+): CriterionRecord[] {
+  return records.map((record) =>
+    record.id === criterionId ? { ...record, statement } : record,
+  );
+}
+
 type UpdateContextOp = Extract<
   WorkflowLiveEditOperation,
   { type: "update-context" }
@@ -290,7 +310,7 @@ function diffToUpdateContextOp(
     changes.description =
       draft.description.trim().length === 0 ? null : draft.description;
   }
-  if (draft.acceptanceCriteria !== base.acceptanceCriteria) {
+  if (!deepEqualJson(draft.acceptanceCriteria, base.acceptanceCriteria)) {
     changes.acceptanceCriteria = draft.acceptanceCriteria;
   }
   // The only text→document conversion in the tier. Dirtiness is a plain string
@@ -683,7 +703,6 @@ export default function ContextConfigTab({
   resettingAssignmentId,
 }: ContextConfigTabProps): React.JSX.Element | null {
   const descriptionId = useId();
-  const acceptanceCriteriaId = useId();
   const multilineActions = useMultilinePrimaryActionRegistry();
   const context = execution.workingDefinition.executionContexts.find(
     (candidate) => candidate.id === contextId,
@@ -954,24 +973,53 @@ export default function ContextConfigTab({
                 />
               </div>
               <div>
-                <label className={PROSE_LABEL} htmlFor={acceptanceCriteriaId}>
-                  Acceptance criteria
-                </label>
-                <MultilineInput
-                  id={acceptanceCriteriaId}
-                  className={cn(PROSE_INPUT, PROSE_TEXTAREA)}
-                  rows={3}
-                  value={draft.acceptanceCriteria}
-                  onValueChange={(acceptanceCriteria) =>
-                    patch({ acceptanceCriteria })
-                  }
-                  disabled={readOnly}
-                  aria-label="Context acceptance criteria"
-                  onPrimaryAction={(acceptanceCriteria) => {
-                    patch({ acceptanceCriteria });
-                    handleSave({ acceptanceCriteria });
-                  }}
-                />
+                <span className={PROSE_LABEL}>Acceptance criteria</span>
+                {/* Numbered record rows (#69 change 4 stage 1). Ids are
+                    generated identity — visible for citation, never editable —
+                    and every statement edit replaces the whole array in the
+                    composed op (stage-1 whole-value semantics). */}
+                <div className="flex flex-col gap-[4px]">
+                  {draft.acceptanceCriteria.map((record, index) => (
+                    <div
+                      className="rounded-sm border border-solid border-border-subtle bg-bg-base px-[10px] py-[8px]"
+                      data-testid="criterion-row"
+                      data-criterion-id={record.id}
+                      key={record.id}
+                    >
+                      <div className="mb-[4px] flex items-center gap-[8px] font-mono text-[0.7rem]">
+                        <span className="font-semibold text-text-tertiary">
+                          {index + 1}.
+                        </span>
+                        <span className="text-text-secondary">{record.id}</span>
+                      </div>
+                      <MultilineInput
+                        className={cn(PROSE_INPUT, PROSE_TEXTAREA)}
+                        rows={2}
+                        value={record.statement}
+                        onValueChange={(statement) =>
+                          patch({
+                            acceptanceCriteria: withCriterionStatement(
+                              draft.acceptanceCriteria,
+                              record.id,
+                              statement,
+                            ),
+                          })
+                        }
+                        disabled={readOnly}
+                        aria-label={`Statement for ${record.id}`}
+                        onPrimaryAction={(statement) => {
+                          const acceptanceCriteria = withCriterionStatement(
+                            draft.acceptanceCriteria,
+                            record.id,
+                            statement,
+                          );
+                          patch({ acceptanceCriteria });
+                          handleSave({ acceptanceCriteria });
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
               <OutputSchemaField
                 value={draft.outputSchema}

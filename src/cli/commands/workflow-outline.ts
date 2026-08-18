@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { charterInvariantSchema } from "@/lib/workflows/charter-schemas";
 import {
+  acceptanceCriteriaSchema,
+  criterionRecordsOf,
+} from "@/lib/workflow-graph/criteria/criterion-records";
+import {
   graphWorkflowAgentValidationOverrideSchema,
   graphWorkflowLaneMergeValidationOverrideSchema,
   graphWorkflowScriptValidatorConfigSchema,
@@ -139,7 +143,10 @@ const outlineContextSchema = z
     id: z.string(),
     title: z.string(),
     description: z.string().optional(),
-    acceptanceCriteria: z.string().optional(),
+    // The shared tolerant union (legacy prose | ordered records), like the
+    // validation selector blocks: criteria are a foundation contract, never a
+    // privately redefined mirror shape.
+    acceptanceCriteria: acceptanceCriteriaSchema.optional(),
     outputSchema: z.record(z.string(), z.unknown()).optional(),
   })
   .extend(outlineStaffingSchema.shape)
@@ -241,6 +248,12 @@ export interface OutlineData {
     deps: string[];
     taskCount: number;
     overrides: string[];
+    /**
+     * The context's acceptance-criterion records, ids + sizes only (#69
+     * change 4 stage 1). Legacy prose projects as its one canonical wrapped
+     * record, so the outline always shows the ids a verdict would cite.
+     */
+    criteria: OutlineCriterionRecord[];
     /** `null` when the context declares no output contract (free-form). */
     outputSchema: OutputSchemaShape | null;
   }>;
@@ -277,6 +290,11 @@ export interface OutlineData {
 export interface OutlineCharterInvariant {
   id: string;
   contextIds: string[] | null;
+  statementChars: number;
+}
+
+export interface OutlineCriterionRecord {
+  id: string;
   statementChars: number;
 }
 
@@ -324,6 +342,13 @@ export function buildOutlineData(record: OutlineRecord): OutlineData {
       deps: depsFor(context.id),
       taskCount: tasksByContext(context.id).length,
       overrides: presentBlockKeys(context),
+      criteria:
+        context.acceptanceCriteria === undefined
+          ? []
+          : criterionRecordsOf(context.acceptanceCriteria).map((record) => ({
+              id: record.id,
+              statementChars: record.statement.length,
+            })),
       outputSchema: context.outputSchema
         ? summarizeOutputSchemaShape(context.outputSchema)
         : null,
@@ -393,7 +418,23 @@ export function renderOutline(record: OutlineRecord): string {
         ? `  [${context.overrides.join(", ")} override]`
         : "";
     lines.push(
-      `  ${context.id.padEnd(idWidth)}  "${context.title}"  deps=${deps}  tasks=${context.taskCount}${outputSchema}${overrides}`,
+      `  ${context.id.padEnd(idWidth)}  "${context.title}"  deps=${deps}  tasks=${context.taskCount}  criteria=${context.criteria.length}${outputSchema}${overrides}`,
+    );
+  }
+
+  // The citable criterion ids per context (sizes stay in the JSON projection,
+  // bodies stay in `--context`), in the invariants line's scope vocabulary.
+  const criteriaScopes = data.contexts.filter(
+    (context) => context.criteria.length > 0,
+  );
+  if (criteriaScopes.length > 0) {
+    lines.push(
+      `criteria: ${criteriaScopes
+        .map(
+          (context) =>
+            `${context.id} ${context.criteria.map((record) => record.id).join(",")}`,
+        )
+        .join(" · ")}`,
     );
   }
 

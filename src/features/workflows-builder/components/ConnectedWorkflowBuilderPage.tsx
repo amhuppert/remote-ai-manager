@@ -47,6 +47,9 @@ interface ConnectedWorkflowBuilderPageProps {
 // task.
 const placeholderCharter: WorkflowCharter = {
   mission: "Describe this workflow's mission",
+  // Authored-shape source: no retired accessPolicy, no prose appliesTo — the
+  // authored write paths (validateAuthoredDefinition) refuse both, and an
+  // unscoped source is global, which is the right default for a placeholder.
   sourcesOfTruth: [
     {
       rank: 1,
@@ -55,7 +58,6 @@ const placeholderCharter: WorkflowCharter = {
       type: "document",
       locator: "objective",
       description: "The stated objective for this workflow",
-      accessPolicy: "worktree-relative",
     },
   ],
 };

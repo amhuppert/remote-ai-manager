@@ -196,6 +196,149 @@ describe("WorkflowInspectorPanel — workflow tab body", () => {
     );
   });
 
+  // #69 change 3: sources gain structured appliesTo scoping (mirroring
+  // invariants), edited by selecting declared context ids; the retired
+  // accessPolicy field gets no input, and legacy prose appliesTo reads as
+  // Global without error.
+  describe("charter source scoping", () => {
+    const SCOPED_SOURCE = {
+      rank: 1,
+      id: "design-doc",
+      label: "Approved design document",
+      type: "document" as const,
+      locator: "docs/design.md",
+      description: "The authoritative design",
+      appliesTo: { contextIds: ["context-implement"] },
+    };
+    const GLOBAL_SOURCE = {
+      rank: 2,
+      id: "conventions",
+      label: "Engineering conventions",
+      type: "document" as const,
+      locator: "AGENTS.md",
+      description: "House rules",
+    };
+    const LEGACY_SOURCE = {
+      rank: 3,
+      id: "legacy-notes",
+      label: "Legacy notes",
+      type: "other" as const,
+      locator: "notes.md",
+      description: "Pre-structured stored source",
+      appliesTo: "implementation contexts only",
+      accessPolicy: "worktree-relative" as const,
+    };
+
+    function setupSources() {
+      resetStore();
+      const def = createWorkflowDefinition();
+      setupStore({
+        selectedContextId: null,
+        definition: {
+          ...def,
+          charter: {
+            ...def.charter,
+            sourcesOfTruth: [SCOPED_SOURCE, GLOBAL_SOURCE, LEGACY_SOURCE],
+          },
+        },
+      });
+    }
+
+    function sourcesSection(container: HTMLElement): HTMLElement {
+      const section = container.querySelector(
+        '[data-section="charter-sources"]',
+      );
+      if (!(section instanceof HTMLElement)) {
+        throw new Error("No charter sources section rendered");
+      }
+      return section;
+    }
+
+    function storedSources() {
+      return _useGraphWorkflowBuilderStore.getState().draftDefinition!.charter
+        .sourcesOfTruth;
+    }
+
+    it("displays each source's scope, with legacy prose reading as Global", () => {
+      setupSources();
+      const { container } = render(
+        <WorkflowInspectorPanel {...defaultProps} />,
+      );
+
+      const rows = within(sourcesSection(container)).getAllByTestId(
+        "charter-source-row",
+      );
+      expect(rows).toHaveLength(3);
+      expect(rows[0]).toHaveTextContent("design-doc");
+      expect(within(rows[0]!).getByTestId("source-scope")).toHaveTextContent(
+        "context-implement",
+      );
+      expect(within(rows[1]!).getByTestId("source-scope")).toHaveTextContent(
+        "Global",
+      );
+      // Prose carries no context ids the engine can filter on, so it renders
+      // exactly as an unscoped source — no error, no crash.
+      expect(within(rows[2]!).getByTestId("source-scope")).toHaveTextContent(
+        "Global",
+      );
+      expect(
+        within(sourcesSection(container)).queryByLabelText(/access ?policy/i),
+      ).toBeNull();
+    });
+
+    it("toggling a declared context id authors a structured appliesTo", () => {
+      setupSources();
+      render(<WorkflowInspectorPanel {...defaultProps} />);
+
+      fireEvent.click(
+        screen.getByRole("checkbox", {
+          name: "Scope conventions to context-plan",
+        }),
+      );
+
+      expect(storedSources()[1]).toMatchObject({
+        id: "conventions",
+        appliesTo: { contextIds: ["context-plan"] },
+      });
+    });
+
+    it("unchecking the last scoped context returns the source to global", () => {
+      setupSources();
+      render(<WorkflowInspectorPanel {...defaultProps} />);
+
+      fireEvent.click(
+        screen.getByRole("checkbox", {
+          name: "Scope design-doc to context-implement",
+        }),
+      );
+
+      expect(storedSources()[0]!.appliesTo).toBeUndefined();
+    });
+
+    it("re-authoring a legacy source's scope drops prose appliesTo and the retired accessPolicy", () => {
+      setupSources();
+      render(<WorkflowInspectorPanel {...defaultProps} />);
+
+      fireEvent.click(
+        screen.getByRole("checkbox", {
+          name: "Scope legacy-notes to context-verify",
+        }),
+      );
+
+      expect(storedSources()[2]).toEqual({
+        rank: 3,
+        id: "legacy-notes",
+        label: "Legacy notes",
+        type: "other",
+        locator: "notes.md",
+        description: "Pre-structured stored source",
+        appliesTo: { contextIds: ["context-verify"] },
+      });
+      // Untouched sources keep their stored bytes — no read-renormalization.
+      expect(storedSources()[0]).toEqual(SCOPED_SOURCE);
+    });
+  });
+
   it("clicking Override then Reset on a workflow block mutates workflowConfig", () => {
     resetStore();
     setupStore({ selectedContextId: null });
@@ -405,32 +548,126 @@ describe("WorkflowInspectorPanel — launch parameters editor", () => {
   });
 });
 
-describe("WorkflowInspectorPanel — context tab body", () => {
-  it("editing acceptance criteria through the focus sheet updates the store", () => {
+// #69 change 4 stage 1: the builder edits acceptance criteria as ordered
+// {id, statement} records through the draft mutators — ids generated, visible,
+// never hand-edited — and a legacy prose value loads as one wrapped record.
+describe("WorkflowInspectorPanel — acceptance criteria record editor", () => {
+  function criterionRows(): HTMLElement[] {
+    return screen.queryAllByTestId("criterion-row");
+  }
+
+  function definitionWithPlanCriteria(
+    criteria: string | { id: string; statement: string }[],
+  ) {
+    const def = createWorkflowDefinition();
+    return {
+      ...def,
+      executionContexts: def.executionContexts.map((ctx) =>
+        ctx.id === "context-plan"
+          ? { ...ctx, acceptanceCriteria: criteria }
+          : ctx,
+      ),
+    };
+  }
+
+  it("shows a legacy prose definition as one record with the wrap id", () => {
     resetStore();
+    // The fixture's context-plan carries legacy prose criteria.
     setupStore({ selectedContextId: "context-plan" });
-    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+    render(<WorkflowInspectorPanel {...defaultProps} />);
 
-    // The focus sheet (and its textarea) mounts on demand from the read view.
-    expect(container.querySelector("#context-acceptance-criteria")).toBeNull();
-    fireEvent.click(
-      screen.getByRole("button", { name: /edit in focus view/i }),
+    const rows = criterionRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveTextContent("ac-1");
+    expect(screen.getByLabelText("Statement for ac-1")).toHaveValue(
+      "Plan is documented",
     );
-
-    const textarea = document.getElementById(
-      "context-acceptance-criteria",
-    ) as HTMLTextAreaElement;
-    expect(textarea).not.toBeNull();
-    fireEvent.change(textarea, {
-      target: { value: "Updated acceptance criteria." },
-    });
-
-    const ctx = _useGraphWorkflowBuilderStore
-      .getState()
-      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
-    expect(ctx?.acceptanceCriteria).toBe("Updated acceptance criteria.");
+    // The id is visible but generated — never an editable field.
+    expect(screen.queryByDisplayValue("ac-1")).toBeNull();
   });
 
+  it("starts with zero rows for the builder's empty-prose seed", () => {
+    resetStore();
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: definitionWithPlanCriteria(""),
+    });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    expect(criterionRows()).toHaveLength(0);
+  });
+
+  it("adds a record with the next generated id after the prose wrap", () => {
+    resetStore();
+    setupStore({ selectedContextId: "context-plan" });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /add criterion/i }));
+
+    expect(planContext()?.acceptanceCriteria).toEqual([
+      { id: "ac-1", statement: "Plan is documented" },
+      { id: "ac-2", statement: "" },
+    ]);
+    expect(_useGraphWorkflowBuilderStore.getState().dirty).toBe(true);
+  });
+
+  it("edits a record's statement inline", () => {
+    resetStore();
+    setupStore({ selectedContextId: "context-plan" });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    fireEvent.change(screen.getByLabelText("Statement for ac-1"), {
+      target: { value: "Plan is documented and reviewed." },
+    });
+
+    expect(planContext()?.acceptanceCriteria).toEqual([
+      { id: "ac-1", statement: "Plan is documented and reviewed." },
+    ]);
+  });
+
+  it("removes a record", () => {
+    resetStore();
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: definitionWithPlanCriteria([
+        { id: "ac-1", statement: "First" },
+        { id: "ac-2", statement: "Second" },
+      ]),
+    });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    fireEvent.click(screen.getByLabelText("Remove ac-1"));
+
+    expect(planContext()?.acceptanceCriteria).toEqual([
+      { id: "ac-2", statement: "Second" },
+    ]);
+  });
+
+  it("reorders records with the move controls", () => {
+    resetStore();
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: definitionWithPlanCriteria([
+        { id: "ac-1", statement: "First" },
+        { id: "ac-2", statement: "Second" },
+      ]),
+    });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    // Boundary moves are disabled, not no-ops.
+    expect(screen.getByLabelText("Move ac-1 up")).toBeDisabled();
+    expect(screen.getByLabelText("Move ac-2 down")).toBeDisabled();
+
+    fireEvent.click(screen.getByLabelText("Move ac-2 up"));
+
+    expect(planContext()?.acceptanceCriteria).toEqual([
+      { id: "ac-2", statement: "Second" },
+      { id: "ac-1", statement: "First" },
+    ]);
+  });
+});
+
+describe("WorkflowInspectorPanel — context tab body", () => {
   it("editing the description through the focus sheet updates the store", () => {
     resetStore();
     setupStore({ selectedContextId: "context-plan" });

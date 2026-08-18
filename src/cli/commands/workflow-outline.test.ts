@@ -180,6 +180,91 @@ describe("workflow outline", () => {
     expect(JSON.stringify(data)).not.toContain(statement);
   });
 
+  // #69 change 4 stage 1: acceptance criteria are ordered {id, statement}
+  // records. The outline stays sizes-not-bodies — it shows each context's
+  // record count and the citable ids, never a statement.
+  describe("acceptance-criterion records", () => {
+    const statement = "Route selection is audited end to end.";
+    const RECORDS_RECORD = {
+      ...RECORD,
+      definition: {
+        ...RECORD.definition,
+        executionContexts: [
+          RECORD.definition.executionContexts[0],
+          {
+            ...RECORD.definition.executionContexts[1],
+            acceptanceCriteria: [
+              { id: "ac-1", statement: "The feature works end to end." },
+              { id: "audit-log", statement },
+            ],
+          },
+        ],
+      },
+    };
+
+    it("projects record criteria as ids with sizes, never statements", () => {
+      const record = parseOutlineRecord(RECORDS_RECORD);
+      if (!record) throw new Error("record must parse");
+
+      const data = buildOutlineData(record);
+
+      expect(data.contexts[1]?.criteria).toEqual([
+        {
+          id: "ac-1",
+          statementChars: "The feature works end to end.".length,
+        },
+        { id: "audit-log", statementChars: statement.length },
+      ]);
+      expect(JSON.stringify(data)).not.toContain(statement);
+    });
+
+    it("projects legacy prose as the one canonical wrapped record", () => {
+      const record = parseOutlineRecord(RECORD);
+      if (!record) throw new Error("record must parse");
+
+      const data = buildOutlineData(record);
+
+      expect(data.contexts[0]?.criteria).toEqual([
+        {
+          id: "ac-1",
+          statementChars: "A plan.md describes the approach.".length,
+        },
+      ]);
+    });
+
+    it("renders per-context record counts and ids in the text outline", () => {
+      const record = parseOutlineRecord(RECORDS_RECORD);
+      if (!record) throw new Error("record must parse");
+
+      const text = renderOutline(record);
+
+      expect(text).toContain("criteria=1");
+      expect(text).toContain("criteria=2");
+      expect(text).toContain("criteria: plan ac-1 · impl ac-1,audit-log");
+      expect(text).not.toContain(statement);
+    });
+
+    it("projects an absent acceptanceCriteria as zero records", () => {
+      const record = parseOutlineRecord({
+        ...RECORD,
+        definition: {
+          ...RECORD.definition,
+          executionContexts: [
+            { id: "bare", title: "No contract declared" },
+          ],
+          tasks: [],
+          edges: [],
+        },
+      });
+      if (!record) throw new Error("record must parse");
+
+      const data = buildOutlineData(record);
+
+      expect(data.contexts[0]?.criteria).toEqual([]);
+      expect(renderOutline(record)).toContain("criteria=0");
+    });
+  });
+
   it("renders concrete validation selections for the new selector blocks", () => {
     const record = parseOutlineRecord({
       ...RECORD,

@@ -1,4 +1,5 @@
 import type { WorkflowDefinitionMutation } from "@/lib/workflow-graph/definition-schemas";
+import { acceptanceCriteriaText } from "@/lib/workflow-graph/criteria/criterion-records";
 
 export default function WorkflowFinalizedLaunchMetadata({
   launch,
@@ -26,6 +27,22 @@ export default function WorkflowFinalizedLaunchMetadata({
       <ul className="mt-sm mb-0 list-none p-0 font-mono text-[0.68rem] text-text-secondary">
         {definition.charter.sourcesOfTruth.map((source) => (
           <li key={source.id}>{source.id}</li>
+        ))}
+      </ul>
+      {/* Each context's contract, in the canonical criteria rendering (#69
+          change 4 stage 1): numbered `[id]` lines for records, the prose
+          verbatim for legacy values. */}
+      <ul
+        className="mt-sm mb-0 list-none p-0 font-mono text-[0.68rem] text-text-secondary"
+        data-testid="launch-context-criteria"
+      >
+        {definition.executionContexts.map((context) => (
+          <li className="mt-xs" key={context.id}>
+            <span className="text-text-tertiary">{context.id}</span>
+            <div className="whitespace-pre-line">
+              {acceptanceCriteriaText(context.acceptanceCriteria)}
+            </div>
+          </li>
         ))}
       </ul>
       <ul className="mt-sm mb-0 list-none p-0 font-mono text-[0.68rem] text-text-secondary">
