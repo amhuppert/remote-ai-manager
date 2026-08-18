@@ -549,7 +549,11 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
 
     // And no prompt carries a runtime precedence or deferral instruction any
     // more, which is why the resolution has to happen while planning.
-    for (const retired of ["prevails", "higher-ranked", "Applying the source"]) {
+    for (const retired of [
+      "prevails",
+      "higher-ranked",
+      "Applying the source",
+    ]) {
       expect(
         scopedDigest.includes(retired),
         `the charter digest still renders the retired precedence rule (${retired})`,

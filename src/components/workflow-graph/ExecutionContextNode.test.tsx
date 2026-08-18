@@ -113,7 +113,9 @@ describe("ExecutionContextNode — acceptance criteria records", () => {
 
     const block = screen.getByTestId("node-criteria");
     expect(block).toHaveTextContent("1. [ac-1] A verdict is recorded");
-    expect(block).toHaveTextContent("2. [audit-log] The audit trail is complete");
+    expect(block).toHaveTextContent(
+      "2. [audit-log] The audit trail is complete",
+    );
   });
 
   it("displays legacy prose criteria verbatim", () => {

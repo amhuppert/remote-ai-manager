@@ -255,7 +255,10 @@ describe("buildPlanRepairPrompt", () => {
                   id: "list-endpoint",
                   statement: "GET /v2/users returns the roster",
                 },
-                { id: "auth-guard", statement: "Unauthenticated calls get 401" },
+                {
+                  id: "auth-guard",
+                  statement: "Unauthenticated calls get 401",
+                },
               ],
             }
           : context,

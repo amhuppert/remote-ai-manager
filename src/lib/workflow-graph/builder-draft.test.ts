@@ -415,9 +415,9 @@ describe("acceptance-criterion record mutators", () => {
     const first = addAcceptanceCriterion(draft.definition, draft.contextId);
     expect(first.criterionId).toBe("ac-1");
     expect(
-      first.definition.executionContexts
-        .find((context) => context.id === draft.contextId)
-        ?.acceptanceCriteria,
+      first.definition.executionContexts.find(
+        (context) => context.id === draft.contextId,
+      )?.acceptanceCriteria,
     ).toEqual([{ id: "ac-1", statement: "" }]);
 
     // An author-chosen non-numeric id neither collides nor advances the
@@ -458,9 +458,8 @@ describe("acceptance-criterion record mutators", () => {
       "Every new test passes",
     );
     expect(
-      updated.executionContexts.find(
-        (context) => context.id === "context-plan",
-      )?.acceptanceCriteria,
+      updated.executionContexts.find((context) => context.id === "context-plan")
+        ?.acceptanceCriteria,
     ).toEqual([
       { id: "docs-updated", statement: "Docs updated" },
       { id: "tests-green", statement: "Every new test passes" },
@@ -484,9 +483,8 @@ describe("acceptance-criterion record mutators", () => {
       "docs-updated",
     );
     expect(
-      removed.executionContexts.find(
-        (context) => context.id === "context-plan",
-      )?.acceptanceCriteria,
+      removed.executionContexts.find((context) => context.id === "context-plan")
+        ?.acceptanceCriteria,
     ).toEqual([{ id: "tests-green", statement: "Tests pass" }]);
 
     // Prose normalizes to its wrapped record first, so removing ac-1 empties
@@ -515,9 +513,9 @@ describe("acceptance-criterion record mutators", () => {
       },
     );
     const criteriaOf = (definition: typeof seeded) =>
-      definition.executionContexts
-        .find((context) => context.id === "context-plan")
-        ?.acceptanceCriteria;
+      definition.executionContexts.find(
+        (context) => context.id === "context-plan",
+      )?.acceptanceCriteria;
 
     const moved = moveAcceptanceCriterion(
       seeded,

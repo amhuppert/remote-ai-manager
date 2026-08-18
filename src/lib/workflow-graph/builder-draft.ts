@@ -281,9 +281,7 @@ export function moveAcceptanceCriterion(
   );
   if (!context) return cloneValue(definition);
   const records = draftCriterionRecords(context.acceptanceCriteria);
-  const currentIndex = records.findIndex(
-    (record) => record.id === criterionId,
-  );
+  const currentIndex = records.findIndex((record) => record.id === criterionId);
   if (currentIndex === -1) return cloneValue(definition);
 
   const nextIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;

@@ -201,4 +201,3 @@ export const workflowCharterSchema = buildWorkflowCharterSchema(
   persistedSourceOfTruthSchema,
 );
 export type WorkflowCharter = z.infer<typeof workflowCharterSchema>;
-

@@ -249,9 +249,7 @@ describe("workflow outline", () => {
         ...RECORD,
         definition: {
           ...RECORD.definition,
-          executionContexts: [
-            { id: "bare", title: "No contract declared" },
-          ],
+          executionContexts: [{ id: "bare", title: "No contract declared" }],
           tasks: [],
           edges: [],
         },

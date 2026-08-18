@@ -1280,8 +1280,8 @@ function WorkflowTabBody({
             })}
           </div>
           <div className="mt-xs font-mono text-[0.7rem] leading-[1.5] text-text-tertiary">
-            Each context&apos;s prompt renders only the sources scoped to it;
-            an unscoped source is global.
+            Each context&apos;s prompt renders only the sources scoped to it; an
+            unscoped source is global.
           </div>
         </section>
       ) : null}

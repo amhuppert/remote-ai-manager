@@ -30,10 +30,11 @@ function expectStoredExecutionReloadsVerbatim(
 ): void {
   const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse(
     createResolvedWorkflowDefinition({
-      executionContexts: createResolvedWorkflowDefinition().executionContexts.map(
-        (context, index) =>
-          index === 0 ? { ...context, acceptanceCriteria } : context,
-      ),
+      executionContexts:
+        createResolvedWorkflowDefinition().executionContexts.map(
+          (context, index) =>
+            index === 0 ? { ...context, acceptanceCriteria } : context,
+        ),
     }),
   );
   const execution = graphWorkflowExecutionSchema.parse(
@@ -49,9 +50,9 @@ function expectStoredExecutionReloadsVerbatim(
     storedDefinitionBytes,
   );
   expect(workingDefinitionHash(reloaded.workingDefinition)).toBe(storedHash);
-  expect(reloaded.workingDefinition.executionContexts[0]?.acceptanceCriteria).toEqual(
-    acceptanceCriteria,
-  );
+  expect(
+    reloaded.workingDefinition.executionContexts[0]?.acceptanceCriteria,
+  ).toEqual(acceptanceCriteria);
 }
 
 describe("stored working-definition acceptance criteria (no-read-renormalization)", () => {

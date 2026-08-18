@@ -862,8 +862,14 @@ describe("buildContextValidationPrompt", () => {
       context: {
         ...context,
         acceptanceCriteria: [
-          { id: "summaries-complete", statement: "Every task summary is complete." },
-          { id: "plan-updated", statement: "The final plan document is updated." },
+          {
+            id: "summaries-complete",
+            statement: "Every task summary is complete.",
+          },
+          {
+            id: "plan-updated",
+            statement: "The final plan document is updated.",
+          },
         ],
       },
       tasks,
@@ -1651,7 +1657,8 @@ describe("parseValidatorResponse verdict shape is the dispatched schema", () => 
       "The route this context must call is created by `wire-routes`, two contexts later.",
     whyNotLocallyRemediable:
       "No task here owns the route module, and creating it would take this context's scope.",
-    conflictingContract: "Acceptance criterion 3 vs. the `wire-routes` boundary",
+    conflictingContract:
+      "Acceptance criterion 3 vs. the `wire-routes` boundary",
   };
 
   function fenced(payload: unknown): string {
@@ -1866,7 +1873,8 @@ describe("parseValidatorResponse plan defects", () => {
       "The route this context must call is created by `wire-routes`, two contexts later.",
     whyNotLocallyRemediable:
       "No task here owns the route module, and creating it would take this context's scope.",
-    conflictingContract: "Acceptance criterion 3 vs. the `wire-routes` boundary",
+    conflictingContract:
+      "Acceptance criterion 3 vs. the `wire-routes` boundary",
   };
   const ISSUE = {
     taskId: "task-2",

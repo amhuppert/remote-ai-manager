@@ -1044,6 +1044,11 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
               issues: [
                 {
                   taskId: "task-1",
+                  // Drawn from THIS context's criterion records above, not an
+                  // arbitrary string: the runner refuses a verdict citing an
+                  // id outside the context's set, so any other value would
+                  // persist a state the engine never writes.
+                  criterionId: "build-green",
                   title: "Missing rollback notes",
                   description: "Document how to revert the migration.",
                 },

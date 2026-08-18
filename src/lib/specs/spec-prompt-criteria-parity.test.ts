@@ -213,12 +213,9 @@ describe("spec-bound prompt criteria parity", () => {
   it("renders a prose-shaped context byte-identical and keeps the ownership bytes shape-independent", async () => {
     const prosePrompt = await specBoundValidatorPrompt("Feature implemented");
     expect(prosePrompt).toContain(
-      [
-        "## Acceptance Criteria",
-        "",
-        "1. [ac-1] Feature implemented",
-        "",
-      ].join("\n"),
+      ["## Acceptance Criteria", "", "1. [ac-1] Feature implemented", ""].join(
+        "\n",
+      ),
     );
 
     // The authoritative spec-ownership section renders the pinned criterion
@@ -227,8 +224,6 @@ describe("spec-bound prompt criteria parity", () => {
       { id: "parity-implemented", statement: "Feature implemented" },
     ]);
     expect(ownershipSection(prosePrompt)).toContain("criterion-parity");
-    expect(ownershipSection(recordsPrompt)).toBe(
-      ownershipSection(prosePrompt),
-    );
+    expect(ownershipSection(recordsPrompt)).toBe(ownershipSection(prosePrompt));
   });
 });

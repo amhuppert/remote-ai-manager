@@ -13,7 +13,8 @@ import {
 function makeRecord(overrides: Partial<CriterionRecord> = {}): CriterionRecord {
   return {
     id: "round-trip-proven",
-    statement: "The stored value reloads byte-identical through the repository.",
+    statement:
+      "The stored value reloads byte-identical through the repository.",
     ...overrides,
   };
 }
@@ -82,9 +83,9 @@ describe("acceptanceCriteriaSchema", () => {
   });
 
   it("accepts a records array and surfaces a located duplicate-id refusal", () => {
-    expect(
-      acceptanceCriteriaSchema.safeParse([makeRecord()]).success,
-    ).toBe(true);
+    expect(acceptanceCriteriaSchema.safeParse([makeRecord()]).success).toBe(
+      true,
+    );
     const duplicate = acceptanceCriteriaSchema.safeParse([
       makeRecord({ id: "dup" }),
       makeRecord({ id: "dup" }),
@@ -136,7 +137,9 @@ describe("acceptanceCriteriaText", () => {
         makeRecord({ id: "first-thing", statement: "First outcome." }),
         makeRecord({ id: "second-thing", statement: "Second outcome." }),
       ]),
-    ).toBe("1. [first-thing] First outcome.\n2. [second-thing] Second outcome.");
+    ).toBe(
+      "1. [first-thing] First outcome.\n2. [second-thing] Second outcome.",
+    );
   });
 });
 
@@ -153,6 +156,8 @@ describe("acceptanceCriteriaRecordListText", () => {
         makeRecord({ id: "first-thing", statement: "First outcome." }),
         makeRecord({ id: "second-thing", statement: "Second outcome." }),
       ]),
-    ).toBe("1. [first-thing] First outcome.\n2. [second-thing] Second outcome.");
+    ).toBe(
+      "1. [first-thing] First outcome.\n2. [second-thing] Second outcome.",
+    );
   });
 });

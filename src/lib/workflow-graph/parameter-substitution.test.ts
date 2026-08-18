@@ -110,7 +110,10 @@ describe("substituteContent", () => {
               // The id spells the token grammar on purpose: an id is
               // structural (validators cite it) and must survive verbatim.
               { id: "feature-shipped", statement: "{{inputs.feature}} works" },
-              { id: "docs-updated", statement: "Docs cover {{inputs.feature}}" },
+              {
+                id: "docs-updated",
+                statement: "Docs cover {{inputs.feature}}",
+              },
             ],
             placement: { lane: "ctx-1", mode: "full" },
           },

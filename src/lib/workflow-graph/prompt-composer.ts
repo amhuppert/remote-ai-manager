@@ -106,7 +106,9 @@ export async function composeGraphRolePrompt(
     projection === null ? null : renderGraphRolePromptProjection(projection);
 
   if (input.role !== "context-validator") {
-    return projected === null ? input.prompt : `${projected}\n\n${input.prompt}`;
+    return projected === null
+      ? input.prompt
+      : `${projected}\n\n${input.prompt}`;
   }
   if (input.contextId === undefined) {
     throw new Error(
