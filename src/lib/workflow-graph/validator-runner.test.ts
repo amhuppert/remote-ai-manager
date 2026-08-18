@@ -406,8 +406,12 @@ describe("buildValidatorOutputSchema", () => {
     },
   };
 
-  /** The whole blocking schema, parameterized by the one field under test. */
-  function blockingSchema(taskId: Record<string, unknown>) {
+  /** The whole blocking schema, parameterized by the fields under test. */
+  function blockingSchema(input: {
+    taskId: Record<string, unknown>;
+    criterionId: Record<string, unknown>;
+    issueRequired: string[];
+  }) {
     return {
       type: "object",
       properties: {
@@ -417,11 +421,12 @@ describe("buildValidatorOutputSchema", () => {
           items: {
             type: "object",
             properties: {
-              taskId,
+              taskId: input.taskId,
+              criterionId: input.criterionId,
               title: { type: "string" },
               description: { type: "string" },
             },
-            required: ["taskId", "title", "description"],
+            required: input.issueRequired,
             additionalProperties: false,
           },
         },
@@ -433,22 +438,60 @@ describe("buildValidatorOutputSchema", () => {
     };
   }
 
-  it("gives a blocking validator issues bound to the context's task set, alongside advisories", () => {
-    // The context's task set IS the schema, so a hallucinated id is refused at
-    // the structured-output gate and retried, instead of arriving as a verdict
-    // the runner can only reject as an infrastructure failure.
+  it("binds the acceptance seat's issues to the task set and REQUIRES a criterionId from the criterion enum", () => {
+    // The context's task and criterion sets ARE the schema, so a hallucinated
+    // id is refused at the structured-output gate and retried, instead of
+    // arriving as a verdict the runner can only reject as an infrastructure
+    // failure. The acceptance seat judges the criteria themselves, so every
+    // blocking issue must cite the criterion it fails.
     expect(
       buildValidatorOutputSchema({
         authority: "blocking",
         taskIds: ["task-1", "task-2"],
+        criterionIds: ["summaries-complete", "plan-updated"],
+        issueCriterionCitation: "required",
       }),
-    ).toEqual(blockingSchema({ type: "string", enum: ["task-1", "task-2"] }));
+    ).toEqual(
+      blockingSchema({
+        taskId: { type: "string", enum: ["task-1", "task-2"] },
+        criterionId: {
+          type: "string",
+          enum: ["summaries-complete", "plan-updated"],
+        },
+        issueRequired: ["taskId", "criterionId", "title", "description"],
+      }),
+    );
+  });
+
+  it("keeps criterionId optional on a specialist blocking seat, still bound to the criterion enum", () => {
+    // A specialist's blocking basis is its assigned mandate, not the criteria;
+    // a criterion id appears only when a mandate finding also contradicts one,
+    // so the field stays optional while a present value is still contained.
+    expect(
+      buildValidatorOutputSchema({
+        authority: "blocking",
+        taskIds: ["task-1", "task-2"],
+        criterionIds: ["summaries-complete", "plan-updated"],
+        issueCriterionCitation: "optional",
+      }),
+    ).toEqual(
+      blockingSchema({
+        taskId: { type: "string", enum: ["task-1", "task-2"] },
+        criterionId: {
+          type: "string",
+          enum: ["summaries-complete", "plan-updated"],
+        },
+        issueRequired: ["taskId", "title", "description"],
+      }),
+    );
   });
 
   it("gives an advisory validator neither an issues nor a planDefects field", () => {
     const schema = buildValidatorOutputSchema({
       authority: "advisory",
       taskIds: ["task-1"],
+      criterionIds: ["summaries-complete"],
+      issueCriterionCitation: "optional",
     });
 
     // Both blocking responses are withheld the same way and for the same
@@ -472,17 +515,30 @@ describe("buildValidatorOutputSchema", () => {
     const schema = buildValidatorOutputSchema({
       authority: "blocking",
       taskIds: ["task-1"],
+      criterionIds: ["summaries-complete"],
+      issueCriterionCitation: "required",
     });
 
     expect(schema.required).toEqual(["summary", "issues", "advisories"]);
   });
 
-  it("leaves taskId free-form when the context has no tasks to enumerate", () => {
+  it("leaves taskId and criterionId free-form when the context has nothing to enumerate", () => {
     // An empty enum matches nothing and providers reject it outright, so the
     // degenerate context falls back rather than dispatching a broken schema.
     expect(
-      buildValidatorOutputSchema({ authority: "blocking", taskIds: [] }),
-    ).toEqual(blockingSchema({ type: "string" }));
+      buildValidatorOutputSchema({
+        authority: "blocking",
+        taskIds: [],
+        criterionIds: [],
+        issueCriterionCitation: "required",
+      }),
+    ).toEqual(
+      blockingSchema({
+        taskId: { type: "string" },
+        criterionId: { type: "string" },
+        issueRequired: ["taskId", "criterionId", "title", "description"],
+      }),
+    );
   });
 });
 
@@ -608,6 +664,132 @@ describe("parseValidatorResponse fenced-block parsing", () => {
     }
   });
 
+  it("carries a cited criterionId through to the fail outcome's issues", () => {
+    const text = [
+      "```json",
+      JSON.stringify({
+        summary: "The plan document was never updated.",
+        issues: [
+          {
+            taskId: "task-2",
+            criterionId: "plan-updated",
+            title: "Stale plan document",
+            description: "The final plan document still shows the draft.",
+          },
+        ],
+        advisories: [],
+      }),
+      "```",
+    ].join("\n");
+
+    const outcome = parseValidatorResponse({
+      text,
+      engine: "claude",
+      authority: "blocking",
+      allowedTaskIds: ["task-1", "task-2"],
+      allowedCriterionIds: ["summaries-complete", "plan-updated"],
+      requireIssueCriterionId: true,
+    }).result;
+    expect(outcome.kind).toBe("fail");
+    if (outcome.kind === "fail") {
+      expect(outcome.issues[0]?.criterionId).toBe("plan-updated");
+    }
+  });
+
+  it("returns infra_error schema_mismatch when the acceptance seat omits the required criterionId", () => {
+    const text = [
+      "```json",
+      JSON.stringify({
+        summary: "The plan document was never updated.",
+        issues: [
+          {
+            taskId: "task-2",
+            title: "Stale plan document",
+            description: "The final plan document still shows the draft.",
+          },
+        ],
+        advisories: [],
+      }),
+      "```",
+    ].join("\n");
+
+    const outcome = parseValidatorResponse({
+      text,
+      engine: "claude",
+      authority: "blocking",
+      allowedTaskIds: ["task-1", "task-2"],
+      allowedCriterionIds: ["summaries-complete", "plan-updated"],
+      requireIssueCriterionId: true,
+    }).result;
+    expect(outcome.kind).toBe("infra_error");
+    if (outcome.kind === "infra_error") {
+      expect(outcome.reason).toBe("schema_mismatch");
+    }
+  });
+
+  it("returns infra_error when an issue cites a criterion outside the context", () => {
+    const text = [
+      "```json",
+      JSON.stringify({
+        summary: "Wrong criterion cited.",
+        issues: [
+          {
+            taskId: "task-2",
+            criterionId: "criterion-missing",
+            title: "Stale plan document",
+            description: "The final plan document still shows the draft.",
+          },
+        ],
+        advisories: [],
+      }),
+      "```",
+    ].join("\n");
+
+    const outcome = parseValidatorResponse({
+      text,
+      engine: "claude",
+      authority: "blocking",
+      allowedTaskIds: ["task-1", "task-2"],
+      allowedCriterionIds: ["summaries-complete", "plan-updated"],
+      requireIssueCriterionId: false,
+    }).result;
+    expect(outcome.kind).toBe("infra_error");
+    if (outcome.kind === "infra_error") {
+      expect(outcome.reason).toBe("schema_mismatch");
+    }
+  });
+
+  it("accepts a specialist issue without criterionId when citation is optional", () => {
+    const text = [
+      "```json",
+      JSON.stringify({
+        summary: "Mandate finding.",
+        issues: [
+          {
+            taskId: "task-1",
+            title: "Unparameterized query",
+            description: "The lookup concatenates user input into SQL.",
+          },
+        ],
+        advisories: [],
+      }),
+      "```",
+    ].join("\n");
+
+    const outcome = parseValidatorResponse({
+      text,
+      engine: "claude",
+      authority: "blocking",
+      allowedTaskIds: ["task-1", "task-2"],
+      allowedCriterionIds: ["summaries-complete", "plan-updated"],
+      requireIssueCriterionId: false,
+    }).result;
+    expect(outcome.kind).toBe("fail");
+    if (outcome.kind === "fail") {
+      expect(outcome.reopenTaskIds).toEqual(["task-1"]);
+    }
+  });
+
   it("returns infra_error schema_mismatch when an issue omits taskId", () => {
     const text = [
       "```json",
@@ -662,6 +844,41 @@ describe("buildContextValidationPrompt", () => {
     );
   });
 
+  it("renders prose acceptance criteria as a one-record numbered list", () => {
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: seedAssignment(validatorConfig),
+    });
+
+    expect(prompt).toContain(
+      "1. [ac-1] Every task summary is complete and the final plan document is updated.",
+    );
+  });
+
+  it("renders record acceptance criteria as the same numbered list shape", () => {
+    const prompt = buildContextValidationPrompt({
+      context: {
+        ...context,
+        acceptanceCriteria: [
+          { id: "summaries-complete", statement: "Every task summary is complete." },
+          { id: "plan-updated", statement: "The final plan document is updated." },
+        ],
+      },
+      tasks,
+      taskStates,
+      validator: seedAssignment(validatorConfig),
+    });
+
+    expect(prompt).toContain(
+      [
+        "1. [summaries-complete] Every task summary is complete.",
+        "2. [plan-updated] The final plan document is updated.",
+      ].join("\n"),
+    );
+  });
+
   it("documents the issues-only response contract", () => {
     const prompt = buildContextValidationPrompt({
       context,
@@ -676,6 +893,46 @@ describe("buildContextValidationPrompt", () => {
     expect(prompt).toContain("inspect files and verify the agent's claims");
     expect(prompt).not.toContain("`pass`");
     expect(prompt).not.toContain("`reopenTaskIds`");
+  });
+
+  it("instructs the acceptance seat to cite the violated criterion id in each blocking issue, naming the response field", () => {
+    // The default general-reviewer seat judges the criteria themselves, so its
+    // issue contract carries the citation: the exact field (`criterionId`) and
+    // where its value comes from (the numbered list above).
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: seedAssignment(validatorConfig),
+    });
+
+    expect(prompt).toContain("`{ taskId, criterionId, title, description }`");
+    expect(prompt).toContain(
+      "set `criterionId` to the violated criterion's id from the numbered Acceptance Criteria list above",
+    );
+  });
+
+  it("offers a specialist blocking seat an optional criterionId tied to its mandate", () => {
+    const specialist: ValidatorAssignment = {
+      ...validatorConfig,
+      id: "security",
+      profile: { tier: "project", id: "security-auditor" },
+      focus: "auth boundaries",
+    };
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: seedAssignment(specialist),
+    });
+
+    expect(prompt).toContain("`{ taskId, title, description, criterionId? }`");
+    expect(prompt).toContain(
+      "only when your finding also contradicts that specific criterion",
+    );
+    expect(prompt).not.toContain(
+      "`{ taskId, criterionId, title, description }`",
+    );
   });
 
   it("describes `planDefects` to a blocking seat, whose dispatched schema admits it", () => {
@@ -2016,10 +2273,14 @@ describe("createValidatorRunner", () => {
       outputFormat: {
         type: "json_schema",
         // The dispatched schema is the one this seat's authority selects, with
-        // its issue ids bound to this context's tasks.
+        // its issue ids bound to this context's tasks and criterion records —
+        // prose criteria wrap as the single `ac-1` record, and the acceptance
+        // seat's citation is required.
         schema: buildValidatorOutputSchema({
           authority: "blocking",
           taskIds: ["task-plan-1", "task-plan-2"],
+          criterionIds: ["ac-1"],
+          issueCriterionCitation: "required",
         }),
       },
     });
@@ -2616,6 +2877,9 @@ describe("createValidatorRunner", () => {
       issues: [
         {
           taskId: "task-plan-2",
+          // The acceptance seat's issues cite the failed criterion; the
+          // fixture context's prose criteria wrap as the single `ac-1` record.
+          criterionId: "ac-1",
           title: "Missing tests",
           description: "Add the missing tests.",
         },

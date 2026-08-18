@@ -662,6 +662,43 @@ describe("buildIterationPrompt", () => {
     expect(prompt).toContain("Verify test coverage exists and all tests pass.");
   });
 
+  it("renders prose acceptance criteria as a one-record numbered list", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      contextValidationAcceptanceCriteria:
+        "Verify test coverage exists and all tests pass.",
+    });
+
+    expect(prompt).toContain(
+      "1. [ac-1] Verify test coverage exists and all tests pass.",
+    );
+  });
+
+  it("renders record acceptance criteria as the same numbered list shape", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      contextValidationAcceptanceCriteria: [
+        { id: "coverage-exists", statement: "Test coverage exists." },
+        { id: "tests-pass", statement: "All tests pass." },
+      ],
+    });
+
+    expect(prompt).toContain(
+      [
+        "1. [coverage-exists] Test coverage exists.",
+        "2. [tests-pass] All tests pass.",
+      ].join("\n"),
+    );
+  });
+
   it("omits validation criteria section when no instructions provided", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),

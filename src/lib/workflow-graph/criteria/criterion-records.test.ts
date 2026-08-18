@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  acceptanceCriteriaRecordListText,
   acceptanceCriteriaSchema,
   acceptanceCriteriaText,
   criterionRecordSchema,
@@ -132,6 +133,23 @@ describe("acceptanceCriteriaText", () => {
   it("renders records as numbered lines citing each id", () => {
     expect(
       acceptanceCriteriaText([
+        makeRecord({ id: "first-thing", statement: "First outcome." }),
+        makeRecord({ id: "second-thing", statement: "Second outcome." }),
+      ]),
+    ).toBe("1. [first-thing] First outcome.\n2. [second-thing] Second outcome.");
+  });
+});
+
+describe("acceptanceCriteriaRecordListText", () => {
+  it("renders prose as a one-record numbered list under the deterministic wrap id", () => {
+    expect(acceptanceCriteriaRecordListText("The feature works.")).toBe(
+      "1. [ac-1] The feature works.",
+    );
+  });
+
+  it("renders records as the same numbered list shape", () => {
+    expect(
+      acceptanceCriteriaRecordListText([
         makeRecord({ id: "first-thing", statement: "First outcome." }),
         makeRecord({ id: "second-thing", statement: "Second outcome." }),
       ]),

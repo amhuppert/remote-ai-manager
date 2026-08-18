@@ -2,6 +2,10 @@ import {
   CHARTER_DOCUMENT_PATH,
   renderCharterPromptSection,
 } from "@/lib/workflow-graph/charter/render";
+import {
+  acceptanceCriteriaRecordListText,
+  type AcceptanceCriteria,
+} from "@/lib/workflow-graph/criteria/criterion-records";
 import { formatQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
 import type { AskQuestionAnswer } from "@/lib/conversations/schemas";
 import type {
@@ -134,7 +138,13 @@ export interface BuildIterationPromptInput {
    */
   loopHistory?: LoopHistory | null;
   allowAgentCollaboration?: boolean;
-  contextValidationAcceptanceCriteria?: string;
+  /**
+   * The context's acceptance criteria in their stored shape (prose or
+   * records); rendered here as the numbered record list via the criteria
+   * helper, so the implementer reads the same citable list the validator
+   * cohort judges against.
+   */
+  contextValidationAcceptanceCriteria?: AcceptanceCriteria;
   latestContextValidationFailure?: LatestContextValidationFailureFeedback;
   collaborationContinuations?: GraphWorkflowCollaborationContinuation[];
   charter?: WorkflowCharter;
@@ -444,7 +454,9 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
         "When every task in this execution context is marked complete, a context validator will review the whole context against these exact acceptance criteria.",
         "If the validator reopens any tasks, address the feedback and run `cctl workflow task complete` again for those reopened tasks.",
         "",
-        input.contextValidationAcceptanceCriteria,
+        acceptanceCriteriaRecordListText(
+          input.contextValidationAcceptanceCriteria,
+        ),
       ].join("\n"),
     );
   }

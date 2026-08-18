@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
-import { acceptanceCriteriaText } from "./criteria/criterion-records";
 import { assertLoopFence } from "./loop-fence";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { AgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
@@ -5052,9 +5051,12 @@ export function createGraphWorkflowIterationOrchestrator(
                 }) ?? input.contextId,
               askUserQuestionsEnabled: context.askUserQuestions.enabled,
               allowAgentCollaboration,
+              // Passed in its stored shape (prose or records); the prompt
+              // builder renders the numbered record list via the criteria
+              // helper.
               contextValidationAcceptanceCriteria: context.contextValidator
                 .enabled
-                ? acceptanceCriteriaText(context.acceptanceCriteria)
+                ? context.acceptanceCriteria
                 : undefined,
               latestContextValidationFailure,
               collaborationContinuations,

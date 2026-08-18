@@ -816,6 +816,14 @@ export type WorkflowDefinitionRecord = z.infer<
 
 export const workflowValidatorIssueSchema = z.object({
   taskId: z.string().trim().min(1),
+  /**
+   * The acceptance criterion this issue fails, cited by record id (#69 change
+   * 4). Optional HERE because this base is also the persisted shape and one
+   * parse twin serves every blocking seat; the acceptance seat's dispatched
+   * schema requires it and the runner's containment check enforces both the
+   * requirement and the per-context id set, per seat.
+   */
+  criterionId: z.string().trim().min(1).optional(),
   title: z.string().trim().min(1),
   description: z.string().trim().min(1),
 });

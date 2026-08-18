@@ -79,11 +79,12 @@ export function criterionRecordsOf(
 }
 
 /**
- * The one string rendering of an acceptance-criteria value, for surfaces that
- * embed criteria in prose (prompts, previews, outlines). Prose passes through
- * byte-identical — a pre-records plan must render exactly as it always has —
- * while records render as numbered lines citing each id, the citable form the
- * acceptance seat's verdicts key on.
+ * The shape-preserving string rendering of an acceptance-criteria value, for
+ * surfaces that must not re-shape stored values (previews, outlines,
+ * emptiness checks). Prose passes through byte-identical — a pre-records plan
+ * must render exactly as it always has — while records render as numbered
+ * lines citing each id. Agent prompts use
+ * {@link acceptanceCriteriaRecordListText} instead.
  */
 export function acceptanceCriteriaText(
   criteria: string | readonly CriterionRecord[],
@@ -92,4 +93,16 @@ export function acceptanceCriteriaText(
   return criteria
     .map((record, index) => `${index + 1}. [${record.id}] ${record.statement}`)
     .join("\n");
+}
+
+/**
+ * The numbered record-list rendering every agent prompt embeds — ordinal,
+ * record id, statement, one line per record. Prose wraps as the single `ac-1`
+ * record first, so both stored shapes render in one list shape and a
+ * validator always has an id to cite in its blocking issues.
+ */
+export function acceptanceCriteriaRecordListText(
+  criteria: string | readonly CriterionRecord[],
+): string {
+  return acceptanceCriteriaText(criterionRecordsOf(criteria));
 }
