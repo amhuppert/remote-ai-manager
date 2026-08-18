@@ -15,13 +15,7 @@ import { readRepoConfig as defaultReadRepoConfig } from "@/lib/projects/repo-con
 import { readConfig as defaultReadGlobalConfig } from "@/lib/config/loader";
 import { resolveBranchPrefix } from "@/lib/config/cascade";
 import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
-import { parseDirtyPaths, readIgnoredContents } from "@/lib/git/worktree";
-import { summarizeIgnoredContents } from "@/lib/workflow-graph/lane-drift";
-import {
-  createLaneIgnoredBaselineStore,
-  type LaneIgnoredBaselineStore,
-} from "@/lib/workflow-graph/lane-ignored-baseline-store";
-import type { GraphWorkflowIgnoredBaselineEntry } from "@/lib/workflow-graph/schemas";
+import { parseDirtyPaths } from "@/lib/git/worktree";
 import type { DirtyPath } from "@/lib/workflow-graph/errors";
 import { validateLaneId } from "@/lib/workflow-graph/lane-identity";
 import { prepareManagedSkillsCheckout as defaultPrepareManagedSkillsCheckout } from "@/lib/agent-backends/registry";
@@ -59,18 +53,8 @@ export interface LaneTargets {
   branchName: string;
 }
 
-export interface ProvisionResult extends LaneTargets {
-  /**
-   * The ignored content the worktree already held once provisioning finished —
-   * checkout plus whatever the init script installed (R8, decision D8).
-   *
-   * Captured HERE rather than at first landing because that is the only moment
-   * it means "before any member wrote anything". Drift classification gives
-   * `.gitignore` no blanket exemption, so without this every pre-existing
-   * `node_modules` would read as an unattributable write.
-   */
-  ignoredBaseline: readonly GraphWorkflowIgnoredBaselineEntry[];
-}
+/** The same coordinates, once provisioning has put them on disk. */
+export type ProvisionResult = LaneTargets;
 
 export interface DisposeInput {
   projectPath: string;
@@ -123,7 +107,6 @@ export interface ParallelWorktreesDeps {
   readRepoConfig?(repoRoot: string): Promise<PerRepoConfig | null>;
   readGlobalConfig?(): Promise<Pick<GlobalConfig, "branchPrefix">>;
   execFileAsync?: ExecFileAsync;
-  ignoredBaselineStore?: LaneIgnoredBaselineStore;
   buildChildEnv?(): NodeJS.ProcessEnv;
   prepareManagedSkillsCheckout?(worktreePath: string): Promise<void>;
   logger?: Logger;
@@ -188,9 +171,6 @@ export function createParallelWorktrees(
   const prepareManagedSkillsCheckout =
     deps.prepareManagedSkillsCheckout ?? defaultPrepareManagedSkillsCheckout;
   const logger = deps.logger ?? defaultLogger;
-  const ignoredBaselineStore =
-    deps.ignoredBaselineStore ??
-    createLaneIgnoredBaselineStore({ gitClient, logger });
   const fastRemoveWorktree =
     deps.fastRemoveWorktree ?? defaultFastRemoveWorktree;
   const stopDevServersForWorktree =
@@ -269,10 +249,7 @@ export function createParallelWorktrees(
           worktreePath: targets.worktreePath,
           branchName: targets.branchName,
         });
-        return {
-          ...targets,
-          ignoredBaseline: await recoverIgnoredBaseline(targets),
-        };
+        return targets;
       }
       throw new Error(
         `Worktree at ${targets.worktreePath} already exists on branch ${
@@ -330,9 +307,9 @@ export function createParallelWorktrees(
       throw err;
     }
 
-    // The backend bridge materializes ignored checkout-local discovery state.
-    // Freeze it with the rest of provisioning so a later agent launch cannot
-    // appear to the ownership auditor as a member's undeclared write.
+    // The backend bridge materializes checkout-local skill discovery state, so
+    // it belongs with the rest of provisioning: the lane's first agent launch
+    // finds its managed skills already there rather than racing to create them.
     try {
       await prepareManagedSkillsCheckout(targets.worktreePath);
     } catch (error) {
@@ -343,52 +320,7 @@ export function createParallelWorktrees(
       });
     }
 
-    // After the init script, so everything provisioning itself installed is
-    // baselined rather than reported as a member's undeclared write.
-    return {
-      ...targets,
-      ignoredBaseline: await captureIgnoredBaseline(targets),
-    };
-  }
-
-  /**
-   * Best-effort: a status read that fails must not fail the provisioning it
-   * describes. An empty baseline is the fail-closed reading — it can only make
-   * a pre-existing ignored path look like drift, which surfaces a halt an
-   * operator dismisses, never hides a write.
-   */
-  async function captureIgnoredBaseline(
-    targets: LaneTargets,
-  ): Promise<readonly GraphWorkflowIgnoredBaselineEntry[]> {
-    try {
-      const contents = await readIgnoredContents(
-        targets.worktreePath,
-        gitClient,
-      );
-      if (contents.roots.length > 0 || contents.entries.length > 0) {
-        await ignoredBaselineStore.write(targets.worktreePath, contents);
-      }
-      return summarizeIgnoredContents(contents);
-    } catch (error) {
-      logger.warn("provision_ignored_baseline_failed", {
-        worktreePath: targets.worktreePath,
-        branchName: targets.branchName,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return [];
-    }
-  }
-
-  async function recoverIgnoredBaseline(
-    targets: LaneTargets,
-  ): Promise<readonly GraphWorkflowIgnoredBaselineEntry[]> {
-    const contents = await ignoredBaselineStore.read(targets.worktreePath);
-    if (contents !== null) return summarizeIgnoredContents(contents);
-    logger.warn("provision_ignored_baseline_recovery_failed", {
-      worktreePath: targets.worktreePath,
-      branchName: targets.branchName,
-    });
-    return [];
+    return targets;
   }
 
   async function provision(input: ProvisionInput): Promise<ProvisionResult> {

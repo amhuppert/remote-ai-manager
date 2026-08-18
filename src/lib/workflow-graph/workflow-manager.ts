@@ -2587,6 +2587,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           }
           if (contextState.status === "ready") {
             contextState.consecutiveFailureCount = 0;
+            // The consecutive-mismatch budget is a manual retry decision for
+            // the same reason: a context that halted at the bound would come
+            // back at the bound and re-halt on its first round, which is a
+            // resumable halt in name only.
+            contextState.consecutiveCandidateMismatchCount = 0;
           }
           // Resume is the manual retry decision for an infrastructure halt too:
           // the lanes that never reached a verdict get their attempt budget
@@ -3991,9 +3996,6 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
               includedContextIds: [...inheritedIncluded],
               lastCommittingContextId: mint.parentContextId,
               commitSnapshots: [],
-              // Captured by provisioning, after the init script ran: what this
-              // lane's members inherited rather than wrote (R8, decision D8).
-              ignoredBaseline: [...result.ignoredBaseline],
               createdAt: provisionTimestamp,
               updatedAt: provisionTimestamp,
             };

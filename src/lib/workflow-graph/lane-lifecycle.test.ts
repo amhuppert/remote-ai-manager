@@ -30,7 +30,6 @@ function lane(
     includedContextIds: [],
     lastCommittingContextId: null,
     commitSnapshots: [],
-    ignoredBaseline: [],
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,

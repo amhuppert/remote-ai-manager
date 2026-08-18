@@ -47,6 +47,23 @@ import {
 } from "./definition-schemas";
 import { agentProfileRefSchema } from "@/lib/agent-profiles/schemas";
 
+/**
+ * The re-verification points a round checks its frozen candidate at.
+ *
+ * One vocabulary for the incident a single drift publishes and the halt a run of
+ * them records: an operator reading "the tree kept moving at `diff_render`" is
+ * reading the same stage name the per-round incidents already showed them.
+ */
+export const graphWorkflowValidationIncidentStageSchema = z.enum([
+  "post_script",
+  "diff_render",
+  "specialist_result",
+  "aggregate",
+]);
+export type GraphWorkflowValidationIncidentStage = z.infer<
+  typeof graphWorkflowValidationIncidentStageSchema
+>;
+
 // ============================================================
 // Graph Workflow Halt Reasons
 // ============================================================
@@ -368,6 +385,53 @@ export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
     unattributedPaths: z.array(z.string().min(1)).max(50).default([]),
     message: z.string(),
   }),
+  /**
+   * A context whose validation rounds kept concluding without a verdict —
+   * `CONSECUTIVE_CANDIDATE_MISMATCH_BUDGET` of them in a row.
+   *
+   * A single such round is not a failure of anything: nothing is charged and
+   * the round re-opens, which is the right answer for a cause that settles.
+   * This halt exists for one that cannot, where that same response is an
+   * unbounded loop no other budget can observe. It carries the LAST round's
+   * evidence because every round in the run reports the same thing, and the
+   * stage says which probe caught it.
+   *
+   * Two different causes reach the same count, and the halt has to say which:
+   * a candidate that moved (`driftedComponents` names what diverged) and a
+   * validator result rejected for an earlier round, where nothing moved at all
+   * and `driftedComponents` is empty. Copy that claimed movement for the second
+   * would send an operator hunting a worktree writer that does not exist.
+   *
+   * Resumable, and repairable: the cause is usually a lane or worktree the plan
+   * placed badly (or a stale index under it), so the remedy is a fix outside the
+   * reviewed work followed by resume — never a re-review of it.
+   */
+  z.object({
+    type: z.literal("candidate_unstable"),
+    contextId: z.string().trim().min(1),
+    stage: graphWorkflowValidationIncidentStageSchema,
+    /**
+     * The moved candidate components, as the last incident recorded them.
+     * Empty when nothing was observed to move.
+     */
+    driftedComponents: z.string(),
+    /**
+     * Which incident the last round concluded on. Additive: rows written before
+     * the distinction existed carried a moved candidate, which is this default.
+     */
+    lastIncident: z
+      .enum(["candidate_mismatch", "stale_result_rejected"])
+      .default("candidate_mismatch"),
+    consecutiveCount: z.number().int().min(1),
+    message: z.string(),
+    /**
+     * The plan-repair supervisor's verdict on this halt, once it has spoken —
+     * the same role `circuit_breaker.summary` plays. This halt declines more
+     * often than it repairs (the cause is frequently outside the plan), so the
+     * verdict is the whole product of a round the operator paid for.
+     */
+    summary: z.string().nullable().default(null),
+  }),
   z.object({
     type: z.literal("collaboration_failure"),
     status: z.enum([
@@ -413,29 +477,6 @@ export type GraphWorkflowExecutionLaneCommitSnapshot = z.infer<
   typeof graphWorkflowExecutionLaneCommitSnapshotSchema
 >;
 
-/**
- * One entry of a lane's provisioning-time ignored baseline: an ignored path as
- * the ignore rules name it, plus a digest of the files it actually contained.
- *
- * The digest is what makes the baseline usable. Git names a wholly-ignored
- * directory by the directory alone however many files are inside it, so a
- * baseline of names could only ever answer "was `node_modules` here?" — never
- * "is what is under it still what provisioning installed?". Recording the names
- * of all those files instead would put a repo-sized list in the execution's
- * persisted state; a digest over them costs one line and answers the same
- * question, at the price of naming the directory rather than the new file when
- * they differ.
- */
-export const graphWorkflowIgnoredBaselineEntrySchema = z.object({
-  /** Repo-relative, no trailing slash even for a directory. */
-  path: z.string().min(1),
-  /** Over the sorted paths and byte/filesystem fingerprints beneath it. */
-  digest: z.string().min(1),
-});
-export type GraphWorkflowIgnoredBaselineEntry = z.infer<
-  typeof graphWorkflowIgnoredBaselineEntrySchema
->;
-
 export const graphWorkflowExecutionLaneStateSchema = z.object({
   laneId: graphWorkflowExecutionLaneIdSchema,
   kind: graphWorkflowExecutionLaneKindSchema,
@@ -447,18 +488,6 @@ export const graphWorkflowExecutionLaneStateSchema = z.object({
   commitSnapshots: z
     .array(graphWorkflowExecutionLaneCommitSnapshotSchema)
     .default([]),
-  /**
-   * The ignored content this lane's worktree already held when it was
-   * provisioned (R8, decision D8). Drift classification gives `.gitignore` no
-   * blanket exemption, so it needs to know which ignored content predates the
-   * members — everything else ignored and unowned is a write nobody declared.
-   *
-   * Empty on the session lane and on every lane recorded before the field
-   * existed, which reads as "no ignored path is pre-existing". That is the
-   * fail-closed direction: it can only surface a halt an operator dismisses,
-   * never hide a write.
-   */
-  ignoredBaseline: z.array(graphWorkflowIgnoredBaselineEntrySchema).default([]),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -1410,6 +1439,13 @@ export const graphWorkflowExecutionContextStateSchema = z.object({
   completedTaskCount: z.number().int().min(0).default(0),
   iterationCount: z.number().int().min(0).default(0),
   consecutiveFailureCount: z.number().int().min(0).default(0),
+  /**
+   * Rounds in a row that concluded `candidate_mismatch` — the only round outcome
+   * that charges neither an iteration nor a consecutive failure, and so the only
+   * one that can repeat unbounded. Reset by any round that concludes otherwise,
+   * and by resume, exactly like `consecutiveFailureCount`.
+   */
+  consecutiveCandidateMismatchCount: z.number().int().min(0).default(0),
   worktreePath: z.string().nullable().default(null),
   branchName: z.string().nullable().default(null),
   isolation: z.enum(["session", "worktree"]).default("session"),
@@ -1661,6 +1697,10 @@ export const planRepairRoundSchema = z.object({
     // defect names a contract, and the context that carries it is what an
     // `update-context` or charter amendment repairs.
     "plan_defect",
+    // A candidate that never held still. Accounted per CONTEXT like the other
+    // context halts — the placement or scope a repair would narrow belongs to
+    // the context whose rounds kept failing to certify anything.
+    "candidate_unstable",
   ]),
   /** The loop a `loop_limit_reached` round repairs; null for context halts. */
   loopGroupId: z.string().trim().min(1).nullable().default(null),

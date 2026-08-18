@@ -271,6 +271,9 @@ describe("graph-workflow-executions-repo legacy migration on read", () => {
     expect(ctxA?.status).toBe("ready");
     expect(ctxA?.worktreePath).toBe("/wt/sub");
     expect(ctxA?.branchName).toBe("csm/feature");
+    // A budget nobody had written yet reads as unspent rather than refusing the
+    // row: a stored execution that predates a counter has not exhausted it.
+    expect(ctxA?.consecutiveCandidateMismatchCount).toBe(0);
     expect(execution.contextStates["ctx-b"]?.status).toBe("completed");
 
     // A read is a read. The upgrade is a pure function of the stored bytes, so
@@ -301,6 +304,64 @@ describe("graph-workflow-executions-repo legacy migration on read", () => {
         "contextStates.running",
       ]),
     );
+  });
+
+  it("loads a lane row that still carries the retired ignored-content baseline", () => {
+    rawInsertExecution(
+      buildLegacyExecution({
+        executionLanes: {
+          "lane-1": {
+            laneId: "lane-1",
+            kind: "worktree",
+            status: "active",
+            worktreePath: "/wt/lane-1",
+            branchName: "csm/lane-1",
+            includedContextIds: ["ctx-a"],
+            lastCommittingContextId: null,
+            commitSnapshots: [],
+            ignoredBaseline: [
+              { path: "node_modules", digest: "digest-node-modules" },
+            ],
+            createdAt: "2026-04-04T00:00:00.000Z",
+            updatedAt: "2026-04-04T00:00:00.000Z",
+          },
+        },
+      }),
+    );
+
+    const lane = repo.getActive(PROJECT_PATH, SESSION_NAME)?.executionLanes[
+      "lane-1"
+    ];
+
+    expect(lane?.branchName).toBe("csm/lane-1");
+    expect(lane).not.toHaveProperty("ignoredBaseline");
+  });
+
+  it("loads a candidate_unstable halt stored before it carried an incident kind or a repair verdict", () => {
+    rawInsertExecution(
+      buildLegacyExecution({
+        status: "halted",
+        haltReason: {
+          type: "candidate_unstable",
+          contextId: "ctx-a",
+          stage: "post_script",
+          driftedComponents: "candidateTreeHash",
+          consecutiveCount: 5,
+          message: "the reviewed candidate kept moving",
+        },
+      }),
+    );
+
+    const halt = repo.getActive(PROJECT_PATH, SESSION_NAME)?.haltReason;
+
+    expect(halt?.type).toBe("candidate_unstable");
+    if (halt?.type !== "candidate_unstable") return;
+    // Every stored row of this kind was written by the moved-candidate path,
+    // so the default is the one claim those rows' own message already makes.
+    expect(halt.lastIncident).toBe("candidate_mismatch");
+    // Nothing has spoken about the halt: repair could not write a verdict onto
+    // this variant when the row was stored.
+    expect(halt.summary).toBeNull();
   });
 
   it("(b2) the next ordinary write persists the upgraded shape", () => {

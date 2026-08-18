@@ -193,7 +193,8 @@ function haltMatchesSubject(
   if (
     haltReason.type !== "circuit_breaker" &&
     haltReason.type !== "max_iterations" &&
-    haltReason.type !== "plan_defect"
+    haltReason.type !== "plan_defect" &&
+    haltReason.type !== "candidate_unstable"
   ) {
     return false;
   }
@@ -811,7 +812,8 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         nextReason?.type === "circuit_breaker" ||
         nextReason?.type === "max_iterations" ||
         nextReason?.type === "loop_limit_reached" ||
-        nextReason?.type === "plan_defect"
+        nextReason?.type === "plan_defect" ||
+        nextReason?.type === "candidate_unstable"
       ) {
         nextReason.summary = summary;
       }
@@ -829,7 +831,8 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       haltReason?.type !== "circuit_breaker" &&
       haltReason?.type !== "max_iterations" &&
       haltReason?.type !== "loop_limit_reached" &&
-      haltReason?.type !== "plan_defect"
+      haltReason?.type !== "plan_defect" &&
+      haltReason?.type !== "candidate_unstable"
     ) {
       return;
     }

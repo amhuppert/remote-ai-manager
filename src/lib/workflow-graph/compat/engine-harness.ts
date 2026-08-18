@@ -337,7 +337,6 @@ function createWorktreeStub(worktreeRoot?: string): ParallelWorktrees {
     return {
       worktreePath,
       branchName: `csm/${input.sessionDir}-${input.contextId}`,
-      ignoredBaseline: [],
     };
   };
   const provisionLane = (input: ProvisionLaneInput): Promise<ProvisionResult> =>

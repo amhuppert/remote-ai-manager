@@ -1687,9 +1687,7 @@ describe("0030 native-SDD v2 cutover hardening", () => {
       expect(current.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
       expect(
         current
-          .prepare(
-            "SELECT COUNT(*) AS count FROM spec_delivery_plan_attempts",
-          )
+          .prepare("SELECT COUNT(*) AS count FROM spec_delivery_plan_attempts")
           .get(),
       ).toEqual({ count: 0 });
       // Losing the table also loses candidate identity as a classifier, so the
@@ -1947,7 +1945,7 @@ describe("0030 native-SDD v2 cutover hardening", () => {
     const fixture = createFixture("completed");
     const context = { db: fixture.db, configDir: fixture.configDir };
 
-    expect(migrations.at(-1)?.name).toBe(nativeSddV2Cutover.name);
+    expect(migrations.map((m) => m.name)).toContain(nativeSddV2Cutover.name);
     const first = await runMigrations(context, [nativeSddV2Cutover]);
     const databaseAfterFirst = fixture.db.serialize();
     const workflowsAfterFirst = snapshotWorkflowStore(fixture.configDir);

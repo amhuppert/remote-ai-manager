@@ -312,6 +312,99 @@ describe("plan-repair supervisor", () => {
     ]);
   });
 
+  // A candidate_unstable halt is the one the trigger admits where a decline is
+  // the LIKELY outcome — the cause is often a placement repair cannot reach —
+  // so the verdict has to land somewhere. Without it the round burns one of the
+  // execution's five and leaves the operator the same undiagnosed halt card.
+  it("records a decline verdict on a candidate_unstable halt", async () => {
+    const harness = makeHarness({
+      initial: haltedExecution({
+        haltReason: {
+          type: "candidate_unstable",
+          contextId: "context-implement",
+          stage: "post_script",
+          driftedComponents: "candidateTreeHash",
+          consecutiveCount: 5,
+          lastIncident: "candidate_mismatch",
+          message: "the reviewed candidate never held still",
+          summary: null,
+        },
+      }),
+      agentResults: [
+        {
+          kind: "verdict",
+          verdict: {
+            planningDefect: false,
+            diagnosis: "A dev server writes into the shared lane worktree",
+            operations: [],
+          },
+          conversationId: "conv-repair-1",
+        },
+      ],
+    });
+    const supervisor = createPlanRepairSupervisor(harness.deps);
+
+    const result = await supervisor.maybeRunPlanRepair(RUN_INPUT);
+
+    expect(result).toMatchObject({ ran: true, outcome: "declined" });
+    const current = harness.current();
+    expect(
+      current?.haltReason?.type === "candidate_unstable"
+        ? current.haltReason.summary
+        : null,
+    ).toContain("A dev server writes into the shared lane worktree");
+    expect(harness.published).toEqual([
+      expect.objectContaining({
+        outcome: "declined",
+        haltType: "candidate_unstable",
+      }),
+    ]);
+  });
+
+  it("announces exhaustion on a candidate_unstable halt", async () => {
+    const spentRound = (seq: number): PlanRepairRound => ({
+      seq,
+      contextId: "context-implement",
+      haltType: "candidate_unstable",
+      loopGroupId: null,
+      startedAt: "2026-08-16T00:00:00.000Z",
+      settledAt: "2026-08-16T00:05:00.000Z",
+      outcome: "declined",
+      planningDefect: false,
+      diagnosis: `round ${seq} declined`,
+      operationCount: 0,
+      resumed: false,
+      conversationId: `c${seq}`,
+    });
+    const harness = makeHarness({
+      initial: haltedExecution({
+        haltReason: {
+          type: "candidate_unstable",
+          contextId: "context-implement",
+          stage: "post_script",
+          driftedComponents: "candidateTreeHash",
+          consecutiveCount: 5,
+          lastIncident: "candidate_mismatch",
+          message: "the reviewed candidate never held still",
+          summary: null,
+        },
+        planRepairRounds: [spentRound(1), spentRound(2)],
+      }),
+    });
+    const supervisor = createPlanRepairSupervisor(harness.deps);
+
+    const result = await supervisor.maybeRunPlanRepair(RUN_INPUT);
+
+    expect(result).toEqual({
+      ran: false,
+      reason: "context_attempts_exhausted",
+    });
+    const halt = harness.current()?.haltReason;
+    expect(halt?.type === "candidate_unstable" ? halt.summary : null).toContain(
+      "exhausted",
+    );
+  });
+
   it("fails closed when the verdict contains a forbidden operation", async () => {
     const harness = makeHarness({
       initial: haltedExecution(),

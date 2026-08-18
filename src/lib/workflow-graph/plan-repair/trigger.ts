@@ -33,7 +33,14 @@ export type PlanRepairHaltType =
   // admitted under the SAME gates as the rest — a defect the plan cannot
   // answer would otherwise re-trip on every resume, and the caps are what stop
   // a repair→resume→trip cycle.
-  | "plan_defect";
+  | "plan_defect"
+  // A context whose candidate would not hold still long enough to be reviewed.
+  // Plan-shaped often enough to be worth a diagnosis: the usual causes are a
+  // placement that shares a worktree with something that keeps writing, or a
+  // scope that renders a moving tree — both `update-context` repairs. A cause
+  // repair cannot reach ends as a decline, which is the same answer an operator
+  // would get, arrived at without their time.
+  | "candidate_unstable";
 
 export type PlanRepairTriggerVerdict =
   | {
@@ -147,7 +154,8 @@ export function evaluatePlanRepairTrigger(
     haltReason.type !== "max_iterations" &&
     haltReason.type !== "loop_limit_reached" &&
     haltReason.type !== "ownership_violation" &&
-    haltReason.type !== "plan_defect"
+    haltReason.type !== "plan_defect" &&
+    haltReason.type !== "candidate_unstable"
   ) {
     return { eligible: false, reason: "halt_kind" };
   }

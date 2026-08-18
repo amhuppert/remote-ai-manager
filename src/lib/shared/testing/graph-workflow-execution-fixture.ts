@@ -914,6 +914,9 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
         completedTaskCount: 2,
         iterationCount: 3,
         consecutiveFailureCount: 1,
+        // Non-default: a zero here would round-trip identically whether the
+        // column carried the field or dropped it.
+        consecutiveCandidateMismatchCount: 2,
         worktreePath: "/wt/ctx-1",
         branchName: "csm/ctx-1",
         isolation: "worktree",
@@ -1429,20 +1432,6 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
             committedAt: "2026-01-02T03:00:00Z",
           },
         ],
-        ignoredBaseline: [
-          {
-            path: "node_modules",
-            digest:
-              "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
-            excluded: ["node_modules/.cache/generated"],
-          },
-          {
-            path: "dist/bundle.js",
-            digest:
-              "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35",
-            excluded: [],
-          },
-        ],
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-02T03:00:00Z",
       },
@@ -1599,6 +1588,22 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
           retryable: false,
           retryAfterHint: "Aug 19th, 2026 11:29 PM",
         },
+      },
+      // Maximal candidate-instability halt: the drift evidence, the incident
+      // kind that decides whether the copy may claim movement at all, and the
+      // repair verdict. An operator reads all four back after a restart, and
+      // the halt-reason union is a discriminated union the durability harness
+      // classifies as a leaf — so parking the variant here is the only thing
+      // that proves its payload survives.
+      {
+        type: "candidate_unstable",
+        contextId: "ctx-1",
+        stage: "specialist_result",
+        driftedComponents: "candidateTreeHash, headSha",
+        lastIncident: "stale_result_rejected",
+        consecutiveCount: 5,
+        message: "the rounds never certified a candidate",
+        summary: "plan repair declined: a dev server writes into the lane",
       },
       // Maximal loop-budget halt (D4 R10): the execution-scope variant, whose
       // verdict/passCount/totalPassCount fields are what an operator reads back

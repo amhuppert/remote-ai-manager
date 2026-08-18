@@ -69,6 +69,7 @@ function makeExecution(
         completedTaskCount: 1,
         iterationCount: 3,
         consecutiveFailureCount: 0,
+        consecutiveCandidateMismatchCount: 0,
       },
     },
     taskStates: {},

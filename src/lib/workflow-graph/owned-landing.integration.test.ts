@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { defaultGitClient } from "@/lib/git/client";
 import { createLaneCommitter } from "./lane-committer";
+import { computeValidationDiffScope } from "./validation-diff-scope";
 
 const CONTEXT_API = "context-api";
 const CONTEXT_UI = "context-ui";
@@ -59,6 +60,14 @@ describe("owned landing through the lane committer (real git)", () => {
   afterEach(async () => {
     await rm(laneWorktree, { recursive: true, force: true });
   });
+
+  /**
+   * What the lane's shared index stages against the new HEAD — empty when the
+   * index IS that HEAD.
+   */
+  async function stagedAgainstHead(): Promise<string> {
+    return git(laneWorktree, ["diff", "--cached", "--name-status", "HEAD"]);
+  }
 
   it("commits exactly the landing member's owned paths and leaves the sibling's work uncommitted and unmodified", async () => {
     const committer = createLaneCommitter();
@@ -114,6 +123,135 @@ describe("owned landing through the lane committer (real git)", () => {
     ]);
     expect(dirty).toContain("src/ui/panel.tsx");
     expect(dirty).toContain("src/ui/draft.tsx");
+  });
+
+  it("leaves the lane index equal to the new HEAD after landing over a sibling's pre-existing dirt", async () => {
+    // Execution d007fb79, incident 3: the first landing on a lane whose tree
+    // already carried another member's dirt left the index rewound to the
+    // pre-lane base — landed work staged as reverted, added files staged as
+    // deleted — while the worktree matched HEAD byte for byte.
+    const committer = createLaneCommitter();
+    await write(
+      laneWorktree,
+      "src/api/legacy.ts",
+      "export const legacy = 1;\n",
+    );
+    await git(laneWorktree, ["add", "-A"]);
+    await git(laneWorktree, ["commit", "-m", "lane base"]);
+
+    // The sibling's dirt is already in the tree when the owner starts writing:
+    // accounted (it sits inside the paths another current member owns) but not
+    // this landing's to commit.
+    await write(
+      laneWorktree,
+      "src/ui/panel.tsx",
+      "export const Panel = 'wip';\n",
+    );
+    await write(laneWorktree, "src/ui/draft.tsx", "// sibling draft\n");
+    // All three shapes the stale index gets wrong: a modified path whose old
+    // blob it holds, an added path it has no entry for, a deleted path it
+    // still lists.
+    await write(laneWorktree, "src/api/handler.ts", "export const a = 2;\n");
+    await write(laneWorktree, "src/api/added.ts", "export const added = 1;\n");
+    await rm(path.join(laneWorktree, "src/api/legacy.ts"));
+
+    const result = await committer.commit({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: CONTEXT_API,
+      laneId: "lane-shared",
+      laneWorktreePath: laneWorktree,
+      preTurnHeadSha: await git(laneWorktree, ["rev-parse", "HEAD"]),
+      landingToken: "token-api",
+      ownership: {
+        mode: "owned",
+        canonicalPrefixes: [path.join(canonicalLaneWorktree, "src/api")],
+      },
+    });
+
+    expect(result.status).toBe("committed");
+    // The commit itself carries exactly the owned scope.
+    expect(
+      (
+        await git(laneWorktree, ["show", "--name-status", "--format=", "HEAD"])
+      ).split("\n"),
+    ).toEqual([
+      "A\tsrc/api/added.ts",
+      "M\tsrc/api/handler.ts",
+      "D\tsrc/api/legacy.ts",
+    ]);
+
+    // Index, HEAD, and worktree all agree about the landed scope.
+    expect(await stagedAgainstHead()).toBe("");
+    expect(
+      await git(laneWorktree, [
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        "--",
+        "src/api",
+      ]),
+    ).toBe("");
+
+    // The sibling's dirt survived untouched: same bytes, still unstaged, still
+    // absent from the branch.
+    expect(
+      await readFile(path.join(laneWorktree, "src/ui/panel.tsx"), "utf-8"),
+    ).toBe("export const Panel = 'wip';\n");
+    expect(
+      await readFile(path.join(laneWorktree, "src/ui/draft.tsx"), "utf-8"),
+    ).toBe("// sibling draft\n");
+    expect(await git(laneWorktree, ["show", "HEAD:src/ui/panel.tsx"])).toBe(
+      "export const Panel = 1;",
+    );
+    expect(
+      await git(laneWorktree, ["diff", "--name-only", "HEAD", "--", "src/ui"]),
+    ).toBe("src/ui/panel.tsx");
+    expect(
+      await git(laneWorktree, [
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        "--",
+        "src/ui/draft.tsx",
+      ]),
+    ).toBe("?? src/ui/draft.tsx");
+  });
+
+  it("leaves the landed scope readable as a settled candidate rather than dirty-with-no-diff", async () => {
+    // The reader half of the same incident: a rewound index made the scoped
+    // status probe call the landed paths dirty while the scoped diff rendered
+    // nothing, so every following validation round read an unresolvable
+    // candidate and re-opened immediately.
+    const committer = createLaneCommitter();
+    await write(
+      laneWorktree,
+      "src/ui/panel.tsx",
+      "export const Panel = 'wip';\n",
+    );
+    await write(laneWorktree, "src/api/handler.ts", "export const a = 2;\n");
+    await write(laneWorktree, "src/api/added.ts", "export const added = 1;\n");
+
+    await committer.commit({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: CONTEXT_API,
+      laneId: "lane-shared",
+      laneWorktreePath: laneWorktree,
+      preTurnHeadSha: await git(laneWorktree, ["rev-parse", "HEAD"]),
+      landingToken: "token-api",
+      ownership: {
+        mode: "owned",
+        canonicalPrefixes: [path.join(canonicalLaneWorktree, "src/api")],
+      },
+    });
+
+    const scope = await computeValidationDiffScope(laneWorktree, {
+      mode: "owned",
+      ownedPaths: ["src/api"],
+    });
+
+    expect(scope.kind).toBe("empty");
   });
 
   it("lands both members correctly when a sibling's landing moved lane HEAD in between", async () => {

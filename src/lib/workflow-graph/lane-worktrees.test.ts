@@ -290,104 +290,10 @@ describe("createParallelWorktrees.provisionLane", () => {
       branchPrefix: "csm",
     });
 
-    // The targets are the claim; provisioning additionally captures the lane's
-    // ignored baseline, which derivation cannot know without touching disk.
     expect({
       worktreePath: fromContext.worktreePath,
       branchName: fromContext.branchName,
     }).toEqual(fromLane);
-    expect(fromContext.ignoredBaseline).toEqual([]);
-  });
-
-  it("captures the ignored content already in the worktree as the lane's drift baseline, digesting each root over the files beneath it", async () => {
-    let capturedEntryPaths: readonly string[] = [];
-    const fakeClient: GitClient = {
-      git: async (args) => {
-        if (args[0] !== "ls-files") return { stdout: "", stderr: "" };
-        const collapsed = args.includes("--directory");
-        return {
-          stdout: collapsed
-            ? ["node_modules/", "debug.log", ""].join("\0")
-            : [
-                "node_modules/pkg/index.js",
-                "node_modules/pkg/package.json",
-                "debug.log",
-                "",
-              ].join("\0"),
-          stderr: "",
-        };
-      },
-    };
-    const pwt = createParallelWorktrees({
-      gitClient: fakeClient,
-      existsSync: () => false,
-      readGlobalConfig: async () => ({}),
-      readRepoConfig: async () => null,
-      ignoredBaselineStore: {
-        async write(_worktreePath, contents) {
-          capturedEntryPaths = contents.entries.map((entry) => entry.path);
-        },
-        async read() {
-          return null;
-        },
-      },
-    });
-
-    const result = await pwt.provisionLane({
-      projectPath: "/repo",
-      sessionName: "session-1",
-      sessionDir: "session-1",
-      sessionBranch: "csm/session-1",
-      laneId: "lane-api",
-    });
-
-    // One entry per root as the ignore rules name it — the collapsed grain is
-    // the only one small enough to persist with the execution.
-    expect(result.ignoredBaseline.map((entry) => entry.path)).toEqual([
-      "node_modules",
-      "debug.log",
-    ]);
-    // The digest, not just the name: without it the baseline could not tell
-    // this install from the same directory with a credential dropped inside.
-    expect(
-      result.ignoredBaseline.every((entry) => entry.digest.length > 0),
-    ).toBe(true);
-    expect(result.ignoredBaseline[0]?.digest).not.toBe(
-      result.ignoredBaseline[1]?.digest,
-    );
-    expect(capturedEntryPaths).toEqual([
-      "node_modules/pkg/index.js",
-      "node_modules/pkg/package.json",
-      "debug.log",
-    ]);
-  });
-
-  it("provisions successfully when the baseline read fails, rather than failing the lane over a status probe", async () => {
-    const fakeClient: GitClient = {
-      git: async (args) => {
-        if (args[0] === "ls-files") throw new Error("ls-files exploded");
-        return { stdout: "", stderr: "" };
-      },
-    };
-    const pwt = createParallelWorktrees({
-      gitClient: fakeClient,
-      existsSync: () => false,
-      readGlobalConfig: async () => ({}),
-      readRepoConfig: async () => null,
-    });
-
-    const result = await pwt.provisionLane({
-      projectPath: "/repo",
-      sessionName: "session-1",
-      sessionDir: "session-1",
-      sessionBranch: "csm/session-1",
-      laneId: "lane-api",
-    });
-
-    // Empty is the fail-closed reading: a pre-existing ignored path can then
-    // look like drift, which surfaces a halt, never hides a write.
-    expect(result.ignoredBaseline).toEqual([]);
-    expect(result.branchName).toBe("csm/session-1-lane-api");
   });
 
   it("passes the session worktree as PARENT_WORKTREE_PATH to the lane init script", async () => {

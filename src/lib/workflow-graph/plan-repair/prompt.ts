@@ -454,13 +454,20 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
             "This halt is an output-contract failure, not a work failure: the context finished its tasks and passed validation, then could not emit a payload matching its declared `outputSchema`. Read the refused payloads in the validation history above — when the schema demands something the context's work cannot know, correct it with `outputSchema` (or `null` to return the context to free-form output). Leave the tasks alone unless the schema is right and the work genuinely missed it.",
           ]
         : []),
+      ...(haltReason.type === "candidate_unstable"
+        ? [
+            "",
+            `This halt is not a work failure at all: the context's validation rounds never reached a verdict, ${haltReason.consecutiveCount} in a row, because the engine could not certify what it was reviewing (${haltReason.driftedComponents === "" ? `nothing was observed to move — the last round concluded on ${haltReason.lastIncident}` : `last divergence at ${haltReason.stage}: ${haltReason.driftedComponents}`}). No reviewer rejected anything and no attempt was charged, so nothing in the tasks or the acceptance criteria explains it.`,
+            "The two plan-shaped causes are both `placement`: the context shares a lane worktree with something that keeps writing to it (another member, or a dev server running in the lane), or its owned paths cover a surface a build regenerates. Moving the context to a lane of its own, or narrowing `placement.ownedPaths` off the churning surface, is the repair. Every other cause is outside the plan — a stale index, a tool writing into the worktree — and the honest answer for those is planningDefect: false with a diagnosis naming what you found.",
+          ]
+        : []),
       "",
       "## Allowed repair operations",
       "",
       "Choose live-edit operations from this vocabulary ONLY (plan artifacts, plus the one narrowing operation below; no structural graph changes, no gate or config controls). These are the logical operation shapes; the strict transport envelope is shown in the Output section:",
       "```jsonc",
       '{"type": "amend-charter", "rationale": "<required: why the charter changes>", "mission": "...", "conventions": ["..."], "nonGoals": ["..."], "vocabulary": ["..."], "testStrategy": "...", "knownAmbiguities": ["..."], "invariants": [{"id": "...", "statement": "...", "appliesTo": {"contextIds": ["..."]}}]}  // include only the charter fields you are changing',
-      '{"type": "update-context", "contextId": "<id>", "title": "...", "description": "...", "acceptanceCriteria": "...", "outputSchema": {"type": "object", "properties": {}} /* or null to drop it */, "iterationPolicy": {"maxIterations": 10, "continuity": {"enabled": true}}, "circuitBreaker": {"consecutiveFailureThreshold": 3}}  // include only the fields you are changing',
+      '{"type": "update-context", "contextId": "<id>", "title": "...", "description": "...", "acceptanceCriteria": "...", "outputSchema": {"type": "object", "properties": {}} /* or null to drop it */, "placement": {"lane": "<laneId>", "mode": "full" | "readOnly" | "owned", "ownedPaths": ["<repo-relative path>"] /* mode "owned" only */} /* replaces the placement wholesale */, "iterationPolicy": {"maxIterations": 10, "continuity": {"enabled": true}}, "circuitBreaker": {"consecutiveFailureThreshold": 3}}  // include only the fields you are changing',
       '{"type": "add-task", "contextId": "<id>", "title": "...", "instructions": "..."}',
       '{"type": "update-task", "taskId": "<id>", "title": "...", "instructions": "..."}  // include only the fields you are changing',
       '{"type": "remove-task", "taskId": "<id>"}',

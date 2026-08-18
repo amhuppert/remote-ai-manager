@@ -79,9 +79,9 @@ describe("full-access landing parity after an enveloped sibling landed (R7.2)", 
     expect(result.status).toBe("committed");
   }
 
-  it("leaves the shared index exactly as it found it, staged sibling state included (D7)", async () => {
+  it("writes back only its own entries in the shared index, leaving staged sibling state alone (D7)", async () => {
     // A sibling stages work of its own mid-turn, which is the state D7 exists
-    // to protect: nothing about a landing may read or write this index.
+    // to protect: a landing may write no index entry but its own.
     await write(lane, "src/ui/panel.tsx", "ui staged\n");
     await git(lane, ["add", "src/ui/panel.tsx"]);
     const stagedSiblingBlob = await git(lane, [
@@ -91,14 +91,11 @@ describe("full-access landing parity after an enveloped sibling landed (R7.2)", 
 
     await landOwnedSibling();
 
-    // The landing published through a PRIVATE index, so the shared index still
-    // holds the pre-landing blob for the path that just landed — git reports it
-    // as differing from the new HEAD. That staleness is the contract, not a
-    // defect: the alternative is a write to the one index a sibling is using.
+    // The landing's own path agrees with the new HEAD; the sibling's staged
+    // blob is byte-identical to what it staged, and still staged.
     expect(
       (await git(lane, ["diff", "--cached", "--name-only"])).split("\n"),
-    ).toContain("src/api/handler.ts");
-    // And the sibling's staged blob is byte-identical to what it staged.
+    ).not.toContain("src/api/handler.ts");
     expect(await git(lane, ["rev-parse", ":src/ui/panel.tsx"])).toBe(
       stagedSiblingBlob,
     );
@@ -126,11 +123,11 @@ describe("full-access landing parity after an enveloped sibling landed (R7.2)", 
       act: () => rm(path.join(lane, "src/api/handler.ts")),
     },
   ])(
-    "skips after a sibling landed a $shape path, which the shared index still describes the old way",
+    "skips after a sibling landed a $shape path, leaving the index agreeing with the new HEAD",
     async ({ act }) => {
-      // Each shape leaves the index wrong in a different direction: a stale
-      // blob, a missing entry, a lingering entry. All three have to read as
-      // "nothing of mine to commit".
+      // The three shapes a landing can leave behind — a rewritten blob, a new
+      // entry, a removed one. All three have to read as "nothing of mine to
+      // commit" and leave the index describing what HEAD holds.
       await act();
       const landed = await committer.commit({
         ...input("context-api"),
@@ -151,6 +148,9 @@ describe("full-access landing parity after an enveloped sibling landed (R7.2)", 
 
       expect(result).toEqual({ status: "skipped" });
       expect(await git(lane, ["rev-parse", "HEAD"])).toBe(preTurnHeadSha);
+      expect(await git(lane, ["diff", "--cached", "--name-only", "HEAD"])).toBe(
+        "",
+      );
     },
   );
 
@@ -172,28 +172,41 @@ describe("full-access landing parity after an enveloped sibling landed (R7.2)", 
     expect(result.snapshot.sha).toBe(selfCommit);
   });
 
-  it("keeps a sibling's newly ADDED file through a self-commit, which the shared index has no entry for", async () => {
-    // The one shape of index staleness a self-commit turns into data loss. The
-    // owned landing put a path into HEAD that the shared index never learned
-    // about, and `git commit -a` builds its commit FROM that index — so the
-    // commit the agent makes publishes the file's deletion, silently reverting
-    // a sibling's landed work. Only an added path does this: a stale blob or a
-    // lingering entry survives `commit -a` as an ordinary modification.
+  it("keeps a sibling's newly ADDED file through a self-commit", async () => {
+    // The one shape of index staleness a self-commit turns into data loss:
+    // `git commit -a` builds its commit FROM the shared index, so a path in
+    // HEAD that the index has no entry for is published as a DELETION —
+    // silently reverting a sibling's landed work. A stale blob or a lingering
+    // entry survives `commit -a` as an ordinary modification.
+    const preLandingHead = await git(lane, ["rev-parse", "HEAD"]);
     await write(lane, "src/api/added.ts", "added by the owner\n");
     const landed = await committer.commit({
       ...input("context-api"),
-      preTurnHeadSha: await git(lane, ["rev-parse", "HEAD"]),
+      preTurnHeadSha: preLandingHead,
       ownership: {
         mode: "owned",
         canonicalPrefixes: [path.join(canonicalLane, "src/api")],
       },
     });
     expect(landed.status).toBe("committed");
+    expect(await git(lane, ["ls-files", "--", "src/api/added.ts"])).toBe(
+      "src/api/added.ts",
+    );
+
+    // The landing writes the entry back, so the destructive shape has to be
+    // induced: the index rewound off a path that HEAD holds. Any route there
+    // does — a private-index landing that could not write back, another tool,
+    // an operator — and the resync is what the engine owes the next member
+    // regardless of which one it was.
+    await git(lane, [
+      "reset",
+      "--quiet",
+      preLandingHead,
+      "--",
+      "src/api/added.ts",
+    ]);
     expect(await git(lane, ["ls-files", "--", "src/api/added.ts"])).toBe("");
 
-    // Handing the lane to a whole-tree writer is what repairs the index. It is
-    // not part of the landing (which must never touch the shared index) — it is
-    // the engine preparing the worktree for a member that owns all of it.
     const preTurnHeadSha = await git(lane, ["rev-parse", "HEAD"]);
     await resyncSharedIndexToHead(lane);
 
@@ -207,7 +220,12 @@ describe("full-access landing parity after an enveloped sibling landed (R7.2)", 
       ownership: { mode: "full", canonicalPrefixes: [] },
     });
 
-    // The sibling's file survived, and the self-commit was ADOPTED rather than
+    // The agent's own commit carries the sibling's file rather than deleting
+    // it — the data-loss claim itself, read off the commit the agent made.
+    expect(await git(lane, ["show", `${selfCommit}:src/api/added.ts`])).toBe(
+      "added by the owner",
+    );
+    // And it survives into HEAD, with the self-commit ADOPTED rather than
     // followed by a restoration commit carrying different evidence (R7.2).
     expect(await git(lane, ["show", "HEAD:src/api/added.ts"])).toBe(
       "added by the owner",
