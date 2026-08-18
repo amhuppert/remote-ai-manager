@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { conversationTargetApiBase } from "@/lib/conversations/conversation-target";
-import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
   EXIT_OPERATION_FAILED,
@@ -48,7 +47,7 @@ export async function runAsk(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("ask"), json);
+  const denied = checkFlags(values, "ask", json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure("ask takes no positional arguments", json);

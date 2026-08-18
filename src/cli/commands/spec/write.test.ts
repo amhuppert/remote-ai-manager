@@ -1086,6 +1086,53 @@ describe("cctl spec write verbs", () => {
     expect(Object.keys(envelope.reply)).not.toContain("anchor_json");
   });
 
+  it("reads the reply body from --body-file, backticks intact (doc 09 §7)", async () => {
+    const host = makeHost({
+      files: { ".cc/temp/reply.md": "R6 excludes `retry` on purpose.\n" },
+    });
+    const result = await runCli(
+      [
+        "spec",
+        "reply",
+        "native-sdd",
+        "--thread",
+        "thread-1",
+        "--body-file",
+        ".cc/temp/reply.md",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const post = host.requests.find(
+      (request) => request.init.method === "POST",
+    );
+    expect(JSON.parse(post?.init.body ?? "{}")).toEqual({
+      threadId: "thread-1",
+      body: "R6 excludes `retry` on purpose.",
+    });
+  });
+
+  it("reads the question text from --text-file (doc 09 §7)", async () => {
+    const host = makeHost({
+      files: { ".cc/temp/q.md": "Which retention period applies?\n" },
+    });
+    const result = await runCli(
+      ["spec", "question", "native-sdd", "--text-file", ".cc/temp/q.md"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const post = host.requests.find(
+      (request) => request.init.method === "POST",
+    );
+    expect(JSON.parse(post?.init.body ?? "{}")).toMatchObject({
+      text: "Which retention period applies?",
+    });
+  });
+
   it("refuses a reply without its thread or body locally", async () => {
     const host = makeHost();
     const missingThread = await runCli(
@@ -2428,8 +2475,9 @@ describe("cctl spec start against a delivery plan", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(result.stderr).toContain(".cc/temp/");
-    expect(result.stderr).toContain(RELATIVE_INPUTS_FILE);
+    expect(result.stdout).toContain("reminder: ");
+    expect(result.stdout).toContain(".cc/temp/");
+    expect(result.stdout).toContain(RELATIVE_INPUTS_FILE);
   });
 
   it.each([

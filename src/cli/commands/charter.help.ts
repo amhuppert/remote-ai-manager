@@ -2,8 +2,7 @@ import type { CommandHelpEntry } from "../help-types";
 
 /**
  * Help-registry entries for `cctl charter` (docs/design/cc-cli/04 §2.2/§2.4):
- * the group hub plus the `write` leaf. Ported from the legacy `help.ts` block and
- * the cc-cli SKILL.md; `charter write` reads only `--file` (`charter.ts`).
+ * the group hub plus the `write` leaf.
  */
 export const charterHelpEntries: CommandHelpEntry[] = [
   {

@@ -2,9 +2,7 @@ import type { CommandHelpEntry } from "../help-types";
 
 /**
  * Help-registry entry for `cctl notify` (docs/design/cc-cli/04 §2.2/§2.4). Single
- * leaf node — the message is a positional and `--title` is the only extra flag
- * (`notify.ts` `checkFlags`). Ported from the legacy `help.ts` block and the
- * cc-cli SKILL.md.
+ * leaf node — the message is a positional and `--title` is the only extra flag.
  */
 export const notifyHelpEntries: CommandHelpEntry[] = [
   {

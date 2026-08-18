@@ -93,6 +93,35 @@ describe("shared CLI refusal-envelope contract", () => {
     },
   );
 
+  // The one 409 that is not "server said no": the request was refused before
+  // the handler ran, which is the version-mismatch exit, not an operation
+  // failure the caller could retry as-is.
+  it("maps a build_skew 409 to exit 4 with its recovery details intact", async () => {
+    const details = {
+      serverBuild: "server-sha",
+      serverCliPath: "/srv/cc/bin/cctl",
+    };
+    const result = await classify(409, {
+      error: "cctl build cli-sha does not match server build server-sha",
+      code: "build_skew",
+      details,
+    });
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") throw new Error("expected error result");
+
+    const rendered = failureFromRequest(result, true);
+    expect(rendered.exitCode).toBe(4);
+    expect(JSON.parse(rendered.stdout) as JsonEnvelope).toMatchObject({
+      ok: false,
+      code: "build_skew",
+      details,
+    });
+    const text = failureFromRequest(result, false);
+    expect(text.stderr).toContain("no changes were made");
+    expect(text.stderr).toContain("/srv/cc/bin/cctl");
+  });
+
   it("carries lint_blocked findings in code-discriminated details", async () => {
     const findings = [
       {

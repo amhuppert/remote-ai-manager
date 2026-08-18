@@ -415,13 +415,15 @@ describe("cctl validate run", () => {
     expect(result.stderr).toContain("queue depth 2");
   });
 
-  it("renders policy skip as a server-authored instruction and exits zero", async () => {
-    const instruction =
+  // The skip text is a keep-true invariant ("do not run it by other means"),
+  // not a do-now step: it is tier 2, and it reaches --json consumers as one.
+  it("renders policy skip as a reminder on the success envelope and exits zero", async () => {
+    const message =
       'Skipped "format": workflow policy disables it. Do not run it by other means.';
     const host = hostWith(() =>
       json({
         kind: "not_started",
-        result: { kind: "skipped_by_policy", message: instruction },
+        result: { kind: "skipped_by_policy", message },
       }),
     );
 
@@ -432,11 +434,29 @@ describe("cctl validate run", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope).toMatchObject({
       ok: true,
       code: "validation_policy_skipped",
-      instruction,
+      reminders: [message],
     });
+    expect(envelope.instruction).toBeUndefined();
+  });
+
+  it("renders the policy skip once, as a reminder line, in text mode", async () => {
+    const message =
+      'Skipped "format": workflow policy disables it. Do not run it by other means.';
+    const host = hostWith(() =>
+      json({
+        kind: "not_started",
+        result: { kind: "skipped_by_policy", message },
+      }),
+    );
+
+    const result = await runCli(["validate", "run", "format"], env, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(`reminder: ${message}\n`);
   });
 
   it("rejects unknown commands as usage and oversized costs as operation failures", async () => {
@@ -675,6 +695,387 @@ describe("cctl validate run", () => {
         },
       ],
     });
+  });
+});
+
+function passingHost(
+  output: string,
+  scopes: { requested: string; effective: string } = {
+    requested: "changed",
+    effective: "changed",
+  },
+  filesMatched?: number,
+): TestHost {
+  return hostWith((_request, index) => {
+    if (index === 0) {
+      return json(
+        {
+          kind: "accepted",
+          runId: "vrun-pass",
+          status: "running",
+          position: null,
+          lease: {
+            runId: "vrun-pass",
+            token: "lease-pass",
+            expiresAt: "2026-08-05T12:00:00.000Z",
+          },
+          requestedScope: scopes.requested,
+          effectiveScope: scopes.effective,
+        },
+        202,
+      );
+    }
+    return json({
+      runId: "vrun-pass",
+      status: "passed",
+      position: null,
+      requestedScope: scopes.requested,
+      effectiveScope: scopes.effective,
+      result: {
+        kind: "passed",
+        runId: "vrun-pass",
+        exitCode: 0,
+        output,
+        ...(filesMatched === undefined ? {} : { filesMatched }),
+      },
+    });
+  });
+}
+
+/** Accepts the submission, then never reaches a terminal result. */
+function neverTerminalHost(): TestHost {
+  return hostWith((_request, index) => {
+    if (index === 0) {
+      return json(
+        {
+          kind: "accepted",
+          runId: "vrun-slow",
+          status: "queued",
+          position: 0,
+          lease: {
+            runId: "vrun-slow",
+            token: "lease-slow",
+            expiresAt: "2026-08-05T12:00:00.000Z",
+          },
+          requestedScope: "changed",
+          effectiveScope: "changed",
+        },
+        202,
+      );
+    }
+    return json({
+      runId: "vrun-slow",
+      status: "running",
+      position: null,
+      result: null,
+      requestedScope: "changed",
+      effectiveScope: "changed",
+    });
+  });
+}
+
+// The pass verdict must be explicit so a green run stays distinguishable from
+// a run that matched zero files.
+describe("cctl validate run — the pass verdict", () => {
+  it("states the verdict, the command, the resolved scope, and the run id", async () => {
+    const result = await runCli(
+      ["validate", "run", "test"],
+      env,
+      passingHost(""),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "validation passed: test (scope changed→changed, run vrun-pass)",
+    );
+  });
+
+  it("names both scopes when the server widened the request", async () => {
+    const result = await runCli(
+      ["validate", "run", "format"],
+      env,
+      passingHost("", { requested: "changed", effective: "full" }),
+    );
+
+    expect(result.stdout).toContain(
+      "validation passed: format (scope changed→full, run vrun-pass)",
+    );
+  });
+
+  it("carries the same facts in the --json envelope", async () => {
+    const result = await runCli(
+      ["validate", "run", "test", "--json"],
+      env,
+      passingHost("1 test passed"),
+    );
+
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      code: "validation_passed",
+      commandName: "test",
+      runId: "vrun-pass",
+      requestedScope: "changed",
+      effectiveScope: "changed",
+      output: "1 test passed",
+    });
+  });
+
+  it("puts the verdict ahead of the relayed runner output", async () => {
+    const result = await runCli(
+      ["validate", "run", "test"],
+      env,
+      passingHost("1 test passed"),
+    );
+
+    expect(result.stdout.indexOf("validation passed: test")).toBeLessThan(
+      result.stdout.indexOf("1 test passed"),
+    );
+  });
+
+  it("relays only the tail of a long pass output and names the reveal command", async () => {
+    const output = Array.from({ length: 60 }, (_, i) => `line ${i}`).join("\n");
+    const result = await runCli(
+      ["validate", "run", "test"],
+      env,
+      passingHost(output),
+    );
+
+    expect(result.stdout).toContain("line 59");
+    expect(result.stdout).not.toContain("line 0\n");
+    expect(result.stdout).toContain("of 60 output lines");
+    expect(result.stdout).toContain("cctl validate status vrun-pass --json");
+    // The envelope keeps every line.
+    const jsonResult = await runCli(
+      ["validate", "run", "test", "--json"],
+      env,
+      passingHost(output),
+    );
+    expect(JSON.parse(jsonResult.stdout).output).toBe(output);
+  });
+
+  it("relays a failing run's output in full", async () => {
+    const output = Array.from({ length: 60 }, (_, i) => `line ${i}`).join("\n");
+    const host = hostWith((_request, index) => {
+      if (index === 0) {
+        return json(
+          {
+            kind: "accepted",
+            runId: "vrun-fail",
+            status: "running",
+            position: null,
+            lease: {
+              runId: "vrun-fail",
+              token: "lease-fail",
+              expiresAt: "2026-08-05T12:00:00.000Z",
+            },
+            requestedScope: "changed",
+            effectiveScope: "changed",
+          },
+          202,
+        );
+      }
+      return json({
+        runId: "vrun-fail",
+        status: "failed",
+        position: null,
+        requestedScope: "changed",
+        effectiveScope: "changed",
+        result: {
+          kind: "failed",
+          runId: "vrun-fail",
+          exitCode: 1,
+          output,
+        },
+      });
+    });
+
+    const result = await runCli(["validate", "run", "test"], env, host);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("line 0");
+    expect(result.stderr).toContain("line 59");
+  });
+});
+
+// A run narrowed to paths that match nothing still exits 0, so the count is
+// the only thing that separates a real green from a green over nothing.
+describe("cctl validate run — matched files", () => {
+  it("names the resolved file count in the verdict line", async () => {
+    const result = await runCli(
+      ["validate", "run", "test", "--", "src/example.test.ts"],
+      env,
+      passingHost("", { requested: "changed", effective: "changed" }, 12),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "validation passed: test (scope changed→changed, 12 files, run vrun-pass)",
+    );
+  });
+
+  it("calls a zero-match pass vacuous, exits 0, and keeps the count in the envelope", async () => {
+    const text = await runCli(
+      ["validate", "run", "test", "--", "src/typo.test.ts"],
+      env,
+      passingHost("", { requested: "changed", effective: "changed" }, 0),
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain(
+      "0 files matched — vacuous pass, verify the scope path",
+    );
+
+    const structured = await runCli(
+      ["validate", "run", "test", "--json", "--", "src/typo.test.ts"],
+      env,
+      passingHost("", { requested: "changed", effective: "changed" }, 0),
+    );
+
+    expect(structured.exitCode).toBe(0);
+    expect(JSON.parse(structured.stdout)).toMatchObject({
+      ok: true,
+      code: "validation_passed",
+      filesMatched: 0,
+    });
+  });
+
+  it("exits 1 on a zero-match pass under --require-match", async () => {
+    const result = await runCli(
+      [
+        "validate",
+        "run",
+        "test",
+        "--require-match",
+        "--json",
+        "--",
+        "src/typo.test.ts",
+      ],
+      env,
+      passingHost("", { requested: "changed", effective: "changed" }, 0),
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
+      code: "validation_no_files_matched",
+      filesMatched: 0,
+    });
+    expect(result.stderr).toContain("verify the scope path");
+  });
+
+  it("passes under --require-match when the scope resolved to files", async () => {
+    const result = await runCli(
+      ["validate", "run", "test", "--require-match", "--", "src/a.test.ts"],
+      env,
+      passingHost("", { requested: "changed", effective: "changed" }, 1),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("1 file, run vrun-pass");
+  });
+
+  // A changed or full run is narrowed inside the wrapper, so the server reports
+  // no count at all — the ratchet has nothing to refuse.
+  it("leaves an uncounted run alone under --require-match", async () => {
+    const result = await runCli(
+      ["validate", "run", "test", "--require-match"],
+      env,
+      passingHost("1 test passed"),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "validation passed: test (scope changed→changed, run vrun-pass)",
+    );
+  });
+});
+
+describe("cctl validate run — the client wait budget", () => {
+  it("gives up on --timeout and names the status command that recovers the verdict", async () => {
+    const host = neverTerminalHost();
+
+    const result = await runCli(
+      ["validate", "run", "test", "--wait", "--timeout", "3s", "--json"],
+      env,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
+      code: "wait_timeout",
+      details: { runId: "vrun-slow" },
+    });
+    // One submission plus one poll per second of budget.
+    expect(host.requests).toHaveLength(4);
+    // The private lease is local state of a wait that has ended.
+    expect(host.removedFiles).toEqual([host.privateWrites[0]?.path]);
+  });
+
+  it("names the continuation command on stderr in text mode", async () => {
+    const result = await runCli(
+      ["validate", "run", "test", "--wait", "--timeout", "2s"],
+      env,
+      neverTerminalHost(),
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("cctl validate status vrun-slow");
+  });
+
+  it("keeps streaming queue positions while the budget runs down", async () => {
+    const host = hostWith((_request, index) => {
+      if (index === 0) {
+        return json(
+          {
+            kind: "accepted",
+            runId: "vrun-slow",
+            status: "queued",
+            position: 2,
+            lease: {
+              runId: "vrun-slow",
+              token: "lease-slow",
+              expiresAt: "2026-08-05T12:00:00.000Z",
+            },
+            requestedScope: "changed",
+            effectiveScope: "changed",
+          },
+          202,
+        );
+      }
+      return json({
+        runId: "vrun-slow",
+        status: "queued",
+        position: index === 1 ? 1 : 0,
+        result: null,
+        requestedScope: "changed",
+        effectiveScope: "changed",
+      });
+    });
+
+    const result = await runCli(
+      ["validate", "run", "test", "--wait", "--timeout", "2s"],
+      env,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(host.progress.join("")).toContain("queue position 3");
+    expect(host.progress.join("")).toContain("queue position 2");
+    expect(host.progress.join("")).toContain("queue position 1");
+  });
+
+  it("rejects an unreadable --timeout before submitting anything", async () => {
+    const host = hostWith(() => json({}));
+
+    const result = await runCli(
+      ["validate", "run", "test", "--wait", "--timeout", "soon"],
+      env,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(host.requests).toEqual([]);
   });
 });
 

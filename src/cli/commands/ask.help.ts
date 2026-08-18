@@ -2,9 +2,7 @@ import type { CommandHelpEntry } from "../help-types";
 
 /**
  * Help-registry entry for `cctl ask` (docs/design/cc-cli/04 §2.2/§2.4). Single
- * leaf node — `ask` takes no positionals and has no subcommands. Ported from the
- * legacy `help.ts` block and the cc-cli SKILL.md; flags match `ask.ts`'s
- * `checkFlags` (file, question, option, header, context, multi-select).
+ * leaf node — `ask` takes no positionals and has no subcommands.
  */
 export const askHelpEntries: CommandHelpEntry[] = [
   {

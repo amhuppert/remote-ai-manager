@@ -16,6 +16,14 @@
 export const CLI_BUILD_HEADER = "x-cc-cli-build";
 export const BUILD_MISMATCH_HEADER = "x-cc-build-mismatch";
 
+/**
+ * Wire code for the server's pre-execution build-skew refusal. The middleware
+ * emits it and the CLI maps it to exit 4 with a "nothing ran" message, so the
+ * two sides must agree on the spelling; it lives here because this is the one
+ * module both the request-path middleware and the CLI can import.
+ */
+export const BUILD_SKEW_CODE = "build_skew";
+
 export interface BuildMismatch {
   serverBuild: string;
   cliBuild: string;

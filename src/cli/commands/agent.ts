@@ -14,7 +14,7 @@ import {
   type AgentRunStatusResponse,
 } from "@/lib/agent-runs/schemas";
 import { dispatchGroup } from "../dispatch";
-import { flagNamesFor } from "../help-registry";
+import { awaitJob } from "../job-wait";
 import {
   EXIT_OK,
   EXIT_OPERATION_FAILED,
@@ -126,7 +126,7 @@ async function runAgentRun(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("agent run"), json);
+  const denied = checkFlags(values, "agent run", json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure("agent run takes no positional arguments", json);
@@ -198,6 +198,19 @@ async function runAgentRun(
   return waitForAgentRun(context, runId, waitBudgetMs, json, host);
 }
 
+/** The one wording for a status body this binary cannot read, shared by `--wait` and `status`. */
+const UNEXPECTED_STATUS_RESPONSE =
+  "unexpected status response from the CC server";
+
+/**
+ * One poll's outcome. A refused request is a status the classifier terminates
+ * on rather than a parse failure, so a 404 keeps its usage exit class instead
+ * of being retried as an unreadable body.
+ */
+type AgentRunPollStatus =
+  | { kind: "run"; run: AgentRunStatusResponse }
+  | { kind: "request_failed"; result: CliResult };
+
 /** Long-poll a run to a terminal state, or give up (exit 1) when the client budget elapses. */
 async function waitForAgentRun(
   context: SessionContext,
@@ -206,45 +219,65 @@ async function waitForAgentRun(
   json: boolean,
   host: CliHost,
 ): Promise<CliResult> {
-  const maxPolls = Math.max(1, Math.ceil(budgetMs / POLL_INTERVAL_MS));
-  for (let attempt = 0; ; attempt++) {
-    const statusResult = await cliRequest(host, {
-      server: context.server,
-      token: context.token,
-      tokenSource: context.tokenSource,
-      method: "GET",
-      path: `${agentRunsPath(context)}/${encodePathSegment(runId)}`,
-    });
-    if (statusResult.kind !== "ok")
-      return failureFromRequestNotFoundAsUsage(statusResult, json);
-
-    const parsed = agentRunStatusResponseSchema.safeParse(statusResult.body);
-    const run = parsed.success ? parsed.data : null;
-
-    if (run && run.status !== "running") {
-      if (run.status === "completed") return completedResult(run, json);
+  return awaitJob<AgentRunPollStatus>(host, {
+    json,
+    timeoutMs: budgetMs,
+    pollIntervalMs: POLL_INTERVAL_MS,
+    async poll() {
+      const statusResult = await cliRequest(host, {
+        server: context.server,
+        token: context.token,
+        tokenSource: context.tokenSource,
+        method: "GET",
+        path: `${agentRunsPath(context)}/${encodePathSegment(runId)}`,
+      });
+      if (statusResult.kind !== "ok") {
+        return {
+          ok: true,
+          status: {
+            kind: "request_failed",
+            result: failureFromRequestNotFoundAsUsage(statusResult, json),
+          },
+        };
+      }
+      const parsed = agentRunStatusResponseSchema.safeParse(statusResult.body);
+      if (!parsed.success) {
+        return { ok: false, parseError: UNEXPECTED_STATUS_RESPONSE };
+      }
+      return { ok: true, status: { kind: "run", run: parsed.data } };
+    },
+    classify(status) {
+      if (status.kind === "request_failed") {
+        return { terminal: true, result: status.result };
+      }
+      const run = status.run;
+      if (run.status === "running") return { terminal: false };
+      if (run.status === "completed") {
+        return { terminal: true, result: completedResult(run, json) };
+      }
       // A killed run mid-wait is not a client failure of the CLI — but a run
       // that actually failed server-side is: surface it (exit 1).
-      return failure({
-        exitCode: EXIT_OPERATION_FAILED,
-        message: run.error ?? `agent run ${runId} ${run.status}`,
-        json,
-      });
-    }
-
-    if (attempt >= maxPolls) {
+      return {
+        terminal: true,
+        result: failure({
+          exitCode: EXIT_OPERATION_FAILED,
+          message: run.error ?? `agent run ${runId} ${run.status}`,
+          json,
+        }),
+      };
+    },
+    onTimeout(elapsedMs) {
       // The run continues server-side — recovery is a status poll, not a rerun.
-      return failure({
+      return {
         exitCode: EXIT_OPERATION_FAILED,
         message: `agent run ${runId} still running after ${Math.round(
-          budgetMs / 1000,
+          elapsedMs / 1000,
         )}s — the run continues server-side`,
         hint: `recover the result with 'cctl agent status ${runId}'`,
         json,
-      });
-    }
-    await host.sleep(POLL_INTERVAL_MS);
-  }
+      };
+    },
+  });
 }
 
 /** The read-the-docs hint (interpolated from response facts). */
@@ -290,7 +323,7 @@ async function runAgentStatus(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("agent status"), json);
+  const denied = checkFlags(values, "agent status", json);
   if (denied) return denied;
 
   const runId = rest[0];
@@ -319,7 +352,7 @@ async function runAgentStatus(
   if (!parsed.success) {
     return failure({
       exitCode: EXIT_OPERATION_FAILED,
-      message: "unexpected status response from the CC server",
+      message: UNEXPECTED_STATUS_RESPONSE,
       json,
     });
   }
@@ -354,7 +387,7 @@ async function runAgentCancel(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("agent cancel"), json);
+  const denied = checkFlags(values, "agent cancel", json);
   if (denied) return denied;
 
   const runId = rest[0];
@@ -431,7 +464,7 @@ async function runAgentList(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("agent list"), json);
+  const denied = checkFlags(values, "agent list", json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure("agent list takes no positional arguments", json);
@@ -501,7 +534,7 @@ async function runAgentGet(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("agent get"), json);
+  const denied = checkFlags(values, "agent get", json);
   if (denied) return denied;
 
   const refText = rest[0];

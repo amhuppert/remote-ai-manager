@@ -7,17 +7,19 @@ import { runDecisions } from "./commands/decisions";
 import { runDev } from "./commands/dev";
 import { runDoctor } from "./commands/doctor";
 import { runDocs } from "./commands/docs";
+import { runExitCodes } from "./commands/exit-codes";
 import { runFixture } from "./commands/fixture";
+import { runLogs } from "./commands/logs";
 import { runNotify } from "./commands/notify";
 import { runSpec } from "./commands/spec";
 import { runTicket } from "./commands/ticket";
 import { runValidate } from "./commands/validate";
 import { runWorkflow } from "./commands/workflow";
+import { dispatchGroup } from "./dispatch";
 import { fetchHelpContext } from "./help-context";
 import {
   booleanFlagArgsForCommand,
   childEntriesOf,
-  flagNamesFor,
   helpEntryFor,
   helpJsonFor,
   isGroup,
@@ -31,13 +33,13 @@ import {
   EXIT_USAGE,
   USAGE,
   ccTempPayloadAdvisory,
-  checkFlags,
   failure,
   parseArgv,
   render,
   readSessionEnv,
   resolveToken,
   usageFailure,
+  withClientReminder,
   type CliEnv,
   type CliHost,
   type CliResult,
@@ -236,7 +238,7 @@ export async function runCli(
   }
   const result = await dispatchCli(parsed, env, host);
 
-  // Soft location nudge for file-backed payloads, applied centrally so every
+  // Location reminder for file-backed payloads, applied centrally so every
   // payload command (workflow/spec/charter/decisions/agent/ask) gets it without
   // threading the advisory through each success return. Only on a successful
   // run — a failed invocation's payload location is moot.
@@ -244,7 +246,7 @@ export async function runCli(
   if (result.exitCode === EXIT_OK && payloadPath !== undefined) {
     const advisory = ccTempPayloadAdvisory(payloadPath);
     if (advisory !== undefined) {
-      return { ...result, stderr: `${result.stderr}${advisory}` };
+      return withClientReminder(result, parsed.flags.json, advisory);
     }
   }
   return result;
@@ -261,86 +263,36 @@ async function dispatchCli(
   // Help is intercepted before dispatch so every command gets it without
   // declaring it, and so `--help` never trips per-command checkFlags. The full
   // positional path resolves against the registry (doc 04 §3.1); `cctl help x y`
-  // and `cctl x y --help` both resolve the node ["x","y"].
+  // and `cctl x y --help` both resolve the node ["x","y"]. `help` itself is not
+  // a registry entry, so it never reaches the root handler map.
   if (values["help"] === "true" || command === "help") {
     const helpPath = command === "help" ? positionals.slice(1) : positionals;
     return resolveHelp(helpPath, flags, env, host);
   }
 
-  if (command === "version") return runVersion(flags);
-  if (command === "doctor") {
-    const denied = checkFlags(values, flagNamesFor("doctor"), flags.json);
-    if (denied) return denied;
-    return runDoctor(flags, env, host);
-  }
-
-  if (command === "ask") {
-    return runAsk(positionals.slice(1), flags, values, lists, env, host);
-  }
-
-  if (command === "notify") {
-    return runNotify(positionals.slice(1), flags, values, env, host);
-  }
-
-  if (command === "docs") {
-    return runDocs(positionals.slice(1), flags, values, env, host);
-  }
-
-  if (command === "dev") {
-    return runDev(positionals.slice(1), flags, values, env, host);
-  }
-
-  if (command === "fixture") {
-    return runFixture(positionals.slice(1), flags, values, env, host);
-  }
-
-  if (command === "workflow") {
-    return runWorkflow(positionals.slice(1), flags, values, env, host);
-  }
-
-  if (command === "charter") {
-    return runCharter(positionals.slice(1), flags, values, env, host);
-  }
-
-  if (command === "decisions") {
-    return runDecisions(positionals.slice(1), flags, values, env, host);
-  }
-
-  if (command === "agent") {
-    return runAgent(positionals.slice(1), flags, values, env, host);
-  }
-
-  if (command === "validate") {
-    return runValidate(
-      positionals.slice(1),
-      passthrough,
-      flags,
-      values,
-      env,
-      host,
-    );
-  }
-
-  if (command === "conversation") {
-    return runConversation(positionals.slice(1), flags, values, env, host);
-  }
-
-  if (command === "ticket") {
-    return runTicket(positionals.slice(1), flags, values, env, host);
-  }
-
-  if (command === "spec") {
-    return runSpec(positionals.slice(1), flags, values, lists, env, host);
-  }
-
-  if (command === undefined) {
-    return {
-      exitCode: EXIT_USAGE,
-      stdout: flags.json
-        ? `${JSON.stringify({ ok: false, error: "missing command" })}\n`
-        : "",
-      stderr: USAGE,
-    };
-  }
-  return usageFailure(`unknown command "${command}"`, flags.json);
+  return dispatchGroup({
+    group: [],
+    rest: positionals,
+    json: flags.json,
+    handlers: {
+      ask: (rest) => runAsk(rest, flags, values, lists, env, host),
+      notify: (rest) => runNotify(rest, flags, values, env, host),
+      docs: (rest) => runDocs(rest, flags, values, env, host),
+      dev: (rest) => runDev(rest, flags, values, env, host),
+      fixture: (rest) => runFixture(rest, flags, values, env, host),
+      workflow: (rest) => runWorkflow(rest, flags, values, env, host),
+      charter: (rest) => runCharter(rest, flags, values, env, host),
+      decisions: (rest) => runDecisions(rest, flags, values, env, host),
+      agent: (rest) => runAgent(rest, flags, values, env, host),
+      validate: (rest) =>
+        runValidate(rest, passthrough, flags, values, env, host),
+      conversation: (rest) => runConversation(rest, flags, values, env, host),
+      ticket: (rest) => runTicket(rest, flags, values, env, host),
+      spec: (rest) => runSpec(rest, flags, values, lists, env, host),
+      logs: (rest) => runLogs(rest, flags, values, env, host),
+      doctor: () => runDoctor(flags, values, env, host),
+      "exit-codes": async () => runExitCodes(flags, values),
+      version: async () => runVersion(flags),
+    },
+  });
 }

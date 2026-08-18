@@ -2,8 +2,7 @@ import type { CommandHelpEntry } from "../help-types";
 
 /**
  * Help-registry entries for `cctl docs` (docs/design/cc-cli/04 §2.2): the group
- * hub plus the register/list/delete leaves. Ported from the legacy `help.ts`
- * block and the cc-cli SKILL.md; flags match what `docs.ts` actually reads.
+ * hub plus the register/list/delete leaves.
  */
 export const docsHelpEntries: CommandHelpEntry[] = [
   {

@@ -83,6 +83,7 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
         name: "description",
         kind: "value",
         valuePlaceholder: '"<markdown>"',
+        fileSource: true,
         description: "optional markdown description",
       },
       statusFlag,
@@ -104,9 +105,9 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
     path: ["ticket", "list"],
     summary: "list tickets with filters",
     description:
-      "List the ambient project's tickets, or every project's with --all. Filters combine; sort defaults to most recently updated.",
+      "List the ambient project's tickets, or every project's with --all. Filters combine; sort defaults to most recently updated. One row per ticket, capped at 20 — the leading count line names the exact command that reveals the rest. Each row carries its attachment count; --attachments adds the typed index for the rows shown, one request per ticket.",
     usage: [
-      "cctl ticket list [--status <status>] [--type <type>] [--sort <created|updated>] [--all]",
+      "cctl ticket list [--status <status>] [--type <type>] [--sort <created|updated>] [--all] [--limit <n>] [--attachments]",
     ],
     flags: [
       statusFlag,
@@ -122,6 +123,18 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
         kind: "boolean",
         description: "list tickets across every project",
       },
+      {
+        name: "limit",
+        kind: "value",
+        valuePlaceholder: "<n>",
+        description: "rows to print (default: 20)",
+      },
+      {
+        name: "attachments",
+        kind: "boolean",
+        description:
+          "render each shown ticket's attachment index with its retrieval commands",
+      },
     ],
     examples: [
       {
@@ -133,10 +146,19 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
         explanation:
           "tickets across every project — entries show <project>#<number> for cross-scope follow-ups",
       },
+      {
+        invocation: "cctl ticket list --status in_progress --attachments",
+        explanation:
+          "adds each shown ticket's attachment ids and retrieval commands",
+      },
     ],
     related: [
       { command: "ticket get", oneLiner: "read one ticket in full" },
       { command: "ticket create", oneLiner: "create a new ticket" },
+      {
+        command: "ticket attachment get",
+        oneLiner: "retrieve one attachment listed by --attachments",
+      },
     ],
   },
   {
@@ -409,16 +431,31 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
     path: ["ticket", "attach", "note"],
     summary: "attach a markdown note",
     description:
-      "Attach free-form markdown as inline context. The note body is the positional argument; edit it later with 'ticket attachment update --markdown'.",
+      "Attach free-form markdown as inline context. The note body is the positional argument, or --markdown/--markdown-file when the text would not survive the shell; edit it later with 'ticket attachment update --markdown'.",
     usage: [
       `cctl ticket attach note ${REF_PLACEHOLDER} "<markdown>" --description "<what and why>"`,
     ],
-    flags: [{ ...descriptionFlag }],
+    flags: [
+      { ...descriptionFlag },
+      {
+        name: "markdown",
+        kind: "value",
+        valuePlaceholder: '"<markdown>"',
+        fileSource: true,
+        description: "the note body, as an alternative to the positional",
+      },
+    ],
     examples: [
       {
         invocation:
           'cctl ticket attach note 12 "Repro: run the suite twice; second run hits the stale cache." --description "reproduction steps"',
         explanation: "quote the markdown body — it is a single argument",
+      },
+      {
+        invocation:
+          'cctl ticket attach note 12 --markdown-file .cc/temp/note.md --description "reproduction steps"',
+        explanation:
+          "author the body in a file when it carries backticks, quotes, or newlines",
       },
     ],
     related: [
@@ -444,7 +481,7 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
     path: ["ticket", "attachment", "get"],
     summary: "retrieve an attachment's full content",
     description:
-      "Resolve an attachment by kind: file content, conversation compaction markdown (live or retained snapshot), session state, related-ticket detail with its own index, or note markdown. Content that no longer exists exits 1.",
+      "Resolve an attachment by kind: file content, conversation compaction markdown (live or retained snapshot), session state, related-ticket detail with its own index, or note markdown. Content that no longer exists exits 1. A file attachment past the stdout budget — and any binary (base64) file, whatever its size — is written under .cc/temp/ and stdout carries the manifest (path, format, byte count, SHA-256) instead of the content.",
     usage: [`cctl ticket attachment get ${REF_PLACEHOLDER} <attachmentId>`],
     flags: [],
     examples: [
@@ -460,6 +497,10 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
         oneLiner: "the index that lists attachment ids",
       },
       { command: "ticket attachment update", oneLiner: "edit what you found" },
+      {
+        command: "ticket list",
+        oneLiner: "list attachment ids across tickets with --attachments",
+      },
     ],
   },
   {

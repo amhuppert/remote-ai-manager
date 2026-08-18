@@ -2,9 +2,7 @@ import type { CommandHelpEntry } from "../help-types";
 
 /**
  * Help-registry entries for `cctl decisions` (docs/design/cc-cli/04 §2.2/§2.4):
- * the group hub plus the `propose` leaf. Ported from the legacy `help.ts` block
- * and the cc-cli SKILL.md; `decisions propose` reads only `--file`
- * (`decisions.ts`).
+ * the group hub plus the `propose` leaf.
  */
 export const decisionsHelpEntries: CommandHelpEntry[] = [
   {

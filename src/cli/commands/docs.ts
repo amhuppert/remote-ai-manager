@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { dispatchGroup } from "../dispatch";
-import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
   checkFlags,
@@ -66,7 +65,7 @@ async function runDocsRegister(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(values, flagNamesFor("docs register"), json);
+  const denied = checkFlags(values, "docs register", json);
   if (denied) return denied;
 
   const filePath = rest[0];
@@ -128,7 +127,7 @@ async function runDocsList(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(values, flagNamesFor("docs list"), json);
+  const denied = checkFlags(values, "docs list", json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure("docs list takes no arguments", json);
@@ -179,7 +178,7 @@ async function runDocsDelete(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(values, flagNamesFor("docs delete"), json);
+  const denied = checkFlags(values, "docs delete", json);
   if (denied) return denied;
 
   const id = rest[0];

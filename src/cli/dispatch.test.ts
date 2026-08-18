@@ -1,8 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { dispatchGroup } from "./dispatch";
-import { EXIT_OK, EXIT_USAGE, type CliResult } from "./shared";
+import { dispatchGroup, type GroupVerbHandler } from "./dispatch";
+import { childEntriesOf } from "./help-registry";
+import { pathKey } from "./help-types";
+import { EXIT_OK, EXIT_USAGE, USAGE, type CliResult } from "./shared";
 
 const ok: CliResult = { exitCode: EXIT_OK, stdout: "ran\n", stderr: "" };
+
+/**
+ * A stub handler for every level-1 registry entry: the root's handler map is
+ * subject to the same agreement check as any group's, so a partial map here
+ * would throw before the behavior under test runs.
+ */
+function rootHandlers(
+  overrides: Record<string, GroupVerbHandler> = {},
+): Record<string, GroupVerbHandler> {
+  const handlers: Record<string, GroupVerbHandler> = {};
+  for (const entry of childEntriesOf([])) {
+    handlers[pathKey(entry.path)] = async () => ok;
+  }
+  return { ...handlers, ...overrides };
+}
 
 /**
  * `dispatchGroup` is the registry-driven group dispatcher: it derives the valid
@@ -124,5 +141,79 @@ describe("dispatchGroup", () => {
     const envelope = JSON.parse(result.stdout);
     expect(envelope.ok).toBe(false);
     expect(envelope.error).toContain("dev requires a subcommand");
+  });
+});
+
+/**
+ * The empty group path is the CLI root: its verbs are the registry's level-1
+ * entries, so the root gets the same handler/registry agreement guarantee every
+ * nested group has. Its two usage failures keep the front-door wording — an
+ * empty argv prints the whole usage index, and an unrecognized first token is a
+ * command rather than a subcommand.
+ */
+describe("dispatchGroup at the root", () => {
+  it("routes a level-1 command to its handler, forwarding the remaining args", async () => {
+    let seen: string[] | undefined;
+    const result = await dispatchGroup({
+      group: [],
+      rest: ["ticket", "get", "12"],
+      json: false,
+      handlers: rootHandlers({
+        ticket: async (rest) => {
+          seen = rest;
+          return ok;
+        },
+      }),
+    });
+    expect(result).toBe(ok);
+    expect(seen).toEqual(["get", "12"]);
+  });
+
+  it("prints the top-level usage index when no command is given", async () => {
+    const result = await dispatchGroup({
+      group: [],
+      rest: [],
+      json: false,
+      handlers: rootHandlers(),
+    });
+    expect(result.exitCode).toBe(EXIT_USAGE);
+    expect(result.stderr).toBe(USAGE);
+    expect(result.stdout).toBe("");
+  });
+
+  it("emits the missing-command envelope when json is true", async () => {
+    const result = await dispatchGroup({
+      group: [],
+      rest: [],
+      json: true,
+      handlers: rootHandlers(),
+    });
+    expect(result.exitCode).toBe(EXIT_USAGE);
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: false,
+      error: "missing command",
+    });
+  });
+
+  it("names an unrecognized first token as a command, not a subcommand", async () => {
+    const result = await dispatchGroup({
+      group: [],
+      rest: ["frobnicate"],
+      json: false,
+      handlers: rootHandlers(),
+    });
+    expect(result.exitCode).toBe(EXIT_USAGE);
+    expect(result.stderr).toContain('unknown command "frobnicate"');
+    expect(result.stderr).not.toContain("subcommand");
+    // The scoped one-liner, never the full usage dump (its marker is `commands:`).
+    expect(result.stderr).not.toContain("commands:");
+  });
+
+  it("throws when a level-1 registry entry has no root handler", async () => {
+    const handlers = rootHandlers();
+    delete handlers["ticket"];
+    await expect(
+      dispatchGroup({ group: [], rest: ["version"], json: false, handlers }),
+    ).rejects.toThrow(/ticket/);
   });
 });

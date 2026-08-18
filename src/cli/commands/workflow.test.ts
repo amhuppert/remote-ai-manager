@@ -28,10 +28,15 @@ function jsonResponse(body: unknown, status = 200): Response {
 function makeHost(
   respond: (req: RecordedRequest) => Response,
   files: Record<string, string> = {},
-): CliHost & { requests: RecordedRequest[] } {
+): CliHost & {
+  requests: RecordedRequest[];
+  writes: Map<string, string>;
+} {
   const requests: RecordedRequest[] = [];
+  const writes = new Map<string, string>();
   return {
     requests,
+    writes,
     async fetch(url, init) {
       const req = { url, init };
       requests.push(req);
@@ -42,6 +47,9 @@ function makeHost(
     },
     async readFileBytes() {
       return null;
+    },
+    async writeTextFile(filePath, content) {
+      writes.set(filePath, content);
     },
     async sleep() {},
     platform: "darwin",
@@ -159,6 +167,90 @@ describe("cctl workflow get", () => {
     expect(envelope.resolved).toEqual({ ok: 1 });
   });
 
+  it("--full prints the record inline while it fits the stdout budget", async () => {
+    const host = makeHost(() =>
+      jsonResponse({ item: { id: "wf-1", name: "T" }, resolved: { ok: 1 } }),
+    );
+    const result = await runCli(
+      ["workflow", "get", "wf-1", "--full"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('"id": "wf-1"');
+    expect(host.writes.size).toBe(0);
+  });
+
+  it("--full past the stdout budget writes an artifact and prints its manifest", async () => {
+    const blob = "x".repeat(80_000);
+    const host = makeHost(() =>
+      jsonResponse({
+        item: { id: "wf-1", name: "T", notes: blob },
+        resolved: { ok: 1 },
+      }),
+    );
+    const result = await runCli(
+      ["workflow", "get", "wf-1", "--full"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain(blob);
+    expect(result.stdout.length).toBeLessThan(1_000);
+    expect(result.stdout).toContain("artifact: .cc/temp/");
+    expect(result.stdout).toMatch(/sha256: sha256:[a-f0-9]{64}/u);
+
+    const [path, content] = [...host.writes.entries()][0] ?? [];
+    expect(result.stdout).toContain(`artifact: ${path}`);
+    const written = JSON.parse(content ?? "");
+    expect(written.item.notes).toBe(blob);
+    expect(written.resolved).toEqual({ ok: 1 });
+  });
+
+  it("--full --json past the budget carries the manifest as named fields", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        item: { id: "wf-1", name: "T", notes: "x".repeat(80_000) },
+        resolved: { ok: 1 },
+      }),
+    );
+    const result = await runCli(
+      ["workflow", "get", "wf-1", "--full", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.ok).toBe(true);
+    expect(envelope.item).toBeUndefined();
+    expect(envelope.storage).toBe("artifact");
+    expect(envelope.artifact.reason).toBe("stdout_budget_exceeded");
+    expect(envelope.artifact.bytes).toBeGreaterThan(80_000);
+    expect(envelope.artifact.format).toBe("json");
+    expect(envelope.artifact.sha256).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    expect(host.writes.has(envelope.artifact.path)).toBe(true);
+  });
+
+  it("--full fails loudly when the artifact cannot be written", async () => {
+    const host = makeHost(() =>
+      jsonResponse({ item: { id: "wf-1", notes: "x".repeat(80_000) } }),
+    );
+    host.writeTextFile = async () => {
+      throw new Error("read-only file system");
+    };
+    const result = await runCli(
+      ["workflow", "get", "wf-1", "--full"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("could not write");
+  });
+
   it("exits 2 for an unknown workflow (404)", async () => {
     const host = makeHost(() =>
       jsonResponse({ error: "Workflow not found" }, 404),
@@ -242,8 +334,12 @@ describe("cctl workflow status", () => {
     expect(result.stdout).toContain("phase-b: active (running)");
   });
 
-  it("--json returns the full execution payload", async () => {
-    const host = makeHost(() => jsonResponse({ execution }));
+  it("--json carries the projection the table renders, not the unstripped payload", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        execution: { ...execution, charterMarkdown: "a".repeat(400) },
+      }),
+    );
     const result = await runCli(
       ["workflow", "status", "--json"],
       baseEnv,
@@ -251,10 +347,38 @@ describe("cctl workflow status", () => {
     );
     const envelope = JSON.parse(result.stdout);
     expect(envelope.ok).toBe(true);
-    expect(envelope.execution.id).toBe("exec-1");
-    expect(envelope.execution.contextStates["phase-b"].completedTaskCount).toBe(
-      1,
-    );
+    expect(envelope.view).toBe("summary");
+    expect(envelope.execution).toEqual({
+      id: "exec-1",
+      status: "running",
+      halted: false,
+      haltType: null,
+      activeContextIds: ["phase-a", "phase-b"],
+    });
+    expect(envelope.contexts).toEqual([
+      {
+        id: "phase-a",
+        title: "Phase A",
+        lane: "delivery",
+        status: "completed",
+        completedTaskCount: 2,
+        totalTaskCount: 2,
+        batchId: "batch-1",
+        laneId: "delivery",
+      },
+      {
+        id: "phase-b",
+        title: "Phase B",
+        lane: "delivery",
+        status: "running",
+        completedTaskCount: 1,
+        totalTaskCount: 3,
+        batchId: "batch-1",
+        laneId: "delivery",
+      },
+    ]);
+    // The fields the text tier never showed stay behind the explicit selector.
+    expect(result.stdout).not.toContain("charterMarkdown");
     expect(envelope.lanes).toEqual([
       {
         laneId: "delivery",
@@ -277,6 +401,62 @@ describe("cctl workflow status", () => {
         ],
       },
     ]);
+  });
+
+  it("--full returns the unstripped execution the route sent", async () => {
+    const durable = {
+      ...execution,
+      charterMarkdown: "the hand-authored charter",
+      startedAt: "2026-08-01T00:00:00.000Z",
+    };
+    const host = makeHost(() => jsonResponse({ execution: durable }));
+    const result = await runCli(
+      ["workflow", "status", "--full", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.view).toBe("full");
+    expect(envelope.execution).toEqual(durable);
+    expect(envelope.lanes).toHaveLength(1);
+    expect(host.writes.size).toBe(0);
+  });
+
+  it("--full past the stdout budget writes an artifact and prints its manifest", async () => {
+    const blob = "x".repeat(80_000);
+    const host = makeHost(() =>
+      jsonResponse({ execution: { ...execution, charterMarkdown: blob } }),
+    );
+    const result = await runCli(
+      ["workflow", "status", "--full"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain(blob);
+    expect(result.stdout).toContain("artifact: .cc/temp/");
+    expect(result.stdout).toMatch(/sha256: sha256:[a-f0-9]{64}/u);
+
+    const [artifactPath, content] = [...host.writes.entries()][0] ?? [];
+    expect(result.stdout).toContain(`artifact: ${artifactPath}`);
+    const written = JSON.parse(content ?? "");
+    expect(written.execution.charterMarkdown).toBe(blob);
+  });
+
+  it("exits 2 when two selectors are combined", async () => {
+    const host = makeHost(() => jsonResponse({ execution }));
+    const result = await runCli(
+      ["workflow", "status", "--full", "--halt"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("at most one section selector");
+    expect(host.requests).toHaveLength(0);
   });
 
   it("reads the same Current-or-History projection by explicit cross-project execution id without a capability", async () => {
@@ -303,6 +483,7 @@ describe("cctl workflow status", () => {
       "another-project",
       "--session",
       "archived-session",
+      "--full",
       "--json",
     ];
 
@@ -380,11 +561,211 @@ describe("cctl workflow status", () => {
     expect(result.stdout).toContain("repair: round 4 declined");
     // The omission is explicit and names the command that reveals the rest
     // (steering: a cap without disclosure is a defect).
-    expect(result.stdout).toContain("findings: 2 total, 1 shown");
-    expect(result.stdout).toContain("cctl workflow status --json");
+    expect(result.stdout).toContain(
+      "findings: 2 total, 1 shown — rest: cctl workflow status --halt",
+    );
     // The contexts table still renders beneath the halt block.
     expect(result.stdout).toContain("phase-b");
     expect(result.stdout).toContain("1/3");
+  });
+
+  it("carries the same bounded halt block in --json as the text block shows", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        execution: {
+          ...execution,
+          status: "halted",
+          haltReason: planDefectHalt,
+          planRepairRounds: [
+            {
+              seq: 4,
+              contextId: "phase-b",
+              haltType: "plan_defect",
+              outcome: "declined",
+            },
+          ],
+        },
+      }),
+    );
+    const result = await runCli(
+      ["workflow", "status", "--json"],
+      baseEnv,
+      host,
+    );
+
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.execution.halted).toBe(true);
+    expect(envelope.execution.haltType).toBe("plan_defect");
+    expect(envelope.halt).toEqual({
+      type: "plan_defect",
+      contextId: "phase-b",
+      summary: null,
+      findings: [
+        {
+          title: "Criterion 3 requires a schema this context never owns",
+          conflictingContract: "acceptance criterion 3",
+        },
+      ],
+      omission: {
+        total: 2,
+        returned: 1,
+        truncated: true,
+        reveal: "cctl workflow status --halt",
+      },
+      repair: { seq: 4, outcome: "declined" },
+    });
+  });
+
+  // An addressed status read must name its own addressing in the reveal: the
+  // ambient `cctl workflow status --halt` resolves the session's CURRENT
+  // execution, which is not the execution this table just described.
+  it("names the addressed execution in the halt reveal", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        execution: {
+          ...execution,
+          id: "exec-history-7",
+          status: "halted",
+          haltReason: planDefectHalt,
+          planRepairRounds: [],
+        },
+      }),
+    );
+    const argv = ["workflow", "status", "exec-history-7"];
+    const reveal = "cctl workflow status exec-history-7 --halt";
+
+    const text = await runCli(argv, baseEnv, host);
+    const structured = await runCli([...argv, "--json"], baseEnv, host);
+
+    expect(text.stdout).toContain(`rest: ${reveal}`);
+    expect(text.stdout).toContain(`next: ${reveal}`);
+    const envelope = JSON.parse(structured.stdout);
+    expect(envelope.next).toBe(reveal);
+    expect(envelope.halt.omission.reveal).toBe(reveal);
+  });
+
+  it("carries the caller's --project/--session flags in the halt reveal", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        execution: {
+          ...execution,
+          id: "exec-history-7",
+          status: "halted",
+          haltReason: planDefectHalt,
+          planRepairRounds: [],
+        },
+      }),
+    );
+    const argv = [
+      "workflow",
+      "status",
+      "exec-history-7",
+      "--project",
+      "another-project",
+      "--session",
+      "archived-session",
+    ];
+    const reveal =
+      "cctl workflow status exec-history-7 --project another-project --session archived-session --halt";
+
+    const text = await runCli(argv, baseEnv, host);
+    const structured = await runCli([...argv, "--json"], baseEnv, host);
+
+    expect(text.stdout).toContain(`rest: ${reveal}`);
+    expect(text.stdout).toContain(`next: ${reveal}`);
+    const envelope = JSON.parse(structured.stdout);
+    expect(envelope.next).toBe(reveal);
+    expect(envelope.halt.omission.reveal).toBe(reveal);
+  });
+
+  it("--halt reveals every finding the bounded block dropped, in full", async () => {
+    const rounds = [
+      {
+        seq: 4,
+        contextId: "phase-b",
+        haltType: "plan_defect",
+        outcome: "declined",
+      },
+    ];
+    const host = makeHost(() =>
+      jsonResponse({
+        execution: {
+          ...execution,
+          status: "halted",
+          haltReason: planDefectHalt,
+          planRepairRounds: rounds,
+        },
+      }),
+    );
+    const structured = await runCli(
+      ["workflow", "status", "--halt", "--json"],
+      baseEnv,
+      host,
+    );
+    const text = await runCli(["workflow", "status", "--halt"], baseEnv, host);
+
+    const envelope = JSON.parse(structured.stdout);
+    expect(envelope.view).toBe("halt");
+    expect(envelope.haltReason).toEqual(planDefectHalt);
+    expect(envelope.planRepairRounds).toEqual(rounds);
+    // The fields the bounded block has no vocabulary for are readable here.
+    expect(text.stdout).toContain(
+      "The charter's non-goals exclude the migration task 2 assumes",
+    );
+    expect(text.stdout).toContain("The exclusion is a charter clause.");
+  });
+
+  it("names the halt selector for a reason the table has no vocabulary for", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        execution: {
+          ...execution,
+          status: "halted",
+          haltReason: {
+            type: "delivery_gate_failed",
+            instruction: "Fix the failing criterion, then resume.",
+          },
+        },
+      }),
+    );
+    const text = await runCli(["workflow", "status"], baseEnv, host);
+    const structured = await runCli(
+      ["workflow", "status", "--json"],
+      baseEnv,
+      host,
+    );
+
+    // The type name is not an account of the halt, so the compact read says
+    // where the reason, its code, and its instruction live.
+    expect(text.stdout).toContain("halted: delivery_gate_failed");
+    expect(text.stdout).toContain("next: cctl workflow status --halt");
+    expect(JSON.parse(structured.stdout).next).toBe(
+      "cctl workflow status --halt",
+    );
+    expect(JSON.parse(structured.stdout).halt).toBeUndefined();
+  });
+
+  it("names no halt selector while the run is healthy", async () => {
+    const host = makeHost(() => jsonResponse({ execution }));
+    const result = await runCli(
+      ["workflow", "status", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(JSON.parse(result.stdout).next).toBeUndefined();
+  });
+
+  it("--halt says so plainly when the execution is not halted", async () => {
+    const host = makeHost(() => jsonResponse({ execution }));
+    const result = await runCli(
+      ["workflow", "status", "--halt"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("exec-1  running  not halted");
   });
 
   it("omits the repair line when no plan-repair round answered the halt", async () => {
@@ -1195,6 +1576,26 @@ describe("cctl workflow wait", () => {
     });
   });
 
+  // A single unreadable body is a transient the next poll clears; a streak
+  // means the binary and the server disagree about the response shape, and
+  // polling on turns that disagreement into a silent hang.
+  it("fails loud after a streak of unreadable result bodies", async () => {
+    const host = makeHost(() => jsonResponse({ result: "not-a-boundary" }));
+
+    const result = await runCli(
+      ["workflow", "wait", "exec-wait-1", "--cursor", "40", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(host.requests).toHaveLength(3);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
+      error: "unexpected workflow wait response from the CC server",
+    });
+  });
+
   it("returns a continuation receipt on disconnect without cancelling or mutating", async () => {
     const host = makeHost(() => {
       throw new Error("socket closed");
@@ -1796,7 +2197,76 @@ describe("cctl workflow task complete", () => {
     expect(result.stdout).toContain("completed task-1");
   });
 
-  it("emits the remaining-count hint when there is no stop instruction", async () => {
+  // Shell substitution has blanked a backticked summary in production, so the
+  // file source must deliver the bytes the agent wrote, verbatim.
+  it("sends the summary read from --summary-file, backticks intact", async () => {
+    const host = makeHost(
+      () => jsonResponse({ ok: true, remainingTaskCount: 0 }),
+      {
+        ".cc/temp/summary.md": "Ran `bun test`; 12 files green.\n",
+      },
+    );
+    const result = await runCli(
+      [
+        "workflow",
+        "task",
+        "complete",
+        "task-1",
+        "--summary-file",
+        ".cc/temp/summary.md",
+      ],
+      laneEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(host.requests[0]?.init.body ?? "{}")).toEqual({
+      executionId: "exec-7",
+      summary: "Ran `bun test`; 12 files green.",
+    });
+  });
+
+  it("refuses --summary together with --summary-file before any request", async () => {
+    const host = makeHost(
+      () => jsonResponse({ ok: true, remainingTaskCount: 0 }),
+      {
+        ".cc/temp/summary.md": "from the file",
+      },
+    );
+    const result = await runCli(
+      [
+        "workflow",
+        "task",
+        "complete",
+        "task-1",
+        "--summary",
+        "inline",
+        "--summary-file",
+        ".cc/temp/summary.md",
+      ],
+      laneEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it("names the file alternative when neither source is passed", async () => {
+    const host = makeHost(() => jsonResponse({ ok: true }));
+    const result = await runCli(
+      ["workflow", "task", "complete", "task-1"],
+      laneEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("--summary-file");
+  });
+
+  // The remaining count is the outcome of the call, not an optional next step:
+  // it is primary output, and no `hint:` competes with it.
+  it("states the remaining count in the primary body when there is no stop instruction", async () => {
     const host = makeHost(() =>
       jsonResponse({ ok: true, remainingTaskCount: 3 }),
     );
@@ -1806,10 +2276,12 @@ describe("cctl workflow task complete", () => {
       host,
     );
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("hint: 3 tasks remain in this context");
+    expect(result.stdout).toBe(
+      "completed task-1\n3 tasks remain in this context\n",
+    );
   });
 
-  it("singularizes the remaining-count hint for one task", async () => {
+  it("singularizes the remaining count for one task", async () => {
     const host = makeHost(() =>
       jsonResponse({ ok: true, remainingTaskCount: 1 }),
     );
@@ -1818,7 +2290,8 @@ describe("cctl workflow task complete", () => {
       laneEnv,
       host,
     );
-    expect(result.stdout).toContain("hint: 1 task remains in this context");
+    expect(result.stdout).toContain("1 task remains in this context");
+    expect(result.stdout).not.toContain("hint:");
   });
 
   it("prints the stop instruction verbatim and OMITS the hint on rotation", async () => {
@@ -1839,7 +2312,7 @@ describe("cctl workflow task complete", () => {
     expect(result.stdout).not.toContain("tasks remain");
   });
 
-  it("carries the stop instruction in the json envelope, without a hint", async () => {
+  it("carries the stop instruction in the json envelope, with no hint at all", async () => {
     const stop = "CONTEXT LIMIT REACHED. End your turn now.";
     const host = makeHost(() =>
       jsonResponse({ ok: true, remainingTaskCount: 2, stopInstruction: stop }),
@@ -1899,13 +2372,14 @@ describe("cctl workflow task complete", () => {
     expect(out).toContain(
       "reminder: This lane is autonomous — use `cctl workflow collab request`.",
     );
-    expect(out).toContain("hint: 2 tasks remain in this context");
-    // Tier order (doc 04 §5.1): primary output → reminders → hint.
+    expect(out).toContain("2 tasks remain in this context");
+    // Tier order (doc 04 §5.1): primary output → reminders.
     const primaryIdx = out.indexOf("completed task-1");
+    const countIdx = out.indexOf("2 tasks remain in this context");
     const reminderIdx = out.indexOf("reminder:");
-    const hintIdx = out.indexOf("hint:");
-    expect(primaryIdx).toBeLessThan(reminderIdx);
-    expect(reminderIdx).toBeLessThan(hintIdx);
+    expect(primaryIdx).toBeLessThan(countIdx);
+    expect(countIdx).toBeLessThan(reminderIdx);
+    expect(out).not.toContain("hint:");
   });
 
   it("carries reminders in the --json envelope on success", async () => {

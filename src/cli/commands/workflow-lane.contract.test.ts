@@ -314,7 +314,7 @@ describe("cctl workflow lane verbs against the real lane route handlers", () => 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("completed task-plan-1");
     // The fixture context has one task; completing it leaves zero remaining.
-    expect(result.stdout).toContain("hint: 0 tasks remain in this context");
+    expect(result.stdout).toContain("0 tasks remain in this context");
   });
 
   it("task complete surfaces the real rotation-gate stop instruction, no hint", async () => {

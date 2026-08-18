@@ -233,6 +233,60 @@ describe("cctl agent run --wait", () => {
     expect(result.stderr).toContain("boom");
   });
 
+  it("exits 1 on a streak of unreadable status responses instead of polling on", async () => {
+    let gets = 0;
+    const host = makeHost((req) => {
+      if (req.init.method === "POST") return jsonResponse({ runId: "run-7" });
+      gets++;
+      return jsonResponse({ runId: "run-7", state: "in-flight" });
+    });
+
+    const result = await runCli(
+      ["agent", "run", "--file", "prompt.json", "--wait", "--timeout", "10m"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      "unexpected status response from the CC server",
+    );
+    expect(result.stderr).not.toContain("still running");
+    expect(gets).toBe(3);
+  });
+
+  it("polls on through an isolated unreadable status response", async () => {
+    let gets = 0;
+    const host = makeHost((req) => {
+      if (req.init.method === "POST") return jsonResponse({ runId: "run-7" });
+      gets++;
+      if (gets === 1) return jsonResponse({ runId: "run-7", state: "??" });
+      if (gets === 2)
+        return jsonResponse({
+          runId: "run-7",
+          backend: "codex",
+          status: "running",
+        });
+      if (gets === 3) return jsonResponse({ runId: "run-7", state: "??" });
+      return jsonResponse({
+        runId: "run-7",
+        backend: "codex",
+        status: "completed",
+        summary: "survived the blips",
+        referenceDocuments: [],
+      });
+    });
+
+    const result = await runCli(
+      ["agent", "run", "--file", "prompt.json", "--wait", "--timeout", "10m"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("survived the blips");
+  });
+
   it("exits 1 with a status-recovery hint when the client budget elapses", async () => {
     const host = makeHost((req) => {
       if (req.init.method === "POST") return jsonResponse({ runId: "run-7" });

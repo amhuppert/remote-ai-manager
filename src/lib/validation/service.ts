@@ -41,6 +41,7 @@ import type {
 } from "./schemas";
 import { resolveValidationExecution } from "./command-resolution";
 import { resolveSubmissionCost } from "./cost-resolution";
+import { countMatchedScopePaths } from "./scope-match";
 
 const defaultLogger = createLogger("validation");
 
@@ -366,6 +367,12 @@ export function createValidationService(
   >();
   /** Spawn parameters for queued runs awaiting pump admission. */
   const preparedSpawns = new Map<string, SpawnValidationParams>();
+  /**
+   * Matched-file count per live run, recorded at submission for the runs that
+   * named their own paths. Only the submission-time resolution can answer it:
+   * once the wrapper is running, the tree it walks may already differ.
+   */
+  const scopeMatches = new Map<string, number>();
   /** Runs whose in-flight cancellation must finalize as interrupted. */
   const forcedVerdicts = new Map<string, "interrupted">();
   /**
@@ -543,6 +550,7 @@ export function createValidationService(
     if (!released) return false;
     handles.take(runId);
     preparedSpawns.delete(runId);
+    scopeMatches.delete(runId);
     forcedVerdicts.delete(runId);
     pendingSpawnCancels.delete(runId);
     const phase: ValidationRunEventPhase =
@@ -554,6 +562,12 @@ export function createValidationService(
     observeTerminalCompletion(runId, result, phase);
     void pumpQueue();
     return true;
+  }
+
+  /** Present only for runs whose scope the server resolved into a file list. */
+  function matchedFiles(runId: string): { filesMatched?: number } {
+    const filesMatched = scopeMatches.get(runId);
+    return filesMatched === undefined ? {} : { filesMatched };
   }
 
   function mapOutcome(
@@ -577,6 +591,7 @@ export function createValidationService(
                 runId,
                 exitCode: 0,
                 output: outcome.output,
+                ...matchedFiles(runId),
               },
             }
           : {
@@ -586,6 +601,7 @@ export function createValidationService(
                 runId,
                 exitCode: outcome.exitCode,
                 output: outcome.output,
+                ...matchedFiles(runId),
               },
             };
       case "timed_out":
@@ -721,6 +737,7 @@ export function createValidationService(
     const pumped = deps.scheduler.pump({ limit: global.concurrencyLimit });
     for (const row of pumped.oversized) {
       preparedSpawns.delete(row.runId);
+      scopeMatches.delete(row.runId);
       observeTerminalCompletion(
         row.runId,
         {
@@ -960,6 +977,13 @@ export function createValidationService(
       effectiveScope: execution.effectiveScope,
       scopedPathCount: execution.scopePaths.length,
     });
+    // Forwarded paths are the only scope the server itself resolves into a
+    // file list; a changed or full run is narrowed inside the wrapper, which
+    // never reports back, so those runs carry no count rather than a guess.
+    const filesMatched =
+      execution.scopePaths.length > 0
+        ? countMatchedScopePaths(execution.scopePaths, resolved.worktreePath)
+        : null;
     const submission: ValidationRunSubmission = {
       runId,
       source: request.source,
@@ -1060,6 +1084,7 @@ export function createValidationService(
       case "queued": {
         locallyOwned.add(runId);
         preparedSpawns.set(runId, spawnParams);
+        if (filesMatched !== null) scopeMatches.set(runId, filesMatched);
         publishPhase("queued", { ...meta, effectiveScope, runId });
         return {
           kind: "accepted",
@@ -1074,6 +1099,7 @@ export function createValidationService(
       case "admitted": {
         locallyOwned.add(runId);
         preparedSpawns.set(runId, spawnParams);
+        if (filesMatched !== null) scopeMatches.set(runId, filesMatched);
         await spawnAdmitted(decision.record);
         return {
           kind: "accepted",

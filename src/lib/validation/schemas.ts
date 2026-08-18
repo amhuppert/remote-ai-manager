@@ -230,6 +230,14 @@ export type ValidationRunSource = z.infer<typeof validationRunSourceSchema>;
 
 const runIdSchema = z.string().trim().min(1);
 
+// How many of the paths the submission named exist in the target worktree.
+// Absent when the run named none, because the wrapper resolves that scope
+// itself and the server never learns which files it reached. Zero is the
+// vacuous-run signal: a mistyped path narrows the run to nothing and the
+// wrapper still exits 0, so the verdict must be readable as "green over
+// nothing" rather than as a pass.
+const filesMatchedSchema = z.number().int().nonnegative().optional();
+
 // Submission/run outcomes shared by the service, CLI, and gate callers.
 // Refusals (`capacity_unavailable`, `cost_exceeds_limit`, `command_not_found`)
 // and the pre-admission no-op (`skipped_by_policy`) occur before a run
@@ -261,6 +269,7 @@ export const validationRunResultSchema = z.discriminatedUnion("kind", [
     runId: runIdSchema,
     exitCode: z.number().int(),
     output: z.string(),
+    filesMatched: filesMatchedSchema,
   }),
   z.object({
     kind: z.literal("failed"),
@@ -268,6 +277,7 @@ export const validationRunResultSchema = z.discriminatedUnion("kind", [
     // Null when the process could not be spawned at all.
     exitCode: z.number().int().nullable(),
     output: z.string(),
+    filesMatched: filesMatchedSchema,
   }),
   z.object({
     kind: z.literal("timed_out"),

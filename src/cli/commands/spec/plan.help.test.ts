@@ -137,7 +137,7 @@ describe("cctl spec plan help", () => {
         "bounded to ten items each",
       );
       expect(text, `${path.join(" ")}: no omission accounting`).toContain(
-        "omitted",
+        "total, shown, and the read that returns the rest",
       );
     }
   });

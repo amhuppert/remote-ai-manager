@@ -23,7 +23,7 @@ cctl validate run build --wait
 cctl validate run lint --wait
 ```
 
-`test` defaults to `--scope changed`, narrowing to the diff against the target branch, so a green run speaks for the changed files rather than the branch; pass `--scope full` when the claim is that the whole branch passes. A changed-scope run passes when zero files match, so a mistyped path after `--` is a silent green.
+`test` defaults to `--scope changed`, narrowing to the diff against the target branch, so a green run speaks for the changed files rather than the branch; pass `--scope full` when the claim is that the whole branch passes. A changed-scope run passes when zero files match, so a mistyped path after `--` still exits 0 — read the verdict line, which names the matched-file count and says `0 files matched — vacuous pass` when there were none, or pass `--require-match` to make it exit 1.
 
 `typecheck` runs the full-project `tsc` check only — it is the fast in-loop check during implementation. The architecture seam ratchet is the `seams` command and the production build (Next.js + CLI bundle) is the `build` command. Merge gates (`preMerge`, `laneMerge`) run `typecheck`, `seams`, and `test` but not `build`; the client bundle can break on changes `tsc` accepts, so run `build` at checkpoints and before claiming a branch is merge-ready, not every iteration.
 

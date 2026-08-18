@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   BUILD_MISMATCH_HEADER,
+  BUILD_SKEW_CODE,
   buildMismatchHeaderValue,
   parseBuildMismatchHeader,
 } from "./build-parity";
@@ -43,5 +44,13 @@ describe("parseBuildMismatchHeader", () => {
 describe("BUILD_MISMATCH_HEADER", () => {
   it("is the header name both sides already agreed on", () => {
     expect(BUILD_MISMATCH_HEADER).toBe("x-cc-build-mismatch");
+  });
+});
+
+describe("BUILD_SKEW_CODE", () => {
+  it("is the refusal code the middleware emits and the CLI exits 4 on", () => {
+    // Changing this string silently downgrades a skewed mutation refusal to a
+    // generic 409 (exit 1) on any binary that still expects the old spelling.
+    expect(BUILD_SKEW_CODE).toBe("build_skew");
   });
 });

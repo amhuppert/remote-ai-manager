@@ -920,7 +920,8 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
     });
 
     // CLI surface (21.3): `cctl workflow status --json` reads the same route
-    // and surfaces the machine-readable halt code with its instruction.
+    // and names the halt code; the selector it points at carries the whole
+    // machine-readable reason with its instruction.
     const cliStatus = await runCli(
       ["workflow", "status", "--json"],
       cliEnv,
@@ -929,16 +930,26 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
     expect(cliStatus.exitCode).toBe(0);
     const cliBody = JSON.parse(cliStatus.stdout) as {
       ok: boolean;
-      execution: {
-        status: string;
-        haltReason: { type: string; instruction: string } | null;
-      };
+      execution: { status: string; halted: boolean; haltType: string | null };
+      next: string;
     };
     expect(cliBody.execution.status).toBe("halted");
-    expect(cliBody.execution.haltReason).toMatchObject({
+    expect(cliBody.execution.halted).toBe(true);
+    expect(cliBody.execution.haltType).toBe("delivery_gate_failed");
+    expect(cliBody.next).toBe("cctl workflow status --halt");
+
+    const cliHalt = await runCli(
+      ["workflow", "status", "--halt", "--json"],
+      cliEnv,
+      bridgeHost(world),
+    );
+    const haltBody = JSON.parse(cliHalt.stdout) as {
+      haltReason: { type: string; instruction: string } | null;
+    };
+    expect(haltBody.haltReason).toMatchObject({
       type: "delivery_gate_failed",
     });
-    expect(cliBody.execution.haltReason?.instruction.length).toBeGreaterThan(0);
+    expect(haltBody.haltReason?.instruction.length).toBeGreaterThan(0);
     // The compact human rendering names the halt code too.
     const cliHuman = await runCli(
       ["workflow", "status"],

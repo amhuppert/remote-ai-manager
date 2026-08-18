@@ -2,10 +2,11 @@ import { z } from "zod";
 import { BUILD_INFO, formatBuildStamp } from "@/lib/build-info";
 import { getErrorMessage } from "@/lib/shared/errors";
 import {
-  EXIT_CONNECTION,
   EXIT_OK,
   EXIT_OPERATION_FAILED,
   EXIT_USAGE,
+  checkFlags,
+  connectionFailure,
   failure,
   readSessionEnv,
   render,
@@ -44,10 +45,14 @@ const handshakeResponseSchema = z.object({
  */
 export async function runDoctor(
   flags: GlobalFlags,
+  values: Record<string, string>,
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
+  const denied = checkFlags(values, "doctor", json);
+  if (denied) return denied;
+
   const server = flags.server ?? env["CC_SERVER_URL"];
   if (!server) {
     return failure({
@@ -79,8 +84,7 @@ export async function runDoctor(
   try {
     response = await host.fetch(url.toString(), { method: "GET", headers });
   } catch (error) {
-    return failure({
-      exitCode: EXIT_CONNECTION,
+    return connectionFailure({
       message: `cctl doctor: cannot reach the CC server at ${server} — is the CC server running?`,
       detail: getErrorMessage(error),
       hint: "start the CC server, then re-run `cctl doctor`",
@@ -93,8 +97,7 @@ export async function runDoctor(
       token === null
         ? "cctl doctor: no API token — pass --token, set CC_API_TOKEN, or run the CC server once to provision <configDir>/api-token"
         : `cctl doctor: the server rejected the API token (source: ${tokenSource})`;
-    return failure({
-      exitCode: EXIT_CONNECTION,
+    return connectionFailure({
       message,
       hint: "pass --token or set CC_API_TOKEN to the server's <configDir>/api-token value, then re-run `cctl doctor`",
       json,

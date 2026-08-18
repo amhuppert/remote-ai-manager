@@ -1,8 +1,9 @@
 # CLI (`cctl`) Design Principles
 
 `cctl` is the primary interface agents use to act on Command Center. Full design history lives in
-`docs/design/cc-cli/` (especially `01-cli-foundation.md` §6 and
-`04-progressive-disclosure.md`).
+`docs/design/cc-cli/` (especially `01-cli-foundation.md` §6, `04-progressive-disclosure.md`, and
+`09-policy-ownership-hardening.md`, which records why each policy below has exactly one owner and
+which audit finding earned it).
 
 ## Principle ownership
 
@@ -23,17 +24,35 @@ invariants. Do not copy the generic principle prose back into it.
 ## Command Center output and query disclosure
 
 - Render terse, line-oriented text by default for an agent to read. `--json` is opt-in for output
-  that feeds code. For every new or changed query, it preserves the selected disclosure level and
-  changes serialization, never volume or field selection. Legacy `workflow status --json` is the
-  explicit exception: it still returns the full active-execution payload. Native SDD `spec status
-  --json` is the other legacy exception: its text sections are bounded while its structured status
-  projection carries every row. Both are migration debt, not patterns to copy.
+  that feeds code. For every query, it preserves the selected disclosure level and changes
+  serialization, never volume or field selection. `src/cli/json-volume-exceptions.ts` is the
+  declare-or-fail list of exceptions and holds exactly two: `validate run` (a pass's text relays a
+  20-line output tail while the envelope carries the captured output in full) and `validate status`
+  (the single-run text is a one-line status while the envelope carries the terminal result with its
+  full output — the read the pass tail points at). An exception is a reviewed edit to that list,
+  carrying the change that deletes it, and an entry naming a command the registry no longer has
+  fails its contract test.
+- `workflow status` and `spec status` are the worked examples of retiring a dump. Status defaults
+  to the projection its own table renders; `workflow status --halt` returns the whole structured
+  halt reason and its repair log, `workflow status --full` the unstripped execution record, and
+  `spec status --full` every row of the sections the default bounds to ten. Each selector past the
+  budget writes the artifact its manifest names rather than truncating a pipe.
 - Every new or changed query defaults to a bounded digest or outline unless its leaf help names an
   established explicit detail selector. Its stable handles appear verbatim in outline rows and are
   accepted by their drill-down commands.
 - Any omission in a new or changed query is explicit in text and JSON: state `total`, `returned`,
   and `truncated`, then name the exact follow-up command that reveals the omitted data. A cap
   without disclosure is a defect.
+- **Bounded output goes through one primitive.** `src/cli/disclosure.ts` owns it.
+  `boundedItems(items, cap, reveal)` caps any item set — structured payload rows included — and
+  `boundedRows` is its rendered-string form. Both return the `Omission` fragment that spreads into
+  the JSON envelope and renders as the same `N total, M shown — rest: <command>` line in text, so
+  the two serializations cannot report different counts or point at different reads;
+  `reveal` lives only on the truncated arm, so a silent cap does not typecheck. `emitLarge` decides
+  inline-versus-artifact against a stdout budget (60_000 bytes by default) and returns the manifest
+  — path, format, byte count, SHA-256 content digest, and reason — that stdout carries in place of
+  the content. Do not hand-roll a cap, a spill, or a `total`/`shown` line; a row may be a
+  multi-line block, and the cap counts rows rather than lines.
 - Native SDD `spec show` uses a four-level ladder: `--summary` for counts, a bounded nested outline
   by default, one-element detail through `spec get`, and file-backed artifacts for `--rendered`
   and `--full`. Artifact stdout is a small manifest with the path, format, byte count, SHA-256
@@ -57,19 +76,41 @@ group module hand-lists its verbs. `dispatchGroup` throws when its handler map d
 registry (a verb wired into dispatch without an entry, or an entry with no handler), and the
 contract test drives every group node through it, so drift fails the suite instead of shipping.
 
+**The root is a group too.** `dispatchCli` dispatches `group: []`, whose children are the
+registry's level-1 entries — leaves (`ask`, `notify`, `doctor`, `version`) sit in the same handler
+map as the groups, so a level-1 command can no longer exist in help while being unreachable from
+dispatch, or vice versa. The root keeps its own two failure texts (a bare `cctl` prints the usage
+index; an unrecognized first token is `unknown command`), and the contract test drives every
+level-1 entry through `runCli`. `help` is intercepted before dispatch and has no registry entry.
+
+**Load-bearing prose declares `fileSource: true`.** A `kind: "value"` flag whose content the shell
+can corrupt — a task summary, a brief, a note body — sets that one bit on its `CommandHelpEntry`,
+and the paired `--<name>-file <path>` (`-` reads stdin) is derived from it everywhere at once:
+parser acceptance, the `checkFlags` allowlist, and the rendered flag list. The command reads the
+value through `resolveProseArg` (`src/cli/shared.ts`), which refuses both sources at once, an
+unreadable or empty file, and anything past 256 KiB with exit `2` before any request. Never
+hand-add a second flag for the same content — that pair is what drifts.
+
 **When adding or changing a command/subcommand/flag, you MUST:**
 
 1. Add/update the `CommandHelpEntry` (summary, description, usage, flags, ≥1 example for leaves).
-2. Wire flags through the registry — never a literal allowlist at the `checkFlags` call site.
+2. Declare the flags on the entry — that is the whole wiring. `checkFlags(values, "<space-joined
+   entry path>", json)` takes the registry key and derives the allowlist itself; there is no
+   name-list parameter, so a hand-written allowlist is unrepresentable and a key naming no entry
+   throws at the call rather than silently allowing nothing.
 3. Add `related` edges both ways (the new node points at siblings; siblings point back when apt).
 4. Add `skills` refs where a skill materially helps (repo-relative path — contract-tested).
 5. Run the registry contract test (`help-registry.contract.test.ts`) — it enforces
    dispatch↔registry agreement (via `dispatchGroup`, see below), graph-edge resolution,
    skill-path existence, and boolean/value flag-name consistency.
-6. Regenerate the `cc-cli` SKILL.md command reference: `bun scripts/cc-cli-skill-reference.ts`
-   (the block between the `GENERATED COMMAND REFERENCE` markers is derived from the registry;
-   `bun run cli:skill-ref` and `cc-cli-skill-reference.test.ts` fail if it drifts). The
-   rich per-group prose stays hand-authored.
+6. Regenerate the `cc-cli` SKILL.md generated blocks: `bun scripts/cc-cli-skill-reference.ts`
+   (the `GENERATED COMMAND REFERENCE` block derives from the registry, the `GENERATED EXIT CODES`
+   block from `EXIT_TAXONOMY`; `bun run cli:skill-ref` and `cc-cli-skill-reference.test.ts` fail if
+   either drifts). The rich per-group prose stays hand-authored, and the same test lints it: a
+   `cctl …` line inside a fenced block outside the generated markers must name a real command and,
+   when it carries placeholders, be one of that command's registry usage shapes VERBATIM. Prefer
+   deleting a restated shape and pointing at the generated reference — a hand-copied verb list
+   cannot be checked for the verb it omits.
 
 ## Help never fails, and is static-first
 
@@ -85,14 +126,81 @@ read-only.
 
 CC renders primary output → detail/issues → `reminder:` lines → `hint:` line and carries the same
 facts in JSON as `error`/`issues`/`code`/`instruction`/`reminders`/`hint`. The legacy
-`stopInstruction` spelling remains only where the workflow protocol still emits it. The server
-authors reminders through directly tested state rules such as
-`src/lib/workflow-graph/lane-reminders.ts`; the CLI only renders them.
+`stopInstruction` spelling remains only where the workflow protocol still emits it, and
+`stop-instruction.arch.test.ts` pins it to those files so a new command cannot spread it. One seam in
+`src/cli/shared.ts` arbitrates the tiers for success and failure alike: an `instruction` suppresses
+the `hint` in both modes, and the `hint` is flattened to the single line it promises.
+
+The server authors reminders through directly tested state rules such as
+`src/lib/workflow-graph/lane-reminders.ts`. The single exception is the enumerated
+`CLIENT_ADVISORIES` constant in `src/cli/shared.ts`: invariants about the caller's own filesystem,
+which no server can observe. Adding a client reminder means editing that list — with the recorded
+failure that earned it — in review; everything else is server-authored and only rendered by the CLI.
+
+The guidance prefixes are the five enumerated in `src/cli/guidance-prefixes.ts` — `instruction:`,
+`reminder:`, `hint:`, `next:` (the machine-composed drill-down pointer), and `context:` (help
+garnish). A sixth spelling does not add a meaning, it makes the other five ambiguous, so
+`guidance-prefix.arch.test.ts` fails on a line that opens with a competing one. A `label: value`
+line inside a command's own body is data, not guidance. `hint-tokens.arch.test.ts` resolves the
+`cctl …` paths named in CLI text against the registry, so renaming a verb breaks the guidance that
+still points at the old one.
 
 CC implements the shared exit taxonomy as `0` success, `1` operation failure, `2` local usage or
-validation failure, `3` connection/auth failure, and reserved `4` version mismatch. Exit-3 output
-points at `cctl doctor`. Routes retain computed error detail as `{ error, code?, issues? }`; local
-flag, identity, and payload checks fail before a network request.
+validation failure, `3` connection/auth failure, and `4` build skew — the binary and the server are
+different builds. The "nothing changed" promise is scoped to the paths that earn it: a gated server
+refuses a mutation before its handler runs and a read's response is discarded unread, but a server
+that predates the gate runs a skewed mutation and only stamps the header, so that exit-4 text warns
+the mutation may have committed and to verify before retrying. That table is data (`EXIT_TAXONOMY` in `src/cli/exit-taxonomy.ts`, with each
+code's meaning and recovery pointer): the `cctl exit-codes` command, its help node's rendered body,
+and the cc-cli SKILL.md exit-code table all derive from it rather than restating it, so a
+correction lands in one place instead of three. `exit-taxonomy.ts` sits below `shared.ts` in the
+import graph precisely so a `*.help.ts` entry can derive from it. Exit 3 is constructed only by
+`connectionFailure`, which appends the `cctl doctor` pointer; `workflow wait`'s disconnect is the
+one approved survivor, because its cursor-carrying `continue:` receipt recovers the still-running
+execution and a healthy-server diagnosis would not. Routes retain computed error detail as
+`{ error, code?, issues? }`; local flag, identity, and payload checks fail before a network request.
+
+## Blocking on a server-side job goes through one waiter
+
+`src/cli/job-wait.ts` (`awaitJob`) owns the policy every blocking wait shares: a client budget, a
+poll cadence, a consecutive-parse-failure tolerance, an optional cancellation hook, and forensic
+pointers appended to whatever failure the waiter authors. A command supplies only what it alone
+knows — how to fetch one status, what counts as terminal, and what to say when the budget runs out.
+Do not hand-roll a poll loop; four of them drifted into four contracts, one of which turned an
+unreadable status body into an endless poll. Two documented survivors sit outside `awaitJob`:
+`conversation compact --wait` hand-rolls its `awaitArtifact` poll (migration pending), and `fixture
+prompt --wait` blocks on the turn's SSE stream rather than a poll, delivering its forensic pointers
+through `withForensics`. **Every `onTimeout` names the continuation command that
+recovers the still-running job** (`workflow wait`'s cursor-carrying receipt is the reference
+implementation); the budget bounds the client wait only, never the server-side run.
+
+`--wait` means two different things and is deliberately not renamed. On `validate run` the command
+always blocks to a verdict and `--wait` chooses queue admission over a fail-fast refusal; on `agent
+run` and `workflow run` it chooses whether to block at all. Each leaf's help states its own
+contract — that is where the split is documented, and a rename would break the ecosystem's muscle
+memory for a naming issue with no recorded failure.
+
+`validate run` discloses what its verdict actually covers: a pass prints one verdict line with the
+resolved scope and, when the server resolved a file list, the matched-file count. A zero-match pass
+says so and still exits `0`, because merge gates depend on green semantics; `--require-match` is the
+opt-in ratchet that turns it into exit `1`.
+
+## `cctl logs` is an adapter, not an analyzer
+
+Log analysis belongs to `src/lib/logging/log-analysis`: which records parse, what counts as slow,
+how a trace is reconstructed, where the default log lives, and what the report says are all its
+decisions, and `bun run logs:analyze` runs the same engine. `src/cli/commands/logs.ts` owns only
+what the CLI contract owns — registry-declared flags forwarded to the engine's option names through
+one mapping table, the exit taxonomy, and egress through `render`/`failure` and the disclosure
+primitive. It must not reason about a log record, re-rank a finding, or learn a storage detail; a
+new analysis capability is a new engine verb the adapter exposes, never analysis written in the CLI.
+
+Two mappings are the CLI's own and deliberate. The engine's exit `3` ("nothing to analyze" — an
+empty filter result, an absent trace) becomes CC exit `1`, because CC reserves `3` for
+connection/auth failures whose recovery is `cctl doctor`. And because the command contacts no
+server, every global identity flag is refused with the record filter that was meant instead
+(`--session` → `--session-name`), rather than accepted as a silent no-op that would report on
+records the caller believes were excluded.
 
 ## Conversation scope: identity is scope-discriminated, never sentinel-shaped
 
@@ -115,6 +223,17 @@ Two rules follow, and both are enforced by tests:
   the ordinary `no session — pass --session or set CC_SESSION` usage error — that
   loud failure is the point of the neutralization. `session-env-inventory.arch.test.ts`
   fails on an unclassified new reader and on a stale entry.
+
+**A read may widen its own scope; a mutation never does.** `cctl` otherwise demands explicit
+`--project`/`--session` to touch another session, and the `conversation` group is the one
+carve-out: handed a bare conversation id its own scope answers 404 for, it resolves the owning
+project and session from the id alone (`GET /api/conversations/<id>`) and retries there. That is
+intended policy — a `<conversation-ref>` an agent is handed carries no scope, so requiring flags
+would make the reference unusable by the agent that received it. It is bounded three ways: only on
+a wrong-scope 404, only when the caller passed no explicit `--project`/`--session` (an explicit
+flag is an override to respect), and only for reads. `ticket attach conversation` uses the same
+lookup to READ its source conversation while the mutation still targets only the named ticket. A
+new command adopts the widening only inside those three bounds.
 
 Classifying a command session-only is a statement about the SERVER surface: the
 capability needs a session branch, worktree, or graph execution, so there is no

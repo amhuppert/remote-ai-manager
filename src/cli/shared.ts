@@ -1,6 +1,7 @@
 import path from "node:path";
 import {
   BUILD_MISMATCH_HEADER,
+  BUILD_SKEW_CODE,
   parseBuildMismatchHeader,
 } from "@/lib/agent-gateway/build-parity";
 import { BUILD_INFO, formatBuildStamp } from "@/lib/build-info";
@@ -11,7 +12,19 @@ import {
   type ConversationTarget,
 } from "@/lib/conversations/conversation-target";
 import { createLogger } from "@/lib/logging";
-import { booleanFlagNames, renderTopUsage } from "./help-registry";
+import {
+  EXIT_CONNECTION,
+  EXIT_OPERATION_FAILED,
+  EXIT_USAGE,
+  EXIT_VERSION_MISMATCH,
+} from "./exit-taxonomy";
+import { guidanceLine } from "./guidance-prefixes";
+import {
+  booleanFlagNames,
+  flagNamesFor,
+  renderTopUsage,
+} from "./help-registry";
+import { fileSourceFlagName } from "./help-types";
 import { flattenDiagnosticText } from "@/lib/shared/diagnostic-text";
 import { getErrorMessage } from "@/lib/shared/errors";
 import {
@@ -117,13 +130,22 @@ export interface CliHost {
   homedir: string;
 }
 
-// Exit codes per docs/design/cc-cli/01 §6.
-export const EXIT_OK = 0;
-export const EXIT_OPERATION_FAILED = 1;
-export const EXIT_USAGE = 2;
-export const EXIT_CONNECTION = 3;
-/** Reserved for a hard version-mismatch policy; mismatches today warn on stderr only. */
-export const EXIT_VERSION_MISMATCH = 4;
+/**
+ * The exit taxonomy is defined in `exit-taxonomy.ts`, which imports nothing, so
+ * a `*.help.ts` entry can derive its body from the table without cycling
+ * (`shared.ts` → `help-registry.ts` → `*.help.ts`). Command modules keep reading
+ * the codes from this kit.
+ */
+export {
+  EXIT_OK,
+  EXIT_OPERATION_FAILED,
+  EXIT_USAGE,
+  EXIT_CONNECTION,
+  EXIT_VERSION_MISMATCH,
+  EXIT_TAXONOMY,
+  exitTaxonomyLines,
+  type ExitCodeMeaning,
+} from "./exit-taxonomy";
 
 /**
  * Top-level usage — generated from the help registry's level-1 entries plus the
@@ -257,16 +279,22 @@ export function parseArgv(
 }
 
 /**
- * Reject any value flag outside the global set ∪ the command's extras. Keeps
- * `<command> --frob bar` at exit 2 even though the parser now defers
- * unknown-flag detection. Returns null when every flag is allowed.
+ * Reject any value flag outside the global set ∪ the flags the registry entry at
+ * `entryPath` declares. Keeps `<command> --frob bar` at exit 2 even though the
+ * parser defers unknown-flag detection. Returns null when every flag is allowed.
+ *
+ * The allowlist is only ever derived — taking the space-joined registry key
+ * rather than a name list makes a hand-written allowlist unrepresentable, which
+ * is what keeps help and flag enforcement from drifting apart (`cli.md`). The
+ * derivation is unconditional so a key naming no entry throws even when there is
+ * nothing to check.
  */
 export function checkFlags(
   values: Record<string, string>,
-  extraAllowed: readonly string[],
+  entryPath: string,
   json: boolean,
 ): CliResult | null {
-  const allowed = new Set<string>([...VALUE_FLAGS, ...extraAllowed]);
+  const allowed = new Set<string>([...VALUE_FLAGS, ...flagNamesFor(entryPath)]);
   for (const name of Object.keys(values)) {
     if (!allowed.has(name)) {
       return usageFailure(`unknown flag "--${name}"`, json);
@@ -312,38 +340,69 @@ function hasInstruction(envelope: JsonEnvelope): boolean {
   );
 }
 
+/**
+ * The tier policy, owned once for success and failure (doc 01 §6): a
+ * load-bearing instruction suppresses the advisory hint in BOTH modes — a
+ * "continue" hint must never sit beside a "stop". A command may pass its
+ * remaining-count `hint` and a rotation `instruction` together and trust this
+ * seam to never surface both.
+ *
+ * The hint is also flattened here. It PROMISES one line, and a hint assembled
+ * from server text or an untrusted value can carry a newline whose second line
+ * would be indistinguishable from a forged guidance line; the surface that
+ * promises the line is the one that guarantees it.
+ */
+function arbitrate(envelope: JsonEnvelope): JsonEnvelope {
+  const hint = envelope.hint;
+  if (hint === undefined) return envelope;
+  if (hasInstruction(envelope)) {
+    const withoutHint: JsonEnvelope = { ...envelope };
+    delete withoutHint.hint;
+    return withoutHint;
+  }
+  const flattened = flattenDiagnosticText(hint);
+  return flattened === hint ? envelope : { ...envelope, hint: flattened };
+}
+
+/**
+ * The text-mode guidance lines of an arbitrated envelope, in tier order
+ * (doc 04 §1.2/§5.1): the do-now instruction, then each keep-true `reminder:`,
+ * then the one advisory `hint:`.
+ *
+ * `instructionLine` is false where the caller's primary body already carries
+ * the instruction's human phrasing verbatim (its wording is command-specific —
+ * e.g. `ask`'s doc-frozen multi-line end-turn note), and true where the body is
+ * a one-line failure message that cannot.
+ */
+function guidanceLines(
+  envelope: JsonEnvelope,
+  instructionLine: boolean,
+): string[] {
+  const lines: string[] = [];
+  const instruction = envelope.instruction ?? envelope.stopInstruction;
+  if (instructionLine && instruction !== undefined) {
+    lines.push(guidanceLine("instruction", instruction));
+  }
+  for (const reminder of envelope.reminders ?? []) {
+    lines.push(guidanceLine("reminder", reminder));
+  }
+  if (envelope.hint !== undefined) {
+    lines.push(guidanceLine("hint", envelope.hint));
+  }
+  return lines;
+}
+
 export function render(
   json: boolean,
   humanStdout: string,
   envelope: JsonEnvelope,
 ): string {
-  // The one tier rule the renderer owns for every command: a load-bearing
-  // instruction suppresses the advisory hint, in BOTH modes — the two are
-  // mutually exclusive at the decision point (doc 01 §6). A command may pass its
-  // remaining-count `hint` and a rotation `instruction` together and trust the
-  // renderer to never surface both. The instruction's own HUMAN text stays in
-  // the caller's primary body (its phrasing is command-specific — e.g. `ask`'s
-  // doc-frozen multi-line end-turn note); the renderer only arbitrates the hint.
-  const instructionPresent = hasInstruction(envelope);
-  if (json) {
-    if (instructionPresent && envelope.hint !== undefined) {
-      const withoutHint: JsonEnvelope = { ...envelope };
-      delete withoutHint.hint;
-      return `${JSON.stringify(withoutHint)}\n`;
-    }
-    return `${JSON.stringify(envelope)}\n`;
-  }
-  // Text tier order (doc 04 §1.2/§5.1): primary body (which carries any
-  // instruction phrasing), then each reminder as a `reminder:` line, then the
-  // advisory `hint:` line last — omitted when an instruction is present.
-  let out = humanStdout;
-  if (envelope.reminders) {
-    for (const reminder of envelope.reminders) out += `reminder: ${reminder}\n`;
-  }
-  if (!instructionPresent && envelope.hint !== undefined) {
-    out += `hint: ${envelope.hint}\n`;
-  }
-  return out;
+  const arbitrated = arbitrate(envelope);
+  if (json) return `${JSON.stringify(arbitrated)}\n`;
+  const lines = guidanceLines(arbitrated, false);
+  return lines.length === 0
+    ? humanStdout
+    : `${humanStdout}${lines.join("\n")}\n`;
 }
 
 export interface FailureInput {
@@ -366,29 +425,52 @@ export interface FailureInput {
 }
 
 export function failure(input: FailureInput): CliResult {
+  const envelope = arbitrate({
+    ok: false,
+    error: input.message,
+    ...(input.issues && input.issues.length > 0
+      ? { issues: input.issues }
+      : {}),
+    ...(input.code ? { code: input.code } : {}),
+    ...(input.details ? { details: input.details } : {}),
+    ...(input.reminders && input.reminders.length > 0
+      ? { reminders: input.reminders }
+      : {}),
+    ...(input.instruction ? { instruction: input.instruction } : {}),
+    ...(input.hint ? { hint: input.hint } : {}),
+  });
+  // Text tier order (doc 04 §5.1): message -> detail/issues -> guidance.
   const stderrLines = [input.message];
   if (input.detail) stderrLines.push(input.detail);
-  if (!input.json && input.instruction)
-    stderrLines.push(`instruction: ${input.instruction}`);
-  // Text tier order (doc 04 §5.1): message -> detail/issues -> reminders -> hint.
-  if (!input.json && input.reminders) {
-    for (const reminder of input.reminders)
-      stderrLines.push(`reminder: ${reminder}`);
-  }
-  if (!input.json && input.hint) stderrLines.push(`hint: ${input.hint}`);
-  const envelope: JsonEnvelope = { ok: false, error: input.message };
-  if (input.issues && input.issues.length > 0) envelope.issues = input.issues;
-  if (input.code) envelope.code = input.code;
-  if (input.details) envelope.details = input.details;
-  if (input.reminders && input.reminders.length > 0)
-    envelope.reminders = input.reminders;
-  if (input.instruction) envelope.instruction = input.instruction;
-  if (input.hint && !input.instruction) envelope.hint = input.hint;
+  if (!input.json) stderrLines.push(...guidanceLines(envelope, true));
   return {
     exitCode: input.exitCode,
     stdout: input.json ? `${JSON.stringify(envelope)}\n` : "",
     stderr: `${stderrLines.join("\n")}\n`,
   };
+}
+
+/** The diagnosis every unreachable-server failure hands the caller. */
+const DOCTOR_POINTER = "run `cctl doctor` to check the CC server connection";
+
+/**
+ * Exit 3 — the connection/auth class — constructed in one place so the taxonomy
+ * promise holds: an agent that cannot reach the server is told which command
+ * diagnoses that, whatever the command it was running. A caller's own recovery
+ * hint is kept and the pointer appended, because the caller's is the more
+ * specific one (start the dev server, fix the token) and the pointer is the
+ * fallback when it does not help.
+ */
+export function connectionFailure(
+  input: Omit<FailureInput, "exitCode">,
+): CliResult {
+  const hint =
+    input.hint === undefined
+      ? DOCTOR_POINTER
+      : input.hint.includes("cctl doctor")
+        ? input.hint
+        : `${input.hint} — ${DOCTOR_POINTER}`;
+  return failure({ ...input, exitCode: EXIT_CONNECTION, hint });
 }
 
 export function usageFailure(message: string, json: boolean): CliResult {
@@ -744,27 +826,166 @@ export function encodePathSegment(value: string): string {
   return encodeURIComponent(value);
 }
 
+export interface ClientAdvisory {
+  /** The recorded failure that earned this reminder (admission rule). */
+  evidence: string;
+  /** The reminder body: one line, no tier prefix — the renderer owns both. */
+  reminder(subject: string): string;
+}
+
 /**
- * A soft stderr advisory for a payload path a lane commit could sweep into the
- * branch. File-backed payloads (plan / inputs / questions / doc / charter JSON)
- * are throwaway scratch — the CLI reads them once and never needs them again —
- * but a graph-workflow lane commits its whole worktree with `git add -A` at
- * land time, so a payload left at the worktree root lands in the diff the
- * context validator reviews and derails the context. CC's `.cc/` namespace is
- * git-ignored, so `.cc/temp/` is the safe home for these files.
+ * The complete set of CLIENT-authored reminders. Reminders are otherwise
+ * server-authored (steering `cli.md`): the server holds the state that decides
+ * whether an invariant is worth repeating. These are the enumerated exception —
+ * invariants about the caller's own filesystem, which no server can observe.
+ * Adding an entry is an edit to this list, with its evidence, in review.
+ */
+export const CLIENT_ADVISORIES = {
+  payload_outside_cc: {
+    evidence:
+      "A graph-workflow lane commits its whole worktree ('git add -A') at land time, so a payload left at the worktree root landed in the diff its context validator reviewed and derailed the context.",
+    reminder: (filePath: string) =>
+      `"${filePath}" is outside .cc/ — author cctl payload files under .cc/temp/ so a lane commit ('git add -A') doesn't sweep them into the branch`,
+  },
+} satisfies Record<string, ClientAdvisory>;
+
+/**
+ * The payload-location reminder for a file a lane commit could sweep into the
+ * branch, or undefined when the path is not at risk. File-backed payloads (plan
+ * / inputs / questions / doc / charter JSON) are throwaway scratch, and CC's
+ * `.cc/` namespace is git-ignored, so `.cc/temp/` is their safe home.
  *
- * We nudge only worktree-relative paths outside `.cc/`: a relative path
- * resolves against the agent's cwd (always its worktree), so it is exactly a
- * file at risk. Absolute paths (the worktree root is unknown to the CLI here)
- * and stdin (`-`) are out of scope — the observed footgun is the documented
- * bare `--file doc.json`. Returns a newline-terminated advisory line, or
- * undefined when no nudge is warranted.
+ * Only worktree-relative paths outside `.cc/` qualify: a relative path resolves
+ * against the agent's cwd (always its worktree), so it is exactly a file at
+ * risk. Absolute paths (the worktree root is unknown to the CLI here) and stdin
+ * (`-`) are out of scope — the observed footgun is the documented bare
+ * `--file doc.json`.
  */
 export function ccTempPayloadAdvisory(filePath: string): string | undefined {
   if (filePath === "-" || path.isAbsolute(filePath)) return undefined;
   const segments = path.normalize(filePath).split(path.sep);
   if (segments.includes(".cc")) return undefined;
-  return `note: "${filePath}" is outside .cc/ — author cctl payload files under .cc/temp/ so a lane commit ('git add -A') doesn't sweep them into the branch\n`;
+  return CLIENT_ADVISORIES.payload_outside_cc.reminder(filePath);
+}
+
+/**
+ * Merge a client advisory into a result a command already rendered, so text and
+ * `--json` carry the same fact. Text mode keeps the tier order by placing the
+ * line ahead of a trailing `hint:`; JSON mode appends to the envelope's
+ * `reminders`, and falls back to stderr rather than writing prose into stdout
+ * that a caller is parsing.
+ */
+export function withClientReminder(
+  result: CliResult,
+  json: boolean,
+  reminder: string,
+): CliResult {
+  if (json) {
+    const envelope = parseEnvelopeStdout(result.stdout);
+    if (envelope === null) {
+      return { ...result, stderr: `${result.stderr}reminder: ${reminder}\n` };
+    }
+    const existing = Array.isArray(envelope.reminders)
+      ? envelope.reminders.filter(
+          (entry): entry is string => typeof entry === "string",
+        )
+      : [];
+    return {
+      ...result,
+      stdout: `${JSON.stringify({ ...envelope, reminders: [...existing, reminder] })}\n`,
+    };
+  }
+  const line = `reminder: ${reminder}\n`;
+  if (result.stdout === "") return { ...result, stdout: line };
+  if (!result.stdout.endsWith("\n")) {
+    return { ...result, stdout: `${result.stdout}\n${line}` };
+  }
+  const lines = result.stdout.split("\n");
+  const insertAt =
+    lines.length >= 2 && (lines[lines.length - 2] ?? "").startsWith("hint: ")
+      ? lines.length - 2
+      : lines.length - 1;
+  lines.splice(insertAt, 0, `reminder: ${reminder}`);
+  return { ...result, stdout: lines.join("\n") };
+}
+
+function parseEnvelopeStdout(stdout: string): Record<string, unknown> | null {
+  if (stdout === "") return null;
+  try {
+    const parsed: unknown = JSON.parse(stdout);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Prose payloads are agent-authored scratch — a task summary, a brief, a note.
+ * 256 KiB is orders of magnitude past any of them and well short of the binary
+ * or transcript a mis-pointed path would drag in, so the cap catches the wrong
+ * file without ever refusing a real one.
+ */
+const PROSE_FILE_MAX_BYTES = 256 * 1024;
+
+/**
+ * The one value behind a `fileSource` flag: either the inline `--<name>` or the
+ * derived `--<name>-file <path>` (`-` reads stdin through the host). Returns
+ * `undefined` when neither is present — whether the argument is required is the
+ * command's decision, and only the command can word its own usage failure.
+ *
+ * Every refusal is exit 2 before any request: the argument is load-bearing
+ * prose, so a truncated, doubled, or unreadable one must not reach the server
+ * as content.
+ */
+export async function resolveProseArg(
+  values: Record<string, string>,
+  host: CliHost,
+  name: string,
+  json: boolean,
+): Promise<
+  { ok: true; value: string | undefined } | { ok: false; result: CliResult }
+> {
+  const fileFlag = fileSourceFlagName(name);
+  const inline = values[name];
+  const filePath = values[fileFlag];
+  if (inline !== undefined && filePath !== undefined) {
+    return {
+      ok: false,
+      result: usageFailure(
+        `--${name} and --${fileFlag} are alternatives — pass exactly one`,
+        json,
+      ),
+    };
+  }
+  if (filePath === undefined) return { ok: true, value: inline };
+
+  const raw = await host.readTextFile(filePath);
+  if (raw === null) {
+    return {
+      ok: false,
+      result: usageFailure(`cannot read --${fileFlag} "${filePath}"`, json),
+    };
+  }
+  const bytes = Buffer.byteLength(raw, "utf8");
+  if (bytes > PROSE_FILE_MAX_BYTES) {
+    return {
+      ok: false,
+      result: usageFailure(
+        `--${fileFlag} "${filePath}" is ${bytes} bytes — the limit is ${PROSE_FILE_MAX_BYTES}`,
+        json,
+      ),
+    };
+  }
+  // Surrounding whitespace is an artifact of how the file was written, not part
+  // of the prose; an all-whitespace file is a mis-authored payload, not content.
+  const text = raw.trim();
+  if (text === "") {
+    return {
+      ok: false,
+      result: usageFailure(`--${fileFlag} "${filePath}" is empty`, json),
+    };
+  }
+  return { ok: true, value: text };
 }
 
 /**
@@ -841,6 +1062,21 @@ export function issueDetailLines(issues: readonly RequestIssue[]): string[] {
   );
 }
 
+/**
+ * A gated server refuses skewed mutations before the handler runs
+ * (`src/middleware.ts`), which is what lets that refusal state that nothing
+ * changed. The post-response header check still covers reads — and mutations
+ * against a server that predates the gate, where the handler already ran and
+ * the effect may have committed, so that path must hedge instead.
+ */
+export { BUILD_SKEW_CODE };
+
+export interface BuildSkewCliErrorDetails {
+  serverBuild: string;
+  /** The cctl that server publishes, or null when it has not installed one. */
+  serverCliPath: string | null;
+}
+
 export interface LintBlockedCliErrorDetails {
   findings: unknown[];
 }
@@ -856,6 +1092,7 @@ export interface StaleElementCliErrorDetails {
  * additive record-shaped details without a family-specific adapter.
  */
 export type CliErrorDetails =
+  | BuildSkewCliErrorDetails
   | LintBlockedCliErrorDetails
   | StaleElementCliErrorDetails
   | Record<string, unknown>;
@@ -864,7 +1101,17 @@ export type CliRequestResult =
   | { kind: "ok"; status: number; body: unknown }
   | { kind: "connection"; detail: string }
   | { kind: "auth"; hadToken: boolean; tokenSource: TokenSource | null }
-  | { kind: "version_mismatch"; serverBuild: string; cliBuild: string }
+  | {
+      kind: "version_mismatch";
+      serverBuild: string;
+      cliBuild: string;
+      /**
+       * The HTTP method of the discarded request. A header-only mismatch means
+       * the server ran the handler (a gated server refuses with `build_skew`
+       * instead), so the method decides whether "nothing changed" is true.
+       */
+      method: string;
+    }
   | {
       kind: "error";
       status: number;
@@ -1073,12 +1320,13 @@ function classifyErrorBody(
  */
 function readBuildMismatch(
   response: Response,
+  method: string,
 ): Extract<CliRequestResult, { kind: "version_mismatch" }> | null {
   const header = response.headers.get(BUILD_MISMATCH_HEADER);
   if (header === null) return null;
   const parsed = parseBuildMismatchHeader(header);
   if (parsed === null) return null;
-  return { kind: "version_mismatch", ...parsed };
+  return { kind: "version_mismatch", method, ...parsed };
 }
 
 /**
@@ -1120,9 +1368,6 @@ export async function cliRequest(
     };
   }
 
-  const skew = readBuildMismatch(response);
-  if (skew !== null) return skew;
-
   let body: unknown;
   try {
     body = await response.json();
@@ -1130,9 +1375,29 @@ export async function cliRequest(
     body = undefined;
   }
 
-  if (response.ok) return { kind: "ok", status: response.status, body };
+  if (response.ok) {
+    const skew = readBuildMismatch(response, params.method);
+    if (skew !== null) return skew;
+    return { kind: "ok", status: response.status, body };
+  }
 
-  return classifyErrorBody(response.status, body);
+  return classifySkewedErrorBody(response, body, params.method);
+}
+
+/**
+ * Classify a non-2xx body, preferring the server's own skew refusal over the
+ * mismatch header carried by the same response: the refusal is authoritative
+ * about what happened (nothing ran) and names the recovery binary, while the
+ * header only reports the stamps.
+ */
+function classifySkewedErrorBody(
+  response: Response,
+  body: unknown,
+  method: string,
+): Exclude<CliRequestResult, { kind: "ok" }> {
+  const classified = classifyErrorBody(response.status, body);
+  if (classified.code === BUILD_SKEW_CODE) return classified;
+  return readBuildMismatch(response, method) ?? classified;
 }
 
 export type CliTextRequestResult =
@@ -1169,11 +1434,12 @@ export async function cliRequestText(
     };
   }
 
-  const skew = readBuildMismatch(response);
-  if (skew !== null) return skew;
-
   const text = await response.text();
-  if (response.ok) return { kind: "ok", status: response.status, text };
+  if (response.ok) {
+    const skew = readBuildMismatch(response, params.method);
+    if (skew !== null) return skew;
+    return { kind: "ok", status: response.status, text };
+  }
 
   let body: unknown;
   try {
@@ -1181,7 +1447,7 @@ export async function cliRequestText(
   } catch {
     body = undefined;
   }
-  return classifyErrorBody(response.status, body);
+  return classifySkewedErrorBody(response, body, params.method);
 }
 
 /**
@@ -1246,6 +1512,53 @@ function refusalDetailLines(
   return [];
 }
 
+function readBuildSkewDetails(
+  details: CliErrorDetails | undefined,
+): BuildSkewCliErrorDetails | null {
+  if (!isRecord(details) || typeof details.serverBuild !== "string") {
+    return null;
+  }
+  return {
+    serverBuild: details.serverBuild,
+    serverCliPath:
+      typeof details.serverCliPath === "string" ? details.serverCliPath : null,
+  };
+}
+
+/**
+ * The refusal the server issues before running a skewed mutation. The message
+ * can state what no post-response check could: the handler never ran, so the
+ * caller can retry with the right binary instead of checking what committed.
+ */
+function buildSkewFailure(
+  result: Extract<CliRequestResult, { kind: "error" }>,
+  json: boolean,
+): CliResult {
+  const skew = readBuildSkewDetails(result.details);
+  const cliBuild = formatBuildStamp(BUILD_INFO);
+  const serverBuild = skew?.serverBuild ?? "a different build";
+  const serverCliPath = skew?.serverCliPath ?? null;
+  return failure({
+    exitCode: EXIT_VERSION_MISMATCH,
+    message: `refused before it ran: this cctl is build ${cliBuild}; the server is build ${serverBuild} — no changes were made`,
+    detail: `  ${flattenDiagnosticText(result.error)}`,
+    hint:
+      serverCliPath === null
+        ? "run `cctl doctor --server <url>` to print that server's cctl path, then invoke that binary"
+        : `re-run with the cctl that server publishes: ${serverCliPath}`,
+    code: BUILD_SKEW_CODE,
+    ...(result.details ? { details: result.details } : {}),
+    json,
+  });
+}
+
+/**
+ * The rendered-issue cap for a server refusal, matching the file-payload
+ * refusals in `spec/write.ts`: past it the located lines stop being readable
+ * evidence and start being a dump, while the envelope keeps every issue.
+ */
+const MAX_RENDERED_ISSUES = 5;
+
 /**
  * Map a non-ok request result to a CliResult per the shared exit-code contract
  * (doc 01 §6): connection → 3, 401 → 3, 400/422 validation → 2 (one issue per
@@ -1256,8 +1569,7 @@ export function failureFromRequest(
   json: boolean,
 ): CliResult {
   if (result.kind === "connection") {
-    return failure({
-      exitCode: EXIT_CONNECTION,
+    return connectionFailure({
       message: "cannot reach the CC server — is the CC server running?",
       detail: result.detail,
       hint: "start the CC server, then re-run `cctl doctor`",
@@ -1268,27 +1580,40 @@ export function failureFromRequest(
     const message = !result.hadToken
       ? "no API token — pass --token, set CC_API_TOKEN, or run the CC server once to provision <configDir>/api-token"
       : `the server rejected the API token (source: ${result.tokenSource ?? "-"})`;
-    return failure({
-      exitCode: EXIT_CONNECTION,
+    return connectionFailure({
       message,
       hint: "run `cctl doctor` to check connectivity and auth",
       json,
     });
   }
   if (result.kind === "version_mismatch") {
+    // Header-only skew means the server RAN the handler (a gated server
+    // refuses mutations with `build_skew` instead, handled below). A discarded
+    // read changed nothing; a mutation may already be committed server-side,
+    // and claiming otherwise invites a re-run that double-commits.
+    const isRead = result.method === "GET" || result.method === "HEAD";
+    const outcome = isRead
+      ? "so the response was discarded unread; nothing changed"
+      : "and this server ran the request before reporting the skew — the mutation may have committed; verify server state before retrying";
     return failure({
       exitCode: EXIT_VERSION_MISMATCH,
       message: `this cctl is build ${result.cliBuild}; the server is build ${result.serverBuild}`,
-      detail:
-        "  every CC server publishes its own cctl at <its configDir>/bin/cctl — a binary from one server reads a\n  command surface the other does not have, so the result would describe the wrong build",
+      detail: `  every CC server publishes its own cctl at <its configDir>/bin/cctl — a binary from one server reads a\n  command surface the other does not have, ${outcome}`,
       hint: "run `cctl doctor --server <url>` to print that server's cctl path, then invoke that binary",
       json,
     });
   }
+  if (result.code === BUILD_SKEW_CODE) return buildSkewFailure(result, json);
+  const issues =
+    result.issues?.filter((issue) => issue.message !== result.error) ?? [];
+  const overflow = issues.length - MAX_RENDERED_ISSUES;
   const detailLines = [
-    ...issueDetailLines(
-      result.issues?.filter((issue) => issue.message !== result.error) ?? [],
-    ),
+    ...issueDetailLines(issues.slice(0, MAX_RENDERED_ISSUES)),
+    ...(overflow > 0
+      ? [
+          `  …and ${overflow} more — the --json envelope carries all ${issues.length}`,
+        ]
+      : []),
     ...refusalDetailLines(result),
   ];
   const detail = detailLines.length > 0 ? detailLines.join("\n") : undefined;

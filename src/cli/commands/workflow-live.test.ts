@@ -33,10 +33,15 @@ function jsonResponse(body: unknown, status = 200): Response {
 function makeHost(
   respond: (req: RecordedRequest) => Response,
   files: Record<string, string> = {},
-): CliHost & { requests: RecordedRequest[] } {
+): CliHost & {
+  requests: RecordedRequest[];
+  writes: Map<string, string>;
+} {
   const requests: RecordedRequest[] = [];
+  const writes = new Map<string, string>();
   return {
     requests,
+    writes,
     async fetch(url, init) {
       const req = { url, init };
       requests.push(req);
@@ -47,6 +52,9 @@ function makeHost(
     },
     async readFileBytes() {
       return null;
+    },
+    async writeTextFile(filePath, content) {
+      writes.set(filePath, content);
     },
     async sleep() {},
     platform: "darwin",
@@ -538,6 +546,60 @@ describe("cctl workflow live get", () => {
     expect(new URL(host.requests[0]?.url ?? "").searchParams.get("full")).toBe(
       "true",
     );
+  });
+
+  it("--full past the stdout budget writes an artifact and prints its manifest", async () => {
+    const blob = "y".repeat(80_000);
+    const host = makeHost(() =>
+      jsonResponse({
+        ok: true,
+        section: "full",
+        header: {},
+        contexts: [{ id: "impl", instructions: blob }],
+      }),
+    );
+    const result = await runCli(
+      ["workflow", "live", "get", "--full"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain(blob);
+    expect(result.stdout.length).toBeLessThan(1_000);
+    expect(result.stdout).toContain("artifact: .cc/temp/");
+    expect(result.stdout).toMatch(/sha256: sha256:[a-f0-9]{64}/u);
+
+    const [path, content] = [...host.writes.entries()][0] ?? [];
+    expect(result.stdout).toContain(`artifact: ${path}`);
+    expect(JSON.parse(content ?? "").contexts[0].instructions).toBe(blob);
+  });
+
+  it("--full --json past the budget carries the manifest as named fields", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        ok: true,
+        section: "full",
+        header: {},
+        contexts: [{ id: "impl", instructions: "y".repeat(80_000) }],
+      }),
+    );
+    const result = await runCli(
+      ["workflow", "live", "get", "--full", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.ok).toBe(true);
+    expect(envelope.contexts).toBeUndefined();
+    expect(envelope.storage).toBe("artifact");
+    expect(envelope.artifact.reason).toBe("stdout_budget_exceeded");
+    expect(envelope.artifact.format).toBe("json");
+    expect(envelope.artifact.bytes).toBeGreaterThan(80_000);
+    expect(envelope.artifact.sha256).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    expect(host.writes.has(envelope.artifact.path)).toBe(true);
   });
 
   it("passes --config <ctx> through as ?config= and renders the full-config slice", async () => {
@@ -1467,6 +1529,68 @@ describe("cctl workflow live ledger (D4 R16.2)", () => {
       eventRequests.map((req) => new URL(req.url).searchParams.get("cursor")),
     ).toEqual(["3", "4"]);
     expect(result.stdout).toContain("--cursor 5");
+  });
+
+  it("points at the resume read through the shared disclosure vocabulary", async () => {
+    const host = longLogHost(40);
+    const result = await runCli(
+      ["workflow", "live", "ledger", "--max-pages", "2"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "next: cctl workflow live ledger --cursor 2",
+    );
+    expect(result.stdout).not.toContain("note:");
+  });
+
+  it("discloses a stalled walk without a resume pointer it cannot honour", async () => {
+    const host = makeHost((req) => {
+      const url = new URL(req.url);
+      if (url.pathname.endsWith("/graph-workflow/execution")) {
+        return jsonResponse(executionBody());
+      }
+      return jsonResponse({
+        events: [decisionRow(1, LOOP_DECISION)],
+        nextCursor: 1,
+      });
+    });
+
+    const result = await runCli(["workflow", "live", "ledger"], baseEnv, host);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("older decisions are not shown");
+    expect(result.stdout).not.toContain("note:");
+    expect(result.stdout).not.toContain("next:");
+  });
+
+  it("discloses a bounded walk even when no loop group has an entry", async () => {
+    // A declared group with no persisted state yields no entry, but the walk
+    // still ran — dropping its bound here would hide the omission entirely.
+    const host = makeHost((req) => {
+      const url = new URL(req.url);
+      if (url.pathname.endsWith("/graph-workflow/execution")) {
+        return jsonResponse({
+          execution: {
+            id: "exec-7",
+            workingDefinition: { loopGroups: [{ id: "refine", maxPasses: 4 }] },
+            loopStates: {},
+          },
+        });
+      }
+      return jsonResponse({ events: [], nextCursor: 9 });
+    });
+
+    const result = await runCli(
+      ["workflow", "live", "ledger", "--max-pages", "1"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "next: cctl workflow live ledger --cursor 9",
+    );
   });
 
   it("rejects a non-numeric --cursor before any network call", async () => {

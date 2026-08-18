@@ -57,36 +57,51 @@ ticket identified by `<ticket>`.
 
 ## Exit codes
 
-| Code | Meaning | What to do |
+<!-- BEGIN GENERATED EXIT CODES -->
+_Generated from `EXIT_TAXONOMY` (`src/cli/exit-taxonomy.ts`) — do not edit by hand; run `bun scripts/cc-cli-skill-reference.ts`. `cctl exit-codes` prints the same table offline._
+
+| Code | Meaning | Recovery |
 |---|---|---|
-| `0` | success | proceed |
-| `1` | operation failed — the server said no | read stderr; the first line is the actionable error |
-| `2` | usage/validation error (bad flags, invalid `--file` payload) | fix the invocation or payload and re-run |
-| `3` | connection/auth failure (server unreachable, bad token) | run `cctl doctor` — see recovery below |
-| `4` | reserved for hard version-mismatch (mismatches today only warn) | re-run `cctl doctor` |
+| `0` | the command did what was asked | — |
+| `1` | the server refused the operation, or a server-side job it started failed | — |
+| `2` | a local flag, identity, or payload check failed before any request was sent | `cctl <command> --help` |
+| `3` | the CC server could not be reached, or it rejected the API token | `cctl doctor` |
+| `4` | this binary and the server are different builds — nothing changed unless the failure text warns the mutation may have committed | `cctl doctor --server <url>` |
+
+<!-- END GENERATED EXIT CODES -->
 
 Errors go to stderr, one actionable line first, detail after.
+
+Exit `4` is a hard refusal, not a warning. A gated server rejects a skewed
+mutation before its handler runs, and a read's response is discarded unread —
+on those paths the failure says nothing changed, and it is true. A server that
+predates the gate runs a mutation before stamping the skew header, so that
+failure text warns the mutation may have committed: verify server state before
+retrying. Either way, re-run with the binary that server publishes
+(`cctl doctor` prints its path), never the same binary.
 
 ## Output and the `--json` envelope
 
 Default output is terse, line-oriented text for an agent's own reading. Use
 `--json` only when the output feeds code, such as a script, orchestrator, or
-`jq` pipeline. For every new or changed query command, structured mode changes
-representation but does not widen the selected disclosure level or include
-records text mode omitted.
+`jq` pipeline. For every query command, structured mode changes representation
+but does not widen the selected disclosure level or include records text mode
+omitted.
 
-New or changed query commands return a bounded summary or outline by default.
-Every row that can be expanded carries the stable handle its drill-down command
-accepts, and every truncation states what was omitted plus the exact command
-that reveals more. In JSON, the same disclosure facts are fields such as
-`total`, `returned`, `truncated`, and `next`; they are never text-only. Full
-documents on these surfaces are opt-in and become file-backed artifacts instead
-of large stdout payloads.
+Query commands return a bounded summary or outline by default. Every row that
+can be expanded carries the stable handle its drill-down command accepts, and
+every truncation states what was omitted plus the exact command that reveals
+more. In JSON, the same disclosure facts are fields such as `total`, `returned`,
+`truncated`, and `next`; they are never text-only. Full documents on these
+surfaces are opt-in and become file-backed artifacts instead of large stdout
+payloads.
 
-`cctl workflow status --json` and `cctl spec status --json` are documented
-legacy exceptions. Unlike their bounded text views, they still return their
-full active-execution or lifecycle projections. Treat that behavior as
-migration debt, not as precedent for a new or changed query.
+There are no exceptions left to this rule. `cctl workflow status` and `cctl spec
+status` used to return their whole projection under `--json`; both now serialize
+exactly what their text prints, and the rest is an explicit selector:
+`--halt` for a workflow's whole structured halt reason and repair log, `--full`
+for the unstripped execution record or for every row of a spec status section
+the default bounds to ten.
 
 Every command supports `--json`, which prints one JSON envelope on stdout:
 
@@ -116,9 +131,10 @@ collapse them — the whole point is that each means something different:
 - **Hints** are a purely advisory pointer at a likely next command. Protocol-
   critical instructions never travel in `hint`. In text mode a hint is the final
   line, prefixed `hint:`.
-- **Reminders** are server-authored, state-conditional invariants (they fire from
+- **Reminders** are state-conditional invariants (they fire from
   runtime state, not on every call) — the graph-workflow **lane verbs** are the
-  commands that emit them (see that section). In text mode each renders as a `reminder:` line,
+  commands that emit them (see that section); the CLI itself authors only the
+  enumerated payload-location reminder (`--file` outside `.cc/`). In text mode each renders as a `reminder:` line,
   after the primary body and before the `hint:` line; in `--json` they are the
   `reminders[]` array. A reminder is not a step to perform — it is something to
   keep true as you continue.
@@ -136,6 +152,16 @@ Structured input beyond a couple of scalars goes through `--file <path>`
 land-time `git add -A` never sweeps the throwaway payload into the branch (a
 payload left at the worktree root derails the context validator). Then run the
 command and iterate on the validation errors it returns (one issue per line).
+
+Prose arguments take a file too. Any flag carrying load-bearing text —
+`workflow task complete --summary`, `workflow task add --instructions`,
+`workflow collab request --brief`, `ticket create --description`, `ticket attach
+note --markdown`, `spec reply --body`, `spec question --text` — accepts
+`--<flag>-file <path>` (`-` reads stdin) as an alternative, and `--help` lists
+it. Use it whenever the text carries backticks, quotes, `$`, or newlines: the
+shell has silently blanked a backticked summary in production. Pass one form or
+the other — both at once exits `2` before the request, as does a file that is
+unreadable, empty, or over 256 KiB.
 
 ## `cctl doctor`
 
@@ -157,9 +183,12 @@ identity      project=my-repo session=my-session conversation=abc123
 token         valid (source: env)
 ```
 
-A build-stamp mismatch prints a warning on stderr but still exits 0 — the
-server owns the binary, so a mismatch is transient across a server restart
-and resolves itself.
+`doctor` is the one command that reports a build-stamp mismatch and still
+exits `0` — diagnosing the skew is its job. Every other command hard-fails
+with exit `4`. A mismatch is not transient and a server restart does not clear
+it: every CC server publishes its own `cctl`, so a differing stamp means the
+wrong binary. `doctor` prints that server's `cctl` path (`server cctl`) —
+invoke that binary instead.
 
 ### Troubleshooting (exit 3 recovery)
 
@@ -309,7 +338,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl workflow edit` — apply targeted, atomic edits to a saved definition
   - `cctl workflow edit <id> --file .cc/temp/ops.json [--dry-run] [--tier global|project] [--json]`
 - `cctl workflow status` — show a Current or History execution projection
-  - `cctl workflow status [<executionId>] [--json]`
+  - `cctl workflow status [<executionId>] [--halt | --full] [--json]`
 - `cctl workflow start` — launch an execution from a saved definition
   - `cctl workflow start <id> [--file .cc/temp/inputs.json] [--json]`
 - `cctl workflow run` — launch a one-off execution directly from a plan file
@@ -385,7 +414,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl validate list` — list commands, policy enablement, and current capacity
   - `cctl validate list [--json]`
 - `cctl validate run` — run one registered validation command
-  - `cctl validate run <name> [--scope changed|full] [--wait] [--json] [-- <validated paths>]`
+  - `cctl validate run <name> [--scope changed|full] [--wait] [--timeout <dur>] [--require-match] [--json] [-- <validated paths>]`
 - `cctl validate status` — inspect active validation or one run
   - `cctl validate status [run-id] [--json]`
 - `cctl validate cancel` — cancel an owned validation run
@@ -409,7 +438,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl ticket create` — create a ticket in the ambient project
   - `cctl ticket create --title "<title>" --type <feature|bug|research|tech_debt|performance> [--description "<markdown>"] [--status <not_started|in_progress|done|blocked|closed>]`
 - `cctl ticket list` — list tickets with filters
-  - `cctl ticket list [--status <status>] [--type <type>] [--sort <created|updated>] [--all]`
+  - `cctl ticket list [--status <status>] [--type <type>] [--sort <created|updated>] [--all] [--limit <n>] [--attachments]`
 - `cctl ticket get` — read one ticket in full
   - `cctl ticket get <number | project#number>`
 - `cctl ticket update` — update a ticket's fields or status
@@ -486,7 +515,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec show <slug> --rendered [--out <file>]`
   - `cctl spec show <slug> --full [--out <file>]`
 - `cctl spec status` — inspect a spec's phase and gate readiness
-  - `cctl spec status <slug>`
+  - `cctl spec status <slug> [--full] [--json]`
 - `cctl spec comments` — read reviewer comments as typed rows
   - `cctl spec comments <slug> [--element <handle>] [--open]`
 - `cctl spec reply` — answer a review thread in place
@@ -579,6 +608,18 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl spec plan preview` — read an authored or finalized launch envelope
   - `cctl spec plan preview <slug> --stage draft|proposed [--expected-draft-revision <n>]`
 
+- `cctl logs` — analyze this machine's CC server logs offline
+  - `cctl logs <report|trace|compare>`
+- `cctl logs report` — rank slow requests, hotspots, duplicate work, and errors
+  - `cctl logs report [--in <path>] [--since <iso>] [--until <iso>] [--top <n>] [--out <path>] [--json]`
+- `cctl logs trace` — deep-dive one trace: timeline, spans, and unexplained time
+  - `cctl logs trace <traceId> [--in <path>] [--top <n>] [--out <path>] [--json]`
+- `cctl logs compare` — compare two logs for regressions and improvements
+  - `cctl logs compare --before <path> --after <path> [--path <api-path>] [--out <path>] [--json]`
+
+- `cctl exit-codes` — what each cctl exit code means and how to recover from it
+  - `cctl exit-codes [--json]`
+
 - `cctl doctor` — check connectivity, auth, and build parity with the CC server
   - `cctl doctor`
 
@@ -632,13 +673,15 @@ List and execute the project's registered validation commands through the server
 
 ```
 cctl validate list [--json]
-cctl validate run <name> [--scope changed|full] [--wait] [--json] [-- <validated paths>]
+cctl validate run <name> [--scope changed|full] [--wait] [--timeout <dur>] [--require-match] [--json] [-- <validated paths>]
 cctl validate status [run-id] [--json]
 cctl validate cancel <run-id> [--json]
 ```
 
 - `list` shows stable command names, declared costs, descriptions, path-scope support, caller enablement, and current global capacity. It intentionally does not reveal executable paths.
-- `run` submits one registered name. Admission is fail-fast by default; `--wait` joins the strict weighted FIFO queue. A capacity refusal means systemic capacity or an older waiter currently blocks admission, not that the validation tool failed. A command whose declared cost exceeds the machine limit is invalid configuration and is rejected even with `--wait`.
+- `run` submits one registered name and always blocks to a verdict. `--wait` decides only how a busy scheduler answers — join the strict weighted FIFO queue instead of refusing immediately — unlike `agent run --wait` / `workflow run --wait`, where the flag decides whether to block at all. A capacity refusal means systemic capacity or an older waiter currently blocks admission, not that the validation tool failed. A command whose declared cost exceeds the machine limit is invalid configuration and is rejected even with `--wait`.
+- A pass prints one verdict line — `validation passed: <name> (scope <requested>→<effective>, <n> files, run <id>)` — followed by the tail of the runner output; the full output stays in the `--json` envelope and in `validate status <id>`. A narrowing path that matches nothing still passes and says `0 files matched — vacuous pass, verify the scope path`; `--require-match` turns that into exit `1`. Read the verdict instead of trusting a silent green.
+- `--timeout` bounds only the client wait (default 2h, covering queue time). On expiry the run continues server-side and the failure names `cctl validate status <run-id>`, which recovers the verdict.
 - Values after `--` may only narrow a command registered with path scoping. The server rejects option tokens, absolute paths, traversal, and worktree escapes, so callers cannot override workers, heap, pool, or configuration. Omit `--` entirely for a command that forbids scope arguments.
 - A command disabled for the caller's graph role exits successfully as a policy no-op, consumes no capacity, and spawns nothing. Do not retry it or bypass the policy.
 - `status` without an id lists active queued/running jobs and capacity; with an id it reports that run's queue or terminal state. `cancel` requires the submitter's private lease. A blocking `run` renews its lease and attempts cancellation on SIGINT/SIGTERM; lease expiry is the fallback for a dead client.
@@ -701,17 +744,9 @@ cctl docs delete 4f1d2797-...
 ## cctl ticket
 
 Manage Command Center **tickets** — durable work items owned by one project,
-identified as `<project>#<number>`.
-
-```
-cctl ticket create --title "<title>" --type <feature|bug|research|tech_debt|performance> [--description "<markdown>"] [--status <status>]
-cctl ticket list [--status <status>] [--type <type>] [--sort <created|updated>] [--all]
-cctl ticket get <number | project#number>
-cctl ticket update <number | project#number> [--title …] [--description …] [--type …] [--status …]
-cctl ticket delete <number | project#number>
-cctl ticket attach <file|conversation|session|ticket|note> <number | project#number> … --description "<what and why>"
-cctl ticket attachment <get|update|remove> <number | project#number> <attachmentId>
-```
+identified as `<project>#<number>`. The verbs and their exact invocation shapes
+are in the command reference above (`cctl ticket --help` for the live node);
+what follows is what the shapes do not tell you.
 
 **Identifier forms.** A bare `<number>` resolves through the ambient project
 scope (`--project` / `CC_PROJECT`); the `<project>#<number>` form addresses any
@@ -720,13 +755,21 @@ needs no ambient project. Unknown tickets exit `1` with `ticket_not_found`
 naming the reference; malformed references, missing flags, and invalid enum
 values exit `2` **before any network call**.
 
-**The attachment index.** `list` and `get` always render each ticket's typed
-attachment index — id, kind, description, and the exact retrieval/follow
-command per entry — in both text and `--json` output (`attachmentIndex` in the
-envelope). `list` bounds descriptions with an explicit `…`; `get` renders them
-in full. Retrieve any entry's content with the command shown in its index line
-(`cctl ticket attachment get <ticket> <id>`); related-ticket entries also carry
-a `cctl ticket get <project>#<number>` follow command.
+**The bounded list.** `list` leads with `tickets: <n> total, <m> shown` and caps
+the rows at 20; when it truncates, the same line names the exact command that
+returns the rest (the filters in effect plus `--limit <n>`), and `--json`
+carries `total`/`returned`/`truncated`/`reveal`. Each row ends with its
+`attachments: <count>`, read straight from the list payload — the default costs
+exactly one request.
+
+**The attachment index.** `get` always renders the ticket's typed attachment
+index — id, kind, description, and the exact retrieval/follow command per
+entry — in both text and `--json` output (`attachmentIndex` in the envelope).
+`list --attachments` adds the same index (with descriptions bounded by an
+explicit `…`) for the rows it shows, at one request per shown ticket. Retrieve
+any entry's content with the command shown in its index line (`cctl ticket
+attachment get <ticket> <id>`); related-ticket entries also carry a `cctl ticket
+get <project>#<number>` follow command.
 
 - `attach` — five kinds, each with a **required** `--description` (the
   descriptions are the index): `file <path>` snapshots bytes at attach time
@@ -738,14 +781,21 @@ a `cctl ticket get <project>#<number>` follow command.
   "<markdown>"` is inline markdown.
 - `attachment get` — resolve full content per kind (file content, compaction
   markdown with read commands, session state, related-ticket detail plus its
-  own index, note body). `attachment update` edits `--description` (any kind)
-  and `--markdown` (notes). `attachment remove` deletes the entry. All three
-  work in any ticket status.
+  own index, note body). A file attachment past the stdout budget — and any
+  binary (base64) file, whatever its size — is written under `.cc/temp/` and
+  stdout carries the manifest (`artifact`, `format`, `bytes`, `sha256`) in place
+  of the content; in `--json` the `attachment.content` field is replaced by the
+  same manifest under `artifact`. `attachment update` edits `--description` (any
+  kind) and `--markdown` (notes). `attachment remove` deletes the entry. All
+  three work in any ticket status.
 
 ```
 cctl ticket create --title "Flaky pre-merge gate" --type bug
 # → created cc#12  Flaky pre-merge gate
 cctl ticket attach file 12 logs/ci-failure.txt --description "full CI log of the flaky run"
+cctl ticket list
+# → tickets: 34 total, 20 shown — rest: cctl ticket list --limit 34
+#   cc#12  not_started  bug  attachments: 1  Flaky pre-merge gate
 cctl ticket get 12
 # → cc#12  Flaky pre-merge gate
 #   status: not_started  type: bug  created: …  updated: …
@@ -772,15 +822,8 @@ scoped to one message (its `message-index` attribute): its `read-command`
 reads just that message and its `compaction-command` (present when
 `compacted="true"`) fetches that message's compaction.
 
-```
-cctl conversation read <conversation-id> [--outline] [--message N] [--message-range A:B]
-                       [--seq-range A:B] [--include-tools none|summary|full]
-                       [--include-thinking] [--search <regex>] [--max-bytes N]
-                       [--format json|markdown] [--json]
-cctl conversation compact <conversation-id> [--message N] [--force] [--wait] [--json]
-cctl conversation compaction get <conversation-id> [--message N] [--format json|markdown] [--json]
-cctl conversation compaction list <conversation-id> [--json]
-```
+`read`, `compact`, and the `compaction get|list` pair are in the command
+reference above; `cctl conversation read --help` lists the full selector set.
 
 **Windows & coordinates.** Ranges are `A:B` (e.g. `--message-range 2:3`;
 `A-B`, `A,B`, and a bare `N` for `N:N` are also accepted). Two coordinate
@@ -843,7 +886,7 @@ in scope) and whenever you pass those flags; a truly unknown id exits `2`.
   background. With `--wait` it polls until the artifact completes (exit `0`),
   fails (exit `1` with the generation error), or a bounded timeout elapses.
   `--force` regenerates even when the existing artifact is fresh. If the
-  artifact is already fresh it returns it directly with `hint: already fresh`.
+  artifact is already fresh it returns it directly (`status: "fresh"`).
 - `compaction get` — fetch the newest matching artifact's **full envelope**
   (`--message N` selects that message's artifact; otherwise the
   conversation-level one). `--format markdown` renders the envelope as prose
@@ -959,20 +1002,9 @@ cctl fixture session delete scratch-project fx-...
 ## cctl workflow
 
 Author, read, launch, and inspect **graph workflows** — the saved multi-context
-task graphs and their live executions.
-
-```
-cctl workflow validate --file .cc/temp/plan.json [--json]
-cctl workflow create --file .cc/temp/plan.json [--json]
-cctl workflow replace <id> --file .cc/temp/plan.json [--json]
-cctl workflow edit <id> --file .cc/temp/ops.json [--dry-run] [--tier global|project] [--json]
-cctl workflow status [--json]
-cctl workflow list [--json]
-cctl workflow get <id> [--full | --context <ctx> | --task <task> | --charter | --config | --params] [--tier global|project] [--json]
-cctl workflow start <id> [--file .cc/temp/inputs.json] [--json]
-cctl workflow delete <id>
-cctl workflow templates [--tier global|project] [--json]
-```
+task graphs and their live executions. Every verb and its invocation shape is in
+the command reference above (`cctl workflow --help` for the live index),
+including the one-off lifecycle trio `run`/`wait`/`abandon`.
 
 **Authoring** is file-based — never emit a whole workflow
 graph as inline tool arguments. Author a `plan.json` file
@@ -1013,8 +1045,11 @@ the planning method), then walk the canonical chain: validate → create → sta
 - `status` — the workflow call you reach for most. Prints a compact per-context
   table for this session's active execution (`<context id>  <state>
   <completed>/<total>`), with the execution id and any halt reason on the header
-  line. With `--json` it returns the **full** execution payload. When nothing is
-  running it says so plainly. No hint.
+  line; `--json` serializes that same projection. Two mutually-exclusive
+  selectors open the rest: `--halt` returns the whole structured halt reason
+  (every finding) and its plan-repair rounds, and `--full` returns the
+  unstripped execution record. When nothing is running it says so plainly. No
+  hint.
 - `list` — this project's saved workflow definitions (`id  name (rev N)  —
   description`). Project-scoped; needs no session. No hint.
 - `get` — print a saved definition's compact **outline** by default (structure,
@@ -1080,12 +1115,8 @@ working copy, not the definition it launched from. `workflow execution …` and
 `workflow exec …` are aliases rewritten to `live` before dispatch and help
 lookup. Session-scoped (reads your `CC_SESSION`); no execution running exits `2`.
 
-```
-cctl workflow live get [--context <ctx> | --task <task> | --config <ctx> | --charter | --full] [--json]
-cctl workflow live edit --file .cc/temp/live-ops.json [--dry-run] [--json]
-cctl workflow live pause [--json]
-cctl workflow live resume [--json]
-```
+The group's verbs — `get`, `ledger`, `edit`, `amend`, `pause`, `resume`,
+`abort` — and their invocation shapes are in the command reference above.
 
 - `get` — print the active execution's **live outline**: a header
   (`executionId`, `liveRevision`, status, seed `id@revision`, whether it is
@@ -1099,8 +1130,10 @@ cctl workflow live resume [--json]
   instructions), `--config <ctx>` (one context's **full resolved config** —
   implementer, validator, gates, iteration policy, circuit breaker, mutability,
   collaboration), `--charter` (the current charter document with its live
-  amendment log), `--full` (every context expanded). An amended charter also
-  shows in the outline header as `charter amended ×N`.
+  amendment log), `--outputs` (every schema-declaring context's capture status
+  with the captured payload and its parse provenance), `--full` (every context
+  expanded). An amended charter also shows in the outline header as
+  `charter amended ×N`.
 - The `amend-charter` op (in `live edit`'s `operations[]`) partial-merges
   charter content (mission, conventions, non-goals, vocabulary, test strategy,
   known ambiguities, invariants, sources of truth) with a **required
@@ -1168,16 +1201,16 @@ them true as you keep working (see the three output tiers above).
 cctl workflow task complete <taskId> --summary "<what changed, how verified>"
 cctl workflow task add --title "<name>" --instructions "<self-contained steps>" [--slug <slug>]
 cctl workflow shared-doc upsert <relativePath> --file .cc/temp/doc.json
-cctl workflow collab request --brief "<the question/decision, with context>"
+cctl workflow collab request --brief "<question with context>"
 ```
 
 - `task complete` — mark the current task done. **Call this after each task** —
   it is the only way the workflow advances. `<taskId>` is the task's id/slug from
   the task list; `--summary` records what you changed and how you verified it.
-  On success it prints `completed <taskId>` and hints how many tasks remain in
+  On success it prints `completed <taskId>` and how many tasks remain in
   this context. If the server returns a **stop instruction** (a mid-turn context
   rotation — "CONTEXT LIMIT REACHED … End your turn now …"), that text is printed
-  as primary output **instead of** the remaining-count hint: obey it and end your
+  **instead of** the remaining-count line: obey it and end your
   turn with a brief handoff note; the workflow resumes the rest in a fresh
   conversation. Exit `0` either way.
 - `task add` — append a newly-discovered task to this context. Only allowed when
@@ -1198,7 +1231,7 @@ cctl workflow collab request --brief "<the question/decision, with context>"
 ```
 cctl workflow task complete implement-auth --summary "Added OAuth2 route + tests; bun test green"
 # → completed implement-auth
-#   hint: 3 tasks remain in this context
+#   3 tasks remain in this context
 cctl workflow task add --title "Handle token refresh" --instructions "Add refresh-token rotation to /api/auth; cover expiry in tests."
 cctl workflow shared-doc upsert .cc/graph-workflow-docs/api-contract.md --file .cc/temp/doc.json
 cctl workflow collab request --brief "Store sessions in SQLite or Redis? Constraints: single-node, <10k sessions, must survive restart."

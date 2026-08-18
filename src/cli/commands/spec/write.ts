@@ -56,7 +56,6 @@ import {
   type SpecEditContextView,
   type SpecProposeResultView,
 } from "@/lib/specs/view-schemas";
-import { flagNamesFor } from "../../help-registry";
 import {
   EXIT_OK,
   EXIT_OPERATION_FAILED,
@@ -70,6 +69,7 @@ import {
   render,
   resolveConversationContext,
   resolveProjectConversationContext,
+  resolveProseArg,
   structuredErrorFields,
   usageFailure,
   type CliEnv,
@@ -960,7 +960,7 @@ export async function runSpecCreate(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec create"), json);
+  const denied = checkFlags(values, "spec create", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 0, "create", json);
   if (extra) return extra;
@@ -1195,7 +1195,7 @@ export async function runSpecImport(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec import"), json);
+  const denied = checkFlags(values, "spec import", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 0, "import", json);
   if (extra) return extra;
@@ -1260,7 +1260,7 @@ export async function runSpecAmend(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec amend"), json);
+  const denied = checkFlags(values, "spec amend", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "amend", json);
   if (extra) return extra;
@@ -1638,7 +1638,7 @@ export async function runSpecDraft(
       json,
     );
   }
-  const denied = checkFlags(values, flagNamesFor("spec draft"), json);
+  const denied = checkFlags(values, "spec draft", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "draft", json);
   if (extra) return extra;
@@ -1697,7 +1697,7 @@ export async function runSpecRemove(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec remove"), json);
+  const denied = checkFlags(values, "spec remove", json);
   if (denied) return denied;
   const slug = validateSlug(rest[0], "remove", json);
   if (!slug.ok) return slug.result;
@@ -1873,7 +1873,7 @@ export async function runSpecPropose(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec propose"), json);
+  const denied = checkFlags(values, "spec propose", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "propose", json);
   if (extra) return extra;
@@ -1942,11 +1942,7 @@ export async function runSpecWithdrawProposal(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(
-    values,
-    flagNamesFor("spec withdraw-proposal"),
-    json,
-  );
+  const denied = checkFlags(values, "spec withdraw-proposal", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "withdraw-proposal", json);
   if (extra) return extra;
@@ -2007,11 +2003,7 @@ export async function runSpecDismissSuperseded(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(
-    values,
-    flagNamesFor("spec dismiss-superseded"),
-    json,
-  );
+  const denied = checkFlags(values, "spec dismiss-superseded", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "dismiss-superseded", json);
   if (extra) return extra;
@@ -2074,7 +2066,7 @@ export async function runSpecAdvance(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec advance"), json);
+  const denied = checkFlags(values, "spec advance", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "advance", json);
   if (extra) return extra;
@@ -2144,7 +2136,7 @@ export async function runSpecReply(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec reply"), json);
+  const denied = checkFlags(values, "spec reply", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "reply", json);
   if (extra) return extra;
@@ -2154,9 +2146,14 @@ export async function runSpecReply(
   if (threadId === undefined) {
     return usageFailure("spec reply requires --thread <threadId>", json);
   }
-  const body = values["body"];
+  const bodyArg = await resolveProseArg(values, host, "body", json);
+  if (!bodyArg.ok) return bodyArg.result;
+  const body = bodyArg.value;
   if (body === undefined || body.trim() === "") {
-    return usageFailure("spec reply requires --body <text>", json);
+    return usageFailure(
+      "spec reply requires --body <text> (or --body-file <path>)",
+      json,
+    );
   }
   const resolved = await resolveProjectConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
@@ -2206,7 +2203,7 @@ export async function runSpecAnswer(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec answer"), json);
+  const denied = checkFlags(values, "spec answer", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "answer", json);
   if (extra) return extra;
@@ -2360,15 +2357,20 @@ export async function runSpecQuestion(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec question"), json);
+  const denied = checkFlags(values, "spec question", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "question", json);
   if (extra) return extra;
   const slug = validateSlug(rest[0], "question", json);
   if (!slug.ok) return slug.result;
-  const text = values["text"];
+  const textArg = await resolveProseArg(values, host, "text", json);
+  if (!textArg.ok) return textArg.result;
+  const text = textArg.value;
   if (text === undefined) {
-    return usageFailure("spec question requires --text <text>", json);
+    return usageFailure(
+      "spec question requires --text <text> (or --text-file <path>)",
+      json,
+    );
   }
   const resolved = await resolveProjectConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
@@ -2421,7 +2423,7 @@ export async function runSpecAssume(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec assume"), json);
+  const denied = checkFlags(values, "spec assume", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "assume", json);
   if (extra) return extra;
@@ -2486,11 +2488,7 @@ export async function runSpecRequestApproval(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(
-    values,
-    flagNamesFor("spec request-approval"),
-    json,
-  );
+  const denied = checkFlags(values, "spec request-approval", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "request-approval", json);
   if (extra) return extra;
@@ -2590,7 +2588,7 @@ export async function runSpecStart(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec start"), json);
+  const denied = checkFlags(values, "spec start", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "start", json);
   if (extra) return extra;
@@ -2710,7 +2708,7 @@ export async function runSpecCapture(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec capture"), json);
+  const denied = checkFlags(values, "spec capture", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "capture", json);
   if (extra) return extra;
@@ -2834,7 +2832,7 @@ export async function runSpecRename(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec rename"), json);
+  const denied = checkFlags(values, "spec rename", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "rename", json);
   if (extra) return extra;
@@ -2895,7 +2893,7 @@ export async function runSpecAbandon(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec abandon"), json);
+  const denied = checkFlags(values, "spec abandon", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "abandon", json);
   if (extra) return extra;
@@ -3126,7 +3124,7 @@ export async function runSpecPlanOpen(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec plan open"), json);
+  const denied = checkFlags(values, "spec plan open", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "plan open", json);
   if (extra) return extra;
@@ -3170,7 +3168,7 @@ export async function runSpecPlanEdit(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec plan edit"), json);
+  const denied = checkFlags(values, "spec plan edit", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "plan edit", json);
   if (extra) return extra;
@@ -3239,7 +3237,7 @@ export async function runSpecPlanPropose(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec plan propose"), json);
+  const denied = checkFlags(values, "spec plan propose", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "plan propose", json);
   if (extra) return extra;
@@ -3282,7 +3280,7 @@ export async function runSpecPlanReopen(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec plan reopen"), json);
+  const denied = checkFlags(values, "spec plan reopen", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "plan reopen", json);
   if (extra) return extra;
@@ -3332,7 +3330,7 @@ export async function runSpecPlanSignOff(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec plan sign-off"), json);
+  const denied = checkFlags(values, "spec plan sign-off", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "plan sign-off", json);
   if (extra) return extra;

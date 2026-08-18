@@ -2,8 +2,7 @@ import type { CommandHelpEntry } from "../help-types";
 
 /**
  * Help-registry entries for `cctl dev` (docs/design/cc-cli/04 §2.2): the group
- * hub plus the list/ensure/stop leaves. Ported from the legacy `help.ts` block
- * and the cc-cli SKILL.md; `dev.ts` reads no command-specific flags.
+ * hub plus the list/ensure/stop leaves.
  */
 export const devHelpEntries: CommandHelpEntry[] = [
   {
@@ -29,7 +28,7 @@ export const devHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "show configured dev servers with status and URLs",
     description:
-      "Show every configured server with its status and the local/remote URLs. With --json each entry carries a derived `localUrl`.",
+      "Show every configured server with its status and the local/remote URLs, plus its failure reason and log-file path when it has them. With --json each entry carries a derived `localUrl`.",
     usage: ["cctl dev list [--json]"],
     flags: [],
     examples: [

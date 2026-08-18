@@ -194,17 +194,30 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "status"],
     summary: "inspect a spec's phase and gate readiness",
     description:
-      "Show phase, current authoring stage and its concluding gate, the authoring stages the open draft still has to walk, every gate state with why it is or is not consulted for the current revision, the subject approvals still outstanding, whether a proposed revision still owes an explicit human sign-off, a lint findings tier, open questions, criterion coverage, and the task execution graph for one spec. Each active execution is reported with its lane position: running, parked with no workflow lane launched, or parked awaiting human approval of the finalized candidate.",
-    usage: ["cctl spec status <slug>"],
-    flags: [],
+      "Show phase, current authoring stage and its concluding gate, the authoring stages the open draft still has to walk, every gate state with why it is or is not consulted for the current revision, the subject approvals still outstanding, whether a proposed revision still owes an explicit human sign-off, a lint findings tier, open questions, criterion coverage, and the task execution graph for one spec. Each active execution is reported with its lane position: running, parked with no workflow lane launched, or parked awaiting human approval of the finalized candidate. The enumerated sections are bounded to ten rows each and say what they left out; --full returns every row, and past the stdout budget either level is written to a .cc/temp file whose manifest stdout carries instead.",
+    usage: ["cctl spec status <slug> [--full] [--json]"],
+    flags: [
+      {
+        name: "full",
+        kind: "boolean",
+        description:
+          "every row of each enumerated section, instead of the bounded ten",
+      },
+    ],
     examples: [
       {
         invocation: "cctl spec status native-sdd --json",
-        explanation: "return all readiness fields without reading full prose",
+        explanation:
+          "the bounded readiness projection, with per-section total/returned/truncated under disclosure",
+      },
+      {
+        invocation: "cctl spec status native-sdd --full",
+        explanation:
+          "every open question, assumption, approval, execution, and plan task the bounded sections capped",
       },
     ],
     domainContext:
-      "The remaining-stage sequence is pinned to the open draft, not derived from the current preset: a policy change never moves an open draft's stage, so a draft opened under one preset keeps walking its own sequence under the new dials. Each remaining stage names the gate that concludes it and whether that concluding step is an advance or a propose. Gate applicability is measured against the nearest APPROVED ancestor, so a gate stays consulted for content that entered through an attempt a human withdrew, and an earlier admission is reported as history rather than as current satisfaction. The findings tier names counts per severity and the first few findings; the enumerated sections — executions, pending subject approvals, open questions, assumptions, plan tasks — are bounded to ten items each in the text rendering and state what they left out, while --json carries every row.",
+      "The remaining-stage sequence is pinned to the open draft, not derived from the current preset: a policy change never moves an open draft's stage, so a draft opened under one preset keeps walking its own sequence under the new dials. Each remaining stage names the gate that concludes it and whether that concluding step is an advance or a propose. Gate applicability is measured against the nearest APPROVED ancestor, so a gate stays consulted for content that entered through an attempt a human withdrew, and an earlier admission is reported as history rather than as current satisfaction. The findings tier names counts per severity and the first few findings; the enumerated sections — executions, pending subject approvals, open questions, assumptions, plan tasks — are bounded to ten items each and state what they left out in both renderings, and --full is what returns the rest.",
     related: [
       {
         command: "spec show",
@@ -299,6 +312,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       {
         name: "body",
         kind: "value",
+        fileSource: true,
         description: "the reply text",
       },
     ],
@@ -1145,6 +1159,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
         name: "text",
         kind: "value",
         valuePlaceholder: "<text>",
+        fileSource: true,
         description: "question that blocks or shapes the spec content",
       },
       {
@@ -1483,7 +1498,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
     ],
     domainContext:
-      "The binding dispositions and claims are bounded to ten items each in text and state their total, shown, and omitted counts; --json carries the exact envelope. The launch remains graph-owned opaque data on this surface, so use the ordinary workflow renderer for graph topology and configuration.",
+      "The binding dispositions and claims are bounded to ten items each in text and state their total, shown, and the read that returns the rest; --json carries the exact envelope. The launch remains graph-owned opaque data on this surface, so use the ordinary workflow renderer for graph topology and configuration.",
     related: [
       { command: "spec plan edit", oneLiner: "write the document back" },
       {
@@ -1508,7 +1523,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     ],
     generatedReference: [NATIVE_SDD_GUIDANCE_SECTIONS.deliveryPlanLint],
     domainContext:
-      "The findings here are the SAME projection the propose refusal applies and an edit receipt counts, so a status reporting zero blocking and a propose that refuses cannot coexist. Enumerated sections are bounded to ten items each with total, shown, and omitted counts in the text rendering; --json carries every row.",
+      "The findings here are the SAME projection the propose refusal applies and an edit receipt counts, so a status reporting zero blocking and a propose that refuses cannot coexist. Enumerated sections are bounded to ten items each with total, shown, and the read that returns the rest in the text rendering; --json carries every row.",
     related: [
       {
         command: "spec plan edit",

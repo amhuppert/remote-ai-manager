@@ -15,7 +15,8 @@ import type {
 } from "@/lib/validation/schemas";
 import { conversationTargetApiBase } from "@/lib/conversations/conversation-target";
 import { dispatchGroup } from "../dispatch";
-import { flagNamesFor } from "../help-registry";
+import { awaitJob } from "../job-wait";
+import { parseDuration } from "./agent";
 import {
   EXIT_OK,
   EXIT_OPERATION_FAILED,
@@ -38,6 +39,17 @@ import {
 } from "../shared";
 
 const POLL_INTERVAL_MS = 1_000;
+
+/**
+ * The client wait budget. It bounds a wait that can no longer end — not a run
+ * that is simply long: registered command timeouts already reach an hour, and a
+ * `--wait` submission queues behind every older waiter before its own clock
+ * starts. A budget near those durations would abandon waits that succeed today,
+ * so the default sits well above them and `--timeout` is how a caller who wants
+ * a tighter one asks for it.
+ */
+const DEFAULT_WAIT_BUDGET_MS = 2 * 60 * 60 * 1_000;
+const DEFAULT_WAIT_TIMEOUT_LABEL = "2h";
 
 function validationPath(context: ConversationTargetContext): string {
   return `${conversationTargetApiBase(context.target)}/validation`;
@@ -89,10 +101,6 @@ function validationFailure(
 
 function unexpectedResponse(message: string, json: boolean): CliResult {
   return failure({ exitCode: EXIT_OPERATION_FAILED, message, json });
-}
-
-function humanLine(value: string): string {
-  return value.endsWith("\n") ? value : `${value}\n`;
 }
 
 export async function runValidate(
@@ -212,7 +220,7 @@ async function runValidateList(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
-  const denied = checkFlags(values, flagNamesFor("validate list"), flags.json);
+  const denied = checkFlags(values, "validate list", flags.json);
   if (denied) return denied;
   if (rest.length > 0 || passthrough.length > 0) {
     return usageFailure(
@@ -278,18 +286,17 @@ function notStartedResult(
 ): CliResult {
   switch (result.kind) {
     case "skipped_by_policy":
+      // Tier 2, not tier 3: the skip text states an invariant to keep true
+      // ("it is handled by the script validator", "do not run it by other
+      // means"), not a step to perform now. The renderer owns the one line.
       return {
         exitCode: EXIT_OK,
-        stdout: render(
-          json,
-          `${humanLine(result.message)}instruction: ${result.message}\n`,
-          {
-            ok: true,
-            status: "skipped_by_policy",
-            code: "validation_policy_skipped",
-            instruction: result.message,
-          },
-        ),
+        stdout: render(json, "", {
+          ok: true,
+          status: "skipped_by_policy",
+          code: "validation_policy_skipped",
+          reminders: [result.message],
+        }),
         stderr: "",
       };
     case "capacity_unavailable":
@@ -324,6 +331,58 @@ function notStartedResult(
   }
 }
 
+/**
+ * What a submitted run is, for the verdict line: the command as the caller
+ * named it plus the scope the server resolved. Threaded from submission because
+ * a terminal result carries neither.
+ */
+interface ValidationRunDescriptor {
+  commandName: string;
+  requestedScope: ValidationScope;
+  effectiveScope: ValidationScope;
+}
+
+/**
+ * The stable pass verdict, in text. Without it a quiet green run printed
+ * nothing, so a real pass and a run that matched zero files (a mistyped scope
+ * path) were the same bytes. A run whose scope the server never resolved into a
+ * file list carries no count, and the line says nothing rather than guessing.
+ */
+function passVerdictLine(
+  run: ValidationRunDescriptor,
+  runId: string,
+  filesMatched: number | undefined,
+): string {
+  const parts = [
+    `scope ${run.requestedScope}→${run.effectiveScope}`,
+    ...(filesMatched !== undefined && filesMatched > 0
+      ? [`${filesMatched} file${filesMatched === 1 ? "" : "s"}`]
+      : []),
+    `run ${runId}`,
+  ];
+  return `validation passed: ${run.commandName} (${parts.join(", ")})`;
+}
+
+/** The disclosure that separates a real green from a green over nothing. */
+const VACUOUS_PASS_LINE =
+  "0 files matched — vacuous pass, verify the scope path";
+
+/**
+ * How many trailing lines of a passing run's captured output are relayed. A
+ * pass is summarized by its verdict line; the evidence a caller re-reads lives
+ * in the envelope and in `validate status`. The failure arm relays in full —
+ * there the output IS the finding.
+ */
+const PASS_OUTPUT_TAIL_LINES = 20;
+
+function passOutputRelay(output: string, runId: string): string {
+  const lines = output.replace(/\n+$/, "").split("\n");
+  if (lines.length === 1 && lines[0] === "") return "";
+  if (lines.length <= PASS_OUTPUT_TAIL_LINES) return `${lines.join("\n")}\n`;
+  const tail = lines.slice(-PASS_OUTPUT_TAIL_LINES);
+  return `…${tail.length} of ${lines.length} output lines shown (tail) — full output: cctl validate status ${runId} --json\n${tail.join("\n")}\n`;
+}
+
 function terminalRunResult(
   result: Exclude<
     ValidationRunResult,
@@ -337,21 +396,53 @@ function terminalRunResult(
     }
   >,
   json: boolean,
-  scope: { requestedScope: ValidationScope; effectiveScope: ValidationScope },
+  run: ValidationRunDescriptor,
+  requireMatch: boolean,
 ): CliResult {
+  const scope = {
+    requestedScope: run.requestedScope,
+    effectiveScope: run.effectiveScope,
+  };
   let rendered: CliResult;
   switch (result.kind) {
-    case "passed":
+    case "passed": {
+      const vacuous = result.filesMatched === 0;
+      if (vacuous && requireMatch) {
+        rendered = validationFailure(
+          {
+            exitCode: EXIT_OPERATION_FAILED,
+            message: `${VACUOUS_PASS_LINE} (${run.commandName}, run ${result.runId})`,
+            code: "validation_no_files_matched",
+            json,
+          },
+          {
+            runId: result.runId,
+            commandName: run.commandName,
+            filesMatched: 0,
+          },
+        );
+        break;
+      }
+      const verdict = [
+        passVerdictLine(run, result.runId, result.filesMatched),
+        ...(vacuous ? [VACUOUS_PASS_LINE] : []),
+      ].join("\n");
       rendered = {
         exitCode: EXIT_OK,
-        stdout: render(json, humanLine(result.output), {
-          ok: true,
-          code: "validation_passed",
-          ...result,
-        }),
+        stdout: render(
+          json,
+          `${verdict}\n${passOutputRelay(result.output, result.runId)}`,
+          {
+            ok: true,
+            code: "validation_passed",
+            commandName: run.commandName,
+            ...result,
+          },
+        ),
         stderr: "",
       };
       break;
+    }
     case "failed":
       rendered = validationFailure(
         {
@@ -453,56 +544,38 @@ async function cancelOwnedRun(
   });
 }
 
-async function pollToTerminal(
-  context: ConversationTargetContext,
-  runId: string,
-  leaseToken: string,
-  initialPosition: number | null,
-  scope: { requestedScope: ValidationScope; effectiveScope: ValidationScope },
-  json: boolean,
-  host: CliHost,
-): Promise<CliResult> {
+/**
+ * One poll's outcome. A refused request is a status the classifier terminates
+ * on rather than a parse failure, so a 404 keeps its usage exit class instead
+ * of being retried as an unreadable body.
+ */
+type ValidationWaitStatus =
+  | { kind: "request_failed"; result: CliResult }
+  | { kind: "polled"; response: ValidationPollResponse };
+
+interface PollToTerminalInput {
+  context: ConversationTargetContext;
+  runId: string;
+  leaseToken: string;
+  initialPosition: number | null;
+  run: ValidationRunDescriptor;
+  budgetMs: number;
+  timeoutLabel: string;
+  requireMatch: boolean;
+  json: boolean;
+  host: CliHost;
+}
+
+async function pollToTerminal(input: PollToTerminalInput): Promise<CliResult> {
+  const { context, runId, leaseToken, run, json, host } = input;
   const queuePositions: number[] = [];
-  reportQueuePosition(runId, initialPosition, queuePositions, json, host);
-  let interrupted: "SIGINT" | "SIGTERM" | null = null;
-  const removeSignalListener = host.onSignal?.((signal) => {
-    interrupted = signal;
-  });
+  reportQueuePosition(runId, input.initialPosition, queuePositions, json, host);
 
-  try {
-    for (;;) {
-      if (interrupted !== null) {
-        const signal = interrupted;
-        const cancelled = await cancelOwnedRun(
-          context,
-          runId,
-          leaseToken,
-          host,
-        );
-        if (cancelled.kind !== "ok") {
-          return addProgress(
-            failureFromRequest(cancelled, json),
-            queuePositions,
-            json,
-            host,
-          );
-        }
-        return addProgress(
-          validationFailure(
-            {
-              exitCode: EXIT_OPERATION_FAILED,
-              message: `Cancelled validation run ${runId} after ${signal}.`,
-              code: "validation_cancelled_by_signal",
-              json,
-            },
-            { runId, signal },
-          ),
-          queuePositions,
-          json,
-          host,
-        );
-      }
-
+  const waited = await awaitJob<ValidationWaitStatus>(host, {
+    json,
+    timeoutMs: input.budgetMs,
+    pollIntervalMs: POLL_INTERVAL_MS,
+    async poll() {
       const response = await cliRequest(host, {
         server: context.server,
         token: context.token,
@@ -512,25 +585,24 @@ async function pollToTerminal(
         headers: { [VALIDATION_LEASE_HEADER]: leaseToken },
       });
       if (response.kind !== "ok") {
-        return addProgress(
-          failureFromRequestNotFoundAsUsage(response, json),
-          queuePositions,
-          json,
-          host,
-        );
+        return {
+          ok: true,
+          status: {
+            kind: "request_failed",
+            result: failureFromRequestNotFoundAsUsage(response, json),
+          },
+        };
       }
       const parsed = validationPollResponseSchema.safeParse(response.body);
       if (!parsed.success) {
-        return addProgress(
-          unexpectedResponse(
+        return {
+          ok: false,
+          parseError:
             "unexpected validation status response from the CC server",
-            json,
-          ),
-          queuePositions,
-          json,
-          host,
-        );
+        };
       }
+      // Queue movement is the only progress a queued run has; it is reported as
+      // it arrives rather than replayed at the end.
       reportQueuePosition(
         runId,
         parsed.data.position,
@@ -538,45 +610,74 @@ async function pollToTerminal(
         json,
         host,
       );
-      if (parsed.data.result !== null) {
-        const terminal = parsed.data.result;
-        if (terminal.kind === "cost_exceeds_limit") {
-          return addProgress(
-            notStartedResult(terminal.name, terminal, json),
-            queuePositions,
-            json,
-            host,
-          );
-        }
-        if (
-          terminal.kind === "passed" ||
-          terminal.kind === "failed" ||
-          terminal.kind === "timed_out" ||
-          terminal.kind === "cancelled" ||
-          terminal.kind === "interrupted"
-        ) {
-          return addProgress(
-            terminalRunResult(terminal, json, scope),
-            queuePositions,
-            json,
-            host,
-          );
-        }
-        return addProgress(
-          unexpectedResponse(
-            `validation run ${runId} returned non-terminal result ${terminal.kind} from status`,
-            json,
-          ),
-          queuePositions,
-          json,
-          host,
-        );
+      return { ok: true, status: { kind: "polled", response: parsed.data } };
+    },
+    classify(status) {
+      if (status.kind === "request_failed") {
+        return { terminal: true, result: status.result };
       }
-      await host.sleep(POLL_INTERVAL_MS);
-    }
-  } finally {
-    removeSignalListener?.();
-  }
+      const terminal = status.response.result;
+      if (terminal === null) return { terminal: false };
+      if (terminal.kind === "cost_exceeds_limit") {
+        return {
+          terminal: true,
+          result: notStartedResult(terminal.name, terminal, json),
+        };
+      }
+      if (
+        terminal.kind === "passed" ||
+        terminal.kind === "failed" ||
+        terminal.kind === "timed_out" ||
+        terminal.kind === "cancelled" ||
+        terminal.kind === "interrupted"
+      ) {
+        return {
+          terminal: true,
+          result: terminalRunResult(terminal, json, run, input.requireMatch),
+        };
+      }
+      return {
+        terminal: true,
+        result: unexpectedResponse(
+          `validation run ${runId} returned non-terminal result ${terminal.kind} from status`,
+          json,
+        ),
+      };
+    },
+    onTimeout() {
+      // The budget bounds only this client wait: the run holds its capacity
+      // reservation server-side and reaches its own verdict.
+      return {
+        exitCode: EXIT_OPERATION_FAILED,
+        message: `stopped waiting for validation run ${runId} after ${input.timeoutLabel} — the run continues server-side`,
+        detail: `  continue: cctl validate status ${runId}`,
+        hint: `read the verdict with 'cctl validate status ${runId}'`,
+        code: "wait_timeout",
+        details: {
+          runId,
+          continueWith: `cctl validate status ${runId}`,
+        },
+        json,
+      };
+    },
+    async onAbort(signal) {
+      const cancelled = await cancelOwnedRun(context, runId, leaseToken, host);
+      if (cancelled.kind !== "ok") {
+        return failureFromRequest(cancelled, json);
+      }
+      return validationFailure(
+        {
+          exitCode: EXIT_OPERATION_FAILED,
+          message: `Cancelled validation run ${runId} after ${signal}.`,
+          code: "validation_cancelled_by_signal",
+          json,
+        },
+        { runId, signal },
+      );
+    },
+  });
+
+  return addProgress(waited, queuePositions, json, host);
 }
 
 async function runValidateRun(
@@ -587,7 +688,7 @@ async function runValidateRun(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
-  const denied = checkFlags(values, flagNamesFor("validate run"), flags.json);
+  const denied = checkFlags(values, "validate run", flags.json);
   if (denied) return denied;
   const [commandName, ...extra] = rest;
   if (!commandName) {
@@ -611,6 +712,18 @@ async function runValidateRun(
       "validated paths require --scope changed and cannot narrow a full run",
       flags.json,
     );
+  }
+  const timeoutValue = values["timeout"];
+  let budgetMs = DEFAULT_WAIT_BUDGET_MS;
+  if (timeoutValue !== undefined) {
+    const parsedTimeout = parseDuration(timeoutValue);
+    if (parsedTimeout === null) {
+      return usageFailure(
+        `invalid --timeout "${timeoutValue}" — use e.g. 25m, 90s, 500ms`,
+        flags.json,
+      );
+    }
+    budgetMs = parsedTimeout;
   }
   const workflowExecutionId = env["CC_WORKFLOW_EXECUTION_ID"];
   const workflowContextId = env["CC_WORKFLOW_CONTEXT_ID"];
@@ -713,18 +826,22 @@ async function runValidateRun(
     });
   }
   try {
-    return await pollToTerminal(
-      resolved.context,
-      parsed.data.runId,
-      parsed.data.lease.token,
-      parsed.data.position,
-      {
+    return await pollToTerminal({
+      context: resolved.context,
+      runId: parsed.data.runId,
+      leaseToken: parsed.data.lease.token,
+      initialPosition: parsed.data.position,
+      run: {
+        commandName,
         requestedScope: parsed.data.requestedScope,
         effectiveScope: parsed.data.effectiveScope,
       },
-      flags.json,
+      budgetMs,
+      timeoutLabel: timeoutValue ?? DEFAULT_WAIT_TIMEOUT_LABEL,
+      requireMatch: values["require-match"] !== undefined,
+      json: flags.json,
       host,
-    );
+    });
   } finally {
     await removeStoredLease(leaseFilePath, host);
   }
@@ -796,11 +913,7 @@ async function runValidateStatus(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
-  const denied = checkFlags(
-    values,
-    flagNamesFor("validate status"),
-    flags.json,
-  );
+  const denied = checkFlags(values, "validate status", flags.json);
   if (denied) return denied;
   if (rest.length > 1 || passthrough.length > 0) {
     return usageFailure("validate status takes at most one run id", flags.json);
@@ -849,11 +962,7 @@ async function runValidateCancel(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
-  const denied = checkFlags(
-    values,
-    flagNamesFor("validate cancel"),
-    flags.json,
-  );
+  const denied = checkFlags(values, "validate cancel", flags.json);
   if (denied) return denied;
   if (rest.length !== 1 || passthrough.length > 0) {
     return usageFailure(

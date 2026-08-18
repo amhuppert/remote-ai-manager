@@ -1,6 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { runCli } from "./core";
-import { ccTempPayloadAdvisory, type CliEnv, type CliHost } from "./shared";
+import {
+  CLIENT_ADVISORIES,
+  ccTempPayloadAdvisory,
+  type CliEnv,
+  type CliHost,
+} from "./shared";
+
+// Declare-or-fail: client-authored reminders are the enumerated exception to
+// "the server authors reminders", so each one must name the failure it earned.
+describe("CLIENT_ADVISORIES", () => {
+  it("carries an evidence line for every enumerated entry", () => {
+    const entries = Object.entries(CLIENT_ADVISORIES);
+    expect(entries.length).toBeGreaterThan(0);
+    for (const [id, advisory] of entries) {
+      expect(advisory.evidence.length, id).toBeGreaterThan(20);
+    }
+  });
+});
 
 describe("ccTempPayloadAdvisory", () => {
   it("nudges a bare relative payload written to the worktree root", () => {
@@ -8,6 +25,14 @@ describe("ccTempPayloadAdvisory", () => {
     expect(advisory).toBeDefined();
     expect(advisory).toContain(".cc/temp/");
     expect(advisory).toContain("doc.json");
+  });
+
+  // The renderer owns the reminder prefix and the line break, so the advisory
+  // text must carry neither.
+  it("is a bare single-line reminder body", () => {
+    const advisory = ccTempPayloadAdvisory("doc.json");
+    expect(advisory).not.toContain("\n");
+    expect(advisory?.startsWith("note:")).toBe(false);
   });
 
   it("nudges a relative payload in a non-.cc subdirectory", () => {
@@ -61,15 +86,33 @@ function payloadHost(): CliHost {
 }
 
 describe("cctl --file payload location advisory (integration)", () => {
-  it("prints the .cc/temp advisory on stderr for a worktree-root payload, without touching stdout or exit code", async () => {
+  it("renders the .cc/temp advisory as a reminder line, without touching the exit code", async () => {
     const result = await runCli(
       ["agent", "run", "--file", "doc.json"],
       baseEnv,
       payloadHost(),
     );
     expect(result.exitCode).toBe(0);
-    expect(result.stderr).toContain(".cc/temp/");
     expect(result.stdout).toContain("run-1");
+    expect(result.stdout).toContain("reminder: ");
+    expect(result.stdout).toContain(".cc/temp/");
+    expect(result.stderr).toBe("");
+  });
+
+  // --json consumers see only the envelope, so the advisory must travel in
+  // its reminders array.
+  it("carries the advisory in the --json envelope's reminders", async () => {
+    const result = await runCli(
+      ["agent", "run", "--file", "doc.json", "--json"],
+      baseEnv,
+      payloadHost(),
+    );
+    expect(result.exitCode).toBe(0);
+    const envelope: unknown = JSON.parse(result.stdout);
+    expect(envelope).toMatchObject({ ok: true });
+    const reminders = (envelope as { reminders?: unknown }).reminders;
+    expect(Array.isArray(reminders)).toBe(true);
+    expect((reminders as string[])[0]).toContain(".cc/temp/");
   });
 
   it("stays silent when the payload already lives under .cc/temp/", async () => {
@@ -80,5 +123,6 @@ describe("cctl --file payload location advisory (integration)", () => {
     );
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
+    expect(result.stdout).not.toContain("reminder: ");
   });
 });

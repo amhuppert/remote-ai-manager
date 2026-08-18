@@ -56,7 +56,6 @@ import {
   type SpecStatusView,
   type SpecSummaryView,
 } from "@/lib/specs/view-schemas";
-import { flagNamesFor } from "../../help-registry";
 import {
   EXIT_OK,
   EXIT_OPERATION_FAILED,
@@ -72,9 +71,17 @@ import {
   type CliHost,
   type CliResult,
   type GlobalFlags,
+  type JsonEnvelope,
   type ProjectContext,
   type RequestIssue,
 } from "../../shared";
+import {
+  boundedItems,
+  emitLarge,
+  omissionSummary,
+  type ArtifactManifest,
+  type Omission,
+} from "../../disclosure";
 import { deliveryPlanPreviewText } from "./plan-preview-text";
 import { countOf, gateLines, signOffLines } from "./projection-text";
 import {
@@ -85,7 +92,10 @@ import {
   specShowOutlineSpillEnvelopeSchema,
   specShowSummaryInlineEnvelopeSchema,
   specShowSummarySpillEnvelopeSchema,
-  specStatusEnvelopeSchema,
+  specStatusBoundedEnvelopeSchema,
+  specStatusFullEnvelopeSchema,
+  specStatusSpillEnvelopeSchema,
+  type SpecStatusDisclosure,
   type SpecShowArtifact,
   type SpecShowArtifactRevision,
   type SpecShowOutlineInlineEnvelope,
@@ -399,24 +409,90 @@ function unresolvedDependencyLines(elementIds: readonly string[]): string[] {
  */
 const STATUS_SECTION_LIMIT = 10;
 
+/** The cap `--full` selects: no section drops a row. */
+const EVERY_ROW = Number.MAX_SAFE_INTEGER;
+
 /**
- * One enumerated section, bounded and accounted for. The counts are printed
- * whether or not anything was dropped, so the shape of a section never depends
- * on how much it happens to hold — and an omission is never silent.
- *
- * Items arrive in the order the status projection assigned them, which is
- * stable across reads, so the same ten show every time.
+ * The status projection as one disclosure level: every enumerated section
+ * carries the rows this level shows, and the account of what it left out. Text
+ * and JSON both render from this value, so the cap is decided once and the two
+ * serializations cannot report different rows or different counts.
  */
+interface BoundedStatus {
+  readonly status: SpecStatusView;
+  readonly executions: readonly ActiveExecution[];
+  readonly disclosure: SpecStatusDisclosure;
+}
+
+/**
+ * Bound every enumerated section to `limit` rows. Items arrive in the order the
+ * status projection assigned them, which is stable across reads, so the same
+ * rows show every time.
+ *
+ * Tasks are outline rows, so the outline read is a narrower disclosure than
+ * replaying the whole projection; every other section's rest lives in the
+ * projection itself.
+ */
+function boundStatus(
+  status: SpecStatusView,
+  executions: readonly ActiveExecution[],
+  limit: number,
+): BoundedStatus {
+  const whole = `cctl spec status ${status.slug} --full`;
+  const bound = <T>(items: readonly T[], reveal: string) =>
+    boundedItems(items, Math.max(limit, 1), reveal);
+  const boundedExecutions = bound(executions, whole);
+  const pendingApprovals = bound(status.pendingApprovals, whole);
+  const openQuestions = bound(status.openQuestions, whole);
+  const assumptions = bound(status.assumptions, whole);
+  const taskPlan = bound(status.taskPlan, `cctl spec show ${status.slug}`);
+  return {
+    status: {
+      ...status,
+      pendingApprovals: pendingApprovals.items,
+      openQuestions: openQuestions.items,
+      assumptions: assumptions.items,
+      taskPlan: taskPlan.items,
+    },
+    executions: boundedExecutions.items,
+    disclosure: {
+      executions: boundedExecutions.omission,
+      pendingApprovals: pendingApprovals.omission,
+      openQuestions: openQuestions.omission,
+      assumptions: assumptions.omission,
+      taskPlan: taskPlan.omission,
+    },
+  };
+}
+
+/**
+ * One enumerated section's lines. The counts are printed whether or not
+ * anything was dropped, so the shape of a section never depends on how much it
+ * happens to hold, and a section that dropped rows names the exact read that
+ * returns them.
+ */
+function sectionLines<T>(
+  label: string,
+  items: readonly T[],
+  omission: Omission,
+  renderItem: (item: T) => string[],
+): string[] {
+  const header = `${label}: ${omissionSummary(omission)}`;
+  if (items.length === 0) return [header, "  none"];
+  // One item renders as one row even when it spans several lines: the cap
+  // counts items, so a multi-line row never consumes another item's slot.
+  return [header, ...items.map((item) => renderItem(item).join("\n"))];
+}
+
+/** A section bounded at read time, for the projections that carry no ladder. */
 function boundedSection<T>(
   label: string,
   items: readonly T[],
+  reveal: string,
   renderItem: (item: T) => string[],
 ): string[] {
-  const shown = items.slice(0, STATUS_SECTION_LIMIT);
-  const omitted = items.length - shown.length;
-  const header = `${label}: ${items.length} total, ${shown.length} shown, ${omitted} omitted`;
-  if (items.length === 0) return [header, "  none"];
-  return [header, ...shown.flatMap(renderItem)];
+  const bounded = boundedItems(items, STATUS_SECTION_LIMIT, reveal);
+  return sectionLines(label, bounded.items, bounded.omission, renderItem);
 }
 
 /**
@@ -447,10 +523,10 @@ function draftHealthLines(
   ];
 }
 
-function statusText(
-  status: SpecStatusView,
-  executions: readonly ActiveExecution[],
-): string {
+function statusText(bounded: BoundedStatus): string {
+  const status = bounded.status;
+  const executions = bounded.executions;
+  const disclosure = bounded.disclosure;
   const lines = [
     `${status.slug}  phase: ${status.phase.primary}${phaseQualifier(executions)}`,
     ...(status.phase.authoringStage === undefined
@@ -467,17 +543,21 @@ function statusText(
     // that exists is worth accounting for.
     ...(executions.length === 0
       ? []
-      : boundedSection("executions", executions, (execution) => [
-          executionLine(execution),
-        ])),
+      : sectionLines(
+          "executions",
+          executions,
+          disclosure.executions,
+          (execution) => [executionLine(execution)],
+        )),
     "gates:",
     ...gateLines(status.gates),
     // Subject approvals and the revision's own sign-off are separate answers:
     // a consulted human gate stays pending after its last subject approval, so
     // an empty subject list beside a pending gate would name no act at all.
-    ...boundedSection(
+    ...sectionLines(
       "pending subject approvals",
       status.pendingApprovals,
+      disclosure.pendingApprovals,
       (approval) => [`  ${approval.gate}: ${approval.subject}`],
     ),
     "revision sign-off:",
@@ -490,25 +570,38 @@ function statusText(
           `open comments: ${status.openComments.count}${status.openComments.blockingCount > 0 ? ` (${status.openComments.blockingCount} blocking)` : ""} on ${status.openComments.subjects.join(", ")}`,
           `  read: cctl spec comments ${status.slug} --open`,
         ]),
-    ...boundedSection("open questions", status.openQuestions, (question) => [
-      `  ${question.handle}: ${question.text}`,
-    ]),
-    ...boundedSection("assumptions", status.assumptions, (assumption) => [
-      `  ${assumption.handle} [${assumption.disposition}]: ${assumption.text}`,
-    ]),
-    ...boundedSection("plan tasks", status.taskPlan, (task) => [
-      `  ${task.handle}: ${task.title}`,
-      `    dependencies: ${task.dependsOn.join(", ") || "none"}`,
-      ...unresolvedDependencyLines(task.unresolvedDependsOnTaskElementIds),
-      // Authored intent the delivery-plan author reads while placing the
-      // graph, so an absent value is "not declared" — no default is derived
-      // from it any more.
-      `    intended lane group: ${task.laneGroup ?? "not declared"}`,
-      `    intended execution lane: ${task.executionLane ?? "not declared"}`,
-      `    intended touched paths: ${task.touchedPaths.join(", ") || "not declared"}`,
-      `    criterion coverage: ${task.criterionCoverage.join(", ") || "none"}`,
-      ...unresolvedCoverageLines(task.unresolvedCriterionElementIds),
-    ]),
+    ...sectionLines(
+      "open questions",
+      status.openQuestions,
+      disclosure.openQuestions,
+      (question) => [`  ${question.handle}: ${question.text}`],
+    ),
+    ...sectionLines(
+      "assumptions",
+      status.assumptions,
+      disclosure.assumptions,
+      (assumption) => [
+        `  ${assumption.handle} [${assumption.disposition}]: ${assumption.text}`,
+      ],
+    ),
+    ...sectionLines(
+      "plan tasks",
+      status.taskPlan,
+      disclosure.taskPlan,
+      (task) => [
+        `  ${task.handle}: ${task.title}`,
+        `    dependencies: ${task.dependsOn.join(", ") || "none"}`,
+        ...unresolvedDependencyLines(task.unresolvedDependsOnTaskElementIds),
+        // Authored intent the delivery-plan author reads while placing the
+        // graph, so an absent value is "not declared" — no default is derived
+        // from it any more.
+        `    intended lane group: ${task.laneGroup ?? "not declared"}`,
+        `    intended execution lane: ${task.executionLane ?? "not declared"}`,
+        `    intended touched paths: ${task.touchedPaths.join(", ") || "not declared"}`,
+        `    criterion coverage: ${task.criterionCoverage.join(", ") || "none"}`,
+        ...unresolvedCoverageLines(task.unresolvedCriterionElementIds),
+      ],
+    ),
   ];
   return `${lines.join("\n")}\n`;
 }
@@ -617,7 +710,7 @@ export async function runSpecList(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec list"), json);
+  const denied = checkFlags(values, "spec list", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 0, "list", json);
   if (extra) return extra;
@@ -660,7 +753,7 @@ export async function runSpecMeasures(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec measures"), json);
+  const denied = checkFlags(values, "spec measures", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 0, "measures", json);
   if (extra) return extra;
@@ -853,45 +946,64 @@ function defaultShowArtifactStem(slug: string): string {
     : `spec-${createHash("sha256").update(slug, "utf8").digest("hex").slice(0, 12)}`;
 }
 
-async function writeShowArtifact(
+/**
+ * The four-level ladder always writes when it reaches an artifact level, so
+ * the destination is either the caller's `--out`/derived path or a digest-named
+ * spill file; the shared primitive owns the write, the byte count, and the
+ * content digest the receipt publishes.
+ */
+async function writeSpecArtifact(
   host: CliHost,
-  path: string,
-  format: SpecShowArtifact["format"],
   content: string,
+  destination: {
+    /** The verb the refusal names, so the caller knows which read failed. */
+    readonly command: string;
+    readonly format: SpecShowArtifact["format"];
+    readonly reason: ArtifactManifest["reason"];
+    readonly path?: string;
+    readonly namePrefix?: string;
+    /** The act that recovers a failed write, where the verb has one. */
+    readonly writeFailedInstruction?: string;
+  },
   json: boolean,
 ): Promise<ReadResult<SpecShowArtifact>> {
-  if (host.writeTextFile === undefined) {
+  const outcome = await emitLarge(host, content, {
+    format: destination.format,
+    force: destination.reason,
+    ...(destination.path === undefined ? {} : { path: destination.path }),
+    ...(destination.namePrefix === undefined
+      ? {}
+      : { namePrefix: destination.namePrefix }),
+  });
+  if (outcome.kind === "unwritable") {
     return {
       ok: false,
-      result: failure({
-        exitCode: EXIT_OPERATION_FAILED,
-        message: "spec show: this CLI host cannot write artifact files",
-        code: "write_unavailable",
-        json,
-      }),
-    };
-  }
-  try {
-    await host.writeTextFile(path, content);
-  } catch {
-    return {
-      ok: false,
-      result: failure({
-        exitCode: EXIT_OPERATION_FAILED,
-        message: `spec show: could not write ${JSON.stringify(path)}`,
-        code: "write_failed",
-        instruction: "Name a writable file with --out and retry.",
-        json,
-      }),
+      result:
+        outcome.reason === "host_cannot_write"
+          ? failure({
+              exitCode: EXIT_OPERATION_FAILED,
+              message: `${destination.command}: this CLI host cannot write artifact files`,
+              code: "write_unavailable",
+              json,
+            })
+          : failure({
+              exitCode: EXIT_OPERATION_FAILED,
+              message: `${destination.command}: could not write ${JSON.stringify(outcome.path)}`,
+              code: "write_failed",
+              ...(destination.writeFailedInstruction === undefined
+                ? {}
+                : { instruction: destination.writeFailedInstruction }),
+              json,
+            }),
     };
   }
   return {
     ok: true,
     value: {
-      path,
-      format,
-      bytes: Buffer.byteLength(content, "utf8"),
-      sha256: `sha256:${createHash("sha256").update(content, "utf8").digest("hex")}`,
+      path: outcome.manifest.path,
+      format: destination.format,
+      bytes: outcome.manifest.bytes,
+      sha256: outcome.manifest.sha256,
     },
   };
 }
@@ -921,12 +1033,19 @@ async function boundedInlineShowResult(input: {
   }
 
   const content = `${JSON.stringify(input.envelope, null, 2)}\n`;
-  const digest = createHash("sha256").update(content, "utf8").digest("hex");
-  const written = await writeShowArtifact(
+  const written = await writeSpecArtifact(
     input.host,
-    `.cc/temp/spec-${input.view}-${digest.slice(0, 12)}.json`,
-    "json",
     content,
+    {
+      command: "spec show",
+      format: "json",
+      // The budget was measured against the selected serialization, which this
+      // pretty-printed spill is not identical to, so the reason is stated here
+      // rather than re-derived from the artifact's own size.
+      reason: "stdout_budget_exceeded",
+      namePrefix: `spec-${input.view}`,
+      writeFailedInstruction: "Name a writable file with --out and retry.",
+    },
     input.json,
   );
   if (!written.ok) return { result: written.result, spilled: false };
@@ -978,7 +1097,7 @@ export async function runSpecShow(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec show"), json);
+  const denied = checkFlags(values, "spec show", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "show", json);
   if (extra) return extra;
@@ -1133,11 +1252,16 @@ export async function runSpecShow(
       out ??
       `.cc/temp/${defaultShowArtifactStem(response.value.spec.slug)}-spec-detail.json`;
   }
-  const written = await writeShowArtifact(
+  const written = await writeSpecArtifact(
     host,
-    path,
-    rendered ? "markdown" : "json",
     content,
+    {
+      command: "spec show",
+      format: rendered ? "markdown" : "json",
+      reason: "requested",
+      path,
+      writeFailedInstruction: "Name a writable file with --out and retry.",
+    },
     json,
   );
   if (!written.ok) return written.result;
@@ -1185,7 +1309,7 @@ export async function runSpecStatus(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec status"), json);
+  const denied = checkFlags(values, "spec status", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "status", json);
   if (extra) return extra;
@@ -1210,10 +1334,22 @@ export async function runSpecStatus(
     openQuestionCount: response.value.openQuestions.length,
     activeExecutionCount: executions.length,
   });
-  const envelope = specStatusEnvelopeSchema.parse({
+
+  // --full is the one level that carries every row; the default reports the
+  // rows its own text sections print and accounts for the rest.
+  const full = values["full"] !== undefined;
+  const bounded = boundStatus(
+    response.value,
+    executions,
+    full ? EVERY_ROW : STATUS_SECTION_LIMIT,
+  );
+  const projection = {
     ok: true,
-    status: response.value,
-    executions: executions.map((execution) => {
+    command: "spec status",
+    view: full ? "full" : "bounded",
+    storage: "inline",
+    status: bounded.status,
+    executions: bounded.executions.map((execution) => {
       const progress = describeExecution(execution);
       return {
         id: execution.id,
@@ -1225,10 +1361,80 @@ export async function runSpecStatus(
         actsNext: progress.actsNext,
       };
     }),
+    ...(full ? {} : { disclosure: bounded.disclosure }),
+  };
+  const envelope = full
+    ? specStatusFullEnvelopeSchema.parse(projection)
+    : specStatusBoundedEnvelopeSchema.parse(projection);
+  return await statusResult({
+    host,
+    json,
+    view: full ? "full" : "bounded",
+    text: statusText(bounded),
+    envelope,
+  });
+}
+
+/**
+ * Emit a status projection against the shared stdout budget. Either level can
+ * outgrow a pipe — a spec with a hundred plan tasks does at the bounded level
+ * too — so both spill to the artifact the receipt names rather than truncating
+ * an envelope mid-stream.
+ */
+async function statusResult(input: {
+  readonly host: CliHost;
+  readonly json: boolean;
+  readonly view: "bounded" | "full";
+  readonly text: string;
+  readonly envelope: JsonEnvelope;
+}): Promise<CliResult> {
+  const structured = `${JSON.stringify(input.envelope)}\n`;
+  const largestInlineBytes = Math.max(
+    Buffer.byteLength(structured, "utf8"),
+    Buffer.byteLength(input.text, "utf8"),
+  );
+  if (largestInlineBytes < SPEC_SHOW_STDOUT_BUDGET_BYTES) {
+    return {
+      exitCode: EXIT_OK,
+      stdout: render(input.json, input.text, input.envelope),
+      stderr: "",
+    };
+  }
+  const written = await writeSpecArtifact(
+    input.host,
+    `${JSON.stringify(input.envelope, null, 2)}\n`,
+    {
+      command: "spec status",
+      format: "json",
+      // The budget was measured against the selected serialization, which this
+      // pretty-printed spill is not identical to.
+      reason: "stdout_budget_exceeded",
+      namePrefix: `spec-status-${input.view}`,
+    },
+    input.json,
+  );
+  if (!written.ok) return written.result;
+  const receipt = specStatusSpillEnvelopeSchema.parse({
+    ok: true,
+    command: "spec status",
+    view: input.view,
+    storage: "artifact",
+    reason: "stdout_budget_exceeded",
+    artifact: written.value,
   });
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, statusText(response.value, executions), envelope),
+    stdout: render(
+      input.json,
+      `${[
+        `spec status\t${input.view}\tstdout budget exceeded`,
+        `artifact: ${written.value.path}`,
+        `format: ${written.value.format}`,
+        `bytes: ${written.value.bytes}`,
+        `sha256: ${written.value.sha256}`,
+      ].join("\n")}\n`,
+      receipt,
+    ),
     stderr: "",
   };
 }
@@ -1273,7 +1479,7 @@ export async function runSpecComments(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec comments"), json);
+  const denied = checkFlags(values, "spec comments", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "comments", json);
   if (extra) return extra;
@@ -1354,7 +1560,7 @@ export async function runSpecLint(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec lint"), json);
+  const denied = checkFlags(values, "spec lint", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "lint", json);
   if (extra) return extra;
@@ -1511,7 +1717,7 @@ export async function runSpecGet(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec get"), json);
+  const denied = checkFlags(values, "spec get", json);
   if (denied) return denied;
   const target = parseGetTarget(rest, json);
   if (!target.ok) return target.result;
@@ -1640,7 +1846,7 @@ export async function runSpecSearch(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec search"), json);
+  const denied = checkFlags(values, "spec search", json);
   if (denied) return denied;
   if (values["all"] === "true") {
     return runSpecProjectSearch(rest, flags, env, host);
@@ -1731,7 +1937,7 @@ export async function runSpecDiff(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec diff"), json);
+  const denied = checkFlags(values, "spec diff", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "diff", json);
   if (extra) return extra;
@@ -1863,7 +2069,7 @@ export async function runSpecExport(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec export"), json);
+  const denied = checkFlags(values, "spec export", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "export", json);
   if (extra) return extra;
@@ -2033,7 +2239,7 @@ export async function runSpecPlanPreview(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec plan preview"), json);
+  const denied = checkFlags(values, "spec plan preview", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "plan preview", json);
   if (extra) return extra;
@@ -2066,7 +2272,7 @@ export async function runSpecVerify(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec verify"), json);
+  const denied = checkFlags(values, "spec verify", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "verify", json);
   if (extra) return extra;
@@ -2272,7 +2478,7 @@ export async function runSpecDelta(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec delta"), json);
+  const denied = checkFlags(values, "spec delta", json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "delta", json);
   if (extra) return extra;
@@ -2359,7 +2565,7 @@ async function readPlanView(
   command: "plan get" | "plan status",
 ): Promise<ReadResult<{ view: DeliveryPlanView; slug: string }>> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor(`spec ${command}`), json);
+  const denied = checkFlags(values, `spec ${command}`, json);
   if (denied) return { ok: false, result: denied };
   const extra = noExtraPositionals(rest, 1, command, json);
   if (extra) return { ok: false, result: extra };
@@ -2397,6 +2603,7 @@ function planHealthLines(view: DeliveryPlanView): string[] {
 
 function planStatusText(view: DeliveryPlanView): string {
   const attempt = view.attempt;
+  const wholeStatus = `cctl spec plan status ${attempt.specSlug} --json`;
   const lines = [
     `${attempt.specSlug}  plan attempt ${attempt.id}  status: ${attempt.status}`,
     `pinned revision: ${attempt.pinnedRevisionId}  draft revision: ${attempt.draftRevision}`,
@@ -2415,19 +2622,31 @@ function planStatusText(view: DeliveryPlanView): string {
       view.health.findings.filter(
         (finding) => finding.severity === "blocks_propose",
       ),
+      `cctl spec lint ${attempt.specSlug}`,
       (finding) => [
         `  ${finding.elementHandle} [${finding.ruleId}]: ${finding.message}`,
       ],
     ),
-    ...boundedSection("dispositions", view.dispositionCounts, (entry) => [
-      `  ${entry.disposition}: ${entry.count}`,
-    ]),
-    ...boundedSection("unresolved dispositions", view.unresolved, (row) => [
-      `  ${row.handle} [${row.disposition}]: ${row.resolution}`,
-    ]),
-    ...boundedSection("proposal snapshots", view.snapshots, (snapshot) => [
-      `  ${snapshot.draftRevision}: ${snapshot.candidateId} at ${snapshot.candidateHash} (${snapshot.proposedAt})`,
-    ]),
+    ...boundedSection(
+      "dispositions",
+      view.dispositionCounts,
+      wholeStatus,
+      (entry) => [`  ${entry.disposition}: ${entry.count}`],
+    ),
+    ...boundedSection(
+      "unresolved dispositions",
+      view.unresolved,
+      wholeStatus,
+      (row) => [`  ${row.handle} [${row.disposition}]: ${row.resolution}`],
+    ),
+    ...boundedSection(
+      "proposal snapshots",
+      view.snapshots,
+      wholeStatus,
+      (snapshot) => [
+        `  ${snapshot.draftRevision}: ${snapshot.candidateId} at ${snapshot.candidateHash} (${snapshot.proposedAt})`,
+      ],
+    ),
     ...planNextActLines(view),
   ];
   return `${lines.join("\n")}\n`;
@@ -2436,12 +2655,14 @@ function planStatusText(view: DeliveryPlanView): string {
 function planGetText(view: DeliveryPlanView): string {
   const { document } = view;
   const launchLabel = graphWorkflowLaunchLabel(document.launch);
+  const wholeDocument = `cctl spec plan get ${view.attempt.specSlug} --json`;
   const lines = [
     `${view.attempt.specSlug}  plan attempt ${view.attempt.id} (${view.attempt.status}, draft revision ${view.attempt.draftRevision})`,
     `graph launch: ${launchLabel}`,
     ...boundedSection(
       "binding dispositions",
       document.binding.dispositions,
+      wholeDocument,
       (entry) => [
         `  ${entry.criterionElementId}: ${entry.disposition}${
           entry.deliveredByExecutionId === null
@@ -2450,13 +2671,18 @@ function planGetText(view: DeliveryPlanView): string {
         }`,
       ],
     ),
-    ...boundedSection("binding claims", document.binding.claims, (claim) => [
-      `  ${claim.contextId}: ${claim.criterionElementIds.join(", ") || "no criterion"}`,
-    ]),
+    ...boundedSection(
+      "binding claims",
+      document.binding.claims,
+      wholeDocument,
+      (claim) => [
+        `  ${claim.contextId}: ${claim.criterionElementIds.join(", ") || "no criterion"}`,
+      ],
+    ),
     // The rendering is bounded by design; the whole document is one --json read
     // away, and saying so is what keeps a truncated section from reading as the
     // whole plan.
-    `full document: cctl spec plan get ${view.attempt.specSlug} --json`,
+    `full document: ${wholeDocument}`,
     ...planNextActLines(view),
   ];
   return `${lines.join("\n")}\n`;

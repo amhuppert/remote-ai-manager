@@ -716,15 +716,23 @@ describe("cctl ticket against the real route handlers", () => {
       expect(related.commands).toContain("cctl ticket get 'cc#2'");
     });
 
-    it("includes the bounded index on list in both modes", async () => {
+    it("includes the bounded index on list --attachments in both modes", async () => {
       const host = makeHost();
       await seedTicketWithAllKinds(host);
 
-      const text = await runCli(["ticket", "list"], makeEnv(), host);
+      const text = await runCli(
+        ["ticket", "list", "--attachments"],
+        makeEnv(),
+        host,
+      );
       expect(text.exitCode).toBe(0);
       expect(text.stdout).toContain("cctl ticket attachment get 'cc#1' ");
 
-      const json = await runCli(["ticket", "list", "--json"], makeEnv(), host);
+      const json = await runCli(
+        ["ticket", "list", "--attachments", "--json"],
+        makeEnv(),
+        host,
+      );
       const envelope = JSON.parse(json.stdout);
       const first = envelope.tickets.find(
         (ticket: { number: number }) => ticket.number === 1,
@@ -734,6 +742,19 @@ describe("cctl ticket against the real route handlers", () => {
         (ticket: { number: number }) => ticket.number === 2,
       );
       expect(second.attachmentIndex).toEqual([]);
+    });
+
+    it("counts attachments on the default list without fetching an index", async () => {
+      const host = makeHost();
+      await seedTicketWithAllKinds(host);
+      const before = host.fetchCount();
+
+      const text = await runCli(["ticket", "list"], makeEnv(), host);
+
+      expect(text.exitCode).toBe(0);
+      expect(text.stdout).toContain("attachments: 5");
+      expect(text.stdout).not.toContain("cctl ticket attachment get");
+      expect(host.fetchCount() - before).toBe(1);
     });
 
     it("retrieves a file snapshot's content after the source file is deleted", async () => {

@@ -10,7 +10,15 @@ import {
 import { graphWorkflowBoundaryKindSchema } from "@/lib/workflow-graph/event-schemas";
 import { graphWorkflowStatusSchema } from "@/lib/workflow-graph/definition-schemas";
 import { dispatchGroup } from "../dispatch";
-import { flagNamesFor } from "../help-registry";
+import {
+  STDOUT_BUDGET_BYTES,
+  boundedItems,
+  emitLarge,
+  omissionSummary,
+  type ArtifactManifest,
+  type Omission,
+} from "../disclosure";
+import { awaitJob } from "../job-wait";
 import {
   EXIT_OK,
   EXIT_CONNECTION,
@@ -28,6 +36,7 @@ import {
   resolveCliPrincipalCapabilities,
   resolveLaneContext,
   resolveProjectContext,
+  resolveProseArg,
   resolveSessionContext,
   structuredErrorFields,
   usageFailure,
@@ -35,6 +44,7 @@ import {
   type CliHost,
   type CliRequestResult,
   type CliResult,
+  type FailureInput,
   type GlobalFlags,
   type JsonEnvelope,
   type LaneContext,
@@ -505,7 +515,7 @@ async function runWorkflowValidate(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("workflow validate"), json);
+  const denied = checkFlags(values, "workflow validate", json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure(
@@ -577,7 +587,7 @@ async function runWorkflowCreate(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("workflow create"), json);
+  const denied = checkFlags(values, "workflow create", json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure("workflow create takes no positional arguments", json);
@@ -631,7 +641,7 @@ async function runWorkflowReplace(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("workflow replace"), json);
+  const denied = checkFlags(values, "workflow replace", json);
   if (denied) return denied;
 
   const id = rest[0];
@@ -687,7 +697,7 @@ async function runWorkflowList(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("workflow list"), json);
+  const denied = checkFlags(values, "workflow list", json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure("workflow list takes no arguments", json);
@@ -735,6 +745,99 @@ const GET_SELECTOR_FLAGS = [
   "params",
 ] as const;
 
+/** The receipt that stands in for content stdout could not carry. */
+function fullArtifactText(
+  command: string,
+  view: string,
+  manifest: ArtifactManifest,
+): string {
+  return `${[
+    `${command}\t${view}\tstdout budget exceeded`,
+    `artifact: ${manifest.path}`,
+    `format: ${manifest.format}`,
+    `bytes: ${manifest.bytes}`,
+    `sha256: ${manifest.sha256}`,
+  ].join("\n")}\n`;
+}
+
+/**
+ * A `--full` selector returns the whole record, which past the stdout budget is
+ * more than a pipe or an agent's context window can carry. The shared
+ * disclosure primitive decides: inline while it fits, otherwise the bytes go to
+ * a file and stdout carries the manifest that names and verifies it.
+ *
+ * The budget is measured against BOTH serializations and the artifact holds the
+ * envelope's payload either way, so the same record cannot spill in text mode
+ * while dumping under `--json`, and both modes name one file with one digest.
+ */
+async function fullRecordResult(input: {
+  readonly host: CliHost;
+  readonly json: boolean;
+  readonly command: string;
+  readonly namePrefix: string;
+  /** The selector this record answers; names the view in the receipt. */
+  readonly view?: string;
+  /** The envelope's named payload fields — also the artifact's document. */
+  readonly payload: Record<string, unknown>;
+  readonly inlineText: string;
+}): Promise<CliResult> {
+  const view = input.view ?? "full";
+  const envelope: JsonEnvelope = { ...input.payload, ok: true };
+  const widestBytes = Math.max(
+    Buffer.byteLength(input.inlineText, "utf8"),
+    Buffer.byteLength(`${JSON.stringify(envelope)}\n`, "utf8"),
+  );
+  if (widestBytes < STDOUT_BUDGET_BYTES) {
+    return {
+      exitCode: EXIT_OK,
+      stdout: render(input.json, input.inlineText, envelope),
+      stderr: "",
+    };
+  }
+
+  const outcome = await emitLarge(
+    input.host,
+    `${JSON.stringify(input.payload, null, 2)}\n`,
+    {
+      format: "json",
+      // The budget was measured against the selected serialization, which this
+      // pretty-printed payload is not identical to.
+      force: "stdout_budget_exceeded",
+      namePrefix: input.namePrefix,
+    },
+  );
+  if (outcome.kind === "unwritable") {
+    return outcome.reason === "host_cannot_write"
+      ? failure({
+          exitCode: EXIT_OPERATION_FAILED,
+          message: `${input.command} --${view}: this CLI host cannot write artifact files`,
+          code: "write_unavailable",
+          json: input.json,
+        })
+      : failure({
+          exitCode: EXIT_OPERATION_FAILED,
+          message: `${input.command} --${view}: could not write ${JSON.stringify(outcome.path)}`,
+          code: "write_failed",
+          json: input.json,
+        });
+  }
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(
+      input.json,
+      fullArtifactText(input.command, view, outcome.manifest),
+      {
+        ok: true,
+        command: input.command,
+        view,
+        storage: "artifact",
+        artifact: outcome.manifest,
+      },
+    ),
+    stderr: "",
+  };
+}
+
 function applyGetSelector(
   record: OutlineRecord,
   selector: string,
@@ -764,7 +867,7 @@ async function runWorkflowGet(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("workflow get"), json);
+  const denied = checkFlags(values, "workflow get", json);
   if (denied) return denied;
 
   const id = rest[0];
@@ -807,17 +910,19 @@ async function runWorkflowGet(
 
   // --full: the entire record (the pre-outline behavior), for wholesale edits.
   if (selector === "full") {
-    return {
-      exitCode: EXIT_OK,
-      stdout: render(json, `${JSON.stringify(item, null, 2)}\n`, {
-        ok: true,
+    return await fullRecordResult({
+      host,
+      json,
+      command: "workflow get",
+      namePrefix: "workflow-get-full",
+      payload: {
         item,
         ...(parsed.success && parsed.data.resolved !== undefined
           ? { resolved: parsed.data.resolved }
           : {}),
-      }),
-      stderr: "",
-    };
+      },
+      inlineText: `${JSON.stringify(item, null, 2)}\n`,
+    });
   }
 
   const record = parseOutlineRecord(item);
@@ -867,7 +972,7 @@ async function runWorkflowEdit(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("workflow edit"), json);
+  const denied = checkFlags(values, "workflow edit", json);
   if (denied) return denied;
 
   const id = rest[0];
@@ -936,6 +1041,14 @@ async function runWorkflowEdit(
   };
 }
 
+/**
+ * The mutually-exclusive `workflow status` selectors, in help order. The default
+ * (no selector) is the compact table's own projection; `full` returns the
+ * unstripped execution the route sent, and `halt` returns the whole structured
+ * halt reason the bounded halt block reports one finding of.
+ */
+const STATUS_SELECTOR_FLAGS = ["full", "halt"] as const;
+
 async function runWorkflowStatus(
   rest: string[],
   flags: GlobalFlags,
@@ -944,7 +1057,7 @@ async function runWorkflowStatus(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("workflow status"), json);
+  const denied = checkFlags(values, "workflow status", json);
   if (denied) return denied;
   if (rest.length > 1) {
     return usageFailure(
@@ -952,6 +1065,16 @@ async function runWorkflowStatus(
       json,
     );
   }
+  const selectors = STATUS_SELECTOR_FLAGS.filter(
+    (name) => values[name] !== undefined,
+  );
+  if (selectors.length > 1) {
+    return usageFailure(
+      `choose at most one section selector (--${selectors.join(", --")})`,
+      json,
+    );
+  }
+  const selector = selectors[0];
   const executionId = rest[0];
 
   const resolved = await resolveSessionContext(flags, env, host);
@@ -988,26 +1111,111 @@ async function runWorkflowStatus(
     };
   }
 
-  // --json emits the full, unstripped execution the route returned; the human
-  // table uses only the focused fields (doc 02 §2.4: status is the
-  // highest-frequency call, so the default output stays compact).
-  const rawExecution =
-    result.body !== null &&
-    typeof result.body === "object" &&
-    "execution" in result.body
-      ? (result.body as { execution: unknown }).execution
-      : execution;
   const lanes = deriveExecutionLaneActivities(execution);
 
+  // --full: the unstripped execution the route sent, for the reads the table's
+  // projection cannot answer. Past the stdout budget the disclosure primitive
+  // moves it to a file rather than truncating an envelope mid-pipe.
+  if (selector === "full") {
+    const rawExecution =
+      result.body !== null &&
+      typeof result.body === "object" &&
+      "execution" in result.body
+        ? (result.body as { execution: unknown }).execution
+        : execution;
+    return await fullRecordResult({
+      host,
+      json,
+      command: "workflow status",
+      namePrefix: "workflow-status-full",
+      payload: { view: "full", execution: rawExecution, lanes },
+      inlineText: `${JSON.stringify(rawExecution, null, 2)}\n`,
+    });
+  }
+
+  // --halt: the whole structured reason and its repair log — the reads the
+  // bounded halt block names when it shows one finding of several.
+  if (selector === "halt") {
+    const haltReason = execution.haltReason ?? null;
+    return await fullRecordResult({
+      host,
+      json,
+      command: "workflow status",
+      view: "halt",
+      namePrefix: "workflow-status-halt",
+      payload: {
+        view: "halt",
+        execution: { id: execution.id, status: execution.status },
+        haltReason,
+        planRepairRounds: execution.planRepairRounds,
+      },
+      inlineText:
+        haltReason === null
+          ? `${execution.id}  ${execution.status}  not halted\n`
+          : `${JSON.stringify(
+              {
+                haltReason,
+                planRepairRounds: execution.planRepairRounds,
+              },
+              null,
+              2,
+            )}\n`,
+    });
+  }
+
+  // Default: the same projection the table renders — status is the
+  // highest-frequency call (doc 02 §2.4), so both serializations stay compact
+  // and the whole payload waits behind a selector.
+  const haltReveal = haltFindingsReveal({
+    ...(executionId === undefined ? {} : { executionId }),
+    ...(flags.project !== undefined || flags.session !== undefined
+      ? { scope: { project: context.project, session: context.session } }
+      : {}),
+  });
+  const halt = describePlanDefectHalt(
+    execution.haltReason,
+    execution.planRepairRounds,
+    haltReveal,
+  );
+  const haltType = haltLabel(execution.haltReason);
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, formatStatusTable(execution), {
+    stdout: render(json, formatStatusTable(execution, haltReveal), {
       ok: true,
-      execution: rawExecution,
+      view: "summary",
+      execution: {
+        id: execution.id,
+        status: execution.status,
+        halted: haltType !== null,
+        haltType,
+        activeContextIds: execution.activeContextIds,
+      },
+      contexts: statusContextRows(execution),
       lanes,
+      ...(halt === null ? {} : { halt }),
+      ...(haltType === null ? {} : { next: haltReveal }),
     }),
     stderr: "",
   };
+}
+
+/** The per-context table rows, as the envelope's named payload. */
+function statusContextRows(
+  execution: z.infer<typeof executionSchema>,
+): Record<string, unknown>[] {
+  return execution.workingDefinition.executionContexts.map((ctx) => {
+    const state = execution.contextStates[ctx.id];
+    return {
+      id: ctx.id,
+      title: ctx.title,
+      lane: ctx.placement?.lane ?? null,
+      status: state?.status ?? null,
+      completedTaskCount: state?.completedTaskCount ?? null,
+      totalTaskCount: state?.totalTaskCount ?? null,
+      batchId: state?.batchId ?? null,
+      laneId: state?.laneId ?? null,
+    };
+  });
 }
 
 /**
@@ -1033,6 +1241,54 @@ const planRepairRoundRowSchema = z.object({
   outcome: z.string().nullish(),
 });
 
+/** How many halt findings the bounded block carries before it names the rest. */
+const HALT_FINDING_LIMIT = 1;
+
+/**
+ * The follow-up read that reveals the whole halt, built from the invocation's
+ * own addressing. The ambient `cctl workflow status --halt` resolves the
+ * session's CURRENT execution, so a status read addressed to an execution id
+ * (or scoped by --project/--session) must carry that same addressing or the
+ * reveal points at a different execution's halt — or at nothing.
+ */
+function haltFindingsReveal(
+  target: {
+    executionId?: string;
+    scope?: WorkflowWaitScope;
+  } = {},
+): string {
+  return [
+    "cctl workflow status",
+    ...(target.executionId === undefined ? [] : [target.executionId]),
+    ...(target.scope === undefined
+      ? []
+      : [
+          `--project ${target.scope.project} --session ${target.scope.session}`,
+        ]),
+    "--halt",
+  ].join(" ");
+}
+
+/**
+ * The bounded halt block, as both serializations read it. Rendering text and
+ * JSON from this one value is what keeps them from reporting different findings
+ * or different counts.
+ */
+interface PlanDefectHaltView {
+  readonly type: "plan_defect";
+  readonly contextId: string;
+  readonly summary: string | null;
+  readonly findings: readonly {
+    readonly title: string;
+    readonly conflictingContract: string;
+  }[];
+  readonly omission: Omission;
+  readonly repair: {
+    readonly seq: number;
+    readonly outcome: string | null;
+  } | null;
+}
+
 /**
  * The halt block for the reasons whose type name is not, on its own, an account
  * of what stopped the run.
@@ -1042,24 +1298,25 @@ const planRepairRoundRowSchema = z.object({
  * automatic repair round that already answered it is the difference between "go
  * read the plan" and "repair already declined — decide yourself". Explicit
  * vocabulary rather than a generic dump: a reason type with no entry here keeps
- * the bare `(halted: <type>)` header it has always had.
+ * the bare `(halted: <type>)` header it has always had, and `--halt` returns the
+ * whole reason whatever its type.
  */
-function formatHaltDetail(
+function describePlanDefectHalt(
   haltReason: unknown,
   planRepairRounds: readonly unknown[],
-): string[] {
+  reveal: string,
+): PlanDefectHaltView | null {
   const parsed = planDefectHaltReasonSchema.safeParse(haltReason);
-  if (!parsed.success) return [];
+  if (!parsed.success) return null;
   const reason = parsed.data;
-  const first = reason.planDefects[0];
-  if (first === undefined) return [];
-
-  // Only the first finding is shown, so the omission states total/shown and
-  // names the command that reveals the rest (steering: a cap without
-  // disclosure is a defect). `status --json` returns the unstripped execution.
-  const total = reason.planDefects.length;
-  const disclosure =
-    total > 1 ? " — cctl workflow status --json for the rest" : "";
+  const bounded = boundedItems(
+    reason.planDefects.map((defect) => ({
+      title: defect.title,
+      conflictingContract: defect.conflictingContract,
+    })),
+    HALT_FINDING_LIMIT,
+    reveal,
+  );
 
   // The latest plan-defect round on this context. Repair may run more than once
   // against one halt and the log is append-only, so the highest seq is the live
@@ -1072,7 +1329,8 @@ function formatHaltDetail(
     })
     .filter(
       (round) =>
-        round.haltType === "plan_defect" && round.contextId === reason.contextId,
+        round.haltType === "plan_defect" &&
+        round.contextId === reason.contextId,
     )
     .reduce<z.infer<typeof planRepairRoundRowSchema> | null>(
       (latest, round) =>
@@ -1080,15 +1338,36 @@ function formatHaltDetail(
       null,
     );
 
+  return {
+    type: "plan_defect",
+    contextId: reason.contextId,
+    summary:
+      typeof reason.summary === "string" && reason.summary.trim() !== ""
+        ? reason.summary
+        : null,
+    findings: bounded.items,
+    omission: bounded.omission,
+    repair:
+      repair === null
+        ? null
+        : { seq: repair.seq, outcome: repair.outcome ?? null },
+  };
+}
+
+function formatHaltDetail(halt: PlanDefectHaltView): string[] {
   return [
-    `plan defect: ${reason.contextId} — the plan, not the work`,
-    `  findings: ${total} total, 1 shown${disclosure}`,
-    `  finding: ${first.title}`,
-    `  contract: ${first.conflictingContract}`,
-    ...(repair === null
+    `plan defect: ${halt.contextId} — the plan, not the work`,
+    `  findings: ${omissionSummary(halt.omission)}`,
+    ...halt.findings.flatMap((finding) => [
+      `  finding: ${finding.title}`,
+      `  contract: ${finding.conflictingContract}`,
+    ]),
+    ...(halt.repair === null
       ? []
-      : [`  repair: round ${repair.seq} ${repair.outcome ?? "in flight"}`]),
-    ...(reason.summary ? [`  summary: ${reason.summary}`] : []),
+      : [
+          `  repair: round ${halt.repair.seq} ${halt.repair.outcome ?? "in flight"}`,
+        ]),
+    ...(halt.summary === null ? [] : [`  summary: ${halt.summary}`]),
   ];
 }
 
@@ -1106,7 +1385,10 @@ function haltLabel(haltReason: unknown): string | null {
   return "halted";
 }
 
-function formatStatusTable(execution: z.infer<typeof executionSchema>): string {
+function formatStatusTable(
+  execution: z.infer<typeof executionSchema>,
+  haltReveal: string,
+): string {
   const lanes = deriveExecutionLaneActivities(execution);
   const rows = execution.workingDefinition.executionContexts.map((ctx) => {
     const state = execution.contextStates[ctx.id];
@@ -1142,14 +1424,19 @@ function formatStatusTable(execution: z.infer<typeof executionSchema>): string {
         `  ${r.id.padEnd(idWidth)}  ${r.status.padEnd(statusWidth)}  ${r.tasks}`,
     )
     .join("\n");
-  const haltDetail = formatHaltDetail(
+  const haltView = describePlanDefectHalt(
     execution.haltReason,
     execution.planRepairRounds,
+    haltReveal,
   );
   const sections = [
-    haltDetail.length > 0 ? haltDetail.join("\n") : null,
+    haltView === null ? null : formatHaltDetail(haltView).join("\n"),
     lanes.length > 0 ? `lanes:\n${laneBody}` : null,
     rows.length > 0 ? `contexts:\n${contextBody}` : null,
+    // A halted run's reason carries more than its type name — a code, an
+    // instruction, the findings — and none of it fits the table, so the table
+    // says where it lives.
+    halt === null ? null : `next: ${haltReveal}`,
   ].filter((section): section is string => section !== null);
   return sections.length === 0
     ? `${header}\n`
@@ -1164,7 +1451,7 @@ async function runWorkflowDelete(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("workflow delete"), json);
+  const denied = checkFlags(values, "workflow delete", json);
   if (denied) return denied;
 
   const id = rest[0];
@@ -1204,7 +1491,7 @@ async function runWorkflowStart(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("workflow start"), json);
+  const denied = checkFlags(values, "workflow start", json);
   if (denied) return denied;
 
   const id = rest[0];
@@ -1298,7 +1585,7 @@ async function runWorkflowRun(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("workflow run"), json);
+  const denied = checkFlags(values, "workflow run", json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure(
@@ -1423,10 +1710,17 @@ function formatWorkflowBoundaryResult(result: WorkflowBoundaryResult): string {
   );
   // A halt boundary carries the reason the run stopped; without the block a
   // `halt` line says only that something did. The boundary projection has no
-  // repair log, so the round outcome is a `status` detail only.
-  const halt = formatHaltDetail(result.haltReason, []).map(
-    (line) => `  ${line}`,
+  // repair log, so the round outcome is a `status` detail only. The ambient
+  // reveal is right here: the boundary belongs to the session's own execution.
+  const haltView = describePlanDefectHalt(
+    result.haltReason,
+    [],
+    haltFindingsReveal(),
   );
+  const halt =
+    haltView === null
+      ? []
+      : formatHaltDetail(haltView).map((line) => `  ${line}`);
   return [
     `${result.executionId}  ${result.boundaryKind}`,
     `  status: ${result.status}`,
@@ -1482,7 +1776,7 @@ function workflowWaitContinuationFailure(input: {
   json: boolean;
   scope?: WorkflowWaitScope;
   connectionDetail?: string;
-}): CliResult {
+}): FailureInput {
   const details = workflowWaitContinuation(input);
   const message =
     input.kind === "timeout"
@@ -1494,7 +1788,7 @@ function workflowWaitContinuationFailure(input: {
     `  cursor: ${details.cursor ?? "-"}`,
     `  continue: ${details.continueWith}`,
   ].join("\n");
-  return failure({
+  return {
     exitCode:
       input.kind === "timeout" ? EXIT_OPERATION_FAILED : EXIT_CONNECTION,
     message,
@@ -1502,8 +1796,20 @@ function workflowWaitContinuationFailure(input: {
     code: input.kind === "timeout" ? "wait_timeout" : "wait_disconnected",
     details,
     json: input.json,
-  });
+  };
 }
+
+/**
+ * One long-poll's outcome. A transport that gave up is classified where the
+ * budget is known: a request that exhausted it timed out, anything earlier is a
+ * disconnect, and the two carry different exit classes with the same
+ * continuation receipt.
+ */
+type WorkflowWaitStatus =
+  | { kind: "boundary"; boundary: WorkflowBoundaryResult }
+  | { kind: "pending" }
+  | { kind: "connection"; timedOut: boolean; detail: string }
+  | { kind: "request_failed"; result: CliResult };
 
 async function waitForWorkflowBoundary(input: {
   context: SessionContext;
@@ -1516,90 +1822,113 @@ async function waitForWorkflowBoundary(input: {
   launchReceipt?: GraphWorkflowLaunchReceipt;
   scope?: WorkflowWaitScope;
 }): Promise<CliResult> {
-  let remainingBudgetMs = Math.max(0, input.budgetMs);
   const now = input.host.now ?? Date.now;
-  for (;;) {
-    if (remainingBudgetMs === 0) {
-      return workflowWaitContinuationFailure({
-        kind: "timeout",
-        executionId: input.executionId,
-        cursor: input.cursor,
-        timeoutLabel: input.timeoutLabel,
-        json: input.json,
-        scope: input.scope,
-      });
-    }
-    const params = new URLSearchParams();
-    if (input.cursor !== null) params.set("cursor", input.cursor);
-    const query = params.toString();
-    const requestStartedAt = now();
-    const result = await cliRequest(input.host, {
-      server: input.context.server,
-      token: input.context.token,
-      tokenSource: input.context.tokenSource,
-      method: "GET",
-      path: `${graphWorkflowPath(input.context)}/executions/${encodePathSegment(input.executionId)}/result${query ? `?${query}` : ""}`,
-      timeoutMs: Math.max(1, Math.ceil(remainingBudgetMs)),
+  const continuation = (
+    kind: "timeout" | "disconnected",
+    detail?: string,
+  ): FailureInput =>
+    workflowWaitContinuationFailure({
+      kind,
+      executionId: input.executionId,
+      cursor: input.cursor,
+      timeoutLabel: input.timeoutLabel,
+      json: input.json,
+      scope: input.scope,
+      ...(detail === undefined ? {} : { connectionDetail: detail }),
     });
-    const requestElapsedMs = Math.max(0, now() - requestStartedAt);
-    remainingBudgetMs = Math.max(0, remainingBudgetMs - requestElapsedMs);
-    if (result.kind === "connection") {
-      return workflowWaitContinuationFailure({
-        kind: remainingBudgetMs === 0 ? "timeout" : "disconnected",
-        executionId: input.executionId,
-        cursor: input.cursor,
-        timeoutLabel: input.timeoutLabel,
-        json: input.json,
-        scope: input.scope,
-        connectionDetail: result.detail,
-      });
-    }
-    if (remainingBudgetMs === 0) {
-      return workflowWaitContinuationFailure({
-        kind: "timeout",
-        executionId: input.executionId,
-        cursor: input.cursor,
-        timeoutLabel: input.timeoutLabel,
-        json: input.json,
-        scope: input.scope,
-      });
-    }
-    if (result.kind !== "ok") return workflowFailure(result, input.json);
 
-    const parsed = workflowBoundaryResponseSchema.safeParse(result.body);
-    if (!parsed.success) {
-      return failure({
-        exitCode: EXIT_OPERATION_FAILED,
-        message: "unexpected workflow wait response from the CC server",
-        json: input.json,
+  return awaitJob<WorkflowWaitStatus>(input.host, {
+    json: input.json,
+    timeoutMs: Math.max(0, input.budgetMs),
+    pollIntervalMs: WORKFLOW_WAIT_POLL_INTERVAL_MS,
+    async poll(remainingBudgetMs) {
+      const params = new URLSearchParams();
+      if (input.cursor !== null) params.set("cursor", input.cursor);
+      const query = params.toString();
+      const requestStartedAt = now();
+      const result = await cliRequest(input.host, {
+        server: input.context.server,
+        token: input.context.token,
+        tokenSource: input.context.tokenSource,
+        method: "GET",
+        path: `${graphWorkflowPath(input.context)}/executions/${encodePathSegment(input.executionId)}/result${query ? `?${query}` : ""}`,
+        timeoutMs: Math.max(1, Math.ceil(remainingBudgetMs)),
       });
-    }
-    if (parsed.data.result !== null) {
-      const humanText = [
-        ...(input.launchReceipt === undefined
-          ? []
-          : [formatWorkflowLaunchReceipt(input.launchReceipt)]),
-        formatWorkflowBoundaryResult(parsed.data.result),
-      ].join("");
-      return {
-        exitCode: EXIT_OK,
-        stdout: render(input.json, humanText, {
+      if (result.kind === "connection") {
+        const elapsedMs = Math.max(0, now() - requestStartedAt);
+        return {
           ok: true,
-          ...(input.launchReceipt ?? {}),
-          result: parsed.data.result,
-        }),
-        stderr: "",
+          status: {
+            kind: "connection",
+            timedOut: elapsedMs >= remainingBudgetMs,
+            detail: result.detail,
+          },
+        };
+      }
+      if (result.kind !== "ok") {
+        return {
+          ok: true,
+          status: {
+            kind: "request_failed",
+            result: workflowFailure(result, input.json),
+          },
+        };
+      }
+      const parsed = workflowBoundaryResponseSchema.safeParse(result.body);
+      if (!parsed.success) {
+        return {
+          ok: false,
+          parseError: "unexpected workflow wait response from the CC server",
+        };
+      }
+      return {
+        ok: true,
+        status:
+          parsed.data.result === null
+            ? { kind: "pending" }
+            : { kind: "boundary", boundary: parsed.data.result },
       };
-    }
-    const sleepMs = Math.min(WORKFLOW_WAIT_POLL_INTERVAL_MS, remainingBudgetMs);
-    const sleepStartedAt = now();
-    await input.host.sleep(sleepMs);
-    const sleepElapsedMs = Math.max(0, now() - sleepStartedAt);
-    remainingBudgetMs = Math.max(
-      0,
-      remainingBudgetMs - Math.max(sleepMs, sleepElapsedMs),
-    );
-  }
+    },
+    classify(status) {
+      switch (status.kind) {
+        case "pending":
+          return { terminal: false };
+        case "request_failed":
+          return { terminal: true, result: status.result };
+        case "connection":
+          return {
+            terminal: true,
+            result: failure(
+              continuation(
+                status.timedOut ? "timeout" : "disconnected",
+                status.detail,
+              ),
+            ),
+          };
+        case "boundary": {
+          const humanText = [
+            ...(input.launchReceipt === undefined
+              ? []
+              : [formatWorkflowLaunchReceipt(input.launchReceipt)]),
+            formatWorkflowBoundaryResult(status.boundary),
+          ].join("");
+          return {
+            terminal: true,
+            result: {
+              exitCode: EXIT_OK,
+              stdout: render(input.json, humanText, {
+                ok: true,
+                ...(input.launchReceipt ?? {}),
+                result: status.boundary,
+              }),
+              stderr: "",
+            },
+          };
+        }
+      }
+    },
+    onTimeout: () => continuation("timeout"),
+  });
 }
 
 async function runWorkflowWait(
@@ -1610,7 +1939,7 @@ async function runWorkflowWait(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("workflow wait"), json);
+  const denied = checkFlags(values, "workflow wait", json);
   if (denied) return denied;
   const executionId = rest[0];
   if (executionId === undefined) {
@@ -1668,7 +1997,7 @@ async function runWorkflowAbandon(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("workflow abandon"), json);
+  const denied = checkFlags(values, "workflow abandon", json);
   if (denied) return denied;
   const executionId = rest[0];
   if (executionId === undefined) {
@@ -1727,7 +2056,7 @@ async function runWorkflowTemplates(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("workflow templates"), json);
+  const denied = checkFlags(values, "workflow templates", json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure(
@@ -1810,8 +2139,8 @@ function laneContextPath(context: LaneContext): string {
   return `${graphWorkflowPath(context)}/contexts/${encodePathSegment(context.contextId)}`;
 }
 
-/** Steer for the lane loop: what to do once the current task is done. */
-function remainingTasksHint(remaining: number): string {
+/** Where the lane loop stands once the current task is done. */
+function remainingTasksLine(remaining: number): string {
   return remaining === 1
     ? "1 task remains in this context"
     : `${remaining} tasks remain in this context`;
@@ -1910,7 +2239,7 @@ async function runWorkflowLiveAbort(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("workflow live abort"), json);
+  const denied = checkFlags(values, "workflow live abort", json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure("workflow live abort takes no arguments", json);
@@ -1963,7 +2292,7 @@ async function runWorkflowLiveGet(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("workflow live get"), json);
+  const denied = checkFlags(values, "workflow live get", json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure("workflow live get takes no arguments", json);
@@ -2006,10 +2335,24 @@ async function runWorkflowLiveGet(
   if (result.kind !== "ok") return workflowFailure(result, json);
 
   const body = result.body;
-  const envelope: JsonEnvelope =
+  const payload: Record<string, unknown> =
     body !== null && typeof body === "object"
-      ? { ...(body as Record<string, unknown>), ok: true }
-      : { ok: true };
+      ? { ...(body as Record<string, unknown>) }
+      : {};
+  const envelope: JsonEnvelope = { ...payload, ok: true };
+
+  // --full expands every context, so it is the one selector whose response has
+  // no bound at all; the disclosure primitive decides inline versus artifact.
+  if (selector === "full") {
+    return await fullRecordResult({
+      host,
+      json,
+      command: "workflow live get",
+      namePrefix: "workflow-live-get-full",
+      payload,
+      inlineText: `${JSON.stringify(liveOutlineSectionValue(body), null, 2)}\n`,
+    });
+  }
 
   // Default (no selector) → the compact text outline; --charter → the rendered
   // charter document itself (markdown is the readable form, not a JSON dump);
@@ -2067,7 +2410,7 @@ async function runWorkflowLiveLedger(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("workflow live ledger"), json);
+  const denied = checkFlags(values, "workflow live ledger", json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure("workflow live ledger takes no arguments", json);
@@ -2192,7 +2535,7 @@ async function runWorkflowLiveEdit(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("workflow live edit"), json);
+  const denied = checkFlags(values, "workflow live edit", json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure(
@@ -2283,7 +2626,7 @@ async function runWorkflowLiveAmend(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("workflow live amend"), json);
+  const denied = checkFlags(values, "workflow live amend", json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure(
@@ -2403,11 +2746,7 @@ async function runWorkflowLivePauseResume(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(
-    values,
-    flagNamesFor(`workflow live ${action}`),
-    json,
-  );
+  const denied = checkFlags(values, `workflow live ${action}`, json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure(`workflow live ${action} takes no arguments`, json);
@@ -2462,11 +2801,7 @@ async function runWorkflowTaskComplete(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(
-    values,
-    flagNamesFor("workflow task complete"),
-    json,
-  );
+  const denied = checkFlags(values, "workflow task complete", json);
   if (denied) return denied;
 
   const taskId = rest[0];
@@ -2482,10 +2817,12 @@ async function runWorkflowTaskComplete(
       json,
     );
   }
-  const summary = values["summary"];
+  const summaryArg = await resolveProseArg(values, host, "summary", json);
+  if (!summaryArg.ok) return summaryArg.result;
+  const summary = summaryArg.value;
   if (summary === undefined) {
     return usageFailure(
-      "workflow task complete requires --summary <what you changed and how you verified it>",
+      "workflow task complete requires --summary <what you changed and how you verified it> (or --summary-file <path>)",
       json,
     );
   }
@@ -2514,19 +2851,17 @@ async function runWorkflowTaskComplete(
     : undefined;
   const reminders = parsed.success ? parsed.data.reminders : undefined;
 
-  // A load-bearing stop (mid-turn context rotation) is primary output: it prints
-  // in the body verbatim. The tier arbitration — that the remaining-count hint is
-  // suppressed whenever a stop instruction is present, in both text and JSON — is
-  // owned by `render` (doc 01 §6), so pass both `stopInstruction` and the `hint`
-  // and let the renderer drop the hint.
+  // Both facts are primary output: the remaining count is what this call
+  // decided, and a load-bearing stop (mid-turn context rotation) prints
+  // verbatim and replaces it — a lane that must end its turn is not steered by
+  // a count it cannot act on.
   const humanBody =
     stopInstruction !== undefined
       ? `completed ${taskId}\n${stopInstruction}\n`
-      : `completed ${taskId}\n`;
+      : `completed ${taskId}\n${remainingTasksLine(remaining)}\n`;
   const envelope: JsonEnvelope = {
     ok: true,
     remainingTaskCount: remaining,
-    hint: remainingTasksHint(remaining),
     ...(stopInstruction !== undefined ? { stopInstruction } : {}),
     ...(reminders && reminders.length > 0 ? { reminders } : {}),
   };
@@ -2546,7 +2881,7 @@ async function runWorkflowTaskAdd(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("workflow task add"), json);
+  const denied = checkFlags(values, "workflow task add", json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure(
@@ -2555,10 +2890,17 @@ async function runWorkflowTaskAdd(
     );
   }
   const title = values["title"];
-  const instructions = values["instructions"];
+  const instructionsArg = await resolveProseArg(
+    values,
+    host,
+    "instructions",
+    json,
+  );
+  if (!instructionsArg.ok) return instructionsArg.result;
+  const instructions = instructionsArg.value;
   if (title === undefined || instructions === undefined) {
     return usageFailure(
-      "workflow task add requires --title <name> and --instructions <what to do>",
+      "workflow task add requires --title <name> and --instructions <what to do> (or --instructions-file <path>)",
       json,
     );
   }
@@ -2643,11 +2985,7 @@ async function runWorkflowGraphExpand(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(
-    values,
-    flagNamesFor("workflow graph expand"),
-    json,
-  );
+  const denied = checkFlags(values, "workflow graph expand", json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure(
@@ -2757,11 +3095,7 @@ async function runWorkflowSharedDocUpsert(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(
-    values,
-    flagNamesFor("workflow shared-doc upsert"),
-    json,
-  );
+  const denied = checkFlags(values, "workflow shared-doc upsert", json);
   if (denied) return denied;
 
   const relativePath = rest[0];
@@ -2853,11 +3187,7 @@ async function runWorkflowCollabRequest(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(
-    values,
-    flagNamesFor("workflow collab request"),
-    json,
-  );
+  const denied = checkFlags(values, "workflow collab request", json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure(
@@ -2865,10 +3195,12 @@ async function runWorkflowCollabRequest(
       json,
     );
   }
-  const brief = values["brief"];
+  const briefArg = await resolveProseArg(values, host, "brief", json);
+  if (!briefArg.ok) return briefArg.result;
+  const brief = briefArg.value;
   if (brief === undefined) {
     return usageFailure(
-      "workflow collab request requires --brief <the question or decision>",
+      "workflow collab request requires --brief <the question or decision> (or --brief-file <path>)",
       json,
     );
   }

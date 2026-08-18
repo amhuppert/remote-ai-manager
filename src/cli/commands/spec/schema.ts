@@ -52,7 +52,6 @@ import {
   NATIVE_SDD_GUIDANCE,
   nativeSddGuidanceSchema,
 } from "@/lib/specs/native-sdd-guidance";
-import { flagNamesFor } from "../../help-registry";
 import {
   EXIT_OK,
   checkFlags,
@@ -750,7 +749,9 @@ const readEnvelopeReferenceSchema = z
             "spec lint",
             "spec get",
           ]),
-          view: z.enum(["summary", "outline", "rendered", "full"]).nullable(),
+          view: z
+            .enum(["summary", "outline", "bounded", "rendered", "full"])
+            .nullable(),
           payloadFields: z.array(z.string().min(1)).min(1),
           disclosure: z.string().min(1),
         })
@@ -798,10 +799,17 @@ const READ_ENVELOPE_REFERENCE: z.infer<typeof readEnvelopeReferenceSchema> = {
     },
     {
       command: "spec status",
-      view: null,
-      payloadFields: [...SPEC_READ_ENVELOPE_FIELDS.status],
+      view: "bounded",
+      payloadFields: [...SPEC_READ_ENVELOPE_FIELDS.status.bounded],
       disclosure:
-        "status is the complete lifecycle projection; executions is its active execution subset",
+        "status is the lifecycle projection with each enumerated section bounded to the rows the text tier prints; disclosure reports total, returned, truncated, and the exact reveal command per section; executions is its active execution subset",
+    },
+    {
+      command: "spec status",
+      view: "full",
+      payloadFields: [...SPEC_READ_ENVELOPE_FIELDS.status.full],
+      disclosure:
+        "every row of the lifecycle projection, with no disclosure field because nothing was left out; when either serialization would exceed the stdout budget, storage: artifact carries reason: stdout_budget_exceeded and the exact inline envelope moves to artifact.path",
     },
     {
       command: "spec lint",
@@ -844,7 +852,8 @@ function readEnvelopeDocument(): SchemaDocument {
     example: READ_ENVELOPE_REFERENCE,
     notes: [
       "Every success envelope carries ok: true. Show is flattened: command, view, storage, spec identity, revision, and the selected view fields are siblings rather than a named show payload. Status, lint, and get keep their named payloads under status, lint, and element.",
-      "Summary and outline normally use storage: inline. If either text or JSON serialization would exceed the stdout budget, storage: artifact and reason: stdout_budget_exceeded point to the exact inline envelope in artifact.path. Rendered and full always use storage: artifact.",
+      "Show summary and outline, and both status views, normally use storage: inline. If either text or JSON serialization would exceed the stdout budget, storage: artifact and reason: stdout_budget_exceeded point to the exact inline envelope in artifact.path. Show rendered and show full always use storage: artifact.",
+      "Status is a two-level ladder: the default bounded view prints the same rows as its text sections and accounts for the rest under disclosure, and `--full` returns every row.",
       "baseRevision is the currentRevision lineage head's immediate basedOnRevisionId parent; it is the review comparison base, not a synonym for an approved revision.",
       "currentRevision is the latest revision and lineage head regardless of state.",
       "currentApprovedRevision is the latest approved revision and is not assumed to be an ancestor of currentRevision.",
@@ -913,7 +922,7 @@ export function runSpecSchema(
   values: Record<string, string>,
 ): CliResult {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("spec schema"), json);
+  const denied = checkFlags(values, "spec schema", json);
   if (denied) return denied;
   if (rest.length > 1) {
     return usageFailure("spec schema takes at most one <document>", json);

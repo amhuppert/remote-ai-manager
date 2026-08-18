@@ -3,11 +3,10 @@ import type { CommandHelpEntry } from "../help-types";
 /**
  * Help-registry entries for `cctl conversation` (docs/design/cc-cli/04
  * §2.2/§2.4): the group hub, the read/compact leaves, and the `compaction`
- * group with its get/list leaves. Ported from the legacy `help.ts` block and the
- * cc-cli SKILL.md. The `read` entry carries the FULL flag set from
- * `conversation.ts` (outline, message, message-range, seq-range, include-tools,
- * include-thinking, search, max-bytes, format) — the old help omitted
- * search/max-bytes/format (doc 04 §1.1, the 2026-07-06 audit gap).
+ * group with its get/list leaves. The `read` entry declares the FULL selector
+ * set (outline, message, message-range, seq-range, include-tools,
+ * include-thinking, search, max-bytes, format): the entry IS the allowlist, so
+ * an undeclared selector is a flag the command refuses (doc 04 §1.1).
  */
 export const conversationHelpEntries: CommandHelpEntry[] = [
   {

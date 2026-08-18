@@ -6,9 +6,8 @@ import type { CommandHelpEntry } from "../help-types";
  * the group hub, the authoring/lifecycle leaves (validate/create/replace/list/
  * get/status/start/delete/templates), and the lane-verb family (task
  * complete/add, shared-doc upsert, collab request) under their own group nodes.
- * Ported from the legacy `help.ts` block and the cc-cli SKILL.md; flags match
- * `workflow.ts`'s per-verb `checkFlags`. Related edges follow the one hint
- * vocabulary: validate → create → start → status (`.kiro/steering/cli.md`).
+ * Related edges follow the one hint vocabulary: validate → create → start →
+ * status (`.kiro/steering/cli.md`).
  */
 
 const GRAPH_PLANNING_SKILL = {
@@ -197,7 +196,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "print a definition's outline (or one section, or the full JSON)",
     description:
-      "Print a saved definition's compact OUTLINE by default — structure, ids, per-context task counts + deps, declared output-schema shapes (e.g. `output schema: object · 4 fields`), and prose SIZES (not bodies). It is the navigation map for a targeted `cctl workflow edit`: it shows every id an edit addresses and the current revision, in a few hundred tokens. The `staffing (references)` block lists every agent assignment the document authors — scope, role, assignment id, the qualified `tier:id` profile reference, strategy, and runtime. A SAVED definition is reference-bearing: it names profiles the library still owns and resolves nothing, so these rows carry no profile revision and no resolved-instruction hash. Assignments retained by a switched-off cohort are listed too, marked `(cohort disabled)`. Use `cctl workflow live get` for what a running execution actually resolved. Section selectors fetch ONE full-prose slice (--context/--task/--charter/--config/--params); --full prints the entire record for a wholesale `replace`. At most one selector per invocation. An unknown id exits 2. No hint.",
+      "Print a saved definition's compact OUTLINE by default — structure, ids, per-context task counts + deps, declared output-schema shapes (e.g. `output schema: object · 4 fields`), and prose SIZES (not bodies). It is the navigation map for a targeted `cctl workflow edit`: it shows every id an edit addresses and the current revision, in a few hundred tokens. The `staffing (references)` block lists every agent assignment the document authors — scope, role, assignment id, the qualified `tier:id` profile reference, strategy, and runtime. A SAVED definition is reference-bearing: it names profiles the library still owns and resolves nothing, so these rows carry no profile revision and no resolved-instruction hash. Assignments retained by a switched-off cohort are listed too, marked `(cohort disabled)`. Use `cctl workflow live get` for what a running execution actually resolved. Section selectors fetch ONE full-prose slice (--context/--task/--charter/--config/--params); --full prints the entire record for a wholesale `replace` — and a record too large for stdout is written to a `.cc/temp` file instead, with stdout (and `--json`) carrying only the artifact manifest: path, format, byte count, and SHA-256. At most one selector per invocation. An unknown id exits 2. No hint.",
     usage: [
       "cctl workflow get <id> [--full | --context <ctx> | --task <task> | --charter | --config | --params] [--tier global|project] [--json]",
     ],
@@ -206,7 +205,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
         name: "full",
         kind: "boolean",
         description:
-          "print the entire WorkflowDefinitionRecord (the pre-outline behavior)",
+          "print the entire WorkflowDefinitionRecord; past the stdout budget it is written to a .cc/temp file and stdout carries the manifest",
       },
       {
         name: "context",
@@ -349,20 +348,38 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "show a Current or History execution projection",
     description:
-      "The workflow call you reach for most. With no id, prints a compact per-context table for this session's active Current execution. With an execution id, reads that same self-contained projection from Current or History through explicit project/session/execution addressing. Reads are capability-free. With --json it returns the full execution payload. When no-id status finds nothing running it says so plainly. No hint.",
-    usage: ["cctl workflow status [<executionId>] [--json]"],
-    flags: [],
+      "The workflow call you reach for most. With no id, prints a compact per-context table for this session's active Current execution. With an execution id, reads that same self-contained projection from Current or History through explicit project/session/execution addressing. Reads are capability-free. --json serializes exactly what the table shows: execution identity and status, the context rows, the lanes, and the bounded halt block. Two mutually-exclusive selectors open the rest — --halt returns the whole structured halt reason and its plan-repair log, and --full returns the unstripped execution record, written to a .cc/temp file with only its manifest on stdout when it exceeds the stdout budget. When no-id status finds nothing running it says so plainly. No hint.",
+    usage: ["cctl workflow status [<executionId>] [--halt | --full] [--json]"],
+    flags: [
+      {
+        name: "halt",
+        kind: "boolean",
+        description:
+          "the whole structured halt reason (every finding) plus the plan-repair rounds",
+      },
+      {
+        name: "full",
+        kind: "boolean",
+        description:
+          "the entire execution record; past the stdout budget it is written to a .cc/temp file and stdout carries the manifest",
+      },
+    ],
     examples: [
       {
         invocation: "cctl workflow status",
         explanation:
-          "no id needed — reports this session's running execution; --json returns the full payload",
+          "no id needed — reports this session's running execution as the bounded per-context table",
+      },
+      {
+        invocation: "cctl workflow status --halt",
+        explanation:
+          "reads every finding behind a halt the table shows one of, with the repair rounds that answered it",
       },
       {
         invocation:
-          "cctl workflow status exec-7 --project another-project --session archived-session --json",
+          "cctl workflow status exec-7 --project another-project --session archived-session --full --json",
         explanation:
-          "reads the durable projection by explicit address whether it is in Current or History",
+          "reads the whole durable projection by explicit address whether it is in Current or History",
       },
     ],
     related: [
@@ -648,7 +665,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "print the live outline of the active execution",
     description:
-      "Print the ACTIVE execution's live outline — a compact, server-projected map: the header (executionId, liveRevision, status, seed id@revision, whether it is editable, charter amendment count, plan-repair round count), per-context rows (status, editability tier frozen/editable/pause-to-edit from the shared lifecycle classifier, deps, task progress, iteration progress, and — when the context declares an outputSchema — its shape, e.g. `output schema: object · 4 fields`), per-task rows (id, order, status, title, instruction SIZE — never inlined), a one-line config summary per context, and a `staffing (snapshots)` block. Staffing lists one row per SEEDED assignment — context, role, assignment id, the profile as `tier:id@revision`, the short resolved-instruction hash, and the runtime. Those last two are what a live execution has that a saved definition does not: execution start resolved every assignment once and nothing consults the profile library again, so these rows are what is actually running (`cctl workflow get` shows the bare references the document authored). Two rows sharing a hash are replaying identical instructions. Assignments retained by a switched-off cohort are listed too, marked `(cohort disabled)`: they are snapshotted and a live edit can enable them without any library lookup, but nothing dispatches them — which is why the `config:` line above still reads `validator off`. The profile identity in these rows comes from the snapshot, not the authored reference. The header's liveRev is the value an edit's baseLiveRevision must match. Selectors: --context <ctx> (full prose + resolved config + full task instructions for one context), --task <task> (full instructions), --config <ctx> (one context's full resolved config — implementer, validator, script/approval/questions gates, iteration policy, circuit breaker, mutability, plan repair, collaboration, and the outputSchema declaration itself), --charter (the current charter document rendered with its amendment log), --outputs (every schema-declaring context's capture status, plus the captured payload and its parse provenance), --full (every context expanded). At most one selector. No active execution exits 2.",
+      "Print the ACTIVE execution's live outline — a compact, server-projected map: the header (executionId, liveRevision, status, seed id@revision, whether it is editable, charter amendment count, plan-repair round count), per-context rows (status, editability tier frozen/editable/pause-to-edit from the shared lifecycle classifier, deps, task progress, iteration progress, and — when the context declares an outputSchema — its shape, e.g. `output schema: object · 4 fields`), per-task rows (id, order, status, title, instruction SIZE — never inlined), a one-line config summary per context, and a `staffing (snapshots)` block. Staffing lists one row per SEEDED assignment — context, role, assignment id, the profile as `tier:id@revision`, the short resolved-instruction hash, and the runtime. Those last two are what a live execution has that a saved definition does not: execution start resolved every assignment once and nothing consults the profile library again, so these rows are what is actually running (`cctl workflow get` shows the bare references the document authored). Two rows sharing a hash are replaying identical instructions. Assignments retained by a switched-off cohort are listed too, marked `(cohort disabled)`: they are snapshotted and a live edit can enable them without any library lookup, but nothing dispatches them — which is why the `config:` line above still reads `validator off`. The profile identity in these rows comes from the snapshot, not the authored reference. The header's liveRev is the value an edit's baseLiveRevision must match. Selectors: --context <ctx> (full prose + resolved config + full task instructions for one context), --task <task> (full instructions), --config <ctx> (one context's full resolved config — implementer, validator, script/approval/questions gates, iteration policy, circuit breaker, mutability, plan repair, collaboration, and the outputSchema declaration itself), --charter (the current charter document rendered with its amendment log), --outputs (every schema-declaring context's capture status, plus the captured payload and its parse provenance), --full (every context expanded — past the stdout budget it lands in a `.cc/temp` file and stdout carries only the artifact manifest: path, format, byte count, and SHA-256). At most one selector. No active execution exits 2.",
     usage: [
       "cctl workflow live get [--context <ctx> | --task <task> | --config <ctx> | --charter | --outputs | --full] [--json]",
     ],
@@ -656,7 +673,8 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
       {
         name: "full",
         kind: "boolean",
-        description: "expand every context: full prose + config + full tasks",
+        description:
+          "expand every context: full prose + config + full tasks; past the stdout budget it is written to a .cc/temp file and stdout carries the manifest",
       },
       {
         name: "charter",
@@ -993,7 +1011,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     path: ["workflow", "task", "complete"],
     dynamicContext: true,
     summary: "mark the current lane task done (advances the workflow)",
-    description: `Mark the current task done — call this after each task; it is the only way the workflow advances. <taskId> is the task's id/slug from the task list; --summary records what you changed and how you verified it. On success it hints how many tasks remain. A server stop instruction (mid-turn rotation, "CONTEXT LIMIT REACHED …") prints as primary output instead of the remaining-count hint — obey it and end your turn. ${LANE_NOTE}`,
+    description: `Mark the current task done — call this after each task; it is the only way the workflow advances. <taskId> is the task's id/slug from the task list; --summary records what you changed and how you verified it. On success it prints how many tasks remain in this context. A server stop instruction (mid-turn rotation, "CONTEXT LIMIT REACHED …") replaces that line — obey it and end your turn. ${LANE_NOTE}`,
     usage: [
       'cctl workflow task complete <taskId> --summary "<what changed, how verified>"',
     ],
@@ -1002,6 +1020,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
         name: "summary",
         kind: "value",
         valuePlaceholder: '"<what changed, how verified>"',
+        fileSource: true,
         description: "what you changed and how you verified it",
       },
     ],
@@ -1043,6 +1062,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
         name: "instructions",
         kind: "value",
         valuePlaceholder: '"<self-contained steps>"',
+        fileSource: true,
         description: "self-contained instructions for the agent that runs it",
       },
       {
@@ -1192,6 +1212,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
         name: "brief",
         kind: "value",
         valuePlaceholder: '"<question with context>"',
+        fileSource: true,
         description: "the problem + context, WITHOUT your preferred solution",
       },
     ],

@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { dispatchGroup } from "../dispatch";
-import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
   checkFlags,
@@ -56,7 +55,7 @@ async function runCharterWrite(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("charter write"), json);
+  const denied = checkFlags(values, "charter write", json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure("charter write takes no positional arguments", json);

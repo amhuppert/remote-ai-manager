@@ -542,6 +542,39 @@ describe("cctl fixture prompt", () => {
     expect(result.stderr).toContain("model exploded");
   });
 
+  // The failure arm is exactly where the transcript matters, so it must carry
+  // the same pointers the success arm prints.
+  it("points a failed turn at the transcript and db the success path names", async () => {
+    const host = promptHost(() =>
+      sseResponse('event: error\ndata: {"message":"model exploded"}\n\n'),
+    );
+    const result = await runCli(
+      [
+        "fixture",
+        "prompt",
+        "scratch",
+        "fx-test",
+        "--text",
+        "go",
+        "--wait",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
+      details: {
+        forensics: [
+          "transcript: /wt/.config/transcripts/c1.jsonl",
+          "db: /wt/.config/command-center.db",
+        ],
+      },
+    });
+  });
+
   it("times out a hung turn when --timeout is given", async () => {
     // The fake host's sleep resolves instantly, so the timeout branch wins
     // the race against the never-ending stream.

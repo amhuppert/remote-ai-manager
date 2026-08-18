@@ -2,7 +2,6 @@ import {
   conversationTargetApiBase,
   projectConversationTarget,
 } from "@/lib/conversations/conversation-target";
-import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
   checkFlags,
@@ -37,7 +36,7 @@ export async function runNotify(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(values, flagNamesFor("notify"), json);
+  const denied = checkFlags(values, "notify", json);
   if (denied) return denied;
 
   const message = rest[0];

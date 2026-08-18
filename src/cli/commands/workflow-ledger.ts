@@ -166,18 +166,32 @@ export interface LedgerWalk {
   readonly reason: "complete" | "page-bound" | "reader-stalled" | "unreadable";
 }
 
-function walkNote(walk: LedgerWalk): string | null {
+/**
+ * What a short walk left out, in the shared disclosure vocabulary: the fact is
+ * primary output and `next:` carries the read that reveals the rest. The walk
+ * has no total to count against — the log's length is only known by reaching
+ * its end — so the cap is disclosed by naming the resume point instead, and a
+ * walk that stopped somewhere it cannot resume from says only that.
+ */
+function walkLines(walk: LedgerWalk): string[] {
   switch (walk.reason) {
     case "complete":
-      return null;
+      return [];
     case "page-bound":
-      return walk.resumeCursor === null
-        ? "note: the event walk stopped at its page bound — older decisions are not shown"
-        : `note: the event walk stopped at its page bound — read the rest with: cctl workflow live ledger --cursor ${walk.resumeCursor}`;
+      return [
+        "history: the event walk stopped at its page bound — older decisions are not shown",
+        ...(walk.resumeCursor === null
+          ? []
+          : [`next: cctl workflow live ledger --cursor ${walk.resumeCursor}`]),
+      ];
     case "reader-stalled":
-      return "note: the event reader stopped advancing its cursor — older decisions are not shown";
+      return [
+        "history: the event reader stopped advancing its cursor — older decisions are not shown",
+      ];
     case "unreadable":
-      return "note: a page of the event log could not be read — older decisions are not shown";
+      return [
+        "history: a page of the event log could not be read — older decisions are not shown",
+      ];
   }
 }
 
@@ -186,7 +200,9 @@ export function renderLedger(
   walk: LedgerWalk,
 ): string {
   if (entries.length === 0) {
-    return "this execution declares no loop groups\n";
+    // A declared group with no persisted state leaves the ledger empty while
+    // the walk still ran, so the disclosure belongs here too.
+    return `${["this execution declares no loop groups", ...walkLines(walk)].join("\n")}\n`;
   }
   const lines: string[] = [];
   for (const entry of entries) {
@@ -211,7 +227,6 @@ export function renderLedger(
     lines.push("");
   }
   // No silent caps: a walk that stopped short says so, and says what to do.
-  const note = walkNote(walk);
-  if (note !== null) lines.push(note);
+  lines.push(...walkLines(walk));
   return `${lines.join("\n").trimEnd()}\n`;
 }

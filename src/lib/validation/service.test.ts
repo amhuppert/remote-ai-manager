@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Logger } from "@/lib/logging";
 
@@ -476,11 +479,14 @@ describe("submission lifecycle", () => {
 
     const polled = service.poll("run-1", submission.lease?.token);
     expect(polled.status).toBe("passed");
+    // This harness names a worktree that holds no files, so the forwarded path
+    // resolves to nothing.
     expect(polled.result).toEqual({
       kind: "passed",
       runId: "run-1",
       exitCode: 0,
       output: "42 tests passed",
+      filesMatched: 0,
     });
 
     const row = repo.findById("run-1");
@@ -714,6 +720,89 @@ describe("submission lifecycle", () => {
     });
     expect(repo.findStaleActive()).toHaveLength(0);
     expect(runner.spawns).toHaveLength(0);
+  });
+});
+
+describe("matched-file disclosure for scoped runs", () => {
+  let worktreePath: string;
+
+  beforeEach(() => {
+    worktreePath = mkdtempSync(path.join(tmpdir(), "cc-validation-scope-"));
+    mkdirSync(path.join(worktreePath, "src"), { recursive: true });
+    writeFileSync(path.join(worktreePath, "src", "a.test.ts"), "");
+    resolved = { ...SESSION_CALLER, worktreePath };
+  });
+
+  afterEach(() => {
+    rmSync(worktreePath, { recursive: true, force: true });
+  });
+
+  async function completeScopedRun(
+    scopePaths: string[],
+    outcome: ValidationRunOutcome,
+  ): Promise<ReturnType<ValidationService["poll"]>> {
+    const submission = await service.submit(
+      request({ commandName: "test", scopePaths }),
+    );
+    expect(submission).toMatchObject({ kind: "accepted" });
+    if (submission.kind !== "accepted") throw new Error("submission refused");
+    runner.runs.get(submission.runId)?.complete(outcome);
+    await flush();
+    return service.poll(submission.runId);
+  }
+
+  it("reports how many named paths the run could reach", async () => {
+    const polled = await completeScopedRun(["src/a.test.ts"], {
+      kind: "exited",
+      exitCode: 0,
+      output: "1 test passed",
+    });
+
+    expect(polled.result).toEqual({
+      kind: "passed",
+      runId: "run-1",
+      exitCode: 0,
+      output: "1 test passed",
+      filesMatched: 1,
+    });
+  });
+
+  it("reports zero matched files for a mistyped path that still exits green", async () => {
+    const polled = await completeScopedRun(["src/a.tset.ts"], {
+      kind: "exited",
+      exitCode: 0,
+      output: "",
+    });
+
+    expect(polled.status).toBe("passed");
+    expect(polled.result).toMatchObject({ kind: "passed", filesMatched: 0 });
+  });
+
+  it("counts only the reachable paths of a partially mistyped selection", async () => {
+    const polled = await completeScopedRun(["src/a.test.ts", "src/b.test.ts"], {
+      kind: "exited",
+      exitCode: 1,
+      output: "1 test failed",
+    });
+
+    expect(polled.result).toMatchObject({ kind: "failed", filesMatched: 1 });
+  });
+
+  it("omits the count when the run named no paths of its own", async () => {
+    const submission = await service.submit(request({ commandName: "test" }));
+    expect(submission).toMatchObject({ kind: "accepted" });
+    if (submission.kind !== "accepted") return;
+    runner.runs
+      .get(submission.runId)
+      ?.complete({ kind: "exited", exitCode: 0, output: "clean" });
+    await flush();
+
+    expect(service.poll(submission.runId).result).toEqual({
+      kind: "passed",
+      runId: submission.runId,
+      exitCode: 0,
+      output: "clean",
+    });
   });
 });
 

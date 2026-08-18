@@ -21,7 +21,9 @@ import { conversationHelpEntries } from "./commands/conversation.help";
 import { decisionsHelpEntries } from "./commands/decisions.help";
 import { docsHelpEntries } from "./commands/docs.help";
 import { devHelpEntries } from "./commands/dev.help";
+import { exitCodesHelpEntries } from "./commands/exit-codes.help";
 import { fixtureHelpEntries } from "./commands/fixture.help";
+import { logsHelpEntries } from "./commands/logs.help";
 import { metaHelpEntries } from "./commands/meta.help";
 import { notifyHelpEntries } from "./commands/notify.help";
 import { specHelpEntries } from "./commands/spec/spec.help";
@@ -36,14 +38,16 @@ import {
   type HelpContextBlock,
 } from "./help-render";
 import type { CommandHelpEntry } from "./help-types";
-import { pathKey } from "./help-types";
+import { expandFlagSpecs, pathKey } from "./help-types";
 
 /**
  * Build the registry map from a flat entry list, throwing at build time on a
  * malformed registry so a bad entry fails every test run rather than surfacing
  * in an agent session (docs/design/cc-cli/04 §2.2):
- *   (a) two entries share a path key, or
- *   (b) a length-≥2 entry's immediate parent group node is absent.
+ *   (a) two entries share a path key,
+ *   (b) a length-≥2 entry's immediate parent group node is absent, or
+ *   (c) a `fileSource` flag's derived `--<name>-file` collides with another
+ *       flag the same entry declares (two meanings, one parsed name).
  */
 export function buildHelpRegistry(
   entries: CommandHelpEntry[],
@@ -53,6 +57,15 @@ export function buildHelpRegistry(
     const key = pathKey(entry.path);
     if (registry.has(key)) {
       throw new Error(`help registry: duplicate command path "${key}"`);
+    }
+    const seen = new Set<string>();
+    for (const flag of expandFlagSpecs(entry.flags)) {
+      if (seen.has(flag.name)) {
+        throw new Error(
+          `help registry: entry "${key}" declares "--${flag.name}" twice (a derived file-source flag collides with a declared flag)`,
+        );
+      }
+      seen.add(flag.name);
     }
     registry.set(key, entry);
   }
@@ -110,7 +123,11 @@ export function isGroupNode(
   return childHelpEntries(registry, entry.path).length > 0;
 }
 
-/** The command-specific flag names for a path key, for `checkFlags`. */
+/**
+ * The command-specific flag names for a path key, for `checkFlags` — including
+ * the `--<name>-file` each `fileSource` flag implies, so accepting a prose file
+ * is the same decision as declaring the prose flag.
+ */
 export function flagNamesFrom(
   registry: Map<string, CommandHelpEntry>,
   key: string,
@@ -121,7 +138,7 @@ export function flagNamesFrom(
       `help registry: no entry for "${key}" — cannot derive flag names`,
     );
   }
-  return entry.flags.map((flag) => flag.name);
+  return expandFlagSpecs(entry.flags).map((flag) => flag.name);
 }
 
 /** The union of every `kind: "boolean"` flag name across the registry. */
@@ -180,6 +197,8 @@ const ENTRIES: CommandHelpEntry[] = [
   ...conversationHelpEntries,
   ...ticketHelpEntries,
   ...specHelpEntries,
+  ...logsHelpEntries,
+  ...exitCodesHelpEntries,
   ...metaHelpEntries,
 ];
 

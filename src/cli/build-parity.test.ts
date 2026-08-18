@@ -19,6 +19,31 @@ const baseEnv = {
   CC_CONVERSATION_ID: "conv-1",
 };
 
+const SERVER_CLI_PATH = "/Users/test/Library/Application Support/cc/bin/cctl";
+
+function hostRefusing(
+  body: unknown,
+  headers: Record<string, string> = {},
+): CliHost {
+  return {
+    async fetch() {
+      return new Response(JSON.stringify(body), {
+        status: 409,
+        headers: { "content-type": "application/json", ...headers },
+      });
+    },
+    async readTextFile() {
+      return null;
+    },
+    async readFileBytes() {
+      return null;
+    },
+    async sleep() {},
+    platform: "darwin",
+    homedir: "/Users/test",
+  };
+}
+
 function hostReturning(headers: Record<string, string>): CliHost {
   return {
     async fetch() {
@@ -58,9 +83,117 @@ describe("cctl build parity", () => {
     expect(result.stderr).toContain("cctl doctor");
   });
 
+  // A read is side-effect-free, so the refusal states plainly that nothing
+  // happened rather than hedging about what the result might describe.
+  it("states that the read was discarded and nothing changed", async () => {
+    const host = hostReturning({
+      [BUILD_MISMATCH_HEADER]: `server=${SERVER_BUILD} cli=${CLI_BUILD}`,
+    });
+
+    const result = await runCli(["dev", "list"], baseEnv, host);
+
+    expect(result.stderr).toContain("discarded unread");
+    expect(result.stderr).toContain("nothing changed");
+  });
+
   it("acts normally when the server published this binary", async () => {
     const host = hostReturning({});
     const result = await runCli(["dev", "list"], baseEnv, host);
     expect(result.exitCode).toBe(0);
+  });
+
+  // A server that predates the middleware refusal stamps the header on every
+  // method but still RUNS the handler, so a mutation that reaches this arm may
+  // already be committed — claiming "nothing changed" here invites a re-run
+  // that double-commits.
+  it("hedges on a mutation an un-gated server may have committed", async () => {
+    const host = hostReturning({
+      [BUILD_MISMATCH_HEADER]: `server=${SERVER_BUILD} cli=${CLI_BUILD}`,
+    });
+
+    const result = await runCli(["notify", "hello"], baseEnv, host);
+
+    expect(result.exitCode).toBe(4);
+    expect(result.stderr).toContain("may have committed");
+    expect(result.stderr).toContain("verify");
+    expect(result.stderr).not.toContain("nothing changed");
+  });
+});
+
+describe("cctl build skew — the server's pre-execution mutation refusal", () => {
+  const refusalBody = {
+    error: `cctl build ${CLI_BUILD} does not match server build ${SERVER_BUILD}`,
+    code: "build_skew",
+    details: { serverBuild: SERVER_BUILD, serverCliPath: SERVER_CLI_PATH },
+  };
+
+  it("exits 4 and states truthfully that no changes were made", async () => {
+    const result = await runCli(
+      ["notify", "hello"],
+      baseEnv,
+      hostRefusing(refusalBody),
+    );
+
+    expect(result.exitCode).toBe(4);
+    expect(result.stderr).toContain("no changes were made");
+    expect(result.stderr).toContain(SERVER_BUILD);
+    expect(result.stderr).toContain(CLI_BUILD);
+    expect(result.stderr).toContain(SERVER_CLI_PATH);
+  });
+
+  // The 409 carries the recovery path and the guarantee that nothing ran, so it
+  // must win over the header-only signal on the same response.
+  it("prefers the refusal body over the mismatch header on the same response", async () => {
+    const result = await runCli(
+      ["notify", "hello"],
+      baseEnv,
+      hostRefusing(refusalBody, {
+        [BUILD_MISMATCH_HEADER]: `server=${SERVER_BUILD} cli=${CLI_BUILD}`,
+      }),
+    );
+
+    expect(result.exitCode).toBe(4);
+    expect(result.stderr).toContain("no changes were made");
+  });
+
+  it("carries the code and details on the --json envelope", async () => {
+    const result = await runCli(
+      ["notify", "hello", "--json"],
+      baseEnv,
+      hostRefusing(refusalBody),
+    );
+
+    expect(result.exitCode).toBe(4);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
+      code: "build_skew",
+      details: { serverBuild: SERVER_BUILD, serverCliPath: SERVER_CLI_PATH },
+    });
+  });
+
+  it("falls back to the doctor pointer when the server publishes no cctl path", async () => {
+    const result = await runCli(
+      ["notify", "hello"],
+      baseEnv,
+      hostRefusing({
+        ...refusalBody,
+        details: { serverBuild: SERVER_BUILD, serverCliPath: null },
+      }),
+    );
+
+    expect(result.exitCode).toBe(4);
+    expect(result.stderr).toContain("no changes were made");
+    expect(result.stderr).toContain("cctl doctor");
+  });
+
+  // Any other 409 keeps the ordinary "server said no" mapping.
+  it("leaves an unrelated 409 at exit 1", async () => {
+    const result = await runCli(
+      ["notify", "hello"],
+      baseEnv,
+      hostRefusing({ error: "already sent", code: "duplicate" }),
+    );
+
+    expect(result.exitCode).toBe(1);
   });
 });

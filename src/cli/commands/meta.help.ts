@@ -1,9 +1,9 @@
 import type { CommandHelpEntry } from "../help-types";
 
 /**
- * Help-registry entries for `cctl doctor` and `cctl version` (docs/design/cc-cli/04
- * §2.2) — they have no command module of their own (both live in `core.ts`), so
- * their help lives here. Ported from the legacy `help.ts` block and SKILL.md.
+ * Help-registry entries for `cctl version` and `cctl doctor` (docs/design/cc-cli/04
+ * §2.2). `version` has no command module of its own — it is dispatch-adjacent and
+ * lives in `core.ts` — so this file is where the pair's help stays together.
  */
 export const metaHelpEntries: CommandHelpEntry[] = [
   {
@@ -22,6 +22,15 @@ export const metaHelpEntries: CommandHelpEntry[] = [
     ],
     related: [
       { command: "version", oneLiner: "print just the cctl build stamp" },
+      {
+        command: "exit-codes",
+        oneLiner: "what the code the failing command exited with asserts",
+      },
+      {
+        command: "logs",
+        oneLiner:
+          "analyze the local server logs once connectivity checks out clean",
+      },
     ],
   },
   {
@@ -40,6 +49,10 @@ export const metaHelpEntries: CommandHelpEntry[] = [
       {
         command: "doctor",
         oneLiner: "full connectivity/auth/build-parity check",
+      },
+      {
+        command: "exit-codes",
+        oneLiner: "what each cctl exit code means and how to recover",
       },
     ],
   },

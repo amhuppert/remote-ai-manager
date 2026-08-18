@@ -13,6 +13,14 @@ interface RecordedRequest {
   init: FetchInit;
 }
 
+function firstOf<T>(items: readonly T[], label: string): T {
+  const first = items[0];
+  if (first === undefined) {
+    throw new Error(`expected at least one recorded ${label}, found none`);
+  }
+  return first;
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -211,11 +219,11 @@ describe("cctl ticket list", () => {
     expect(host.requests).toHaveLength(0);
   });
 
-  it("prints an empty-state line when no tickets match", async () => {
+  it("states a zero count when no tickets match", async () => {
     const host = makeHost(() => jsonResponse([]));
     const result = await runCli(["ticket", "list"], baseEnv, host);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("no tickets");
+    expect(result.stdout).toContain("tickets: 0 total, 0 shown");
   });
 
   it("fails on a malformed list response instead of reporting no tickets", async () => {
@@ -236,7 +244,11 @@ describe("cctl ticket list — attachment-index enrichment", () => {
       if (req.url.includes("/attachments")) throw new Error("ECONNREFUSED");
       return jsonResponse([attachedItem]);
     });
-    const result = await runCli(["ticket", "list"], baseEnv, host);
+    const result = await runCli(
+      ["ticket", "list", "--attachments"],
+      baseEnv,
+      host,
+    );
     expect(result.exitCode).toBe(3);
   });
 
@@ -246,7 +258,11 @@ describe("cctl ticket list — attachment-index enrichment", () => {
         ? jsonResponse({ error: "index exploded", code: "index_kaboom" }, 500)
         : jsonResponse([attachedItem]),
     );
-    const result = await runCli(["ticket", "list", "--json"], baseEnv, host);
+    const result = await runCli(
+      ["ticket", "list", "--attachments", "--json"],
+      baseEnv,
+      host,
+    );
     expect(result.exitCode).toBe(1);
     const envelope = JSON.parse(result.stdout);
     expect(envelope.ok).toBe(false);
@@ -260,12 +276,139 @@ describe("cctl ticket list — attachment-index enrichment", () => {
         ? jsonResponse({ nope: true })
         : jsonResponse([attachedItem]),
     );
-    const result = await runCli(["ticket", "list", "--json"], baseEnv, host);
+    const result = await runCli(
+      ["ticket", "list", "--attachments", "--json"],
+      baseEnv,
+      host,
+    );
     expect(result.exitCode).toBe(1);
     const envelope = JSON.parse(result.stdout);
     expect(envelope.ok).toBe(false);
     expect(envelope.code).toBe("invalid_response");
     expect(result.stderr).toContain("cc#12");
+  });
+});
+
+describe("cctl ticket list — bounded default", () => {
+  function listItems(count: number, attachmentCount = 0) {
+    return Array.from({ length: count }, (_unused, index) => ({
+      ...sampleListItem,
+      id: `ticket-${index + 1}`,
+      number: index + 1,
+      attachmentCount,
+    }));
+  }
+
+  it("leads with the count and caps the rows, naming the exact reveal command", async () => {
+    const host = makeHost(() => jsonResponse(listItems(25)));
+    const result = await runCli(["ticket", "list"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.split("\n")[0]).toBe(
+      "tickets: 25 total, 20 shown — rest: cctl ticket list --limit 25",
+    );
+    expect(result.stdout).toContain("cc#20  ");
+    expect(result.stdout).not.toContain("cc#21  ");
+  });
+
+  it("carries the same counts and reveal command in the --json envelope", async () => {
+    const host = makeHost(() => jsonResponse(listItems(25)));
+    const result = await runCli(["ticket", "list", "--json"], baseEnv, host);
+
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.total).toBe(25);
+    expect(envelope.returned).toBe(20);
+    expect(envelope.truncated).toBe(true);
+    expect(envelope.reveal).toBe("cctl ticket list --limit 25");
+    expect(envelope.tickets).toHaveLength(20);
+  });
+
+  it("reveals every row through --limit and reports nothing omitted", async () => {
+    const host = makeHost(() => jsonResponse(listItems(25)));
+    const result = await runCli(
+      ["ticket", "list", "--limit", "30", "--json"],
+      baseEnv,
+      host,
+    );
+
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.tickets).toHaveLength(25);
+    expect(envelope.truncated).toBe(false);
+    expect(envelope.reveal).toBeUndefined();
+  });
+
+  it("keeps the filters in effect in the reveal command", async () => {
+    const host = makeHost(() => jsonResponse(listItems(25)));
+    const result = await runCli(
+      [
+        "ticket",
+        "list",
+        "--all",
+        "--status",
+        "in_progress",
+        "--type",
+        "bug",
+        "--sort",
+        "created",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(JSON.parse(result.stdout).reveal).toBe(
+      "cctl ticket list --all --status in_progress --type bug --sort created --limit 25",
+    );
+  });
+
+  it("prints the count line when nothing matches", async () => {
+    const host = makeHost(() => jsonResponse([]));
+    const result = await runCli(["ticket", "list"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("tickets: 0 total, 0 shown");
+  });
+
+  it("renders attachment counts from the list payload without a request per ticket", async () => {
+    const host = makeHost(() => jsonResponse(listItems(3, 2)));
+    const result = await runCli(["ticket", "list"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(host.requests).toHaveLength(1);
+    expect(result.stdout).toContain("attachments: 2");
+  });
+
+  it("fetches the attachment index only for the rows the cap keeps", async () => {
+    const host = makeHost((req) =>
+      req.url.includes("/attachments")
+        ? jsonResponse({
+            attachments: [
+              sampleAttachment("att-1", { kind: "note", markdown: "m" }),
+            ],
+          })
+        : jsonResponse(listItems(3, 1)),
+    );
+    const result = await runCli(
+      ["ticket", "list", "--attachments", "--limit", "2"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(host.requests).toHaveLength(3);
+  });
+
+  it("exits 2 on a non-positive --limit before any network call", async () => {
+    const host = makeHost(() => jsonResponse(listItems(3)));
+    const result = await runCli(
+      ["ticket", "list", "--limit", "0"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("--limit");
+    expect(host.requests).toHaveLength(0);
   });
 });
 
@@ -478,7 +621,7 @@ function sampleAttachment(
 const LONG_DESCRIPTION = "x".repeat(150);
 
 describe("cctl ticket attach", () => {
-  it("exits 2 naming the kinds on an unknown kind", async () => {
+  it("exits 2 naming the offending kind and the registry's kinds", async () => {
     const host = makeHost(() => jsonResponse({}));
     const result = await runCli(
       ["ticket", "attach", "url", "12", "--description", "d"],
@@ -486,7 +629,10 @@ describe("cctl ticket attach", () => {
       host,
     );
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("conversation");
+    expect(result.stderr).toContain('unknown ticket attach kind "url"');
+    for (const kind of ["file", "conversation", "session", "ticket", "note"]) {
+      expect(result.stderr, kind).toContain(kind);
+    }
     expect(host.requests).toHaveLength(0);
   });
 
@@ -546,7 +692,9 @@ describe("cctl ticket attach", () => {
       { ...baseEnv, CC_SESSION: "sess-env", CC_CONVERSATION_ID: "conv-env" },
       host,
     );
-    expect(JSON.parse(host.requests[0]!.init.body ?? "{}")).toEqual({
+    expect(
+      JSON.parse(firstOf(host.requests, "request").init.body ?? "{}"),
+    ).toEqual({
       description: "d",
       payload: {
         kind: "conversation",
@@ -661,6 +809,268 @@ describe("cctl ticket attach", () => {
     expect(new URL(host.requests[0]!.url).pathname).toBe(
       "/api/projects/other/tickets/7/attachments",
     );
+  });
+});
+
+describe("cctl ticket attach note — file-sourced body (doc 09 §7)", () => {
+  function noteHost(files: Record<string, string>) {
+    const host = makeHost(() =>
+      jsonResponse(
+        sampleAttachment("att-1", { kind: "note", markdown: "m" }),
+        201,
+      ),
+    );
+    return {
+      ...host,
+      readTextFile: async (filePath: string) => files[filePath] ?? null,
+    };
+  }
+
+  it("sends the markdown read from --markdown-file in place of the positional", async () => {
+    const host = noteHost({
+      ".cc/temp/note.md": "Repro: run `bun test` twice.\n",
+    });
+    const result = await runCli(
+      [
+        "ticket",
+        "attach",
+        "note",
+        "12",
+        "--markdown-file",
+        ".cc/temp/note.md",
+        "--description",
+        "repro steps",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(host.requests[0]!.init.body ?? "{}")).toEqual({
+      description: "repro steps",
+      payload: { kind: "note", markdown: "Repro: run `bun test` twice." },
+    });
+  });
+
+  it("refuses a positional body alongside a file source before any request", async () => {
+    const host = noteHost({ ".cc/temp/note.md": "from the file" });
+    const result = await runCli(
+      [
+        "ticket",
+        "attach",
+        "note",
+        "12",
+        "inline body",
+        "--markdown-file",
+        ".cc/temp/note.md",
+        "--description",
+        "d",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it("names the file alternative when no body is supplied at all", async () => {
+    const host = noteHost({});
+    const result = await runCli(
+      ["ticket", "attach", "note", "12", "--description", "d"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("--markdown-file");
+    expect(host.requests).toHaveLength(0);
+  });
+});
+
+describe("cctl ticket create — file-sourced description (doc 09 §7)", () => {
+  it("sends the description read from --description-file", async () => {
+    const base = makeHost(() =>
+      jsonResponse({ ticket: sampleDetail, warnings: [] }, 201),
+    );
+    const host = {
+      ...base,
+      readTextFile: async (filePath: string) =>
+        filePath === ".cc/temp/desc.md"
+          ? "Fails ~1 in 5 `bun test` runs.\n"
+          : null,
+    };
+    const result = await runCli(
+      [
+        "ticket",
+        "create",
+        "--title",
+        "Flaky gate",
+        "--type",
+        "bug",
+        "--description-file",
+        ".cc/temp/desc.md",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(
+      JSON.parse(firstOf(base.requests, "request").init.body ?? "{}"),
+    ).toEqual({
+      title: "Flaky gate",
+      workType: "bug",
+      description: "Fails ~1 in 5 `bun test` runs.",
+    });
+  });
+});
+
+describe("cctl ticket attachment get — file content", () => {
+  function fileAttachment(fileName: string, mediaType: string | null) {
+    return sampleAttachment(
+      "att-1",
+      {
+        kind: "file",
+        fileName,
+        snapshotKey: "snap-1",
+        mediaType,
+        sizeBytes: 12,
+        sha256: "deadbeef",
+      },
+      "captured build notes",
+    );
+  }
+
+  function resolvedFile(input: {
+    content: string;
+    encoding: "utf8" | "base64";
+    fileName?: string;
+    mediaType?: string | null;
+  }): Record<string, unknown> {
+    const fileName = input.fileName ?? "notes.md";
+    const mediaType =
+      input.mediaType === undefined ? "text/markdown" : input.mediaType;
+    return {
+      kind: "file",
+      attachment: fileAttachment(fileName, mediaType),
+      fileName,
+      mediaType,
+      sizeBytes: Buffer.byteLength(input.content, "utf8"),
+      sha256: "deadbeef",
+      encoding: input.encoding,
+      content: input.content,
+    };
+  }
+
+  function writingHost(respond: (req: RecordedRequest) => Response) {
+    const written: Array<{ path: string; content: string }> = [];
+    const host = makeHost(respond);
+    return Object.assign(host, {
+      written,
+      async writeTextFile(filePath: string, content: string) {
+        written.push({ path: filePath, content });
+      },
+    });
+  }
+
+  it("keeps content within the stdout budget inline", async () => {
+    const host = writingHost(() =>
+      jsonResponse(resolvedFile({ content: "short body", encoding: "utf8" })),
+    );
+    const result = await runCli(
+      ["ticket", "attachment", "get", "12", "att-1"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("short body");
+    expect(host.written).toHaveLength(0);
+  });
+
+  it("spills content past the stdout budget to an artifact and prints the manifest", async () => {
+    const content = "x".repeat(70_000);
+    const host = writingHost(() =>
+      jsonResponse(resolvedFile({ content, encoding: "utf8" })),
+    );
+    const result = await runCli(
+      ["ticket", "attachment", "get", "12", "att-1"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain(content);
+    expect(host.written).toHaveLength(1);
+    const written = firstOf(host.written, "artifact write");
+    expect(written.content).toBe(content);
+    expect(result.stdout).toContain(`artifact: ${written.path}`);
+    expect(result.stdout).toContain("bytes: 70000");
+    expect(result.stdout).toMatch(/sha256: sha256:[a-f0-9]{64}/u);
+    expect(result.stdout).toContain("notes.md");
+    expect(result.stdout).toContain("text/markdown");
+  });
+
+  it("replaces the content field with the manifest in the --json envelope", async () => {
+    const content = "x".repeat(70_000);
+    const host = writingHost(() =>
+      jsonResponse(resolvedFile({ content, encoding: "utf8" })),
+    );
+    const result = await runCli(
+      ["ticket", "attachment", "get", "12", "att-1", "--json"],
+      baseEnv,
+      host,
+    );
+
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.attachment.content).toBeUndefined();
+    expect(envelope.artifact).toMatchObject({
+      path: firstOf(host.written, "artifact write").path,
+      bytes: 70_000,
+      reason: "stdout_budget_exceeded",
+    });
+    expect(envelope.artifact.sha256).toMatch(/^sha256:[a-f0-9]{64}$/u);
+  });
+
+  it("always writes base64 content to an artifact, whatever its size", async () => {
+    const host = writingHost(() =>
+      jsonResponse(
+        resolvedFile({
+          content: "aGVsbG8=",
+          encoding: "base64",
+          fileName: "diagram.png",
+          mediaType: "image/png",
+        }),
+      ),
+    );
+    const result = await runCli(
+      ["ticket", "attachment", "get", "12", "att-1"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain("aGVsbG8=");
+    expect(host.written).toHaveLength(1);
+    expect(firstOf(host.written, "artifact write").path).toContain(".cc/temp/");
+    expect(result.stdout).toContain("base64");
+  });
+
+  it("fails loudly when the artifact cannot be written", async () => {
+    const host = makeHost(() =>
+      jsonResponse(resolvedFile({ content: "aGVsbG8=", encoding: "base64" })),
+    );
+    const result = await runCli(
+      ["ticket", "attachment", "get", "12", "att-1", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.ok).toBe(false);
+    expect(envelope.code).toBe("write_unavailable");
   });
 });
 
@@ -781,6 +1191,23 @@ describe("cctl ticket attachment", () => {
       });
     },
   );
+
+  it("exits 2 naming the offending verb and the registry's verbs", async () => {
+    const host = makeHost(() => jsonResponse({}));
+    const result = await runCli(
+      ["ticket", "attachment", "frob", "12", "att-1"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain(
+      'unknown ticket attachment subcommand "frob"',
+    );
+    for (const verb of ["get", "update", "refresh", "remove"]) {
+      expect(result.stderr, verb).toContain(verb);
+    }
+    expect(host.requests).toHaveLength(0);
+  });
 
   it("exits 2 before any network call when update has no field flags", async () => {
     const host = makeHost(() => jsonResponse({}));
@@ -927,7 +1354,7 @@ describe("attachment index on list (bounded mode)", () => {
 
   it("fetches attachments only for tickets that have any", async () => {
     const host = listHost();
-    await runCli(["ticket", "list"], baseEnv, host);
+    await runCli(["ticket", "list", "--attachments"], baseEnv, host);
     // One list call + one attachments call for cc#12; none for cc#13.
     expect(host.requests).toHaveLength(2);
   });

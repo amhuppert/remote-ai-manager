@@ -54,8 +54,8 @@ approval gates, ask-user-question pauses, charter, shared documents.
   `<graph-workflow>`). Otherwise:
   `bun run workflow:audit -- --list` — every execution (active + archived),
   newest first, with project/session.
-- A live run in the current session: `cctl workflow status` (add `--json`
-  for the full payload).
+- A live run in the current session: `cctl workflow status` (add `--full`
+  for the whole execution record).
 
 ## Step 2 — Run the extractor
 

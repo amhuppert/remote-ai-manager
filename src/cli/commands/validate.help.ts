@@ -50,9 +50,9 @@ export const validateHelpEntries: CommandHelpEntry[] = [
     path: ["validate", "run"],
     summary: "run one registered validation command",
     description:
-      "Submit one logical command through ValidationService. Scope defaults to changed; a command without native changed support falls back to full. Admission is fail-fast by default; --wait joins the strict FIFO queue. Values after `--` are changed-run narrowing paths, never tool options.",
+      "Submit one logical command through ValidationService. Scope defaults to changed; a command without native changed support falls back to full. Every submission blocks to a verdict — --wait decides only how a busy scheduler answers, joining the strict FIFO queue instead of refusing immediately, unlike `agent run --wait` and `workflow run --wait` which decide whether to block at all. Values after `--` are changed-run narrowing paths, never tool options. A pass prints one verdict line naming the command, the resolved scope, the matched-file count when the server resolved one, and the run id, then the tail of the runner output; the same facts are fields on the --json envelope. A path after `--` that matches nothing still passes and says `0 files matched`, so read the verdict line rather than trusting a silent green. --timeout bounds only this client wait; on expiry the run continues server-side and the failure names the status command that recovers its verdict.",
     usage: [
-      "cctl validate run <name> [--scope changed|full] [--wait] [--json] [-- <validated paths>]",
+      "cctl validate run <name> [--scope changed|full] [--wait] [--timeout <dur>] [--require-match] [--json] [-- <validated paths>]",
     ],
     flags: [
       {
@@ -66,6 +66,19 @@ export const validateHelpEntries: CommandHelpEntry[] = [
         name: "wait",
         kind: "boolean",
         description: "queue behind older work instead of refusing when busy",
+      },
+      {
+        name: "timeout",
+        kind: "value",
+        valuePlaceholder: "<dur>",
+        description:
+          "client wait budget including queue time (e.g. 45m, 90s; default 2h)",
+      },
+      {
+        name: "require-match",
+        kind: "boolean",
+        description:
+          "exit 1 when the paths after `--` matched no files; a run that forwards no paths carries no count and is unaffected",
       },
     ],
     examples: [

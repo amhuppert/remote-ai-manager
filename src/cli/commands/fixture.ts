@@ -3,13 +3,13 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import { z } from "zod";
 import { devServersStatusResponseSchema } from "@/lib/dev-server/schemas";
 import { dispatchGroup } from "../dispatch";
-import { flagNamesFor } from "../help-registry";
+import { withForensics } from "../job-wait";
 import {
-  EXIT_CONNECTION,
   EXIT_OK,
   EXIT_OPERATION_FAILED,
   checkFlags,
   cliRequest,
+  connectionFailure,
   encodePathSegment,
   failure,
   failureFromRequest,
@@ -81,6 +81,21 @@ function configPaths(
         }
       : {}),
   };
+}
+
+/**
+ * The artifacts a failed turn is diagnosed from. The success path names them as
+ * envelope fields; a failure carries the same pointers rather than leaving the
+ * caller to reconstruct paths from a worktree it never sees.
+ */
+function fixturePathPointers(paths: {
+  dbPath?: string;
+  transcriptPath?: string;
+}): string[] {
+  return [
+    ...(paths.transcriptPath ? [`transcript: ${paths.transcriptPath}`] : []),
+    ...(paths.dbPath ? [`db: ${paths.dbPath}`] : []),
+  ];
 }
 
 /**
@@ -265,11 +280,7 @@ async function runSessionCreate(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(
-    values,
-    flagNamesFor("fixture session create"),
-    json,
-  );
+  const denied = checkFlags(values, "fixture session create", json);
   if (denied) return denied;
   const project = rest[0];
   if (project === undefined || rest.length > 1) {
@@ -365,11 +376,7 @@ async function runSessionDelete(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(
-    values,
-    flagNamesFor("fixture session delete"),
-    json,
-  );
+  const denied = checkFlags(values, "fixture session delete", json);
   if (denied) return denied;
   const [project, sessionName] = rest;
   if (project === undefined || sessionName === undefined || rest.length > 2) {
@@ -451,7 +458,7 @@ async function runPrompt(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("fixture prompt"), json);
+  const denied = checkFlags(values, "fixture prompt", json);
   if (denied) return denied;
   const [project, sessionName] = rest;
   if (project === undefined || sessionName === undefined || rest.length > 2) {
@@ -519,10 +526,10 @@ async function runPrompt(
       body: JSON.stringify({ prompt: text }),
     });
   } catch (error) {
-    return failure({
-      exitCode: EXIT_CONNECTION,
+    return connectionFailure({
       message: `cannot reach the dev server at ${target.url}`,
       detail: getErrorMessage(error),
+      hint: "start it with `cctl dev ensure`, then re-run this prompt",
       json,
     });
   }
@@ -569,11 +576,16 @@ async function runPrompt(
     });
   }
   if (outcome.kind === "error") {
-    return failure({
-      exitCode: EXIT_OPERATION_FAILED,
-      message: `turn failed: ${outcome.message}`,
-      json,
-    });
+    return failure(
+      withForensics(
+        {
+          exitCode: EXIT_OPERATION_FAILED,
+          message: `turn failed: ${outcome.message}`,
+          json,
+        },
+        fixturePathPointers(paths),
+      ),
+    );
   }
   if (outcome.kind === "ended") {
     return failure({
@@ -608,7 +620,7 @@ async function runStatus(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const denied = checkFlags(values, flagNamesFor("fixture status"), json);
+  const denied = checkFlags(values, "fixture status", json);
   if (denied) return denied;
   const [project, sessionName] = rest;
   if (project === undefined || sessionName === undefined || rest.length > 2) {

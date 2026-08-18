@@ -27,7 +27,13 @@ import {
   type TicketLinkSummary,
   type TicketListItem,
 } from "@/lib/tickets/schemas";
-import { flagNamesFor } from "../help-registry";
+import { dispatchGroup } from "../dispatch";
+import {
+  STDOUT_BUDGET_BYTES,
+  boundedRows,
+  emitLarge,
+  omissionSummary,
+} from "../disclosure";
 import {
   EXIT_OK,
   EXIT_OPERATION_FAILED,
@@ -39,6 +45,7 @@ import {
   render,
   readSessionEnv,
   resolveProjectContext,
+  resolveProseArg,
   resolveToken,
   usageFailure,
   type CliEnv,
@@ -58,10 +65,11 @@ import {
  * deterministic checks (subcommand, flags, reference shape, enum values, file
  * readability) fail at exit 2 before any network round-trip; an unknown ticket
  * is a server 404 (`ticket_not_found`) and exits 1 via the shared failure
- * mapping. `list` and `get` always render the typed attachment index — with
- * descriptions and exact retrieval/follow commands — in both text and `--json`
- * output (bounded entries on list, full descriptions on get) via the shared
- * renderer, so agents can selectively retrieve full content.
+ * mapping. `get` renders the typed attachment index in full — descriptions plus
+ * exact retrieval/follow commands, in both text and `--json` — and `list`
+ * carries per-ticket attachment counts, adding the bounded index for the rows
+ * it shows under `--attachments`, so agents can selectively retrieve content
+ * without paying for an index fetch per ticket in the project.
  */
 
 const REF_USAGE = "<number> or <project>#<number>";
@@ -319,39 +327,21 @@ export async function runTicket(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
-  const json = flags.json;
-  const sub = rest[0];
-  if (sub === undefined) {
-    return usageFailure(
-      "ticket requires a subcommand: create, list, get, update, delete, start, attach, or attachment",
-      json,
-    );
-  }
-  if (sub === "create") {
-    return runTicketCreate(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "list") {
-    return runTicketList(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "get") {
-    return runTicketGet(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "update") {
-    return runTicketUpdate(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "delete") {
-    return runTicketDelete(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "start") {
-    return runTicketStart(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "attach") {
-    return runTicketAttach(rest.slice(1), flags, values, env, host);
-  }
-  if (sub === "attachment") {
-    return runTicketAttachment(rest.slice(1), flags, values, env, host);
-  }
-  return usageFailure(`unknown ticket subcommand "${sub}"`, json);
+  return dispatchGroup({
+    group: ["ticket"],
+    rest,
+    json: flags.json,
+    handlers: {
+      create: (r) => runTicketCreate(r, flags, values, env, host),
+      list: (r) => runTicketList(r, flags, values, env, host),
+      get: (r) => runTicketGet(r, flags, values, env, host),
+      update: (r) => runTicketUpdate(r, flags, values, env, host),
+      delete: (r) => runTicketDelete(r, flags, values, env, host),
+      start: (r) => runTicketStart(r, flags, values, env, host),
+      attach: (r) => runTicketAttach(r, flags, values, env, host),
+      attachment: (r) => runTicketAttachment(r, flags, values, env, host),
+    },
+  });
 }
 
 async function runTicketCreate(
@@ -363,7 +353,7 @@ async function runTicketCreate(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(values, flagNamesFor("ticket create"), json);
+  const denied = checkFlags(values, "ticket create", json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure(
@@ -387,6 +377,8 @@ async function runTicketCreate(
   if (!workType.ok) return workType.result;
   const status = enumFlagValue(values, "status", ticketStatusSchema, json);
   if (!status.ok) return status.result;
+  const description = await resolveProseArg(values, host, "description", json);
+  if (!description.ok) return description.result;
 
   const resolved = await resolveProjectContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
@@ -401,8 +393,8 @@ async function runTicketCreate(
     body: {
       title,
       workType: workType.value,
-      ...(values["description"] !== undefined
-        ? { description: values["description"] }
+      ...(description.value !== undefined
+        ? { description: description.value }
         : {}),
       ...(status.value !== undefined ? { status: status.value } : {}),
     },
@@ -433,7 +425,7 @@ async function runTicketList(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(values, flagNamesFor("ticket list"), json);
+  const denied = checkFlags(values, "ticket list", json);
   if (denied) return denied;
   if (rest.length > 0) {
     return usageFailure("ticket list takes no arguments", json);
@@ -445,6 +437,9 @@ async function runTicketList(
   if (!workType.ok) return workType.result;
   const sort = enumFlagValue(values, "sort", ticketListSortSchema, json);
   if (!sort.ok) return sort.result;
+  const limit = listLimitValue(values, json);
+  if (!limit.ok) return limit.result;
+  const withIndex = values["attachments"] !== undefined;
 
   const all = values["all"] !== undefined;
   let target: Omit<TicketTarget, "projectName"> & { path: string };
@@ -477,40 +472,95 @@ async function runTicketList(
   const parsed = z.array(ticketListItemSchema).safeParse(result.body);
   if (!parsed.success) return invalidResponseFailure("the ticket list", json);
   const tickets = parsed.data;
-  const enriched = await Promise.all(
-    tickets.map(async (item) => ({
-      item,
-      index: await fetchBoundedIndex(host, target, item, json),
-    })),
-  );
-  const indexed: Array<
-    TicketListItem & { attachmentIndex: AttachmentIndexEntry[] }
-  > = [];
-  for (const { item, index } of enriched) {
-    if (!index.ok) return index.result;
-    indexed.push({ ...item, attachmentIndex: index.entries });
+
+  // Only the rows the cap keeps are enriched, so the attachment index costs at
+  // most `limit` requests instead of one per ticket in the project.
+  const kept = tickets.slice(0, limit.value);
+  const indexes: AttachmentIndexEntry[][] = [];
+  if (withIndex) {
+    const fetched = await Promise.all(
+      kept.map((item) => fetchBoundedIndex(host, target, item, json)),
+    );
+    for (const entry of fetched) {
+      if (!entry.ok) return entry.result;
+      indexes.push(entry.entries);
+    }
   }
 
-  const humanBody =
-    indexed.length === 0
-      ? "no tickets found\n"
-      : `${indexed
-          .map((item) => {
-            const line = `${identifierOf(item)}  ${item.status}  ${item.workType}  ${item.title}`;
-            const indexLines = renderAttachmentIndexLines(item.attachmentIndex);
-            return [line, ...indexLines].join("\n");
-          })
-          .join("\n")}\n`;
+  const rows = tickets.map((item, position) => {
+    const line = `${identifierOf(item)}  ${item.status}  ${item.workType}  attachments: ${item.attachmentCount}  ${item.title}`;
+    const index = indexes[position];
+    if (index === undefined || index.length === 0) return line;
+    return [line, ...renderAttachmentIndexLines(index)].join("\n");
+  });
+  const bounded = boundedRows(
+    rows,
+    limit.value,
+    listRevealCommand(values, tickets.length),
+  );
+  const humanBody = `${[
+    `tickets: ${omissionSummary(bounded.omission)}`,
+    ...bounded.rows,
+  ].join("\n")}\n`;
 
   return {
     exitCode: EXIT_OK,
     stdout: render(json, humanBody, {
       ok: true,
-      tickets: indexed,
+      tickets: kept.map((item, position) => {
+        const index = indexes[position];
+        return index === undefined ? item : { ...item, attachmentIndex: index };
+      }),
+      ...bounded.omission,
       hint: LIST_HINT,
     }),
     stderr: "",
   };
+}
+
+/** Rows the bounded default prints before it names the reveal command. */
+const TICKET_LIST_LIMIT = 20;
+
+function listLimitValue(
+  values: Record<string, string>,
+  json: boolean,
+): { ok: true; value: number } | { ok: false; result: CliResult } {
+  const raw = values["limit"];
+  if (raw === undefined) return { ok: true, value: TICKET_LIST_LIMIT };
+  const parsed = Number(raw);
+  if (!/^[0-9]+$/.test(raw) || !Number.isSafeInteger(parsed) || parsed < 1) {
+    return {
+      ok: false,
+      result: usageFailure(
+        `ticket list --limit takes a positive integer, received "${raw}"`,
+        json,
+      ),
+    };
+  }
+  return { ok: true, value: parsed };
+}
+
+/**
+ * The read that returns every row this one bounded away: the same filters,
+ * sort, and index selection, widened to the full count. Anything that changes
+ * which rows the server returns has to survive here or the reveal would
+ * disclose a different set than it omitted.
+ */
+function listRevealCommand(
+  values: Record<string, string>,
+  total: number,
+): string {
+  const parts = ["cctl ticket list"];
+  if (values["all"] !== undefined) parts.push("--all");
+  const status = values["status"];
+  if (status !== undefined) parts.push(`--status ${status}`);
+  const workType = values["type"];
+  if (workType !== undefined) parts.push(`--type ${workType}`);
+  const sort = values["sort"];
+  if (sort !== undefined) parts.push(`--sort ${sort}`);
+  if (values["attachments"] !== undefined) parts.push("--attachments");
+  parts.push(`--limit ${total}`);
+  return parts.join(" ");
 }
 
 const attachmentsResponseSchema = z.object({
@@ -520,10 +570,11 @@ const attachmentsResponseSchema = z.object({
 /**
  * Bounded index entries for one list item. The list endpoints return lean
  * items (design §HTTP API), so attachment rows come from each ticket's index
- * endpoint — skipped entirely when `attachmentCount` is 0. The index is a
- * required part of the list output (design §CLI Contract), so an enrichment
- * failure fails the whole command through the shared exit-code mapping rather
- * than silently rendering the ticket without its attachments.
+ * endpoint — one request per ticket, which is why `list` fetches them only for
+ * the rows `--attachments` asks for. Skipped entirely when `attachmentCount`
+ * is 0. An enrichment failure fails the whole command through the shared
+ * exit-code mapping rather than silently rendering a ticket as if it had no
+ * attachments.
  */
 async function fetchBoundedIndex(
   host: CliHost,
@@ -578,7 +629,7 @@ async function runTicketGet(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(values, flagNamesFor("ticket get"), json);
+  const denied = checkFlags(values, "ticket get", json);
   if (denied) return denied;
   const ref = ticketRefArgument(rest, "get", json);
   if (!ref.ok) return ref.result;
@@ -647,7 +698,7 @@ async function runTicketUpdate(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(values, flagNamesFor("ticket update"), json);
+  const denied = checkFlags(values, "ticket update", json);
   if (denied) return denied;
   const ref = ticketRefArgument(rest, "update", json);
   if (!ref.ok) return ref.result;
@@ -713,7 +764,7 @@ async function runTicketDelete(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(values, flagNamesFor("ticket delete"), json);
+  const denied = checkFlags(values, "ticket delete", json);
   if (denied) return denied;
   const ref = ticketRefArgument(rest, "delete", json);
   if (!ref.ok) return ref.result;
@@ -763,7 +814,7 @@ async function runTicketStart(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(values, flagNamesFor("ticket start"), json);
+  const denied = checkFlags(values, "ticket start", json);
   if (denied) return denied;
   const ref = ticketRefArgument(rest, "start", json);
   if (!ref.ok) return ref.result;
@@ -828,27 +879,15 @@ async function runTicketStart(
 // ticket attach <kind>
 // ---------------------------------------------------------------------------
 
-const ATTACH_KINDS = [
-  "file",
-  "conversation",
-  "session",
-  "ticket",
-  "note",
-] as const;
-type AttachKind = (typeof ATTACH_KINDS)[number];
-
 /** The kind-specific positional each attach kind takes, for usage messages. */
-const ATTACH_ARG_NOUN: Record<AttachKind, string> = {
+const ATTACH_ARG_NOUN = {
   file: "<path>",
   conversation: "<conversationId>",
   session: "<sessionName>",
   ticket: "<ticket>",
   note: '"<markdown>"',
-};
-
-function isAttachKind(value: string): value is AttachKind {
-  return (ATTACH_KINDS as readonly string[]).includes(value);
-}
+} as const;
+type AttachKind = keyof typeof ATTACH_ARG_NOUN;
 
 /**
  * Multipart form-data encoder for the file-attach upload: a JSON `metadata`
@@ -894,23 +933,42 @@ async function runTicketAttach(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
+  return dispatchGroup({
+    group: ["ticket", "attach"],
+    rest,
+    json: flags.json,
+    noun: "kind",
+    handlers: {
+      file: (r) => runTicketAttachKind("file", r, flags, values, env, host),
+      conversation: (r) =>
+        runTicketAttachKind("conversation", r, flags, values, env, host),
+      session: (r) =>
+        runTicketAttachKind("session", r, flags, values, env, host),
+      ticket: (r) => runTicketAttachKind("ticket", r, flags, values, env, host),
+      note: (r) => runTicketAttachKind("note", r, flags, values, env, host),
+    },
+  });
+}
+
+/**
+ * Everything the five attach kinds share: flag allowlist, host-ticket
+ * reference, the mandatory description, and the single kind-specific
+ * positional. `rest` starts after the kind token.
+ */
+async function runTicketAttachKind(
+  kind: AttachKind,
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
   const json = flags.json;
 
-  const kind = rest[0];
-  if (kind === undefined || !isAttachKind(kind)) {
-    return usageFailure(
-      `ticket attach requires a kind: ${ATTACH_KINDS.join(", ")}`,
-      json,
-    );
-  }
-  const denied = checkFlags(
-    values,
-    flagNamesFor(`ticket attach ${kind}`),
-    json,
-  );
+  const denied = checkFlags(values, `ticket attach ${kind}`, json);
   if (denied) return denied;
 
-  const refRaw = rest[1];
+  const refRaw = rest[0];
   if (refRaw === undefined) {
     return usageFailure(
       `ticket attach ${kind} requires a <ticket> argument (${REF_USAGE})`,
@@ -932,7 +990,7 @@ async function runTicketAttach(
   // Every kind takes at most one positional after the <ticket> (the
   // conversation id is optional). Reject extras deterministically, before any
   // resolution or request.
-  if (rest.length > 3) {
+  if (rest.length > 2) {
     return usageFailure(
       `ticket attach ${kind} takes a single ${ATTACH_ARG_NOUN[kind]} argument after the <ticket> — quote values with spaces`,
       json,
@@ -946,7 +1004,7 @@ async function runTicketAttach(
 
   if (kind === "file") {
     return attachFile(
-      rest.slice(2),
+      rest.slice(1),
       description,
       target,
       ref,
@@ -958,8 +1016,9 @@ async function runTicketAttach(
 
   const payload = await buildJsonAttachPayload(
     kind,
-    rest.slice(2),
+    rest.slice(1),
     flags,
+    values,
     env,
     host,
     json,
@@ -989,6 +1048,7 @@ async function buildJsonAttachPayload(
   kind: Exclude<AttachKind, "file">,
   args: string[],
   flags: GlobalFlags,
+  values: Record<string, string>,
   env: CliEnv,
   host: CliHost,
   json: boolean,
@@ -997,12 +1057,24 @@ async function buildJsonAttachPayload(
   | { ok: false; result: CliResult }
 > {
   if (kind === "note") {
-    const markdown = args[0];
+    const flagged = await resolveProseArg(values, host, "markdown", json);
+    if (!flagged.ok) return { ok: false, result: flagged.result };
+    const positional = args[0];
+    if (positional !== undefined && flagged.value !== undefined) {
+      return {
+        ok: false,
+        result: usageFailure(
+          "ticket attach note takes the body once — as the positional argument, --markdown, or --markdown-file",
+          json,
+        ),
+      };
+    }
+    const markdown = positional ?? flagged.value;
     if (markdown === undefined) {
       return {
         ok: false,
         result: usageFailure(
-          'ticket attach note requires a "<markdown>" argument',
+          'ticket attach note requires a "<markdown>" argument (or --markdown-file <path>)',
           json,
         ),
       };
@@ -1230,6 +1302,8 @@ const resolvedAttachmentSchema = z.union([
   }),
 ]);
 
+type AttachmentVerb = "get" | "update" | "refresh" | "remove";
+
 const removedAttachmentSchema = z.object({
   attachmentId: z.string().min(1),
   ticketId: z.string().min(1),
@@ -1267,21 +1341,23 @@ function unresolvedConversationRefreshResult(
   };
 }
 
+function resolvedHeaderLine(
+  resolved: ResolvedAttachmentBody,
+  identifier: string,
+): string {
+  return `${resolved.attachment.id} ${resolved.kind} on ${identifier} — ${resolved.attachment.description}`;
+}
+
 function renderResolvedText(
   resolved: ResolvedAttachmentBody,
   identifier: string,
 ): string {
-  const header = `${resolved.attachment.id} ${resolved.kind} on ${identifier} — ${resolved.attachment.description}`;
+  const header = resolvedHeaderLine(resolved, identifier);
   if (resolved.kind === "note") {
     return `${header}\n\n${resolved.markdown}\n`;
   }
   if (resolved.kind === "file") {
-    const meta = `file: ${resolved.fileName} (${resolved.mediaType ?? "unknown type"}, ${resolved.sizeBytes} bytes)`;
-    const content =
-      resolved.encoding === "utf8"
-        ? resolved.content
-        : `content (base64):\n${resolved.content}`;
-    return `${header}\n${meta}\n\n${content}\n`;
+    return `${header}\n${fileMetaLine(resolved)}\n\n${resolved.content}\n`;
   }
   if (resolved.kind === "conversation") {
     if ("state" in resolved) {
@@ -1332,6 +1408,93 @@ function renderResolvedText(
   return `${header}\nrelated ticket: ${identifierOf(ticket)}  ${ticket.title} (${ticket.status})\nfollow: ${follow}\n${renderIndexText(relatedIndex)}`;
 }
 
+type ResolvedFileAttachment = Extract<ResolvedAttachmentBody, { kind: "file" }>;
+
+function fileMetaLine(resolved: ResolvedFileAttachment): string {
+  const encoding = resolved.encoding === "base64" ? ", base64" : "";
+  return `file: ${resolved.fileName} (${resolved.mediaType ?? "unknown type"}, ${resolved.sizeBytes} bytes${encoding})`;
+}
+
+/** Artifact file names carry the ticket and attachment they came from. */
+function fileArtifactNamePrefix(
+  identifier: string,
+  attachmentId: string,
+): string {
+  const safe = (value: string): string =>
+    value.replace(/[^A-Za-z0-9._-]+/gu, "-");
+  return `ticket-${safe(identifier)}-${safe(attachmentId)}`;
+}
+
+function fileArtifactFormat(resolved: ResolvedFileAttachment): string {
+  if (resolved.encoding === "base64") return "base64";
+  const extension = path.extname(resolved.fileName).slice(1).toLowerCase();
+  return extension === "" ? "text" : extension;
+}
+
+/**
+ * A file attachment's bytes are known before rendering, so the choice between
+ * stdout and a file is made before anything is written. Base64 content has a
+ * zero-byte stdout budget: it is unreadable in a terminal and displaces the
+ * rest of the envelope in a pipe, so it always lands in a file.
+ */
+async function fileAttachmentResult(
+  host: CliHost,
+  resolved: ResolvedFileAttachment,
+  identifier: string,
+  json: boolean,
+): Promise<CliResult> {
+  const { content, ...withoutContent } = resolved;
+  const outcome = await emitLarge(host, content, {
+    format: fileArtifactFormat(resolved),
+    namePrefix: fileArtifactNamePrefix(identifier, resolved.attachment.id),
+    budgetBytes: resolved.encoding === "base64" ? 0 : STDOUT_BUDGET_BYTES,
+  });
+  if (outcome.kind === "inline") {
+    return {
+      exitCode: EXIT_OK,
+      stdout: render(json, renderResolvedText(resolved, identifier), {
+        ok: true,
+        attachment: resolved,
+      }),
+      stderr: "",
+    };
+  }
+  if (outcome.kind === "unwritable") {
+    return outcome.reason === "host_cannot_write"
+      ? failure({
+          exitCode: EXIT_OPERATION_FAILED,
+          message:
+            "ticket attachment get: this CLI host cannot write artifact files",
+          code: "write_unavailable",
+          json,
+        })
+      : failure({
+          exitCode: EXIT_OPERATION_FAILED,
+          message: `ticket attachment get: could not write ${JSON.stringify(outcome.path)}`,
+          code: "write_failed",
+          json,
+        });
+  }
+  const manifest = outcome.manifest;
+  const humanBody = `${[
+    resolvedHeaderLine(resolved, identifier),
+    fileMetaLine(resolved),
+    `artifact: ${manifest.path}`,
+    `format: ${manifest.format}`,
+    `bytes: ${manifest.bytes}`,
+    `sha256: ${manifest.sha256}`,
+  ].join("\n")}\n`;
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(json, humanBody, {
+      ok: true,
+      attachment: withoutContent,
+      artifact: manifest,
+    }),
+    stderr: "",
+  };
+}
+
 async function runTicketAttachment(
   rest: string[],
   flags: GlobalFlags,
@@ -1339,27 +1502,36 @@ async function runTicketAttachment(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
+  return dispatchGroup({
+    group: ["ticket", "attachment"],
+    rest,
+    json: flags.json,
+    handlers: {
+      get: (r) => runTicketAttachmentVerb("get", r, flags, values, env, host),
+      update: (r) =>
+        runTicketAttachmentVerb("update", r, flags, values, env, host),
+      refresh: (r) =>
+        runTicketAttachmentVerb("refresh", r, flags, values, env, host),
+      remove: (r) =>
+        runTicketAttachmentVerb("remove", r, flags, values, env, host),
+    },
+  });
+}
+
+/** `rest` starts after the verb token: `<ticket> <attachmentId>`. */
+async function runTicketAttachmentVerb(
+  verb: AttachmentVerb,
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
   const json = flags.json;
-  const verb = rest[0];
-  if (
-    verb !== "get" &&
-    verb !== "update" &&
-    verb !== "refresh" &&
-    verb !== "remove"
-  ) {
-    return usageFailure(
-      "ticket attachment requires a subcommand: get, update, refresh, or remove",
-      json,
-    );
-  }
-  const denied = checkFlags(
-    values,
-    flagNamesFor(`ticket attachment ${verb}`),
-    json,
-  );
+  const denied = checkFlags(values, `ticket attachment ${verb}`, json);
   if (denied) return denied;
 
-  const refRaw = rest[1];
+  const refRaw = rest[0];
   if (refRaw === undefined) {
     return usageFailure(
       `ticket attachment ${verb} requires a <ticket> argument (${REF_USAGE})`,
@@ -1368,14 +1540,14 @@ async function runTicketAttachment(
   }
   const parsedRef = parseTicketRef(refRaw);
   if (!parsedRef.ok) return usageFailure(parsedRef.message, json);
-  const attachmentId = rest[2];
+  const attachmentId = rest[1];
   if (attachmentId === undefined) {
     return usageFailure(
       `ticket attachment ${verb} requires an <attachmentId> argument`,
       json,
     );
   }
-  if (rest.length > 3) {
+  if (rest.length > 2) {
     return usageFailure(
       `ticket attachment ${verb} takes <ticket> and <attachmentId> arguments only`,
       json,
@@ -1424,6 +1596,9 @@ async function runTicketAttachment(
         `attachment ${attachmentId} on ${identifier}`,
         json,
       );
+    }
+    if (parsed.data.kind === "file") {
+      return fileAttachmentResult(host, parsed.data, identifier, json);
     }
     const humanBody = renderResolvedText(parsed.data, identifier);
     return {

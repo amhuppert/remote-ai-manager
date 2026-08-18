@@ -97,6 +97,38 @@ describe("cctl dev list", () => {
     expect(envelope.servers[0].remoteUrl).toBe("https://web.example.ts.net");
   });
 
+  it("renders the failure reason and log path the JSON envelope carries", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        servers: [
+          server({
+            status: "error",
+            port: null,
+            remoteUrl: null,
+            errorMessage: "port 5010 is already in use",
+            logFilePath: "/wt/.cc/dev-web.log",
+          }),
+        ],
+      }),
+    );
+    const result = await runCli(["dev", "list"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("error:  port 5010 is already in use");
+    expect(result.stdout).toContain("log:    /wt/.cc/dev-web.log");
+  });
+
+  it("omits the error and log lines when the server carries neither", async () => {
+    const host = makeHost(() =>
+      jsonResponse({ servers: [server({ logFilePath: null })] }),
+    );
+    const result = await runCli(["dev", "list"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain("error:");
+    expect(result.stdout).not.toContain("log:");
+  });
+
   it("reports an empty configuration plainly", async () => {
     const host = makeHost(() => jsonResponse({ servers: [] }));
     const result = await runCli(["dev", "list"], baseEnv, host);
@@ -208,6 +240,24 @@ describe("cctl dev ensure", () => {
     expect(result.stdout.endsWith(`hint: ${ENSURE_HINT}\n`)).toBe(true);
   });
 
+  it("names the log file in the ready block, matching the list rendering", async () => {
+    const host = makeHost((req) =>
+      req.init.method === "POST"
+        ? jsonResponse(
+            { status: "accepted", server: server({ status: "starting" }) },
+            202,
+          )
+        : jsonResponse({
+            servers: [server({ logFilePath: "/wt/.cc/dev-web.log" })],
+          }),
+    );
+
+    const result = await runCli(["dev", "ensure", "web"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("log:    /wt/.cc/dev-web.log");
+  });
+
   it("resolves the single configured server when no name is given", async () => {
     const host = makeHost((req) => {
       if (req.init.method === "POST") {
@@ -310,6 +360,42 @@ describe("cctl dev ensure", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr.toLowerCase()).toContain("running state");
+  });
+
+  // A bare "did not reach running state" says nothing about why. The facts the
+  // next command would fetch are already in the poll the wait gave up on.
+  it("carries the last-known status, its recent output, and the list pointer on timeout", async () => {
+    const host = makeHost((req) => {
+      if (req.init.method === "POST") {
+        return jsonResponse(
+          { status: "accepted", server: server({ status: "starting" }) },
+          202,
+        );
+      }
+      return jsonResponse({
+        servers: [
+          server({
+            status: "starting",
+            port: null,
+            recentOutput: ["compiling…", "still compiling"],
+          }),
+        ],
+      });
+    });
+
+    const result = await runCli(
+      ["dev", "ensure", "web", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.details.forensics.join("\n")).toContain(
+      "last status: starting",
+    );
+    expect(envelope.details.forensics.join("\n")).toContain("still compiling");
+    expect(envelope.hint).toContain("cctl dev list");
   });
 
   it("retains workflow identity on the initial list, start, and every readiness poll", async () => {

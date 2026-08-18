@@ -502,6 +502,8 @@ describe("cctl conversation compact", () => {
     expect(host.requests).toHaveLength(0);
   });
 
+  // "already fresh" is the outcome, not an advisory next step: it belongs in
+  // the primary body (text) and as a status field (JSON), never as a hint.
   it("reports an already-fresh artifact without waiting", async () => {
     const host = makeHost(() =>
       jsonResponse({ artifact: conversationArtifact, hint: "already fresh" }),
@@ -515,7 +517,22 @@ describe("cctl conversation compact", () => {
     const envelope = JSON.parse(result.stdout);
     expect(envelope.ok).toBe(true);
     expect(envelope.artifact.id).toBe("art-conv");
-    expect(envelope.hint).toBe("already fresh");
+    expect(envelope.status).toBe("fresh");
+    expect(envelope.hint).toBeUndefined();
+  });
+
+  it("states the already-fresh outcome as primary text output", async () => {
+    const host = makeHost(() =>
+      jsonResponse({ artifact: conversationArtifact, hint: "already fresh" }),
+    );
+    const result = await runCli(
+      ["conversation", "compact", "conv-1"],
+      baseEnv,
+      host,
+    );
+    expect(result.stdout).toBe(
+      "compaction already fresh (artifact art-conv)\n",
+    );
   });
 
   it("polls the artifact to completion under --wait", async () => {

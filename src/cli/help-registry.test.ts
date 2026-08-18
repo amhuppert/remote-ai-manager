@@ -28,6 +28,12 @@ const valueFlag = (name: string): FlagSpec => ({
   kind: "value",
   description: `the ${name}`,
 });
+const proseFlag = (name: string): FlagSpec => ({
+  name,
+  kind: "value",
+  fileSource: true,
+  description: `the ${name}`,
+});
 const booleanFlag = (name: string): FlagSpec => ({
   name,
   kind: "boolean",
@@ -168,6 +174,43 @@ describe("flagNamesFrom", () => {
   });
 });
 
+describe("file-source derivation from the single flag bit (doc 09 §7)", () => {
+  const registry = buildHelpRegistry([
+    entry({ path: ["lane"] }),
+    entry({
+      path: ["lane", "complete"],
+      flags: [proseFlag("summary"), valueFlag("slug")],
+    }),
+  ]);
+
+  it("allowlists the paired --<name>-file alongside the declared flag", () => {
+    expect(flagNamesFrom(registry, "lane complete")).toEqual([
+      "summary",
+      "summary-file",
+      "slug",
+    ]);
+  });
+
+  it("derives nothing for a value flag that does not declare fileSource", () => {
+    expect(flagNamesFrom(registry, "lane complete")).not.toContain("slug-file");
+  });
+
+  it("keeps the derived flag out of the boolean set (it takes a path)", () => {
+    expect(booleanFlagNamesFrom(registry)).toEqual([]);
+  });
+
+  it("throws when a derived file flag collides with a declared flag name", () => {
+    const entries = [
+      entry({ path: ["lane"] }),
+      entry({
+        path: ["lane", "complete"],
+        flags: [proseFlag("summary"), valueFlag("summary-file")],
+      }),
+    ];
+    expect(() => buildHelpRegistry(entries)).toThrowError(/summary-file/);
+  });
+});
+
 describe("booleanFlagNamesFrom", () => {
   it("returns the union of boolean flag names across entries", () => {
     const registry = buildHelpRegistry([
@@ -197,11 +240,14 @@ describe("booleanFlagNames() over the real registry", () => {
   it("is exactly the union of every boolean flag across all commands", () => {
     expect(booleanFlagNames().sort()).toEqual([
       "all",
+      "attachments",
       "charter",
       "config",
       "dry-run",
       "force",
       "full",
+      "halt",
+      "include-self",
       "include-thinking",
       "multi-select",
       "open",
@@ -211,6 +257,7 @@ describe("booleanFlagNames() over the real registry", () => {
       "park",
       "quiet",
       "rendered",
+      "require-match",
       "skip-warm",
       "stdout",
       "summary",

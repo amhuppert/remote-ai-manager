@@ -823,6 +823,10 @@ function makeHost(
     unplannedCoverage?: boolean;
     /** Seed this many open questions, to overflow the bounded status section. */
     questionCount?: number;
+    /** Pad each seeded question, to overflow the status stdout budget. */
+    questionTextBytes?: number;
+    /** Append this many tasks, to overflow the bounded plan-task section. */
+    extraTaskCount?: number;
     /** Seed review comments on the current revision. */
     comments?: readonly SpecCommentRow[];
     /** Inflate one element past the known cctl stdout pipe ceiling. */
@@ -872,11 +876,57 @@ function makeHost(
               : row,
           ),
         };
+  const paddedSnapshot: SpecRevisionSnapshot =
+    options.extraTaskCount === undefined
+      ? contentSnapshot
+      : {
+          ...contentSnapshot,
+          elements: [
+            ...contentSnapshot.elements,
+            ...Array.from(
+              { length: options.extraTaskCount },
+              (_unused, index) => {
+                const number = index + 3;
+                return {
+                  element: {
+                    id: `task-${number}`,
+                    specId: spec.id,
+                    kind: "task" as const,
+                    number,
+                    parentElementId: null,
+                    createdAt: CREATED_AT,
+                  },
+                  version: {
+                    revisionId: revision.id,
+                    elementId: `task-${number}`,
+                    position: contentSnapshot.elements.length + index,
+                    payload: {
+                      kind: "task" as const,
+                      title: `Padding task ${number}`,
+                      instructions: "Seeded to overflow the bounded section.",
+                      tracedRequirementElementIds: ["requirement-1"],
+                      tracedDecisionElementIds: [],
+                      coveredCriterionElementIds: ["criterion-1"],
+                      dependsOnTaskElementIds: [],
+                      laneGroup: "cli",
+                      executionLane: "cli-surface",
+                      touchedPaths: ["src/cli/commands/spec"],
+                    },
+                    payloadHash: `task-${number}-hash`,
+                    elementVersion: 1,
+                    createdAt: CREATED_AT,
+                    updatedAt: CREATED_AT,
+                  },
+                };
+              },
+            ),
+          ],
+        };
   const plannedSnapshot: SpecRevisionSnapshot =
     options.unplannedCoverage === true
       ? {
-          ...contentSnapshot,
-          elements: contentSnapshot.elements.map((row) =>
+          ...paddedSnapshot,
+          elements: paddedSnapshot.elements.map((row) =>
             row.version.payload.kind === "task"
               ? {
                   ...row,
@@ -891,7 +941,7 @@ function makeHost(
               : row,
           ),
         }
-      : contentSnapshot;
+      : paddedSnapshot;
   const seededSnapshot: SpecRevisionSnapshot =
     options.orphanedCoverage === true || options.orphanedDependency === true
       ? {
@@ -980,11 +1030,12 @@ function makeHost(
     findQuestionsBySpecId() {
       const count = options.questionCount;
       if (count === undefined) return [question];
+      const padding = "y".repeat(options.questionTextBytes ?? 0);
       return Array.from({ length: count }, (_unused, index) => ({
         ...question,
         id: `question-${index + 1}`,
         number: index + 1,
-        text: `Open question ${index + 1}?`,
+        text: `Open question ${index + 1}?${padding}`,
       }));
     },
     // The real deterministic lint over the seeded revision, not a stub: the
@@ -1715,9 +1766,10 @@ describe("cctl spec read verbs against seeded read routes", () => {
 
     expect(text.exitCode).toBe(0);
     // A spec with a long tail of questions must not push the rest of status
-    // out of the reader's window; the omission is stated, not silent.
+    // out of the reader's window; the omitted rows name the exact read that
+    // returns them, so the cap is never a dead end.
     expect(text.stdout).toContain(
-      "open questions: 14 total, 10 shown, 4 omitted",
+      "open questions: 14 total, 10 shown — rest: cctl spec status native-sdd --full",
     );
     expect(text.stdout).toContain("  Q1: Open question 1?");
     expect(text.stdout).toContain("  Q10: Open question 10?");
@@ -1728,11 +1780,105 @@ describe("cctl spec read verbs against seeded read routes", () => {
     // the full panel exists, which is exactly the reader who has not seen one.
     expect(text.stdout).toContain("lint findings: 0 total, 0 blocking");
     expect(text.stdout).toContain("  full panel: cctl spec lint native-sdd");
-    expect(text.stdout).toContain("assumptions: 1 total, 1 shown, 0 omitted");
-    expect(text.stdout).toContain("plan tasks: 2 total, 2 shown, 0 omitted");
+    expect(text.stdout).toContain("assumptions: 1 total, 1 shown");
+    expect(text.stdout).toContain("plan tasks: 2 total, 2 shown");
     expect(text.stdout).toContain(
-      "pending subject approvals: 2 total, 2 shown, 0 omitted",
+      "pending subject approvals: 2 total, 2 shown",
     );
+    // A section that dropped nothing names no follow-up: there is no rest.
+    expect(text.stdout).not.toContain("assumptions: 1 total, 1 shown — rest");
+  });
+
+  it("names the outline read as the rest of a truncated plan-task section", async () => {
+    const host = makeHost({ extraTaskCount: 10 });
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain(
+      "plan tasks: 12 total, 10 shown — rest: cctl spec show native-sdd",
+    );
+  });
+
+  it("serializes the bounded sections and their omissions in --json", async () => {
+    const host = makeHost({ questionCount: 14 });
+    const structured = await runCli(
+      ["spec", "status", "native-sdd", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(structured.exitCode).toBe(0);
+    const envelope = JSON.parse(structured.stdout);
+    expect(envelope.command).toBe("spec status");
+    expect(envelope.view).toBe("bounded");
+    expect(envelope.storage).toBe("inline");
+    // The structured view carries exactly the rows the text tier printed.
+    expect(envelope.status.openQuestions).toHaveLength(10);
+    expect(envelope.status.openQuestions[0].handle).toBe("Q1");
+    expect(structured.stdout).not.toContain("Open question 11?");
+    expect(envelope.disclosure.openQuestions).toEqual({
+      total: 14,
+      returned: 10,
+      truncated: true,
+      reveal: "cctl spec status native-sdd --full",
+    });
+    expect(envelope.disclosure.assumptions).toEqual({
+      total: 1,
+      returned: 1,
+      truncated: false,
+    });
+    expect(envelope.disclosure.taskPlan).toEqual({
+      total: 2,
+      returned: 2,
+      truncated: false,
+    });
+  });
+
+  it("--full carries every row the bounded sections dropped", async () => {
+    const host = makeHost({ questionCount: 14 });
+    const structured = await runCli(
+      ["spec", "status", "native-sdd", "--full", "--json"],
+      baseEnv,
+      host,
+    );
+    const text = await runCli(
+      ["spec", "status", "native-sdd", "--full"],
+      baseEnv,
+      host,
+    );
+
+    expect(structured.exitCode).toBe(0);
+    const envelope = JSON.parse(structured.stdout);
+    expect(envelope.view).toBe("full");
+    expect(envelope.storage).toBe("inline");
+    expect(envelope.status.openQuestions).toHaveLength(14);
+    expect(envelope.disclosure).toBeUndefined();
+    expect(text.stdout).toContain("open questions: 14 total, 14 shown");
+    expect(text.stdout).toContain("Open question 14?");
+    expect(host.written.size).toBe(0);
+  });
+
+  it("--full past the stdout budget writes the projection to an artifact", async () => {
+    const host = makeHost({ questionCount: 14, questionTextBytes: 8_000 });
+    const structured = await runCli(
+      ["spec", "status", "native-sdd", "--full", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(structured.exitCode).toBe(0);
+    const envelope = JSON.parse(structured.stdout);
+    expect(envelope.view).toBe("full");
+    expect(envelope.storage).toBe("artifact");
+    expect(envelope.reason).toBe("stdout_budget_exceeded");
+    expect(envelope.artifact.format).toBe("json");
+    expect(envelope.artifact.sha256).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    expect(structured.stdout).not.toContain("yyyy");
+
+    const written = host.written.get(envelope.artifact.path);
+    expect(written).toBeDefined();
+    const document = JSON.parse(written ?? "");
+    expect(document.status.openQuestions).toHaveLength(14);
   });
 
   it("reports open comments in status text and points at the comments verb", async () => {

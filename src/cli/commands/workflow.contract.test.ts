@@ -561,6 +561,44 @@ describe("cctl workflow against the real workflow route handlers", () => {
     expect(result.stdout).toContain("halted: max_iterations");
   });
 
+  it("status --json bounds the real route payload to the table's own projection", async () => {
+    const execution = createWorkflowExecution({
+      id: "execution-active",
+      status: "running",
+      activeContextIds: ["context-plan"],
+    });
+    const bounded = await runCli(
+      ["workflow", "status", "--json"],
+      env,
+      routeHost(execution),
+    );
+    const full = await runCli(
+      ["workflow", "status", "--full", "--json"],
+      env,
+      routeHost(execution),
+    );
+
+    const envelope = JSON.parse(bounded.stdout);
+    expect(envelope.view).toBe("summary");
+    expect(envelope.execution).toEqual({
+      id: "execution-active",
+      status: "running",
+      halted: false,
+      haltType: null,
+      activeContextIds: ["context-plan"],
+    });
+    expect(
+      envelope.contexts.map((context: { id: string }) => context.id),
+    ).toEqual(execution.workingDefinition.executionContexts.map((c) => c.id));
+    // The charter and the task prose the record carries are a different
+    // disclosure level, and --full is where they stay reachable.
+    expect(bounded.stdout).not.toContain("charter");
+    expect(bounded.stdout).not.toContain("instructions");
+    expect(JSON.parse(full.stdout).execution).toEqual(
+      JSON.parse(JSON.stringify(execution)),
+    );
+  });
+
   it("status reports no active execution when the route returns null", async () => {
     const result = await runCli(["workflow", "status"], env, routeHost(null));
     expect(result.exitCode).toBe(0);
@@ -577,6 +615,8 @@ describe("cctl workflow against the real workflow route handlers", () => {
       ...env,
       [CONVERSATION_CAPABILITY_ENV_VAR]: undefined,
     };
+    // --full is the selector that carries the whole durable record; the
+    // bounded default answers the same address with the table's projection.
     const invocation = [
       "workflow",
       "status",
@@ -585,6 +625,7 @@ describe("cctl workflow against the real workflow route handlers", () => {
       "another-project",
       "--session",
       "archived-session",
+      "--full",
       "--json",
     ];
 

@@ -3,8 +3,7 @@ import type { CommandHelpEntry } from "../help-types";
 /**
  * Help-registry entries for `cctl fixture` (docs/design/cc-cli/04 §2.2/§2.4): the
  * `fixture` and `fixture session` group hubs plus the session create/delete,
- * prompt, and status leaves. Ported from the legacy `help.ts` block and the
- * cc-cli SKILL.md; flags match `fixture.ts`'s `checkFlags` per verb.
+ * prompt, and status leaves.
  */
 
 /**

@@ -133,6 +133,28 @@ const result = await runCli(process.argv.slice(2), process.env, {
   platform: os.platform(),
   homedir: os.homedir(),
 });
-if (result.stdout) process.stdout.write(result.stdout);
-if (result.stderr) process.stderr.write(result.stderr);
+/**
+ * Resolve only once the stream reports the bytes accepted. On a pipe the kernel
+ * buffer is ~64KB, so anything past it is still queued in-process when the
+ * write call returns — exiting there truncates the output mid-envelope.
+ */
+const drain = (stream: NodeJS.WriteStream, text: string): Promise<void> =>
+  new Promise((resolve) => {
+    if (text === "") {
+      resolve();
+      return;
+    }
+    // A reader that closes the pipe early (`cctl … | head`) fails the pending
+    // write with EPIPE, which node otherwise raises as an unhandled 'error'
+    // event. A downstream reader leaving is not this process's failure.
+    stream.once("error", () => resolve());
+    stream.write(text, () => resolve());
+  });
+
+await Promise.all([
+  drain(process.stdout, result.stdout),
+  drain(process.stderr, result.stderr),
+]);
+// Explicit exit stays: undici keep-alive agents and signal listeners can hold
+// the event loop open long after the output is delivered.
 process.exit(result.exitCode);

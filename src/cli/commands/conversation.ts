@@ -8,7 +8,6 @@ import {
   sessionConversationTarget,
   type ConversationTarget,
 } from "@/lib/conversations/conversation-target";
-import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
   EXIT_OPERATION_FAILED,
@@ -412,7 +411,7 @@ async function runConversationRead(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(values, flagNamesFor("conversation read"), json);
+  const denied = checkFlags(values, "conversation read", json);
   if (denied) return denied;
 
   const { id, extra } = takeConversationPositional(rest);
@@ -593,7 +592,7 @@ async function runConversationCompact(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(values, flagNamesFor("conversation compact"), json);
+  const denied = checkFlags(values, "conversation compact", json);
   if (denied) return denied;
 
   const { id, extra } = takeConversationPositional(rest);
@@ -662,7 +661,7 @@ async function compactBody(
         {
           ok: true,
           artifact: extractArtifactBody(result.body),
-          hint: fresh.data.hint ?? "already fresh",
+          status: "fresh",
         },
       ),
       stderr: "",
@@ -794,11 +793,7 @@ async function runCompactionGet(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(
-    values,
-    flagNamesFor("conversation compaction get"),
-    json,
-  );
+  const denied = checkFlags(values, "conversation compaction get", json);
   if (denied) return denied;
 
   const { id, extra } = takeConversationPositional(rest);
@@ -949,11 +944,7 @@ async function runCompactionList(
 ): Promise<CliResult> {
   const json = flags.json;
 
-  const denied = checkFlags(
-    values,
-    flagNamesFor("conversation compaction list"),
-    json,
-  );
+  const denied = checkFlags(values, "conversation compaction list", json);
   if (denied) return denied;
 
   const { id, extra } = takeConversationPositional(rest);

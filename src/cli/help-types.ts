@@ -9,17 +9,66 @@
  * from the registry without a cycle back through the parser.
  */
 
-/** One command-specific flag (global flags are implied, never declared here). */
-export interface FlagSpec {
+interface FlagSpecBase {
   /** Flag name without the leading "--". */
   name: string;
-  kind: "value" | "boolean";
-  /** e.g. "<path>"; value kind only. */
-  valuePlaceholder?: string;
   /** One line. */
   description: string;
   /** e.g. `ask --option` may repeat. */
   repeatable?: boolean;
+}
+
+export interface ValueFlagSpec extends FlagSpecBase {
+  kind: "value";
+  /** e.g. "<path>". */
+  valuePlaceholder?: string;
+  /**
+   * The flag carries load-bearing prose. The paired `--<name>-file <path>`
+   * (`-` reads stdin) is derived from this one bit — parser acceptance, the
+   * `checkFlags` allowlist, and the rendered help alike — so a file source can
+   * neither be forgotten nor drift from what help advertises. Shell
+   * substitution has silently blanked such an argument in production, and an
+   * argv-only prose field has no other escape hatch.
+   */
+  fileSource?: true;
+}
+
+export interface BooleanFlagSpec extends FlagSpecBase {
+  kind: "boolean";
+}
+
+/**
+ * One command-specific flag (global flags are implied, never declared here).
+ * Discriminated so `fileSource` and `valuePlaceholder` are unrepresentable on a
+ * flag that consumes no value.
+ */
+export type FlagSpec = ValueFlagSpec | BooleanFlagSpec;
+
+/** The paired file-source flag name for a `fileSource` flag. */
+export function fileSourceFlagName(name: string): string {
+  return `${name}-file`;
+}
+
+function fileSourceFlagSpec(flag: ValueFlagSpec): ValueFlagSpec {
+  return {
+    name: fileSourceFlagName(flag.name),
+    kind: "value",
+    valuePlaceholder: "<path>",
+    description: `or read --${flag.name} from a file ("-" reads stdin) — immune to shell substitution`,
+  };
+}
+
+/**
+ * The declared flags, each `fileSource` flag followed by the file flag it
+ * implies. Every surface that enumerates an entry's flags goes through this, so
+ * the derived flag exists exactly once and identically in all of them.
+ */
+export function expandFlagSpecs(flags: readonly FlagSpec[]): FlagSpec[] {
+  return flags.flatMap((flag) =>
+    flag.kind === "value" && flag.fileSource === true
+      ? [flag, fileSourceFlagSpec(flag)]
+      : [flag],
+  );
 }
 
 export interface HelpExample {

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { omissionSchema } from "../../disclosure";
 import {
   deliveryDisplaySchema,
   specPhaseProjectionSchema,
@@ -196,13 +197,64 @@ const specStatusExecutionEnvelopeSchema = specStatusViewSchema.shape.executions
   })
   .strict();
 
-export const specStatusEnvelopeSchema = z
+/**
+ * What each enumerated status section left out. The keys are the sections the
+ * text tier bounds, so the two serializations account for the same rows.
+ */
+const specStatusDisclosureSchema = z
   .object({
-    ok: z.literal(true),
-    status: specStatusViewSchema,
-    executions: z.array(specStatusExecutionEnvelopeSchema),
+    executions: omissionSchema,
+    pendingApprovals: omissionSchema,
+    openQuestions: omissionSchema,
+    assumptions: omissionSchema,
+    taskPlan: omissionSchema,
   })
   .strict();
+
+const specStatusProjectionSchema = z.object({
+  ok: z.literal(true),
+  command: z.literal("spec status"),
+  storage: z.literal("inline"),
+  status: specStatusViewSchema,
+  executions: z.array(specStatusExecutionEnvelopeSchema),
+});
+
+export const specStatusBoundedEnvelopeSchema = specStatusProjectionSchema
+  .extend({
+    view: z.literal("bounded"),
+    disclosure: specStatusDisclosureSchema,
+  })
+  .strict();
+
+export const specStatusFullEnvelopeSchema = specStatusProjectionSchema
+  .extend({ view: z.literal("full") })
+  .strict();
+
+export const specStatusSpillEnvelopeSchema = z
+  .object({
+    ok: z.literal(true),
+    command: z.literal("spec status"),
+    view: z.enum(["bounded", "full"]),
+    storage: z.literal("artifact"),
+    reason: z.literal("stdout_budget_exceeded"),
+    artifact: specShowArtifactSchema
+      .extend({ format: z.literal("json") })
+      .strict(),
+  })
+  .strict();
+
+/**
+ * Both levels of the status ladder plus the receipt either can spill to. The
+ * union is not discriminated on `storage`: two inline views share that value,
+ * and `view` alone cannot separate an inline projection from its artifact.
+ */
+export const specStatusEnvelopeSchema = z.union([
+  specStatusBoundedEnvelopeSchema,
+  specStatusFullEnvelopeSchema,
+  specStatusSpillEnvelopeSchema,
+]);
+
+export type SpecStatusDisclosure = z.infer<typeof specStatusDisclosureSchema>;
 
 const lintCountSchema = z
   .object({
@@ -289,7 +341,16 @@ export const SPEC_READ_ENVELOPE_FIELDS = {
     rendered: payloadFields([specShowRenderedEnvelopeSchema]),
     full: payloadFields([specShowFullEnvelopeSchema]),
   },
-  status: payloadFields([specStatusEnvelopeSchema]),
+  status: {
+    bounded: payloadFields([
+      specStatusBoundedEnvelopeSchema,
+      specStatusSpillEnvelopeSchema,
+    ]),
+    full: payloadFields([
+      specStatusFullEnvelopeSchema,
+      specStatusSpillEnvelopeSchema,
+    ]),
+  },
   lint: payloadFields([specLintEnvelopeSchema]),
   get: payloadFields([
     specContentElementGetEnvelopeSchema,

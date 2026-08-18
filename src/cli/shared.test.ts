@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  checkFlags,
   cliRequest,
   failure,
   failureFromRequest,
@@ -8,7 +9,9 @@ import {
   resolveConversationContext,
   resolveLaneContext,
   resolveProjectContext,
+  resolveProseArg,
   resolveSessionContext,
+  withClientReminder,
   type CliEnv,
   type CliHost,
   type CliRequestResult,
@@ -282,6 +285,133 @@ describe("failure — reminders tier ordering", () => {
   });
 });
 
+describe("withClientReminder — client advisories reach both modes", () => {
+  const rendered = (stdout: string) => ({ exitCode: 0, stdout, stderr: "" });
+
+  it("keeps the tier order, inserting the reminder ahead of the hint", () => {
+    const merged = withClientReminder(
+      rendered("started run-1\nhint: watch it with `cctl agent status`\n"),
+      false,
+      "keep payloads under .cc/temp/",
+    );
+    expect(merged.stdout).toBe(
+      "started run-1\n" +
+        "reminder: keep payloads under .cc/temp/\n" +
+        "hint: watch it with `cctl agent status`\n",
+    );
+  });
+
+  it("appends to the existing reminders of a JSON envelope", () => {
+    const merged = withClientReminder(
+      rendered(
+        `${JSON.stringify({ ok: true, reminders: ["server said so"] })}\n`,
+      ),
+      true,
+      "keep payloads under .cc/temp/",
+    );
+    const parsed = JSON.parse(merged.stdout) as JsonEnvelope;
+    expect(parsed.reminders).toEqual([
+      "server said so",
+      "keep payloads under .cc/temp/",
+    ]);
+  });
+
+  // A --json result whose stdout is not an envelope must not be corrupted: the
+  // advisory falls back to stderr rather than breaking the parse.
+  it("never writes prose into unparseable --json stdout", () => {
+    const merged = withClientReminder(rendered("not json\n"), true, "advice");
+    expect(merged.stdout).toBe("not json\n");
+    expect(merged.stderr).toBe("reminder: advice\n");
+  });
+});
+
+describe("failure — instruction tier arbitration (same policy as render)", () => {
+  const both = [
+    { mode: "text", json: false },
+    { mode: "json", json: true },
+  ] as const;
+
+  for (const { mode, json } of both) {
+    it(`${mode} mode: an instruction suppresses the hint`, () => {
+      const result = failure({
+        exitCode: 1,
+        message: "the plan was refused",
+        instruction: "Fix the failing criterion, then propose again.",
+        hint: "run `cctl spec status`",
+        json,
+      });
+      const rendered = json ? result.stdout : result.stderr;
+      expect(rendered).not.toContain("hint:");
+      expect(rendered).toContain(
+        "Fix the failing criterion, then propose again.",
+      );
+      if (json) {
+        const parsed = JSON.parse(result.stdout) as JsonEnvelope;
+        expect(parsed.hint).toBeUndefined();
+        expect(parsed.instruction).toBe(
+          "Fix the failing criterion, then propose again.",
+        );
+      }
+    });
+  }
+
+  it("text mode: orders message -> detail -> instruction -> reminders", () => {
+    const result = failure({
+      exitCode: 1,
+      message: "the plan was refused",
+      detail: "  name: Required",
+      instruction: "Fix it, then propose again.",
+      reminders: ["stay in your worktree"],
+      hint: "run `cctl spec status`",
+      json: false,
+    });
+    expect(result.stderr).toBe(
+      "the plan was refused\n" +
+        "  name: Required\n" +
+        "instruction: Fix it, then propose again.\n" +
+        "reminder: stay in your worktree\n",
+    );
+  });
+
+  it("keeps the hint when no instruction is present", () => {
+    const result = failure({
+      exitCode: 1,
+      message: "it broke",
+      hint: "try doctor",
+      json: false,
+    });
+    expect(result.stderr).toBe("it broke\nhint: try doctor\n");
+  });
+});
+
+describe("hint tier contract — one line, whatever it was assembled from", () => {
+  it("flattens a multi-line hint on the failure path", () => {
+    const result = failure({
+      exitCode: 1,
+      message: "it broke",
+      hint: "run `cctl doctor`\n  name: forged issue",
+      json: false,
+    });
+    expect(result.stderr.split("\n").filter((line) => line !== "")).toEqual([
+      "it broke",
+      "hint: run `cctl doctor`\\n  name: forged issue",
+    ]);
+  });
+
+  it("flattens a multi-line hint on the success path, in both modes", () => {
+    const out = render(false, "body\n", {
+      ok: true,
+      hint: "first\nsecond",
+    });
+    expect(out).toBe("body\nhint: first\\nsecond\n");
+
+    const parsed = JSON.parse(
+      render(true, "body\n", { ok: true, hint: "first\nsecond" }),
+    ) as JsonEnvelope;
+    expect(parsed.hint).toBe("first\\nsecond");
+  });
+});
+
 describe("failureFromRequest — reminders threading", () => {
   it("threads reminders from a non-2xx error result (409 halt path)", () => {
     const result: Extract<CliRequestResult, { kind: "error" }> = {
@@ -423,6 +553,60 @@ describe("failureFromRequest — issues/code threading", () => {
   });
 });
 
+describe("failureFromRequest — bounded issue rendering", () => {
+  const manyIssues: RequestIssue[] = Array.from({ length: 9 }, (_, index) => ({
+    path: `definition.tasks.${index}`,
+    message: `issue ${index}`,
+  }));
+
+  it("caps the rendered issue lines and discloses the omission", () => {
+    const result: Extract<CliRequestResult, { kind: "error" }> = {
+      kind: "error",
+      status: 422,
+      error: "Workflow plan is invalid",
+      issues: manyIssues,
+    };
+    const text = failureFromRequest(result, false);
+    const located = text.stderr
+      .split("\n")
+      .filter((line) => line.startsWith("  "));
+    expect(located).toHaveLength(6);
+    expect(located.slice(0, 5)).toEqual([
+      "  definition.tasks.0: issue 0",
+      "  definition.tasks.1: issue 1",
+      "  definition.tasks.2: issue 2",
+      "  definition.tasks.3: issue 3",
+      "  definition.tasks.4: issue 4",
+    ]);
+    expect(located[5]).toContain("…and 4 more");
+    expect(located[5]).toContain("9");
+  });
+
+  it("keeps every issue in the JSON envelope", () => {
+    const result: Extract<CliRequestResult, { kind: "error" }> = {
+      kind: "error",
+      status: 422,
+      error: "Workflow plan is invalid",
+      issues: manyIssues,
+    };
+    const parsed = JSON.parse(
+      failureFromRequest(result, true).stdout,
+    ) as JsonEnvelope;
+    expect(parsed.issues).toEqual(manyIssues);
+  });
+
+  it("adds no overflow line at exactly the cap", () => {
+    const result: Extract<CliRequestResult, { kind: "error" }> = {
+      kind: "error",
+      status: 422,
+      error: "Workflow plan is invalid",
+      issues: manyIssues.slice(0, 5),
+    };
+    const text = failureFromRequest(result, false);
+    expect(text.stderr).not.toContain("more");
+  });
+});
+
 describe("failureFromRequestNotFoundAsUsage — structured fields on 404", () => {
   it("forwards a server code into the JSON envelope while exiting 2 and leaving text unchanged", () => {
     const result: Extract<CliRequestResult, { kind: "error" }> = {
@@ -497,5 +681,170 @@ describe("classifyErrorBody — reminders coercion", () => {
     // Non-string entries are dropped, same defensive style as coerceIssues.
     expect(result.reminders).toEqual(["stop now", "and also this"]);
     expect(result.code).toBe("HALTED");
+  });
+});
+
+describe("checkFlags — the allowlist is the registry entry's own flags", () => {
+  it("accepts a flag the named entry declares", () => {
+    expect(
+      checkFlags({ description: "why" }, "docs register", false),
+    ).toBeNull();
+  });
+
+  it("rejects a flag the named entry does not declare", () => {
+    const denied = checkFlags({ frob: "x" }, "docs register", false);
+    expect(denied?.exitCode).toBe(2);
+    expect(denied?.stderr).toContain('unknown flag "--frob"');
+  });
+
+  it("rejects a sibling leaf's flag, so entries do not share an allowlist", () => {
+    const denied = checkFlags({ description: "why" }, "docs list", false);
+    expect(denied?.exitCode).toBe(2);
+    expect(denied?.stderr).toContain('unknown flag "--description"');
+  });
+
+  it("accepts the global value flags on an entry that declares none", () => {
+    expect(
+      checkFlags({ session: "s", project: "p" }, "docs list", false),
+    ).toBeNull();
+  });
+
+  it("throws when the path names no registry entry, even with no flags to check", () => {
+    expect(() => checkFlags({}, "docs bogus", false)).toThrowError(
+      /no entry for "docs bogus"/,
+    );
+  });
+
+  it("accepts the file source a fileSource flag derives, with no entry edit", () => {
+    expect(
+      checkFlags(
+        { "summary-file": ".cc/temp/s.md" },
+        "workflow task complete",
+        false,
+      ),
+    ).toBeNull();
+  });
+
+  it("still rejects a file source for a flag that declares no fileSource", () => {
+    const denied = checkFlags({ "slug-file": "x" }, "workflow task add", false);
+    expect(denied?.exitCode).toBe(2);
+    expect(denied?.stderr).toContain('unknown flag "--slug-file"');
+  });
+});
+
+describe("resolveProseArg — one prose value from a flag or a file (doc 09 §7)", () => {
+  const fileHost = (files: Record<string, string>): CliHost =>
+    fakeHost({ readTextFile: async (p) => files[p] ?? null });
+
+  it("returns the inline flag value when only the flag is present", async () => {
+    const resolved = await resolveProseArg(
+      { summary: "wrote the parser" },
+      fakeHost(),
+      "summary",
+      false,
+    );
+    expect(resolved).toEqual({ ok: true, value: "wrote the parser" });
+  });
+
+  it("returns undefined when neither source is present, leaving the requirement to the command", async () => {
+    const resolved = await resolveProseArg({}, fakeHost(), "summary", false);
+    expect(resolved).toEqual({ ok: true, value: undefined });
+  });
+
+  it("reads the file source and strips the editor's trailing newline", async () => {
+    const resolved = await resolveProseArg(
+      { "summary-file": ".cc/temp/s.md" },
+      fileHost({ ".cc/temp/s.md": "ran `bun test`; green\n" }),
+      "summary",
+      false,
+    );
+    expect(resolved).toEqual({ ok: true, value: "ran `bun test`; green" });
+  });
+
+  it("reads stdin through the host when the path is '-'", async () => {
+    const resolved = await resolveProseArg(
+      { "summary-file": "-" },
+      fileHost({ "-": "piped body" }),
+      "summary",
+      false,
+    );
+    expect(resolved).toEqual({ ok: true, value: "piped body" });
+  });
+
+  it("refuses both sources at once with exit 2 before any request", async () => {
+    const resolved = await resolveProseArg(
+      { summary: "inline", "summary-file": ".cc/temp/s.md" },
+      fileHost({ ".cc/temp/s.md": "from file" }),
+      "summary",
+      false,
+    );
+    expect(resolved.ok).toBe(false);
+    if (resolved.ok) return;
+    expect(resolved.result.exitCode).toBe(2);
+    expect(resolved.result.stderr).toContain("--summary");
+    expect(resolved.result.stderr).toContain("--summary-file");
+  });
+
+  it("fails with exit 2 when the file cannot be read", async () => {
+    const resolved = await resolveProseArg(
+      { "summary-file": ".cc/temp/missing.md" },
+      fileHost({}),
+      "summary",
+      false,
+    );
+    expect(resolved.ok).toBe(false);
+    if (resolved.ok) return;
+    expect(resolved.result.exitCode).toBe(2);
+    expect(resolved.result.stderr).toContain(".cc/temp/missing.md");
+  });
+
+  it("fails with exit 2 on an empty file rather than sending blank prose", async () => {
+    const resolved = await resolveProseArg(
+      { "summary-file": ".cc/temp/s.md" },
+      fileHost({ ".cc/temp/s.md": "\n  \n" }),
+      "summary",
+      false,
+    );
+    expect(resolved.ok).toBe(false);
+    if (resolved.ok) return;
+    expect(resolved.result.exitCode).toBe(2);
+    expect(resolved.result.stderr).toContain("empty");
+  });
+
+  it("fails with exit 2 past the sanity byte cap", async () => {
+    const oversized = "x".repeat(256 * 1024 + 1);
+    const resolved = await resolveProseArg(
+      { "summary-file": ".cc/temp/huge.md" },
+      fileHost({ ".cc/temp/huge.md": oversized }),
+      "summary",
+      false,
+    );
+    expect(resolved.ok).toBe(false);
+    if (resolved.ok) return;
+    expect(resolved.result.exitCode).toBe(2);
+    expect(resolved.result.stderr).toContain("262144");
+  });
+
+  it("accepts a file exactly at the cap", async () => {
+    const atCap = "x".repeat(256 * 1024);
+    const resolved = await resolveProseArg(
+      { "summary-file": ".cc/temp/big.md" },
+      fileHost({ ".cc/temp/big.md": atCap }),
+      "summary",
+      false,
+    );
+    expect(resolved).toEqual({ ok: true, value: atCap });
+  });
+
+  it("emits the failure into the json envelope when --json is set", async () => {
+    const resolved = await resolveProseArg(
+      { summary: "inline", "summary-file": "-" },
+      fakeHost(),
+      "summary",
+      true,
+    );
+    expect(resolved.ok).toBe(false);
+    if (resolved.ok) return;
+    expect(JSON.parse(resolved.result.stdout).ok).toBe(false);
   });
 });

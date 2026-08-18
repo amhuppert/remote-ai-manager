@@ -423,6 +423,27 @@ describe("validationRunResultSchema", () => {
     expect(parsed.kind).toBe("failed");
   });
 
+  it.each([
+    [{ kind: "passed", runId: "run-1", exitCode: 0, output: "ok" }, 0],
+    [{ kind: "failed", runId: "run-1", exitCode: 1, output: "boom" }, 3],
+  ])("carries the matched-file count on a $0.kind verdict", (result, count) => {
+    const withCount = { ...result, filesMatched: count };
+
+    expect(validationRunResultSchema.parse(withCount)).toEqual(withCount);
+  });
+
+  it("rejects a negative matched-file count", () => {
+    expect(
+      validationRunResultSchema.safeParse({
+        kind: "passed",
+        runId: "run-1",
+        exitCode: 0,
+        output: "ok",
+        filesMatched: -1,
+      }).success,
+    ).toBe(false);
+  });
+
   it("rejects an unknown result kind", () => {
     expect(
       validationRunResultSchema.safeParse({ kind: "clamped" }).success,

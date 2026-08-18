@@ -64,9 +64,12 @@ describe("one-off execution help contract", () => {
       "cursor",
       "timeout",
     ]);
-    expect(entry("workflow status")?.flags).toEqual([]);
+    expect(entry("workflow status")?.flags.map((flag) => flag.name)).toEqual([
+      "halt",
+      "full",
+    ]);
     expect(entry("workflow status")?.usage).toContain(
-      "cctl workflow status [<executionId>] [--json]",
+      "cctl workflow status [<executionId>] [--halt | --full] [--json]",
     );
     expect(entry("workflow abandon")?.flags.map((flag) => flag.name)).toEqual([
       "reason",

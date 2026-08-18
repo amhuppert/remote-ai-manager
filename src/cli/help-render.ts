@@ -15,7 +15,7 @@ import type {
   RelatedRef,
   SkillRef,
 } from "./help-types";
-import { pathKey } from "./help-types";
+import { expandFlagSpecs, pathKey } from "./help-types";
 
 /** A dynamic context block (docs/design/cc-cli/04 §4); the seam is here even though nothing supplies blocks yet. */
 export interface HelpContextBlock {
@@ -51,7 +51,8 @@ function flagSignature(flag: FlagSpec): string {
   return `--${flag.name}`;
 }
 
-function flagsBlock(flags: FlagSpec[]): string | null {
+function flagsBlock(declared: FlagSpec[]): string | null {
+  const flags = expandFlagSpecs(declared);
   if (flags.length === 0) return null;
   const width = Math.max(...flags.map((f) => flagSignature(f).length));
   const lines = flags.map(
@@ -227,7 +228,7 @@ export function buildHelpJson(
     summary: entry.summary,
     description: entry.description,
     usage: entry.usage,
-    flags: entry.flags,
+    flags: expandFlagSpecs(entry.flags),
     examples: entry.examples,
     ...(entry.domainContext !== undefined
       ? { domainContext: entry.domainContext }

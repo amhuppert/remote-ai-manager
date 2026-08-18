@@ -299,6 +299,26 @@ describe("help registry contract", () => {
     }
   });
 
+  describe("every level-1 command is reachable from the root", () => {
+    // The root is a `dispatchGroup` like any other (doc 09 §6), so a level-1
+    // entry with no root handler throws here rather than reaching an agent as
+    // `unknown command`. Leaves (ask/notify/doctor/version) are in the same
+    // handler map as the groups, so this sweep covers both shapes. No network:
+    // with an empty env every command fails locally on its own missing
+    // argument, identity, or server URL.
+    for (const entry of ENTRIES) {
+      if (entry.path.length !== 1) continue;
+      const key = pathKey(entry.path);
+      it(`root dispatch routes "${key}"`, async () => {
+        const result = await runCli([key], {}, offlineHost());
+        expect(
+          `${result.stdout}${result.stderr}`,
+          `level-1 command "${key}" is in the registry but not in the root handler map`,
+        ).not.toContain(`unknown command "${key}"`);
+      });
+    }
+  });
+
   describe("top usage and group indexes list their commands (doc 04 §7.1 rule 6)", () => {
     const topUsage = renderTopUsage();
 

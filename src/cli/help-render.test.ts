@@ -125,6 +125,33 @@ describe("renderLeafHelpText", () => {
     expect(text).toContain("examples:");
   });
 
+  it("renders the derived file-source row under the prose flag it pairs with (doc 09 §7)", () => {
+    const prose: CommandHelpEntry = {
+      ...leaf,
+      flags: [
+        {
+          name: "summary",
+          kind: "value",
+          valuePlaceholder: '"<what changed>"',
+          fileSource: true,
+          description: "what you changed and how you verified it",
+        },
+      ],
+    };
+    const lines = renderLeafHelpText(prose).split("\n");
+    const declared = lines.findIndex((line) => line.includes("--summary "));
+    const derived = lines.findIndex((line) =>
+      line.includes("--summary-file <path>"),
+    );
+    expect(declared).toBeGreaterThan(-1);
+    expect(derived).toBe(declared + 1);
+    expect(lines[derived]).toContain('"-" reads stdin');
+  });
+
+  it("renders no file-source row for a value flag without the bit", () => {
+    expect(renderLeafHelpText(leaf)).not.toContain("--file-file");
+  });
+
   it("renders dynamic context blocks passed through the seam", () => {
     const text = renderLeafHelpText(leaf, [
       { title: "dev servers", body: "web — running (http://localhost:5010)" },
@@ -271,6 +298,26 @@ describe("buildHelpJson", () => {
       expect(parsed.data.help.command).toBe("workflow create");
       expect(parsed.data.help.flags[0]?.name).toBe("file");
     }
+  });
+
+  it("lists the derived file-source flag so JSON help sees what text help shows", () => {
+    const prose: CommandHelpEntry = {
+      ...leaf,
+      flags: [
+        {
+          name: "body",
+          kind: "value",
+          fileSource: true,
+          description: "the reply text",
+        },
+      ],
+    };
+    const { help } = buildHelpJson(prose);
+    expect(help.flags.map((flag) => flag.name)).toEqual(["body", "body-file"]);
+    expect(help.flags[1]).toMatchObject({
+      kind: "value",
+      valuePlaceholder: "<path>",
+    });
   });
 
   it("carries no duplicated rendered-text field", () => {
