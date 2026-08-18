@@ -427,6 +427,12 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
                       targetWorktreePath,
                       message: `Graph workflow join ${currentJoin.kind} ${currentJoin.joinId}: ${sourceLaneId} -> ${currentJoin.targetLaneId}`,
                       conversationId,
+                      // The lane conversation above is an identity and
+                      // conflict-guidance source; the validation-fix turn must
+                      // not resume it — an enveloped implementer's session is
+                      // filed under its scratch cwd, unreachable from the
+                      // merge worktree (command-center#78).
+                      agentTurnDispatch: "fresh-run",
                       decisions: currentJoin.conflictGuidance ?? undefined,
                       resolutionContext,
                       validationMode,

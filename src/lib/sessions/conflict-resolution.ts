@@ -4,6 +4,11 @@ import type { ConflictEntry, ConflictDecisionInput } from "@/lib/jobs/schemas";
 import { assertNever } from "../shared/assert-never";
 import { createLogger } from "../logging";
 import { executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import { executeFreshTaskRun as defaultExecuteFreshTaskRun } from "@/lib/workflows/conversation/execute-fresh-task-run";
+import type {
+  AgentTurnDispatch,
+  ExecuteFreshTaskRunInput,
+} from "@/lib/workflows/conversation/execute-fresh-task-run";
 import type {
   ExecuteWorkflowTaskRunInput,
   TaskRunResult,
@@ -69,6 +74,11 @@ export interface ConflictResolutionDeps {
   executeWorkflowTaskRun?(
     input: ExecuteWorkflowTaskRunInput,
   ): Promise<TaskRunResult>;
+  /** One-shot entrypoint for `fresh-run` dispatch (graph joins — see
+   *  {@link AgentTurnDispatch}); same result contract, no conversation. */
+  executeFreshTaskRun?(
+    input: ExecuteFreshTaskRunInput,
+  ): Promise<TaskRunResult>;
   /**
    * Describes the commits arriving from the target branch (the other side of
    * the conflicts), annotated with recorded merge intents. Best-effort: null
@@ -133,10 +143,13 @@ export type ConflictAnalysisResult =
   | { status: "infrastructure"; failure: AgentFailureClassification };
 
 export interface ResolveConflictsParams {
+  /** How the agent turn executes; absent means `conversation`. Under
+   *  `fresh-run` the conversationId is an identity source only. */
+  agentTurnDispatch?: AgentTurnDispatch;
   worktreePath: string;
   projectPath: string;
   sessionName: string;
-  conversationId: string;
+  conversationId?: string;
   decisions?: ConflictDecisionInput[];
   /** Intent notes about the changes on each side of the merge, written by the
    *  agents that implemented them; injected into the prompt so the resolver
@@ -158,10 +171,12 @@ export interface ResolveConflictsParams {
 }
 
 export interface AnalyzeConflictsParams {
+  /** See {@link ResolveConflictsParams.agentTurnDispatch}. */
+  agentTurnDispatch?: AgentTurnDispatch;
   worktreePath: string;
   projectPath: string;
   sessionName: string;
-  conversationId: string;
+  conversationId?: string;
   /** See {@link ResolveConflictsParams.resolutionContext}. */
   resolutionContext?: string;
   /** See {@link ResolveConflictsParams.targetBranch}. */
@@ -473,6 +488,68 @@ export function createConflictResolver(
  * the structured-output gate validates the response against
  * `CONFLICT_ENTRIES_OUTPUT_SCHEMA`.
  */
+/**
+ * Route one conflict agent turn by dispatch mode with an identical result
+ * contract, so both mapping pipelines stay dispatch-agnostic.
+ */
+async function dispatchConflictTurn(input: {
+  dispatch: AgentTurnDispatch;
+  deps: ConflictResolutionDeps;
+  projectPath: string;
+  sessionName: string;
+  conversationId?: string;
+  worktreePath: string;
+  prompt: string;
+  systemInstructions: string;
+  timeoutMs: number;
+  signal?: AbortSignal;
+}): Promise<TaskRunResult> {
+  const outputFormat = {
+    type: "json_schema" as const,
+    schema: CONFLICT_ENTRIES_OUTPUT_SCHEMA as unknown as Record<
+      string,
+      unknown
+    >,
+  };
+  if (input.dispatch === "fresh-run") {
+    const executeFreshTaskRun =
+      input.deps.executeFreshTaskRun ?? defaultExecuteFreshTaskRun;
+    return executeFreshTaskRun({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      ...(input.conversationId !== undefined
+        ? { identityConversationId: input.conversationId }
+        : {}),
+      worktreePath: input.worktreePath,
+      prompt: input.prompt,
+      systemInstructions: input.systemInstructions,
+      outputFormat,
+      timeoutMs: input.timeoutMs,
+      ...(input.signal !== undefined ? { signal: input.signal } : {}),
+    });
+  }
+  if (input.conversationId === undefined) {
+    throw new Error(
+      "Conversation dispatch requires a conversationId; callers without one must use the fresh-run dispatch",
+    );
+  }
+  const executeWorkflowTaskRun =
+    input.deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
+  return executeWorkflowTaskRun({
+    projectPath: input.projectPath,
+    sessionName: input.sessionName,
+    conversationId: input.conversationId,
+    worktreePath: input.worktreePath,
+    kind: "task_run",
+    prompt: input.prompt,
+    systemInstructions: input.systemInstructions,
+    timeoutMs: input.timeoutMs,
+    signal: input.signal,
+    outputFormat,
+    origin: { source: "workflow" },
+  });
+}
+
 export async function resolveConflicts(
   params: ResolveConflictsParams,
 ): Promise<ConflictResolutionResult> {
@@ -493,8 +570,6 @@ async function resolveConflictsImpl(
     targetBranch,
     conflictFiles,
   } = params;
-  const executeWorkflowTaskRun =
-    deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
   const timeoutMs = params.resolutionTimeoutMs ?? DEFAULT_RESOLUTION_TIMEOUT_MS;
 
   logger.info("conflict-resolution.start", {
@@ -524,24 +599,17 @@ async function resolveConflictsImpl(
   }
 
   try {
-    const result = await executeWorkflowTaskRun({
+    const result = await dispatchConflictTurn({
+      dispatch: params.agentTurnDispatch ?? "conversation",
+      deps,
       projectPath,
       sessionName,
       conversationId,
       worktreePath,
-      kind: "task_run",
       prompt,
       systemInstructions: CONFLICT_RESOLUTION_INSTRUCTIONS,
       timeoutMs,
       signal: params.signal,
-      outputFormat: {
-        type: "json_schema",
-        schema: CONFLICT_ENTRIES_OUTPUT_SCHEMA as unknown as Record<
-          string,
-          unknown
-        >,
-      },
-      origin: { source: "workflow" },
     });
 
     const resolution = mapTaskRunResultToResolution(result, worktreePath);
@@ -730,8 +798,6 @@ async function analyzeConflictsImpl(
     resolutionContext,
     targetBranch,
   } = params;
-  const executeWorkflowTaskRun =
-    deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
   const timeoutMs = params.resolutionTimeoutMs ?? DEFAULT_RESOLUTION_TIMEOUT_MS;
 
   logger.info("conflict-analysis.start", {
@@ -757,24 +823,17 @@ async function analyzeConflictsImpl(
   );
 
   try {
-    const result = await executeWorkflowTaskRun({
+    const result = await dispatchConflictTurn({
+      dispatch: params.agentTurnDispatch ?? "conversation",
+      deps,
       projectPath,
       sessionName,
       conversationId,
       worktreePath,
-      kind: "task_run",
       prompt,
       systemInstructions: CONFLICT_ANALYSIS_INSTRUCTIONS,
       timeoutMs,
       signal: params.signal,
-      outputFormat: {
-        type: "json_schema",
-        schema: CONFLICT_ENTRIES_OUTPUT_SCHEMA as unknown as Record<
-          string,
-          unknown
-        >,
-      },
-      origin: { source: "workflow" },
     });
 
     return mapTaskRunResultToAnalysis(result, worktreePath);

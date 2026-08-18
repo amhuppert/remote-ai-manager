@@ -2,6 +2,7 @@ import { createActor, toPromise } from "xstate";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger } from "@/lib/logging";
 import { observePhaseTransitions } from "@/lib/jobs/machine-host";
+import type { AgentTurnDispatch } from "@/lib/workflows/conversation/execute-fresh-task-run";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
 import {
   mergeMachine,
@@ -38,6 +39,10 @@ export interface GraphMergeRunnerInput {
    *  worktree; omitted when the lane recorded no conversation, letting the
    *  machine fall back to the session's most-recently-active conversation. */
   conversationId?: string;
+  /** How validation-fix turns execute; graph joins pass `fresh-run` because an
+   *  enveloped implementer conversation cannot be resumed from the merge
+   *  worktree (command-center#78). */
+  agentTurnDispatch?: AgentTurnDispatch;
   /** Operator guidance for conflict resolution, threaded into the machine's
    *  resolver as per-file decisions. */
   decisions?: ConflictDecisionInput[];
@@ -152,6 +157,9 @@ export function createGraphWorkflowMergeRunner(
         message: input.message,
         ...(input.conversationId !== undefined
           ? { conversationId: input.conversationId }
+          : {}),
+        ...(input.agentTurnDispatch !== undefined
+          ? { agentTurnDispatch: input.agentTurnDispatch }
           : {}),
         autoResolve: true,
         // Every graph-owned merge (join and fan-in alike) re-enters a worktree

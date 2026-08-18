@@ -26,6 +26,7 @@ import type { ValidationRunResult } from "@/lib/validation/schemas";
 import type { GateFailResult } from "@/lib/workflows/primitives/gate-vocabulary";
 import { scriptValidationGateFromOutcome } from "@/lib/workflows/primitives/script-validation-gate";
 import { getErrorMessage } from "@/lib/shared/errors";
+import type { AgentTurnDispatch } from "@/lib/workflows/conversation/execute-fresh-task-run";
 import type {
   MergeValidationSource,
   ValidationCommandSelection,
@@ -414,8 +415,11 @@ export interface FixValidationInput {
   sessionName: string;
   /** Explicit conversation for the fix turn (graph joins pass the source
    *  lane's implementer conversation). Falls back to the session's
-   *  most-recently-active conversation when omitted. */
+   *  most-recently-active conversation when omitted. Under `fresh-run`
+   *  dispatch it is an identity source only — never resumed. */
   conversationId?: string;
+  /** How the fix turn executes; absent means `conversation`. */
+  agentTurnDispatch?: AgentTurnDispatch;
   resolutionContext?: string;
   branchName: string;
   isRetry: boolean;
@@ -522,14 +526,23 @@ export const fixValidation = fromPromise<
     // Best-effort: if we can't read the config, the agent just won't verify
   }
 
+  // Fresh runs never resume, so the session fallback (which exists only to
+  // find something resumable) is skipped; whatever id the caller supplied is
+  // forwarded purely as an identity source.
   const conversationId =
-    input.conversationId ??
-    (await resolveSessionConversationId(input.projectPath, input.sessionName));
+    input.agentTurnDispatch === "fresh-run"
+      ? input.conversationId
+      : (input.conversationId ??
+        (await resolveSessionConversationId(
+          input.projectPath,
+          input.sessionName,
+        )));
 
   logger.info("validation_fix.dispatch", {
     projectPath: input.projectPath,
     sessionName: input.sessionName,
     conversationId,
+    dispatch: input.agentTurnDispatch ?? "conversation",
     branchName: input.branchName,
     isRetry: input.isRetry,
   });
@@ -542,6 +555,7 @@ export const fixValidation = fromPromise<
     projectPath: input.projectPath,
     sessionName: input.sessionName,
     conversationId,
+    agentTurnDispatch: input.agentTurnDispatch,
     branchName: input.branchName,
     isRetry: input.isRetry,
   });
