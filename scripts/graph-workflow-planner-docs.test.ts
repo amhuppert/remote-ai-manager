@@ -4,11 +4,17 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { allHelpEntries } from "../src/cli/help-registry";
 import { pathKey } from "../src/cli/help-types";
+import { renderCharterDigest } from "../src/lib/workflow-graph/charter/render";
 import { graphWorkflowMutabilityPolicySchema } from "../src/lib/workflow-graph/config-schemas";
 import {
   CONSECUTIVE_CANDIDATE_MISMATCH_BUDGET,
   EXECUTION_TOTAL_PASS_BACKSTOP,
 } from "../src/lib/workflow-graph/constants";
+import {
+  acceptanceCriteriaSchema,
+  criterionRecordSchema,
+  criterionRecordsOf,
+} from "../src/lib/workflow-graph/criteria/criterion-records";
 import {
   graphWorkflowContextEdgeSchema,
   graphWorkflowContextRoutingPolicySchema,
@@ -16,6 +22,7 @@ import {
   graphWorkflowLoopGroupSchema,
   workflowBlockingValidatorResultSchema,
   workflowSemanticDefinitionSchema,
+  workflowValidatorIssueSchema,
 } from "../src/lib/workflow-graph/definition-schemas";
 import { planRepairRoundSchema } from "../src/lib/workflow-graph/schemas";
 import { EXPANSION_CAPS } from "../src/lib/workflow-graph/expansion-caps";
@@ -26,7 +33,11 @@ import {
   LOOP_HISTORY_MAX_SECTION_BYTES,
 } from "../src/lib/workflow-graph/loop-history";
 import { SEEDED_WORKFLOW_DEFAULTS } from "../src/lib/workflow-graph/resolve-config";
-import { charterInvariantSchema } from "../src/lib/workflows/charter-schemas";
+import {
+  charterInvariantSchema,
+  sourceOfTruthSchema,
+  workflowCharterSchema,
+} from "../src/lib/workflows/charter-schemas";
 
 /**
  * The D4 R16.3 documentation contract. Two halves, both checked against the
@@ -192,6 +203,16 @@ const DOCUMENTED_FIELDS: ReadonlyArray<{
     term: "appliesTo",
     owner: "charterInvariantSchema",
     keys: shapeKeys(charterInvariantSchema),
+  },
+  {
+    term: "appliesTo",
+    owner: "sourceOfTruthSchema",
+    keys: shapeKeys(sourceOfTruthSchema),
+  },
+  {
+    term: "statement",
+    owner: "criterionRecordSchema",
+    keys: shapeKeys(criterionRecordSchema),
   },
   {
     term: "planDefects",
@@ -410,6 +431,133 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
       expectDocuments(skill, "unknown-invariant-scope-context", why);
     },
   );
+
+  it.each(SKILL_DIRS)(
+    "%s documents acceptance criteria as the records the schema declares",
+    (dir) => {
+      const skill = readPackage(dir);
+      const why = "acceptance-criteria records";
+
+      // The record shape, taken from the schema rather than a second copy of
+      // it: a rename fails here instead of teaching a spelling the accept path
+      // refuses.
+      expect(
+        shapeKeys(criterionRecordSchema),
+        "criterionRecordSchema no longer declares exactly { id, statement }",
+      ).toEqual(["id", "statement"]);
+      expectDocuments(skill, '"acceptanceCriteria": [', why);
+      expectDocuments(skill, '"statement":', why);
+
+      // One obligation per record is the whole point of the shape — without it
+      // the records are a blob wearing a list's clothes.
+      expectDocuments(skill, "one independently-failable obligation", why);
+
+      // Prose stays a valid authored value and wraps as exactly ONE record
+      // under the helper's deterministic id. The skill has to name the wrap so
+      // a planner reads it as a migration affordance, not a second dialect.
+      expect(
+        acceptanceCriteriaSchema.safeParse("legacy prose").success,
+        "the authored criteria union no longer accepts prose",
+      ).toBe(true);
+      const wrapped = criterionRecordsOf("legacy prose");
+      expect(
+        wrapped,
+        "prose no longer wraps as exactly one criterion record",
+      ).toHaveLength(1);
+      for (const record of wrapped) {
+        expectDocuments(skill, record.id, why);
+      }
+
+      // The citation the records exist for, pinned to the issue schema that
+      // carries it.
+      expect(
+        shapeKeys(workflowValidatorIssueSchema),
+        "workflowValidatorIssueSchema no longer carries `criterionId`",
+      ).toContain("criterionId");
+      expectDocuments(skill, "criterionId", why);
+    },
+  );
+
+  it.each(SKILL_DIRS)(
+    "%s documents charter source scoping and the retired access grade",
+    (dir) => {
+      const skill = readPackage(dir);
+      const why = "charter source scoping";
+
+      // Sources take the same structured scope invariants do, with the same
+      // accept-time refusals — including the one that rejects the free-prose
+      // spelling the engine cannot resolve against the graph.
+      expect(
+        shapeKeys(sourceOfTruthSchema),
+        "sourceOfTruthSchema no longer declares `appliesTo`",
+      ).toContain("appliesTo");
+      expectDocuments(skill, "unknown-source-scope-context", why);
+      expectDocuments(skill, "legacy-source-applies-to", why);
+
+      // And they no longer take an access grade. The authored schema is the
+      // contract: a field it refuses must not appear in guidance whose whole
+      // job is telling a planner what to write.
+      expect(
+        shapeKeys(sourceOfTruthSchema),
+        "sourceOfTruthSchema declares `accessPolicy` again — revisit the guidance",
+      ).not.toContain("accessPolicy");
+      for (const retired of ["accessPolicy", "external-readonly"]) {
+        expect(
+          skill.includes(retired),
+          `the skill still teaches the retired \`${retired}\` source grade`,
+        ).toBe(false);
+      }
+      // What replaced it: acquisition at plan time, not permission at run time.
+      expectDocuments(skill, "materialize", why);
+    },
+  );
+
+  it("pins the plan-time conflict rule to what the charter digest actually renders", () => {
+    const skill = readPackage(SKILL_DIRS[0]);
+    const why = "plan-time source-conflict resolution";
+
+    const charter = workflowCharterSchema.parse({
+      mission: "Ship the thing.",
+      sourcesOfTruth: [
+        {
+          rank: 1,
+          id: "global-source",
+          label: "Global reference",
+          type: "document",
+          locator: "docs/design.md",
+          description: "Governs every context.",
+        },
+        {
+          rank: 2,
+          id: "scoped-source",
+          label: "Scoped reference",
+          type: "spec",
+          locator: "docs/persistence.md",
+          description: "Governs the persistence context only.",
+          appliesTo: { contextIds: ["persistence"] },
+        },
+      ],
+    });
+
+    // A scoped source renders for the context it names and for no other — the
+    // filtering the skill tells planners to rely on when they scope.
+    const scopedDigest = renderCharterDigest(charter, "persistence");
+    expect(scopedDigest).toContain("Scoped reference");
+    expect(renderCharterDigest(charter, "unrelated")).not.toContain(
+      "Scoped reference",
+    );
+
+    // And no prompt carries a runtime precedence or deferral instruction any
+    // more, which is why the resolution has to happen while planning.
+    for (const retired of ["prevails", "higher-ranked", "Applying the source"]) {
+      expect(
+        scopedDigest.includes(retired),
+        `the charter digest still renders the retired precedence rule (${retired})`,
+      ).toBe(false);
+    }
+    expectDocuments(skill, "resolved at plan time", why);
+    expectDocuments(skill, "blocking plan-review finding", why);
+  });
 
   it.each(SKILL_DIRS)(
     "%s documents launch parameters and the one-off run path",

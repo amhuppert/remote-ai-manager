@@ -33,7 +33,7 @@ This core file covers the ordinary planning path end to end: decompose the objec
 1. Read the governing context.
    - Load the full objective, relevant specification files, relevant steering files, and any existing workflow definition being replaced.
    - Do not plan from only a narrow task excerpt when design semantics matter.
-   - Resolve design contradictions between sources NOW, during planning. Executing agents receive the plan, not the debate — an unresolved conflict shipped into criteria becomes contradictory instructions two agents resolve differently.
+   - Resolve design contradictions between sources NOW, during planning. Executing agents receive the plan, not the debate, and no prompt carries a rule for arbitrating between two sources — an unresolved conflict shipped into the charter or the criteria becomes contradictory instructions two agents resolve differently. See [Resolving source conflicts at plan time](#resolving-source-conflicts-at-plan-time).
 
 2. Build a context inventory.
    - List major implementation surfaces: schemas, persistence, runtime lifecycle, adapters, API, UI, tests, migration, diagnostics.
@@ -51,9 +51,10 @@ This core file covers the ordinary planning path end to end: decompose the objec
    - If wiring is deferred to another context, the deferring context's acceptance criteria must name that downstream owner explicitly, AND the named owner's acceptance criteria must carry the matching obligation. Context validators fail unnamed deferral of wiring; a deferral whose target never carried the obligation silently evaporates.
    - If the answer to "which context requires the production caller?" is the final verification context, the plan is deferring reachability — assign it to the owning context instead.
 
-5. Derive charter invariants — and scope them.
+5. Derive charter invariants and sources — and scope both.
    - While reading the governing context, extract the recurring cross-cutting rules: any rule that constrains **how** multiple contexts implement (not **what** one context builds) belongs in `charter.invariants`, declared once — not repeated inconsistently or omitted per-context.
    - Scope each invariant honestly (see [The Charter](#the-charter)): leave it global only when every context's validator should actively check it; give it `appliesTo.contextIds` when it binds specific surfaces. An end-state property only the final integration or cutover context can satisfy is that context's acceptance criterion, not a global invariant — a global invariant is checked against every intermediate state, and mid-migration contexts will honestly fail it.
+   - Scope sources the same way and for the same reason: an unscoped source renders into every context's prompts on every iteration. Attach each source to the contexts whose agents must actually consult it, and materialize anything living outside the worktree before citing it at all.
    - For any plan with approval, gate, or attribution semantics, include an evidence-legality invariant: integration evidence must flow through production-legal, human-attributed paths — no fixture shortcuts through service internals, no unauthenticated stand-in calls.
 
 6. Choose execution contexts around validation boundaries.
@@ -83,16 +84,18 @@ Steps 4 and 5 encode an audited failure mode: in a 21-context execution, three r
 
 ## The Charter
 
-`definition.charter` is required and is the plan's governing context for every executing agent. Its mission, invariants, and ranked sources render into every implementer and validator prompt, so everything in it is paid for on every iteration — keep it small and load-bearing.
+`definition.charter` is required and is the plan's governing context for every executing agent. Its mission, the invariants that apply to a context, and the sources scoped to that context render into that context's implementer and validator prompts, so anything left global is paid for on every iteration — keep it small and load-bearing.
 
 - `mission` (required): one paragraph of what the workflow delivers.
-- `sourcesOfTruth` (required, at least one): the ranked precedence hierarchy agents consult when documents conflict. Each entry: `rank` (unique positive integer; lower prevails), `id`, `label`, `type` (`code`/`config`/`document`/`spec`/`other`), `locator`, `description`, optional `appliesTo` (free-form applicability scope; precedence is evaluated within it), and `accessPolicy` (`worktree-relative` or `external-readonly`). An `external-readonly` source is read-only and permission-gated: agents must not read or verify it without explicit human permission, so anything a validator must actually check belongs in the worktree. Every locator must resolve from a lane worktree — a session-scoped or absolute path outside the repository is flagged absent in every verdict.
+- `sourcesOfTruth` (required, at least one): the ranked reference list agents consult. Each entry: `rank` (unique positive integer, ordering the list), `id`, `label`, `type` (`code`/`config`/`document`/`spec`/`other`), `locator`, `description`, and optional `appliesTo` (`{ "contextIds": [...] }` — the same structured scope invariants take).
 - `invariants` (optional): cross-cutting rules as `{ "id", "statement", "appliesTo"? }` entries with unique kebab-case ids and one-line statements. Validators actively check each rendered invariant and cite its id in issues.
 - Optional prose fields when they earn their prompt space: `conventions`, `nonGoals`, `vocabulary`, `testStrategy`, `knownAmbiguities`.
 
-### Invariant scoping
+Charter amendments made mid-run are recorded in an amendment log that lands in `charter.md` and the durable record; it does not render into any prompt. An amended rule therefore has to stand on its own in the charter text — a statement that only makes sense against its own change history is not finished.
 
-An invariant without `appliesTo` is global: it renders into EVERY context's implementer and validator prompts and is checked on every iteration. Scope it instead with authored context ids:
+### Scoping invariants and sources
+
+An invariant or a source with no `appliesTo` is global: it renders into EVERY context's implementer and validator prompts. Scope it instead with authored context ids — one shape, both entry kinds:
 
 ```json
 {
@@ -102,16 +105,39 @@ An invariant without `appliesTo` is global: it renders into EVERY context's impl
 }
 ```
 
-- The engine renders a scoped invariant only into the prompts of the contexts it names; other contexts never see it.
-- Scoping follows logical authored identity: loop-pass clones and runtime-expanded children of a named context inherit its scoped invariants automatically.
-- A scope naming a context id the definition does not declare is refused at accept time (`unknown-invariant-scope-context`).
-- Duplicate invariant ids and duplicate `contextIds` entries within one scope are refused.
+- The engine renders a scoped entry only into the prompts of the contexts it names; other contexts never see it.
+- Scoping follows logical authored identity: loop-pass clones and runtime-expanded children of a named context inherit its scoped invariants and sources automatically.
+- A scope naming a context id the definition does not declare is refused at accept time (`unknown-invariant-scope-context` for an invariant, `unknown-source-scope-context` for a source), as is free-form prose where a source's scope belongs (`legacy-source-applies-to`) — only context ids resolve against the graph.
+- Duplicate ids and duplicate `contextIds` entries within one scope are refused.
 
-Default to few, genuinely global invariants plus scoped ones for specific surfaces. A rule that needs prose to explain *when* it applies is not global — scope it or make it the owning context's acceptance criterion.
+Default to few, genuinely global entries plus scoped ones for specific surfaces. A rule that needs prose to explain *when* it applies is not global — scope it, or make it the owning context's acceptance criterion.
+
+### Resolving source conflicts at plan time
+
+`rank` orders the list; it is not a runtime tiebreak. No prompt tells an agent to defer to a higher-ranked source, so two attached sources that contradict each other reach every implementer and validator as contradictory instructions, resolved differently by each.
+
+- Conflicts among sources are **resolved at plan time**, by you. Decide which statement governs, write the decision where agents actually read it (the mission, an invariant, or the owning context's criteria), and record in the losing source's `description` what it no longer governs.
+- An unresolved conflict between two attached sources is a **blocking plan-review finding**, not something execution absorbs.
+- Attach only sources the contexts you scope them to can actually read. There is no permission-gated source grade: material living outside the worktree — another repository, a URL, a database-resident document — must be **materialized into the worktree** (a committed export, a shared document) before it may be cited as a source at all. Every locator must resolve from a lane worktree; one that does not is flagged absent in every verdict that names it.
 
 ## Acceptance Criteria
 
-Acceptance criteria are the shared contract between implementer and validator. Draft them as context-local, observable outcomes that an LLM validator can judge by inspecting the work.
+Acceptance criteria are the shared contract between implementer and validator. `acceptanceCriteria` is an ordered list of `{ "id", "statement" }` records — the same shape as charter invariants, for the same reason: a blocking validator cites `criterionId` in its issues, so every obligation needs a stable name to be cited by.
+
+```json
+"acceptanceCriteria": [
+  { "id": "publishes-on-commit", "statement": "The commit handler calls publishLeaseEvent for every accepted write." },
+  { "id": "refuses-unowned-write", "statement": "A write outside the context's ownedPaths is refused with ownership_violation." }
+]
+```
+
+- Ids are kebab-case and unique within the context. Keep them stable across revisions — verdicts, repair diagnoses, and remediation all address criteria by id, so a renamed id orphans every citation that named it.
+- **One independently-failable obligation per record.** If a record can pass in one half and fail in the other, it is two records. The old advice to number your clauses is now the schema, not a formatting preference.
+- **Record count is the context-split signal.** A coherent validation thesis is a handful of records; a context carrying a dozen-plus is several contexts wearing one id. Density is visible while you author now — read it before you submit, because the validator reads it after.
+- Prose is still accepted on the authored write paths and wraps as exactly one record, `ac-1`. That is a migration affordance, not a second dialect: one record holding a paragraph of obligations reproduces exactly the blob records exist to remove.
+- Live-edit and plan repair replace the WHOLE list (`update-context`); there are no per-criterion operations. Such an edit must restate every record the context keeps, verbatim.
+
+Draft each statement as a context-local, observable outcome an LLM validator can judge by inspecting the work.
 
 Good acceptance criteria:
 
@@ -120,8 +146,7 @@ Good acceptance criteria:
 - Fit entirely inside the context's scope.
 - Give the validator enough specificity to pass or reopen a task without inventing new edge cases.
 - Require **runtime reachability** for every capability the context introduces: name the production composition site (route handler, service factory, listener registration, UI control) and demand evidence through it — a composition-level smoke test or a typed wiring deliverable. If the wiring intentionally lands downstream, name the owning context in the criterion.
-- Preserve **deferral integrity**: an obligation one context defers ("verified in context X") is only validly deferred when X's acceptance criteria contain the matching obligation. Audit every deferral chain at planning time — each "verified later" claim must terminate in a criterion that states it.
-- Number their clauses when a context has several independently-failable criteria, so validator issues and remediation can cite exact clauses. If the clause count grows past a handful, treat that as the signal to split the context (one coherent validation thesis).
+- Preserve **deferral integrity**: an obligation one context defers ("verified in context X") is only validly deferred when X's acceptance criteria contain the matching obligation. Audit every deferral chain at planning time — each "verified later" claim must terminate in a criterion record that states it.
 
 Do not write acceptance criteria that:
 
@@ -162,7 +187,7 @@ Create workflows with default implementer and validator settings unless the user
   - `askUserQuestions: { "enabled": true }` lets the context's agents ask the user questions mid-run (one toggle covers implementer and validator).
   - `collaboration` pairs the implementer with a second agent (`secondAgent`, `negotiationRounds`, `autonomousResolutionThreshold`).
   - `planRepair` tunes the automatic plan-repair response to halts (default ON — see [references/revising-and-recovery.md](references/revising-and-recovery.md)).
-- `acceptanceCriteria` is required on every execution context and must live on the context, not on the validator.
+- `acceptanceCriteria` is required on every execution context, lives on the context rather than the validator, and is authored as ordered `{ id, statement }` records — see [Acceptance Criteria](#acceptance-criteria).
 - `placement` is required on every execution context too, and it does not default or cascade — decide it deliberately per context.
 - Minimal payloads are preferred because global and workflow defaults cascade into each context at execution seed time.
 - Exception to the "use defaults" rule: select the appropriate registered commands in `scriptValidator.commands` for the **final** execution context unless there is a specific reason to leave the gate empty.
@@ -171,7 +196,7 @@ Create workflows with default implementer and validator settings unless the user
 
 Three independent validation surfaces exist; keep their decisions separate. The full policy, cascade semantics, and staffing model live in [references/validation-and-staffing.md](references/validation-and-staffing.md).
 
-- `contextValidator` — an ordered cohort of LLM validator assignments judging the intent of the context's acceptance criteria. Default staffing (a single general reviewer) is right for most contexts; staff a specialist cohort only when a context genuinely needs a second lens.
+- `contextValidator` — an ordered cohort of LLM validator assignments judging the intent of the context's acceptance criteria. Default staffing (a single general reviewer) is right for most contexts; staff a specialist cohort only when a context genuinely needs a second lens. That default seat judges the criteria themselves, so each of its blocking issues cites the failing criterion's id; a specialist cites its own assigned mandate instead and names a criterion only when its finding also contradicts one.
 - `scriptValidator.commands` — the deterministic registered-command gate run after the context's tasks complete. Select commands only for a context expected to leave those checks green; never gate an intentionally invalid intermediate state (a schema landed before its callers migrate) — put the deterministic thesis on a later integration context or the lane's merge barrier instead. Every name must exist in the project's `validation.commands` registry.
 - `laneMergeValidation` — the deterministic barrier protecting the shared fan-in target; global/workflow tier only. For contexts sharing a lane this barrier IS where whole-repo verification happens, and an enveloped context's `scriptValidator.commands` must be empty or a subset of it.
 
@@ -197,6 +222,9 @@ Guard against these before starting execution:
 - Parallelism without foundation: independent-looking contexts secretly need the same unresolved contract.
 - Unowned wiring: a capability's consumer is fully specified while no context's criteria require the production caller — every context passes locally and the composed runtime path is dead until (at best) final verification.
 - Invariants by rediscovery: cross-cutting rules live only in deep spec documents, so each implementer independently misses them and validators re-teach the same lesson context after context. Declare them once in `charter.invariants`.
+- Criteria as a blob: one record carrying a paragraph of obligations, so nobody can count what the context actually owes, and a validator citing that id is pointing at everything at once.
+- Conflict shipped to runtime: two attached sources disagree and the plan ships the disagreement. Nothing arbitrates between them at execution time, so each context resolves it its own way and the results only collide at a join.
+- Unreadable source: a source whose material never entered the worktree, so every agent scoped to it reports it absent and judges the work without it.
 - Global invariants over phased work: an end-state invariant left unscoped binds every mid-migration context, so honest validators fail states the plan itself scheduled. Scope it with `appliesTo` or move it to the owning context's criteria.
 - Deferral dead-end: a validator GO records "deferred to context X" but X's acceptance criteria never carried the obligation, so it evaporates and the workflow completes without it — most dangerously for live end-to-end verification, which no per-context validation replaces.
 - Charter-violating exemplar: a task says "mirror file X" and X itself violates a charter invariant, so the implementer faithfully reproduces the violation and burns a NO-GO cycle on precedent the plan pointed them at.
@@ -234,10 +262,11 @@ A plan is a JSON object the validate, create, replace, and run endpoints all acc
     "charter": {
       "mission": "…",
       "invariants": [ { "id": "server-side-enforcement", "statement": "…" } ],
-      "sourcesOfTruth": [ /* ranked entries */ ]
+      "sourcesOfTruth": [ /* ranked entries, each global or `appliesTo`-scoped */ ]
     },
     "executionContexts": [
-      { "id": "auth-setup", "title": "Authentication Setup", "acceptanceCriteria": "…",
+      { "id": "auth-setup", "title": "Authentication Setup",
+        "acceptanceCriteria": [ { "id": "token-exchange", "statement": "…" } ],
         "placement": { "lane": "auth", "mode": "owned", "ownedPaths": ["src/lib/auth"] } }
     ],
     "tasks": [
@@ -281,9 +310,10 @@ To revise a saved definition after feedback, use targeted edits (`cctl workflow 
 
 - The `graph-workflow-planning` skill was used, and the relevant references were read for any machinery the plan uses.
 - No known design contradictions remain unresolved.
-- Every context has non-empty, context-local acceptance criteria, and their independently-failable obligations are countable and criterion-sized.
+- Every context's `acceptanceCriteria` is a list of `{ id, statement }` records with stable kebab-case ids, one independently-failable obligation each, and few enough of them to be one validation thesis.
 - Every runtime capability the plan introduces has a producer context whose acceptance criteria require the production call site, or a criterion naming the downstream context that owns the wiring — and the named owner's criteria carry the matching obligation.
-- Cross-cutting rules are declared once in `charter.invariants`, each either honestly global or scoped via `appliesTo.contextIds`; every source locator resolves from a lane worktree.
+- Cross-cutting rules are declared once in `charter.invariants`, and sources are scoped the same way: each entry is either honestly global or carries `appliesTo.contextIds`.
+- No conflict between two attached sources is left for execution to arbitrate, and every source locator resolves from a lane worktree — external material was materialized into it before being cited.
 - Optional implementer and validator settings are omitted unless the user requested them or a specific context requires them; any selected `scriptValidator.commands` run only after contexts expected to leave those checks valid.
 - Every agent profile reference was read from `cctl agent list`, not invented (`cctl agent get <tier:id>` for full instructions), and a context that overrides a cohort restates every assignment it wants.
 - Every context carries `placement`, every read-only context carries an `outputSchema`, no write-capable context sits on the `session` lane, and unordered same-lane members own pairwise-disjoint directory-grain prefixes.

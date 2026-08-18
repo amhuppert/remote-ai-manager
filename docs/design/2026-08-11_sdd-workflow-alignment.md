@@ -117,6 +117,16 @@ edge at propose time* instead of six LLM conflict sub-turns at publish.
 
 ## 2. Charter access: make the pinned spec readable (must-fix)
 
+> **Superseded in part by ticket #69 change 3 (2026-08-18).** D6 (materialize the pinned
+> revision into every lane) is what shipped and remains current. The `accessPolicy` field
+> it kept for "genuinely external sources" is gone: the authored charter schema refuses it
+> (`retired-source-access-policy`), no prompt carries a permission-gated-source rule, and
+> materializing outside material into the worktree is now the only way to attach it —
+> D6's mechanism generalized rather than a grade beside it. D7's `spec plan open` seeding
+> stands minus the `accessPolicy` line. Sources also gained structured
+> `appliesTo.contextIds` scoping, and the ranked hierarchy no longer arbitrates conflicts
+> at runtime — see `docs/design/2026-08-16_graph-workflow-simplification-proposed-changes.md`.
+
 ### Problem
 
 `accessPolicySchema` is two-valued (`worktree-relative` | `external-readonly`,

@@ -160,6 +160,13 @@ whether an AC is even satisfiable. Model/effort from `planRepair.agent` (seeded 
 
 **Prompt** (built by a pure `buildPlanRepairPrompt`, unit-tested):
 
+> **Amended by ticket #69 changes 3 and 4 (2026-08-18).** The repair prompt's charter
+> section is the digest alone — the amendment log stayed behind in `charter.md` and the
+> durable record — and the digest carries only the sources scoped to the tripped context,
+> with no precedence or access-policy rules. The tripped context's AC renders as numbered
+> `{id, statement}` records, repair evidence cites the `criterionId` a verdict named, and
+> `update-context` rewrites that whole record list (there is no per-criterion op).
+
 - Persona: a senior engineering lead reviewing a stalled workstream — diagnose first,
   change the plan only when the plan itself is wrong.
 - Evidence sections: workflow title/description; charter digest **with amendment log**

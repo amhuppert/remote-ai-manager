@@ -9,15 +9,18 @@ A lane is one git worktree on one branch, and several contexts may share it. Tha
 ## The three placement grades
 
 ```jsonc
-{ "id": "judge", "title": "Judge the candidates", "acceptanceCriteria": "…",
+{ "id": "judge", "title": "Judge the candidates",
+  "acceptanceCriteria": [ { "id": "names-one-winner", "statement": "…" } ],
   "placement": { "lane": "session", "mode": "readOnly" },
   "outputSchema": { "type": "object", "properties": { "winner": { "type": "string" } }, "required": ["winner"] } }
 
-{ "id": "persistence", "title": "Persist the new fields", "acceptanceCriteria": "…",
+{ "id": "persistence", "title": "Persist the new fields",
+  "acceptanceCriteria": [ { "id": "round-trips-new-fields", "statement": "…" } ],
   "placement": { "lane": "impl", "mode": "owned",
                  "ownedPaths": ["src/lib/state-store", "docs/persistence.md"] } }
 
-{ "id": "dependency-bump", "title": "Bump the SDK", "acceptanceCriteria": "…",
+{ "id": "dependency-bump", "title": "Bump the SDK",
+  "acceptanceCriteria": [ { "id": "lockfile-matches-manifest", "statement": "…" } ],
   "placement": { "lane": "sdk-bump", "mode": "full" } }
 ```
 

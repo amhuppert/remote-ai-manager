@@ -150,6 +150,14 @@ keeps `update-charter`):
 
 ## Rendering, materialization, and visibility
 
+> **Amended by ticket #69 change 3 (2026-08-18).** The amendment log no longer renders into
+> agent prompts: only `renderCharterMarkdown` takes the `amendments` parameter, so the log
+> reaches `charter.md` and the durable record while the per-context digest carries the
+> current rules alone. An amendment must therefore leave the charter text self-contained.
+> The same change dropped the digest's precedence, deferral, and access-policy instructions
+> and made sources context-scoped —
+> `docs/design/2026-08-16_graph-workflow-simplification-proposed-changes.md`.
+
 - `renderCharterDigest` / `renderCharterMarkdown` / `renderCharterPromptSection` gain an
   optional `amendments: CharterAmendment[]` parameter rendering an **"Amendment log"**
   section (seq, date, fieldsChanged, rationale) after the content sections — so every future

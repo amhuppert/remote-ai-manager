@@ -136,7 +136,21 @@ Script validation runs before agent validation. If a command fails, agent valida
 
 Unknown command names and costs above the global limit fail preflight rather than becoming runtime no-ops.
 
-Validators also actively check every charter invariant rendered into their prompt — global invariants plus those scoped to the context under review — and cite invariant ids in issues. Scope invariants honestly at planning time so validators are never asked to hold a mid-migration context to an end-state rule (see [The Charter](../SKILL.md#the-charter)).
+Validators also actively check every charter invariant rendered into their prompt — global invariants plus those scoped to the context under review — and cite invariant ids in issues. Sources of truth are filtered the same way, so a validator sees only the references its context was scoped to and is never asked to arbitrate a conflict between two of them: that resolution happened while planning (see [The Charter](../SKILL.md#the-charter)). Scope both honestly at planning time, so a validator is never held to a rule the plan did not mean it to enforce or asked to check material its context cannot read.
+
+### What each seat cites
+
+Every seat in a cohort receives the context's acceptance criteria as a numbered record list — the criteria are the context's scope contract, and each seat needs them to respect scope boundaries and honor deferrals whatever else it judges. What differs is the **basis a blocking finding must cite**:
+
+| seat | blocking basis | criterion id |
+|---|---|---|
+| the acceptance seat (the default blocking general reviewer) | the acceptance criteria themselves | required on every issue |
+| a blocking specialist | its own assigned mandate (`focus` plus profile standard) | only when the finding also contradicts a specific criterion |
+| an advisory seat | none — advisories block nothing | never required |
+
+A specialist is deliberately **not** asked to map its standard onto criterion ids: forcing that mapping would file mandate findings under criteria that never claimed them. A finding a seat's mandate does not clearly cover is an advisory, and a contract the context cannot satisfy at all is a `planDefects` entry — see below.
+
+Planner consequence: the acceptance seat can only cite what you gave it names for. Criteria authored as one giant record leave every blocking issue pointing at the same id, which is the pre-records blob with extra syntax.
 
 ### The third blocking response: `planDefects`
 
@@ -154,12 +168,13 @@ Planner consequence: a plan defect is the honest report of a **planning** error,
 
 Before creating or replacing a workflow, check every context:
 
-- The validator and implementer receive the same essential context (acceptance criteria are automatically provided to both the implementer and validator).
-- Every criterion maps to at least one task in that same context.
+- The validator and implementer receive the same essential context — the same numbered criterion records render into both prompts, automatically.
+- Every criterion record maps to at least one task in that same context, and each states one independently-failable obligation the seat can pass or fail on its own.
 - Every task has enough context to satisfy the criteria without relying on conversation-only knowledge.
 - Validator scope cannot require downstream integration work to already be done.
 - Any wiring intentionally deferred downstream is named in the acceptance criteria — validators fail existence-only evidence for a capability whose wiring has no named owner.
 - Every deferral declared anywhere in the plan ("deferred to context X", "verified in final verification") has a matching acceptance criterion in the receiving context. A validator GO that records a deferral whose target never carried the obligation is an invalid GO.
-- A failed criterion can reopen a specific task in the same context.
+- A failed criterion can reopen a specific task in the same context — the acceptance seat's issue carries both the `taskId` it reopens and the `criterionId` it failed.
+- No criterion contradicts a charter invariant or a source scoped to the same context. There is no runtime precedence rule to fall back on, so a contradiction here is a plan defect waiting to be reported.
 
 If the validator would need the whole design to judge a narrow context, either add a context-local design summary task or move that criterion to a final verification context.
