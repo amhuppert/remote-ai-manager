@@ -576,6 +576,11 @@ describe.each(["claude", "codex"] as const)(
             issues: [
               {
                 taskId: FOREIGN_TASK_ID,
+                // Cited so the refusal below is unambiguously about task
+                // containment: this seat is the acceptance seat, whose issues
+                // must each cite a criterion, and the context's criteria are
+                // prose — `ac-1` is the deterministic wrap id.
+                criterionId: "ac-1",
                 title: "Out-of-context finding",
                 description: "Raised because the profile said to.",
               },
@@ -606,6 +611,7 @@ describe.each(["claude", "codex"] as const)(
             issues: [
               {
                 taskId: IN_SCOPE_TASK_ID,
+                criterionId: "ac-1",
                 title: "Missing module list",
                 description: "The plan omits two modules.",
               },

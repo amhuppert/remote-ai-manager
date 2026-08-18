@@ -21,8 +21,7 @@ import { workflowCharterSchema } from "@/lib/workflows/charter-schemas";
 
 /**
  * Behavioral fixture: the AeroTrainer "floor/round" reproduction — the primary
- * acceptance test for the workflow-charter feature's intent (design.md, Testing
- * Strategy → Behavioral Fixture; requirements 5.2, 5.3).
+ * acceptance fixture for the workflow-charter feature's intent.
  *
  * History the feature exists to prevent: an implementer correctly followed a
  * higher-ranked CODE prototype for the floor/round rule; the per-context
@@ -30,24 +29,25 @@ import { workflowCharterSchema } from "@/lib/workflows/charter-schemas";
  * the wrong acceptance criterion and reopened the work, and a later context
  * silently reverted the correct implementation.
  *
- * True deferral is the VALIDATOR LLM's judgment and cannot be exercised
- * deterministically in a unit test — enforcement in this spec is prompt-mediated
- * (the validator's structured-output schema is unchanged; conflicts live in the
- * existing `summary`). This fixture therefore pins two REAL production paths and
- * simulates ONLY the LLM's judgment via the existing `executeWorkflowTaskRun`
- * dependency-injection seam on `createValidatorRunner`:
+ * Under the plan-time-resolution model (simplification change 3) the runtime
+ * no longer arbitrates that conflict: source conflicts are resolved during
+ * planning, so the validator prompt carries the context's ranked references
+ * WITHOUT the retired precedence/deferral rule. This fixture pins two REAL
+ * production paths and simulates ONLY the LLM's judgment via the existing
+ * `executeWorkflowTaskRun` dependency-injection seam on
+ * `createValidatorRunner`:
  *
  *   1. The REAL validator prompt built by `runContextValidator` for this
- *      floor/round conflict carries the charter digest at the top, ranks the
- *      code prototype ABOVE the contradicting acceptance-criterion source, and
- *      instructs the validator to defer to the higher-ranked source (5.2) and
- *      record the conflict — criterion, prevailing source, resolution — in its
- *      `summary` (5.3).
- *   2. With the injected fake standing in for a validator that correctly defers
- *      (empty `issues`, a `summary` naming the criterion, the prevailing rank-1
- *      source, and the resolution), the runner's REAL outcome derivation
- *      (`issues.length === 0` ⇒ PASS, with `summary` passed through) yields a
- *      PASS whose summary records the conflict.
+ *      floor/round conflict carries the charter digest at the top and ranks
+ *      the code prototype ABOVE the contradicting acceptance-criterion source
+ *      — and carries none of the retired runtime-governance text (deferral
+ *      rule, access policy, amendment log).
+ *   2. With the injected fake standing in for a validator that records a
+ *      conflict resolution in its verdict (empty `issues`, a `summary` naming
+ *      the criterion, the prevailing rank-1 source, and the resolution), the
+ *      runner's REAL outcome derivation (`issues.length === 0` ⇒ PASS, with
+ *      `summary` passed through) yields a PASS whose summary records the
+ *      conflict.
  *
  * The fake never decides anything: it returns a fixed result so the assertions
  * exercise the production prompt builder and the production pass/summary
@@ -181,9 +181,10 @@ function buildFloorRoundExecution(): GraphWorkflowExecution {
 }
 
 /**
- * A deferral verdict as a CORRECTLY-deferring validator LLM would emit it:
- * empty `issues` (so the runner derives PASS) and a `summary` that records the
- * affected criterion, the prevailing rank-1 source, and the resolution (5.3).
+ * A conflict-recording verdict as a validator LLM would emit it after judging
+ * that the implementation follows the plan's rank-1 authority: empty `issues`
+ * (so the runner derives PASS) and a `summary` that records the affected
+ * criterion, the prevailing rank-1 source, and the resolution.
  */
 const DEFERRAL_SUMMARY =
   "Conflict resolved by the charter precedence. Affected acceptance criterion: the Math.floor " +
@@ -218,7 +219,7 @@ function deferralTaskRun(): TaskRunResult {
 }
 
 describe("charter floor/round conflict behavioral fixture", () => {
-  it("builds a validator prompt that opens with the charter, ranks the prototype above the contradicting AC, and instructs defer + record-conflict", async () => {
+  it("builds a validator prompt that opens with the charter and ranks the prototype above the contradicting AC, without the retired deferral rule", async () => {
     let capturedPrompt: string | undefined;
     const executeWorkflowTaskRun = vi.fn(
       async (input: ExecuteWorkflowTaskRunInput) => {
@@ -271,22 +272,19 @@ describe("charter floor/round conflict behavioral fixture", () => {
     expect(prototypeIndex).toBeLessThan(acDocIndex);
     expect(prompt).toContain(`\`${ROUNDING_PROTOTYPE_LOCATOR}\``);
 
-    // 5.2: defer to the higher-ranked source; do not fail the context for the
-    // acceptance-criterion mismatch. 5.3: record the conflict (criterion,
-    // prevailing source, resolution) in the summary. 5.5: precedence within the
-    // declared applicability scope. This guidance ships in the production
-    // validator prompt + charter digest (task 4.3).
+    // Change 3: the runtime deferral/precedence rule, access-policy
+    // instructions, and amendment history retired from every agent prompt —
+    // conflicts among sources are resolved at plan time, and the validator
+    // judges the contract with the ranked references as context.
     const lowered = prompt.toLowerCase();
-    expect(lowered).toContain("higher-ranked source");
-    expect(lowered).toMatch(/do not|don't|must not/);
-    expect(lowered).toContain("acceptance criterion");
-    expect(lowered).toContain("prevailing source");
-    expect(lowered).toContain("resolution");
-    expect(lowered).toContain("summary");
-    expect(lowered).toMatch(/applicability scope|appliesto|applies to/);
+    expect(lowered).not.toContain("higher-ranked source");
+    expect(lowered).not.toContain("prevailing source");
+    expect(prompt).not.toContain("Applying the source-of-truth hierarchy");
+    expect(lowered).not.toContain("permission-gated");
+    expect(prompt).not.toContain("Amendment log");
   });
 
-  it("passes the context and records the conflict in the summary when the validator defers to the higher-ranked source", async () => {
+  it("passes the context and carries the validator's conflict-recording summary through the outcome derivation", async () => {
     const executeWorkflowTaskRun = vi.fn(
       async (_input: ExecuteWorkflowTaskRunInput) => deferralTaskRun(),
     );

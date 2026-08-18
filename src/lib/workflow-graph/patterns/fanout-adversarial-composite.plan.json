@@ -35,9 +35,7 @@
           "label": "Survey brief",
           "type": "document",
           "locator": ".cc/temp/survey-brief.md",
-          "description": "The subject under survey and the question the synthesis has to answer: what is being assessed, and what decision the answer feeds.",
-          "appliesTo": "all execution contexts",
-          "accessPolicy": "worktree-relative"
+          "description": "The subject under survey and the question the synthesis has to answer: what is being assessed, and what decision the answer feeds."
         },
         {
           "rank": 2,
@@ -45,9 +43,7 @@
           "label": "Repository engineering contract",
           "type": "document",
           "locator": "AGENTS.md",
-          "description": "The engineering contract that defines what 'correct' means for the runtime, tests, and documentation the readers assess and the panel reviews against.",
-          "appliesTo": "all execution contexts",
-          "accessPolicy": "worktree-relative"
+          "description": "The engineering contract that defines what 'correct' means for the runtime, tests, and documentation the readers assess and the panel reviews against."
         }
       ]
     },

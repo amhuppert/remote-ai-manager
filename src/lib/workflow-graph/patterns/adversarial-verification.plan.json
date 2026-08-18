@@ -35,9 +35,7 @@
           "label": "Change brief",
           "type": "document",
           "locator": ".cc/temp/change-brief.md",
-          "description": "What the change has to accomplish and the bar it is held to. Governs both what the worker builds and what the blocking seat measures it against.",
-          "appliesTo": "all execution contexts",
-          "accessPolicy": "worktree-relative"
+          "description": "What the change has to accomplish and the bar it is held to. Governs both what the worker builds and what the blocking seat measures it against."
         },
         {
           "rank": 2,
@@ -45,9 +43,7 @@
           "label": "Repository engineering contract",
           "type": "document",
           "locator": "AGENTS.md",
-          "description": "The engineering contract the implementation must satisfy — typing, testing, and architecture boundaries — and the standard the specialists apply within their lenses.",
-          "appliesTo": "all execution contexts",
-          "accessPolicy": "worktree-relative"
+          "description": "The engineering contract the implementation must satisfy — typing, testing, and architecture boundaries — and the standard the specialists apply within their lenses."
         }
       ]
     },

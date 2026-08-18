@@ -26,16 +26,20 @@ const DEFERRAL_PARAGRAPH =
 const COHORT_INTRO_PARAGRAPH =
   "This is the current and graph-downstream authored acceptance-criteria cohort, not a wiring table. Upstream or unrelated claimants remain ownership-visible but cannot authorize a future production handoff:";
 
-/** The current context (`context-plan`) plus both graph-downstream contexts. */
+/**
+ * The current context (`context-plan`) plus both graph-downstream contexts.
+ * The fixture criteria are stored as prose, so each renders as the one-record
+ * numbered list under the deterministic wrap id (#69 change 4 stage 1).
+ */
 const PLAN_COHORT_LISTING = [
   "### `context-plan` — Plan (current context)",
-  "Plan is documented",
+  "1. [ac-1] Plan is documented",
   "",
   "### `context-implement` — Implement",
-  "Feature implemented",
+  "1. [ac-1] Feature implemented",
   "",
   "### `context-verify` — Verify",
-  "Verification passes",
+  "1. [ac-1] Verification passes",
 ];
 
 function contract(
@@ -107,9 +111,53 @@ describe("composeGraphRolePrompt", () => {
           COHORT_INTRO_PARAGRAPH,
           "",
           "### `context-verify` — Verify (current context)",
-          "Verification passes",
+          "1. [ac-1] Verification passes",
           "",
           BASE_PROMPT,
+        ].join("\n"),
+      );
+    });
+
+    it("renders a cohort member's record criteria as the same numbered list shape", async () => {
+      const execution = createWorkflowExecution({
+        id: "execution-prompt-composer",
+      });
+      const prompt = await composeGraphRolePrompt({
+        execution: {
+          ...execution,
+          workingDefinition: {
+            ...execution.workingDefinition,
+            executionContexts:
+              execution.workingDefinition.executionContexts.map((context) =>
+                context.id === "context-verify"
+                  ? {
+                      ...context,
+                      acceptanceCriteria: [
+                        {
+                          id: "verification-passes",
+                          statement: "Verification passes.",
+                        },
+                        {
+                          id: "evidence-linked",
+                          statement: "Evidence is linked from the summary.",
+                        },
+                      ],
+                    }
+                  : context,
+              ),
+          },
+        },
+        executionContract: contract(null),
+        prompt: BASE_PROMPT,
+        role: "context-validator",
+        contextId: "context-verify",
+      });
+
+      expect(prompt).toContain(
+        [
+          "### `context-verify` — Verify (current context)",
+          "1. [verification-passes] Verification passes.",
+          "2. [evidence-linked] Evidence is linked from the summary.",
         ].join("\n"),
       );
     });

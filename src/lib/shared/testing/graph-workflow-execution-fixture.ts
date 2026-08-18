@@ -30,6 +30,9 @@ function maximalResolvedContext(): Record<string, unknown> {
     id: "ctx-1",
     title: "Implement the thing",
     description: "Detailed description of the context",
+    // Deliberately legacy prose while the scheduled ctx-1 below carries
+    // records: the same execution then persists both admitted shapes of the
+    // acceptanceCriteria union.
     acceptanceCriteria: "All tests pass and the build is green",
     // The owning grade, because it is the only one that carries a payload:
     // a placement round-trip that only ever saw `{ lane, mode }` would not
@@ -642,7 +645,15 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
           id: "ctx-1",
           title: "Implement the thing",
           description: "Detailed description of the context",
-          acceptanceCriteria: "All tests pass and the build is green",
+          // Records-shaped, while the loop-template contexts and the authored
+          // launch document above keep prose: ONE persisted row carries both
+          // admitted shapes of the acceptanceCriteria union, so the round trip
+          // proves the union is additive (same tier blobs, no schema-version
+          // bump) rather than a records-only cutover.
+          acceptanceCriteria: [
+            { id: "tests-pass", statement: "All tests pass" },
+            { id: "build-green", statement: "The build is green" },
+          ],
           // The owning grade, because it is the only one that carries a payload:
           // a placement round-trip that only ever saw `{ lane, mode }` would not
           // prove the owned-prefix set survives a real save and reload.
@@ -1033,6 +1044,11 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
               issues: [
                 {
                   taskId: "task-1",
+                  // Drawn from THIS context's criterion records above, not an
+                  // arbitrary string: the runner refuses a verdict citing an
+                  // id outside the context's set, so any other value would
+                  // persist a state the engine never writes.
+                  criterionId: "build-green",
                   title: "Missing rollback notes",
                   description: "Document how to revert the migration.",
                 },

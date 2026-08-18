@@ -210,16 +210,28 @@ export const ACCEPTANCE_CRITERIA_VALIDATOR_PROFILE_REF = {
   id: "general-reviewer",
 } as const satisfies AgentProfileRef;
 
+/**
+ * Whether a profile is the standard acceptance-criteria verifier. The seat
+ * distinction the citation rule keys on (#69 change 4): a blocking assignment
+ * with this profile is the acceptance seat, judging the criteria themselves;
+ * a blocking assignment with any other profile is a specialist judging its
+ * own mandate.
+ */
+export function isAcceptanceCriteriaValidatorProfile(
+  profile: AgentProfileRef,
+): boolean {
+  return (
+    profile.tier === ACCEPTANCE_CRITERIA_VALIDATOR_PROFILE_REF.tier &&
+    profile.id === ACCEPTANCE_CRITERIA_VALIDATOR_PROFILE_REF.id
+  );
+}
+
 export function defaultValidatorAuthority(
   profile: AgentProfileRef,
 ): ValidatorAuthority {
-  if (
-    profile.tier === ACCEPTANCE_CRITERIA_VALIDATOR_PROFILE_REF.tier &&
-    profile.id === ACCEPTANCE_CRITERIA_VALIDATOR_PROFILE_REF.id
-  ) {
-    return "blocking";
-  }
-  return "advisory";
+  return isAcceptanceCriteriaValidatorProfile(profile)
+    ? "blocking"
+    : "advisory";
 }
 
 function applyDefaultValidatorAuthority(value: unknown): unknown {

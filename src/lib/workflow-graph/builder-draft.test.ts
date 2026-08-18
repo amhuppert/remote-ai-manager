@@ -4,16 +4,20 @@ import {
   createWorkflowLayout,
 } from "./test-fixtures";
 import {
+  addAcceptanceCriterion,
   addContextDependency,
   addExecutionContext,
   addTaskToContext,
   clearContextBlockOverride,
   clearWorkflowConfigOverride,
   deleteExecutionContext,
+  moveAcceptanceCriterion,
   moveTaskWithinContext,
+  removeAcceptanceCriterion,
   setContextBlockOverride,
   setContextOutputSchema,
   setWorkflowConfigOverride,
+  updateAcceptanceCriterionStatement,
   updateContextPosition,
   updateExecutionContext,
 } from "./builder-draft";
@@ -32,6 +36,9 @@ describe("workflow builder draft helpers", () => {
     expect(added).toEqual({
       id: "context-4",
       title: "Execution Context 4",
+      // Still the empty-prose seed: the inspector panel renders this value as
+      // a string until the builder-cli-surfaces slice swaps both together.
+      // The criterion mutators below normalize it to records on first edit.
       acceptanceCriteria: "",
       // A single-member lane of its own is what the builder can safely assume
       // for a context nobody has placed yet.
@@ -374,5 +381,161 @@ describe("workflow builder draft helpers", () => {
       result.executionContexts.find((context) => context.id === "context-plan")
         ?.outputSchema,
     ).toEqual({ type: "object" });
+  });
+});
+
+// #69 change 4 stage 1: the draft tier represents acceptance criteria as
+// {id, statement} records and edits them with list mutators. The builder UI
+// consuming these is owned downstream (builder-cli-surfaces); the mutators
+// here are UI-agnostic pure functions in the same style as the task helpers.
+describe("acceptance-criterion record mutators", () => {
+  it("wraps legacy prose once and appends with a deterministic non-colliding id", () => {
+    const first = addAcceptanceCriterion(
+      createWorkflowDefinition(),
+      "context-plan",
+      "Rollout notes exist",
+    );
+    expect(first.criterionId).toBe("ac-2");
+    const criteria = first.definition.executionContexts.find(
+      (context) => context.id === "context-plan",
+    )?.acceptanceCriteria;
+    // The fixture's prose became the ac-1 record (same wrap the accept path
+    // performs), so the appended record is ac-2, not a second ac-1.
+    expect(criteria).toEqual([
+      { id: "ac-1", statement: "Plan is documented" },
+      { id: "ac-2", statement: "Rollout notes exist" },
+    ]);
+  });
+
+  it("starts at ac-1 on an empty draft list and skips author-chosen ids", () => {
+    const draft = addExecutionContext({
+      definition: createWorkflowDefinition(),
+      layout: createWorkflowLayout(),
+    });
+    const first = addAcceptanceCriterion(draft.definition, draft.contextId);
+    expect(first.criterionId).toBe("ac-1");
+    expect(
+      first.definition.executionContexts.find(
+        (context) => context.id === draft.contextId,
+      )?.acceptanceCriteria,
+    ).toEqual([{ id: "ac-1", statement: "" }]);
+
+    // An author-chosen non-numeric id neither collides nor advances the
+    // counter; a numeric ac-N does.
+    const authored = updateExecutionContext(
+      createWorkflowDefinition(),
+      "context-plan",
+      {
+        acceptanceCriteria: [
+          { id: "docs-updated", statement: "Docs updated" },
+          { id: "ac-7", statement: "Authored seventh" },
+        ],
+      },
+    );
+    const appended = addAcceptanceCriterion(
+      authored,
+      "context-plan",
+      "One more",
+    );
+    expect(appended.criterionId).toBe("ac-8");
+  });
+
+  it("updates one record's statement and leaves its siblings untouched", () => {
+    const seeded = updateExecutionContext(
+      createWorkflowDefinition(),
+      "context-plan",
+      {
+        acceptanceCriteria: [
+          { id: "docs-updated", statement: "Docs updated" },
+          { id: "tests-green", statement: "Tests pass" },
+        ],
+      },
+    );
+    const updated = updateAcceptanceCriterionStatement(
+      seeded,
+      "context-plan",
+      "tests-green",
+      "Every new test passes",
+    );
+    expect(
+      updated.executionContexts.find((context) => context.id === "context-plan")
+        ?.acceptanceCriteria,
+    ).toEqual([
+      { id: "docs-updated", statement: "Docs updated" },
+      { id: "tests-green", statement: "Every new test passes" },
+    ]);
+  });
+
+  it("removes a record by id, including the wrapped prose record", () => {
+    const seeded = updateExecutionContext(
+      createWorkflowDefinition(),
+      "context-plan",
+      {
+        acceptanceCriteria: [
+          { id: "docs-updated", statement: "Docs updated" },
+          { id: "tests-green", statement: "Tests pass" },
+        ],
+      },
+    );
+    const removed = removeAcceptanceCriterion(
+      seeded,
+      "context-plan",
+      "docs-updated",
+    );
+    expect(
+      removed.executionContexts.find((context) => context.id === "context-plan")
+        ?.acceptanceCriteria,
+    ).toEqual([{ id: "tests-green", statement: "Tests pass" }]);
+
+    // Prose normalizes to its wrapped record first, so removing ac-1 empties
+    // the list rather than throwing or leaving the prose behind.
+    const prose = removeAcceptanceCriterion(
+      createWorkflowDefinition(),
+      "context-plan",
+      "ac-1",
+    );
+    expect(
+      prose.executionContexts.find((context) => context.id === "context-plan")
+        ?.acceptanceCriteria,
+    ).toEqual([]);
+  });
+
+  it("reorders records one step at a time and clamps at the boundaries", () => {
+    const seeded = updateExecutionContext(
+      createWorkflowDefinition(),
+      "context-plan",
+      {
+        acceptanceCriteria: [
+          { id: "first", statement: "First" },
+          { id: "second", statement: "Second" },
+          { id: "third", statement: "Third" },
+        ],
+      },
+    );
+    const criteriaOf = (definition: typeof seeded) =>
+      definition.executionContexts.find(
+        (context) => context.id === "context-plan",
+      )?.acceptanceCriteria;
+
+    const moved = moveAcceptanceCriterion(
+      seeded,
+      "context-plan",
+      "third",
+      "up",
+    );
+    expect(criteriaOf(moved)).toEqual([
+      { id: "first", statement: "First" },
+      { id: "third", statement: "Third" },
+      { id: "second", statement: "Second" },
+    ]);
+
+    // Clamped: moving the first record up is a no-op, not a rotation.
+    const clamped = moveAcceptanceCriterion(
+      seeded,
+      "context-plan",
+      "first",
+      "up",
+    );
+    expect(criteriaOf(clamped)).toEqual(criteriaOf(seeded));
   });
 });

@@ -5,12 +5,16 @@ import {
   workflowValidatorOutputPlanDefectSchema,
 } from "@/lib/workflow-graph/definition-schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
-import type {
-  CharterAmendment,
-  WorkflowCharter,
-} from "@/lib/workflows/charter-schemas";
+import {
+  acceptanceCriteriaRecordListText,
+  criterionRecordsOf,
+} from "@/lib/workflow-graph/criteria/criterion-records";
+import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import { renderCharterPromptSection } from "@/lib/workflow-graph/charter/render";
-import { resolveScopedCharterForContext } from "@/lib/workflow-graph/charter/invariant-scope";
+import {
+  resolveLogicalAuthoredContextId,
+  resolveScopedCharterForContext,
+} from "@/lib/workflow-graph/charter/invariant-scope";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import {
@@ -27,6 +31,7 @@ import {
   type GraphWorkflowValidationSessionRef,
 } from "@/lib/workflow-graph/schemas";
 import {
+  isAcceptanceCriteriaValidatorProfile,
   selectRunnableCohortAssignments,
   type ValidatorAssignment,
   type ValidatorAuthority,
@@ -163,14 +168,23 @@ const { $schema: _planDefectDialect, ...PLAN_DEFECT_ITEMS_OUTPUT_SCHEMA } =
  * instead of arriving as a well-formed verdict the runner can only reject as an
  * infrastructure failure.
  *
- * `planDefects` is the one optional field: `issues` and `advisories` stay
- * required because their empty arrays carry meaning (a pass, and a considered
- * absence of observations), while requiring the rare third response would make
- * every clean verdict declare it.
+ * `planDefects` is the one optional field on the verdict: `issues` and
+ * `advisories` stay required because their empty arrays carry meaning (a
+ * pass, and a considered absence of observations), while requiring the rare
+ * third response would make every clean verdict declare it.
+ *
+ * `criterionId` is bound to the context's criterion-record ids exactly as
+ * `taskId` is bound to its task ids, and the citation rule decides whether an
+ * issue must carry it (#69 change 4 seat table): the acceptance seat judges
+ * the criteria themselves, so its issues cite one; a specialist's blocking
+ * basis is its assigned mandate, so a criterion id appears only when a
+ * mandate finding also contradicts a specific criterion.
  */
 export function buildValidatorOutputSchema(input: {
   authority: ValidatorAuthority;
   taskIds: readonly string[];
+  criterionIds: readonly string[];
+  issueCriterionCitation: IssueCriterionCitation;
 }): Record<string, unknown> {
   if (input.authority === "advisory") {
     return {
@@ -194,16 +208,25 @@ export function buildValidatorOutputSchema(input: {
           type: "object",
           properties: {
             // An empty enum matches nothing and providers refuse it outright,
-            // so a context with no tasks to name falls back to a free-form id
-            // rather than dispatching an unsatisfiable schema.
+            // so a context with no ids to name falls back to a free-form
+            // field rather than dispatching an unsatisfiable schema.
             taskId: {
               type: "string",
               ...(input.taskIds.length > 0 ? { enum: [...input.taskIds] } : {}),
             },
+            criterionId: {
+              type: "string",
+              ...(input.criterionIds.length > 0
+                ? { enum: [...input.criterionIds] }
+                : {}),
+            },
             title: { type: "string" },
             description: { type: "string" },
           },
-          required: ["taskId", "title", "description"],
+          required:
+            input.issueCriterionCitation === "required"
+              ? ["taskId", "criterionId", "title", "description"]
+              : ["taskId", "title", "description"],
           additionalProperties: false,
         },
       },
@@ -215,6 +238,25 @@ export function buildValidatorOutputSchema(input: {
   };
 }
 
+/**
+ * Whether a seat's blocking issues must each cite a criterion id, derived
+ * from what the seat is assigned to judge: the default blocking
+ * general-reviewer (the acceptance seat) judges the criteria themselves, so
+ * its citation is required; every other seat cites its own mandate and
+ * carries a criterion id only incidentally. Advisory seats emit no issues at
+ * all, so the value is inert for them.
+ */
+export type IssueCriterionCitation = "required" | "optional";
+
+export function issueCriterionCitationFor(
+  validator: Pick<ValidatorAssignment, "authority" | "profile">,
+): IssueCriterionCitation {
+  return validator.authority === "blocking" &&
+    isAcceptanceCriteriaValidatorProfile(validator.profile)
+    ? "required"
+    : "optional";
+}
+
 export interface BuildContextValidationPromptInput {
   context: GraphWorkflowCascadeContext;
   tasks: GraphWorkflowTaskDefinition[];
@@ -223,8 +265,13 @@ export interface BuildContextValidationPromptInput {
   // Optional because the resolved context carries an optional charter; when
   // present the digest is prepended so the prompt opens with it (4.2).
   charter?: WorkflowCharter;
-  /** Live amendment history (doc 07) — the validator judges the amended rules. */
-  charterAmendments?: CharterAmendment[];
+  /**
+   * The LOGICAL authored context id the charter section renders for — scoped
+   * sources bind authored ids, so a loop-instance validation (context id like
+   * `group__p2__ctx`) passes its authored template id here. Defaults to
+   * `context.id`, which is correct for every non-expanded context.
+   */
+  charterContextId?: string;
   // Pre-rendered "Changes under review" section anchoring the validator on the
   // context's diff. Inserted after the acceptance criteria. Omitted when scope
   // computation is disabled or fails to produce a section.
@@ -273,9 +320,9 @@ export function resolveValidatorAskUserQuestionsEnabled(
 
 function buildCharterSection(
   charter: WorkflowCharter,
-  amendments: readonly CharterAmendment[] = [],
+  contextId: string,
 ): string {
-  return renderCharterPromptSection(charter, [], amendments);
+  return renderCharterPromptSection(charter, contextId);
 }
 
 function formatTaskBlock(
@@ -304,8 +351,14 @@ function formatTaskBlock(
  * and calling an empty `issues` array a pass without qualification — would
  * describe a two-response contract the schema and the round conclusion no
  * longer implement.
+ *
+ * The issue line matches the seat's citation rule so the tuple a seat reads
+ * is the tuple its dispatched schema enforces.
  */
-function requiredOutputFieldLines(authority: ValidatorAuthority): string[] {
+function requiredOutputFieldLines(
+  authority: ValidatorAuthority,
+  issueCriterionCitation: IssueCriterionCitation,
+): string[] {
   const advisories =
     "- `advisories` (array of `{ kind, title, description }`, `kind` one of `implementation` | `plan` | `out_of_scope`): Non-blocking observations delivered to the implementer, who may act on them or decline. An advisory carries no `taskId`, reopens nothing, and may name matters outside this context — use `out_of_scope` for those. Emit an empty array when you have none.";
 
@@ -317,8 +370,13 @@ function requiredOutputFieldLines(authority: ValidatorAuthority): string[] {
     ];
   }
 
+  const issues =
+    issueCriterionCitation === "required"
+      ? "- `issues` (array of `{ taskId, criterionId, title, description }`): Each issue must reference the `taskId` of the task that needs to be reopened to address it, and must cite the acceptance criterion it fails — set `criterionId` to the violated criterion's id from the numbered Acceptance Criteria list above. If the same problem touches multiple tasks in this context, include one issue entry per affected task (duplicate the entry with each distinct `taskId`)."
+      : "- `issues` (array of `{ taskId, title, description, criterionId? }`): Each issue must reference the `taskId` of the task that needs to be reopened to address it. Your blocking basis is your assigned mandate, not the acceptance criteria: include `criterionId` (a criterion's id from the numbered Acceptance Criteria list above) only when your finding also contradicts that specific criterion — you are not required to map your findings onto criteria. If the same problem touches multiple tasks in this context, include one issue entry per affected task (duplicate the entry with each distinct `taskId`).";
+
   return [
-    "- `issues` (array of `{ taskId, title, description }`): Each issue must reference the `taskId` of the task that needs to be reopened to address it. If the same problem touches multiple tasks in this context, include one issue entry per affected task (duplicate the entry with each distinct `taskId`).",
+    issues,
     advisories,
     "- `planDefects` (optional array of `{ title, description, whyNotLocallyRemediable, conflictingContract }`): The contract itself is the defect — no task in this context can remedy it. A plan defect carries no `taskId` and reopens nothing; `whyNotLocallyRemediable` states why the remedy is not local, and `conflictingContract` names the criterion clause, boundary, dependency, or governance rule in conflict. Omit the field entirely when you have none. Your role contract above says when this response is the right one.",
     "",
@@ -337,7 +395,10 @@ export function buildContextValidationPrompt(
     .join("\n");
 
   const charterSection = input.charter
-    ? `${buildCharterSection(input.charter, input.charterAmendments ?? [])}\n\n`
+    ? `${buildCharterSection(
+        input.charter,
+        input.charterContextId ?? input.context.id,
+      )}\n\n`
     : "";
 
   // A validator resume opens with the answers so the re-run validator reads them
@@ -388,13 +449,12 @@ export function buildContextValidationPrompt(
     "- **Respect context scope boundaries.** This execution context is one step in a larger graph workflow. Work that is explicitly out of scope for this context — for example, type updates or cleanup handled by a downstream context, or integration work reserved for another context — must not cause this context to fail. If the current context produced the intermediate state it is responsible for, treat that as success even if the wider codebase is not yet fully consistent.",
     "- **Require a production call path for wiring criteria.** When a criterion requires a capability to exist or be wired — an event publication, route, notification, adapter, or control — it is satisfied only by a production call path that reaches it. An exported, unit-tested function with no production caller does not satisfy it. Deferral is valid only to a graph-downstream owner, and only when this context's acceptance criteria explicitly name that downstream owner for the obligation, or the downstream owner's acceptance criteria contain the matching obligation. A graph relationship or ownership claim alone cannot invent the handoff. With valid deferral evidence, record it in your `summary` instead of failing; without it, raise an issue.",
     ...invariantGuidanceLines,
-    "- **Defer to the higher-ranked source on a charter conflict.** When an acceptance criterion conflicts with a higher-ranked source of truth and the implementation follows that higher-ranked source, do not fail the context solely for that acceptance-criterion mismatch — the higher-ranked source prevails. Instead, record the conflict in your `summary`, naming the affected acceptance criterion, the prevailing source, and the resolution. Evaluate each source's precedence within that source's declared applicability scope (`appliesTo`).",
     buildValidatorDeterministicChecksGuidance(input.validationSelections),
     "",
     ...validationSectionLines,
     "## Acceptance Criteria",
     "",
-    input.context.acceptanceCriteria,
+    acceptanceCriteriaRecordListText(input.context.acceptanceCriteria),
     "",
     ...(input.diffScopeSection ? [input.diffScopeSection, ""] : []),
     "## Context",
@@ -412,7 +472,10 @@ export function buildContextValidationPrompt(
     "",
     "Output a JSON object with these fields:",
     "- `summary` (string): Brief explanation of your assessment.",
-    ...requiredOutputFieldLines(input.validator.authority),
+    ...requiredOutputFieldLines(
+      input.validator.authority,
+      issueCriterionCitationFor(input.validator),
+    ),
   ].join("\n");
 }
 
@@ -510,6 +573,39 @@ function validateIssueTaskIds(
   return `Validator issues referenced tasks outside the context: ${invalidTaskIds.join(", ")}`;
 }
 
+/**
+ * The criterion twin of {@link validateIssueTaskIds}, plus the per-seat
+ * requirement the shared parse twin cannot carry: one Zod contract serves
+ * every blocking seat, so the acceptance seat's "every issue cites a
+ * criterion" rule has to be applied here, where the dispatch knows which seat
+ * it is parsing for.
+ */
+function validateIssueCriterionIds(
+  issues: WorkflowValidatorIssue[],
+  allowedCriterionIds: Set<string> | null,
+  requireIssueCriterionId: boolean,
+): string | null {
+  if (requireIssueCriterionId) {
+    const missing = issues.filter((issue) => issue.criterionId === undefined);
+    if (missing.length > 0) {
+      return `Validator issues omitted the required criterionId: ${missing
+        .map((issue) => issue.title)
+        .join(", ")}`;
+    }
+  }
+  if (!allowedCriterionIds) return null;
+  const invalidCriterionIds = issues
+    .map((issue) => issue.criterionId)
+    .filter(
+      (criterionId): criterionId is string =>
+        criterionId !== undefined && !allowedCriterionIds.has(criterionId),
+    );
+  if (invalidCriterionIds.length === 0) {
+    return null;
+  }
+  return `Validator issues referenced criteria outside the context: ${invalidCriterionIds.join(", ")}`;
+}
+
 function validatorOutcomeLogFields(outcome: ValidatorOutcome): {
   issueCount: number;
   reopenTaskIds: string[];
@@ -548,20 +644,35 @@ function wireResultToOutcome(
   },
   engine: AgentBackendId,
   allowedTaskIds: Set<string> | null,
+  allowedCriterionIds: Set<string> | null,
+  requireIssueCriterionId: boolean,
 ): ValidatorOutcome {
   // Both absent for an advisory assignment, whose schema has neither field.
   const issues = result.issues ?? [];
   const planDefects = result.planDefects ?? [];
-  // Only issues are checked against the context's task set. Advisories and plan
-  // defects pass through untouched — neither names a task — which is what keeps
-  // an out-of-context observation from taking the infra_error path and spending
-  // one of the lane's attempts.
+  // Only issues are checked against the context's task and criterion sets.
+  // Advisories and plan defects pass through untouched — neither names a task
+  // or a criterion — which is what keeps an out-of-context observation from
+  // taking the infra_error path and spending one of the lane's attempts.
   const invalidIssueTaskIds = validateIssueTaskIds(issues, allowedTaskIds);
   if (invalidIssueTaskIds) {
     return {
       kind: "infra_error",
       reason: "schema_mismatch",
       message: invalidIssueTaskIds,
+      engine,
+    };
+  }
+  const invalidIssueCriterionIds = validateIssueCriterionIds(
+    issues,
+    allowedCriterionIds,
+    requireIssueCriterionId,
+  );
+  if (invalidIssueCriterionIds) {
+    return {
+      kind: "infra_error",
+      reason: "schema_mismatch",
+      message: invalidIssueCriterionIds,
       engine,
     };
   }
@@ -629,6 +740,14 @@ export interface ParseValidatorResponseInput {
   authority: ValidatorAuthority;
   structuredOutput?: unknown;
   allowedTaskIds?: string[];
+  /** The context's criterion-record ids, mirroring `allowedTaskIds`. */
+  allowedCriterionIds?: string[];
+  /**
+   * True for the acceptance seat, whose issues must each cite a criterion
+   * (the "required" citation rule); the shared parse twin keeps the field
+   * optional, so the requirement is enforced here per dispatch.
+   */
+  requireIssueCriterionId?: boolean;
 }
 
 /**
@@ -640,8 +759,19 @@ export interface ParseValidatorResponseInput {
 export function parseValidatorResponse(
   input: ParseValidatorResponseInput,
 ): ParsedValidatorResponse {
-  const { text, engine, authority, structuredOutput, allowedTaskIds } = input;
+  const {
+    text,
+    engine,
+    authority,
+    structuredOutput,
+    allowedTaskIds,
+    allowedCriterionIds,
+    requireIssueCriterionId,
+  } = input;
   const allowedTaskIdSet = allowedTaskIds ? new Set(allowedTaskIds) : null;
+  const allowedCriterionIdSet = allowedCriterionIds
+    ? new Set(allowedCriterionIds)
+    : null;
 
   const validated = validateStructuredOutput(
     authority === "advisory"
@@ -668,7 +798,13 @@ export function parseValidatorResponse(
   }
 
   return {
-    result: wireResultToOutcome(validated.value, engine, allowedTaskIdSet),
+    result: wireResultToOutcome(
+      validated.value,
+      engine,
+      allowedTaskIdSet,
+      allowedCriterionIdSet,
+      requireIssueCriterionId ?? false,
+    ),
     parsePath: PARSE_PATH_BY_SOURCE[validated.source],
   };
 }
@@ -1035,6 +1171,10 @@ interface RunValidatorTurnInput {
   reasoningEffort: string | undefined;
   contextLimitTokens: number | undefined;
   allowedTaskIds: string[];
+  /** The context's criterion-record ids, mirroring `allowedTaskIds`. */
+  allowedCriterionIds: string[];
+  /** True for the acceptance seat, whose issues must each cite a criterion. */
+  requireIssueCriterionId: boolean;
   /** Selects both the dispatched output schema and the parse twin (D2). */
   authority: ValidatorAuthority;
   outputSchema: Record<string, unknown>;
@@ -1250,6 +1390,8 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       reasoningEffort,
       contextLimitTokens,
       allowedTaskIds,
+      allowedCriterionIds,
+      requireIssueCriterionId,
       authority,
       outputSchema,
       overrideWorktreePath,
@@ -1362,6 +1504,8 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         authority,
         structuredOutput: taskResult.structuredOutput,
         allowedTaskIds,
+        allowedCriterionIds,
+        requireIssueCriterionId,
       });
 
       execLogger?.validation(contextId, "validator.result_parsed", {
@@ -1522,6 +1666,8 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           authority,
           structuredOutput: taskResult.structuredOutput,
           allowedTaskIds,
+          allowedCriterionIds,
+          requireIssueCriterionId,
         });
 
     if (resolved.strategy === "task") {
@@ -1885,6 +2031,13 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     };
     const contextLimitTokens = input.validator.continuity.contextLimitTokens;
     const allowedTaskIds = getContextTaskIds(index, input.context.id);
+    // The criterion twin of the task-id enum: the context's record ids (prose
+    // wraps as the single `ac-1` record), bound into the dispatched schema and
+    // the parse-side containment check alike.
+    const allowedCriterionIds = criterionRecordsOf(
+      input.context.acceptanceCriteria,
+    ).map((record) => record.id);
+    const issueCriterionCitation = issueCriterionCitationFor(input.validator);
 
     const inspection = await resolveInspectionWorktree(input);
     const resolvedWorktreePath = inspection.worktreePath;
@@ -1934,7 +2087,13 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       validator: input.validator,
       validationSelections,
       ...(scopedCharter ? { charter: scopedCharter } : {}),
-      charterAmendments: input.execution.charterAmendments,
+      // Scoped sources bind authored ids: a loop-instance context renders the
+      // charter section under its authored template id, same as invariants.
+      charterContextId:
+        resolveLogicalAuthoredContextId({
+          execution: input.execution,
+          contextId: input.context.id,
+        }) ?? input.context.id,
       diffScopeSection,
       askUserQuestionsEnabled: resolveValidatorAskUserQuestionsEnabled(
         input.validator,
@@ -1962,6 +2121,8 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     const outputSchema = buildValidatorOutputSchema({
       authority: input.validator.authority,
       taskIds: allowedTaskIds,
+      criterionIds: allowedCriterionIds,
+      issueCriterionCitation,
     });
 
     // Role contract first, the assignment's seeded lens after it. Composed here
@@ -2024,6 +2185,8 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         reasoningEffort: validatorPlan.reasoningEffort,
         contextLimitTokens,
         allowedTaskIds,
+        allowedCriterionIds,
+        requireIssueCriterionId: issueCriterionCitation === "required",
         authority: input.validator.authority,
         outputSchema,
         overrideWorktreePath,

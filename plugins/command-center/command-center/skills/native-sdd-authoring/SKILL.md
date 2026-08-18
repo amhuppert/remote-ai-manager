@@ -45,6 +45,8 @@ After design sign-off, open an attempt with `cctl spec plan open <slug>`. Read t
 
 The document is `{ "schemaVersion": 2, "launch": ..., "binding": ... }`. `launch` is the ordinary graph launch, written verbatim as its `name`, `description`, `definition`, and `layout`; no native-SDD parser selects, renames, or reconstructs graph fields. Read the ordinary workflow authoring help for loops, guards, expansion configuration, output schemas, scoped invariants, per-context validation and breakers, layout, and required inputs. Use `cctl spec schema guidance` for the current lint and evidence reference.
 
+Write each launch context's graph acceptance criteria in the ordinary graph dialect: `acceptanceCriteria` is an ordered list of `{ "id", "statement" }` records, ids kebab-case and unique within the context, one independently-failable obligation per record. Validators cite those ids in blocking issues, so a record is the unit a verdict can address. Prose is still accepted on the authored write paths and wraps as exactly one `ac-1` record — a migration affordance, not a second spelling, and one record holding a paragraph of obligations is the blob the records replaced. These are graph criteria, distinct from the spec's own pinned criteria that `binding` dispositions and claims address.
+
 ## Stable-source claims and dynamic accountability
 
 `binding` gives every pinned criterion one disposition and records claims against stable authored source contexts. A selected criterion needs an existential claim: at least one stable source must be accountable. Dynamic contexts, expansion, must-run coverage, and execution outcomes remain owned by graph semantics; never infer them in the spec document from topology or lineage.

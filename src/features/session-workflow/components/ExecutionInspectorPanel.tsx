@@ -31,6 +31,7 @@ import {
   implementerChipLabel,
   validatorChipLabel,
 } from "@/components/workflow-config/InspectorChips";
+import { acceptanceCriteriaText } from "@/lib/workflow-graph/criteria/criterion-records";
 import { cn } from "@/lib/ui/cn";
 
 const wbBtn =
@@ -1976,8 +1977,12 @@ function DetailView({
                       <ExpandGlyphIcon /> Open
                     </button>
                   </div>
+                  {/* The canonical text rendering (#69 change 4 stage 1):
+                      prose passes through byte-identical, records render as
+                      numbered `[id]` lines — markdown turns them into the
+                      numbered-record list validator verdicts cite. */}
                   <MarkdownReadView
-                    value={context.acceptanceCriteria}
+                    value={acceptanceCriteriaText(context.acceptanceCriteria)}
                     ariaLabel="View acceptance criteria"
                     onOpen={() => setSheetField("acceptanceCriteria")}
                   />
@@ -2420,7 +2425,7 @@ function DetailView({
         contextTitle={context.title}
         content={
           sheetField === "acceptanceCriteria"
-            ? context.acceptanceCriteria
+            ? acceptanceCriteriaText(context.acceptanceCriteria)
             : (context.description ?? "")
         }
       />

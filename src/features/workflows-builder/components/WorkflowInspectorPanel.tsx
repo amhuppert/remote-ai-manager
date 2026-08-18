@@ -15,17 +15,26 @@ import {
 } from "@/components/ui/Tabs";
 import { cn } from "@/lib/ui/cn";
 import {
+  addAcceptanceCriterion,
   addTaskToContext,
   clearContextBlockOverride,
   clearWorkflowConfigOverride,
+  moveAcceptanceCriterion,
   moveTaskWithinContext,
+  removeAcceptanceCriterion,
   removeTask,
   setContextBlockOverride,
   setContextOutputSchema,
   setWorkflowConfigOverride,
+  updateAcceptanceCriterionStatement,
   updateExecutionContext,
   updateTask,
 } from "@/lib/workflow-graph/builder-draft";
+import {
+  acceptanceCriteriaText,
+  criterionRecordsOf,
+  type CriterionRecord,
+} from "@/lib/workflow-graph/criteria/criterion-records";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
 import { useValidationCommandOptions } from "@/lib/validation/queries";
 import type { ValidationCommandSummary } from "@/lib/validation/schemas";
@@ -51,6 +60,7 @@ import type {
   GraphWorkflowTaskDefinition,
   WorkflowConfigOverride,
   WorkflowGraphValidationError,
+  WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 import {
   resolveContextCollaboration,
@@ -69,9 +79,15 @@ import InspectorConfigBlock, {
   type InspectorConfigBlockSource,
 } from "./InspectorConfigBlock";
 import ParameterDeclarationEditor from "./ParameterDeclarationEditor";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { SectionLabel } from "@/components/ui/SectionHeader";
+import { StatusChip } from "@/components/ui/StatusChip";
 import type { ParameterDeclaration } from "@/lib/workflow-graph/definition-schemas";
-import type { CharterInvariant } from "@/lib/workflows/charter-schemas";
+import {
+  sourceScopeContextIds,
+  type CharterInvariant,
+  type PersistedSourceOfTruth,
+} from "@/lib/workflows/charter-schemas";
 import {
   AgentValidationEditor,
   CircuitBreakerEditor,
@@ -94,7 +110,6 @@ import {
   ApprovalGlyphIcon,
   BackendChip,
   EditGlyphIcon,
-  ExpandGlyphIcon,
   GateChip,
   QuestionGlyphIcon,
   SchemaGlyphIcon,
@@ -296,9 +311,61 @@ function MarkdownReadView({
   );
 }
 
-// Numbered-list entries in the acceptance criteria, for the "N criteria" hint.
-function countCriteria(text: string): number {
-  return (text.match(/^\s*\d+\./gm) ?? []).length;
+// Record-list view of a context's acceptance criteria (#69 change 4 stage 1),
+// derived through the shared criteria helpers only. Emptiness is judged the
+// way validation judges it (the rendered text is blank), so the builder's
+// empty-prose seed ("" — nothing authored yet) yields no rows instead of one
+// phantom record; anything authored normalizes through the canonical wrap
+// (legacy prose → one `ac-1` record).
+function draftCriterionRecords(
+  criteria: string | readonly CriterionRecord[],
+): CriterionRecord[] {
+  if (!acceptanceCriteriaText(criteria).trim()) return [];
+  return criterionRecordsOf(criteria);
+}
+
+/**
+ * Toggle one declared context in a charter source's applicability scope (#69
+ * change 3). Re-authoring the scope re-authors the SOURCE: legacy prose
+ * `appliesTo` is replaced by the structured shape and the retired
+ * `accessPolicy` field is dropped — the authored schema refuses both — while
+ * every untouched source keeps its stored bytes (no read-renormalization).
+ * An emptied scope removes `appliesTo` outright: absence IS global, and
+ * `contextIds: []` would be refused at accept time.
+ */
+function toggleSourceScopeContext(
+  definition: WorkflowSemanticDefinition,
+  sourceId: string,
+  contextId: string,
+  included: boolean,
+): WorkflowSemanticDefinition {
+  const declaredIds = definition.executionContexts.map((context) => context.id);
+  return {
+    ...definition,
+    charter: {
+      ...definition.charter,
+      sourcesOfTruth: definition.charter.sourcesOfTruth.map((source) => {
+        if (source.id !== sourceId) return source;
+        const selected = new Set(sourceScopeContextIds(source) ?? []);
+        if (included) {
+          selected.add(contextId);
+        } else {
+          selected.delete(contextId);
+        }
+        // Declaration order keeps the authored list deterministic regardless
+        // of click order; ids no longer in the graph drop out with the edit.
+        const contextIds = declaredIds.filter((id) => selected.has(id));
+        const {
+          appliesTo: _replaced,
+          accessPolicy: _retired,
+          ...authored
+        } = source;
+        return contextIds.length === 0
+          ? authored
+          : { ...authored, appliesTo: { contextIds } };
+      }),
+    },
+  };
 }
 
 function summarizeIterationPolicy(
@@ -889,6 +956,20 @@ export default function WorkflowInspectorPanel({
                 globalDefaults={defaults}
                 parameters={draftDefinition.parameters}
                 charterInvariants={draftDefinition.charter.invariants ?? []}
+                charterSources={draftDefinition.charter.sourcesOfTruth}
+                declaredContextIds={draftDefinition.executionContexts.map(
+                  (context) => context.id,
+                )}
+                onToggleSourceScope={(sourceId, contextId, included) => {
+                  updateDefinition(
+                    toggleSourceScopeContext(
+                      draftDefinition,
+                      sourceId,
+                      contextId,
+                      included,
+                    ),
+                  );
+                }}
                 parameterSaveError={parameterSaveError(validationErrors)}
                 onParametersChange={(next) => {
                   updateDefinition({ ...draftDefinition, parameters: next });
@@ -943,6 +1024,43 @@ export default function WorkflowInspectorPanel({
                         draftDefinition,
                         selectedContext.id,
                         updates,
+                      ),
+                    );
+                  }}
+                  onAddCriterion={() => {
+                    updateDefinition(
+                      addAcceptanceCriterion(
+                        draftDefinition,
+                        selectedContext.id,
+                      ).definition,
+                    );
+                  }}
+                  onUpdateCriterionStatement={(criterionId, statement) => {
+                    updateDefinition(
+                      updateAcceptanceCriterionStatement(
+                        draftDefinition,
+                        selectedContext.id,
+                        criterionId,
+                        statement,
+                      ),
+                    );
+                  }}
+                  onRemoveCriterion={(criterionId) => {
+                    updateDefinition(
+                      removeAcceptanceCriterion(
+                        draftDefinition,
+                        selectedContext.id,
+                        criterionId,
+                      ),
+                    );
+                  }}
+                  onMoveCriterion={(criterionId, direction) => {
+                    updateDefinition(
+                      moveAcceptanceCriterion(
+                        draftDefinition,
+                        selectedContext.id,
+                        criterionId,
+                        direction,
                       ),
                     );
                   }}
@@ -1019,6 +1137,9 @@ function WorkflowTabBody({
   globalDefaults,
   parameters,
   charterInvariants,
+  charterSources,
+  declaredContextIds,
+  onToggleSourceScope,
   parameterSaveError,
   onParametersChange,
   onPrimaryAction,
@@ -1032,6 +1153,13 @@ function WorkflowTabBody({
   globalDefaults: WorkflowDefaults;
   parameters: ParameterDeclaration[];
   charterInvariants: CharterInvariant[];
+  charterSources: PersistedSourceOfTruth[];
+  declaredContextIds: string[];
+  onToggleSourceScope: (
+    sourceId: string,
+    contextId: string,
+    included: boolean,
+  ) => void;
   parameterSaveError: string | null;
   onParametersChange: (next: ParameterDeclaration[]) => void;
   onPrimaryAction: (force?: boolean) => void;
@@ -1077,6 +1205,83 @@ function WorkflowTabBody({
                 </div>
               </div>
             ))}
+          </div>
+        </section>
+      ) : null}
+
+      {charterSources.length > 0 ? (
+        <section className="mb-xl" data-section="charter-sources">
+          <GroupHeader label="Charter sources" count={charterSources.length} />
+          <div className="flex flex-col gap-sm">
+            {charterSources.map((source) => {
+              const scopeIds = sourceScopeContextIds(source);
+              return (
+                <div
+                  className="rounded-sm border border-solid border-border-dim bg-bg-base px-md py-sm"
+                  data-testid="charter-source-row"
+                  key={source.id}
+                >
+                  <div className="flex items-baseline gap-sm">
+                    <span className="font-mono text-[0.72rem] text-text-primary">
+                      {source.id}
+                    </span>
+                    <span className="font-mono text-[0.68rem] text-text-tertiary">
+                      rank {source.rank} · {source.type}
+                    </span>
+                  </div>
+                  <div className="mt-[3px] text-[0.76rem] leading-[1.45] text-text-secondary">
+                    {source.label}
+                  </div>
+                  <div className="mt-[2px] font-mono text-[0.68rem] break-all text-text-tertiary">
+                    {source.locator}
+                  </div>
+                  {/* Legacy prose appliesTo carries no ids the engine can
+                      filter on — the shared helper reads it as global, the
+                      exact pre-structured rendering behavior. */}
+                  <div
+                    className="mt-[6px] flex flex-wrap items-center gap-[4px]"
+                    data-testid="source-scope"
+                  >
+                    {scopeIds === null ? (
+                      <StatusChip tone="neutral">Global</StatusChip>
+                    ) : (
+                      scopeIds.map((contextId) => (
+                        <StatusChip key={contextId} tone="cyan">
+                          {contextId}
+                        </StatusChip>
+                      ))
+                    )}
+                  </div>
+                  {declaredContextIds.length > 0 ? (
+                    <div className="mt-[8px] flex flex-wrap gap-md">
+                      {declaredContextIds.map((contextId) => (
+                        <label
+                          className="flex cursor-pointer items-center gap-xs text-[0.72rem] text-text-secondary"
+                          key={contextId}
+                        >
+                          <Checkbox
+                            aria-label={`Scope ${source.id} to ${contextId}`}
+                            checked={scopeIds?.includes(contextId) ?? false}
+                            onCheckedChange={(checked) =>
+                              onToggleSourceScope(
+                                source.id,
+                                contextId,
+                                checked === true,
+                              )
+                            }
+                          />
+                          {contextId}
+                        </label>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-xs font-mono text-[0.7rem] leading-[1.5] text-text-tertiary">
+            Each context&apos;s prompt renders only the sources scoped to it; an
+            unscoped source is global.
           </div>
         </section>
       ) : null}
@@ -1396,6 +1601,10 @@ function ContextTabBody({
   globalDefaults,
   selectedTaskId,
   onUpdateContext,
+  onAddCriterion,
+  onUpdateCriterionStatement,
+  onRemoveCriterion,
+  onMoveCriterion,
   onSetOutputSchema,
   onSchemaTextValidChange,
   onSetContextOverride,
@@ -1422,6 +1631,10 @@ function ContextTabBody({
   onUpdateContext: (
     updates: Partial<GraphWorkflowExecutionContextDefinition>,
   ) => void;
+  onAddCriterion: () => void;
+  onUpdateCriterionStatement: (criterionId: string, statement: string) => void;
+  onRemoveCriterion: (criterionId: string) => void;
+  onMoveCriterion: (criterionId: string, direction: "up" | "down") => void;
   /** `null` deletes the declaration; a document replaces it wholesale. */
   onSetOutputSchema: (schema: Record<string, unknown> | null) => void;
   onSchemaTextValidChange: (valid: boolean) => void;
@@ -1454,11 +1667,11 @@ function ContextTabBody({
     "empty-context-acceptance-criteria",
     context.id,
   );
-  const [sheetField, setSheetField] = useState<
-    "description" | "acceptanceCriteria" | null
-  >(null);
+  // The focus sheet now hosts only the description — criteria are structured
+  // records with their own list editor, not long-form Markdown.
+  const [descriptionSheetOpen, setDescriptionSheetOpen] = useState(false);
 
-  const criteriaCount = countCriteria(context.acceptanceCriteria);
+  const criterionRecords = draftCriterionRecords(context.acceptanceCriteria);
 
   return (
     <div className="flex flex-col" data-scope="context">
@@ -1485,7 +1698,7 @@ function ContextTabBody({
               <button
                 type="button"
                 className={WB_FIELD_ACTION}
-                onClick={() => setSheetField("description")}
+                onClick={() => setDescriptionSheetOpen(true)}
               >
                 <EditGlyphIcon /> Edit
               </button>
@@ -1494,7 +1707,7 @@ function ContextTabBody({
               value={context.description ?? ""}
               placeholder="Add a description"
               ariaLabel="Edit description"
-              onOpen={() => setSheetField("description")}
+              onOpen={() => setDescriptionSheetOpen(true)}
             />
           </div>
           <div>
@@ -1502,29 +1715,27 @@ function ContextTabBody({
               <span className={cn(WB_FIELD_LABEL, "mb-0")}>
                 Acceptance criteria <RequiredMark />
               </span>
-              <button
-                type="button"
-                className={WB_FIELD_ACTION}
-                onClick={() => setSheetField("acceptanceCriteria")}
-              >
-                <ExpandGlyphIcon /> Edit in focus view
-              </button>
             </div>
-            <MarkdownReadView
-              value={context.acceptanceCriteria}
-              placeholder="Add acceptance criteria"
-              ariaLabel="Edit acceptance criteria"
+            <AcceptanceCriteriaRecordsEditor
+              records={criterionRecords}
               invalid={acError !== undefined}
-              onOpen={() => setSheetField("acceptanceCriteria")}
+              onAdd={onAddCriterion}
+              onUpdateStatement={onUpdateCriterionStatement}
+              onRemove={onRemoveCriterion}
+              onMove={onMoveCriterion}
+              onPrimaryAction={onPrimaryAction}
+              voiceProjectName={voiceProjectName}
             />
             <FieldError error={acError} />
             <div className="mt-xs flex justify-between gap-sm font-mono text-[0.7rem] leading-[1.5] text-text-tertiary">
               <span>
                 Passed to the implementer — and the validator, when enabled.
+                Validator verdicts cite criterion ids.
               </span>
-              {criteriaCount > 0 ? (
+              {criterionRecords.length > 0 ? (
                 <span className="whitespace-nowrap">
-                  {criteriaCount} criteria
+                  {criterionRecords.length}{" "}
+                  {criterionRecords.length === 1 ? "criterion" : "criteria"}
                 </span>
               ) : null}
             </div>
@@ -1746,33 +1957,15 @@ function ContextTabBody({
       </section>
 
       <InspectorFocusSheet
-        open={sheetField !== null}
+        open={descriptionSheetOpen}
         onOpenChange={(open) => {
-          if (!open) setSheetField(null);
+          if (!open) setDescriptionSheetOpen(false);
         }}
-        fieldLabel={
-          sheetField === "acceptanceCriteria"
-            ? "Acceptance criteria"
-            : "Description"
-        }
+        fieldLabel="Description"
         contextTitle={context.title || "(untitled)"}
-        value={
-          sheetField === "acceptanceCriteria"
-            ? context.acceptanceCriteria
-            : (context.description ?? "")
-        }
-        onChange={(next) => {
-          if (sheetField === "acceptanceCriteria") {
-            onUpdateContext({ acceptanceCriteria: next });
-          } else if (sheetField === "description") {
-            onUpdateContext({ description: next });
-          }
-        }}
-        textareaId={
-          sheetField === "acceptanceCriteria"
-            ? "context-acceptance-criteria"
-            : "context-description"
-        }
+        value={context.description ?? ""}
+        onChange={(next) => onUpdateContext({ description: next })}
+        textareaId="context-description"
         onPrimaryAction={onPrimaryAction}
         voiceProjectName={voiceProjectName}
       />
@@ -1950,6 +2143,105 @@ function ContextTabBody({
           </button>
         </div>
       </section>
+    </div>
+  );
+}
+
+/**
+ * Ordered record-list editor for a context's acceptance criteria (#69 change 4
+ * stage 1). Ids are generated by the draft mutators and rendered read-only —
+ * the author edits statements and order, never identity — so verdict citations
+ * stay stable across statement edits.
+ */
+function AcceptanceCriteriaRecordsEditor({
+  records,
+  invalid,
+  onAdd,
+  onUpdateStatement,
+  onRemove,
+  onMove,
+  onPrimaryAction,
+  voiceProjectName,
+}: {
+  records: CriterionRecord[];
+  invalid: boolean;
+  onAdd: () => void;
+  onUpdateStatement: (criterionId: string, statement: string) => void;
+  onRemove: (criterionId: string) => void;
+  onMove: (criterionId: string, direction: "up" | "down") => void;
+  onPrimaryAction: (force?: boolean) => void;
+  voiceProjectName?: string | null;
+}): React.JSX.Element {
+  return (
+    <div data-testid="acceptance-criteria-editor">
+      {records.map((record, index) => (
+        <div
+          className={cn(
+            "mb-[4px] rounded-md border border-solid bg-bg-base px-[10px] py-[8px]",
+            invalid ? "border-red" : "border-border-subtle",
+          )}
+          data-testid="criterion-row"
+          data-criterion-id={record.id}
+          key={record.id}
+        >
+          <div className="mb-[6px] flex items-center gap-[8px]">
+            <span className="font-mono text-[0.7rem] font-semibold text-text-tertiary">
+              {index + 1}.
+            </span>
+            <span className="font-mono text-[0.72rem] text-text-secondary">
+              {record.id}
+            </span>
+            <div className="ml-auto flex items-center gap-[4px]">
+              <button
+                aria-label={`Move ${record.id} up`}
+                className={cn(WB_BTN_BASE, WB_BTN_XS, WB_BTN_DEFAULT)}
+                disabled={index === 0}
+                onClick={() => onMove(record.id, "up")}
+                type="button"
+              >
+                ↑
+              </button>
+              <button
+                aria-label={`Move ${record.id} down`}
+                className={cn(WB_BTN_BASE, WB_BTN_XS, WB_BTN_DEFAULT)}
+                disabled={index === records.length - 1}
+                onClick={() => onMove(record.id, "down")}
+                type="button"
+              >
+                ↓
+              </button>
+              <button
+                aria-label={`Remove ${record.id}`}
+                className={cn(WB_BTN_BASE, WB_BTN_XS, WB_BTN_DANGER)}
+                onClick={() => onRemove(record.id)}
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          <MultilineInput
+            aria-label={`Statement for ${record.id}`}
+            className={cn(WB_TASK_INPUT, "min-h-[40px] resize-y")}
+            onValueChange={(statement) =>
+              onUpdateStatement(record.id, statement)
+            }
+            onPrimaryAction={(statement) => {
+              onUpdateStatement(record.id, statement);
+              onPrimaryAction(true);
+            }}
+            voiceProjectName={voiceProjectName}
+            value={record.statement}
+          />
+        </div>
+      ))}
+      <button
+        className="mt-[2px] w-full cursor-pointer rounded-md border border-dashed border-border-default bg-transparent p-[9px] font-[inherit] text-[0.72rem] text-text-tertiary transition-all duration-150 hover:border-cyan-dim hover:bg-[var(--cc-cyan-a04)] hover:text-cyan"
+        onClick={onAdd}
+        type="button"
+      >
+        + Add criterion
+      </button>
     </div>
   );
 }

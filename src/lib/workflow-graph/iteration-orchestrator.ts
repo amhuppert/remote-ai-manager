@@ -51,7 +51,10 @@ import {
   buildFollowUpPrompt,
   type LatestContextValidationFailureFeedback,
 } from "./iteration-prompt";
-import { resolveScopedCharterForContext } from "./charter/invariant-scope";
+import {
+  resolveLogicalAuthoredContextId,
+  resolveScopedCharterForContext,
+} from "./charter/invariant-scope";
 import { contextOwesOutput, resolveUpstreamInputs } from "./context-outputs";
 import { resolveLoopHistory } from "./loop-history";
 import {
@@ -5038,9 +5041,19 @@ export function createGraphWorkflowIterationOrchestrator(
               sharedDocuments: seededExecution.sharedDocuments,
               allowAgentTaskAdd: context.mutability.allowAgentTaskAdd,
               charter: scopedCharter,
-              charterAmendments: seededExecution.charterAmendments,
+              // Scoped sources bind authored ids: a loop-instance context
+              // renders the charter section under its authored template id,
+              // same as invariants.
+              charterContextId:
+                resolveLogicalAuthoredContextId({
+                  execution: seededExecution,
+                  contextId: input.contextId,
+                }) ?? input.contextId,
               askUserQuestionsEnabled: context.askUserQuestions.enabled,
               allowAgentCollaboration,
+              // Passed in its stored shape (prose or records); the prompt
+              // builder renders the numbered record list via the criteria
+              // helper.
               contextValidationAcceptanceCriteria: context.contextValidator
                 .enabled
                 ? context.acceptanceCriteria

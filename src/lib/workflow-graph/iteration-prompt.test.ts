@@ -662,6 +662,43 @@ describe("buildIterationPrompt", () => {
     expect(prompt).toContain("Verify test coverage exists and all tests pass.");
   });
 
+  it("renders prose acceptance criteria as a one-record numbered list", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      contextValidationAcceptanceCriteria:
+        "Verify test coverage exists and all tests pass.",
+    });
+
+    expect(prompt).toContain(
+      "1. [ac-1] Verify test coverage exists and all tests pass.",
+    );
+  });
+
+  it("renders record acceptance criteria as the same numbered list shape", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      contextValidationAcceptanceCriteria: [
+        { id: "coverage-exists", statement: "Test coverage exists." },
+        { id: "tests-pass", statement: "All tests pass." },
+      ],
+    });
+
+    expect(prompt).toContain(
+      [
+        "1. [coverage-exists] Test coverage exists.",
+        "2. [tests-pass] All tests pass.",
+      ].join("\n"),
+    );
+  });
+
   it("omits validation criteria section when no instructions provided", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),
@@ -734,7 +771,10 @@ describe("buildIterationPrompt", () => {
     expect(prompt).not.toContain("Verify every applicable charter invariant");
   });
 
-  it("renders the amendment log in the charter section when the run has amendments", () => {
+  it("renders no amendment log, access-policy, or precedence text in the charter section", () => {
+    // The prompt diet (change 3): agents read the current rules; amendment
+    // history, access bookkeeping, and the retired precedence/deferral rule
+    // live only in charter.md and the durable record.
     const prompt = buildIterationPrompt({
       context: makeContext(),
       tasks: [makeTask()],
@@ -742,22 +782,87 @@ describe("buildIterationPrompt", () => {
       sharedDocuments: [],
       allowAgentTaskAdd: false,
       charter: makeCharter(),
-      charterAmendments: [
+    });
+
+    expect(prompt).not.toContain("Amendment log");
+    expect(prompt).not.toContain("Access:");
+    expect(prompt.toLowerCase()).not.toContain("higher-ranked source");
+    expect(prompt).not.toContain("Applying the source-of-truth hierarchy");
+  });
+
+  it("renders only global sources plus sources scoped to the rendering context", () => {
+    const scopedCharter = makeCharter({
+      sourcesOfTruth: [
         {
-          seq: 1,
-          amendedAt: "2026-07-29T10:00:00.000Z",
-          source: "cli",
-          rationale: "Invariant inv-1 was impossible against the shipped API",
-          fieldsChanged: ["invariants"],
-          charterHash: "hash-1",
+          rank: 1,
+          id: "domain-spec",
+          label: "Billing domain spec",
+          type: "spec",
+          locator: "docs/billing-spec.md",
+          description: "Authoritative invoice lifecycle rules.",
+        },
+        {
+          rank: 2,
+          id: "plan-notes",
+          label: "Planning notes",
+          type: "document",
+          locator: "docs/plan-notes.md",
+          description: "Notes that only concern the planning context.",
+          appliesTo: { contextIds: ["context-plan"] },
         },
       ],
     });
 
-    expect(prompt).toContain("## Amendment log");
-    expect(prompt).toContain(
-      "Invariant inv-1 was impossible against the shipped API",
-    );
+    const inScope = buildIterationPrompt({
+      context: makeContext({ id: "context-plan" }),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      charter: scopedCharter,
+    });
+    const outOfScope = buildIterationPrompt({
+      context: makeContext({ id: "context-integrate" }),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      charter: scopedCharter,
+    });
+
+    expect(inScope).toContain("Planning notes");
+    expect(outOfScope).not.toContain("Planning notes");
+    expect(inScope).toContain("Billing domain spec");
+    expect(outOfScope).toContain("Billing domain spec");
+  });
+
+  it("renders the charter section under charterContextId when it differs from the runtime context id", () => {
+    // A loop-instance iteration runs under an expanded id like
+    // `group__p2__context-plan`; scoped sources bind the authored id, which the
+    // orchestrator passes as charterContextId.
+    const prompt = buildIterationPrompt({
+      context: makeContext({ id: "group__p2__context-plan" }),
+      charterContextId: "context-plan",
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      charter: makeCharter({
+        sourcesOfTruth: [
+          {
+            rank: 1,
+            id: "plan-notes",
+            label: "Planning notes",
+            type: "document",
+            locator: "docs/plan-notes.md",
+            description: "Notes that only concern the planning context.",
+            appliesTo: { contextIds: ["context-plan"] },
+          },
+        ],
+      }),
+    });
+
+    expect(prompt).toContain("Planning notes");
   });
 
   it("tells a continuation turn how many times the charter was amended", () => {
@@ -783,7 +888,7 @@ describe("buildIterationPrompt", () => {
     expect(prompt).toContain(".cc/graph-workflow-docs/charter.md");
   });
 
-  it("instructs the implementer to cite the governing source and that external sources require permission", () => {
+  it("instructs the implementer to cite the governing source without any access-policy instruction", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),
       tasks: [makeTask()],
@@ -796,8 +901,9 @@ describe("buildIterationPrompt", () => {
     // 5.4: cite the governing source in the completion summary on conflict.
     expect(prompt).toMatch(/cite.+governing source/i);
     expect(prompt).toMatch(/cctl workflow task complete/);
-    // 6.3: outside-worktree sources are read-only and require explicit permission.
-    expect(prompt).toMatch(/permission/i);
+    // Access policy retired (change 3): external material is materialized at
+    // plan time, so no per-agent permission rule ships in the prompt.
+    expect(prompt).not.toContain("outside the worktree are read-only");
   });
 
   it("excludes the charter entry from the generic Shared Documents list", () => {
@@ -1246,9 +1352,9 @@ describe("buildFollowUpPrompt", () => {
 
     expect(prompt).toMatch(/charter/i);
     expect(prompt).toContain(".cc/graph-workflow-docs/charter.md");
-    // 5.1 precedence reminder is kept compact — the full ranked hierarchy and
-    // mission live in the iteration prompt / charter.md, not here.
-    expect(prompt).toMatch(/higher-ranked source/i);
+    // The reminder is a compact pointer — no precedence rule (retired with
+    // plan-time conflict resolution), no ranked hierarchy, no mission.
+    expect(prompt).not.toMatch(/higher-ranked source/i);
     expect(prompt).not.toContain("## Mission");
     expect(prompt).not.toContain(
       "Ship the billing rewrite without breaking existing invoices.",

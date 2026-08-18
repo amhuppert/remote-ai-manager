@@ -1119,6 +1119,11 @@ function buildMaximalExecution(): unknown {
               issues: [
                 {
                   taskId: "task-1",
+                  // This fixture's ctx-1 keeps PROSE acceptance criteria, whose
+                  // deterministic wrap id is the only id a verdict on it can
+                  // cite — the runner binds criterionId to the context's own
+                  // criterion records.
+                  criterionId: "ac-1",
                   title: "Missing rollback notes",
                   description: "Document how to revert the migration.",
                 },

@@ -358,6 +358,33 @@ describe("lintParameterReferences", () => {
       expect(error?.parameterName).toBe("nope");
     });
 
+    it("flags an undeclared reference in a criterion record statement at the record's locator", () => {
+      const def = definition({
+        parameters: [requiredFeatureName],
+        executionContexts: [
+          {
+            id: "ctx-1",
+            title: "Context one",
+            acceptanceCriteria: [
+              { id: "first-outcome", statement: "The first outcome holds." },
+              { id: "second-outcome", statement: "Done when {{inputs.nope}}" },
+            ],
+            placement: { lane: "ctx-1", mode: "full" },
+          },
+        ],
+      });
+
+      const errors = lintParameterReferences(def);
+      const error = errors.find(
+        (e) => e.code === "undeclared-parameter-reference",
+      );
+      expect(error).toBeDefined();
+      expect(error?.field).toBe(
+        "executionContexts[0].acceptanceCriteria[1].statement",
+      );
+      expect(error?.parameterName).toBe("nope");
+    });
+
     it("flags an undeclared reference in context title", () => {
       const def = definition({
         parameters: [requiredFeatureName],
@@ -964,7 +991,7 @@ describe("SUBSTITUTION_FIELD_SET drift guard", () => {
     const { charter: sentineledCharter, sentinelByField } =
       maximalSentineledCharter();
 
-    const rendered = `${renderCharterDigest(sentineledCharter)}\n${renderCharterMarkdown(
+    const rendered = `${renderCharterDigest(sentineledCharter, "context-main")}\n${renderCharterMarkdown(
       sentineledCharter,
     )}`;
 
@@ -994,7 +1021,7 @@ describe("SUBSTITUTION_FIELD_SET drift guard", () => {
     // exclusion is load-bearing, not dead).
     const { charter: sentineledCharter, sentinelByField } =
       maximalSentineledCharter();
-    const rendered = `${renderCharterDigest(sentineledCharter)}\n${renderCharterMarkdown(
+    const rendered = `${renderCharterDigest(sentineledCharter, "context-main")}\n${renderCharterMarkdown(
       sentineledCharter,
     )}`;
 
@@ -1051,6 +1078,13 @@ describe("forEachScannedField visits exactly the registered surface", () => {
   }
 
   function contentFieldKind(locator: string): string | null {
+    const criterionMatch =
+      /^executionContexts\[\d+\]\.acceptanceCriteria\[\d+\]\.statement$/.exec(
+        locator,
+      );
+    if (criterionMatch) {
+      return "executionContexts[].acceptanceCriteria[].statement";
+    }
     const contextMatch = /^executionContexts\[\d+\]\.(\w+)$/.exec(locator);
     if (contextMatch) return `executionContexts[].${contextMatch[1]}`;
     const taskMatch = /^tasks\[\d+\]\.(\w+)$/.exec(locator);
@@ -1093,6 +1127,17 @@ describe("forEachScannedField visits exactly the registered surface", () => {
           description: "About the context",
           acceptanceCriteria: "It works",
           placement: { lane: "ctx-1", mode: "full" },
+        },
+        // Records-shaped criteria so the traversal registers the per-statement
+        // occurrence kind alongside the prose kind.
+        {
+          id: "ctx-2",
+          title: "Context two",
+          description: "About the other context",
+          acceptanceCriteria: [
+            { id: "outcome-holds", statement: "The outcome holds" },
+          ],
+          placement: { lane: "ctx-2", mode: "full" },
         },
       ],
       tasks: [

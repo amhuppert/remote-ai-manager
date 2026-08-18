@@ -218,6 +218,95 @@ describe("buildPlanRepairPrompt", () => {
     expect(buildPlanRepairPrompt(makeInput())).not.toContain("## Plan defect");
   });
 
+  // #69 change 4 stage 1: the op vocabulary is the agent's only view of the
+  // acceptanceCriteria shape, and the whole-value semantics — replace the
+  // array, no per-criterion ops — are not discoverable from the shape alone.
+  it("documents acceptanceCriteria as ordered records that update-context replaces wholesale", () => {
+    const prompt = buildPlanRepairPrompt(makeInput());
+
+    const updateContextShape = prompt
+      .split("\n")
+      .find((line) => line.startsWith('{"type": "update-context"'));
+    expect(updateContextShape).toContain(
+      '"acceptanceCriteria": [{"id": "<kebab-case>", "statement": "..."}]',
+    );
+    expect(prompt).toContain("replaces the WHOLE value");
+    expect(prompt).toContain("per-criterion operations do not exist");
+  });
+
+  // The evidence cites criterion ids (validator-runner binds them to the
+  // context's record ids), so the AC list the agent reads must show the ids
+  // those citations and its own whole-array rewrites line up against.
+  it("renders prose criteria as the single wrapped ac-1 record", () => {
+    const prompt = buildPlanRepairPrompt(makeInput());
+
+    expect(prompt).toContain("1. [ac-1] Feature implemented");
+  });
+
+  it("renders record criteria as the numbered list citing each stored id", () => {
+    const base = makeInput();
+    const contexts = base.execution.workingDefinition.executionContexts.map(
+      (context) =>
+        context.id === "context-implement"
+          ? {
+              ...context,
+              acceptanceCriteria: [
+                {
+                  id: "list-endpoint",
+                  statement: "GET /v2/users returns the roster",
+                },
+                {
+                  id: "auth-guard",
+                  statement: "Unauthenticated calls get 401",
+                },
+              ],
+            }
+          : context,
+    );
+    const execution: GraphWorkflowExecution = {
+      ...base.execution,
+      workingDefinition: {
+        ...base.execution.workingDefinition,
+        executionContexts: contexts,
+      },
+    };
+
+    const prompt = buildPlanRepairPrompt({ ...base, execution });
+
+    expect(prompt).toContain(
+      "1. [list-endpoint] GET /v2/users returns the roster",
+    );
+    expect(prompt).toContain("2. [auth-guard] Unauthenticated calls get 401");
+  });
+
+  it("cites the criterion id a finding carries, and stays silent when absent", () => {
+    const prompt = buildPlanRepairPrompt(
+      makeInput({
+        validationHistory: [
+          {
+            pass: false,
+            summary: "the endpoint criterion fails",
+            issues: [
+              {
+                taskId: "task-implement-1",
+                criterionId: "ac-1",
+                title: "Impossible endpoint",
+                description: "The API surface has no /v2/users route",
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(prompt).toContain(
+      "task-implement-1 (criterion ac-1): Impossible endpoint",
+    );
+    // The default history carries no criterionId, so no citation renders —
+    // an invented or placeholder id would be worse than none.
+    expect(buildPlanRepairPrompt(makeInput())).not.toContain("(criterion");
+  });
+
   it("caps the validation history at the five most recent verdicts", () => {
     const history = Array.from({ length: 7 }, (_, i) => ({
       pass: false,
@@ -395,6 +484,28 @@ describe("buildPlanRepairPrompt: cohort evidence", () => {
 
     expect(prompt).toContain("Impossible endpoint");
     expect(prompt).not.toContain("rev 1) [");
+  });
+
+  it("carries a specialist's criterion citation into its grouped finding", () => {
+    const verdict = {
+      ...COHORT_VERDICT,
+      specialists: COHORT_VERDICT.specialists.map((specialist) =>
+        specialist.assignmentId === "security"
+          ? {
+              ...specialist,
+              issues: [{ ...specialist.issues[0]!, criterionId: "ac-1" }],
+            }
+          : specialist,
+      ),
+    };
+
+    const prompt = buildPlanRepairPrompt(
+      makeInput({ validationHistory: [verdict] }),
+    );
+
+    expect(prompt).toContain(
+      "task-implement-1 (criterion ac-1): Secrets in the log line",
+    );
   });
 
   // D10: the repair agent may narrow ONE named assignment and may never write
@@ -703,6 +814,20 @@ describe("the loop halt briefing (R12.1)", () => {
     // The two rules the agent cannot discover from the shapes alone.
     expect(prompt).toContain("rationale");
     expect(prompt).toMatch(/never retroactive|not retroactive/i);
+  });
+
+  // The template edit's update-context replaces acceptanceCriteria wholesale
+  // too — the nested shape must show the records form for the same reason the
+  // plan-op shape does.
+  it("shows the records shape in the template-edit vocabulary too", () => {
+    const prompt = buildPlanRepairPrompt(loopInput());
+
+    const templateEditShape = prompt
+      .split("\n")
+      .find((line) => line.startsWith('{"type": "edit-loop-template"'));
+    expect(templateEditShape).toContain(
+      '"acceptanceCriteria": [{"id": "<kebab-case>", "statement": "..."}]',
+    );
   });
 
   it("withholds the cap raise on a backstop halt, naming the remedy that works", () => {

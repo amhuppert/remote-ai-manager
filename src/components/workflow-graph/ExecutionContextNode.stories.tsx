@@ -110,6 +110,33 @@ export const Draft: Story = {
   },
 };
 
+// #69 change 4 stage 1: record-shaped criteria display as numbered `[id]`
+// lines, clamped like the description (the inspector carries the full list).
+export const CriteriaRecords: Story = {
+  args: {
+    data: {
+      context: makeContext({
+        acceptanceCriteria: [
+          {
+            id: "ac-1",
+            statement: "All REST endpoints exist and pass integration tests.",
+          },
+          {
+            id: "ac-2",
+            statement: "JWT auth middleware guards every non-public route.",
+          },
+          {
+            id: "rate-limit",
+            statement: "Public endpoints enforce the configured rate limit.",
+          },
+        ],
+      }),
+      tasks: makeTasks(5),
+      mode: "builder",
+    },
+  },
+};
+
 export const DependencyBlocked: Story = {
   args: {
     data: {

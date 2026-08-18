@@ -277,6 +277,10 @@ const failPayload = {
   issues: [
     {
       taskId: "task-plan-2",
+      // The seat under test is the acceptance seat, whose every issue must
+      // cite a criterion; this context's criteria are prose, so `ac-1` — the
+      // deterministic wrap id — is the only citable id.
+      criterionId: "ac-1",
       title: "Plan doc missing rollout section",
       description: "Add the rollout section to plan.md.",
     },
@@ -289,6 +293,10 @@ const mismatchPayload = {
   issues: [
     {
       taskId: "task-from-other-context",
+      // Cited so the refusal below is about task containment alone: the
+      // criterion-citation requirement is checked BEFORE task containment, so
+      // an uncited foreign-task issue would be refused for the wrong reason.
+      criterionId: "ac-1",
       title: "Wrong context",
       description: "References a task outside the active context.",
     },

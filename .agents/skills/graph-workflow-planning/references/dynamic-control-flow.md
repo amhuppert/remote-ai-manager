@@ -53,7 +53,9 @@ It also **warns** (exit code 0 — the plan is still creatable) when every guard
 By default a source's conditional branches are independent: zero, one, or many may activate. Declare a stricter contract on the SOURCE context — it is a property of the outgoing edge SET, not of one edge:
 
 ```json
-{ "id": "triage", "title": "Triage", "acceptanceCriteria": "…", "routing": { "cardinality": "exactlyOne" } }
+{ "id": "triage", "title": "Triage",
+  "acceptanceCriteria": [ { "id": "classifies-every-report", "statement": "…" } ],
+  "routing": { "cardinality": "exactlyOne" } }
 ```
 
 - `independent` — the meaning of an absent `routing` block; any number of branches may activate.
@@ -200,7 +202,9 @@ Read the whole ledger — every pass's decision, including passes an amended pre
 When a context cannot know at planning time HOW MANY parallel branches its work needs, grant it expansion authority and let it append them at runtime:
 
 ```json
-{ "id": "generate", "title": "Generate candidates", "acceptanceCriteria": "…", "mutability": { "allowAgentContextAdd": true } }
+{ "id": "generate", "title": "Generate candidates",
+  "acceptanceCriteria": [ { "id": "one-context-per-approach", "statement": "…" } ],
+  "mutability": { "allowAgentContextAdd": true } }
 ```
 
 The flag is default-off, cascades like its `allowAgentTaskAdd` sibling, and is exercisable only by the context's currently bound implementer. The lane then submits ONE payload:
@@ -213,7 +217,7 @@ The flag is default-off, cascades like its `allowAgentTaskAdd` sibling, and is e
     {
       "handle": "candidate-a",
       "title": "Candidate: approach A",
-      "acceptanceCriteria": "…",
+      "acceptanceCriteria": [ { "id": "builds-approach-a", "statement": "…" } ],
       "placement": { "lane": "candidate-a", "mode": "owned", "ownedPaths": ["src/candidate-a"] },
       "outputSchema": { "type": "object", "properties": { "score": { "type": "number" } }, "required": ["score"], "additionalProperties": false }
     }

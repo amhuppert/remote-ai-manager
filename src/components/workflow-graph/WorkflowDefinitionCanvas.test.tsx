@@ -145,4 +145,29 @@ describe("WorkflowFinalizedLaunchMetadata", () => {
     expect(screen.getByText("design-doc")).toBeVisible();
     expect(screen.getByText("/charter")).toBeVisible();
   });
+
+  // #69 change 4 stage 1: the launch preview lists each context's acceptance
+  // criteria — numbered `[id]` lines for records, prose verbatim for legacy.
+  it("lists each context's acceptance criteria as numbered records", () => {
+    const launch = createMaximalAuthoredWorkflowLaunchFixture();
+    launch.definition.executionContexts =
+      launch.definition.executionContexts.map((context, index) =>
+        index === 0
+          ? {
+              ...context,
+              acceptanceCriteria: [
+                { id: "ac-1", statement: "The spawner selects a route" },
+                { id: "audit-log", statement: "The choice is audited" },
+              ],
+            }
+          : context,
+      );
+
+    render(<WorkflowFinalizedLaunchMetadata launch={launch} />);
+
+    const block = screen.getByTestId("launch-context-criteria");
+    expect(block).toHaveTextContent("1. [ac-1] The spawner selects a route");
+    expect(block).toHaveTextContent("2. [audit-log] The choice is audited");
+    expect(block).toHaveTextContent("The pass emits progress.");
+  });
 });

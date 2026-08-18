@@ -4538,3 +4538,83 @@ describe("applyLiveExecutionEdits — pinned live-session read-only runs (R8.3)"
     expect(result.ok).toBe(true);
   });
 });
+
+// #69 change 4 stage 1: the live vocabulary carries the prose-or-records
+// acceptanceCriteria union with whole-value replacement — the applier assigns
+// the parsed value verbatim, with no per-criterion ops and no read-time
+// canonicalization of what is already stored.
+describe("applyLiveExecutionEdits — acceptance-criterion records", () => {
+  it("replaces prose criteria wholesale with records via live update-context", () => {
+    const execution = createWorkflowExecution({ status: "paused" });
+    const result = apply(execution, [
+      workflowLiveEditOperationSchema.parse({
+        type: "update-context",
+        contextId: "context-implement",
+        acceptanceCriteria: [
+          { id: "feature-works", statement: "The feature works end to end." },
+          { id: "tests-green", statement: "The new tests pass." },
+        ],
+      }),
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const context = result.execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-implement",
+    );
+    expect(context?.acceptanceCriteria).toEqual([
+      { id: "feature-works", statement: "The feature works end to end." },
+      { id: "tests-green", statement: "The new tests pass." },
+    ]);
+  });
+
+  it("adds a context whose acceptance criteria are records", () => {
+    const execution = createWorkflowExecution({ status: "paused" });
+    const result = apply(execution, [
+      workflowLiveEditOperationSchema.parse({
+        type: "add-context",
+        id: "context-review",
+        title: "Review",
+        acceptanceCriteria: [
+          { id: "change-reviewed", statement: "The change is reviewed." },
+        ],
+      }),
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const context = result.execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-review",
+    );
+    expect(context?.acceptanceCriteria).toEqual([
+      { id: "change-reviewed", statement: "The change is reviewed." },
+    ]);
+  });
+
+  it("admits records on a loop-template update-context and refuses duplicate ids", () => {
+    const accepted = workflowLiveEditOperationSchema.safeParse({
+      type: "edit-loop-template",
+      loopGroupId: "loop-1",
+      operations: [
+        {
+          type: "update-context",
+          contextId: "worker",
+          acceptanceCriteria: [
+            { id: "draft-refined", statement: "The draft is refined." },
+          ],
+        },
+      ],
+    });
+    expect(accepted.success).toBe(true);
+
+    const refused = workflowLiveEditOperationSchema.safeParse({
+      type: "update-context",
+      contextId: "context-implement",
+      acceptanceCriteria: [
+        { id: "same-id", statement: "First." },
+        { id: "same-id", statement: "Second." },
+      ],
+    });
+    expect(refused.success).toBe(false);
+  });
+});

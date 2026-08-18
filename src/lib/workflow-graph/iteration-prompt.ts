@@ -2,6 +2,10 @@ import {
   CHARTER_DOCUMENT_PATH,
   renderCharterPromptSection,
 } from "@/lib/workflow-graph/charter/render";
+import {
+  acceptanceCriteriaRecordListText,
+  type AcceptanceCriteria,
+} from "@/lib/workflow-graph/criteria/criterion-records";
 import { formatQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
 import type { AskQuestionAnswer } from "@/lib/conversations/schemas";
 import type {
@@ -37,25 +41,20 @@ const COMPLETE_TASK_COMMAND =
 
 function buildCharterSection(
   charter: WorkflowCharter,
-  amendments: readonly CharterAmendment[] = [],
+  contextId: string,
 ): string {
-  return renderCharterPromptSection(
-    charter,
-    [
-      "When resolving a source conflict or ambiguity while completing a task, cite the governing source-of-truth entry in your `cctl workflow task complete` summary.",
-      "Sources marked outside the worktree are read-only: never read, write, or verify them; out-of-worktree access requires explicit human permission.",
-      // Validators already carry a per-invariant check instruction; without
-      // this implementer-side twin, invariant violations surface only as
-      // NO-GO cycles (audit 1beec403: 2 of 4 NO-GOs were invariant breaches
-      // in new test code, one copied verbatim from a violating exemplar).
-      ...((charter.invariants ?? []).length > 0
-        ? [
-            "Verify every applicable charter invariant against your new and changed code with a concrete check (for example, grep for a banned pattern) before running `cctl workflow task complete` — especially on the final task. Do not assume existing code you were told to mirror satisfies the invariants: an exemplar can itself violate one, and copying it faithfully still fails validation.",
-          ]
-        : []),
-    ],
-    amendments,
-  );
+  return renderCharterPromptSection(charter, contextId, [
+    "When resolving a source conflict or ambiguity while completing a task, cite the governing source-of-truth entry in your `cctl workflow task complete` summary.",
+    // Validators already carry a per-invariant check instruction; without
+    // this implementer-side twin, invariant violations surface only as
+    // NO-GO cycles (audit 1beec403: 2 of 4 NO-GOs were invariant breaches
+    // in new test code, one copied verbatim from a violating exemplar).
+    ...((charter.invariants ?? []).length > 0
+      ? [
+          "Verify every applicable charter invariant against your new and changed code with a concrete check (for example, grep for a banned pattern) before running `cctl workflow task complete` — especially on the final task. Do not assume existing code you were told to mirror satisfies the invariants: an exemplar can itself violate one, and copying it faithfully still fails validation.",
+        ]
+      : []),
+  ]);
 }
 
 /**
@@ -139,12 +138,23 @@ export interface BuildIterationPromptInput {
    */
   loopHistory?: LoopHistory | null;
   allowAgentCollaboration?: boolean;
-  contextValidationAcceptanceCriteria?: string;
+  /**
+   * The context's acceptance criteria in their stored shape (prose or
+   * records); rendered here as the numbered record list via the criteria
+   * helper, so the implementer reads the same citable list the validator
+   * cohort judges against.
+   */
+  contextValidationAcceptanceCriteria?: AcceptanceCriteria;
   latestContextValidationFailure?: LatestContextValidationFailureFeedback;
   collaborationContinuations?: GraphWorkflowCollaborationContinuation[];
   charter?: WorkflowCharter;
-  /** Live amendment history (doc 07) — rendered into the charter digest. */
-  charterAmendments?: CharterAmendment[];
+  /**
+   * The LOGICAL authored context id the charter section renders for — scoped
+   * sources bind authored ids, so a loop-instance iteration (context id like
+   * `group__p2__ctx`) passes its authored template id here. Defaults to
+   * `context.id`, which is correct for every non-expanded context.
+   */
+  charterContextId?: string;
   /**
    * Answers delivered into a rotated resume: the asking conversation reached its
    * context-window limit, so this fresh (seed) conversation carries the block in
@@ -356,7 +366,10 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
   // Charter digest at the very top, before the context header (4.1, 4.3).
   if (input.charter) {
     sections.push(
-      buildCharterSection(input.charter, input.charterAmendments ?? []),
+      buildCharterSection(
+        input.charter,
+        input.charterContextId ?? input.context.id,
+      ),
     );
   }
 
@@ -441,7 +454,9 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
         "When every task in this execution context is marked complete, a context validator will review the whole context against these exact acceptance criteria.",
         "If the validator reopens any tasks, address the feedback and run `cctl workflow task complete` again for those reopened tasks.",
         "",
-        input.contextValidationAcceptanceCriteria,
+        acceptanceCriteriaRecordListText(
+          input.contextValidationAcceptanceCriteria,
+        ),
       ].join("\n"),
     );
   }
@@ -588,7 +603,7 @@ export function buildFollowUpPrompt(input: BuildFollowUpPromptInput): string {
         ? ` The charter has been amended ${amendmentCount} time(s) during this run — re-read the Amendment log there before relying on remembered rules.`
         : "";
     sections.push(
-      `Reminder: the workflow charter still governs — a higher-ranked source prevails over a lower-ranked one on conflict. Full charter: \`${CHARTER_DOCUMENT_PATH}\`.${amendedNote}`,
+      `Reminder: the workflow charter still governs. Full charter: \`${CHARTER_DOCUMENT_PATH}\`.${amendedNote}`,
     );
   }
 

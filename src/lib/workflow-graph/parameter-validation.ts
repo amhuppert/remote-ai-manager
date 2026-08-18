@@ -161,12 +161,16 @@ const CHARTER_FIELD_KEYS: readonly CharterFieldKey[] = [
 
 export const SUBSTITUTION_FIELD_SET = {
   // Content fields scanned per R2.1: each task's instructions (NOT title),
-  // each context's title, description (when present), and acceptanceCriteria.
+  // each context's title, description (when present), and acceptanceCriteria —
+  // the prose form as one occurrence, the record form as one occurrence per
+  // statement (criterion ids are structural, like invariant ids, and are
+  // never substituted).
   contentFields: [
     "tasks[].instructions",
     "executionContexts[].title",
     "executionContexts[].description",
     "executionContexts[].acceptanceCriteria",
+    "executionContexts[].acceptanceCriteria[].statement",
   ] as const,
   // Charter text fields rendered by charter/render.ts (drift-guard anchored).
   charterFields: CHARTER_FIELD_KEYS,
@@ -345,7 +349,11 @@ function buildScannedFieldAccessors(
       stringFieldAccessor(
         `${prefix}.appliesTo`,
         owner,
-        (source) => source.appliesTo,
+        // Only the legacy prose form is a substitutable string; a structured
+        // scope holds context ids, which are graph structure, not template
+        // prose.
+        (source) =>
+          typeof source.appliesTo === "string" ? source.appliesTo : undefined,
         (source, value) => {
           source.appliesTo = value;
         },
@@ -353,7 +361,7 @@ function buildScannedFieldAccessors(
     );
   });
 
-  definition.executionContexts.forEach((_context, index) => {
+  definition.executionContexts.forEach((contextEntry, index) => {
     const prefix = `executionContexts[${index}]`;
     const owner = (def: WorkflowSemanticDefinition) =>
       def.executionContexts[index];
@@ -374,15 +382,44 @@ function buildScannedFieldAccessors(
           context.description = value;
         },
       ),
-      stringFieldAccessor(
-        `${prefix}.acceptanceCriteria`,
-        owner,
-        (context) => context.acceptanceCriteria,
-        (context, value) => {
-          context.acceptanceCriteria = value;
-        },
-      ),
     );
+    // Prose criteria are one occurrence; record-shaped criteria contribute one
+    // occurrence per statement. A criterion `id` is structural like an
+    // invariant id (validators cite it in issues) and therefore NOT
+    // substitutable.
+    if (typeof contextEntry.acceptanceCriteria === "string") {
+      accessors.push(
+        stringFieldAccessor(
+          `${prefix}.acceptanceCriteria`,
+          owner,
+          (context) =>
+            typeof context.acceptanceCriteria === "string"
+              ? context.acceptanceCriteria
+              : undefined,
+          (context, value) => {
+            context.acceptanceCriteria = value;
+          },
+        ),
+      );
+    } else {
+      contextEntry.acceptanceCriteria.forEach((_record, recordIndex) => {
+        accessors.push(
+          stringFieldAccessor(
+            `${prefix}.acceptanceCriteria[${recordIndex}].statement`,
+            (def: WorkflowSemanticDefinition) => {
+              const criteria = def.executionContexts[index]?.acceptanceCriteria;
+              return typeof criteria === "string"
+                ? undefined
+                : criteria?.[recordIndex];
+            },
+            (record) => record.statement,
+            (record, value) => {
+              record.statement = value;
+            },
+          ),
+        );
+      });
+    }
   });
 
   definition.tasks.forEach((_task, index) => {

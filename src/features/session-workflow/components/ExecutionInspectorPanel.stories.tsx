@@ -1056,6 +1056,45 @@ export const ContextRunning: Story = {
   },
 };
 
+// #69 change 4 stage 1: record-shaped criteria display in the Brief group as
+// numbered records citing each id — the citable form validator verdicts use.
+export const ContextWithCriteriaRecords: Story = {
+  args: {
+    execution: (() => {
+      const execution = makeExecution();
+      execution.workingDefinition.executionContexts =
+        execution.workingDefinition.executionContexts.map((context) =>
+          context.id === "ctx-1"
+            ? {
+                ...context,
+                acceptanceCriteria: [
+                  {
+                    id: "ac-1",
+                    statement:
+                      "All REST endpoints exist and pass integration tests.",
+                  },
+                  {
+                    id: "ac-2",
+                    statement:
+                      "JWT auth middleware guards every non-public route.",
+                  },
+                  {
+                    id: "rate-limit",
+                    statement:
+                      "Public endpoints enforce the configured rate limit.",
+                  },
+                ],
+              }
+            : context,
+        );
+      return execution;
+    })(),
+    events: overviewEvents,
+    selectedContextId: "ctx-1",
+    ...sharedHandlers,
+  },
+};
+
 export const ContextCompleted: Story = {
   args: {
     execution: makeExecution(),

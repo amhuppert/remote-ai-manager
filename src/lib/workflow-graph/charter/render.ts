@@ -4,27 +4,40 @@ import { truncate } from "@/lib/shared/truncate";
 import type {
   CharterAmendment,
   CharterInvariant,
-  SourceOfTruth,
+  PersistedSourceOfTruth,
   WorkflowCharter,
 } from "@/lib/workflows/charter-schemas";
+import { sourceScopeContextIds } from "@/lib/workflows/charter-schemas";
 
 // Max characters of a source description rendered into the budget-bounded
 // digest. The full untruncated description lives in renderCharterMarkdown /
 // charter.md; the digest is a compact pointer, not the whole charter.
 const DIGEST_DESCRIPTION_BUDGET = 200;
 
-// Fixed application-rule text shared by implementer and validator prompts. It
-// encodes the precedence semantics (5.1) and the validator deferral behavior so
-// every agent resolves a source-vs-acceptance-criterion conflict identically.
-const APPLICATION_RULE = [
-  "## Applying the source-of-truth hierarchy",
-  "When two sources conflict, the higher-ranked source (lower rank number) prevails over the lower-ranked one, evaluated within each source's applicability scope.",
-  "When an acceptance criterion conflicts with a higher-ranked source and the implementation follows the higher-ranked source, do not fail the implementer for that mismatch; instead flag the conflicting acceptance criterion and record the conflict (criterion, prevailing source, resolution) in the validation summary.",
-  "Sources marked external-readonly are read-only and permission-gated: never read, write, or verify them automatically — explicit human permission is required for any out-of-worktree access.",
-].join("\n");
-
-function rankedSources(charter: WorkflowCharter): SourceOfTruth[] {
+function rankedSources(charter: WorkflowCharter): PersistedSourceOfTruth[] {
   return [...charter.sourcesOfTruth].sort((a, b) => a.rank - b.rank);
+}
+
+// The sources an agent working THIS context receives: global sources plus
+// sources scoped to the context. Conflicts among sources are resolved at plan
+// time, so the prompt path never renders out-of-scope entries or precedence
+// rules. A legacy prose `appliesTo` carries no filterable ids and is treated
+// as global (sourceScopeContextIds returns null for it).
+function contextScopedSources(
+  charter: WorkflowCharter,
+  contextId: string,
+): PersistedSourceOfTruth[] {
+  return rankedSources(charter).filter((source) => {
+    const scope = sourceScopeContextIds(source);
+    return scope === null || scope.includes(contextId);
+  });
+}
+
+/** A source's applicability note: prose passes through, structured scopes join. */
+function appliesToNote(source: PersistedSourceOfTruth): string | null {
+  if (source.appliesTo === undefined) return null;
+  if (typeof source.appliesTo === "string") return source.appliesTo;
+  return source.appliesTo.contextIds.join(", ");
 }
 
 function hasScopedInvariants(
@@ -57,30 +70,27 @@ function renderInvariant(
   return `\`${invariant.id}\` — ${invariant.statement} (${scope})`;
 }
 
-function renderDigestSourceLine(source: SourceOfTruth): string {
-  const parts = [
+// The digest's source line is deliberately reference-shaped: rank, label,
+// locator, and a budget-bounded description. Scope and access bookkeeping
+// never render here — scoping is applied by filtering (contextScopedSources),
+// and access policy is a retired authored field preserved only for legacy
+// persisted charters (rendered in renderCharterMarkdown, not in prompts).
+function renderDigestSourceLine(source: PersistedSourceOfTruth): string {
+  return [
     `${source.rank}. **${source.label}** (${source.type}, \`${source.locator}\`)`,
     `   ${truncate(source.description, DIGEST_DESCRIPTION_BUDGET, {
       countEllipsisInBudget: true,
       trimEnd: true,
     })}`,
-  ];
-  if (source.appliesTo) {
-    parts.push(`   Applies to: ${source.appliesTo}`);
-  }
-  const readOnly = source.accessPolicy === "external-readonly";
-  parts.push(
-    `   Access: ${source.accessPolicy}${readOnly ? " (read-only, permission-gated)" : ""}`,
-  );
-  return parts.join("\n");
+  ].join("\n");
 }
 
 /**
  * The live-amendment history section (docs/design/cc-cli/07), oldest first so
- * the narrative reads forward. Rendered into BOTH the prompt digest and the
- * full charter.md: an agent resumed after an amendment must see that the rules
- * changed and why, not just the current text. Returns null when the run has no
- * amendments so pre-amendment output stays byte-identical.
+ * the narrative reads forward. Rendered ONLY into the full charter.md and the
+ * durable record surfaces: agents read the current rules from their prompt and
+ * consult the history in `charter.md` on demand. Returns null when the run has
+ * no amendments so pre-amendment output stays byte-identical.
  */
 function renderAmendmentLog(
   amendments: readonly CharterAmendment[],
@@ -97,9 +107,17 @@ function renderAmendmentLog(
   ].join("\n");
 }
 
+/**
+ * The budget-bounded charter digest for one rendering context: mission,
+ * applicable invariants, the context's sources (global + scoped to it), and
+ * non-goals. Applicability is resolved here by filtering, not delegated to the
+ * agent as a rule — source conflicts are resolved at plan time, so the digest
+ * carries no precedence, deferral, or access-policy instructions and no
+ * amendment history (charter.md keeps all of those).
+ */
 export function renderCharterDigest(
   charter: WorkflowCharter,
-  amendments: readonly CharterAmendment[] = [],
+  contextId: string,
 ): string {
   const sections: string[] = [
     "# Workflow Charter",
@@ -123,7 +141,7 @@ export function renderCharterDigest(
   sections.push(
     [
       "## Source-of-truth hierarchy (highest authority first)",
-      ...rankedSources(charter).map(renderDigestSourceLine),
+      ...contextScopedSources(charter, contextId).map(renderDigestSourceLine),
     ].join("\n"),
   );
 
@@ -135,13 +153,6 @@ export function renderCharterDigest(
     );
   }
 
-  const amendmentLog = renderAmendmentLog(amendments);
-  if (amendmentLog !== null) {
-    sections.push(amendmentLog);
-  }
-
-  sections.push(APPLICATION_RULE);
-
   return sections.join("\n\n");
 }
 
@@ -149,17 +160,20 @@ export function renderCharterDigest(
 // service (shared-documents.ts SHARED_DOCUMENT_DIRECTORY + charter.md).
 export const CHARTER_DOCUMENT_PATH = ".cc/graph-workflow-docs/charter.md";
 
-// Charter section prepended at the top of the implementer and validator prompts:
-// the budget-bounded digest plus a pointer to the full charter.md. Role-specific
-// instructions (e.g. the implementer's citation requirement) are appended to the
-// pointer block via `extraInstructions`.
+// Charter section prepended at the top of the implementer and validator
+// prompts: the rendering context's budget-bounded digest plus a pointer to the
+// full charter.md. `contextId` is the LOGICAL authored context id (a loop
+// instance passes its authored template id) so scoped sources resolve the same
+// ids the plan declared. Role-specific instructions (e.g. the implementer's
+// citation requirement) are appended to the pointer block via
+// `extraInstructions`.
 export function renderCharterPromptSection(
   charter: WorkflowCharter,
+  contextId: string,
   extraInstructions: string[] = [],
-  amendments: readonly CharterAmendment[] = [],
 ): string {
   return [
-    renderCharterDigest(charter, amendments),
+    renderCharterDigest(charter, contextId),
     [
       `Full charter: read \`${CHARTER_DOCUMENT_PATH}\` on demand.`,
       ...extraInstructions,
@@ -167,16 +181,19 @@ export function renderCharterPromptSection(
   ].join("\n\n");
 }
 
-function renderMarkdownSourceEntry(source: SourceOfTruth): string {
+function renderMarkdownSourceEntry(source: PersistedSourceOfTruth): string {
   const lines = [
     `### ${source.rank}. ${source.label}`,
     `- id: \`${source.id}\``,
     `- type: ${source.type}`,
     `- locator: \`${source.locator}\``,
-    `- access policy: ${source.accessPolicy}`,
   ];
-  if (source.appliesTo) {
-    lines.push(`- applies to: ${source.appliesTo}`);
+  if (source.accessPolicy !== undefined) {
+    lines.push(`- access policy: ${source.accessPolicy}`);
+  }
+  const applies = appliesToNote(source);
+  if (applies !== null) {
+    lines.push(`- applies to: ${applies}`);
   }
   lines.push("", source.description);
   return lines.join("\n");

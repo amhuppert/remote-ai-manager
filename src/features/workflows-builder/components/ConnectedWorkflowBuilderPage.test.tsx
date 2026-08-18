@@ -304,6 +304,33 @@ describe("ConnectedWorkflowBuilderPage — workflow-settings chrome button", () 
     });
   });
 
+  // #69 change 3: the builder authors definitions, and authored write paths
+  // refuse the retired accessPolicy field and prose appliesTo — the seed for
+  // a brand-new draft must already be authored-shape.
+  it("seeds new workflows with authored-shape charter sources", async () => {
+    const dispatcher = createHotkeyDispatcher();
+    renderPage(dispatcher);
+
+    await act(async () => {
+      fireEvent.keyDown(document, { key: "c" });
+      fireEvent.keyDown(document, { key: "w" });
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(workflowMutationState.create).toHaveBeenCalled();
+    });
+    const payload = workflowMutationState.create.mock.calls[0]![0] as {
+      definition: {
+        charter: { sourcesOfTruth: Record<string, unknown>[] };
+      };
+    };
+    for (const source of payload.definition.charter.sourcesOfTruth) {
+      expect(source).not.toHaveProperty("accessPolicy");
+      expect(typeof source["appliesTo"]).not.toBe("string");
+    }
+  });
+
   it("marks new workflow unavailable while creation is pending", () => {
     workflowMutationState.createPending = true;
     const dispatcher = createHotkeyDispatcher();

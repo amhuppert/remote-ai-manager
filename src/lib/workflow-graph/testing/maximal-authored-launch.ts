@@ -144,6 +144,28 @@ export function createMaximalAuthoredWorkflowLaunchFixture(): WorkflowDefinition
           appliesTo: MAXIMAL_GRAPH_AFTER_ENVELOPE_CANARY,
         },
       ],
+      // Explicit authored-shape sources: the shared fixture's defaults model
+      // the persisted legacy dialect, which the authored gate this launch
+      // parses through refuses. One source exercises structured scoping.
+      sourcesOfTruth: [
+        {
+          rank: 1,
+          id: "design-doc",
+          label: "Approved design document",
+          type: "document",
+          locator: ".kiro/specs/workflow-charter/design.md",
+          description: "The authoritative architecture for this workflow",
+        },
+        {
+          rank: 2,
+          id: "integration-contract",
+          label: "Integration contract",
+          type: "spec",
+          locator: "docs/design/integration-contract.md",
+          description: "The contract the integration context implements",
+          appliesTo: MAXIMAL_GRAPH_AFTER_ENVELOPE_CANARY,
+        },
+      ],
     }),
     parameters: [
       {

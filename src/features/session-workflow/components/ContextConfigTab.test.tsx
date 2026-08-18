@@ -230,11 +230,11 @@ describe("ContextConfigTab — display", () => {
       within(collab).getByRole("radio", { name: "major" }),
     ).toHaveAttribute("aria-checked", "true");
 
-    // Prose fields
+    // Prose fields. Legacy prose criteria display as one wrapped record row
+    // (#69 change 4 stage 1) — the wrap id is visible, never hand-editable.
     expect(screen.getByLabelText("Context title")).toHaveValue("Implement");
-    expect(screen.getByLabelText("Context acceptance criteria")).toHaveValue(
-      "It works",
-    );
+    expect(screen.getByLabelText("Statement for ac-1")).toHaveValue("It works");
+    expect(screen.queryByDisplayValue("ac-1")).toBeNull();
 
     const runtime = screen.getByTestId("context-runtime");
     expect(within(runtime).getByTestId("runtime-isolation")).toHaveTextContent(
@@ -1052,6 +1052,101 @@ describe("ContextConfigTab — validation command selectors", () => {
     expect(
       within(script).getByRole("button", { name: "Remove test" }),
     ).toBeInTheDocument();
+  });
+});
+
+// #69 change 4 stage 1: the live surface displays criteria as numbered record
+// rows and keeps WHOLE-VALUE replacement — a statement edit submits the full
+// records array in one update-context op (per-criterion ops are stage 2).
+describe("ContextConfigTab — acceptance criteria records", () => {
+  it("displays record-shaped criteria as numbered rows citing ids", () => {
+    const context = fullContext();
+    context.acceptanceCriteria = [
+      { id: "ac-1", statement: "The endpoint returns 200" },
+      { id: "audit-log", statement: "The audit log records it" },
+    ];
+    render(
+      <ContextConfigTab
+        execution={startedExecution(context, startedContextState(), {
+          status: "paused",
+        })}
+        contextId="context-impl"
+        onSaveContextConfig={vi.fn()}
+      />,
+    );
+
+    const rows = screen.getAllByTestId("criterion-row");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("1.");
+    expect(rows[0]).toHaveTextContent("ac-1");
+    expect(rows[1]).toHaveTextContent("2.");
+    expect(rows[1]).toHaveTextContent("audit-log");
+    expect(screen.getByLabelText("Statement for audit-log")).toHaveValue(
+      "The audit log records it",
+    );
+  });
+
+  it("submits a statement edit as whole-array replacement", () => {
+    const onSaveContextConfig = vi.fn();
+    const context = fullContext();
+    context.acceptanceCriteria = [
+      { id: "ac-1", statement: "The endpoint returns 200" },
+      { id: "audit-log", statement: "The audit log records it" },
+    ];
+    render(
+      <ContextConfigTab
+        execution={startedExecution(context, startedContextState(), {
+          status: "paused",
+        })}
+        contextId="context-impl"
+        onSaveContextConfig={onSaveContextConfig}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Statement for ac-1"), {
+      target: { value: "The endpoint returns 201" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(onSaveContextConfig).toHaveBeenCalledWith([
+      {
+        type: "update-context",
+        contextId: "context-impl",
+        acceptanceCriteria: [
+          { id: "ac-1", statement: "The endpoint returns 201" },
+          { id: "audit-log", statement: "The audit log records it" },
+        ],
+      },
+    ]);
+  });
+
+  it("submits a legacy prose edit as the wrapped record array", () => {
+    const onSaveContextConfig = vi.fn();
+    render(
+      <ContextConfigTab
+        execution={startedExecution(fullContext(), startedContextState(), {
+          status: "paused",
+        })}
+        contextId="context-impl"
+        onSaveContextConfig={onSaveContextConfig}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Statement for ac-1"), {
+      target: { value: "It works end to end" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    // Prose wraps through the canonical helper on this authored write path;
+    // an UNTOUCHED prose value never re-shapes (covered by the only-changed-
+    // field test, whose op omits acceptanceCriteria entirely).
+    expect(onSaveContextConfig).toHaveBeenCalledWith([
+      {
+        type: "update-context",
+        contextId: "context-impl",
+        acceptanceCriteria: [{ id: "ac-1", statement: "It works end to end" }],
+      },
+    ]);
   });
 });
 

@@ -1526,6 +1526,52 @@ describe("ExecutionInspectorPanel — brief markdown + focus modal", () => {
     expect(code.closest("code")).toBeTruthy();
   });
 
+  // #69 change 4 stage 1: record-shaped criteria render as numbered records
+  // citing each id — the same citable form validator verdicts key on.
+  it("renders record-shaped criteria as numbered records citing ids", async () => {
+    const definition = createResolvedWorkflowDefinition();
+    definition.executionContexts = definition.executionContexts.map(
+      (context) =>
+        context.id === "context-plan"
+          ? {
+              ...context,
+              acceptanceCriteria: [
+                { id: "ac-1", statement: "The endpoint returns 200" },
+                { id: "audit-log", statement: "The audit log records it" },
+              ],
+            }
+          : context,
+    );
+    render(
+      <ExecutionInspectorPanel
+        execution={createWorkflowExecution({ workingDefinition: definition })}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    const first = await screen.findByText(
+      "[ac-1] The endpoint returns 200",
+      undefined,
+      { timeout: 15000 },
+    );
+    // Numbered records, not prose: markdown renders the canonical numbered
+    // lines as an ordered list.
+    expect(first.closest("ol")).toBeTruthy();
+    expect(
+      screen.getByText("[audit-log] The audit log records it"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /view acceptance criteria/i }),
+    );
+    const dialog = await screen.findByRole("dialog", {}, { timeout: 15000 });
+    expect(
+      await within(dialog).findByText("[audit-log] The audit log records it"),
+    ).toBeInTheDocument();
+  });
+
   it("opens the description in a focus modal on click", async () => {
     renderDetail();
 

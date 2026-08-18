@@ -1,4 +1,5 @@
 import type { GraphWorkflowExecution } from "./schemas";
+import { acceptanceCriteriaRecordListText } from "./criteria/criterion-records";
 import {
   createRegisteredGraphExecutionContract,
   type GraphExecutionContract,
@@ -85,7 +86,7 @@ function renderValidatorDeferralCohort(
     "",
     ...contexts.flatMap((context) => [
       `### \`${context.id}\` — ${context.title}${context.id === contextId ? " (current context)" : ""}`,
-      context.acceptanceCriteria,
+      acceptanceCriteriaRecordListText(context.acceptanceCriteria),
       "",
     ]),
   ]
@@ -105,7 +106,9 @@ export async function composeGraphRolePrompt(
     projection === null ? null : renderGraphRolePromptProjection(projection);
 
   if (input.role !== "context-validator") {
-    return projected === null ? input.prompt : `${projected}\n\n${input.prompt}`;
+    return projected === null
+      ? input.prompt
+      : `${projected}\n\n${input.prompt}`;
   }
   if (input.contextId === undefined) {
     throw new Error(

@@ -512,6 +512,208 @@ describe("validateAuthoredDefinition (composite accept-time validator)", () => {
     expect(result.errors).toEqual([]);
   });
 
+  it("refuses a charter source scoped to an unknown context id (unknown-source-scope-context)", () => {
+    const base = createWorkflowDefinition();
+    const definition = {
+      ...base,
+      charter: {
+        ...base.charter,
+        sourcesOfTruth: [
+          ...base.charter.sourcesOfTruth,
+          {
+            rank: 90,
+            id: "scoped-source",
+            label: "Scoped Source",
+            type: "document" as const,
+            locator: "docs/scoped.md",
+            description: "A source scoped to one declared and one unknown id.",
+            appliesTo: {
+              contextIds: ["context-implement", "context-missing"],
+            },
+          },
+        ],
+      },
+    };
+
+    const result = validateAuthoredDefinition(definition);
+    expect(result.ok).toBe(false);
+    const error = result.errors.find(
+      (entry) => entry.code === "unknown-source-scope-context",
+    );
+    expect(error).toBeDefined();
+    expect(error?.contextId).toBe("context-missing");
+    // The path locates the offending source entry and the offending id.
+    const sourceIndex = definition.charter.sourcesOfTruth.length - 1;
+    expect(error?.field).toBe(
+      `charter.sourcesOfTruth.${sourceIndex}.appliesTo.contextIds.1`,
+    );
+  });
+
+  it("accepts a charter source scoped to declared context ids", () => {
+    const base = createWorkflowDefinition();
+    const definition = {
+      ...base,
+      charter: {
+        ...base.charter,
+        sourcesOfTruth: [
+          ...base.charter.sourcesOfTruth,
+          {
+            rank: 91,
+            id: "well-scoped-source",
+            label: "Well-Scoped Source",
+            type: "document" as const,
+            locator: "docs/scoped.md",
+            description: "A source scoped to declared contexts only.",
+            appliesTo: { contextIds: ["context-plan", "context-implement"] },
+          },
+        ],
+      },
+    };
+
+    const result = validateAuthoredDefinition(definition);
+    expect(result.ok).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
+  it("skips legacy prose appliesTo when checking source scopes", () => {
+    // A persisted-era source with prose appliesTo has no context ids to
+    // check; the scope refusal must not misread the prose as an unknown id.
+    const base = createWorkflowDefinition();
+    const definition = {
+      ...base,
+      charter: {
+        ...base.charter,
+        sourcesOfTruth: [
+          {
+            rank: 92,
+            id: "legacy-source",
+            label: "Legacy Source",
+            type: "document" as const,
+            locator: "docs/legacy.md",
+            description: "A pre-structured source with prose applicability.",
+            appliesTo: "everything under src/",
+          },
+        ],
+      },
+    };
+
+    const result = validateAuthoredDefinition(definition);
+    expect(
+      result.errors.filter(
+        (entry) => entry.code === "unknown-source-scope-context",
+      ),
+    ).toEqual([]);
+  });
+
+  it("refuses a charter source carrying the retired accessPolicy field (retired-source-access-policy)", () => {
+    // The authored gate: stored definitions tolerate the legacy field, but a
+    // plan submitted for validate/create/replace must not author it — external
+    // material is materialized into the worktree at plan time.
+    const base = createWorkflowDefinition();
+    const definition = {
+      ...base,
+      charter: {
+        ...base.charter,
+        sourcesOfTruth: [
+          {
+            rank: 93,
+            id: "gated-source",
+            label: "Gated Source",
+            type: "document" as const,
+            locator: "docs/gated.md",
+            description: "A source still authored with the retired field.",
+            accessPolicy: "external-readonly" as const,
+          },
+        ],
+      },
+    };
+
+    const result = validateAuthoredDefinition(definition);
+    expect(result.ok).toBe(false);
+    const error = result.errors.find(
+      (entry) => entry.code === "retired-source-access-policy",
+    );
+    expect(error).toBeDefined();
+    expect(error?.field).toBe("charter.sourcesOfTruth.0.accessPolicy");
+    expect(error?.message).toContain("accessPolicy");
+  });
+
+  it("exempts the server-seeded native-SDD sources from the accessPolicy refusal", () => {
+    // Delivery-plan finalization injects the pinned-spec and claims sources —
+    // still stamped with the legacy accessPolicy — into every spec-candidate
+    // launch before admission. They are server-seeded, not authored (the spec
+    // document schema refuses these reserved ids in user-submitted plans), so
+    // the authored gate must not reject the engine's own finalization output.
+    const base = createWorkflowDefinition();
+    const definition = {
+      ...base,
+      charter: {
+        ...base.charter,
+        sourcesOfTruth: [
+          {
+            rank: 1,
+            id: "native-sdd-pinned-spec",
+            label: "Pinned native SDD specification",
+            type: "spec" as const,
+            locator: ".cc/graph-workflow-docs/spec/pinned.md",
+            description: "The immutable specification revision.",
+            accessPolicy: "worktree-relative" as const,
+          },
+          {
+            rank: 2,
+            id: "native-sdd-claims",
+            label: "Native SDD candidate claims",
+            type: "document" as const,
+            locator: ".cc/graph-workflow-docs/spec-bindings/c1/claims.md",
+            description: "The candidate-specific dispositions and claims.",
+            accessPolicy: "worktree-relative" as const,
+          },
+          ...base.charter.sourcesOfTruth.map((source) => ({
+            ...source,
+            rank: source.rank + 2,
+          })),
+        ],
+      },
+    };
+
+    const result = validateAuthoredDefinition(definition);
+    expect(
+      result.errors.filter(
+        (entry) => entry.code === "retired-source-access-policy",
+      ),
+    ).toEqual([]);
+  });
+
+  it("refuses a charter source authored with legacy prose appliesTo (legacy-source-applies-to)", () => {
+    const base = createWorkflowDefinition();
+    const definition = {
+      ...base,
+      charter: {
+        ...base.charter,
+        sourcesOfTruth: [
+          {
+            rank: 94,
+            id: "prose-source",
+            label: "Prose Source",
+            type: "document" as const,
+            locator: "docs/prose.md",
+            description: "A source still authored with prose applicability.",
+            appliesTo: "everything under src/",
+          },
+        ],
+      },
+    };
+
+    const result = validateAuthoredDefinition(definition);
+    expect(result.ok).toBe(false);
+    const error = result.errors.find(
+      (entry) => entry.code === "legacy-source-applies-to",
+    );
+    expect(error).toBeDefined();
+    expect(error?.field).toBe("charter.sourcesOfTruth.0.appliesTo");
+    expect(error?.message).toContain("structured scope");
+  });
+
   it("rejects an invalid prerequisite through the shared accept-time path (R4.4)", () => {
     const definition = createWorkflowDefinition({
       prerequisites: [{ kind: "path", path: "/etc/passwd" }],

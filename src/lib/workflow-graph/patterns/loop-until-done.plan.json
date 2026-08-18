@@ -32,9 +32,7 @@
           "label": "Loop brief",
           "type": "document",
           "locator": ".cc/temp/loop-brief.md",
-          "description": "The objective the worker drafts against and the exit bar the judge applies: what has to be true for the work to be done, stated so a third party can check it.",
-          "appliesTo": "all execution contexts",
-          "accessPolicy": "worktree-relative"
+          "description": "The objective the worker drafts against and the exit bar the judge applies: what has to be true for the work to be done, stated so a third party can check it."
         },
         {
           "rank": 2,
@@ -42,9 +40,7 @@
           "label": "Repository engineering contract",
           "type": "document",
           "locator": "AGENTS.md",
-          "description": "The engineering contract every draft has to satisfy — typing, testing, and architecture boundaries.",
-          "appliesTo": "all execution contexts",
-          "accessPolicy": "worktree-relative"
+          "description": "The engineering contract every draft has to satisfy — typing, testing, and architecture boundaries."
         }
       ]
     },

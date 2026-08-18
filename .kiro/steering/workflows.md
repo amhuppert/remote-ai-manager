@@ -234,12 +234,16 @@ for non-default implementer or validator settings.
     {
       "id": "plan",
       "title": "Plan",
-      "acceptanceCriteria": "A plan.md describes the approach in enough detail for an implementer to follow."
+      "acceptanceCriteria": [
+        { "id": "plan-is-followable", "statement": "A plan.md describes the approach in enough detail for an implementer to follow." }
+      ]
     },
     {
       "id": "impl",
       "title": "Implement",
-      "acceptanceCriteria": "The feature behaves as described in the plan when exercised end-to-end."
+      "acceptanceCriteria": [
+        { "id": "behaves-end-to-end", "statement": "The feature behaves as described in the plan when exercised end-to-end." }
+      ]
     }
   ]
 }
@@ -449,6 +453,33 @@ Conventions:
 
 `acceptanceCriteria` is required on every execution context and is consumed by
 the implementer and, when enabled, the agent context validator.
+
+Its shape is ordered `{ id, statement }` records (`criteria/criterion-records.ts`,
+ticket #69 change 4 stage 1), ids kebab-case and unique within the context. Legacy
+prose stays a valid PARSE on every read surface — stored definitions, working
+definitions, execution state — and is canonicalized to records ONLY on authored
+write paths (`validateWorkflowPlan` for validate/create/replace, and the edit
+vocabularies), wrapping as one `ac-1` record. Never wrap on read: a stored prose
+value must re-serialize byte-identical or `workingDefinitionHash` moves. Consumers
+normalize through `criterionRecordsOf`; prompts render the numbered list through
+`acceptanceCriteriaRecordListText`, while shape-preserving surfaces (previews,
+outlines) use `acceptanceCriteriaText`. Every edit tier replaces the WHOLE value —
+there is no per-criterion operation, including in plan repair (stage 2, deferred).
+
+Blocking validator issues carry an optional `criterionId` bound to the context's
+record ids; the requirement is per seat (`issueCriterionCitationFor`): the default
+blocking acceptance-criteria seat must cite one on every issue, every other seat
+cites its own assigned mandate and may name a criterion only incidentally.
+
+Charter rendering is per context, not broadcast: `renderCharterDigest` filters
+sources by their structured `appliesTo.contextIds` exactly as it filters invariants
+(unscoped = global), and refuses unknown scope contexts at accept time with
+`unknown-source-scope-context`. The digest carries no precedence, deferral, or
+access-policy instruction — conflicts among sources are resolved at plan time, the
+authored schema refuses the retired `accessPolicy` field
+(`retired-source-access-policy`) and a prose `appliesTo` (`legacy-source-applies-to`),
+and the amendment log renders only into `charter.md` and the durable record. The
+persisted parses stay tolerant of both retired shapes and preserve them verbatim.
 
 `contextValidator` is an LLM validator. `scriptValidator` runs the context's
 ordered `commands` selection through `ValidationService` before agent
@@ -700,6 +731,6 @@ A saved workflow definition is a reusable **template**, launched via `cctl workf
 
 - **Tiers / `WorkflowScope`** — `project` (scopeKey = `base64url(projectPath)`) and `global` (the cross-project library; reserved scopeKey `global.shared`, whose `.` can never collide with a base64url path). `cctl workflow templates` returns both, tier-tagged.
 - **Authoring** — the `/templates` UI, the HTTP handlers (`POST /api/workflow-templates` for global), `createWorkflowStorageService().create(scope, draft)` directly, or the agent-facing `cctl workflow create --file plan.json` / `cctl workflow replace <id> --file plan.json` flow (author the plan as a `plan.json` file — see the `graph-workflow-planning` skill). The CLI create/replace flow is project-tier; author/edit a **global** template (parameterize it with `{{inputs.<name>}}` so it isn't bound to one project) through the Templates UI. All paths resolve tier→scope through `scopeForTier` and reuse the shared inflate + accept-time validation + storage path. Browse the project tier with `cctl workflow list` / `cctl workflow get <id>` / `cctl workflow delete <id>`; browse the global tier with `cctl workflow templates --tier global`.
-- **Parameters** — declared `string` | `text` | `enum`; referenced as `{{inputs.<name>}}`. Substitution runs at launch over the closed `SUBSTITUTION_FIELD_SET` ONLY: task **instructions**, context `title`/`description`/`acceptanceCriteria`, and charter fields (mission, conventions, …, `invariants[]` `statement` — not `id` — and `sourcesOfTruth[]` `label`/`locator`/`description`/`appliesTo`). It does **NOT** touch task **titles**, ids, order, edges, config, or prerequisites — a token placed there renders literally (a silent bug, not a validation error). Launch with `cctl workflow start <id> --file inputs.json` (the inputs file supplies the `parameters`).
+- **Parameters** — declared `string` | `text` | `enum`; referenced as `{{inputs.<name>}}`. Substitution runs at launch over the closed `SUBSTITUTION_FIELD_SET` ONLY: task **instructions**, context `title`/`description`/`acceptanceCriteria` (prose as one occurrence, records as one per `acceptanceCriteria[].statement` — a criterion `id` is structural and never substituted), and charter fields (mission, conventions, …, `invariants[]` `statement` — not `id` — and `sourcesOfTruth[]` `label`/`locator`/`description`/`appliesTo`, where only the legacy prose `appliesTo` is substitutable, a structured scope holding context ids being graph structure rather than template prose). It does **NOT** touch task **titles**, ids, order, edges, config, or prerequisites — a token placed there renders literally (a silent bug, not a validation error). Launch with `cctl workflow start <id> --file inputs.json` (the inputs file supplies the `parameters`).
 - **Prerequisites** — declarative `path` | `skill` requirements, probed deterministically before any tokens are spent (the `skill` kind also covers slash-commands; scope a skill to a `backend` when only one backend uses it). Worktree-relative paths only. Use them to fail-fast a global template on an unsuitable project.
 - **Dynamic tasks (mutability)** — a context with `mutability.allowAgentTaskAdd: true` lets the agent add tasks at runtime via `cctl workflow task add`: e.g. a bootstrap task that fans `tasks.md` out to one task per subtask, or a validate-loop that adds one remediation task per finding plus a re-validate task, looping until clean. Plan these with the `graph-workflow-planning` skill.

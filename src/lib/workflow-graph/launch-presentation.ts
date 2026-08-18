@@ -51,7 +51,6 @@ export function graphWorkflowLaunchExample(): WorkflowDefinitionMutation {
             type: "spec",
             locator: "cctl spec plan read",
             description: "The approved delivery-plan attempt",
-            accessPolicy: "worktree-relative",
           },
         ],
       },

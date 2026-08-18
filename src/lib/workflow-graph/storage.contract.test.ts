@@ -194,6 +194,31 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
           appliesTo: { contextIds: ["ctx-1", "ctx-loop-worker"] },
         },
       ],
+      // Authored-shaped sources: create is an accept path, so the legacy
+      // shapes (prose appliesTo, retired accessPolicy) are refused here — their
+      // read-tolerance durability is proven against a stored record instead.
+      // The structured source scope is itself a persisted field this contract
+      // must round-trip.
+      sourcesOfTruth: [
+        {
+          rank: 1,
+          id: "design-doc",
+          label: "Approved design document",
+          type: "document",
+          locator: ".kiro/specs/workflow-charter/design.md",
+          description: "The authoritative architecture for this workflow",
+          appliesTo: { contextIds: ["ctx-1"] },
+        },
+        {
+          rank: 2,
+          id: "scoped-reference",
+          label: "Scoped durable reference",
+          type: "spec",
+          locator: "docs/scoped-reference.md",
+          description: "A reference scoped to the durable contexts.",
+          appliesTo: { contextIds: ["ctx-1", "ctx-loop-worker"] },
+        },
+      ],
     }),
     parameters: [
       {
@@ -233,7 +258,15 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         id: "ctx-1",
         title: "Implement the thing",
         description: "Detailed description of the context",
-        acceptanceCriteria: "All tests pass and the build is green",
+        // Records-shaped while the three sibling contexts below keep prose:
+        // the same stored record then carries both admitted shapes of the
+        // acceptanceCriteria union, proving the union is additive (storage
+        // persists each verbatim, no schema-version bump) rather than a
+        // records-only cutover.
+        acceptanceCriteria: [
+          { id: "tests-pass", statement: "All tests pass" },
+          { id: "build-green", statement: "The build is green" },
+        ],
         placement: { lane: "ctx-1", mode: "full" },
         origin: {
           sourceUri: "workflow-source:maximal/context/ctx-1",
@@ -504,6 +537,13 @@ describe("workflow-graph storage durability contract", () => {
         createdAt: "derived-on-write",
         updatedAt: "derived-on-write",
         "layout.workflowId": "derived-on-write",
+        // `accessPolicy` survives ONLY on legacy stored records (the tolerant
+        // persisted schema preserves it verbatim); the authored accept path
+        // this contract persists through refuses it, so a maximal CREATABLE
+        // fixture cannot carry it. Its read-path preservation is proven by the
+        // legacy-frozen-charter tolerance test instead.
+        "definition.charter.sourcesOfTruth[0].accessPolicy": "not-persisted",
+        "definition.charter.sourcesOfTruth[1].accessPolicy": "not-persisted",
       },
     });
   });
@@ -533,8 +573,56 @@ describe("workflow-graph storage durability contract", () => {
         createdAt: "derived-on-write",
         updatedAt: "derived-on-write",
         "layout.workflowId": "derived-on-write",
+        // See the project-scope contract above: refused by the authored accept
+        // path, preserved only on legacy stored records.
+        "definition.charter.sourcesOfTruth[0].accessPolicy": "not-persisted",
+        "definition.charter.sourcesOfTruth[1].accessPolicy": "not-persisted",
       },
     });
+  });
+
+  // Contract policy for #69 change 4 stage 1: acceptanceCriteria is an
+  // ADDITIVE union — legacy prose or ordered {id, statement} records — and the
+  // storage service persists whichever shape it is handed verbatim, under the
+  // same writer-pinned schemaVersion. Canonicalization of prose to records is
+  // the plan-validation accept path's job, not storage's; a stored prose value
+  // must reload byte-identical (no-read-renormalization).
+  it("persists records-shaped and prose acceptance criteria side by side with no schema-version bump", async () => {
+    const storage = storageForContract();
+    const fixture = buildMaximalRecord();
+
+    const created = await storage.create(
+      { kind: "project", projectPath: PROJECT_PATH },
+      {
+        name: fixture.name,
+        description: fixture.description,
+        definition: fixture.definition,
+        layout: fixture.layout,
+      },
+    );
+    const reloaded = await storage.get(
+      { kind: "project", projectPath: PROJECT_PATH },
+      created.id,
+    );
+    if (reloaded === null) throw new Error("created record must reload");
+
+    const contextById = (id: string) =>
+      reloaded.definition.executionContexts.find(
+        (context) => context.id === id,
+      );
+    expect(contextById("ctx-1")?.acceptanceCriteria).toEqual([
+      { id: "tests-pass", statement: "All tests pass" },
+      { id: "build-green", statement: "The build is green" },
+    ]);
+    expect(contextById("ctx-2")?.acceptanceCriteria).toBe(
+      "Downstream criteria satisfied",
+    );
+    // Same storage format for both shapes: the record keeps the writer-pinned
+    // version and the definition keeps its authored one.
+    expect(reloaded.schemaVersion).toBe(created.schemaVersion);
+    expect(reloaded.definition.schemaVersion).toBe(
+      fixture.definition.schemaVersion,
+    );
   });
 
   it("stores a global record under the reserved scope, isolated from any project scope", async () => {

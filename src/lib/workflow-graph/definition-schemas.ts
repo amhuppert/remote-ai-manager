@@ -26,6 +26,7 @@ import {
   resolvedCollaborationConfigSchema,
   workflowCollaborationConfigOverrideSchema,
 } from "./collaboration-schemas";
+import { acceptanceCriteriaSchema } from "./criteria/criterion-records";
 
 export const workflowConfigOverrideSchema = z.object({
   implementer: agentAssignmentSchema.optional(),
@@ -229,7 +230,11 @@ export const graphWorkflowExecutionContextDefinitionSchema = z.object({
     (val) => (typeof val === "string" && val.trim() === "" ? undefined : val),
     z.string().trim().min(1).optional(),
   ),
-  acceptanceCriteria: z.string().trim().min(1),
+  // Prose or ordered criterion records (#69 change 4 stage 1). A tolerant
+  // union on purpose: the accept paths (validate/create/replace) canonicalize
+  // prose to records AFTER this parse, so this schema also serves surfaces
+  // that must carry a stored prose value through unchanged.
+  acceptanceCriteria: acceptanceCriteriaSchema,
   // Required, with no runtime default: deterministic seed-time lane assignment
   // is fully replaced by authored placement (locked fork F1), and an optional
   // field would silently resurrect it. Stored definitions written before
@@ -560,7 +565,11 @@ export const graphWorkflowResolvedContextSchema = z.object({
   id: z.string().trim().min(1),
   title: z.string().trim().min(1),
   description: z.string().trim().min(1).optional(),
-  acceptanceCriteria: z.string().trim().min(1),
+  // Same tolerant union as the authored context. A working definition seeded
+  // from a prose-criteria plan must reload with the prose intact — read-time
+  // wrapping would rewrite the stored shape and move workingDefinitionHash
+  // (no-read-renormalization).
+  acceptanceCriteria: acceptanceCriteriaSchema,
   origin: workflowOriginSchema.optional(),
   // Mirrored verbatim from the authored context, and REQUIRED here for the same
   // reason it is required there: placement is the only lane authority, so an
@@ -773,7 +782,11 @@ export type GraphWorkflowVisualLayout = z.infer<
  * The create/replace request body: a named, laid-out workflow definition. This
  * is the single schema both the persisting routes (create/replace) and the
  * non-persisting `graph-workflow/validate` endpoint parse, so a plan that
- * validates is guaranteed to be acceptable to create.
+ * validates is guaranteed to be acceptable to create. It also rides inside
+ * PERSISTED documents (a delivery plan embeds its launch verbatim), so the
+ * parse stays tolerant of legacy charter source shapes; the authored-shape
+ * refusals (retired `accessPolicy`, prose `appliesTo`) are enforced by
+ * `validateAuthoredDefinition` on every accept path instead.
  */
 export const workflowDefinitionMutationSchema = z.object({
   name: z.string().trim().min(1),
@@ -803,6 +816,14 @@ export type WorkflowDefinitionRecord = z.infer<
 
 export const workflowValidatorIssueSchema = z.object({
   taskId: z.string().trim().min(1),
+  /**
+   * The acceptance criterion this issue fails, cited by record id (#69 change
+   * 4). Optional HERE because this base is also the persisted shape and one
+   * parse twin serves every blocking seat; the acceptance seat's dispatched
+   * schema requires it and the runner's containment check enforces both the
+   * requirement and the per-context id set, per seat.
+   */
+  criterionId: z.string().trim().min(1).optional(),
   title: z.string().trim().min(1),
   description: z.string().trim().min(1),
 });

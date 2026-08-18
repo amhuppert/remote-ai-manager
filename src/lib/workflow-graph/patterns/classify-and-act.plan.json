@@ -29,8 +29,7 @@
           "label": "The incoming bug report",
           "type": "document",
           "locator": ".cc/temp/bug-report.md",
-          "description": "The report under triage: symptom, reproduction steps, affected surface, and any user impact. Governs the severity verdict.",
-          "accessPolicy": "worktree-relative"
+          "description": "The report under triage: symptom, reproduction steps, affected surface, and any user impact. Governs the severity verdict."
         },
         {
           "rank": 2,
@@ -38,8 +37,7 @@
           "label": "Repository engineering contract",
           "type": "document",
           "locator": "AGENTS.md",
-          "description": "The repository's testing, typing, and architecture rules every remediation branch implements under.",
-          "accessPolicy": "worktree-relative"
+          "description": "The repository's testing, typing, and architecture rules every remediation branch implements under."
         }
       ]
     },

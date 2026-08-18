@@ -257,6 +257,61 @@ describe("graph-workflow-executions-repo durability contract", () => {
     }
   });
 
+  // Contract policy for #69 change 4 stage 1: acceptanceCriteria is a UNION —
+  // legacy prose or ordered {id, statement} records — and the union is
+  // ADDITIVE. Both shapes are admitted by the same stored tiers with no
+  // schema-version bump, and a reload preserves each verbatim (records stay
+  // records, prose stays prose; no read-time canonicalization). The maximal
+  // fixture carries records on the scheduled ctx-1 and prose on the loop
+  // template and launch document, so one row proves both halves.
+  it("round-trips records-shaped and prose acceptance criteria side by side with no schema-version bump", () => {
+    const fixture = createPersistenceFixture();
+    try {
+      fixture.seedProject(PROJECT_PATH);
+      fixture.seedSession(PROJECT_PATH, SESSION_NAME);
+      const execution = maximalExecution();
+      fixture.graphWorkflowExecutions.setActive(
+        PROJECT_PATH,
+        SESSION_NAME,
+        execution,
+        "2026-03-01T00:00:00Z",
+      );
+
+      // A repo instance that never saw the write has no parsed-row cache to
+      // answer from — this is the post-restart read.
+      const reloaded = createGraphWorkflowExecutionsRepo(fixture.db).getActive(
+        PROJECT_PATH,
+        SESSION_NAME,
+      );
+      if (reloaded === null) throw new Error("maximal execution must reload");
+
+      const scheduled = reloaded.workingDefinition.executionContexts.find(
+        (context) => context.id === "ctx-1",
+      );
+      expect(scheduled?.acceptanceCriteria).toEqual([
+        { id: "tests-pass", statement: "All tests pass" },
+        { id: "build-green", statement: "The build is green" },
+      ]);
+
+      // The loop template context persisted prose and reloads prose — a read
+      // that canonicalized it to records would rewrite stored bytes and break
+      // hash stability (no-read-renormalization).
+      const templateContext =
+        reloaded.workingDefinition.loopGroups?.[0]?.template.contexts[0];
+      expect(templateContext?.acceptanceCriteria).toBe(
+        "All tests pass and the build is green",
+      );
+
+      // Same stored format before and after the union: the definition tier
+      // carries no new version marker for records-shaped criteria.
+      expect(reloaded.workingDefinition.schemaVersion).toBe(
+        execution.workingDefinition.schemaVersion,
+      );
+    } finally {
+      fixture.close();
+    }
+  });
+
   it("persists lane validation debt across a restarted repository", () => {
     const fixture = createPersistenceFixture();
     try {

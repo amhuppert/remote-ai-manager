@@ -10,6 +10,7 @@ import {
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
 import { createApprovalGateService } from "./approval-gate";
+import { criterionRecordsOf } from "./criteria/criterion-records";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import {
@@ -5012,14 +5013,25 @@ describe("graph workflow RUN route — inline one-off launch", () => {
     expect(JSON.stringify(body)).not.toContain("definitionId");
 
     // The route hands the manager the PARSED plan document, never the raw body,
-    // and never a definition identity of any kind.
+    // and never a definition identity of any kind. Parsing canonicalizes prose
+    // acceptance criteria to records (#69 change 4 stage 1).
     expect(runExecution).toHaveBeenCalledWith({
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       plan: {
         name: plan.name,
         description: plan.description,
-        definition: plan.definition,
+        definition: {
+          ...plan.definition,
+          executionContexts: plan.definition.executionContexts.map(
+            (context) => ({
+              ...context,
+              acceptanceCriteria: criterionRecordsOf(
+                context.acceptanceCriteria,
+              ),
+            }),
+          ),
+        },
         layout: plan.layout,
       },
     });

@@ -5,7 +5,9 @@
  * invocation.
  */
 
+import { resolveLogicalAuthoredContextId } from "../charter/invariant-scope";
 import { renderCharterPromptSection } from "../charter/render";
+import { acceptanceCriteriaRecordListText } from "../criteria/criterion-records";
 import type { GraphWorkflowValidationIssue } from "../definition-schemas";
 import type {
   GraphWorkflowExecution,
@@ -151,6 +153,18 @@ export function toPlanRepairValidationVerdict(event: {
   };
 }
 
+/**
+ * One recorded issue as repair evidence, citing the criterion id when the
+ * verdict carries one: the id is what lets the agent line a finding up
+ * against the acceptance-criteria records its `update-context` may rewrite.
+ */
+function renderIssueEvidence(issue: GraphWorkflowValidationIssue): string {
+  const location = issue.taskId ?? issue.path ?? "context";
+  const criterion =
+    issue.criterionId === undefined ? "" : ` (criterion ${issue.criterionId})`;
+  return `${location}${criterion}: ${issue.title} — ${issue.description}`;
+}
+
 export interface PlanRepairPromptInput {
   execution: GraphWorkflowExecution;
   contextId: string;
@@ -186,7 +200,7 @@ function loopOperationVocabulary(loop: PlanRepairLoopContext): string[] {
         ]
       : []),
     `{"type": "amend-loop-predicate", "loopGroupId": "${loop.loopGroupId}", "until": {"schema": {"type": "object", "properties": {}, "required": []}}, "rationale": "<REQUIRED: why the exit bar moves>"}`,
-    `{"type": "edit-loop-template", "loopGroupId": "${loop.loopGroupId}", "operations": [{"type": "update-context", "contextId": "<TEMPLATE context id>", "title": "...", "description": "...", "acceptanceCriteria": "..."}, {"type": "add-task", "contextId": "<TEMPLATE context id>", "title": "...", "instructions": "..."}, {"type": "update-task", "taskId": "<TEMPLATE task id>", "instructions": "..."}, {"type": "remove-task", "taskId": "<TEMPLATE task id>"}, {"type": "reorder-tasks", "contextId": "<TEMPLATE context id>", "orderedTaskIds": ["..."]}]}`,
+    `{"type": "edit-loop-template", "loopGroupId": "${loop.loopGroupId}", "operations": [{"type": "update-context", "contextId": "<TEMPLATE context id>", "title": "...", "description": "...", "acceptanceCriteria": [{"id": "<kebab-case>", "statement": "..."}]}, {"type": "add-task", "contextId": "<TEMPLATE context id>", "title": "...", "instructions": "..."}, {"type": "update-task", "taskId": "<TEMPLATE task id>", "instructions": "..."}, {"type": "remove-task", "taskId": "<TEMPLATE task id>"}, {"type": "reorder-tasks", "contextId": "<TEMPLATE context id>", "orderedTaskIds": ["..."]}]}`,
     "```",
     "",
     ...(loop.scope === "execution"
@@ -240,11 +254,12 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
   );
 
   if (execution.charter) {
+    // The halted context's logical authored id: scoped sources bind authored
+    // ids, so a halted loop instance renders under its template id.
     sections.push(
       renderCharterPromptSection(
         execution.charter,
-        [],
-        execution.charterAmendments,
+        resolveLogicalAuthoredContextId({ execution, contextId }) ?? contextId,
       ),
     );
   }
@@ -290,7 +305,7 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
             .map((task) => `    - ${task.id}: ${task.title}`);
           return [
             `- \`${entry.id}\` — ${entry.title}`,
-            `    AC: ${entry.acceptanceCriteria}`,
+            `    AC: ${acceptanceCriteriaRecordListText(entry.acceptanceCriteria)}`,
             ...templateTasks,
           ].join("\n");
         }),
@@ -305,7 +320,7 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
         ...(context.description ? ["", context.description] : []),
         "",
         "### Acceptance criteria",
-        context.acceptanceCriteria,
+        acceptanceCriteriaRecordListText(context.acceptanceCriteria),
         // Without the declared contract in view, an `output_schema_validation`
         // trip reads as a work failure and the agent repairs the wrong thing.
         ...(context.outputSchema
@@ -376,14 +391,12 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
               [
                 `  - ${specialist.assignmentId} (${specialist.profile.tier}/${specialist.profile.id} rev ${specialist.profile.revision}) [${specialist.pass ? "pass" : "fail"}]: ${specialist.summary}`,
                 ...specialist.issues.map(
-                  (issue) =>
-                    `      - ${issue.taskId ?? issue.path ?? "context"}: ${issue.title} — ${issue.description}`,
+                  (issue) => `      - ${renderIssueEvidence(issue)}`,
                 ),
               ].join("\n"),
             )
           : verdict.issues.map(
-              (issue) =>
-                `    - ${issue.taskId ?? issue.path ?? "context"}: ${issue.title} — ${issue.description}`,
+              (issue) => `    - ${renderIssueEvidence(issue)}`,
             );
       return [
         `${index + 1}. [${verdict.pass ? "pass" : "fail"}] ${verdict.summary}`,
@@ -467,13 +480,15 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
       "Choose live-edit operations from this vocabulary ONLY (plan artifacts, plus the one narrowing operation below; no structural graph changes, no gate or config controls). These are the logical operation shapes; the strict transport envelope is shown in the Output section:",
       "```jsonc",
       '{"type": "amend-charter", "rationale": "<required: why the charter changes>", "mission": "...", "conventions": ["..."], "nonGoals": ["..."], "vocabulary": ["..."], "testStrategy": "...", "knownAmbiguities": ["..."], "invariants": [{"id": "...", "statement": "...", "appliesTo": {"contextIds": ["..."]}}]}  // include only the charter fields you are changing',
-      '{"type": "update-context", "contextId": "<id>", "title": "...", "description": "...", "acceptanceCriteria": "...", "outputSchema": {"type": "object", "properties": {}} /* or null to drop it */, "placement": {"lane": "<laneId>", "mode": "full" | "readOnly" | "owned", "ownedPaths": ["<repo-relative path>"] /* mode "owned" only */} /* replaces the placement wholesale */, "iterationPolicy": {"maxIterations": 10, "continuity": {"enabled": true}}, "circuitBreaker": {"consecutiveFailureThreshold": 3}}  // include only the fields you are changing',
+      '{"type": "update-context", "contextId": "<id>", "title": "...", "description": "...", "acceptanceCriteria": [{"id": "<kebab-case>", "statement": "..."}], "outputSchema": {"type": "object", "properties": {}} /* or null to drop it */, "placement": {"lane": "<laneId>", "mode": "full" | "readOnly" | "owned", "ownedPaths": ["<repo-relative path>"] /* mode "owned" only */} /* replaces the placement wholesale */, "iterationPolicy": {"maxIterations": 10, "continuity": {"enabled": true}}, "circuitBreaker": {"consecutiveFailureThreshold": 3}}  // include only the fields you are changing',
       '{"type": "add-task", "contextId": "<id>", "title": "...", "instructions": "..."}',
       '{"type": "update-task", "taskId": "<id>", "title": "...", "instructions": "..."}  // include only the fields you are changing',
       '{"type": "remove-task", "taskId": "<id>"}',
       '{"type": "reorder-tasks", "contextId": "<id>", "orderedTaskIds": ["<taskId>", "..."]}',
       '{"type": "update-validator-assignment", "contextId": "<id>", "assignmentId": "<id>", "instructions": "...", "authority": "advisory"}  // include only the fields you are changing',
       "```",
+      "",
+      "`acceptanceCriteria` is an ordered list of `{id, statement}` records (kebab-case ids, unique within the context). `update-context` replaces the WHOLE value — per-criterion operations do not exist — so include every record the context should keep, verbatim, not just the ones you are changing: validator verdicts cite criterion ids, and a dropped or renamed id orphans the citations that name it.",
       ...(input.loop ? loopOperationVocabulary(input.loop) : []),
       "",
       'The last operation is the ONLY one that reaches a reviewer, and it narrows: it rewrites what one validator is told to judge, or takes its blocking authority away so its findings become non-blocking advisories. It cannot grant blocking authority (`"authority": "blocking"` is refused), add or remove a reviewer, or change which agent runs one. Use it when a blocking validator is holding the context against a standard the plan never meant it to enforce — not to silence a reviewer whose objection is correct.',
@@ -482,7 +497,7 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
       "",
       "Return the structured verdict: `planningDefect` (boolean), `diagnosis` (your root-cause analysis — it becomes the halt summary when you decline), and `operations` (empty when planningDefect is false).",
       "Each `operations` entry MUST use this transport envelope: `type` is the logical operation's type, and `payload` is a JSON-encoded object string containing every other field. Do not repeat `type` inside `payload`.",
-      'Example: `{ "planningDefect": true, "diagnosis": "The criterion names a removed endpoint.", "operations": [{ "type": "update-context", "payload": "{\\"contextId\\":\\"context-implement\\",\\"acceptanceCriteria\\":\\"Use the supported endpoint.\\"}" }] }`',
+      'Example: `{ "planningDefect": true, "diagnosis": "The criterion names a removed endpoint.", "operations": [{ "type": "update-context", "payload": "{\\"contextId\\":\\"context-implement\\",\\"acceptanceCriteria\\":[{\\"id\\":\\"ac-1\\",\\"statement\\":\\"Use the supported endpoint.\\"}]}" }] }`',
     ].join("\n"),
   );
 

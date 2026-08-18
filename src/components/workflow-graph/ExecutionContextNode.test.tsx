@@ -94,6 +94,49 @@ describe("ExecutionContextNode — output schema glyph (R7.7)", () => {
   });
 });
 
+// #69 change 4 stage 1: the node displays the context's acceptance criteria
+// through the canonical text rendering — numbered records citing ids for
+// record-shaped values, the prose verbatim for legacy values.
+describe("ExecutionContextNode — acceptance criteria records", () => {
+  it("displays record-shaped criteria as numbered records citing ids", () => {
+    renderNode(
+      makeData({
+        context: {
+          ...makeData().context,
+          acceptanceCriteria: [
+            { id: "ac-1", statement: "A verdict is recorded" },
+            { id: "audit-log", statement: "The audit trail is complete" },
+          ],
+        },
+      }),
+    );
+
+    const block = screen.getByTestId("node-criteria");
+    expect(block).toHaveTextContent("1. [ac-1] A verdict is recorded");
+    expect(block).toHaveTextContent(
+      "2. [audit-log] The audit trail is complete",
+    );
+  });
+
+  it("displays legacy prose criteria verbatim", () => {
+    renderNode(makeData());
+
+    expect(screen.getByTestId("node-criteria")).toHaveTextContent(
+      "A verdict is recorded.",
+    );
+  });
+
+  it("renders no criteria block for the builder's empty-prose seed", () => {
+    renderNode(
+      makeData({
+        context: { ...makeData().context, acceptanceCriteria: "" },
+      }),
+    );
+
+    expect(screen.queryByTestId("node-criteria")).toBeNull();
+  });
+});
+
 describe("ExecutionContextNode — skipped contexts (R13.1)", () => {
   const skipped = {
     waitState: { kind: "skipped" } as const,

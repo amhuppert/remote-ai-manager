@@ -8,7 +8,13 @@ import {
   createSpecExecutionBindingGraphContract,
   createSpecExecutionBindingPorts,
 } from "./execution-binding-service";
+import { criterionRecordsOf } from "@/lib/workflow-graph/criteria/criterion-records";
 import {
+  resolvedWorkflowSemanticDefinitionSchema,
+  workflowSemanticDefinitionSchema,
+} from "@/lib/workflow-graph/definition-schemas";
+import {
+  createResolvedWorkflowDefinition,
   createWorkflowDefinitionRecord,
   createWorkflowExecution,
 } from "@/lib/workflow-graph/test-fixtures";
@@ -136,6 +142,65 @@ describe("spec execution binding graph contract", () => {
     expect(() => contract.loadLiveEdit(crossCandidate)).toThrow(
       SpecExecutionBindingMismatchError,
     );
+  });
+
+  it("binds claims unchanged against a records-authored plan", () => {
+    // The same bound run as above, launched from a plan whose contexts author
+    // acceptance criteria as records (#69 change 4 stage 1) instead of prose.
+    // Both records-shaped definitions are re-parsed through the production
+    // schemas, so a schema that stopped accepting records fails here rather
+    // than sliding through the plain-object fixture builder.
+    const launch = createWorkflowDefinitionRecord();
+    const resolved = createResolvedWorkflowDefinition();
+    const bound = createWorkflowExecution({
+      id: WORKFLOW_EXECUTION_ID,
+      origin: {
+        kind: "spec_delivery",
+        specSlug: "spec-bound",
+        candidateId: "candidate-bound",
+      },
+      launchDocument: {
+        name: launch.name,
+        description: launch.description,
+        definition: workflowSemanticDefinitionSchema.parse({
+          ...launch.definition,
+          executionContexts: launch.definition.executionContexts.map(
+            (context) => ({
+              ...context,
+              acceptanceCriteria: criterionRecordsOf(
+                context.acceptanceCriteria,
+              ),
+            }),
+          ),
+        }),
+        layout: launch.layout,
+      },
+      workingDefinition: resolvedWorkflowSemanticDefinitionSchema.parse({
+        ...resolved,
+        executionContexts: resolved.executionContexts.map((context) => ({
+          ...context,
+          acceptanceCriteria: criterionRecordsOf(context.acceptanceCriteria),
+        })),
+      }),
+    });
+    const contract = createSpecExecutionBindingGraphContract(
+      createSpecExecutionBindingPorts(reader()),
+    );
+
+    const liveEdit = contract.loadLiveEdit(bound);
+    expect(liveEdit.accountabilityCoverageGroups).toEqual([
+      {
+        bindingKey: "criterion-a",
+        claimantContextIds: ["context-implement", "context-verify"],
+      },
+      {
+        bindingKey: "criterion-b",
+        claimantContextIds: ["context-implement", "context-verify"],
+      },
+    ]);
+    expect(contract.validateTaskCompletion(bound, "task-implement-1")).toEqual({
+      ok: true,
+    });
   });
 
   it("protects bound criteria at the ordinary live-edit frontier", () => {

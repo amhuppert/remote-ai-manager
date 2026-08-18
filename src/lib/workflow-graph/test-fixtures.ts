@@ -29,6 +29,7 @@ import type {
 } from "@/lib/workflow-graph/config-schemas";
 import type { AgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
+import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import { deriveTemplateOriginFromSeedFields } from "@/lib/workflow-graph/execution-origin";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import {
@@ -198,6 +199,35 @@ export function stubAssignmentSnapshotPreparation(): (
     });
 }
 
+// The authored-shape twin of makeTestCharter's source list: definition
+// fixtures feed authored write paths (validateAuthoredDefinition, the
+// definition mutation schema), which refuse the retired accessPolicy field and
+// legacy prose appliesTo. Execution fixtures keep makeTestCharter()'s
+// legacy-shaped sources — frozen execution charters exercise persisted
+// tolerance.
+function makeAuthoredTestCharter(): WorkflowCharter {
+  return makeTestCharter({
+    sourcesOfTruth: [
+      {
+        rank: 1,
+        id: "design-doc",
+        label: "Approved design document",
+        type: "document",
+        locator: ".kiro/specs/workflow-charter/design.md",
+        description: "The authoritative architecture for this workflow",
+      },
+      {
+        rank: 2,
+        id: "acceptance-criteria",
+        label: "Per-context acceptance criteria",
+        type: "spec",
+        locator: "context.acceptanceCriteria",
+        description: "Context-level criteria authored by the planner",
+      },
+    ],
+  });
+}
+
 export function createWorkflowDefinition(
   overrides: Partial<WorkflowSemanticDefinition> = {},
 ): WorkflowSemanticDefinition {
@@ -212,7 +242,7 @@ export function createWorkflowDefinition(
         commands: { mode: "project" },
       },
     },
-    charter: makeTestCharter(),
+    charter: makeAuthoredTestCharter(),
     parameters: [],
     prerequisites: [],
     executionContexts: [

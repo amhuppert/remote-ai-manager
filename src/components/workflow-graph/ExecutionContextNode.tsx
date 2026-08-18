@@ -19,6 +19,7 @@ import {
 } from "./derive-graph";
 import type { ContextWaitState } from "./derive-wait-state";
 import { backendLabel, backendToneToken } from "@/lib/agent-backends/catalog";
+import { acceptanceCriteriaText } from "@/lib/workflow-graph/criteria/criterion-records";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 
 type WaitKind = ContextWaitState["kind"];
@@ -538,6 +539,23 @@ export default function ExecutionContextNode({
       {context.description && (
         <div className="relative z-[1] mb-[14px] line-clamp-3 overflow-hidden text-[0.72rem] leading-[1.5] font-normal text-text-secondary">
           {context.description}
+        </div>
+      )}
+
+      {/* The canonical criteria rendering (#69 change 4 stage 1): numbered
+          `[id]` lines for records, the prose verbatim for legacy values.
+          Clamped like the description — the node is a scanning surface, and
+          the inspector's Brief group carries the full list. Blank output (the
+          builder's empty-prose seed) renders no block rather than a bare
+          header. */}
+      {acceptanceCriteriaText(context.acceptanceCriteria).trim() && (
+        <div className="relative z-[1] mb-[10px]" data-testid="node-criteria">
+          <div className="mb-[3px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+            Criteria
+          </div>
+          <div className="line-clamp-3 overflow-hidden text-[0.68rem] leading-[1.5] whitespace-pre-line text-text-secondary">
+            {acceptanceCriteriaText(context.acceptanceCriteria)}
+          </div>
         </div>
       )}
 

@@ -517,7 +517,6 @@ describe("applyDefinitionEdits", () => {
             type: "document",
             locator: "a.md",
             description: "d",
-            accessPolicy: "worktree-relative",
           },
           {
             rank: 1,
@@ -526,7 +525,6 @@ describe("applyDefinitionEdits", () => {
             type: "document",
             locator: "b.md",
             description: "d",
-            accessPolicy: "worktree-relative",
           },
         ],
       }),
@@ -1508,5 +1506,63 @@ describe("applyDefinitionEdits — edge guards and id-addressed edge edits", () 
       (entry) => entry.id === "context-plan",
     );
     expect(context && "routing" in context).toBe(false);
+  });
+});
+
+// #69 change 4 stage 1: acceptanceCriteria on the edit vocabulary is the
+// prose-or-records union, applied with whole-value replacement — there are no
+// per-criterion ops at this stage.
+describe("acceptance-criterion records on definition edits", () => {
+  it("accepts records on add-context and replaces prose wholesale on update-context", () => {
+    const result = applyDefinitionEdits(
+      createWorkflowDefinitionRecord(),
+      ops(
+        {
+          type: "add-context",
+          id: "context-review",
+          title: "Review",
+          acceptanceCriteria: [
+            { id: "findings-triaged", statement: "Every finding is triaged." },
+            { id: "docs-updated", statement: "Docs describe the change." },
+          ],
+        },
+        {
+          type: "update-context",
+          contextId: "context-plan",
+          acceptanceCriteria: [
+            { id: "plan-approved", statement: "The plan is approved." },
+          ],
+        },
+      ),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const contextById = (id: string) =>
+      result.record.definition.executionContexts.find(
+        (entry) => entry.id === id,
+      );
+    expect(contextById("context-review")?.acceptanceCriteria).toEqual([
+      { id: "findings-triaged", statement: "Every finding is triaged." },
+      { id: "docs-updated", statement: "Docs describe the change." },
+    ]);
+    // Whole-value replacement: the prose the fixture context carried is gone,
+    // not merged with or appended to.
+    expect(contextById("context-plan")?.acceptanceCriteria).toEqual([
+      { id: "plan-approved", statement: "The plan is approved." },
+    ]);
+  });
+
+  it("refuses duplicate criterion ids at the operation boundary", () => {
+    expect(() =>
+      ops({
+        type: "update-context",
+        contextId: "context-plan",
+        acceptanceCriteria: [
+          { id: "same-id", statement: "First statement." },
+          { id: "same-id", statement: "Second statement." },
+        ],
+      }),
+    ).toThrow(/duplicate criterion id/);
   });
 });
