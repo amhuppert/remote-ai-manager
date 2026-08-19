@@ -218,7 +218,7 @@ The flag is default-off, cascades like its `allowAgentTaskAdd` sibling, and is e
       "handle": "candidate-a",
       "title": "Candidate: approach A",
       "acceptanceCriteria": [ { "id": "builds-approach-a", "statement": "…" } ],
-      "placement": { "lane": "candidate-a", "mode": "owned", "ownedPaths": ["src/candidate-a"] },
+      "placement": { "lane": "candidate-a", "mode": "full" },
       "outputSchema": { "type": "object", "properties": { "score": { "type": "number" } }, "required": ["score"], "additionalProperties": false }
     }
   ],

@@ -490,6 +490,31 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
   );
 
   it.each(SKILL_DIRS)(
+    "%s scopes ownership lists to same-lane concurrency",
+    (dir) => {
+      const skill = readPackage(dir);
+      const why = "the ownership-list scope rule";
+
+      // `ownedPaths` exists to let unordered same-lane members race safely,
+      // and nothing else. Both non-uses must be named — a sole member of a
+      // lane and a member ordered against every lane-mate take `full` —
+      // because a list where no race exists buys no parallelism and turns
+      // unforeseen legitimate writes into `ownership_violation` halts.
+      expectDocuments(
+        skill,
+        "concurrency mechanism, not a scoping mechanism",
+        why,
+      );
+      expectDocuments(skill, "alone on its lane", why);
+      expectDocuments(skill, "ordered against every lane-mate", why);
+      // The validator rule that makes ordered `full` members legal, in the
+      // shipped refusal vocabulary: disjointness binds only unordered pairs.
+      expectDocuments(skill, "placement-full-access-concurrency", why);
+      expectDocuments(skill, "may share paths freely", why);
+    },
+  );
+
+  it.each(SKILL_DIRS)(
     "%s documents charter invariant scoping as the engine enforces it",
     (dir) => {
       const skill = readPackage(dir);

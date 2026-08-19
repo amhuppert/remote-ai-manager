@@ -76,9 +76,9 @@ This core file covers the ordinary planning path end to end: decompose the objec
    - Prefer a short foundation context before parallel branches when multiple implementers need the same contract.
 
 9. Place every context on a lane.
-   - Decide each context's grade and, for owning contexts, its `ownedPaths` — see [Placement Essentials](#placement-essentials). Placement is required and never inferred.
+   - Decide each context's grade — see [Placement Essentials](#placement-essentials). Placement is required and never inferred, and `ownedPaths` belongs only on contexts that run concurrently with a write-capable member of the same lane.
    - Group contexts that implement disjoint blocks of one change onto a shared lane; keep same-file competition, dependency-mutating work, and self-verifying contexts on their own.
-   - Do this AFTER the edges exist: the disjointness requirement applies only to same-lane members that nothing orders, so a dependency edge is often the cheaper fix for an overlap.
+   - Do this AFTER the edges exist: only same-lane members that nothing orders must be disjoint, so a dependency edge is often the cheaper fix for an overlap — and a member ordered against every lane-mate needs no `ownedPaths` at all (`full`).
 
 Steps 4 and 5 encode an audited failure mode: in a 21-context execution, three release blockers (a gate with no production grant path, events no production code ever published, notification adapters no runtime component imported) shipped past green per-context validation because every acceptance criterion was satisfiable by exported, unit-tested code — and five NO-GO classes recurred independently across contexts because the shared rules lived only in deep spec documents.
 
@@ -164,14 +164,15 @@ Every execution context declares `placement`: which **lane** it runs on, and wha
 | grade | may write | use for |
 |---|---|---|
 | `readOnly` | nothing — scratch only; requires `outputSchema` since captured output is all it delivers | fan-out readers, judges, classifiers, reviewers |
-| `owned` | exactly its `ownedPaths`, shared lane with other members | disjoint implementation blocks running concurrently |
-| `full` | the whole tree, lane to itself while it runs | work whose write surface cannot be enumerated up front |
+| `owned` | exactly its `ownedPaths`, shared lane with other members | unordered write-capable members of a shared lane — the only case that needs a list |
+| `full` | the whole tree, lane to itself while it runs | every other write-capable context: alone on its lane, or ordered against every lane-mate |
 
 Core rules:
 
 - Put readers on the `session` lane: `{ "lane": "session", "mode": "readOnly" }` costs no worktree and no merge.
-- Default implementation contexts to a shared, ownership-disjoint lane; give a context its own lane for same-file competition, dependency-mutating work (lockfiles, codegen), a verification boundary it must own, or `mode: "full"`.
-- Prefer **directory-grain ownership** (`src/lib/state-store`, not eleven file paths inside it): red-green implementers create files that did not exist when you planned, and a file-grain entry denies exactly those writes mid-task.
+- `ownedPaths` is a concurrency mechanism, not a scoping mechanism: declare `mode: "owned"` only for two-plus write-capable members of one lane that no dependency edge orders. A context alone on its lane, ordered against every lane-mate, or parallel with contexts on OTHER lanes takes `full` — a list where no race exists buys no parallelism, and its first unforeseen legitimate write is a denied tool call or an `ownership_violation` halt.
+- Share a lane to save worktrees and joins: ordered `full` members for sequential work, disjoint `owned` members for genuinely parallel blocks of one change. Give a context its own lane for same-file competition, dependency-mutating work (lockfiles, codegen), or a verification boundary it must own.
+- Where ownership does apply, prefer **directory-grain ownership** (`src/lib/state-store`, not eleven file paths inside it): red-green implementers create files that did not exist when you planned, and a file-grain entry denies exactly those writes mid-task.
 - Same-lane members that nothing orders must own pairwise-disjoint prefixes; a shared surface (a barrel, a lockfile, a shared `schemas.ts`) has exactly one owner — home it upstream or dependency-order the members.
 - The envelope is mechanical: agents cannot commit (never write task instructions asking an implementer to commit, stash, or rebase), and an enveloped context's whole-repo verification happens at its lane's join, not per context.
 
@@ -267,7 +268,7 @@ A plan is a JSON object the validate, create, replace, and run endpoints all acc
     "executionContexts": [
       { "id": "auth-setup", "title": "Authentication Setup",
         "acceptanceCriteria": [ { "id": "token-exchange", "statement": "…" } ],
-        "placement": { "lane": "auth", "mode": "owned", "ownedPaths": ["src/lib/auth"] } }
+        "placement": { "lane": "auth", "mode": "full" } }
     ],
     "tasks": [
       { "id": "create-user-schema", "contextId": "auth-setup", "order": 1, "title": "…", "instructions": "…" }
@@ -346,7 +347,7 @@ Review is advisory and never required — an unreviewed plan validates, creates,
 - No conflict between two attached sources is left for execution to arbitrate, and every source locator resolves from a lane worktree — external material was materialized into it before being cited.
 - Optional implementer and validator settings are omitted unless the user requested them or a specific context requires them; any selected `scriptValidator.commands` run only after contexts expected to leave those checks valid.
 - Every agent profile reference was read from `cctl agent list`, not invented (`cctl agent get <tier:id>` for full instructions), and a context that overrides a cohort restates every assignment it wants.
-- Every context carries `placement`, every read-only context carries an `outputSchema`, no write-capable context sits on the `session` lane, and unordered same-lane members own pairwise-disjoint directory-grain prefixes.
+- Every context carries `placement`, every read-only context carries an `outputSchema`, no write-capable context sits on the `session` lane, and unordered same-lane members own pairwise-disjoint directory-grain prefixes — `mode: "owned"` appears only where such an unordered pair exists, and every other write-capable context is `full`.
 - No task instruction asks an implementer to commit, stash, rebase, or clean the tree.
 - If the plan uses guards, loops, or expansion: the checklist in [references/dynamic-control-flow.md](references/dynamic-control-flow.md) passes.
 - `cctl workflow validate` passes on the final `.cc/temp/plan.json`, and any warnings it prints are answered rather than ignored.
