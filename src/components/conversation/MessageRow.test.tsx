@@ -107,6 +107,45 @@ describe("MessageRow", () => {
     expect(screen.getByText("sonnet")).toBeInTheDocument();
   });
 
+  // The rendered clock text is zone-dependent, so these assert the structure
+  // and machine-readable value; the exact formatting is pinned by
+  // format-local-time.test.ts.
+  describe("timestamp", () => {
+    it.each(["user", "assistant", "notice"] as const)(
+      "renders the local time in the label row of a %s message",
+      (role) => {
+        const { container } = renderWithQuery(
+          <MessageRow
+            msg={makeMessage({ role, timestamp: "2024-06-15T10:01:00Z" })}
+            messageIndex={0}
+            isLast={false}
+            selectedBackend="claude"
+            worktreePath="/tmp/proj"
+            lastMessageExtras={null}
+          />,
+        );
+        const time = container.querySelector("time");
+        expect(time).not.toBeNull();
+        expect(time?.getAttribute("datetime")).toBe("2024-06-15T10:01:00Z");
+        expect(time?.textContent).toMatch(/\d{1,2}:\d{2}/);
+      },
+    );
+
+    it("omits the timestamp when the message has none", () => {
+      const { container } = renderWithQuery(
+        <MessageRow
+          msg={makeMessage({ role: "user", timestamp: null })}
+          messageIndex={0}
+          isLast={false}
+          selectedBackend="claude"
+          worktreePath="/tmp/proj"
+          lastMessageExtras={null}
+        />,
+      );
+      expect(container.querySelector("time")).toBeNull();
+    });
+  });
+
   it("always renders the copy action, and shows the fork action only when onFork is provided", () => {
     const withFork = renderWithQuery(
       <MessageRow

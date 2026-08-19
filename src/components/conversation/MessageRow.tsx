@@ -8,6 +8,7 @@ import type { ThinkingBlockExpansionCommand } from "@/components/ThinkingBlock";
 import { EffortLabel } from "@/components/conversation/EffortLabel";
 import DebugActionCard from "@/features/session/debug/DebugActionCard";
 import { backendLabel } from "@/lib/agent-backends/catalog";
+import { formatLocalTime } from "@/lib/shared/format-local-time";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
   ConversationState,
@@ -35,6 +36,33 @@ import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 // utilities.
 export const messageRoleClass =
   "font-mono text-[0.7rem] font-bold uppercase tracking-[0.1em] mb-[6px]";
+
+/**
+ * Trailing clock time for a message label row. Rendered from the viewer's zone,
+ * so it is suppressed from hydration comparison — a server render in a
+ * different zone would otherwise mismatch.
+ */
+function MessageTimestamp({
+  timestamp,
+}: {
+  timestamp: string | null;
+}): React.JSX.Element | null {
+  if (!timestamp) return null;
+  const label = formatLocalTime(timestamp);
+  if (!label) return null;
+  return (
+    <span className="inline text-[0.7rem] font-medium tracking-[0.02em] normal-case">
+      <span className="mx-[5px] text-text-tertiary">&middot;</span>
+      <time
+        dateTime={timestamp}
+        className="text-text-tertiary"
+        suppressHydrationWarning
+      >
+        {label}
+      </time>
+    </span>
+  );
+}
 
 export interface MessageRowProps {
   msg: TranscriptMessage;
@@ -105,6 +133,7 @@ const MessageRow = memo(function MessageRow({
       >
         <div className={cn(messageRoleClass, "text-[var(--text-muted)]")}>
           System
+          <MessageTimestamp timestamp={msg.timestamp} />
         </div>
         <div className="message-content">
           <MessageContent
@@ -161,6 +190,7 @@ const MessageRow = memo(function MessageRow({
             {msg.effort && <EffortLabel effort={msg.effort} />}
           </span>
         )}
+        <MessageTimestamp timestamp={msg.timestamp} />
       </div>
       <div className="message-content">
         <MessageContent
