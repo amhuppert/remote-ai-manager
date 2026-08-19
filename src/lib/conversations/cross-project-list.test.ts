@@ -103,9 +103,7 @@ function makeDeps(
       overrides.getFirstPromptSnippet ?? (async () => null),
     findArtifactsByConversationIds:
       overrides.findArtifactsByConversationIds ?? (() => []),
-    readTranscriptEntries:
-      overrides.readTranscriptEntries ??
-      (async () => ({ entries: [], maxSeq: -1 })),
+    getTranscriptMaxSeq: overrides.getTranscriptMaxSeq ?? (async () => -1),
   };
 }
 
@@ -620,7 +618,7 @@ describe("listAllConversations compaction enrichment", () => {
             createdAt: "2026-07-02T10:00:00Z",
           }),
         ],
-        readTranscriptEntries: async () => ({ entries: [], maxSeq: 421 }),
+        getTranscriptMaxSeq: async () => 421,
       }),
     );
 
@@ -644,9 +642,9 @@ describe("listAllConversations compaction enrichment", () => {
         findArtifactsByConversationIds: () => [
           makeArtifactRow({ conversationId: "c1", coveredEndSeq: 421 }),
         ],
-        readTranscriptEntries: async (path) => {
+        getTranscriptMaxSeq: async (path) => {
           readPaths.push(path);
-          return { entries: [], maxSeq: 500 };
+          return 500;
         },
       }),
     );
@@ -654,6 +652,30 @@ describe("listAllConversations compaction enrichment", () => {
     const { items } = await listAll({ includeArchived: false });
     expect(items[0]?.compactStatus).toBe("stale");
     expect(readPaths).toEqual(["/t/c1.jsonl"]);
+  });
+
+  it("derives staleness from the transcript's max seq alone, asking only for compacted conversations", async () => {
+    const state = singleProjectState([
+      makeConversation({ id: "c1", name: "A", transcriptPath: "/t/c1.jsonl" }),
+      makeConversation({ id: "c2", name: "B", transcriptPath: "/t/c2.jsonl" }),
+    ]);
+    const requested: string[] = [];
+    const listAll = createListAllConversations(
+      makeDeps({
+        ...stateToListDeps(state),
+        findArtifactsByConversationIds: () => [
+          makeArtifactRow({ conversationId: "c1", coveredEndSeq: 421 }),
+        ],
+        getTranscriptMaxSeq: async (transcriptPath) => {
+          requested.push(transcriptPath);
+          return 500;
+        },
+      }),
+    );
+
+    const { items } = await listAll({ includeArchived: false });
+    expect(items[0]?.compactStatus).toBe("stale");
+    expect(requested).toEqual(["/t/c1.jsonl"]);
   });
 
   it("ignores message_compaction and non-complete rows, reads no transcripts for them", async () => {
@@ -673,9 +695,9 @@ describe("listAllConversations compaction enrichment", () => {
           }),
           makeArtifactRow({ conversationId: "c2", status: "pending" }),
         ],
-        readTranscriptEntries: async () => {
+        getTranscriptMaxSeq: async () => {
           reads += 1;
-          return { entries: [], maxSeq: 0 };
+          return 0;
         },
       }),
     );
@@ -736,9 +758,9 @@ describe("listAllConversations compaction enrichment", () => {
         findArtifactsByConversationIds: () => [
           makeArtifactRow({ conversationId: "c1", id: "art-c1" }),
         ],
-        readTranscriptEntries: async () => {
+        getTranscriptMaxSeq: async () => {
           reads += 1;
-          return { entries: [], maxSeq: 0 };
+          return 0;
         },
       }),
     );
@@ -759,7 +781,7 @@ describe("listAllConversations compaction enrichment", () => {
         findArtifactsByConversationIds: () => [
           makeArtifactRow({ conversationId: "c1", id: "art-c1" }),
         ],
-        readTranscriptEntries: async () => {
+        getTranscriptMaxSeq: async () => {
           throw new Error("transcript unreadable");
         },
       }),

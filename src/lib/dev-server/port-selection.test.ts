@@ -3,13 +3,15 @@ import {
   createPortSelectionService,
   type PortSelectionDeps,
 } from "./port-selection";
-import type { PortOwnershipInput, PortOwnershipResult } from "./port-ownership";
+import {
+  createPortOwnershipService,
+  type PortOwnershipInput,
+  type PortOwnershipResult,
+  type PortOwnershipDeps,
+  type ScanRangeMatch,
+} from "./port-ownership";
 
 type ClassifyFn = (input: PortOwnershipInput) => Promise<PortOwnershipResult>;
-
-function depsFrom(classify: ClassifyFn): PortSelectionDeps {
-  return { classifyPort: vi.fn(classify) };
-}
 
 function classifyByMap(map: Record<number, PortOwnershipResult>): ClassifyFn {
   return async ({ port }) => {
@@ -19,18 +21,39 @@ function classifyByMap(map: Record<number, PortOwnershipResult>): ClassifyFn {
   };
 }
 
+/**
+ * Deps whose batched scan and per-port classification agree, as the production
+ * port-ownership service's two entry points do: the scan reports the lowest
+ * in-range listener the map marks as owned by this worktree.
+ */
+function depsFrom(map: Record<number, PortOwnershipResult>): PortSelectionDeps {
+  return {
+    classifyPort: vi.fn(classifyByMap(map)),
+    findOwnedListenerInRange: vi.fn(
+      async ({ basePort, rangeSize }): Promise<ScanRangeMatch> => {
+        for (let offset = 0; offset < rangeSize; offset++) {
+          const port = basePort + offset;
+          const result = map[port];
+          if (result?.status === "owned") {
+            return { status: "owned", port, pid: result.pid, cwd: result.cwd };
+          }
+        }
+        return { status: "none" };
+      },
+    ),
+  };
+}
+
 describe("createPortSelectionService.selectPort", () => {
   describe("unmanaged listener detection", () => {
     it("returns unmanaged-detected when an owned listener exists in range", async () => {
-      const deps = depsFrom(
-        classifyByMap({
-          3000: { status: "available" },
-          3001: { status: "available" },
-          3002: { status: "available" },
-          3003: { status: "available" },
-          3004: { status: "owned", pid: 555, cwd: "/wt" },
-        }),
-      );
+      const deps = depsFrom({
+        3000: { status: "available" },
+        3001: { status: "available" },
+        3002: { status: "available" },
+        3003: { status: "available" },
+        3004: { status: "owned", pid: 555, cwd: "/wt" },
+      });
       const service = createPortSelectionService(deps);
 
       const result = await service.selectPort({
@@ -47,13 +70,11 @@ describe("createPortSelectionService.selectPort", () => {
     });
 
     it("returns the lowest owned port when multiple owned ports exist", async () => {
-      const deps = depsFrom(
-        classifyByMap({
-          3000: { status: "conflict", pid: 1, cwd: "/other" },
-          3002: { status: "owned", pid: 2, cwd: "/wt" },
-          3005: { status: "owned", pid: 3, cwd: "/wt" },
-        }),
-      );
+      const deps = depsFrom({
+        3000: { status: "conflict", pid: 1, cwd: "/other" },
+        3002: { status: "owned", pid: 2, cwd: "/wt" },
+        3005: { status: "owned", pid: 3, cwd: "/wt" },
+      });
       const service = createPortSelectionService(deps);
 
       const result = await service.selectPort({
@@ -69,15 +90,13 @@ describe("createPortSelectionService.selectPort", () => {
     });
 
     it("ignores other-worktree conflicts when reporting unmanaged listener", async () => {
-      const deps = depsFrom(
-        classifyByMap({
-          3000: { status: "conflict", pid: 100, cwd: "/other" },
-          3001: { status: "available" },
-          3002: { status: "available" },
-          3003: { status: "available" },
-          3004: { status: "owned", pid: 200, cwd: "/wt/app" },
-        }),
-      );
+      const deps = depsFrom({
+        3000: { status: "conflict", pid: 100, cwd: "/other" },
+        3001: { status: "available" },
+        3002: { status: "available" },
+        3003: { status: "available" },
+        3004: { status: "owned", pid: 200, cwd: "/wt/app" },
+      });
       const service = createPortSelectionService(deps);
 
       const result = await service.selectPort({
@@ -95,12 +114,10 @@ describe("createPortSelectionService.selectPort", () => {
 
   describe("available-port fallback", () => {
     it("selects the first available port when no owned port exists", async () => {
-      const deps = depsFrom(
-        classifyByMap({
-          3000: { status: "conflict", pid: 1, cwd: "/other" },
-          3001: { status: "available" },
-        }),
-      );
+      const deps = depsFrom({
+        3000: { status: "conflict", pid: 1, cwd: "/other" },
+        3001: { status: "available" },
+      });
       const service = createPortSelectionService(deps);
 
       const result = await service.selectPort({
@@ -115,7 +132,7 @@ describe("createPortSelectionService.selectPort", () => {
     });
 
     it("selects the base port when it is free and nothing is owned", async () => {
-      const deps = depsFrom(classifyByMap({}));
+      const deps = depsFrom({});
       const service = createPortSelectionService(deps);
 
       const result = await service.selectPort({
@@ -130,12 +147,10 @@ describe("createPortSelectionService.selectPort", () => {
     });
 
     it("does not select a port whose ownership is unknown", async () => {
-      const deps = depsFrom(
-        classifyByMap({
-          3000: { status: "unknown", reason: "cwd_unresolved" },
-          3001: { status: "available" },
-        }),
-      );
+      const deps = depsFrom({
+        3000: { status: "unknown", reason: "cwd_unresolved" },
+        3001: { status: "available" },
+      });
       const service = createPortSelectionService(deps);
 
       const result = await service.selectPort({
@@ -156,7 +171,7 @@ describe("createPortSelectionService.selectPort", () => {
       for (let p = 3000; p < 3000 + 5; p++) {
         conflicts[p] = { status: "conflict", pid: p, cwd: `/other/${p}` };
       }
-      const deps = depsFrom(classifyByMap(conflicts));
+      const deps = depsFrom(conflicts);
       const service = createPortSelectionService(deps);
 
       const result = await service.selectPort({
@@ -184,7 +199,7 @@ describe("createPortSelectionService.selectPort", () => {
       for (let p = 3000; p < 3000 + 3; p++) {
         unknowns[p] = { status: "unknown", reason: "cwd_unresolved" };
       }
-      const deps = depsFrom(classifyByMap(unknowns));
+      const deps = depsFrom(unknowns);
       const service = createPortSelectionService(deps);
 
       const result = await service.selectPort({
@@ -209,7 +224,13 @@ describe("createPortSelectionService.selectPort", () => {
       const classify = vi.fn<PortSelectionDeps["classifyPort"]>(
         async () => ({ status: "available" }) as const,
       );
-      const deps: PortSelectionDeps = { classifyPort: classify };
+      const scan = vi.fn<PortSelectionDeps["findOwnedListenerInRange"]>(
+        async () => ({ status: "none" }) as const,
+      );
+      const deps: PortSelectionDeps = {
+        classifyPort: classify,
+        findOwnedListenerInRange: scan,
+      };
       const service = createPortSelectionService(deps);
 
       await service.selectPort({
@@ -224,6 +245,83 @@ describe("createPortSelectionService.selectPort", () => {
         expect(arg.allowedCwd).toBe("/custom/app");
         expect(arg.worktreePath).toBe("/wt");
       }
+      expect(scan).toHaveBeenCalledWith({
+        basePort: 3000,
+        rangeSize: 2,
+        worktreePath: "/wt",
+        allowedCwd: "/custom/app",
+      });
+    });
+  });
+
+  describe("cost of selecting a port", () => {
+    it("classifies at most a couple of ports when the base port is free", async () => {
+      let calls = 0;
+      const deps: PortSelectionDeps = {
+        classifyPort: async () => {
+          calls++;
+          return { status: "available" };
+        },
+        findOwnedListenerInRange: async () => ({ status: "none" }),
+      };
+      const service = createPortSelectionService(deps);
+
+      const result = await service.selectPort({
+        basePort: 3000,
+        worktreePath: "/w",
+        maxAttempts: 100,
+      });
+
+      // Each classification spawns `lsof`/`ss` (~75ms). Selecting a free base
+      // port must cost a bounded number of them, not one per port in range.
+      expect(result).toEqual({ status: "selected", port: 3000 });
+      expect(calls).toBeLessThanOrEqual(2);
+    });
+
+    it("selects the base port when the only in-range listener belongs to another worktree", async () => {
+      const deps = depsFrom({
+        3040: { status: "conflict", pid: 900, cwd: "/elsewhere" },
+      });
+      const service = createPortSelectionService(deps);
+
+      const result = await service.selectPort({
+        basePort: 3000,
+        worktreePath: "/wt",
+        maxAttempts: 100,
+      });
+
+      expect(result).toEqual({ status: "selected", port: 3000 });
+    });
+
+    it("bind-probes the port it selects", async () => {
+      const probed: number[] = [];
+      const ownershipDeps: PortOwnershipDeps = {
+        listListeningPids: async () => [],
+        listAllListeningPorts: async () => new Map(),
+        getProcessCwd: async () => null,
+        realpath: async (p) => p,
+        probePortBindable: async (port) => {
+          probed.push(port);
+          return { bindable: true };
+        },
+      };
+      const ownership = createPortOwnershipService(ownershipDeps);
+      const service = createPortSelectionService({
+        classifyPort: ownership.classifyPort,
+        findOwnedListenerInRange: ownership.findOwnedListenerInRange,
+      });
+
+      const result = await service.selectPort({
+        basePort: 3000,
+        worktreePath: "/wt",
+        maxAttempts: 100,
+      });
+
+      // The bind probe is the only signal that catches root-owned listeners
+      // (tailscaled under `tailscale serve`) that `lsof` cannot see, so the
+      // selected port must still be probed — and only it.
+      expect(result).toEqual({ status: "selected", port: 3000 });
+      expect(probed).toEqual([3000]);
     });
   });
 });

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
-import { timed } from "@/lib/logging/timed";
+import { timed, timedSync } from "@/lib/logging/timed";
 import { formatBareElementHandle } from "@/lib/specs/handles";
 import {
   actorProvenanceSchema,
@@ -438,6 +438,21 @@ export interface SpecsRepo {
     label: string,
     operation: (repo: SpecsRepoTransaction) => T,
   ): Promise<T>;
+  /**
+   * Compose several reads into one answer without entering the global write
+   * queue or `BEGIN IMMEDIATE`.
+   *
+   * The queue serializes every writer in the process, so a read admitted through
+   * {@link transaction} waits behind them and then makes them wait behind it —
+   * for a body that changes nothing. This seam exists for exactly that body, and
+   * {@link SpecsRepoRead} is what enforces it: the operation is handed the read
+   * methods only, so a caller that needs to write cannot use it at all and must
+   * go back to {@link transaction}.
+   */
+  readOutsideWriteQueue<T>(
+    label: string,
+    operation: (repo: SpecsRepoRead) => T,
+  ): T;
   create(input: CreateSpecInput): Promise<CreateSpecResult>;
   findById(specId: string): Promise<Spec | null>;
   listByProject(projectPath: string): Promise<Spec[]>;
@@ -529,6 +544,25 @@ export interface SpecsRepoTransaction {
   removeDraftElement(input: RemoveDraftElementInput): void;
   reorderDraftElement(input: ReorderDraftElementInput): SpecElementVersion;
 }
+
+/**
+ * The half of {@link SpecsRepoTransaction} that answers questions. Every method
+ * here is a pure SELECT, which is what lets {@link SpecsRepo.readOutsideWriteQueue}
+ * run a composed read with no queue admission and no write lock.
+ */
+export type SpecsRepoRead = Pick<
+  SpecsRepoTransaction,
+  | "findById"
+  | "resolve"
+  | "findRevision"
+  | "listRevisions"
+  | "findDraft"
+  | "findLatestApproved"
+  | "getRevisionSnapshot"
+  | "findElementVersion"
+  | "findSupersession"
+  | "listSupersessions"
+>;
 
 function validationFailure(
   entity: string,
@@ -2053,6 +2087,14 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
         writeQueue.withWriteQueue(label, async () =>
           db.transaction(() => operation(transactionRepo)).immediate(),
         ),
+      );
+    },
+    readOutsideWriteQueue(label, operation) {
+      // Deferred, not immediate: the reads still share one snapshot against a
+      // concurrent writer in another process, and a deferred BEGIN takes no
+      // write lock, so nothing here can make a writer wait.
+      return timedSync(logger, "state-store.specs.read", { label }, () =>
+        db.transaction(() => operation(transactionRepo)).deferred(),
       );
     },
     async create(input) {

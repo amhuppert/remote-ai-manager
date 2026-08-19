@@ -29,9 +29,16 @@ import { createSpecEventsPublisher } from "./events";
 const PROJECT_PATH = "/repos/native-sdd";
 const ACTOR = { kind: "agent", conversationId: "conversation-1" } as const;
 
+/** Which composition seam of the specs repository a service call entered. */
+interface SeamCall {
+  readonly seam: "transaction" | "readOutsideWriteQueue";
+  readonly label: string;
+}
+
 let db: Db;
 let service: AuthoringService;
 let specs: SpecsRepo;
+let seamCalls: SeamCall[];
 let published: SSEEvent[];
 let idSequence: number;
 let nowSequence: number;
@@ -44,7 +51,21 @@ beforeEach(() => {
   nowSequence = 0;
 
   const writeQueue = createWriteQueue();
-  specs = createSpecsRepo(db, writeQueue);
+  // The real repository, with only its two composition seams instrumented, so
+  // which seam a service call took is observable without faking any read.
+  const realSpecs = createSpecsRepo(db, writeQueue);
+  seamCalls = [];
+  specs = {
+    ...realSpecs,
+    transaction(label, operation) {
+      seamCalls.push({ seam: "transaction", label });
+      return realSpecs.transaction(label, operation);
+    },
+    readOutsideWriteQueue(label, operation) {
+      seamCalls.push({ seam: "readOutsideWriteQueue", label });
+      return realSpecs.readOutsideWriteQueue(label, operation);
+    },
+  };
   const eventRows = createSpecEventsRepo(db);
   const events = createSpecEventsPublisher({
     appendInTransaction: eventRows.appendInTransaction,
@@ -236,6 +257,33 @@ describe("AuthoringService create and draft writes", () => {
     expect(
       db.prepare("SELECT COUNT(*) AS count FROM spec_events").get(),
     ).toEqual({ count: 0 });
+  });
+
+  // The lint body writes nothing, and both GET paths that call it (the status
+  // projection and the lint endpoint) paid for a write-queue admission anyway —
+  // waiting behind every unrelated writer and then making the next one wait.
+  it("lints a draft through the read seam, never the write-queue transaction", async () => {
+    const created = await createDraft();
+    seamCalls.length = 0;
+
+    const findings = await service.lintDraft(created.spec.id, created.draft.id);
+
+    expect(seamCalls).toEqual([
+      { seam: "readOutsideWriteQueue", label: "specs.authoring.lint-draft" },
+    ]);
+    // The seam swap must not change the answer, and the ownership guard the
+    // lint runs before reading still refuses a revision of another spec.
+    expect(findings).toEqual([
+      {
+        ruleId: "9.2.empty-spec",
+        severity: "blocks_propose",
+        elementHandle: "native-sdd",
+        message: "Empty spec — nothing to review.",
+      },
+    ]);
+    await expect(
+      service.lintDraft("spec-does-not-exist", created.draft.id),
+    ).rejects.toThrow();
   });
 
   it("keeps fast-path evergreen authoring at the design stage", async () => {

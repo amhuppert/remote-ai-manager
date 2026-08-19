@@ -1229,6 +1229,7 @@ describe("executeAgentCall — structured-output repair", () => {
       },
     ];
     const validOutput = { summary: "repaired", artifacts: [] };
+    const repairClock = [1_000, 39_600];
     const runner: AgentTaskRunner = {
       backend: "codex",
       async run(input) {
@@ -1290,6 +1291,9 @@ describe("executeAgentCall — structured-output repair", () => {
       {
         resolveTaskRunner,
         recordContinuity,
+        // Advances only across the repair dispatch, so the reported duration is
+        // the repair's own cost and not the whole call's.
+        now: () => repairClock.shift() ?? 0,
         logger: {
           debug: vi.fn(),
           info,
@@ -1299,6 +1303,7 @@ describe("executeAgentCall — structured-output repair", () => {
       },
     );
 
+    expect(repairClock).toHaveLength(0);
     expect(resolveTaskRunner).toHaveBeenCalledTimes(1);
     expect(requests).toHaveLength(2);
     expect(requests[1]).toMatchObject({
@@ -1340,14 +1345,28 @@ describe("executeAgentCall — structured-output repair", () => {
         requestKind: "task_run",
         attempt: 1,
         issuePaths: ["$.artifacts"],
+        // The cost being repeated is what makes a repair worth bounding, so the
+        // attempt line carries the baseline it is about to spend against.
+        initialCostUsd: 0.1,
+        initialInputTokens: 10,
+        initialOutputTokens: 5,
       }),
     );
+    // A repair that costs a fraction of the original is a different decision
+    // from one that doubles it. No backend reports a task run's elapsed time,
+    // so the facade measures the repair itself and reports it beside the
+    // baseline tokens — the ratio needs no join across events.
     expect(info).toHaveBeenCalledWith(
       "agent_call.facade.structured_output_repair_succeeded",
       expect.objectContaining({
         backend: "codex",
         requestKind: "task_run",
         attempt: 1,
+        repairDurationMs: 38_600,
+        repairCostUsd: 0.2,
+        repairInputTokens: 3,
+        repairOutputTokens: 2,
+        initialCostUsd: 0.1,
       }),
     );
   });

@@ -8,7 +8,13 @@ import {
   neutralizeAmbientCcEnv,
   type SessionEnv,
 } from "@/lib/agent-gateway/session-env";
-import { createLogger } from "../logging";
+import {
+  captureTraceContext,
+  createLogger,
+  runAsTrace,
+  timed,
+  type Logger,
+} from "../logging";
 import { publishEvent, type PublishFn } from "../events/publication";
 import * as defaultTailscale from "../shared/tailscale";
 import * as liveness from "./liveness";
@@ -181,6 +187,11 @@ export function transitionEntryTo(
 // ============================================================
 
 export interface DevServerRegistryDeps {
+  /**
+   * Logger for registry events and `timed()` spans. Defaults to the module
+   * logger; injected in tests to read the emitted structured fields.
+   */
+  logger?: Logger;
   broadcast: PublishFn;
   tailscale: {
     register: typeof defaultTailscale.register;
@@ -231,6 +242,8 @@ const defaultDevServerRegistryDeps: DevServerRegistryDeps = {
 export function createDevServerRegistry(
   deps: DevServerRegistryDeps = defaultDevServerRegistryDeps,
 ) {
+  const log = deps.logger ?? logger;
+
   type RegistryMap = Map<string, DevServerEntry>;
 
   function getRegistry(): RegistryMap {
@@ -322,7 +335,7 @@ export function createDevServerRegistry(
     if (ownership.status !== "owned") {
       // Listener present but cwd unverified, or no listener at all. Leave
       // ownedByThisSession=false and source unset — the safety floor.
-      logger.info("dev-server.source.unverified", {
+      log.info("dev-server.source.unverified", {
         serverName: entry.serverName,
         port,
         ownership: ownership.status,
@@ -334,7 +347,7 @@ export function createDevServerRegistry(
     entry.ownerPid = ownership.pid;
     entry.ownedByThisSession = true;
 
-    logger.info("dev-server.source.cc_started", {
+    log.info("dev-server.source.cc_started", {
       serverName: entry.serverName,
       port,
       ownerPid: entry.ownerPid,
@@ -361,7 +374,7 @@ export function createDevServerRegistry(
         const remoteUrl = deps.getLanUrl(port);
         entry.remoteUrl = remoteUrl;
         broadcastStatus(entry);
-        logger.info("dev-server.lan_url_set", {
+        log.info("dev-server.lan_url_set", {
           serverName: entry.serverName,
           port,
           remoteUrl,
@@ -383,7 +396,7 @@ export function createDevServerRegistry(
         if (entry.status === "running") {
           entry.remoteUrl = remoteUrl ?? null;
           broadcastStatus(entry);
-          logger.info("dev-server.tailscale_registered", {
+          log.info("dev-server.tailscale_registered", {
             serverName: entry.serverName,
             port,
             remoteUrl,
@@ -398,7 +411,7 @@ export function createDevServerRegistry(
     // Timeout — server never started listening. Register anyway so remote URL
     // works if the server starts later (liveness poller will catch actual death).
     if (entry.status === "running") {
-      logger.warn("dev-server.tailscale_poll_timeout", {
+      log.warn("dev-server.tailscale_poll_timeout", {
         serverName: entry.serverName,
         port,
         timeoutMs: TAILSCALE_POLL_TIMEOUT_MS,
@@ -425,7 +438,7 @@ export function createDevServerRegistry(
     const { entry, port, timeoutMs } = params;
     const deadline = Date.now() + timeoutMs;
 
-    logger.info("dev-server.readiness.wait", {
+    log.info("dev-server.readiness.wait", {
       serverName: entry.serverName,
       port,
       timeoutMs,
@@ -437,18 +450,18 @@ export function createDevServerRegistry(
       const listening = await deps.checkPortListening(port);
       if (listening) {
         if (entry.status !== "starting") return;
-        logger.info("dev-server.readiness.ready", {
+        log.info("dev-server.readiness.ready", {
           serverName: entry.serverName,
           port,
         });
         transitionTo(entry, "running", { port, remoteUrl: null });
-        logger.info("dev-server.running", {
+        log.info("dev-server.running", {
           serverName: entry.serverName,
           port,
         });
 
         classifyEntrySource(entry, port).catch((err) => {
-          logger.warn("dev-server.source.classify_error", {
+          log.warn("dev-server.source.classify_error", {
             serverName: entry.serverName,
             port,
             error: getErrorMessage(err),
@@ -456,7 +469,7 @@ export function createDevServerRegistry(
         });
 
         deferredRemoteUrlRegister(entry, port).catch((err) => {
-          logger.warn("dev-server.remote_url_deferred_error", {
+          log.warn("dev-server.remote_url_deferred_error", {
             serverName: entry.serverName,
             port,
             error: getErrorMessage(err),
@@ -469,7 +482,7 @@ export function createDevServerRegistry(
     }
 
     if (entry.status !== "starting") return;
-    logger.warn("dev-server.readiness.timeout", {
+    log.warn("dev-server.readiness.timeout", {
       serverName: entry.serverName,
       port,
       timeoutMs,
@@ -565,7 +578,7 @@ export function createDevServerRegistry(
     // Auto-start liveness poller when first server is registered
     deps.livenessStart();
 
-    logger.info("dev-server.start.cc_assigned_port", {
+    log.info("dev-server.start.cc_assigned_port", {
       serverName,
       command,
       worktreePath,
@@ -576,7 +589,7 @@ export function createDevServerRegistry(
       pid: child.pid,
     });
 
-    logger.info("dev-server.start", {
+    log.info("dev-server.start", {
       serverName,
       command,
       worktreePath,
@@ -593,12 +606,28 @@ export function createDevServerRegistry(
       }
     });
 
-    runCcAssignedReadinessProbe({
-      entry,
-      port: startMode.port,
-      timeoutMs: startMode.readinessTimeoutMs,
-    }).catch((err) => {
-      logger.warn("dev-server.readiness.error", {
+    // The probe outlives the request that started the server, so it is its own
+    // background unit of work: replay the starting caller's trace so the
+    // probe's spans correlate with that request instead of an orphan id, and
+    // label the action as the probe rather than whatever initiated the start.
+    const startingTrace = captureTraceContext();
+    runAsTrace(
+      "dev-server.readiness.probe",
+      () =>
+        timed(
+          log,
+          "dev-server.readiness.probe",
+          { serverName, port: startMode.port },
+          () =>
+            runCcAssignedReadinessProbe({
+              entry,
+              port: startMode.port,
+              timeoutMs: startMode.readinessTimeoutMs,
+            }),
+        ),
+      startingTrace,
+    ).catch((err) => {
+      log.warn("dev-server.readiness.error", {
         serverName,
         port: startMode.port,
         error: getErrorMessage(err),
@@ -617,14 +646,14 @@ export function createDevServerRegistry(
       entry._process = null;
       closeLogStream(entry);
 
-      logger.info("dev-server.exit", { serverName, code, signal });
+      log.info("dev-server.exit", { serverName, code, signal });
 
       if (entry.status === "starting") {
         const output = entry.recentOutput.slice(-10).join("\n");
         transitionTo(entry, "error", {
           errorMessage: `Process exited (code=${code}, signal=${signal}) before port ${startMode.port} ever listening.\n${output}`,
         });
-        logger.error("dev-server.error", {
+        log.error("dev-server.error", {
           serverName,
           error: entry.errorMessage,
           recentOutput: entry.recentOutput.slice(-10),
@@ -632,7 +661,7 @@ export function createDevServerRegistry(
       } else if (entry.status === "running" && entry.port) {
         const alive = await isPortListening(entry.port);
         if (!alive) {
-          logger.warn("dev-server.unexpected_exit", {
+          log.warn("dev-server.unexpected_exit", {
             serverName,
             port: entry.port,
             code,
@@ -657,7 +686,7 @@ export function createDevServerRegistry(
       entry._process = null;
       closeLogStream(entry);
 
-      logger.error("dev-server.error", {
+      log.error("dev-server.error", {
         serverName,
         error: err.message,
       });
@@ -687,7 +716,7 @@ export function createDevServerRegistry(
     if (!entry) return;
     if (entry.status !== "running" && entry.status !== "starting") return;
 
-    logger.info("dev-server.stop", {
+    log.info("dev-server.stop", {
       serverName,
       port: entry.port,
       pid: entry._pid,
@@ -735,7 +764,7 @@ export function createDevServerRegistry(
 
     if (stopWarning) {
       entry.errorMessage = stopWarning;
-      logger.warn("dev-server.cleanup.ownership_failed", {
+      log.warn("dev-server.cleanup.ownership_failed", {
         serverName,
         port: entry.port,
         worktreePath: entry.worktreePath,
@@ -785,7 +814,7 @@ export function createDevServerRegistry(
         path.resolve(e.worktreePath) === target &&
         (e.status === "running" || e.status === "starting"),
     );
-    logger.info("dev-server.stop_all_for_worktree", {
+    log.info("dev-server.stop_all_for_worktree", {
       projectPath: params.projectPath,
       worktreePath: params.worktreePath,
       matched: matches.length,
@@ -874,7 +903,7 @@ export function createDevServerRegistry(
     const killed: number[] = [];
     const skipped: Array<{ pid: number; reason: string; cwd?: string }> = [];
 
-    logger.info("dev-server.stop.listener_lookup", { port, worktreePath });
+    log.info("dev-server.stop.listener_lookup", { port, worktreePath });
 
     const ownership = await deps.classifyPortOwnership({
       port,
@@ -883,12 +912,12 @@ export function createDevServerRegistry(
     });
 
     if (ownership.status === "available") {
-      logger.info("dev-server.stop.listener_lookup", { port, found: 0 });
+      log.info("dev-server.stop.listener_lookup", { port, found: 0 });
       return { killed, skipped };
     }
 
     if (ownership.status === "unknown") {
-      logger.warn("dev-server.stop.unverified_owner", {
+      log.warn("dev-server.stop.unverified_owner", {
         port,
         worktreePath,
         reason: ownership.reason,
@@ -898,7 +927,7 @@ export function createDevServerRegistry(
         pid: 0,
         reason: `ownership_unknown: ${ownership.reason}`,
       });
-      logger.warn("dev-server.stop.kill_skipped", {
+      log.warn("dev-server.stop.kill_skipped", {
         port,
         worktreePath,
         skipped,
@@ -918,7 +947,7 @@ export function createDevServerRegistry(
         reason,
       };
       if (ownership.cwd !== null) skip.cwd = ownership.cwd;
-      logger.warn("dev-server.stop.unverified_owner", {
+      log.warn("dev-server.stop.unverified_owner", {
         port,
         pid: ownership.pid,
         cwd: ownership.cwd,
@@ -928,7 +957,7 @@ export function createDevServerRegistry(
         ownership: "conflict",
       });
       skipped.push(skip);
-      logger.warn("dev-server.stop.kill_skipped", {
+      log.warn("dev-server.stop.kill_skipped", {
         port,
         worktreePath,
         skipped,
@@ -937,10 +966,10 @@ export function createDevServerRegistry(
     }
 
     const { pid, cwd } = ownership;
-    logger.info("dev-server.stop.listener_verified", { port, pid, cwd });
+    log.info("dev-server.stop.listener_verified", { port, pid, cwd });
 
     const sentTerm = deps.sendSignal(pid, "SIGTERM");
-    logger.info("dev-server.stop.kill_signal", {
+    log.info("dev-server.stop.kill_signal", {
       port,
       pid,
       signal: "SIGTERM",
@@ -955,7 +984,7 @@ export function createDevServerRegistry(
 
     if (deps.isProcessAlive(pid)) {
       const sentKill = deps.sendSignal(pid, "SIGKILL");
-      logger.info("dev-server.stop.kill_signal", {
+      log.info("dev-server.stop.kill_signal", {
         port,
         pid,
         signal: "SIGKILL",

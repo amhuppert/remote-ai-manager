@@ -90,6 +90,40 @@ export type ValidationPollResponse = z.infer<
   typeof validationPollResponseSchema
 >;
 
+/**
+ * Server ceiling on a status long-poll. It must stay well under the run
+ * lease TTL (`DEFAULT_LEASE_TTL_MS`, 60s): the lease is renewed once per poll
+ * request, so the hold budget is also the gap between renewals, and a budget
+ * approaching the TTL would let a healthy waiting submitter's run be reaped
+ * by the lease sweep.
+ */
+export const VALIDATION_POLL_MAX_WAIT_MS = 25_000;
+
+export const validationPollQuerySchema = z.object({
+  /**
+   * How long the server may hold the request waiting for the run to move.
+   * Absent, empty, or zero means "answer from current state", which is what
+   * keeps a one-shot status read — and a CLI that predates the parameter —
+   * instant. An over-cap budget is clamped rather than refused: the caller is
+   * expressing "hold as long as you can" and the server owns the ceiling. A
+   * value that cannot be read as whole milliseconds is a caller defect and is
+   * refused, because guessing at it would silently change the wait.
+   */
+  waitMs: z
+    .string()
+    .nullish()
+    .transform((raw) => (raw ?? "").trim())
+    .refine((raw) => raw === "" || /^\d+$/.test(raw), {
+      message: "waitMs must be a whole number of milliseconds",
+    })
+    .transform((raw) =>
+      raw === ""
+        ? 0
+        : Math.min(Number.parseInt(raw, 10), VALIDATION_POLL_MAX_WAIT_MS),
+    ),
+});
+export type ValidationPollQuery = z.infer<typeof validationPollQuerySchema>;
+
 export const validationCancelResponseSchema = z.object({
   cancelled: z.literal(true),
 });

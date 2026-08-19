@@ -26,18 +26,19 @@ import {
   type ValidationRunSubmission,
   type ValidationScheduler,
 } from "./scheduler";
-import type {
-  GlobalValidationConfig,
-  RepoValidationConfig,
-  ValidationCommandCost,
-  ValidationLease,
-  ValidationRunEventPhase,
-  ValidationRunRecord,
-  ValidationRunResult,
-  ValidationRunSource,
-  ValidationRunStatus,
-  ValidationScope,
-  ValidationWorkflowRole,
+import {
+  isTerminalValidationRunStatus,
+  type GlobalValidationConfig,
+  type RepoValidationConfig,
+  type ValidationCommandCost,
+  type ValidationLease,
+  type ValidationRunEventPhase,
+  type ValidationRunRecord,
+  type ValidationRunResult,
+  type ValidationRunSource,
+  type ValidationRunStatus,
+  type ValidationScope,
+  type ValidationWorkflowRole,
 } from "./schemas";
 import { resolveValidationExecution } from "./command-resolution";
 import { resolveSubmissionCost } from "./cost-resolution";
@@ -293,6 +294,13 @@ export interface ValidationService {
    * cancellation, and shutdown interruption.
    */
   waitForCompletion(runId: string): Promise<ValidationRunResult>;
+  /**
+   * Resolves when any lifecycle phase is published for `runId` — admission,
+   * start, or a terminal verdict — or as soon as `signal` aborts. Never
+   * rejects and carries no payload: it is a "something moved, read again"
+   * signal for a caller that then re-reads through `poll`.
+   */
+  waitForStatusChange(runId: string, signal?: AbortSignal): Promise<void>;
   /** Status + terminal result; renews the lease when a token is supplied. */
   poll(
     runId: string,
@@ -365,6 +373,13 @@ export function createValidationService(
     string,
     Array<(result: ValidationRunResult) => void>
   >();
+  /**
+   * Readers holding a status request open for a run, keyed by run. Unlike
+   * `completionWaiters` these settle on every phase (a queued run's admission
+   * is progress a held reader must see), and every entry owns its removal, so
+   * a reader that gives up before the run moves leaves nothing behind.
+   */
+  const statusChangeWaiters = new Map<string, Set<() => void>>();
   /** Spawn parameters for queued runs awaiting pump admission. */
   const preparedSpawns = new Map<string, SpawnValidationParams>();
   /**
@@ -452,6 +467,10 @@ export function createValidationService(
       context: { phase, runId: fields.runId },
       publish: deps.publish,
     });
+    // Every transition of an existing run funnels through here, so this is the
+    // one place that can promise a held reader it will be woken. Phases with
+    // no run (pre-admission refusals) have nobody holding on them.
+    if (fields.runId !== null) notifyStatusChange(fields.runId);
   }
 
   function rowMeta(row: ValidationRunRecord): {
@@ -1437,6 +1456,39 @@ export function createValidationService(
     });
   }
 
+  /**
+   * Settle every reader held on `runId`. Only this run's own phases wake it:
+   * queue position also moves when unrelated runs retire, and waking every
+   * reader on every transition would rebuild the storm holding removes.
+   */
+  function notifyStatusChange(runId: string): void {
+    const waiting = statusChangeWaiters.get(runId);
+    if (!waiting) return;
+    statusChangeWaiters.delete(runId);
+    for (const settle of waiting) settle();
+  }
+
+  function waitForStatusChange(
+    runId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (signal?.aborted === true) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const waiting = statusChangeWaiters.get(runId) ?? new Set<() => void>();
+      const settle = (): void => {
+        const current = statusChangeWaiters.get(runId);
+        current?.delete(settle);
+        if (current?.size === 0) statusChangeWaiters.delete(runId);
+        signal?.removeEventListener("abort", settle);
+        resolve();
+      };
+      waiting.add(settle);
+      statusChangeWaiters.set(runId, waiting);
+      signal?.addEventListener("abort", settle, { once: true });
+      logger.debug("validation.status_wait", { runId, waiting: waiting.size });
+    });
+  }
+
   return {
     whenReady: () => ready,
     isAvailable: () => !initFailed,
@@ -1444,6 +1496,7 @@ export function createValidationService(
     list,
     submitSystem,
     waitForCompletion,
+    waitForStatusChange,
 
     poll(runId, leaseToken) {
       if (leaseToken) leases.renew(runId, leaseToken);
@@ -1480,7 +1533,7 @@ export function createValidationService(
     async cancelSystemOwned(runId) {
       const row = deps.repo.findById(runId);
       if (!row || row.leaseToken !== null) return false;
-      if (row.status !== "queued" && row.status !== "running") return false;
+      if (isTerminalValidationRunStatus(row.status)) return false;
       await cancelRun(runId, "cancelled");
       return true;
     },

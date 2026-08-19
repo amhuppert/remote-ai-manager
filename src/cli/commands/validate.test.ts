@@ -15,6 +15,8 @@ const env: CliEnv = {
 };
 
 interface RecordedRequest {
+  /** Full request URL — the only place query parameters are observable. */
+  url: string;
   path: string;
   init: FetchInit;
 }
@@ -55,7 +57,7 @@ function hostWith(
     privateWrites,
     removedFiles,
     async fetch(url, init) {
-      const request = { path: new URL(url).pathname, init };
+      const request = { url, path: new URL(url).pathname, init };
       requests.push(request);
       return respond(request, requests.length - 1);
     },
@@ -742,6 +744,41 @@ function passingHost(
   });
 }
 
+function acceptedHold(): Response {
+  return json(
+    {
+      kind: "accepted",
+      runId: "vrun-hold",
+      status: "running",
+      position: null,
+      lease: {
+        runId: "vrun-hold",
+        token: "lease-hold",
+        expiresAt: "2026-08-05T12:00:00.000Z",
+      },
+      requestedScope: "changed",
+      effectiveScope: "changed",
+    },
+    202,
+  );
+}
+
+function passedHold(): Response {
+  return json({
+    runId: "vrun-hold",
+    status: "passed",
+    position: null,
+    requestedScope: "changed",
+    effectiveScope: "changed",
+    result: {
+      kind: "passed",
+      runId: "vrun-hold",
+      exitCode: 0,
+      output: "",
+    },
+  });
+}
+
 /** Accepts the submission, then never reaches a terminal result. */
 function neverTerminalHost(): TestHost {
   return hostWith((_request, index) => {
@@ -1076,6 +1113,118 @@ describe("cctl validate run — the client wait budget", () => {
 
     expect(result.exitCode).toBe(2);
     expect(host.requests).toEqual([]);
+  });
+
+  it("asks the server to hold the status request up to its long-poll ceiling", async () => {
+    const host = hostWith((_request, index) =>
+      index === 0 ? acceptedHold() : passedHold(),
+    );
+
+    const result = await runCli(
+      ["validate", "run", "test", "--wait", "--timeout", "10m"],
+      env,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const poll = host.requests[1];
+    expect(new URL(poll?.url ?? "").searchParams.get("waitMs")).toBe("25000");
+    // The transport deadline outlives the hold by the response's own slack, so
+    // a server that answers exactly at its ceiling is never cut off.
+    expect(poll?.init.timeoutMs).toBe(27_000);
+  });
+
+  it("caps the hold and the transport deadline by what is left of the budget", async () => {
+    const host = neverTerminalHost();
+
+    const result = await runCli(
+      ["validate", "run", "test", "--wait", "--timeout", "3s"],
+      env,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    const poll = host.requests[1];
+    expect(new URL(poll?.url ?? "").searchParams.get("waitMs")).toBe("1000");
+    expect(poll?.init.timeoutMs).toBe(3_000);
+  });
+
+  it("keeps a one-shot status read instant", async () => {
+    const host = hostWith(() =>
+      json({
+        runId: "vrun-hold",
+        status: "running",
+        position: null,
+        result: null,
+        requestedScope: "changed",
+        effectiveScope: "changed",
+      }),
+    );
+
+    const result = await runCli(["validate", "status", "vrun-hold"], env, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(host.requests[0]?.url).not.toContain("waitMs");
+    expect(host.requests[0]?.init.timeoutMs).toBeUndefined();
+  });
+
+  // A server that predates the hold parameter ignores it and answers at once;
+  // the wait must fall back to its own cadence rather than spin.
+  it("degrades to the established cadence against a server that ignores the hold", async () => {
+    const host = neverTerminalHost();
+
+    const result = await runCli(
+      ["validate", "run", "test", "--wait", "--timeout", "3s", "--json"],
+      env,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
+      code: "wait_timeout",
+      details: { runId: "vrun-slow" },
+    });
+    expect(host.requests).toHaveLength(4);
+  });
+
+  it("retries a hold that reached its own deadline instead of calling the server unreachable", async () => {
+    let now = 1_000;
+    const host = hostWith((request, index) => {
+      if (index === 0) return acceptedHold();
+      if (index === 1) {
+        now += request.init.timeoutMs ?? 0;
+        throw new Error("request aborted at its deadline");
+      }
+      return passedHold();
+    });
+    host.now = () => now;
+
+    const result = await runCli(
+      ["validate", "run", "test", "--wait", "--timeout", "60s"],
+      env,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(host.requests).toHaveLength(3);
+  });
+
+  it("still exits 3 at once when the server is unreachable before the deadline", async () => {
+    const host = hostWith((_request, index) => {
+      if (index === 0) return acceptedHold();
+      throw new Error("connect ECONNREFUSED 127.0.0.1:3000");
+    });
+
+    const result = await runCli(
+      ["validate", "run", "test", "--wait", "--timeout", "60s"],
+      env,
+      host,
+    );
+
+    expect(result.exitCode).toBe(3);
+    expect(host.requests).toHaveLength(2);
+    expect(result.stderr).toContain("cctl doctor");
   });
 });
 

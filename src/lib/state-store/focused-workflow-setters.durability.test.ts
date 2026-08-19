@@ -1772,3 +1772,77 @@ describe("reserveActiveGraphWorkflowExecution — pending artifact reconstructio
     ).toBeNull();
   });
 });
+
+/**
+ * `setActive` skips rewriting `definition_json` when `structuralRevision` has
+ * not moved since this connection's last write for the session. That skip is a
+ * silent data loss the moment the revision is something a caller is trusted to
+ * maintain, so the durable write path derives it from the values themselves —
+ * for every caller of this API, not only the ones that came through the
+ * execution-repository seam.
+ */
+describe("mutateActiveGraphWorkflowExecution — definition-tier dirty fence", () => {
+  it("persists a graph edit whose reducer never advanced structuralRevision", async () => {
+    await seedSessionWithExecution();
+
+    const seeded = await fixture.store.getActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    if (!seeded) throw new Error("no active execution after seeding");
+
+    await fixture.store.mutateActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "test.graph-edit-without-revision-bump",
+      () => ({
+        execution: {
+          ...seeded,
+          // A reducer that edits the graph and leaves the fence alone — the
+          // scheduler and the pre-merge remediation path both do this.
+          workingDefinition: {
+            ...seeded.workingDefinition,
+            approvalRequired: true,
+          },
+        },
+        events: [],
+      }),
+    );
+
+    // Read through a repository that shares no in-memory cache with the writer,
+    // so this is the stored bytes rather than anything held in front of them.
+    const reloaded = createGraphWorkflowExecutionsRepo(fixture.db).getActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(reloaded?.workingDefinition.approvalRequired).toBe(true);
+    expect(reloaded?.structuralRevision).toBe(seeded.structuralRevision + 1);
+  });
+
+  it("leaves the revision alone when a runtime-only tick touches no structural key", async () => {
+    await seedSessionWithExecution();
+
+    const seeded = await fixture.store.getActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    if (!seeded) throw new Error("no active execution after seeding");
+
+    await fixture.store.mutateActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "test.runtime-only-tick",
+      () => ({
+        execution: { ...seeded, status: "paused" },
+        events: [],
+      }),
+    );
+
+    const reloaded = createGraphWorkflowExecutionsRepo(fixture.db).getActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(reloaded?.status).toBe("paused");
+    expect(reloaded?.structuralRevision).toBe(seeded.structuralRevision);
+  });
+});

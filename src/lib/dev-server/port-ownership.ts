@@ -230,13 +230,23 @@ export function createPortOwnershipService(deps: PortOwnershipDeps) {
       };
     }
 
-    const unknown = lastUnknown!;
+    if (lastUnknown) {
+      logger.warn("dev-server.ownership.unknown", {
+        port,
+        pid: lastUnknown.pid,
+        reason: lastUnknown.reason,
+      });
+      return { status: "unknown", reason: lastUnknown.reason };
+    }
+
+    // Every listener PID either matched the worktree (returned above), failed
+    // cwd resolution, or resolved elsewhere, and the PID list was non-empty —
+    // so reaching here means the listener list changed shape underneath us.
     logger.warn("dev-server.ownership.unknown", {
       port,
-      pid: unknown.pid,
-      reason: unknown.reason,
+      reason: "no_listener_classified",
     });
-    return { status: "unknown", reason: unknown.reason };
+    return { status: "unknown", reason: "no_listener_classified" };
   }
 
   /**

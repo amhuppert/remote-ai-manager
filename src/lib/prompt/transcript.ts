@@ -721,6 +721,316 @@ export async function readLastAssistantContent(
   return blocks;
 }
 
+// ============================================================
+// Tail-read: seq of the last visible entry
+// ============================================================
+
+/**
+ * The file primitives the max-seq reader is allowed to touch. Injected so the
+ * bounded-bytes property — the reason this reader exists — is assertable: a
+ * test wraps these and counts what was actually read. `readFullMaxSeq` is part
+ * of the seam for the same reason: it is the one path that reads the whole
+ * file, so leaving it outside would make "bytes consumed" unobservable exactly
+ * where it matters.
+ */
+export interface TranscriptRangeReader {
+  read(
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number,
+  ): Promise<{ bytesRead: number }>;
+  close(): Promise<void>;
+}
+
+export interface TranscriptMaxSeqIO {
+  stat(filePath: string): Promise<{ mtimeMs: number; size: number }>;
+  openRange(filePath: string): Promise<TranscriptRangeReader>;
+  /** Exhaustive parse, used only when a bounded read cannot answer. */
+  readFullMaxSeq(filePath: string): Promise<number>;
+}
+
+const productionMaxSeqIO: TranscriptMaxSeqIO = {
+  stat: (filePath) => stat(filePath),
+  openRange: (filePath) => open(filePath, "r"),
+  readFullMaxSeq: async (filePath) =>
+    (await readTranscriptEntriesWithSeqImpl(filePath)).maxSeq,
+};
+
+const MAX_SEQ_CACHE_MAX = 500;
+const NEWLINE_SCAN_CHUNK_BYTES = 1024 * 1024;
+
+interface MaxSeqCacheEntry {
+  mtimeMs: number;
+  size: number;
+  /**
+   * Number of `split("\n")` segments in the file at `size` — one more than its
+   * newline-byte count. seq IS a segment index, so this is what turns a
+   * window-relative position into the absolute seq the full parse reports.
+   */
+  totalLines: number;
+  maxSeq: number;
+}
+
+/** A cold scan that could not resolve maxSeq from its window carries `null`. */
+interface ColdScan {
+  totalLines: number;
+  maxSeq: number | null;
+}
+
+/**
+ * Count line terminators as BYTES. `readline` would split JSONL on U+2028 /
+ * U+2029, which `JSON.stringify` emits raw inside strings, and every such split
+ * would shift the seq of every line after it.
+ */
+function countNewlineBytes(buf: Buffer): number {
+  let count = 0;
+  for (let i = 0; i < buf.length; i++) {
+    if (buf[i] === 0x0a) count++;
+  }
+  return count;
+}
+
+/**
+ * Index of the last segment that parses into a VISIBLE entry, offset by the
+ * absolute index of `segments[0]`. Mirrors the full parse line-for-line: blank
+ * segments and segments that fail `JSON.parse` are skipped, and a trailing
+ * tool_result line does not count.
+ */
+function lastVisibleSegmentIndex(
+  segments: string[],
+  baseIndex: number,
+): number {
+  for (let j = segments.length - 1; j >= 0; j--) {
+    const line = segments[j];
+    if (line === undefined || line.trim().length === 0) continue;
+    let entry: TranscriptEntry;
+    try {
+      entry = JSON.parse(line) as TranscriptEntry;
+    } catch {
+      continue;
+    }
+    if (isVisibleEntry(entry)) return baseIndex + j;
+  }
+  return -1;
+}
+
+export interface TranscriptMaxSeqReader {
+  read(transcriptPath: string | null): Promise<number>;
+  resetCache(): void;
+}
+
+/**
+ * Read only the seq of a transcript's last visible entry.
+ *
+ * The staleness consumers need one number, and parsing megabytes of NDJSON to
+ * learn it blocks the event loop for every other in-flight request (JSON.parse
+ * is synchronous, so concurrency does not help). This reads a bounded window
+ * instead: a newline-byte scan for the absolute line count plus a tail parse
+ * for the last visible line, then serves later calls from the appended byte
+ * range alone.
+ *
+ * Cached on (mtimeMs, size) like the readers above, and like them it assumes
+ * transcripts are append-only: any path that truncates or rewrites one in place
+ * must reset the cache. A shrink, a same-size rewrite with a new mtime, or an
+ * append whose cached boundary is not a line terminator all force a full
+ * rescan rather than trusting the arithmetic.
+ */
+export function createTranscriptMaxSeqReader(
+  io: TranscriptMaxSeqIO,
+): TranscriptMaxSeqReader {
+  const cache = new Map<string, MaxSeqCacheEntry>();
+
+  function remember(filePath: string, entry: MaxSeqCacheEntry): number {
+    // Bounded eviction via insertion-order (oldest first).
+    if (cache.size >= MAX_SEQ_CACHE_MAX) {
+      const firstKey = cache.keys().next().value;
+      if (firstKey !== undefined) cache.delete(firstKey);
+    }
+    cache.set(filePath, entry);
+    return entry.maxSeq;
+  }
+
+  // A single `read` may return short; loop until the range is filled or the
+  // file ends, so a partial read can never truncate a line silently.
+  async function readRange(
+    reader: TranscriptRangeReader,
+    start: number,
+    length: number,
+  ): Promise<Buffer> {
+    const buf = Buffer.alloc(length);
+    let filled = 0;
+    while (filled < length) {
+      const { bytesRead } = await reader.read(
+        buf,
+        filled,
+        length - filled,
+        start + filled,
+      );
+      if (bytesRead <= 0) break;
+      filled += bytesRead;
+    }
+    return filled === length ? buf : buf.subarray(0, filled);
+  }
+
+  async function coldScan(filePath: string, size: number): Promise<ColdScan> {
+    if (size === 0) return { totalLines: 1, maxSeq: -1 };
+
+    const windowSize = Math.min(size, TAIL_READ_BYTES);
+    const windowStart = size - windowSize;
+    const reader = await io.openRange(filePath);
+    try {
+      // Everything before the tail window is scanned for newline bytes only —
+      // no decode, no parse. The window's own newlines come from the buffer the
+      // parse below needs anyway.
+      let newlines = 0;
+      for (
+        let start = 0;
+        start < windowStart;
+        start += NEWLINE_SCAN_CHUNK_BYTES
+      ) {
+        const chunk = await readRange(
+          reader,
+          start,
+          Math.min(NEWLINE_SCAN_CHUNK_BYTES, windowStart - start),
+        );
+        newlines += countNewlineBytes(chunk);
+      }
+      const tail = await readRange(reader, windowStart, windowSize);
+      const totalLines = newlines + countNewlineBytes(tail) + 1;
+
+      let segments = tail.toString("utf-8").split("\n");
+      if (windowStart > 0) {
+        // The first segment starts before the window; only the full parse can
+        // read it.
+        if (segments.length < 2) return { totalLines, maxSeq: null };
+        segments = segments.slice(1);
+      }
+
+      const maxSeq = lastVisibleSegmentIndex(
+        segments,
+        totalLines - segments.length,
+      );
+      // "No visible entry in the window" is only an answer when the window was
+      // the whole file; otherwise the entry lies further back and guessing -1
+      // would advertise a stale artifact as fresh.
+      if (maxSeq === -1 && windowStart > 0) return { totalLines, maxSeq: null };
+      return { totalLines, maxSeq };
+    } finally {
+      await reader.close();
+    }
+  }
+
+  async function readAppendedRange(
+    filePath: string,
+    cached: MaxSeqCacheEntry,
+    size: number,
+  ): Promise<{ totalLines: number; maxSeq: number } | null> {
+    // Read one byte before the cached end so the append can be proven to start
+    // on a line boundary — without that, the segment arithmetic below silently
+    // shifts every seq.
+    const start = cached.size > 0 ? cached.size - 1 : 0;
+    const reader = await io.openRange(filePath);
+    let appended: Buffer;
+    try {
+      appended = await readRange(reader, start, size - start);
+    } finally {
+      await reader.close();
+    }
+    if (cached.size > 0) {
+      if (appended[0] !== 0x0a) return null;
+      appended = appended.subarray(1);
+    }
+
+    // The cached segment count ends on an empty trailing segment; the appended
+    // bytes extend that segment, so they start at index totalLines - 1.
+    const baseIndex = cached.totalLines - 1;
+    const segments = appended.toString("utf-8").split("\n");
+    const maxSeq = lastVisibleSegmentIndex(segments, baseIndex);
+    return {
+      totalLines: baseIndex + segments.length,
+      maxSeq: maxSeq === -1 ? cached.maxSeq : maxSeq,
+    };
+  }
+
+  return {
+    resetCache() {
+      cache.clear();
+    },
+    async read(transcriptPath: string | null): Promise<number> {
+      if (!transcriptPath) return -1;
+
+      return timed(
+        transcriptLogger,
+        "transcript.max_seq",
+        {},
+        async () => {
+          let stats;
+          try {
+            stats = await io.stat(transcriptPath);
+          } catch {
+            // Missing or unreadable file — parity with the full reader's empty
+            // result, which the staleness consumers read as "not advanced".
+            return -1;
+          }
+
+          const cached = cache.get(transcriptPath);
+          if (
+            cached &&
+            cached.mtimeMs === stats.mtimeMs &&
+            cached.size === stats.size
+          ) {
+            return cached.maxSeq;
+          }
+
+          if (cached && stats.size > cached.size) {
+            const advanced = await readAppendedRange(
+              transcriptPath,
+              cached,
+              stats.size,
+            );
+            if (advanced) {
+              return remember(transcriptPath, {
+                mtimeMs: stats.mtimeMs,
+                size: stats.size,
+                ...advanced,
+              });
+            }
+          }
+
+          const scan = await coldScan(transcriptPath, stats.size);
+          const maxSeq =
+            scan.maxSeq ?? (await io.readFullMaxSeq(transcriptPath));
+          return remember(transcriptPath, {
+            mtimeMs: stats.mtimeMs,
+            size: stats.size,
+            totalLines: scan.totalLines,
+            maxSeq,
+          });
+        },
+        (maxSeq) => ({ maxSeq }),
+      );
+    },
+  };
+}
+
+const productionMaxSeqReader = createTranscriptMaxSeqReader(productionMaxSeqIO);
+
+/**
+ * The seq of the last visible entry in a transcript, or -1 when there is none
+ * (also for a null path or a missing file). Equals
+ * `readTranscriptEntriesWithSeq(path).maxSeq` without materializing entries.
+ */
+export async function getTranscriptMaxSeq(
+  transcriptPath: string | null,
+): Promise<number> {
+  return productionMaxSeqReader.read(transcriptPath);
+}
+
+export function _resetTranscriptMaxSeqCacheForTesting(): void {
+  productionMaxSeqReader.resetCache();
+}
+
 // Cache the fully-parsed transcript message array per file path, keyed on
 // (mtimeMs, size). Polling clients hit the messages endpoint many times per
 // minute while the transcript is unchanged; re-reading and re-parsing the

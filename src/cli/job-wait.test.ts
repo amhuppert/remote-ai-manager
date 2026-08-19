@@ -5,17 +5,20 @@ import { EXIT_OK, EXIT_OPERATION_FAILED, type CliHost } from "./shared";
 interface TestHost extends CliHost {
   sleeps: number[];
   listenerRemoved: boolean;
+  /** Move the injected clock forward, as a poll that takes time would. */
+  advance(ms: number): void;
 }
 
 /**
- * `now` is frozen so only the intended poll interval is charged against the
- * budget: the wait's own accounting, not the machine's clock, decides how many
- * polls a budget buys.
+ * `now` is frozen until a test advances it, so only the intended poll interval
+ * is charged against the budget: the wait's own accounting, not the machine's
+ * clock, decides how many polls a budget buys.
  */
 function testHost(
   options: { signalOnSleep?: "SIGINT" | "SIGTERM" } = {},
 ): TestHost {
   const sleeps: number[] = [];
+  let currentNow = 1_000;
   let signalListener: ((signal: "SIGINT" | "SIGTERM") => void) | null = null;
   let signalSent = false;
   const host: TestHost = {
@@ -37,7 +40,10 @@ function testHost(
         signalListener?.(options.signalOnSleep);
       }
     },
-    now: () => 1_000,
+    now: () => currentNow,
+    advance(ms) {
+      currentNow += ms;
+    },
     onSignal(listener) {
       signalListener = listener;
       return () => {
@@ -126,6 +132,49 @@ describe("awaitJob budget", () => {
 
     expect(result.exitCode).toBe(EXIT_OK);
     expect(seen).toHaveLength(2);
+  });
+
+  // Once a poll can block server-side, charging its duration AND a full
+  // interval on top spends the budget at twice the intended rate.
+  it("treats the interval as a floor on one iteration, not an addition to it", async () => {
+    const seen: Array<JobPollResult<DemoStatus>> = [];
+    const host = testHost();
+
+    const result = await awaitJob(
+      host,
+      demoSpec({
+        async poll() {
+          host.advance(900);
+          seen.push(RUNNING);
+          return RUNNING;
+        },
+      }),
+    );
+
+    expect(seen).toHaveLength(3);
+    expect(host.sleeps).toEqual([100, 100, 100]);
+    expect(result.exitCode).toBe(EXIT_OPERATION_FAILED);
+    expect(result.stderr).toContain("still running after 3s");
+  });
+
+  it("skips the sleep when the poll already spent the whole interval", async () => {
+    const seen: Array<JobPollResult<DemoStatus>> = [];
+    const host = testHost();
+
+    const result = await awaitJob(
+      host,
+      demoSpec({
+        async poll() {
+          host.advance(1_000);
+          seen.push(RUNNING);
+          return RUNNING;
+        },
+      }),
+    );
+
+    expect(seen).toHaveLength(3);
+    expect(host.sleeps).toEqual([]);
+    expect(result.exitCode).toBe(EXIT_OPERATION_FAILED);
   });
 });
 

@@ -770,6 +770,75 @@ describe("cctl ticket attach", () => {
     expect(body.payload.sessionName).toBeNull();
   });
 
+  it("names the still-pending snapshot and its retry command on a conversation attach", async () => {
+    const host = makeHost(() =>
+      jsonResponse(
+        sampleAttachment("att-1", {
+          kind: "conversation",
+          projectPath: "/repos/cc",
+          sessionName: null,
+          conversationId: "conv-42",
+          snapshotKey: null,
+          snapshotCapturedAt: null,
+          snapshotStatus: "pending",
+        }),
+        201,
+      ),
+    );
+    const result = await runCli(
+      [
+        "ticket",
+        "attach",
+        "conversation",
+        "12",
+        "conv-42",
+        "--description",
+        "d",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("snapshot pending");
+    expect(result.stdout).toContain(
+      "cctl ticket attachment refresh 'cc#12' 'att-1'",
+    );
+  });
+
+  it("says nothing about snapshots when the attached conversation is already captured", async () => {
+    const host = makeHost(() =>
+      jsonResponse(
+        sampleAttachment("att-1", {
+          kind: "conversation",
+          projectPath: "/repos/cc",
+          sessionName: null,
+          conversationId: "conv-42",
+          snapshotKey: "k",
+          snapshotCapturedAt: "2026-01-02T00:00:00Z",
+        }),
+        201,
+      ),
+    );
+    const result = await runCli(
+      [
+        "ticket",
+        "attach",
+        "conversation",
+        "12",
+        "conv-42",
+        "--description",
+        "d",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain("snapshot pending");
+    expect(result.stdout).not.toContain("attachment refresh");
+  });
+
   it("exits 2 when no conversation id is available", async () => {
     const host = makeHost(() => jsonResponse({}));
     const result = await runCli(
@@ -1419,6 +1488,60 @@ describe("cctl ticket start", () => {
     expect(result.stdout).toContain("cc#12");
     expect(result.stdout).toContain("ticket-12-fix-the-flaky-gate-1");
     expect(result.stdout).toContain("agent");
+  });
+
+  it("names the conversation snapshots still capturing after the start returns", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        ...startOutput,
+        ticket: {
+          ...startedDetail,
+          attachments: [
+            sampleAttachment("att-pending", {
+              kind: "conversation",
+              projectPath: "/repos/cc",
+              sessionName: null,
+              conversationId: "conv-1",
+              snapshotKey: null,
+              snapshotCapturedAt: null,
+              snapshotStatus: "pending",
+            }),
+            sampleAttachment("att-captured", {
+              kind: "conversation",
+              projectPath: "/repos/cc",
+              sessionName: null,
+              conversationId: "conv-2",
+              snapshotKey: "k",
+              snapshotCapturedAt: "2026-01-02T00:00:00Z",
+            }),
+          ],
+        },
+      }),
+    );
+    const result = await runCli(
+      ["ticket", "start", "12", "--mode", "agent"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("att-pending");
+    expect(result.stdout).toContain(
+      "cctl ticket attachment get 'cc#12' 'att-pending'",
+    );
+    expect(result.stdout).not.toContain("att-captured");
+  });
+
+  it("says nothing about snapshots when every attachment is settled", async () => {
+    const host = makeHost(() => jsonResponse(startOutput));
+    const result = await runCli(
+      ["ticket", "start", "12", "--mode", "agent"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain("pending");
   });
 
   it("reports a prepared start as waiting for the first prompt", async () => {

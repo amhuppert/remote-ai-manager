@@ -358,6 +358,61 @@ describe("dev-server-service", () => {
       expect(result.localUrl).toBe("http://localhost:3001");
     });
 
+    it("times the post-boundary readiness wait and records how long the caller blocked", async () => {
+      const { logger: capturing, logs } = captureLogger();
+      const h = makeHarness();
+      h.deps.logger = capturing;
+      // Advancing clock: the wait's own duration is measured on the injected
+      // clock, so a blocked caller's cost is attributable without wall time.
+      let clock = 0;
+      h.deps.now = () => {
+        clock += 700;
+        return clock;
+      };
+      h.startServer.mockImplementation(
+        async (input: { serverName: string }) => {
+          h.registry.set(
+            input.serverName,
+            makeEntry({ serverName: input.serverName, status: "starting" }),
+          );
+        },
+      );
+      let sleeps = 0;
+      h.deps.sleep = async () => {
+        sleeps++;
+        if (sleeps < 2) return;
+        const entry = h.registry.get("nextjs")!;
+        entry.status = "running";
+        entry.ownedByThisSession = true;
+        entry.port = 3001;
+      };
+
+      const service = createDevServerService(h.deps);
+      const result = await service.ensure({
+        projectPath: "/projects/test",
+        sessionName: "s1",
+        wait: true,
+      });
+
+      expect(result.status).toBe("running");
+
+      const span = logs.find(
+        (l) => l.event === "dev-server.ensure.await_ready.complete",
+      );
+      expect(
+        span,
+        "expected a timed() span for the readiness wait",
+      ).toBeDefined();
+      expect(typeof span!.fields["durationMs"]).toBe("number");
+
+      const outcome = logs.find(
+        (l) => l.event === "dev-server.tool.ensure_wait",
+      );
+      expect(outcome!.fields["attempts"]).toBe(3);
+      expect(typeof outcome!.fields["durationMs"]).toBe("number");
+      expect(outcome!.fields["durationMs"]).toBeGreaterThan(0);
+    });
+
     it("emits a timed() span with durationMs for each synchronous ensure phase", async () => {
       const { logger: capturing, logs } = captureLogger();
       const h = makeHarness();

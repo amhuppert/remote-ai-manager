@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentAuth } from "@/lib/agent-gateway/token";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
@@ -21,6 +21,10 @@ import {
   createValidationCommandsRouteHandlers,
   sessionValidationPOST,
 } from "./route-handlers";
+import {
+  VALIDATION_POLL_MAX_WAIT_MS,
+  validationPollResponseSchema,
+} from "./api-schemas";
 import { validationCommandsResponseSchema } from "./schemas";
 
 const PROJECT_PATH = "/repos/cc";
@@ -44,11 +48,16 @@ function serviceFake(overrides: Partial<ValidationService> = {}): {
   listCallers: ValidationSubmitRequest["caller"][];
   polls: Array<{ runId: string; leaseToken?: string }>;
   cancels: Array<{ runId: string; leaseToken: string }>;
+  statusWaits: Array<{ runId: string; signal: AbortSignal | undefined }>;
 } {
   const submissions: ValidationSubmitRequest[] = [];
   const listCallers: ValidationSubmitRequest["caller"][] = [];
   const polls: Array<{ runId: string; leaseToken?: string }> = [];
   const cancels: Array<{ runId: string; leaseToken: string }> = [];
+  const statusWaits: Array<{
+    runId: string;
+    signal: AbortSignal | undefined;
+  }> = [];
   const listed: ValidationListResult = {
     kind: "ok",
     commands: [
@@ -71,6 +80,7 @@ function serviceFake(overrides: Partial<ValidationService> = {}): {
     listCallers,
     polls,
     cancels,
+    statusWaits,
     service: {
       whenReady: async () => {},
       isAvailable: () => true,
@@ -99,6 +109,20 @@ function serviceFake(overrides: Partial<ValidationService> = {}): {
       },
       async waitForCompletion() {
         throw new Error("waitForCompletion is not used by route-handler tests");
+      },
+      // Production-shaped: the waiter settles only when the run moves or the
+      // caller's signal aborts, so a handler that forgets to bound its wait
+      // hangs the test instead of passing quietly.
+      waitForStatusChange(runId, signal) {
+        statusWaits.push({ runId, signal });
+        return new Promise((resolve) => {
+          if (signal === undefined) return;
+          if (signal.aborted) {
+            resolve();
+            return;
+          }
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        });
       },
       poll(runId, leaseToken) {
         polls.push({
@@ -336,6 +360,284 @@ describe("validation route composition", () => {
     ]);
   });
 });
+
+// ============================================================
+// Status long-poll: the server holds the request until the run
+// moves, so `cctl validate --wait` stops polling every second.
+// ============================================================
+
+type PolledStatus = ReturnType<ValidationService["poll"]>;
+
+const RUN_ID = "vrun-1";
+
+const RUNNING: PolledStatus = {
+  status: "running",
+  position: null,
+  result: null,
+  requestedScope: "changed",
+  effectiveScope: "changed",
+};
+
+const PASSED: PolledStatus = {
+  status: "passed",
+  position: null,
+  result: {
+    kind: "passed",
+    runId: RUN_ID,
+    exitCode: 0,
+    output: "ok",
+    filesMatched: 3,
+  },
+  requestedScope: "changed",
+  effectiveScope: "changed",
+};
+
+/** Answer each poll from the script, repeating its last entry. */
+function pollScript(
+  steps: PolledStatus[],
+  polls: Array<{ runId: string; leaseToken?: string }>,
+): ValidationService["poll"] {
+  return (runId, leaseToken) => {
+    polls.push({ runId, ...(leaseToken === undefined ? {} : { leaseToken }) });
+    return steps[Math.min(polls.length - 1, steps.length - 1)] ?? RUNNING;
+  };
+}
+
+function pollRequest(query = "", signal?: AbortSignal): Request {
+  return new Request(`http://cc.test/validation/${RUN_ID}${query}`, {
+    headers: { [VALIDATION_LEASE_HEADER]: "lease-1" },
+    ...(signal === undefined ? {} : { signal }),
+  });
+}
+
+type ValidationHandlers = ReturnType<typeof createSessionValidationHandlers>;
+
+const handlerFactories: Array<{
+  surface: string;
+  create(service: ValidationService): ValidationHandlers;
+}> = [
+  {
+    surface: "session",
+    create: (service) =>
+      createSessionValidationHandlers({
+        auth: auth(),
+        service,
+        resolveProjectPath: async () => PROJECT_PATH,
+        getSession: async () => ({ conversations: [conversation()] }),
+      }),
+  },
+  {
+    surface: "project",
+    create: (service) =>
+      createProjectValidationHandlers({
+        auth: auth(),
+        service,
+        resolveProjectPath: async () => PROJECT_PATH,
+        getProjectConversation: async () => conversation(),
+      }),
+  },
+];
+
+describe.each(handlerFactories)(
+  "validation status long-poll ($surface handlers)",
+  ({ create }) => {
+    it("answers as soon as the run reaches a terminal verdict", async () => {
+      const fake = serviceFake();
+      const service: ValidationService = {
+        ...fake.service,
+        poll: pollScript([RUNNING, PASSED], fake.polls),
+        async waitForStatusChange(runId) {
+          fake.statusWaits.push({ runId, signal: undefined });
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        },
+      };
+
+      const response = await create(service).POLL(
+        pollRequest("?waitMs=25000"),
+        context({ runId: RUN_ID }),
+      );
+
+      const body = validationPollResponseSchema.parse(await response.json());
+      expect(body.status).toBe("passed");
+      expect(body.result).toMatchObject({ kind: "passed", exitCode: 0 });
+      expect(fake.statusWaits.map((wait) => wait.runId)).toEqual([RUN_ID]);
+      // Entry poll renews the lease before the hold; the exit poll reads the
+      // state the wait was woken for.
+      expect(fake.polls).toEqual([
+        { runId: RUN_ID, leaseToken: "lease-1" },
+        { runId: RUN_ID, leaseToken: "lease-1" },
+      ]);
+    });
+
+    it("short-circuits an already-terminal run without waiting", async () => {
+      const fake = serviceFake({ poll: pollScript([PASSED], []) });
+
+      const response = await create(fake.service).POLL(
+        pollRequest("?waitMs=25000"),
+        context({ runId: RUN_ID }),
+      );
+
+      const body = validationPollResponseSchema.parse(await response.json());
+      expect(body.status).toBe("passed");
+      expect(fake.statusWaits).toEqual([]);
+    });
+
+    it("does not hang on a terminal status whose in-memory result was lost to a restart", async () => {
+      const fake = serviceFake({
+        poll: pollScript([{ ...PASSED, result: null }], []),
+      });
+
+      const response = await create(fake.service).POLL(
+        pollRequest("?waitMs=25000"),
+        context({ runId: RUN_ID }),
+      );
+
+      const body = validationPollResponseSchema.parse(await response.json());
+      expect(body).toMatchObject({ status: "passed", result: null });
+      expect(fake.statusWaits).toEqual([]);
+    });
+
+    it("returns the current non-terminal state when the wait budget expires", async () => {
+      const fake = serviceFake();
+      const service: ValidationService = {
+        ...fake.service,
+        poll: pollScript([RUNNING], fake.polls),
+      };
+
+      const response = await create(service).POLL(
+        pollRequest("?waitMs=20"),
+        context({ runId: RUN_ID }),
+      );
+
+      expect(response.status).toBe(200);
+      const body = validationPollResponseSchema.parse(await response.json());
+      expect(body).toMatchObject({ status: "running", result: null });
+      expect(fake.polls).toHaveLength(2);
+    });
+
+    it("deregisters the waiter on every expired hold", async () => {
+      const fake = serviceFake();
+      const service: ValidationService = {
+        ...fake.service,
+        poll: pollScript([RUNNING], fake.polls),
+      };
+      const handlers = create(service);
+
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await handlers.POLL(
+          pollRequest("?waitMs=10"),
+          context({ runId: RUN_ID }),
+        );
+      }
+
+      expect(fake.statusWaits).toHaveLength(3);
+      for (const wait of fake.statusWaits) {
+        expect(wait.signal?.aborted).toBe(true);
+      }
+    });
+
+    it("abandons the hold when the client disconnects", async () => {
+      const fake = serviceFake();
+      const service: ValidationService = {
+        ...fake.service,
+        poll: pollScript([RUNNING], fake.polls),
+      };
+      const client = new AbortController();
+
+      const pending = create(service).POLL(
+        pollRequest("?waitMs=25000", client.signal),
+        context({ runId: RUN_ID }),
+      );
+      await Promise.resolve();
+      client.abort();
+
+      const response = await pending;
+      expect(response.status).toBe(200);
+      expect(fake.statusWaits[0]?.signal?.aborted).toBe(true);
+    });
+
+    it("clamps an over-cap budget to the server ceiling", async () => {
+      vi.useFakeTimers();
+      try {
+        const fake = serviceFake();
+        const service: ValidationService = {
+          ...fake.service,
+          poll: pollScript([RUNNING], fake.polls),
+        };
+
+        const pending = create(service).POLL(
+          pollRequest("?waitMs=600000"),
+          context({ runId: RUN_ID }),
+        );
+        let settled = false;
+        void pending.then(() => {
+          settled = true;
+        });
+
+        await vi.advanceTimersByTimeAsync(VALIDATION_POLL_MAX_WAIT_MS - 1);
+        expect(settled).toBe(false);
+        await vi.advanceTimersByTimeAsync(2);
+
+        const response = await pending;
+        expect(response.status).toBe(200);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("404s an unknown run immediately rather than holding the request", async () => {
+      const fake = serviceFake({
+        poll: () => ({
+          status: null,
+          position: null,
+          result: null,
+          requestedScope: null,
+          effectiveScope: null,
+        }),
+      });
+
+      const response = await create(fake.service).POLL(
+        pollRequest("?waitMs=25000"),
+        context({ runId: "vrun-missing" }),
+      );
+
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({
+        code: "validation_run_not_found",
+      });
+      expect(fake.statusWaits).toEqual([]);
+    });
+
+    it("answers from current state when waitMs is absent, as an older CLI expects", async () => {
+      const fake = serviceFake();
+
+      const response = await create(fake.service).POLL(
+        pollRequest(),
+        context({ runId: RUN_ID }),
+      );
+
+      const body = validationPollResponseSchema.parse(await response.json());
+      expect(body).toMatchObject({ status: "queued", position: 2 });
+      expect(fake.statusWaits).toEqual([]);
+      expect(fake.polls).toEqual([{ runId: RUN_ID, leaseToken: "lease-1" }]);
+    });
+
+    it("refuses an uninterpretable wait budget", async () => {
+      const fake = serviceFake();
+
+      const response = await create(fake.service).POLL(
+        pollRequest("?waitMs=soon"),
+        context({ runId: RUN_ID }),
+      );
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        code: "validation_invalid_request",
+      });
+      expect(fake.statusWaits).toEqual([]);
+    });
+  },
+);
 
 function project(name: string): DiscoveredProject {
   return {

@@ -359,6 +359,33 @@ export const validationRunStatusSchema = z.enum([
 ]);
 export type ValidationRunStatus = z.infer<typeof validationRunStatusSchema>;
 
+/**
+ * Terminality per status, exhaustively declared so a new status cannot be
+ * added without deciding whether capacity, leases, and waiting callers are
+ * done with the run.
+ */
+const validationRunStatusTerminality: Record<ValidationRunStatus, boolean> = {
+  queued: false,
+  running: false,
+  passed: true,
+  failed: true,
+  timed_out: true,
+  cancelled: true,
+  interrupted: true,
+  cost_exceeds_limit: true,
+};
+
+/**
+ * Whether a run has reached a durable verdict. This is the only terminality
+ * question in the domain: a run's in-memory result is not an answer, because
+ * results are lost on restart while the row's status survives.
+ */
+export function isTerminalValidationRunStatus(
+  status: ValidationRunStatus,
+): boolean {
+  return validationRunStatusTerminality[status];
+}
+
 // Requester role for runs submitted from inside a graph execution context.
 // Mirrors the workflow-graph lane vocabulary by value; declared here so the
 // validation domain stays leaf-level with no workflow-graph import.

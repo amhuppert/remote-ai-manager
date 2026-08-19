@@ -26,7 +26,6 @@ import {
 } from "./content-store";
 import {
   createTicketAttachmentService,
-  type EnsureConversationCompactionResult,
   type LiveCompaction,
   type TicketAttachmentService,
   type TicketAttachmentServiceDeps,
@@ -57,8 +56,11 @@ let events: SSEEvent[];
 let idSeq: number;
 let clock: number;
 
-let ensureResult: EnsureConversationCompactionResult;
-let ensureCalls: unknown[];
+let scheduledRefreshes: Array<{
+  projectName: string;
+  number: number;
+  attachmentId: string;
+}>;
 let liveCompaction: LiveCompaction | null;
 let conversationExistsResult: boolean;
 let sessionOverview: TicketSessionOverview | null;
@@ -82,12 +84,7 @@ beforeEach(async () => {
   events = [];
   idSeq = 0;
   clock = 0;
-  ensureResult = {
-    ok: true,
-    markdown: "## Compaction\n\n- summarized",
-    capturedAt: "2026-07-10T01:00:00.000Z",
-  };
-  ensureCalls = [];
+  scheduledRefreshes = [];
   liveCompaction = {
     markdown: "## Live compaction",
     capturedAt: "2026-07-10T02:00:00.000Z",
@@ -126,9 +123,8 @@ function makeService(
             ? OTHER_PROJECT_PATH
             : null,
       ),
-    ensureConversationCompaction: (input) => {
-      ensureCalls.push(input);
-      return Promise.resolve(ensureResult);
+    scheduleConversationSnapshotRefresh: (input) => {
+      scheduledRefreshes.push(input);
     },
     getLiveCompaction: () => Promise.resolve(liveCompaction),
     resolveConversation: (input) =>
@@ -174,6 +170,42 @@ async function createTicket(
     attachments: [],
     sessions: [],
   };
+}
+
+/**
+ * Adds are pending-only, so a settled snapshot fixture is written the way the
+ * background refresher writes one: blob first, then the captured row.
+ */
+async function addCapturedConversation(
+  ticket: TicketDetail,
+  sessionName: string | null,
+  markdown = "## Retained compaction",
+): Promise<TicketAttachment> {
+  idSeq += 1;
+  const attachmentId = `captured-conversation-${idSeq}`;
+  const snapshot = await contentStore.captureText({
+    ticketId: ticket.id,
+    attachmentId,
+    fileName: `compaction-${CONVERSATION_ID}.md`,
+    text: markdown,
+  });
+  const payload: ConversationAttachmentPayload = {
+    kind: "conversation",
+    projectPath: ticket.projectPath,
+    sessionName,
+    conversationId: CONVERSATION_ID,
+    snapshotKey: snapshot.snapshotKey,
+    snapshotCapturedAt: "2026-07-10T01:00:00.000Z",
+    snapshotStatus: "captured",
+  };
+  return repo.addAttachment({
+    id: attachmentId,
+    ticketId: ticket.id,
+    description: "Captured conversation",
+    payload,
+    createdAt: "2026-07-10T00:00:00.000Z",
+    updatedAt: "2026-07-10T00:00:00.000Z",
+  });
 }
 
 function expectOk<T>(result: TicketResult<T>): T {
@@ -511,6 +543,81 @@ describe("add file", () => {
 });
 
 describe("add conversation", () => {
+  it("commits a pending snapshot and schedules the refresh without awaiting compaction", async () => {
+    const ticket = await createTicket();
+    const service = makeService({
+      // A capture that never settles stands in for the multi-minute LLM
+      // compaction: an add sequenced behind snapshot content would hang here
+      // instead of returning a pending row.
+      contentStore: {
+        ...contentStore,
+        captureText: () => new Promise(() => {}),
+      },
+    });
+
+    const result = await service.add({
+      projectName: PROJECT_NAME,
+      number: ticket.number,
+      description: "prior investigation",
+      payload: {
+        kind: "conversation",
+        projectName: PROJECT_NAME,
+        sessionName: "feature-work",
+        conversationId: CONVERSATION_ID,
+      },
+    });
+
+    const attachment = expectOk(result);
+    const detail = await repo.find(ticket.projectPath, ticket.number);
+    const reloaded = detail?.attachments.find(
+      (candidate) => candidate.id === attachment.id,
+    );
+    expect(reloaded?.payload).toEqual({
+      kind: "conversation",
+      projectPath: PROJECT_PATH,
+      sessionName: "feature-work",
+      conversationId: CONVERSATION_ID,
+      snapshotKey: null,
+      snapshotCapturedAt: null,
+      snapshotStatus: "pending",
+    });
+    expect(scheduledRefreshes).toEqual([
+      {
+        projectName: PROJECT_NAME,
+        number: ticket.number,
+        attachmentId: attachment.id,
+      },
+    ]);
+    expect(attachmentEvents()).toHaveLength(1);
+  });
+
+  it("keeps the add committed when scheduling the refresh throws", async () => {
+    const ticket = await createTicket();
+    const service = makeService({
+      scheduleConversationSnapshotRefresh: () => {
+        throw new Error("refresher unavailable");
+      },
+    });
+
+    const result = await service.add({
+      projectName: PROJECT_NAME,
+      number: ticket.number,
+      description: "prior investigation",
+      payload: {
+        kind: "conversation",
+        projectName: PROJECT_NAME,
+        sessionName: "feature-work",
+        conversationId: CONVERSATION_ID,
+      },
+    });
+
+    const attachment = expectOk(result);
+    const detail = await repo.find(ticket.projectPath, ticket.number);
+    expect(detail?.attachments.map((candidate) => candidate.id)).toContain(
+      attachment.id,
+    );
+  });
+
   it("resolves an omitted session from the conversation id", async () => {
     const ticket = await createTicket();
     const resolverDeps = {
@@ -538,14 +645,6 @@ describe("add conversation", () => {
     });
 
     const attachment = expectOk(result);
-    expect(ensureCalls).toEqual([
-      {
-        projectPath: PROJECT_PATH,
-        projectName: PROJECT_NAME,
-        sessionName: "owning-session",
-        conversationId: CONVERSATION_ID,
-      },
-    ]);
     expect(attachment.payload).toMatchObject({
       kind: "conversation",
       projectPath: PROJECT_PATH,
@@ -554,70 +653,7 @@ describe("add conversation", () => {
     });
   });
 
-  it("ensures a compaction and snapshots its markdown with source coordinates", async () => {
-    const ticket = await createTicket();
-    const service = makeService();
-
-    const result = await service.add({
-      projectName: PROJECT_NAME,
-      number: ticket.number,
-      description: "prior investigation",
-      payload: {
-        kind: "conversation",
-        projectName: PROJECT_NAME,
-        sessionName: "feature-work",
-        conversationId: CONVERSATION_ID,
-      },
-    });
-
-    const attachment = expectOk(result);
-    expect(ensureCalls).toHaveLength(1);
-    expect(ensureCalls[0]).toMatchObject({
-      projectPath: PROJECT_PATH,
-      sessionName: "feature-work",
-      conversationId: CONVERSATION_ID,
-    });
-    expect(attachment.payload).toMatchObject({
-      kind: "conversation",
-      projectPath: PROJECT_PATH,
-      sessionName: "feature-work",
-      conversationId: CONVERSATION_ID,
-      snapshotCapturedAt: "2026-07-10T01:00:00.000Z",
-      snapshotStatus: "captured",
-    });
-    const stored = await contentStore.read(snapshotKeyOf(attachment));
-    expect(Buffer.from(stored).toString("utf8")).toBe(
-      "## Compaction\n\n- summarized",
-    );
-  });
-
-  it("fails without a row when the compaction cannot be prepared", async () => {
-    const ticket = await createTicket();
-    ensureResult = { ok: false, reason: "transcript missing" };
-    const service = makeService();
-
-    const result = await service.add({
-      projectName: PROJECT_NAME,
-      number: ticket.number,
-      description: "prior investigation",
-      payload: {
-        kind: "conversation",
-        projectName: PROJECT_NAME,
-        sessionName: null,
-        conversationId: CONVERSATION_ID,
-      },
-    });
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.code).toBe("context_preparation_failed");
-    }
-    const detail = await repo.find(ticket.projectPath, ticket.number);
-    expect(detail?.attachments).toHaveLength(0);
-    expect(attachmentEvents()).toHaveLength(0);
-  });
-
-  it("rejects an unknown conversation before preparing anything", async () => {
+  it("rejects an unknown conversation without persisting or scheduling", async () => {
     const ticket = await createTicket();
     conversationExistsResult = false;
     const service = makeService();
@@ -635,8 +671,20 @@ describe("add conversation", () => {
     });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.code).toBe("validation_failed");
-    expect(ensureCalls).toHaveLength(0);
+    if (!result.ok) {
+      expect(result.error.code).toBe("validation_failed");
+      if (result.error.code === "validation_failed") {
+        expect(result.error.issues).toEqual([
+          {
+            path: "payload.conversationId",
+            message: "unknown conversation: nope",
+          },
+        ]);
+      }
+    }
+    const detail = await repo.find(ticket.projectPath, ticket.number);
+    expect(detail?.attachments).toHaveLength(0);
+    expect(scheduledRefreshes).toEqual([]);
   });
 });
 
@@ -907,19 +955,7 @@ describe("remove", () => {
   it("reclaims a captured conversation snapshot", async () => {
     const ticket = await createTicket();
     const service = makeService();
-    const attachment = expectOk(
-      await service.add({
-        projectName: PROJECT_NAME,
-        number: ticket.number,
-        description: "Captured conversation",
-        payload: {
-          kind: "conversation",
-          projectName: PROJECT_NAME,
-          sessionName: null,
-          conversationId: CONVERSATION_ID,
-        },
-      }),
-    );
+    const attachment = await addCapturedConversation(ticket, null);
     const snapshotKey = snapshotKeyOf(attachment);
 
     const result = await service.remove({
@@ -1239,19 +1275,7 @@ describe("resolve", () => {
   it("prefers the live compaction with read commands while the source exists", async () => {
     const ticket = await createTicket();
     const service = makeService();
-    const added = expectOk(
-      await service.add({
-        projectName: PROJECT_NAME,
-        number: ticket.number,
-        description: "conv",
-        payload: {
-          kind: "conversation",
-          projectName: PROJECT_NAME,
-          sessionName: "feature-work",
-          conversationId: CONVERSATION_ID,
-        },
-      }),
-    );
+    const added = await addCapturedConversation(ticket, "feature-work");
 
     const resolved = expectResolvedKind(
       expectOk(
@@ -1281,19 +1305,7 @@ describe("resolve", () => {
   it("qualifies live project-conversation read commands without an ambient session", async () => {
     const ticket = await createTicket();
     const service = makeService();
-    const added = expectOk(
-      await service.add({
-        projectName: PROJECT_NAME,
-        number: ticket.number,
-        description: "project conversation",
-        payload: {
-          kind: "conversation",
-          projectName: PROJECT_NAME,
-          sessionName: null,
-          conversationId: CONVERSATION_ID,
-        },
-      }),
-    );
+    const added = await addCapturedConversation(ticket, null);
 
     const resolved = expectResolvedKind(
       expectOk(
@@ -1316,19 +1328,7 @@ describe("resolve", () => {
   it("falls back to the retained-compaction snapshot after the source is deleted", async () => {
     const ticket = await createTicket();
     const service = makeService();
-    const added = expectOk(
-      await service.add({
-        projectName: PROJECT_NAME,
-        number: ticket.number,
-        description: "conv",
-        payload: {
-          kind: "conversation",
-          projectName: PROJECT_NAME,
-          sessionName: null,
-          conversationId: CONVERSATION_ID,
-        },
-      }),
-    );
+    const added = await addCapturedConversation(ticket, null);
     conversationExistsResult = false;
     liveCompaction = null;
 
@@ -1344,7 +1344,7 @@ describe("resolve", () => {
     );
     expect(resolved.source).toBe("retained_compaction");
     expect(resolved.sourceAvailable).toBe(false);
-    expect(resolved.markdown).toBe("## Compaction\n\n- summarized");
+    expect(resolved.markdown).toBe("## Retained compaction");
     expect(resolved.capturedAt).toBe("2026-07-10T01:00:00.000Z");
     expect(resolved.readCommands).toEqual([]);
   });

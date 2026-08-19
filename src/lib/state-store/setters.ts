@@ -35,6 +35,7 @@ import {
   evaluateLeaseAdmission,
   type LeaseAdmissionDecision,
 } from "@/lib/workflow-graph/lifecycle-classifier";
+import { nextStructuralRevision } from "@/lib/workflow-graph/structural-revision";
 
 import type { GraphWorkflowArchivedExecutionRow } from "./graph-workflow-archived-executions-repo";
 import type { GraphWorkflowEventRecord } from "./graph-workflow-events-repo";
@@ -1476,9 +1477,31 @@ export function createSetters(
                 `Session "${sessionName}" not found in project "${projectPath}" during ${label}`,
               );
             }
-            const { execution, events, pushes } = mutate(
-              repos.graphWorkflowExecutions.getActive(projectPath, sessionName),
+            const current = repos.graphWorkflowExecutions.getActive(
+              projectPath,
+              sessionName,
             );
+            const { execution: reduced, events, pushes } = mutate(current);
+            // Stamp the structural fence HERE, at the durable-write boundary,
+            // not only at the execution-repository seam above it. `setActive`
+            // skips rewriting `definition_json` whenever this revision has not
+            // moved, so a reducer that edits the graph without advancing it
+            // would have its edit silently dropped on the floor. Deriving it
+            // from the values makes that impossible for every caller of this
+            // API, including the ones that never went through the seam.
+            // Idempotent: the seam derives the same number from the same
+            // `current`, so a commit that already carries it re-derives it
+            // unchanged.
+            const execution =
+              current === null
+                ? reduced
+                : {
+                    ...reduced,
+                    structuralRevision: nextStructuralRevision(
+                      current,
+                      reduced,
+                    ),
+                  };
             const now = new Date().toISOString();
             let publications: GraphWorkflowSSEEvent[] = [];
             let resultEffects: NonNullable<

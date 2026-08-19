@@ -220,29 +220,45 @@ describe("createTicketMaterializer", () => {
       error: "Conversation snapshot capture failed.",
     },
   ])(
-    "rejects a $status conversation before reading snapshot content",
+    "skips a $status conversation and still materializes captured siblings",
     async ({ status, error }) => {
-      const attachment = baseAttachment(
-        CONVERSATION_ATTACHMENT_ID,
+      const unavailable = baseAttachment(
+        "99999999-9999-4999-8999-999999999999",
         "unavailable conversation",
         {
           kind: "conversation",
           projectPath: PROJECT_PATH,
           sessionName: "older-session",
-          conversationId: CONVERSATION_ID,
+          conversationId: "66666666-6666-4666-8666-666666666666",
           snapshotKey: null,
           snapshotCapturedAt: null,
           snapshotStatus: status,
           ...(error === undefined ? {} : { snapshotError: error }),
         },
       );
-      const readSpy = vi.spyOn(store, "read");
+      const captured = await captureConversationAttachment("## Captured body");
 
-      await expect(materialize([attachment])).rejects.toThrow(
-        `conversation attachment ${CONVERSATION_ATTACHMENT_ID} snapshot is ${status}`,
+      const result = await materialize([unavailable, captured]);
+
+      const relativePath = `.cc/tickets/${TICKET_NUMBER}/conversations/${CONVERSATION_ATTACHMENT_ID}-${CONVERSATION_ID}.md`;
+      expect(result).toEqual([
+        {
+          attachmentId: CONVERSATION_ATTACHMENT_ID,
+          kind: "conversation",
+          relativePath,
+        },
+      ]);
+      expect(registered.map((entry) => entry.filePath)).toEqual([relativePath]);
+      const written = await readdir(
+        path.join(worktreePath, `.cc/tickets/${TICKET_NUMBER}/conversations`),
       );
-      expect(readSpy).not.toHaveBeenCalled();
-      expect(registered).toEqual([]);
+      expect(written).toEqual([
+        `${CONVERSATION_ATTACHMENT_ID}-${CONVERSATION_ID}.md`,
+      ]);
+      expect(logger.info).toHaveBeenCalledWith(
+        "materialize.completed",
+        expect.objectContaining({ conversationCount: 1, skippedCount: 1 }),
+      );
     },
   );
 

@@ -409,6 +409,27 @@ describe("withTracing", () => {
     stderrSpy.mockRestore();
   });
 
+  it("keeps a long-poll handler out of the slow-request warnings it would otherwise dominate", async () => {
+    process.env["CC_REQUEST_SLOW_MS"] = "0";
+    _resetTracingForTesting();
+
+    const handler = vi.fn(async () => new Response("ok"));
+    const wrapped = withTracing(handler, { longPoll: true });
+
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const req = makeRequest("http://localhost:3000/api/held");
+    const response = await wrapped(req, makeParams());
+
+    const lines = readLogLines();
+    const completeLog = lines.find((l) => l["message"] === "request.complete");
+    expect(completeLog?.["level"]).toBe("info");
+    expect(completeLog?.["longPoll"]).toBe(true);
+    expect(typeof completeLog?.["durationMs"]).toBe("number");
+    expect(response.headers.get("Server-Timing")).toMatch(/^total;dur=\d+$/);
+
+    stderrSpy.mockRestore();
+  });
+
   it("tags SSE responses with streaming: true and durationMs: null, no Server-Timing", async () => {
     const handler = vi.fn(
       async () =>

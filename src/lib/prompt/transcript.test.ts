@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { writeFile, mkdir, rm, readFile } from "node:fs/promises";
+import {
+  appendFile,
+  writeFile,
+  mkdir,
+  rm,
+  readFile,
+  stat,
+  open,
+} from "node:fs/promises";
 import path from "node:path";
 import {
   readConversationMessages,
@@ -10,6 +18,10 @@ import {
   _resetLastSeqCacheForTesting,
   _resetTranscriptReadCacheForTesting,
   _resetTranscriptEntriesCacheForTesting,
+  _resetTranscriptMaxSeqCacheForTesting,
+  createTranscriptMaxSeqReader,
+  getTranscriptMaxSeq,
+  type TranscriptMaxSeqIO,
   appendTranscriptEntry,
   appendTranscriptEntryOnce,
   appendNotice,
@@ -2769,5 +2781,243 @@ describe("readTranscriptEntriesWithSeq tool_result entries", () => {
     expect(merged).toHaveLength(1);
     expect(merged[0]?.seq).toBe(2);
     expect(merged[0]?.content).toHaveLength(2);
+  });
+});
+
+// ==========================================================================
+// getTranscriptMaxSeq
+// ==========================================================================
+
+describe("getTranscriptMaxSeq", () => {
+  beforeEach(() => {
+    _resetTranscriptMaxSeqCacheForTesting();
+    _resetTranscriptEntriesCacheForTesting();
+  });
+
+  async function writeTranscript(
+    name: string,
+    lines: string[],
+  ): Promise<string> {
+    const filePath = path.join(TEST_DIR, "transcripts", name);
+    await writeFile(filePath, lines.join("\n") + "\n", "utf-8");
+    return filePath;
+  }
+
+  function visibleLine(text: string, role: "user" | "assistant"): string {
+    return JSON.stringify({
+      timestamp: "2024-01-01T00:00:00Z",
+      type: role,
+      role,
+      content: [{ type: "text", text }],
+    });
+  }
+
+  function toolResultLine(toolUseId: string): string {
+    return JSON.stringify({
+      timestamp: "2024-01-01T00:00:02Z",
+      type: "tool_result",
+      raw: {
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            { tool_use_id: toolUseId, type: "tool_result", content: "output" },
+          ],
+        },
+      },
+    });
+  }
+
+  /** The number every case must reproduce: the full-parse reader's own maxSeq. */
+  async function parityMaxSeq(filePath: string): Promise<number> {
+    return (await readTranscriptEntriesWithSeq(filePath)).maxSeq;
+  }
+
+  it("reports the ABSOLUTE seq of the last visible entry when a tool_result trails it and the earlier lines exceed the tail window", async () => {
+    const padding = "z".repeat(4096);
+    const lines: string[] = [];
+    for (let i = 0; i < 120; i++) {
+      lines.push(visibleLine(`${padding}-${i}`, "user"));
+    }
+    lines.push(visibleLine("final answer", "assistant"));
+    lines.push(toolResultLine("t1"));
+    const filePath = await writeTranscript("max-seq-absolute.jsonl", lines);
+
+    expect(await parityMaxSeq(filePath)).toBe(120);
+    expect(await getTranscriptMaxSeq(filePath)).toBe(120);
+  });
+
+  it("returns -1 for a null path and for a missing file", async () => {
+    expect(await getTranscriptMaxSeq(null)).toBe(-1);
+    expect(await getTranscriptMaxSeq("/tmp/missing-max-seq-xyz.jsonl")).toBe(
+      await parityMaxSeq("/tmp/missing-max-seq-xyz.jsonl"),
+    );
+  });
+
+  it("returns -1 for an empty file", async () => {
+    const filePath = path.join(TEST_DIR, "transcripts", "max-seq-empty.jsonl");
+    await writeFile(filePath, "", "utf-8");
+
+    expect(await parityMaxSeq(filePath)).toBe(-1);
+    expect(await getTranscriptMaxSeq(filePath)).toBe(-1);
+  });
+
+  it("returns -1 when every line is a tool_result", async () => {
+    const filePath = await writeTranscript("max-seq-only-tools.jsonl", [
+      toolResultLine("t1"),
+      toolResultLine("t2"),
+    ]);
+
+    expect(await parityMaxSeq(filePath)).toBe(-1);
+    expect(await getTranscriptMaxSeq(filePath)).toBe(-1);
+  });
+
+  it("counts blank lines toward the seq index", async () => {
+    const filePath = await writeTranscript("max-seq-blank-lines.jsonl", [
+      visibleLine("ask", "user"),
+      "",
+      "   ",
+      visibleLine("answer", "assistant"),
+      "",
+    ]);
+
+    expect(await parityMaxSeq(filePath)).toBe(3);
+    expect(await getTranscriptMaxSeq(filePath)).toBe(3);
+  });
+
+  it("skips a malformed trailing line the way the full parse does", async () => {
+    const filePath = path.join(
+      TEST_DIR,
+      "transcripts",
+      "max-seq-partial-tail.jsonl",
+    );
+    await writeFile(
+      filePath,
+      [visibleLine("ask", "user"), visibleLine("answer", "assistant")].join(
+        "\n",
+      ) + '\n{"timestamp":"2024-01-01T00:00:0',
+      "utf-8",
+    );
+
+    expect(await parityMaxSeq(filePath)).toBe(1);
+    expect(await getTranscriptMaxSeq(filePath)).toBe(1);
+  });
+
+  it("reads the last visible entry when the file has no trailing newline", async () => {
+    const filePath = path.join(
+      TEST_DIR,
+      "transcripts",
+      "max-seq-no-trailing-newline.jsonl",
+    );
+    await writeFile(
+      filePath,
+      [visibleLine("ask", "user"), visibleLine("answer", "assistant")].join(
+        "\n",
+      ),
+      "utf-8",
+    );
+
+    expect(await parityMaxSeq(filePath)).toBe(1);
+    expect(await getTranscriptMaxSeq(filePath)).toBe(1);
+  });
+
+  it("falls back to the full parse when the last visible line alone overflows the tail window", async () => {
+    const filePath = await writeTranscript("max-seq-huge-line.jsonl", [
+      visibleLine("ask", "user"),
+      visibleLine("x".repeat(300 * 1024), "assistant"),
+    ]);
+
+    expect(await parityMaxSeq(filePath)).toBe(1);
+    expect(await getTranscriptMaxSeq(filePath)).toBe(1);
+  });
+
+  it("advances after an append without rereading the whole file", async () => {
+    const filePath = await writeTranscript("max-seq-append.jsonl", [
+      visibleLine("ask", "user"),
+      visibleLine("answer", "assistant"),
+    ]);
+    expect(await getTranscriptMaxSeq(filePath)).toBe(1);
+
+    await appendFile(filePath, toolResultLine("t1") + "\n", "utf-8");
+    _resetTranscriptEntriesCacheForTesting();
+    expect(await parityMaxSeq(filePath)).toBe(1);
+    expect(await getTranscriptMaxSeq(filePath)).toBe(1);
+
+    await appendFile(
+      filePath,
+      visibleLine("more", "assistant") + "\n",
+      "utf-8",
+    );
+    _resetTranscriptEntriesCacheForTesting();
+    expect(await parityMaxSeq(filePath)).toBe(3);
+    expect(await getTranscriptMaxSeq(filePath)).toBe(3);
+  });
+
+  it("reads far fewer bytes than the file holds when a warm transcript grows by one entry", async () => {
+    const lines: string[] = [];
+    const padding = "q".repeat(4096);
+    for (let i = 0; i < 300; i++) {
+      lines.push(
+        visibleLine(`${padding}-${i}`, i % 2 === 0 ? "user" : "assistant"),
+      );
+    }
+    const filePath = await writeTranscript("max-seq-bounded.jsonl", lines);
+    const fileSize = (await stat(filePath)).size;
+    expect(fileSize).toBeGreaterThan(1024 * 1024);
+
+    let bytesRead = 0;
+    let fullParses = 0;
+    const io: TranscriptMaxSeqIO = {
+      stat: async (target) => {
+        const stats = await stat(target);
+        return { mtimeMs: stats.mtimeMs, size: stats.size };
+      },
+      openRange: async (target) => {
+        const handle = await open(target, "r");
+        return {
+          read: async (buffer, offset, length, position) => {
+            const result = await handle.read(buffer, offset, length, position);
+            bytesRead += result.bytesRead;
+            return { bytesRead: result.bytesRead };
+          },
+          close: () => handle.close(),
+        };
+      },
+      readFullMaxSeq: async (target) => {
+        fullParses += 1;
+        return (await readTranscriptEntriesWithSeq(target)).maxSeq;
+      },
+    };
+
+    const reader = createTranscriptMaxSeqReader(io);
+    expect(await reader.read(filePath)).toBe(299);
+
+    bytesRead = 0;
+    await appendFile(
+      filePath,
+      visibleLine("appended", "assistant") + "\n",
+      "utf-8",
+    );
+    _resetTranscriptEntriesCacheForTesting();
+
+    expect(await reader.read(filePath)).toBe(await parityMaxSeq(filePath));
+    expect(await reader.read(filePath)).toBe(300);
+    expect(fullParses).toBe(0);
+    expect(bytesRead).toBeLessThan(fileSize);
+    expect(bytesRead).toBeLessThan(4096 * 2);
+  });
+
+  it("rescans instead of trusting the cache when the file is rewritten shorter", async () => {
+    const filePath = await writeTranscript("max-seq-shrink.jsonl", [
+      visibleLine("ask", "user"),
+      visibleLine("answer", "assistant"),
+      visibleLine("more", "assistant"),
+    ]);
+    expect(await getTranscriptMaxSeq(filePath)).toBe(2);
+
+    await writeFile(filePath, visibleLine("only", "user") + "\n", "utf-8");
+    _resetTranscriptEntriesCacheForTesting();
+    expect(await parityMaxSeq(filePath)).toBe(0);
+    expect(await getTranscriptMaxSeq(filePath)).toBe(0);
   });
 });

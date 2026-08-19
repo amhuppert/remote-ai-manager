@@ -11,12 +11,15 @@ import { resolveProjectPath } from "@/lib/projects/resolver";
 import type { DiscoveredProject } from "@/lib/projects/schemas";
 import { getProjectConversation, getSession } from "@/lib/state-store";
 import { notFound, type RouteResolution } from "@/lib/shared/route-resolution";
-import type {
-  ValidationCommandsResponse,
-  ValidationCommandSummary,
+import {
+  isTerminalValidationRunStatus,
+  type ValidationCommandsResponse,
+  type ValidationCommandSummary,
+  type ValidationRunStatus,
 } from "@/lib/validation/schemas";
 import {
   VALIDATION_LEASE_HEADER,
+  validationPollQuerySchema,
   validationSubmitBodySchema,
   type ValidationCancelResponse,
   type ValidationListResponse,
@@ -119,6 +122,32 @@ function claimedWorkflow(body: {
   };
 }
 
+type PolledRun = ReturnType<ValidationService["poll"]>;
+type ResolvedPolledRun = PolledRun & { status: ValidationRunStatus };
+
+function isResolvedRun(polled: PolledRun): polled is ResolvedPolledRun {
+  return polled.status !== null;
+}
+
+function runNotFound(runId: string): Response {
+  return notFound(
+    `Validation run "${runId}" was not found`,
+    "validation_run_not_found",
+  );
+}
+
+function pollResponse(runId: string, polled: ResolvedPolledRun): Response {
+  const response: ValidationPollResponse = {
+    runId,
+    status: polled.status,
+    position: polled.position,
+    result: polled.result,
+    requestedScope: polled.requestedScope,
+    effectiveScope: polled.effectiveScope,
+  };
+  return NextResponse.json(response);
+}
+
 function createValidationHandlers(
   deps: ValidationHandlerDeps,
   resolveIdentity: (
@@ -214,22 +243,58 @@ function createValidationHandlers(
     const { runId = "" } = await context.params;
     const leaseToken =
       request.headers.get(VALIDATION_LEASE_HEADER) ?? undefined;
-    const polled = deps.service.poll(runId, leaseToken);
-    if (polled.status === null) {
-      return notFound(
-        `Validation run "${runId}" was not found`,
-        "validation_run_not_found",
+    const query = validationPollQuerySchema.safeParse({
+      waitMs: new URL(request.url).searchParams.get("waitMs"),
+    });
+    if (!query.success) {
+      return errorResponse(
+        "Invalid validation status request",
+        400,
+        "validation_invalid_request",
+        query.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        })),
       );
     }
-    const response: ValidationPollResponse = {
-      runId,
-      status: polled.status,
-      position: polled.position,
-      result: polled.result,
-      requestedScope: polled.requestedScope,
-      effectiveScope: polled.effectiveScope,
-    };
-    return NextResponse.json(response);
+
+    // Reading state first is what makes holding safe: it renews the lease at
+    // request entry (the hold is now the gap between renewals) and answers an
+    // unknown run with its 404 — waiting on a run that does not exist would
+    // never be woken by anything.
+    const entry = deps.service.poll(runId, leaseToken);
+    if (!isResolvedRun(entry)) return runNotFound(runId);
+    // Terminality is read from the run's status, never from the presence of a
+    // result: results live in memory only, so a run that finished before the
+    // last server restart has none and a result-keyed hold would wait on a
+    // transition that already happened.
+    if (
+      query.data.waitMs === 0 ||
+      isTerminalValidationRunStatus(entry.status)
+    ) {
+      return pollResponse(runId, entry);
+    }
+
+    // Only this run's own transitions wake the hold. Queue position also
+    // moves when unrelated runs ahead retire, so a queued run's reported
+    // position may lag by up to the wait budget — accepted, because waking
+    // every waiter on every other run's transition rebuilds the polling
+    // storm this hold exists to remove.
+    const wait = new AbortController();
+    const abandon = () => wait.abort();
+    const budget = setTimeout(abandon, query.data.waitMs);
+    request.signal.addEventListener("abort", abandon, { once: true });
+    if (request.signal.aborted) abandon();
+    try {
+      await deps.service.waitForStatusChange(runId, wait.signal);
+    } finally {
+      clearTimeout(budget);
+      request.signal.removeEventListener("abort", abandon);
+    }
+    const settled = deps.service.poll(runId, leaseToken);
+    return isResolvedRun(settled)
+      ? pollResponse(runId, settled)
+      : runNotFound(runId);
   }
 
   async function cancel(
@@ -373,6 +438,8 @@ const serviceProxy: ValidationService = {
   list: (caller) => getValidationService().list(caller),
   submitSystem: (request) => getValidationService().submitSystem(request),
   waitForCompletion: (runId) => getValidationService().waitForCompletion(runId),
+  waitForStatusChange: (runId, signal) =>
+    getValidationService().waitForStatusChange(runId, signal),
   poll: (runId, leaseToken) => getValidationService().poll(runId, leaseToken),
   cancel: (runId, leaseToken) =>
     getValidationService().cancel(runId, leaseToken),
@@ -399,12 +466,16 @@ const projectHandlers = createProjectValidationHandlers({
 
 export const sessionValidationGET = withTracing(sessionHandlers.GET);
 export const sessionValidationPOST = withTracing(sessionHandlers.POST);
-export const sessionValidationPollGET = withTracing(sessionHandlers.POLL);
+export const sessionValidationPollGET = withTracing(sessionHandlers.POLL, {
+  longPoll: true,
+});
 export const sessionValidationCancelPOST = withTracing(sessionHandlers.CANCEL);
 
 export const projectValidationGET = withTracing(projectHandlers.GET);
 export const projectValidationPOST = withTracing(projectHandlers.POST);
-export const projectValidationPollGET = withTracing(projectHandlers.POLL);
+export const projectValidationPollGET = withTracing(projectHandlers.POLL, {
+  longPoll: true,
+});
 export const projectValidationCancelPOST = withTracing(projectHandlers.CANCEL);
 
 /**

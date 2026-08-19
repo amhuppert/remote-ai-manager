@@ -1016,6 +1016,7 @@ function fakeService(overrides: Partial<ValidationService>): ValidationService {
       message: "fake",
     }),
     waitForCompletion: async (runId) => ({ kind: "cancelled", runId }),
+    waitForStatusChange: async () => {},
     poll: () => ({
       status: null,
       position: null,

@@ -19,7 +19,7 @@ import {
 } from "@/lib/context-artifacts/schemas";
 import { listDevServers } from "@/lib/dev-server/service";
 import { resolveProjectPath } from "@/lib/projects/resolver";
-import { readTranscriptEntriesWithSeq } from "@/lib/prompt/transcript";
+import { getTranscriptMaxSeq } from "@/lib/prompt/transcript";
 import {
   getActiveGraphWorkflowExecution,
   getConversation,
@@ -87,11 +87,7 @@ async function resolveConversationArtifacts(input: {
 
   // Only pay a transcript read once we know artifacts exist to place staleness on.
   const transcriptPath = await resolveTranscriptPath(input);
-  const maxSeq =
-    transcriptPath === null
-      ? -1
-      : (await readTranscriptEntriesWithSeq(transcriptPath)).maxSeq;
-  return summarizeArtifacts(rows, maxSeq);
+  return summarizeArtifacts(rows, await getTranscriptMaxSeq(transcriptPath));
 }
 
 /** The production provider deps, wired to the live read accessors. */

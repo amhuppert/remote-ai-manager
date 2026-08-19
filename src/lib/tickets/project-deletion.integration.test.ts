@@ -124,11 +124,7 @@ describe("ticket operations racing project deletion", () => {
       runProjectTicketOperation(projectPath, operation) {
         return gate.runTicketOperation(projectPath, operation);
       },
-      ensureConversationCompaction: async () => ({
-        ok: true,
-        markdown: "unused",
-        capturedAt: now(),
-      }),
+      scheduleConversationSnapshotRefresh: () => {},
       getLiveCompaction: async () => null,
       resolveConversation: async () => null,
       conversationExists: async () => false,

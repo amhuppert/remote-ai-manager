@@ -89,12 +89,7 @@ function buildAttachmentService(
     contentStore,
     resolveProjectPath,
     runProjectTicketOperation: (_projectPath, operation) => operation(),
-    ensureConversationCompaction: () =>
-      Promise.resolve({
-        ok: true,
-        markdown: "## Compaction",
-        capturedAt: "2026-07-10T01:00:00.000Z",
-      }),
+    scheduleConversationSnapshotRefresh: () => {},
     getLiveCompaction: () =>
       Promise.resolve({
         markdown: "## Live compaction",

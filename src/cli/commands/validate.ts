@@ -5,6 +5,7 @@ import {
   validationPollResponseSchema,
   validationSubmitResponseSchema,
   VALIDATION_LEASE_HEADER,
+  VALIDATION_POLL_MAX_WAIT_MS,
   type ValidationListCommand,
   type ValidationListResponse,
   type ValidationPollResponse,
@@ -38,7 +39,25 @@ import {
   type GlobalFlags,
 } from "../shared";
 
+/**
+ * Floor on one wait iteration. A server that honours the status hold already
+ * spends far more than this inside the request itself, so it costs nothing
+ * there; against a server that answers from current state it is the whole
+ * cadence, which is how a wait degrades instead of spinning.
+ */
 const POLL_INTERVAL_MS = 1_000;
+
+/**
+ * How long a status request may ask the server to hold, and the slack left for
+ * the answer to travel after the hold expires. The ceiling is the server's own
+ * (`VALIDATION_POLL_MAX_WAIT_MS`), which sits well under `DEFAULT_LEASE_TTL_MS`
+ * (`src/lib/validation/lease.ts`, 60s): the submitter's lease is renewed once
+ * per status request, so the hold is also the gap between renewals, and a hold
+ * approaching the TTL would let the sweep reap the very run its own submitter
+ * is healthily waiting on.
+ */
+const LONG_POLL_WAIT_MS = VALIDATION_POLL_MAX_WAIT_MS;
+const LONG_POLL_GRACE_MS = 2_000;
 
 /**
  * The client wait budget. It bounds a wait that can no longer end — not a run
@@ -547,10 +566,14 @@ async function cancelOwnedRun(
 /**
  * One poll's outcome. A refused request is a status the classifier terminates
  * on rather than a parse failure, so a 404 keeps its usage exit class instead
- * of being retried as an unreadable body.
+ * of being retried as an unreadable body. A transport that gave up is
+ * classified where the deadline is known: a request that reached it is the
+ * hold expiring and is polled again, anything earlier is an unreachable
+ * server and keeps its exit class.
  */
 type ValidationWaitStatus =
   | { kind: "request_failed"; result: CliResult }
+  | { kind: "connection"; timedOut: boolean; detail: string }
   | { kind: "polled"; response: ValidationPollResponse };
 
 interface PollToTerminalInput {
@@ -568,6 +591,7 @@ interface PollToTerminalInput {
 
 async function pollToTerminal(input: PollToTerminalInput): Promise<CliResult> {
   const { context, runId, leaseToken, run, json, host } = input;
+  const now = host.now ?? Date.now;
   const queuePositions: number[] = [];
   reportQueuePosition(runId, input.initialPosition, queuePositions, json, host);
 
@@ -575,15 +599,40 @@ async function pollToTerminal(input: PollToTerminalInput): Promise<CliResult> {
     json,
     timeoutMs: input.budgetMs,
     pollIntervalMs: POLL_INTERVAL_MS,
-    async poll() {
+    async poll(remainingBudgetMs) {
+      // The hold ends early enough for its answer to arrive inside the budget
+      // the caller asked for; when nothing is left for one, the request just
+      // reads current state.
+      const waitMs = Math.floor(
+        Math.min(
+          LONG_POLL_WAIT_MS,
+          Math.max(0, remainingBudgetMs - LONG_POLL_GRACE_MS),
+        ),
+      );
+      const deadlineMs = Math.max(
+        1,
+        Math.ceil(Math.min(remainingBudgetMs, waitMs + LONG_POLL_GRACE_MS)),
+      );
+      const requestStartedAt = now();
       const response = await cliRequest(host, {
         server: context.server,
         token: context.token,
         tokenSource: context.tokenSource,
         method: "GET",
-        path: `${validationPath(context)}/${encodePathSegment(runId)}`,
+        path: `${validationPath(context)}/${encodePathSegment(runId)}${waitMs > 0 ? `?waitMs=${waitMs}` : ""}`,
         headers: { [VALIDATION_LEASE_HEADER]: leaseToken },
+        timeoutMs: deadlineMs,
       });
+      if (response.kind === "connection") {
+        return {
+          ok: true,
+          status: {
+            kind: "connection",
+            timedOut: Math.max(0, now() - requestStartedAt) >= deadlineMs,
+            detail: response.detail,
+          },
+        };
+      }
       if (response.kind !== "ok") {
         return {
           ok: true,
@@ -615,6 +664,16 @@ async function pollToTerminal(input: PollToTerminalInput): Promise<CliResult> {
     classify(status) {
       if (status.kind === "request_failed") {
         return { terminal: true, result: status.result };
+      }
+      if (status.kind === "connection") {
+        if (status.timedOut) return { terminal: false };
+        return {
+          terminal: true,
+          result: failureFromRequest(
+            { kind: "connection", detail: status.detail },
+            json,
+          ),
+        };
       }
       const terminal = status.response.result;
       if (terminal === null) return { terminal: false };

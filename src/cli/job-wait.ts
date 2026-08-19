@@ -18,7 +18,11 @@ import {
  * counts as terminal, and what to say when the budget runs out.
  */
 
-/** Poll cadence when a spec names none. */
+/**
+ * Minimum cost of one poll iteration when a spec names none. It is what a
+ * long-polling command degrades to against a server that answers instantly
+ * because it does not honour the hold.
+ */
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 
 /**
@@ -124,10 +128,8 @@ export async function awaitJob<S>(
 
       const pollStartedAt = now();
       const polled = await spec.poll(remainingBudgetMs);
-      remainingBudgetMs = Math.max(
-        0,
-        remainingBudgetMs - Math.max(0, now() - pollStartedAt),
-      );
+      const pollElapsedMs = Math.max(0, now() - pollStartedAt);
+      remainingBudgetMs = Math.max(0, remainingBudgetMs - pollElapsedMs);
 
       if (polled.ok) {
         consecutiveParseFailures = 0;
@@ -145,16 +147,24 @@ export async function awaitJob<S>(
         }
       }
 
-      // Charge at least the intended interval: an injected instant `sleep` must
-      // spend the budget at the same rate a real one does, or a wait with a
-      // fake clock never terminates.
-      const sleepMs = Math.min(pollIntervalMs, remainingBudgetMs);
-      const sleepStartedAt = now();
-      await host.sleep(sleepMs);
-      remainingBudgetMs = Math.max(
-        0,
-        remainingBudgetMs - Math.max(sleepMs, now() - sleepStartedAt),
+      // The interval is a floor on what one iteration costs, not an addition
+      // to it: a poll that blocks server-side has already spent the cadence,
+      // and charging it a second interval on top would halve the number of
+      // polls the caller's budget buys. Whatever sleep is left is charged at
+      // its intended length even when injected instant, or a wait driven by a
+      // fake clock would never terminate.
+      const sleepMs = Math.min(
+        Math.max(0, pollIntervalMs - pollElapsedMs),
+        remainingBudgetMs,
       );
+      if (sleepMs > 0) {
+        const sleepStartedAt = now();
+        await host.sleep(sleepMs);
+        remainingBudgetMs = Math.max(
+          0,
+          remainingBudgetMs - Math.max(sleepMs, now() - sleepStartedAt),
+        );
+      }
     }
   } finally {
     removeSignalListener?.();

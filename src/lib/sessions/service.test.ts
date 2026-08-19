@@ -2490,6 +2490,54 @@ describe("bulkDeleteSessions", () => {
     expect(fusedLabels).toEqual(["bulkDeleteSessions"]);
   });
 
+  /** A project whose only sessions are the named parentless siblings. */
+  function stateWithSiblings(names: string[]) {
+    return {
+      projects: {
+        "/projects/repo": {
+          rootPath: "/projects/repo",
+          sessions: Object.fromEntries(
+            names.map((sessionName) => [
+              sessionName,
+              {
+                sessionName,
+                worktreePath: `/projects/repo/.worktrees/${sessionName}`,
+                branchName: `csm/${sessionName}`,
+                createdAt: "2024-01-01T00:00:00Z",
+                lastActivityAt: "2024-01-01T00:00:00Z",
+                archived: false,
+                finished: false,
+                conversations: [],
+                source: "cc",
+                creationMode: "normal",
+                tddEnabled: true,
+                targetBranch: "main",
+                parentSessionName: null,
+              },
+            ]),
+          ),
+        },
+      },
+      archivedProjects: [] as string[],
+      pinnedProjects: [] as string[],
+    };
+  }
+
+  it("splits a large batch's state change into bounded fused-delete slices", async () => {
+    const names = Array.from({ length: 25 }, (_, index) => `S${index + 1}`);
+    readStateMock.mockResolvedValue(stateWithSiblings(names));
+    existsSyncMock.mockReturnValue(true);
+    mockGitSuccess();
+
+    await service.bulkDeleteSessions("/projects/repo", names);
+
+    const slices = (deps.applyFusedSessionDelete as Mock).mock.calls.map(
+      (call: unknown[]) => [...(call[1] as Iterable<string>)],
+    );
+    expect(slices.map((slice) => slice.length)).toEqual([10, 10, 5]);
+    expect(slices.flat()).toEqual(names);
+  });
+
   it("removes all sessions and retargets orphaned children in one pass", async () => {
     readStateMock.mockResolvedValue(stateWithThreeSiblingsAndChild());
     existsSyncMock.mockReturnValue(true);

@@ -50,6 +50,33 @@ describe("analyzeStateStore", () => {
     });
   });
 
+  it("carries the state-read floor and labels accessor statistics as a tail sample", () => {
+    const analysis = analyzeStateStore(
+      [
+        record({
+          durationMs: 60,
+          raw: { accessor: "getSession", totalMs: 60 },
+        }),
+        record({
+          durationMs: 65,
+          raw: { accessor: "getSession", totalMs: 65 },
+        }),
+        record({
+          durationMs: 70,
+          raw: { accessor: "getSession", totalMs: 70 },
+        }),
+      ],
+      { slowMs: 500, hotspotMs: 1000, top: 10 },
+    );
+
+    expect(analysis.stateReadFloorMs).toBe(5);
+    const accessorFinding = analysis.findings.find((finding) =>
+      finding.id.startsWith("state-store-accessor-high:"),
+    );
+    expect(accessorFinding?.explanation).toContain("tail");
+    expect(accessorFinding?.explanation).toContain("5 ms");
+  });
+
   it("groups write queue wait and hold timings by label", () => {
     const analysis = analyzeStateStore(
       [

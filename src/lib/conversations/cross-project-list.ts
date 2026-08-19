@@ -19,14 +19,13 @@ import {
   type SessionConversationListItem,
 } from "@/lib/state-store";
 import { createContextArtifactsRepo } from "@/lib/context-artifacts/repo";
-import { readTranscriptEntriesWithSeq } from "@/lib/prompt/transcript";
+import { getTranscriptMaxSeq as defaultGetTranscriptMaxSeq } from "@/lib/prompt/transcript";
 import { getFirstPromptSnippet as defaultGetFirstPromptSnippet } from "./first-prompt-snippet";
 import { createLogger } from "@/lib/logging";
 import { isProjectSentinel } from "./project-conversation-scope";
 import { redactedConversationProfile } from "./conversation-profile";
 import type { RedactedAgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
 import type { ContextArtifactRow } from "@/lib/context-artifacts/schemas";
-import type { TranscriptEntriesResult } from "@/lib/prompt/transcript";
 import type { ConversationListItem, ConversationState } from "./schemas";
 
 /**
@@ -80,9 +79,7 @@ export interface ListAllConversationsDeps {
   findArtifactsByConversationIds(
     conversationIds: string[],
   ): ContextArtifactRow[];
-  readTranscriptEntries(
-    transcriptPath: string,
-  ): Promise<TranscriptEntriesResult>;
+  getTranscriptMaxSeq(transcriptPath: string): Promise<number>;
 }
 
 const defaultDeps: ListAllConversationsDeps = {
@@ -94,7 +91,7 @@ const defaultDeps: ListAllConversationsDeps = {
     createContextArtifactsRepo(getStateDb()).findByConversationIds(
       conversationIds,
     ),
-  readTranscriptEntries: readTranscriptEntriesWithSeq,
+  getTranscriptMaxSeq: defaultGetTranscriptMaxSeq,
 };
 
 /**
@@ -280,15 +277,21 @@ interface CompactionEnrichmentStats {
 
 /**
  * Advertise completed conversation-compaction artifacts on list items
- * (design §12.4): one batched artifact query, then fresh/stale derived from
- * the entry reader's maxSeq vs the artifact's covered range — one (cached)
- * stat per compacted conversation, zero I/O for the rest.
+ * (design §12.4): one batched artifact query, then fresh/stale from the
+ * transcript's last visible seq against the artifact's covered range.
+ *
+ * Only compacted conversations are asked for a seq, and each answer costs a
+ * stat plus — at most — the bytes appended since the last call, never a parse
+ * of the whole transcript. That bound is the reason this reads through
+ * `getTranscriptMaxSeq` rather than an entry reader: `JSON.parse` is
+ * synchronous, so a full parse per listed conversation blocks the event loop
+ * for every other request no matter how many run concurrently.
  */
 async function enrichWithCompactionStatus(
   items: ConversationListItem[],
   deps: Pick<
     ListAllConversationsDeps,
-    "findArtifactsByConversationIds" | "readTranscriptEntries"
+    "findArtifactsByConversationIds" | "getTranscriptMaxSeq"
   >,
 ): Promise<CompactionEnrichmentStats> {
   const none: CompactionEnrichmentStats = {
@@ -331,7 +334,7 @@ async function enrichWithCompactionStatus(
 
   await runWithConcurrency(tasks, MAX_SNIPPET_CONCURRENCY, async (task) => {
     try {
-      const { maxSeq } = await deps.readTranscriptEntries(task.transcriptPath);
+      const maxSeq = await deps.getTranscriptMaxSeq(task.transcriptPath);
       task.item.compactStatus =
         maxSeq > task.row.coveredEndSeq ? "stale" : "fresh";
     } catch (err) {

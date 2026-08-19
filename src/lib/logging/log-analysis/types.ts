@@ -75,6 +75,14 @@ export interface LogAnalysisThresholds {
   slowMs: number;
   hotspotMs: number;
   top: number;
+  /**
+   * The emit floor `state.read.timing` is subject to in the state store: reads
+   * faster than this are never logged, so every state-read aggregate is a tail
+   * sample. Analyses carry it onto their output so report surfaces can label
+   * that censoring instead of presenting the aggregates as complete. Omitted
+   * means the shipped floor, `DEFAULT_STATE_READ_FLOOR_MS`.
+   */
+  stateReadFloorMs?: number;
 }
 
 interface FindingEvidence {

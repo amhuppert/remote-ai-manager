@@ -186,6 +186,7 @@ export function buildLogAnalysisReport(
     operationHotspots: asUnknownRecords(operationHotspots.hotspots),
     duplicateWork: asUnknownRecords(duplicateWork.duplicates),
     stateStore: {
+      stateReadFloorMs: stateStore.stateReadFloorMs,
       slowAccessors: stateStore.slowAccessors,
       repoOperations: stateStore.repoOperations,
       writeQueue: stateStore.writeQueue,

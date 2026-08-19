@@ -157,10 +157,15 @@ export interface TicketAttachmentServiceDeps {
     projectPath: string,
     operation: () => Promise<T>,
   ): Promise<T>;
-  /** Create-if-missing, never force-refresh (capture policy for adds). */
-  ensureConversationCompaction(
-    input: EnsureConversationCompactionInput,
-  ): Promise<EnsureConversationCompactionResult>;
+  /**
+   * Hands a committed pending conversation attachment to the background
+   * snapshot refresher; capture never runs inside the add request.
+   */
+  scheduleConversationSnapshotRefresh(input: {
+    projectName: string;
+    number: number;
+    attachmentId: string;
+  }): void;
   /** Current compaction artifact markdown, if one exists. */
   getLiveCompaction(conversationId: string): Promise<LiveCompaction | null>;
   resolveConversation(
@@ -372,20 +377,8 @@ export function createTicketAttachmentService(
             `unknown conversation: ${payload.conversationId}`,
           );
         }
-        const ensured = await deps.ensureConversationCompaction(conversation);
-        if (!ensured.ok) {
-          return fail({
-            code: "context_preparation_failed",
-            phase: "content",
-            reason: ensured.reason,
-          });
-        }
-        const snapshot = await deps.contentStore.captureText({
-          ticketId: ticket.id,
-          attachmentId,
-          fileName: `compaction-${payload.conversationId}.md`,
-          text: ensured.markdown,
-        });
+        // The compaction capture is a multi-minute LLM run; the row commits
+        // pending and the background refresher settles the snapshot.
         return {
           ok: true,
           value: {
@@ -393,9 +386,9 @@ export function createTicketAttachmentService(
             projectPath: conversation.projectPath,
             sessionName: conversation.sessionName,
             conversationId: payload.conversationId,
-            snapshotKey: snapshot.snapshotKey,
-            snapshotCapturedAt: ensured.capturedAt,
-            snapshotStatus: "captured",
+            snapshotKey: null,
+            snapshotCapturedAt: null,
+            snapshotStatus: "pending",
           },
         };
       }
@@ -770,6 +763,28 @@ export function createTicketAttachmentService(
           number,
           kind: inserted.payload.kind,
         });
+        if (
+          inserted.payload.kind === "conversation" &&
+          effectiveSnapshotStatus(inserted.payload) === "pending"
+        ) {
+          // The row is already committed, so a refresher that cannot be
+          // reached leaves a pending attachment the retry command can settle
+          // — it never turns the add into a failure.
+          try {
+            deps.scheduleConversationSnapshotRefresh({
+              projectName,
+              number,
+              attachmentId: inserted.id,
+            });
+          } catch (error) {
+            logger.warn("tickets.attachments.snapshot_schedule_failed", {
+              projectName,
+              number,
+              attachmentId: inserted.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
         await publishAttachmentsChanged(projectName, ticket);
         return { ok: true, value: inserted };
       });

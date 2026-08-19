@@ -7,7 +7,10 @@ import {
   renderAttachmentIndexLines,
   type AttachmentIndexEntry,
 } from "@/lib/tickets/attachment-index";
-import { attachmentRefreshCommand } from "@/lib/tickets/attachment-commands";
+import {
+  attachmentGetCommand,
+  attachmentRefreshCommand,
+} from "@/lib/tickets/attachment-commands";
 import { parseTicketIdentifier } from "@/lib/tickets/references";
 import {
   effectiveSnapshotStatus,
@@ -866,7 +869,26 @@ async function runTicketStart(
       : output.initialPromptQueued
         ? "agent kickoff queued — the first turn starts from the ticket"
         : "agent kickoff could NOT be queued — send the first prompt manually";
-  const humanBody = `started ${identifier} in ${mode.value} mode\nsession: ${output.sessionName}\n${kickoffLine}\n`;
+  // Start never blocks on conversation compaction: it schedules a background
+  // capture for every snapshot that is not settled yet. Those entries have no
+  // content in the session's worktree until their capture lands, so the start
+  // names them and the command that reports each one's state.
+  const unsettledSnapshotIds = output.ticket.attachments.flatMap(
+    (attachment) =>
+      attachment.payload.kind === "conversation" &&
+      effectiveSnapshotStatus(attachment.payload) !== "captured"
+        ? [attachment.id]
+        : [],
+  );
+  const snapshotBlock =
+    unsettledSnapshotIds.length === 0
+      ? ""
+      : `conversation snapshots still capturing in the background: ${unsettledSnapshotIds.join(
+          ", ",
+        )}\n${unsettledSnapshotIds
+          .map((id) => `check: ${attachmentGetCommand(identifier, id)}`)
+          .join("\n")}\n`;
+  const humanBody = `started ${identifier} in ${mode.value} mode\nsession: ${output.sessionName}\n${kickoffLine}\n${snapshotBlock}`;
   // Terminal: no hint.
   return {
     exitCode: EXIT_OK,
@@ -1215,15 +1237,27 @@ function attachedResult(
       json,
     );
   }
-  const kind = parsed.data.payload.kind;
+  const payload = parsed.data.payload;
   const idText = ` ${parsed.data.id}`;
+  // A conversation snapshot is compacted in the background, so the attach
+  // returns before any content exists. Naming the unsettled snapshot and its
+  // retry keeps that visible instead of leaving a silently empty entry.
+  const snapshotLines =
+    payload.kind === "conversation" &&
+    effectiveSnapshotStatus(payload) === "pending"
+      ? `snapshot pending\nretry: ${attachmentRefreshCommand(
+          identifier,
+          parsed.data.id,
+        )}\n`
+      : "";
   // Terminal: no hint — the index on `ticket get` is the follow-up surface.
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, `attached ${kind}${idText} to ${identifier}\n`, {
-      ok: true,
-      attachment: parsed.data,
-    }),
+    stdout: render(
+      json,
+      `attached ${payload.kind}${idText} to ${identifier}\n${snapshotLines}`,
+      { ok: true, attachment: parsed.data },
+    ),
     stderr: "",
   };
 }

@@ -11,6 +11,12 @@ import {
   type DevServerStartMode,
 } from "./registry";
 import type { PortOwnershipInput, PortOwnershipResult } from "./port-ownership";
+import {
+  getTraceContext,
+  runWithTrace,
+  type TraceContext,
+} from "@/lib/logging";
+import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 
 function createTestDeps(
   overrides: Partial<DevServerRegistryDeps> = {},
@@ -241,6 +247,64 @@ describe("DevServerRegistry", () => {
 
       expect(server!.status).toBe("running");
       expect(server!.port).toBe(59802);
+    });
+
+    it("times the readiness probe and replays the starting caller's trace", async () => {
+      const capturing = createCapturingLogger();
+      const observedTraces: (TraceContext | undefined)[] = [];
+      deps = createTestDeps({
+        logger: capturing,
+        checkPortListening: vi.fn(async () => {
+          observedTraces.push(getTraceContext());
+          return true;
+        }),
+      });
+      registry = createDevServerRegistry(deps);
+
+      await runWithTrace(
+        { traceId: "trace-start-request", action: "dev-server.route.start" },
+        async () => {
+          await registry.startServer({
+            projectPath: "/proj",
+            sessionName: "s1",
+            serverName: "probe-span-test",
+            command: "sleep 60",
+            worktreePath: "/tmp",
+            startMode: startMode(59804, { readinessTimeoutMs: 2000 }),
+          });
+        },
+      );
+
+      await waitForServer(
+        {
+          projectPath: "/proj",
+          sessionName: "s1",
+          worktreePath: "/tmp",
+          serverName: "probe-span-test",
+        },
+        (entry) => entry.status === "running",
+      );
+
+      // The probe runs after the starting request has returned, so its cost is
+      // only attributable if it is timed AND carries that request's traceId
+      // instead of an orphan id that correlates with nothing.
+      const span = capturing.entries.find(
+        (entry) => entry.message === "dev-server.readiness.probe.complete",
+      );
+      expect(
+        span,
+        "expected a timed() span for the readiness probe",
+      ).toBeDefined();
+      expect(span!.fields).toMatchObject({
+        serverName: "probe-span-test",
+        port: 59804,
+      });
+      expect(typeof span!.fields["durationMs"]).toBe("number");
+
+      expect(observedTraces[0]).toMatchObject({
+        traceId: "trace-start-request",
+        action: "dev-server.readiness.probe",
+      });
     });
 
     it("registers Tailscale after server starts listening on port", async () => {

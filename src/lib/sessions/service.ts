@@ -79,6 +79,13 @@ export { generateRandomSuffix, validateSessionName } from "./repo";
  */
 export const PLANNER_SESSION_NAME = "__planner__";
 
+/**
+ * How many sessions one fused delete may remove. A whole 100-session batch in a
+ * single mutation held the global write queue for over a second, which every
+ * unrelated request behind it waits out; the queue is released between slices.
+ */
+const FUSED_DELETE_SLICE_SIZE = 10;
+
 // ============================================================
 // Types
 // ============================================================
@@ -1139,9 +1146,14 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
    *   notification/job cleanup) run sequentially: concurrent
    *   `git worktree remove` against the same parent repository races on
    *   `.git/config.lock` and fails.
-   * - All successful deletions are applied to state via a single focused
-   *   `applyFusedSessionDelete` at the end (see PERFORMANCE.md — bulk routes
-   *   pay one short write-queue hold per batch).
+   * - Successful deletions are applied to state through focused
+   *   `applyFusedSessionDelete` calls of at most
+   *   {@link FUSED_DELETE_SLICE_SIZE} sessions, awaited one after another so the
+   *   global write queue is released between slices. That trades the batch's
+   *   state mutation being one atomic step for a bounded hold: the end-to-end
+   *   guarantee does not exist today anyway, because each session's side effects
+   *   (worktree removal, transcript purge) are themselves non-atomic and already
+   *   run to completion before any of them is recorded.
    * - A session that was not found is reported as a failure result and
    *   does not abort the rest of the batch.
    */
@@ -1183,11 +1195,17 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       }
     }
 
-    await applyFusedDeleteMutation(
-      "bulkDeleteSessions",
-      projectPath,
-      succeeded,
-    );
+    for (
+      let offset = 0;
+      offset < succeeded.length;
+      offset += FUSED_DELETE_SLICE_SIZE
+    ) {
+      await applyFusedDeleteMutation(
+        "bulkDeleteSessions",
+        projectPath,
+        succeeded.slice(offset, offset + FUSED_DELETE_SLICE_SIZE),
+      );
+    }
     for (const sessionName of succeeded) {
       await reconcileDeletedTicketSession(projectPath, sessionName);
     }

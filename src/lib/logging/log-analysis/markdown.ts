@@ -12,6 +12,51 @@ function value(value: unknown): string {
   return String(value);
 }
 
+function numberField(
+  source: Record<string, unknown>,
+  key: string,
+): number | null {
+  const raw = source[key];
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+}
+
+function recordArrayField(
+  source: Record<string, unknown>,
+  key: string,
+): Record<string, unknown>[] {
+  const raw = source[key];
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (item): item is Record<string, unknown> =>
+      typeof item === "object" && item !== null && !Array.isArray(item),
+  );
+}
+
+/**
+ * Sentences that keep `state.read.timing` aggregates from reading as complete
+ * distributions. The state store only logs a read once it crosses an emit
+ * floor, so counts and percentiles derived from those rows describe the tail
+ * above the floor — and the facade-versus-repo gap subtracts unconditional
+ * per-repo timings from that censored numerator.
+ */
+function stateReadTailNotes(stateStore: Record<string, unknown>): {
+  sentence: string;
+  rowSuffix: string;
+} {
+  const floorMs = numberField(stateStore, "stateReadFloorMs");
+  if (floorMs === null) {
+    return {
+      sentence:
+        "tail sample: state.read.timing is logged only above an emit floor, so counts and p95 are tail statistics, not typical latency",
+      rowSuffix: " (above-floor tail sample; faster reads unlogged)",
+    };
+  }
+  return {
+    sentence: `tail sample: state.read.timing is logged only at or above the ${value(floorMs)} ms floor, so counts and p95 are tail statistics, not typical latency`,
+    rowSuffix: ` (>= ${value(floorMs)} ms tail sample; faster reads unlogged)`,
+  };
+}
+
 function firstTraceCommand(
   findings: readonly LogAnalysisFinding[],
 ): string | null {
@@ -45,6 +90,7 @@ function renderFindings(findings: readonly LogAnalysisFinding[]): string[] {
 export function renderLogAnalysisMarkdown(
   report: AgentLogAnalysisReport,
 ): string {
+  const tailNotes = stateReadTailNotes(report.stateStore);
   const lines: string[] = [
     "# Command Center Log Analysis",
     "",
@@ -71,8 +117,10 @@ export function renderLogAnalysisMarkdown(
 
   lines.push("", "## Top Operation Hotspots");
   for (const hotspot of report.operationHotspots.slice(0, 10)) {
+    const suffix =
+      hotspot["message"] === "state.read.timing" ? tailNotes.rowSuffix : "";
     lines.push(
-      `- ${value(hotspot["key"])}: p95=${value(hotspot["p95Ms"])} ms, total=${value(hotspot["totalMs"])} ms, count=${value(hotspot["count"])}`,
+      `- ${value(hotspot["key"])}: p95=${value(hotspot["p95Ms"])} ms, total=${value(hotspot["totalMs"])} ms, count=${value(hotspot["count"])}${suffix}`,
     );
   }
   if (report.operationHotspots.length === 0) {
@@ -89,18 +137,28 @@ export function renderLogAnalysisMarkdown(
     lines.push("- No repeated work signatures found.");
 
   lines.push("", "## State Store");
-  const stateStore = report.stateStore as {
-    slowAccessors?: unknown[];
-    writeQueue?: unknown[];
-  };
-  lines.push(`- Slow accessors: ${stateStore.slowAccessors?.length ?? 0}`);
-  lines.push(`- Write queue groups: ${stateStore.writeQueue?.length ?? 0}`);
+  const slowAccessors = recordArrayField(report.stateStore, "slowAccessors");
+  lines.push(
+    `- Slow accessors: ${slowAccessors.length} (${tailNotes.sentence})`,
+  );
+  for (const accessor of slowAccessors.slice(0, 10)) {
+    lines.push(
+      `  - ${value(accessor["accessor"])}: count=${value(accessor["count"])}, p95=${value(accessor["p95Ms"])} ms, max=${value(accessor["maxMs"])} ms`,
+    );
+  }
+  lines.push(
+    `- Write queue groups: ${recordArrayField(report.stateStore, "writeQueue").length}`,
+  );
 
   lines.push("", "## Budgets");
   lines.push(`- Violations: ${report.budgets.violationCount}`);
   for (const violation of report.budgets.violations.slice(0, 10)) {
+    // A state-read breach is measured against the same censored p95 the State
+    // Store section labels, so the qualifier has to travel with it.
+    const suffix =
+      violation["kind"] === "state-read" ? tailNotes.rowSuffix : "";
     lines.push(
-      `- ${value(violation["kind"])}: ${value(violation["subject"])} observed=${value(violation["observed"])} ${value(violation["unit"])} > ceiling=${value(violation["ceiling"])} ${value(violation["unit"])}`,
+      `- ${value(violation["kind"])}: ${value(violation["subject"])} observed=${value(violation["observed"])} ${value(violation["unit"])} > ceiling=${value(violation["ceiling"])} ${value(violation["unit"])}${suffix}`,
     );
   }
   if (report.budgets.violationCount === 0) {

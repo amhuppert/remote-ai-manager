@@ -18,6 +18,7 @@ import {
   type DevServerRegistryDeps,
 } from "./registry";
 import type { PortOwnershipInput, PortOwnershipResult } from "./port-ownership";
+import { createPortSelectionService } from "./port-selection";
 import type { PublishFn } from "@/lib/events/publication";
 import type { DevServerStatusEvent } from "@/lib/dev-server/schemas";
 import {
@@ -340,6 +341,68 @@ describe("dev-server route handlers", () => {
     });
   });
 
+  it("START_ALL starts every inactive server without waiting for the previous one", async () => {
+    const events: string[] = [];
+    const service = makeService({
+      list: vi.fn(async () => [
+        makeStatus({ serverName: "web", status: "stopped" }),
+        makeStatus({ serverName: "storybook", status: "stopped" }),
+      ]),
+      ensure: vi.fn(async ({ serverName }) => {
+        events.push(`enter:${serverName ?? "?"}`);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        events.push(`exit:${serverName ?? "?"}`);
+        return makeStatus({ serverName, status: "starting" });
+      }),
+    });
+    const { handlers } = makeHandlers(service);
+
+    const response = await handlers.START_ALL(
+      new Request("http://cc.test/dev-servers/start-all", { method: "POST" }),
+      context({ name: "project", session: "s1" }),
+    );
+
+    expect(response.status).toBe(202);
+    // Every server's pre-response work (reconcile, port selection, spawn) is
+    // independent, so the second must not queue behind the first's latency.
+    expect(events.slice(0, 2)).toEqual(["enter:web", "enter:storybook"]);
+  });
+
+  it("START_ALL reports a failing server while still starting the others", async () => {
+    const started: string[] = [];
+    const service = makeService({
+      list: vi.fn(async () => [
+        makeStatus({ serverName: "web", status: "stopped" }),
+        makeStatus({ serverName: "storybook", status: "stopped" }),
+      ]),
+      ensure: vi.fn(async ({ serverName }) => {
+        if (serverName === "web") {
+          throw new UnmanagedDevServerDetectedError(
+            "web",
+            3007,
+            5001,
+            "/repos/project/.worktrees/s1",
+          );
+        }
+        started.push(serverName ?? "?");
+        return makeStatus({ serverName, status: "starting" });
+      }),
+    });
+    const { handlers } = makeHandlers(service);
+
+    const response = await handlers.START_ALL(
+      new Request("http://cc.test/dev-servers/start-all", { method: "POST" }),
+      context({ name: "project", session: "s1" }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await json(response)).toMatchObject({
+      code: "UNMANAGED_DEV_SERVER_DETECTED",
+      details: { serverName: "web", port: 3007 },
+    });
+    expect(started).toEqual(["storybook"]);
+  });
+
   it("START_ALL returns 400 when no dev servers are configured", async () => {
     const service = makeService({
       list: vi.fn(async () => []),
@@ -467,15 +530,19 @@ describe("dev-server START durable-acceptance boundary", () => {
   const serverName = "web";
   const assignedPort = 59950;
 
+  const portRange = 10;
+
   let worktreePath: string;
   let registry: ReturnType<typeof createDevServerRegistry>;
   let broadcastEvents: DevServerStatusEvent[];
   let ready: boolean;
+  let classifiedPorts: number[];
 
   beforeEach(() => {
     worktreePath = mkdtempSync(path.join(tmpdir(), "cc-accept-boundary-"));
     broadcastEvents = [];
     ready = false;
+    classifiedPorts = [];
 
     const broadcast: PublishFn = (event) => {
       if (event.type === "dev-server-status") {
@@ -518,6 +585,18 @@ describe("dev-server START durable-acceptance boundary", () => {
   });
 
   function makeRealHandlers() {
+    // The real port-selection service, so the accept path pays whatever port
+    // classification actually costs. Each classification is an `lsof`/`ss`
+    // spawn in production, so `classifiedPorts` is the wall-clock cost of the
+    // pre-response work expressed as a countable observation.
+    const portSelection = createPortSelectionService({
+      classifyPort: async ({ port }) => {
+        classifiedPorts.push(port);
+        return { status: "available" };
+      },
+      findOwnedListenerInRange: async () => ({ status: "none" }),
+    });
+
     const serviceDeps: DevServerServiceDeps = {
       getSession: async () => ({ worktreePath }),
       readRepoConfig: async () => ({
@@ -525,7 +604,7 @@ describe("dev-server START durable-acceptance boundary", () => {
           {
             name: serverName,
             command: "sleep 60",
-            port: { base: assignedPort, range: 10 },
+            port: { base: assignedPort, range: portRange },
           },
         ],
       }),
@@ -535,7 +614,7 @@ describe("dev-server START durable-acceptance boundary", () => {
       startServer: registry.startServer,
       stopServer: registry.stopServer,
       killListeningProcessForPort: registry.killListeningProcessForPort,
-      selectPort: async () => ({ status: "selected", port: assignedPort }),
+      selectPort: portSelection.selectPort,
       sleep: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
       now: () => Date.now(),
     };
@@ -581,6 +660,11 @@ describe("dev-server START durable-acceptance boundary", () => {
     };
     expect(body.status).toBe("accepted");
     expect(body.server).toMatchObject({ serverName, status: "starting" });
+
+    // The accept path is fast because it does bounded pre-response work, not
+    // because the test stubbed the expensive part out: selecting the free base
+    // port must not classify the whole configured range.
+    expect(classifiedPorts).toEqual([assignedPort]);
 
     // Slow readiness did not gate the response: at 202 time the registry has
     // broadcast only "starting"; nothing has reached "running".

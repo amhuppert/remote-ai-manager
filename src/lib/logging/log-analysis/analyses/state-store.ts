@@ -37,7 +37,20 @@ interface FacadeRepoGap {
   gapMs: number;
 }
 
+/**
+ * Mirrors `STATE_READ_TIMING_LOG_THRESHOLD_MS` in the state store, the floor
+ * below which a `state.read.timing` line is never written. The floor is a noise
+ * control, so the analyzer reproduces it rather than lowering it; what it must
+ * not do is present the surviving sample as the whole distribution.
+ */
+export const DEFAULT_STATE_READ_FLOOR_MS = 5;
+
 export interface StateStoreAnalysis {
+  /**
+   * Floor every `slowAccessors` and `facadeRepoGaps` number is conditioned on.
+   * Report surfaces read it from here so no renderer restates the constant.
+   */
+  stateReadFloorMs: number;
   slowAccessors: StateAccessorSummary[];
   repoOperations: StateRepoOperationSummary[];
   writeQueue: StateWriteQueueSummary[];
@@ -258,6 +271,7 @@ function findingsForStateStore(input: {
   writeQueue: readonly StateWriteQueueSummary[];
   holdBudgetExceeded: readonly HoldBudgetExceededSummary[];
   gaps: readonly FacadeRepoGap[];
+  stateReadFloorMs: number;
 }): LogAnalysisFinding[] {
   const findings: LogAnalysisFinding[] = [];
 
@@ -313,11 +327,15 @@ function findingsForStateStore(input: {
         confidence: 0.86,
         category: "state-store",
         title: `Slow state accessor: ${accessor.accessor}`,
-        explanation:
-          "This state accessor has p95 latency above the state read target.",
+        explanation: `This state accessor has p95 latency above the state read target. state.read.timing is a ${input.stateReadFloorMs} ms-and-above tail sample — reads below the floor are never logged — so this count and p95 are tail statistics, not the accessor's typical latency or call volume.`,
         evidence: [
           { label: "p95Ms", value: accessor.p95Ms, unit: "ms" },
           { label: "count", value: accessor.count, unit: "count" },
+          {
+            label: "stateReadFloorMs",
+            value: input.stateReadFloorMs,
+            unit: "ms",
+          },
         ],
         traceIds: [],
         recommendedNextActions: [
@@ -335,11 +353,15 @@ function findingsForStateStore(input: {
       confidence: 0.76,
       category: "state-store",
       title: "State facade time exceeds inner repo time",
-      explanation:
-        "Multiple traces spend meaningful state read time outside inner repository timing.",
+      explanation: `Multiple traces spend meaningful state read time outside inner repository timing. The gap is computed against a censored numerator: state.read.timing only exists at or above the ${input.stateReadFloorMs} ms floor, while the per-repo state-store.<repo>.<op>.timing rows subtracted from it are unconditional. Repositories that emit no timing at all also land in this gap, so it bounds uninstrumented work rather than isolating facade work.`,
       evidence: [
         { label: "affectedTraces", value: largeGaps.length, unit: "count" },
         { label: "maxGapMs", value: largeGaps[0]?.gapMs ?? 0, unit: "ms" },
+        {
+          label: "stateReadFloorMs",
+          value: input.stateReadFloorMs,
+          unit: "ms",
+        },
       ],
       traceIds: largeGaps.map((gap) => gap.traceId).slice(0, 5),
       recommendedNextActions: [
@@ -353,8 +375,10 @@ function findingsForStateStore(input: {
 
 export function analyzeStateStore(
   records: readonly ParsedServerLogRecord[],
-  _thresholds: LogAnalysisThresholds,
+  thresholds: LogAnalysisThresholds,
 ): StateStoreAnalysis {
+  const stateReadFloorMs =
+    thresholds.stateReadFloorMs ?? DEFAULT_STATE_READ_FLOOR_MS;
   const slowAccessors = summarizeAccessors(records);
   const repoOperations = summarizeRepoOperations(records);
   const writeQueue = summarizeWriteQueue(records);
@@ -362,6 +386,7 @@ export function analyzeStateStore(
   const facadeRepoGaps = computeFacadeRepoGaps(records);
 
   return {
+    stateReadFloorMs,
     slowAccessors,
     repoOperations,
     writeQueue,
@@ -372,6 +397,7 @@ export function analyzeStateStore(
       writeQueue,
       holdBudgetExceeded,
       gaps: facadeRepoGaps,
+      stateReadFloorMs,
     }),
   };
 }

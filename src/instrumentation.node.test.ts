@@ -479,6 +479,96 @@ describe("createStartupRegistrar", () => {
     expect(calls).toEqual(["stale-jobs", "parked-ref-gc"]);
   });
 
+  /**
+   * The sentinel samples the event loop for whole-process stalls, so it has to
+   * be running on the real server path — but never before migrations, since a
+   * fatal migration failure must not leave a timer behind in a process that is
+   * aborting startup.
+   */
+  it("starts the event-loop stall sentinel exactly once, after migrations", async () => {
+    const calls: string[] = [];
+    const register = createStartupRegistrar({
+      loadConversationRehydration: async () => ({
+        rehydrateConversationActors: async () => 0,
+      }),
+      runStateMigrations: async () => {
+        calls.push("migrations");
+        return [];
+      },
+      startEventLoopStallSentinel: () => {
+        calls.push("event-loop-sentinel");
+      },
+      initNotificationDb: () => {},
+      setConfigReader: () => {},
+      readConfig: async () => ({}) as never,
+      ensureAgentToken: async () => "test-token",
+      installCli: async () =>
+        ({ installed: false, reason: "bundle_missing" }) as const,
+      publishManagedSkills: async () => null,
+      recordServerBaseUrl: () => "http://127.0.0.1:3000",
+      verifyServerBaseUrl: () => {},
+      recoverActiveWorkflowEnvelopes: async () => ({
+        scanned: 0,
+        failed: 0,
+        preservedPaused: 0,
+        preservedRunning: 0,
+        movedToPaused: 0,
+      }),
+      sweepInterruptedCompactions: () => 0,
+      recoverStaleAgentRuns: () => 0,
+      initializeValidationService: async () => {},
+      recoverInterruptedConversationSnapshots: async () => 0,
+    });
+
+    await register();
+
+    expect(calls.filter((c) => c === "event-loop-sentinel")).toHaveLength(1);
+    expect(calls.indexOf("migrations")).toBeLessThan(
+      calls.indexOf("event-loop-sentinel"),
+    );
+  });
+
+  it("survives a throwing event-loop sentinel start without breaking startup", async () => {
+    const calls: string[] = [];
+    const register = createStartupRegistrar({
+      loadConversationRehydration: async () => ({
+        rehydrateConversationActors: async () => {
+          calls.push("rehydrate");
+          return 0;
+        },
+      }),
+      runStateMigrations: async () => [],
+      startEventLoopStallSentinel: () => {
+        throw new Error("timers exploded");
+      },
+      initNotificationDb: () => {},
+      setConfigReader: () => {
+        calls.push("config-reader");
+      },
+      readConfig: async () => ({}) as never,
+      ensureAgentToken: async () => "test-token",
+      installCli: async () =>
+        ({ installed: false, reason: "bundle_missing" }) as const,
+      publishManagedSkills: async () => null,
+      recordServerBaseUrl: () => "http://127.0.0.1:3000",
+      verifyServerBaseUrl: () => {},
+      recoverActiveWorkflowEnvelopes: async () => ({
+        scanned: 0,
+        failed: 0,
+        preservedPaused: 0,
+        preservedRunning: 0,
+        movedToPaused: 0,
+      }),
+      sweepInterruptedCompactions: () => 0,
+      recoverStaleAgentRuns: () => 0,
+      initializeValidationService: async () => {},
+      recoverInterruptedConversationSnapshots: async () => 0,
+    });
+
+    await expect(register()).resolves.not.toThrow();
+    expect(calls).toEqual(["rehydrate", "config-reader"]);
+  });
+
   it("survives a failing parked-ref sweep without breaking startup", async () => {
     const calls: string[] = [];
     const register = createStartupRegistrar({

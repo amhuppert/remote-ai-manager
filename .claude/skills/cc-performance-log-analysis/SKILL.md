@@ -122,6 +122,23 @@ telemetry accrues):
 | `stateReadMs` | `state.read` accessor p95 ceiling, ms | `100` |
 | `rowSizeBytes` | serialized row-size ceiling, bytes (from `state-store.row_size.exceeded`) | `262144` |
 
+**`stateReadMs` is judged on a censored tail.** `state.read.timing` is written
+only when a read takes **5 ms or more**
+(`STATE_READ_TIMING_LOG_THRESHOLD_MS`, `src/lib/state-store/accessors.ts`), so
+every state-read count, p95 and total — in the budget row, in the `## State
+Store` section, in `state-store:state.read.timing accessor=…` hotspots, and in
+the DuckDB `state-store` question — describes the tail above that floor, not
+typical latency or real call volume. The floor is a deliberate noise control:
+do not lower it to "get complete data", and do not report a state-read p95
+without the qualifier. The report carries the floor at
+`stateStore.stateReadFloorMs` and the markdown labels every state-read surface
+with it.
+
+The per-repo `state-store.<repo>.<op>.timing` rows are **unconditional**, so the
+two families cannot be compared directly. A facade total measured against the
+repo totals beneath it manufactures an "unexplained" gap out of the censoring
+alone.
+
 Two convention/violation **finding rules** also surface in every report's
 `findings` (independent of `--assert-budgets`):
 
@@ -176,6 +193,10 @@ exemplars). The interpretation rules below apply to DuckDB output too.
 - Treat `instrumentation-gap` as a signal to add `timed()` coverage before optimizing. Do not claim root cause when unexplained time dominates.
 - Treat `duplicate-work` findings as likely code-path issues: repeated state reads, transcript reads, diffs, or git commands inside one request trace.
 - Treat high `state-store.write_queue` `waitMs` as contention. Treat high `holdMs` as slow mutation work.
+- Do not read a **facade gap** (`State facade time exceeds inner repo time`, or `facadeRepoGaps` in the JSON) as proof of mapping/aggregation cost. The gap is `state.read.timing` minus the per-repo timings seen in the same trace, and it absorbs three different things: SQL in a repository that emits **no timing at all**, per-repo work the analyzer cannot attribute, and genuine facade work. Confirm with a trace before naming Zod mapping.
+  - Repositories that emit **no** `state-store.<repo>.<op>.timing`: `session-markdown-documents`, `graph-workflow-pending-artifacts`, `graph-workflow-result-deliveries`, `conversation-machine-snapshots`, `validation-runs`, and the `spec*` family (`specs`, `spec-delivery`, `spec-delivery-plan`, `spec-events`, `spec-execution-binding`, `spec-links`, `spec-review`). Their SQL is invisible to the analyzer.
+  - `getSessionMarkdownDocuments` is the sharpest case: its only inner repository is un-timed, so **100%** of its facade time is reported as gap even when all of it is SQL.
+  - The gap also sums **every** repo timing in the trace, not only those inside the accessor's own window, so a trace with repo work outside the accessor under-reports the gap.
 - Treat slow external commands separately from application CPU work. A slow `git` or `tailscale` command is not evidence that React, Next.js, or SQLite is slow.
 - Do not infer browser network or handler cost without `--client-log`; server logs alone cannot prove client-side latency.
 - Do not analyze SSE connection lifetime as request latency. Use `sse.broadcast.complete`, `transportMs`, and `handlerMs`.

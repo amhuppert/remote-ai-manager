@@ -37,6 +37,7 @@ import {
   collectOrphanedParkedRefs,
   type ParkedRefGcSummary,
 } from "./lib/jobs/parked-ref-gc";
+import { startEventLoopStallSentinel } from "./lib/logging/event-loop-stall-sentinel";
 
 const logger = createLogger("startup");
 
@@ -72,6 +73,11 @@ export interface StartupDeps {
    * that is not about parked refs need not supply it.
    */
   collectOrphanedParkedRefs?(): Promise<ParkedRefGcSummary>;
+  /**
+   * Starts the event-loop stall sampler. Optional so a test that is not about
+   * runtime instrumentation need not supply it.
+   */
+  startEventLoopStallSentinel?(): void;
   verifyServerBaseUrl(): void;
 }
 
@@ -119,6 +125,7 @@ const defaultStartupDeps: StartupDeps = {
       now: () => new Date().toISOString(),
     }),
   collectOrphanedParkedRefs: () => collectOrphanedParkedRefs(),
+  startEventLoopStallSentinel,
   verifyServerBaseUrl: () => {
     void verifyRecordedServerBaseUrl();
   },
@@ -151,6 +158,16 @@ export function createStartupRegistrar(
         fatal: true,
       });
       throw err;
+    }
+
+    // Runs only past the fatal migration block: a startup that aborts must not
+    // leave a sampling timer behind in the dying process.
+    try {
+      deps.startEventLoopStallSentinel?.();
+    } catch (err) {
+      logger.error("startup.event_loop_sentinel_failed", {
+        error: getErrorMessage(err),
+      });
     }
 
     deps.registerSpecWorkflowComposition?.();

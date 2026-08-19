@@ -438,11 +438,7 @@ describe("cross-project conversation feed", () => {
       ],
       getFirstPromptSnippet: async () => null,
       findArtifactsByConversationIds: () => [],
-      readTranscriptEntries: async () => ({
-        entries: [],
-        nextSeq: 0,
-        maxSeq: 0,
-      }),
+      getTranscriptMaxSeq: async () => 0,
     };
 
     const result = await createListAllConversations(deps)({

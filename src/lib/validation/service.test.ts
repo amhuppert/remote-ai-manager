@@ -1366,6 +1366,87 @@ describe("system submissions with explicit targets", () => {
   });
 });
 
+describe("status-change waits behind held status requests", () => {
+  it("wakes a held reader on admission and again on the terminal verdict", async () => {
+    const occupying = await service.submit(request({ commandName: "test" }));
+    expect(occupying.kind).toBe("accepted");
+    if (occupying.kind !== "accepted") return;
+    const queued = await service.submitSystem(systemRequest());
+    expect(queued).toMatchObject({ kind: "accepted", status: "queued" });
+    if (queued.kind !== "accepted") return;
+
+    let woke = false;
+    const admission = service.waitForStatusChange(queued.runId).then(() => {
+      woke = true;
+    });
+    await flush();
+    // A run standing still must not wake its reader; that is the whole point
+    // of holding the request instead of answering it every second.
+    expect(woke).toBe(false);
+
+    runner.runs
+      .get(occupying.runId)
+      ?.complete({ kind: "exited", exitCode: 0, output: "clean" });
+    await admission;
+    expect(repo.findById(queued.runId)?.status).toBe("running");
+
+    const completion = service.waitForStatusChange(queued.runId);
+    runner.runs
+      .get(queued.runId)
+      ?.complete({ kind: "exited", exitCode: 1, output: "type error" });
+    await completion;
+    expect(repo.findById(queued.runId)?.status).toBe("failed");
+  });
+
+  it("settles an aborted wait and deregisters it, so a held request leaves nothing behind", async () => {
+    const captured = createCapturingLogger();
+    service = buildService({ logger: captured });
+    const submission = await service.submit(request({ commandName: "test" }));
+    expect(submission.kind).toBe("accepted");
+    if (submission.kind !== "accepted") return;
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const abandoned = new AbortController();
+      const wait = service.waitForStatusChange(
+        submission.runId,
+        abandoned.signal,
+      );
+      abandoned.abort();
+      await wait;
+    }
+
+    // The count the service reports for the next reader is the leak detector:
+    // abandoned waits that were never removed would still be registered.
+    const surviving = new AbortController();
+    void service.waitForStatusChange(submission.runId, surviving.signal);
+    const registrations = captured.entries.filter(
+      (entry) => entry.message === "validation.status_wait",
+    );
+    expect(registrations).toHaveLength(4);
+    expect(registrations.at(-1)?.fields).toEqual({
+      runId: submission.runId,
+      waiting: 1,
+    });
+
+    surviving.abort();
+    runner.runs
+      .get(submission.runId)
+      ?.complete({ kind: "exited", exitCode: 0, output: "clean" });
+    await expect(
+      service.waitForCompletion(submission.runId),
+    ).resolves.toMatchObject({ kind: "passed" });
+  });
+
+  it("settles immediately when handed an already-aborted signal", async () => {
+    const submission = await service.submit(request({ commandName: "test" }));
+    if (submission.kind !== "accepted") return;
+
+    await expect(
+      service.waitForStatusChange(submission.runId, AbortSignal.abort()),
+    ).resolves.toBeUndefined();
+  });
+});
+
 describe("cancellation and leases", () => {
   it("cancels a running run only for the exact token holder", async () => {
     const submission = await service.submit(request({ commandName: "test" }));

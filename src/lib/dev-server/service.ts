@@ -561,55 +561,75 @@ export function createDevServerService(
     timeoutMs: number;
   }): Promise<DevServerStatusItem> {
     const { projectPath, sessionName, worktreePath, target, timeoutMs } = args;
-    const deadline = deps.now() + timeoutMs;
-    let lastStatus: DevServerStatus =
-      deps.getServer({
-        projectPath,
-        sessionName,
-        worktreePath,
-        serverName: target.name,
-      })?.status ?? "stopped";
+    return timed(
+      log,
+      "dev-server.ensure.await_ready",
+      { serverName: target.name },
+      async () => {
+        const startedAt = deps.now();
+        const deadline = startedAt + timeoutMs;
+        let lastStatus: DevServerStatus =
+          deps.getServer({
+            projectPath,
+            sessionName,
+            worktreePath,
+            serverName: target.name,
+          })?.status ?? "stopped";
+        let attempts = 0;
 
-    while (true) {
-      const current = deps.getServer({
-        projectPath,
-        sessionName,
-        worktreePath,
-        serverName: target.name,
-      });
-      lastStatus = current?.status ?? "stopped";
+        while (true) {
+          attempts++;
+          const current = deps.getServer({
+            projectPath,
+            sessionName,
+            worktreePath,
+            serverName: target.name,
+          });
+          lastStatus = current?.status ?? "stopped";
 
-      if (current?.status === "running" && current.ownedByThisSession) {
-        log.info("dev-server.tool.ensure_wait", {
-          serverName: target.name,
-          outcome: "running",
-          port: current.port,
-        });
-        return toStatusItem(current, target);
-      }
+          if (current?.status === "running" && current.ownedByThisSession) {
+            log.info("dev-server.tool.ensure_wait", {
+              serverName: target.name,
+              outcome: "running",
+              port: current.port,
+              attempts,
+              durationMs: deps.now() - startedAt,
+            });
+            return toStatusItem(current, target);
+          }
 
-      if (current?.status === "error") {
-        log.warn("dev-server.tool.ensure_error", {
-          serverName: target.name,
-          errorMessage: current.errorMessage,
-        });
-        throw new DevServerStartFailedError(target.name, current.errorMessage, [
-          ...current.recentOutput,
-        ]);
-      }
+          if (current?.status === "error") {
+            log.warn("dev-server.tool.ensure_error", {
+              serverName: target.name,
+              errorMessage: current.errorMessage,
+            });
+            throw new DevServerStartFailedError(
+              target.name,
+              current.errorMessage,
+              [...current.recentOutput],
+            );
+          }
 
-      if (deps.now() >= deadline) {
-        log.warn("dev-server.tool.ensure_error", {
-          serverName: target.name,
-          reason: "timeout",
-          timeoutMs,
-          lastStatus,
-        });
-        throw new DevServerWaitTimeoutError(target.name, timeoutMs, lastStatus);
-      }
+          if (deps.now() >= deadline) {
+            log.warn("dev-server.tool.ensure_error", {
+              serverName: target.name,
+              reason: "timeout",
+              timeoutMs,
+              lastStatus,
+              attempts,
+              durationMs: deps.now() - startedAt,
+            });
+            throw new DevServerWaitTimeoutError(
+              target.name,
+              timeoutMs,
+              lastStatus,
+            );
+          }
 
-      await deps.sleep(POLL_INTERVAL_MS);
-    }
+          await deps.sleep(POLL_INTERVAL_MS);
+        }
+      },
+    );
   }
 
   async function awaitReady(

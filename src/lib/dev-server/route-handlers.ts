@@ -299,17 +299,28 @@ export function createDevServerRouteHandlers(
         return apiError("No dev servers configured for this project", 400);
       }
 
-      for (const server of servers) {
-        if (server.status === "running" || server.status === "starting") {
-          continue;
-        }
+      // Each server's acceptance work is independent, so they run concurrently:
+      // one server's port selection and spawn must not add its latency to the
+      // next server's, and a server that refuses to start must not stop the
+      // others from being accepted.
+      const settled = await Promise.allSettled(
+        servers
+          .filter(
+            (server) =>
+              server.status !== "running" && server.status !== "starting",
+          )
+          .map((server) =>
+            deps.service.ensure({
+              projectPath: project.value,
+              sessionName,
+              serverName: server.serverName,
+              wait: false,
+            }),
+          ),
+      );
 
-        await deps.service.ensure({
-          projectPath: project.value,
-          sessionName,
-          serverName: server.serverName,
-          wait: false,
-        });
+      for (const outcome of settled) {
+        if (outcome.status === "rejected") throw outcome.reason;
       }
 
       return NextResponse.json({ status: "accepted" }, { status: 202 });

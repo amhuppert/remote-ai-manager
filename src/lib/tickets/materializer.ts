@@ -187,9 +187,19 @@ export function createTicketMaterializer(
         }
         if (payload.kind === "conversation") {
           if (!isCapturedConversationAttachmentPayload(payload)) {
-            throw new Error(
-              `conversation attachment ${attachment.id} snapshot is ${effectiveSnapshotStatus(payload)}`,
-            );
+            // An unsettled snapshot has no content to write, and a start must
+            // not fail over it: the kickoff attachment index still names the
+            // entry with the `cctl ticket attachment get` command that reports
+            // its state and offers the retry.
+            skipped += 1;
+            logger.info("materialize.conversation_snapshot_unavailable", {
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+              ticketNumber: input.ticketNumber,
+              attachmentId: attachment.id,
+              snapshotStatus: effectiveSnapshotStatus(payload),
+            });
+            continue;
           }
           assertSafeSegment(payload.conversationId, "conversationId");
           const relativePath = path.posix.join(

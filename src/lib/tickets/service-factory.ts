@@ -407,9 +407,9 @@ async function resolveAttachmentConversation(
 }
 
 /**
- * Create-if-missing conversation compaction shared by attachment adds, ticket
- * starts, and the `/ticket` runner; `trigger` is the audit tag stamped on the
- * run.
+ * Create-if-missing conversation compaction shared by the background snapshot
+ * refresher and the `/ticket` runner; `trigger` is the audit tag stamped on
+ * the run. No HTTP request handler reaches it — the run takes minutes.
  */
 async function ensureConversationCompactionForProduction(
   input: EnsureConversationCompactionInput,
@@ -502,11 +502,8 @@ export function getTicketAttachmentService(): TicketAttachmentService {
           operation,
         );
       },
-      ensureConversationCompaction(input) {
-        return ensureConversationCompactionForProduction(
-          input,
-          "ticket_attachment",
-        );
+      scheduleConversationSnapshotRefresh(input) {
+        getConversationSnapshotRefreshService().schedule(input);
       },
       getLiveCompaction: getLiveCompactionForProduction,
       resolveConversation: resolveAttachmentConversation,
@@ -597,7 +594,6 @@ export function getTicketStartService(): TicketStartService {
   return getGlobalSingleton("__cc_ticket_start_service", () =>
     createTicketStartService({
       repo: getTicketsRepo(),
-      contentStore: getTicketContentStore(),
       lock: getTicketOperationLock(),
       resolveProjectPath(projectName) {
         return resolveProjectPath(projectName);
@@ -608,10 +604,9 @@ export function getTicketStartService(): TicketStartService {
           operation,
         );
       },
-      ensureConversationCompaction(input) {
-        return ensureConversationCompactionForProduction(input, "ticket_start");
+      scheduleConversationSnapshotRefresh(input) {
+        getConversationSnapshotRefreshService().schedule(input);
       },
-      conversationExists,
       async getSessionLiveness(projectPath, sessionName) {
         const session = await getSession(projectPath, sessionName);
         if (session === null) return null;

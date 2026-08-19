@@ -65,6 +65,13 @@ export interface WithTracingOptions {
    * `internal_error` 500 envelope.
    */
   mapError?(error: unknown): Response | undefined;
+  /**
+   * The handler may deliberately hold the request open until server state
+   * changes. Its duration then measures the caller's chosen wait budget, not
+   * server work, so it must never escalate to the slow-request warning that
+   * latency analysis over the request log depends on.
+   */
+  longPoll?: boolean;
 }
 
 /**
@@ -194,12 +201,15 @@ export function withTracing<
             durationMs: null,
           });
         } else {
-          const level = durationMs >= getSlowRequestMs() ? "warn" : "info";
+          const longPoll = options?.longPoll === true;
+          const level =
+            !longPoll && durationMs >= getSlowRequestMs() ? "warn" : "info";
           const completeFields = {
             method: request.method,
             path: url.pathname,
             status: response.status,
             durationMs,
+            ...(longPoll ? { longPoll: true } : {}),
           };
           if (level === "warn") {
             logger.warn("request.complete", completeFields);

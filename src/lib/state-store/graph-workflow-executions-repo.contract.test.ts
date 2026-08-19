@@ -1344,6 +1344,126 @@ describe("graph-workflow-executions-repo behavior", () => {
     expect(reloaded?.completedAt).toBe("2026-03-05T00:00:00Z");
   });
 
+  // The definition tier is the larger half of a real execution row, and the
+  // scheduler rewrites the runtime tier on every tick — so walking the
+  // definition each time, only to discard it when its bytes turn out to be
+  // unchanged, is the write amplification. `structuralRevision` is derived from
+  // the graph tier on every commit (`nextStructuralRevision`), so a revision
+  // that has not moved is a definition that cannot have changed.
+  it("does not read the definition tier when the structural revision has not moved", () => {
+    const execution = maximalExecution();
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      execution,
+      "2026-03-01T00:00:00Z",
+    );
+
+    let definitionReads = 0;
+    const next = graphWorkflowExecutionSchema.parse({
+      ...execution,
+      status: "completed",
+      completedAt: "2026-03-05T00:00:00Z",
+    });
+    Object.defineProperty(next, "workingDefinition", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        definitionReads += 1;
+        return execution.workingDefinition;
+      },
+    });
+
+    repo.setActive(PROJECT_PATH, SESSION_NAME, next, "2026-03-02T00:00:00Z");
+
+    expect(
+      definitionReads,
+      "a runtime-only tick must not walk the working definition at all",
+    ).toBe(0);
+
+    // Skipping the walk must not skip the row: the runtime change persisted and
+    // the untouched definition is still readable from the stored bytes.
+    const reloaded = createGraphWorkflowExecutionsRepo(db).getActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(reloaded?.status).toBe("completed");
+    expect(reloaded?.completedAt).toBe("2026-03-05T00:00:00Z");
+    expect(reloaded?.workingDefinition).toEqual(execution.workingDefinition);
+  });
+
+  // `structuralRevision` is derived from four graph keys, but the definition
+  // tier holds twelve — the launch-provenance fields the revision says nothing
+  // about. Every one of them is fixed at seed today, which is exactly why a
+  // regression here would be silent: the skip would drop the write on the floor
+  // and no reader would notice until the row was reloaded on another
+  // connection. The fence must key off the fields it is actually protecting.
+  it.each([
+    ["liveSessionReadOnlyPinned", (pinned: boolean) => !pinned] as const,
+  ])(
+    "writes the definition tier when %s moves without the structural revision",
+    (_key, flip) => {
+      const execution = maximalExecution();
+      repo.setActive(
+        PROJECT_PATH,
+        SESSION_NAME,
+        execution,
+        "2026-03-01T00:00:00Z",
+      );
+
+      const next = graphWorkflowExecutionSchema.parse({
+        ...execution,
+        liveSessionReadOnlyPinned: flip(execution.liveSessionReadOnlyPinned),
+      });
+      expect(next.structuralRevision).toBe(execution.structuralRevision);
+
+      repo.setActive(PROJECT_PATH, SESSION_NAME, next, "2026-03-02T00:00:00Z");
+
+      // A fresh repo shares no in-memory cache with the writer, so this reads
+      // the stored bytes rather than the object that was handed in.
+      const reloaded = createGraphWorkflowExecutionsRepo(db).getActive(
+        PROJECT_PATH,
+        SESSION_NAME,
+      );
+      expect(reloaded?.liveSessionReadOnlyPinned).toBe(
+        next.liveSessionReadOnlyPinned,
+      );
+    },
+  );
+
+  // The dirty signal is a claim about THIS row: a different execution in the
+  // same session slot shares nothing with the last one but its coordinates, so
+  // its definition must be written even when the two revisions happen to match.
+  it("writes the definition tier for a new execution that reuses the session slot", () => {
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      maximalExecution(),
+      "2026-03-01T00:00:00Z",
+    );
+
+    // `id` lives in the definition tier, so a skipped definition write leaves
+    // the successor's runtime under its predecessor's identity.
+    const successor = graphWorkflowExecutionSchema.parse({
+      ...maximalExecution(),
+      id: "execution-2",
+    });
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      successor,
+      "2026-03-02T00:00:00Z",
+    );
+
+    expect(
+      createGraphWorkflowExecutionsRepo(db).getActive(
+        PROJECT_PATH,
+        SESSION_NAME,
+      )?.id,
+    ).toBe("execution-2");
+    expect(repo.findByExecutionId("execution-2")).not.toBeNull();
+  });
+
   it("admits a pre-feature row with no bound-input snapshot via the additive default", () => {
     // Write a normal execution, then strip `boundInputs` from the stored
     // definition tier to simulate a row persisted before the field existed.

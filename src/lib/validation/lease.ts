@@ -1,7 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { createLogger } from "@/lib/logging";
 import type { ValidationRunsRepo } from "@/lib/state-store/validation-runs-repo";
-import type { ValidationRunRecord } from "./schemas";
+import {
+  isTerminalValidationRunStatus,
+  type ValidationRunRecord,
+} from "./schemas";
 
 const logger = createLogger("validation");
 
@@ -89,9 +92,7 @@ export function createValidationLeaseManager(
         repo.findById(runId),
       );
       if (!row) return "not_found";
-      if (row.status !== "queued" && row.status !== "running") {
-        return "already_terminal";
-      }
+      if (isTerminalValidationRunStatus(row.status)) return "already_terminal";
       if (row.leaseToken === null) return "system_owned";
       return row.leaseToken === token ? "authorized" : "not_owner";
     },
@@ -119,7 +120,7 @@ export function createValidationLeaseManager(
         const claimed = transact("validation.lease.claim", () => {
           const row = repo.findById(candidate.runId);
           if (!row) return null;
-          if (row.status !== "queued" && row.status !== "running") return null;
+          if (isTerminalValidationRunStatus(row.status)) return null;
           if (row.leaseToken !== candidate.leaseToken) return null;
           if (row.leaseExpiresAt === null) return null;
           return row.leaseExpiresAt <= now().toISOString() ? row : null;

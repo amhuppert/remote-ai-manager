@@ -661,7 +661,10 @@ export function continueOrdinaryAuthoring(
   return selection;
 }
 
-function requireSpec(repo: SpecsRepoTransaction, specId: string): Spec {
+function requireSpec(
+  repo: Pick<SpecsRepoTransaction, "findById">,
+  specId: string,
+): Spec {
   const spec = repo.findById(specId);
   if (spec === null) {
     throw new SpecDraftUnavailableError(specId);
@@ -670,7 +673,7 @@ function requireSpec(repo: SpecsRepoTransaction, specId: string): Spec {
 }
 
 function requireOwnedRevision(
-  repo: SpecsRepoTransaction,
+  repo: Pick<SpecsRepoTransaction, "findRevision">,
   specId: string,
   revisionId: string,
 ): SpecRevision {
@@ -1311,20 +1314,26 @@ export function createAuthoringService(
     },
 
     async lintDraft(specId, revisionId) {
-      return deps.specs.transaction("specs.authoring.lint-draft", (repo) => {
-        const spec = requireSpec(repo, specId);
-        requireOwnedRevision(repo, specId, revisionId);
-        const snapshot = repo.getRevisionSnapshot(revisionId);
-        if (snapshot === null) throw new SpecDraftUnavailableError(specId);
-        const loaded = loadProposalState(
-          repo,
-          deps.review,
-          deps.links,
-          spec,
-          snapshot,
-        );
-        return lint(loaded.draft, loaded.records);
-      });
+      // Reads only, so it takes the read seam: two GET paths call this (the
+      // status projection and the lint endpoint), and a write-queue admission
+      // would make them queue behind — and hold up — real writers.
+      return deps.specs.readOutsideWriteQueue(
+        "specs.authoring.lint-draft",
+        (repo) => {
+          const spec = requireSpec(repo, specId);
+          requireOwnedRevision(repo, specId, revisionId);
+          const snapshot = repo.getRevisionSnapshot(revisionId);
+          if (snapshot === null) throw new SpecDraftUnavailableError(specId);
+          const loaded = loadProposalState(
+            repo,
+            deps.review,
+            deps.links,
+            spec,
+            snapshot,
+          );
+          return lint(loaded.draft, loaded.records);
+        },
+      );
     },
 
     async proposeRevision(input) {

@@ -202,6 +202,13 @@ export interface AgentCallFacadeDeps {
   defaultConversationBackend?: AgentBackendId;
   validateStructuredOutput?: StructuredOutputValidator;
   logger?: Logger;
+  /**
+   * Monotonic clock for the structured-output repair's own elapsed time. A
+   * repair is charged against the same budget as the call it repairs, and no
+   * backend reports a task run's duration, so this is where that cost becomes
+   * observable.
+   */
+  now?(): number;
 }
 
 export interface SchedulingHint {
@@ -691,6 +698,7 @@ async function applyStructuredOutputGate(
   if (dispatchResult.outcome.kind !== "completed") return dispatchResult;
 
   const log = deps.logger ?? defaultLogger;
+  const now = deps.now ?? (() => performance.now());
   const artifactKinds = deriveArtifactKinds(dispatchResult.artifacts);
   const sharedFields = buildAgentCallLogFields({
     requestKind: request.kind,
@@ -749,8 +757,10 @@ async function applyStructuredOutputGate(
       ...sharedFields,
       attempt,
       issuePaths,
+      ...usageLogFields("initial", dispatchResult.usage),
     });
 
+    const repairStartedAt = now();
     const repairResult = await dispatchRepair(
       buildStructuredOutputRepairPrompt({
         schema: request.outputSchema,
@@ -758,6 +768,7 @@ async function applyStructuredOutputGate(
         issues,
       }),
     );
+    const repairDurationMs = Math.round(now() - repairStartedAt);
     repairAttempts = attempt;
     latestRepairResult = repairResult;
     aggregate = appendRepairAggregate(aggregate, repairResult);
@@ -767,6 +778,9 @@ async function applyStructuredOutputGate(
         ...sharedFields,
         attempt,
         issuePaths,
+        repairDurationMs,
+        ...usageLogFields("initial", dispatchResult.usage),
+        ...usageLogFields("repair", repairResult.usage),
       });
       return buildNonCompletedRepairResult({
         requestKind: request.kind,
@@ -786,6 +800,9 @@ async function applyStructuredOutputGate(
         ...sharedFields,
         attempt,
         issuePaths,
+        repairDurationMs,
+        ...usageLogFields("initial", dispatchResult.usage),
+        ...usageLogFields("repair", repairResult.usage),
       });
       return buildRepairedSuccess({
         requestKind: request.kind,
@@ -1038,6 +1055,33 @@ function outcomeNumTurns(result: AgentCallResult): number | undefined {
   return result.outcome.kind === "completed" || result.outcome.kind === "failed"
     ? result.outcome.numTurns
     : undefined;
+}
+
+/**
+ * One attempt's token and cost usage, flattened onto a log line under a prefix.
+ *
+ * A repair earns its place only if it costs a fraction of the call it repairs,
+ * so the baseline and the repair are reported on the same event: the ratio is
+ * readable from one line instead of a join across two. A metric the backend did
+ * not report stays absent rather than being flattened to zero, which would read
+ * as "free".
+ *
+ * Elapsed time is not among these. `AgentTaskResult.usage` carries no duration,
+ * so a repair's wall-clock cost is measured here, at the only place that spans
+ * the dispatch.
+ */
+function usageLogFields(
+  prefix: "initial" | "repair",
+  usage: AgentCallResult["usage"],
+): Record<string, number> {
+  const fields: Record<string, number> = {};
+  const put = (suffix: string, value: number | undefined): void => {
+    if (value !== undefined) fields[`${prefix}${suffix}`] = value;
+  };
+  put("CostUsd", usage.costUsd);
+  put("InputTokens", usage.inputTokens);
+  put("OutputTokens", usage.outputTokens);
+  return fields;
 }
 
 function createRepairAggregate(

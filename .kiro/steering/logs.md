@@ -152,12 +152,21 @@ path a project conversation can reach, derive the scope ref instead.
 
 | Module | Event | Notes |
 |---|---|---|
-| `tracing` | `request.start` / `request.complete` / `request.error` | `complete` includes `status`, `durationMs` (non-SSE) |
+| `tracing` | `request.start` / `request.complete` / `request.error` | `complete` includes `status`, `durationMs` (non-SSE), and `longPoll: true` for handlers wrapped as `withTracing(handler, { longPoll: true })` |
 | `prompt` | `prompt.submit` | `sessionName`, `promptLength`, `model`, `backend`, `conversationId` |
 | `prompt` | `prompt.complete` / `prompt.timeout` / `prompt.aborted` / `prompt.sdk_error` | Emitted from the conversation actor; SDK-driven |
 | `sessions` | `session.create` / `session.create_failure` / `session.delete` / `session.worktree_remove_failure` | `worktreePath`, `branchName`, `mode` on create |
 | `lock` | `lock.acquired` / `lock.released` / `lock.rejected` | Conversation-level single-flight lock |
 | `lock` | `project-lock.*` / `conversation-lock.*` | Project- and conversation-scoped variants |
+| `runtime` | `runtime.event_loop.stall` | Whole-process event-loop stall sampler; fields and coalescing rules in the Timing table below |
+| `startup` | `startup.event_loop_sentinel_failed` | **error**-level: the stall sampler failed to start. Field: `error`. Non-fatal — startup continues without the sampler |
+| `validation` | `validation.status_wait` | **debug**: one long-poll reader parked on a run. `runId`, `waiting` (readers held on that run, counted after this registration). A `waiting` count that only climbs is the abandoned-waiter leak signal |
+| `dev-server` | `dev-server.ownership.lookup` / `.owned` / `.available` / `.conflict` / `.hidden_conflict` / `.unknown` | Port ownership classification. `unknown` carries a `reason`: `listener_lookup_failed: <message>`, `cwd_unresolved` (with the `pid`), or `no_listener_classified` (port only — listeners existed but produced no owned match, conflict, or unresolved pid) |
+| `dev-server-service` | `dev-server.tool.ensure_wait` / `dev-server.tool.ensure_error` | Readiness-wait outcome. `ensure_wait` carries `attempts` (1-based poll iterations) and `durationMs`; `ensure_error` carries both on its timeout branch and neither on the server-error branch |
+| `tickets.attachments` | `tickets.attachments.snapshot_schedule_failed` | **warn**: `scheduleConversationSnapshotRefresh` threw after the attachment row committed. `projectName`, `number`, `attachmentId`, `error`. The add still succeeds; the attachment stays pending until the retry command settles it |
+| `tickets.start` | `start.snapshot_schedule_failed` | **warn**: same refresher failure during a ticket start, after the start committed. `projectName`, `number`, `attachmentId`, `error`. The start still succeeds |
+| `tickets.materialize` | `materialize.conversation_snapshot_unavailable` | A start skipped a conversation attachment whose snapshot is pending or failed rather than failing the start. `projectPath`, `sessionName`, `ticketNumber`, `attachmentId`, `snapshotStatus`; also counted in `materialize.completed`'s `skippedCount` |
+| `workflows.primitives.agent-call.facade` | `agent_call.facade.structured_output_repair_attempted` / `_succeeded` / `_failed` (**warn**) | A schema-invalid result being re-asked. All three carry `attempt`, `issuePaths`, and `initialCostUsd` / `initialInputTokens` / `initialOutputTokens` — the cost of the call being repaired. The two terminal events add `repairDurationMs` plus the `repair*` token and cost fields, so a repair's share of the turn is one line's arithmetic. `repairDurationMs` is measured by the facade around its own dispatch: `AgentTaskResult.usage` reports tokens and cost but no elapsed time, so a task run's duration exists nowhere else |
 
 ### Config
 
@@ -185,7 +194,11 @@ reaches the threshold — scoped logs are bounded by session lifetime.
 - `CC_TIMING_INFO_MS` (default `50`) — `timed()` `.complete` logs at `info` when `durationMs >=` this
 - `CC_TIMING_WARN_MS` (default `1000`) — `timed()` `.complete` logs at `warn` when `durationMs >=` this
 - `CC_TIMING_START` (default `0`) — set to `1` to emit `<event>.start` debug logs for every `timed()` call
-- `CC_REQUEST_SLOW_MS` (default `500`) — `request.complete` logs at `warn` when `durationMs >=` this (non-streaming responses only)
+- `CC_REQUEST_SLOW_MS` (default `500`) — `request.complete` logs at `warn` when `durationMs >=` this (non-streaming responses only). A handler declared `longPoll: true` never escalates: its duration is the caller's chosen wait budget, not server work
+- `CC_EVENT_LOOP_SENTINEL_MS` (default `1000`) — `runtime.event_loop.stall` sampling interval in ms; values `< 1` or unparseable fall back to the default, because a zero interval would busy-spin the loop the sampler exists to observe
+- `CC_EVENT_LOOP_STALL_MS` (default `250`) — minimum overshoot in ms counted as a stall; negative or unparseable falls back to the default
+
+Both event-loop variables are read once at startup and cached, so changing either needs a server restart.
 
 Below `CC_TIMING_INFO_MS`, `timed()` complete logs land at `debug` and only surface when `CC_LOG_LEVEL=debug`.
 
@@ -207,7 +220,9 @@ jq 'select(.message == "sse.broadcast.complete" and .durationMs > 10)' "$LOG"
 
 All `timed()`-emitted logs inherit `traceId`/`action`/`projectName`/`sessionName`/`conversationId` from AsyncLocalStorage. Each event emits `<event>.complete` on success (level by duration threshold) and `<event>.error` at `warn` on throw; optional `<event>.start` at `debug` when `CC_TIMING_START=1`.
 
-Every timed event records its primary duration under a canonical **`durationMs`** field. A few events additionally emit a sub-phase breakdown alongside `durationMs`: the write queue's `waitMs`/`holdMs` (`durationMs = waitMs + holdMs`) and `diff.timing`'s `paramsMs`/`resolveMs`/`sessionMs`/`diffMs`/`serializeMs`. Legacy logs (pre-canonicalization) recorded `state.read.timing` / `diff.timing` durations under `totalMs`; the analysis parser still reads it as a fallback.
+Every timed event records its primary duration under a canonical **`durationMs`** field. A few events additionally emit a sub-phase breakdown alongside `durationMs`: the write queue's and the session lifecycle gate's `waitMs`/`holdMs` (`durationMs = waitMs + holdMs`) and `diff.timing`'s `paramsMs`/`resolveMs`/`sessionMs`/`diffMs`/`serializeMs`. Legacy logs (pre-canonicalization) recorded `state.read.timing` / `diff.timing` durations under `totalMs`; the analysis parser still reads it as a fallback.
+
+A few `*.timing` events are direct `info` logs rather than `timed()` spans (`state.read.timing`, `state-store.write_queue.timing`, `session.lifecycle_gate.timing`, `session.lifecycle_project_deletion.timing`, `diff.timing`), so they have no `.start` / `.error` siblings. Of those, only `state.read.timing` is also conditional on a duration floor — see "Reading `state.read.timing` aggregates" below.
 
 | Module | Event | Fields |
 |---|---|---|
@@ -218,23 +233,87 @@ Every timed event records its primary duration under a canonical **`durationMs`*
 | `validation` | `validation.runner.spawned` / `.start_confirmed` / `.timeout` / `.cancel_requested` / `.group_kill_escalated` / `.group_dead` / `.spawn_error` | Validation process-group lifecycle |
 | `tailscale` (via exec, `eventPrefix: "tailscale"`) | `tailscale.complete` / `.error` | All `tailscale` CLI calls |
 | `dev-server` (via exec, `eventPrefix: "dev-server"`) | `dev-server.start` / `dev-server.exit` | Per-session dev server process lifecycle |
+| `dev-server-service` | `dev-server.ensure.await_ready.complete` / `.error` | `serverName`, `durationMs` — the post-boundary readiness wait (`pollUntilReady`), so the accept path never pays for it. Emitted for both `ensure({ wait: true })` and `awaitReady()` |
+| `dev-server` | `dev-server.readiness.probe.complete` / `.error` | `serverName`, `port`, `durationMs` — the CC-assigned readiness probe. Runs inside `runAsTrace("dev-server.readiness.probe", …, captureTraceContext())`, so entries carry the starting request's `traceId` under `action: "dev-server.readiness.probe"` instead of an orphan id |
 | `init-script` (via exec, `eventPrefix: "init-script"`) | `init-script.complete` / `.error` | Worktree init scripts |
 | `sse` | `sse.broadcast.complete` | `eventType`, `seq`, `subscriberCount`, `delivered`, `payloadBytes`, `durationMs` |
 | `sse` | `broadcast.no_clients` | Zero subscribers (warn) |
 | `transcript` | `transcript.read.complete` | `messageCount`, `durationMs` |
+| `transcript` | `transcript.max_seq.complete` / `.error` | `maxSeq`, `durationMs` (`.error` carries `durationMs` + `error` and re-throws — the cross-project conversation list catches it and advertises the artifact conservatively as stale). Emitted by `getTranscriptMaxSeq` and any reader from `createTranscriptMaxSeqReader` |
 | `state-db` (via `notification-db`) | `state-db.createNotification` / `.createJobRecord` / `.updateJobRecord` / `.recoverStaleJobs` / `.cleanupOldNotifications` `.complete` | Per-write fields (`notificationId`, `jobId`, `status`, `deleted`, `recoveredCount`) |
 | `state-store` | `state.mutate.complete` | `label`, `sessionName`, `durationMs` |
-| `state-store` | `state.read.timing` | `accessor`, `durationMs` (and optionally `projectPath`, `sessionName`, `conversationId`); only emitted when `durationMs >= STATE_READ_TIMING_LOG_THRESHOLD_MS` |
+| `state-store` | `state.read.timing` | `accessor`, `durationMs` (and optionally `projectPath`, `sessionName`, `conversationId`); only emitted when `durationMs >= STATE_READ_TIMING_LOG_THRESHOLD_MS` (5ms). The analyzer mirrors that constant and labels every derived count/p95 a **5ms-and-above tail sample** — not typical latency and not call volume |
+| `state-store.specs` | `state-store.specs.read.complete` / `.error` / `.start` | `label` (the read seam's caller label, e.g. `specs.authoring.lint-draft`), `durationMs` (`.error` adds `error`; `.start` only under `CC_TIMING_START=1`). `SpecsRepo.readOutsideWriteQueue` — a deferred transaction that takes no write lock, so it never makes a writer wait |
 | `state-store` | `state-store.write_queue.timing` | `label`, `durationMs`, `waitMs`, `holdMs` (`durationMs = waitMs + holdMs`); plus `blockedByLabel` / `blockedByTraceId` when the wait was caused by another mutation holding the queue (the waiter's own `traceId` is the ambient auto-stamp) — feeds the log-analysis `state-store` finding |
 | `state-store` | `state-store.write_queue.hold_budget_exceeded` | **error**-level: a callback held the queue past the budget (default 500ms). Fields: `label`, `holdMs`, `budgetMs`, `stack` (captured where the write was enqueued). Telemetry only — the write is never aborted |
 | `file-scanner` | `file-scanner.scan.complete` | `rootPath`, `fileCount`, `truncated`, `durationMs` |
 | `worktree` | `worktree.create.complete` / `worktree.remove.complete` | `laneId`, `worktreePath`, `branchName`, `status`, `durationMs` |
 | `diff` | `diff.compute.complete` | `worktreePath`, `fileCount`, `durationMs` |
 | `workflow-storage` | `workflow-storage.list` / `.get` / `.create` / `.update` / `.delete` `.complete` | `workflowId` (where applicable), `workflowCount`/`found`/`revision`/`deleted`, `durationMs` |
+| `sessions.lifecycle-gate` | `session.lifecycle_gate.timing` | `projectPath`, `sessionName` (present only when the call names exactly one session), `sessionCount`, `durationMs`, `waitMs`, `holdMs`. Covers `runExclusive` / `runExclusiveMany`, measured from enqueue to release |
+| `sessions.lifecycle-gate` | `session.lifecycle_project_deletion.timing` | `projectPath`, `durationMs`, `waitMs`, `holdMs` — the project-deletion arm of the same gate |
+| `runtime` | `runtime.event_loop.stall` | `lagMs`, `consecutiveTicks`, `intervalMs`, `thresholdMs` — see below |
 
 Existing `tracing.request.complete` augmented:
 - Non-SSE responses: includes `durationMs`, response headers include `Server-Timing: total;dur=<ms>`; logs at `warn` when `durationMs >= CC_REQUEST_SLOW_MS`, else `info`.
 - SSE responses (content-type `text/event-stream`): `streaming: true`, `durationMs: null`, logged at `debug`; no `Server-Timing` header.
+- Long-poll handlers (`withTracing(handler, { longPoll: true })`): the entry carries `longPoll: true` and never escalates to `warn`, because its duration is the caller's chosen wait budget rather than server work — a 25s intentional hold is not a slow request. Applied to `sessionValidationPollGET` and `projectValidationPollGET` in `src/lib/validation/route-handlers.ts`.
+
+### Event-loop stall sentinel
+
+`runtime.event_loop.stall` (`src/lib/logging/event-loop-stall-sentinel.ts`) is a
+fixed-interval sampler, not a `timed()` span: it measures how far past its
+scheduled fire time each timer callback actually ran, and that overshoot is time
+the loop could run nothing at all — GC, a synchronous block, or host CPU
+contention. It answers the question a per-operation timing cannot: why an
+operation whose own inner work was fast still took hundreds of milliseconds.
+
+Fields: `lagMs` (overshoot in ms), `consecutiveTicks`, `intervalMs`,
+`thresholdMs`. A line is written only when `lagMs >= thresholdMs`.
+
+Emission is coalesced, because the logger appends synchronously and an
+instrument that wrote a line per stalled tick would add filesystem work to the
+path it reports as starved. A run of consecutive stalled ticks produces exactly
+two lines: an onset line (`consecutiveTicks: 1`, `lagMs` = that tick's
+overshoot) and, when the run ends, a closing line (`consecutiveTicks: N` = how
+many consecutive intervals stayed stalled, `lagMs` = the largest overshoot in
+the run).
+
+Each line is emitted inside `runAsTrace("sentinel:event-loop")`, so it carries a
+`traceId` and `action: "sentinel:event-loop"` and — having no
+`projectName`/`sessionName`/`conversationId` — lands in `logs/global.log`, where
+it can be joined by wall-clock window against the timings that ran slow.
+
+`startEventLoopStallSentinel()` is called from `src/instrumentation.node.ts`
+after the fatal migration block, so a startup that aborts leaves no sampling
+timer behind. A failure there logs `startup.event_loop_sentinel_failed` and
+startup continues.
+
+### Reading `state.read.timing` aggregates
+
+Two facts about this event are asymmetric, and every derived number inherits the
+asymmetry:
+
+- `state.read.timing` is **censored**: the accessor drops any read faster than
+  `STATE_READ_TIMING_LOG_THRESHOLD_MS` (5ms). Its rows are a tail sample, so a
+  count is not call volume and a p95 is the p95 *of the tail*, well above the
+  accessor's typical latency. The analyzer mirrors the constant as
+  `stateReadFloorMs` and labels the numbers accordingly in the report and the
+  Markdown rendering.
+- The subtrahend is **unconditional** — no floor at all. It is the per-repo
+  `state-store.*.timing` family (everything with that prefix and suffix except
+  `state-store.write_queue.timing`), which is also narrower than "all repo
+  work": a repo emitting `timed()` spans, whose events end in `.complete`, is
+  not in that family at all.
+
+So the facade-versus-repo gap (`state.read.timing` minus the inner repo timings
+sharing its `traceId`) is not a clean subtraction and is not "facade overhead".
+It subtracts an uncensored subtrahend from a censored numerator, and any
+repository that emits no timing whatsoever leaves its entire cost inside the
+gap. The gap bounds *uninstrumented* work; treat a large one as a request for
+more `timed()` coverage, never as a measurement of the facade. A review that
+reads it as facade cost lands on a confident, wrong owner: the subtraction looks
+arithmetically sound and names a component that is not the cause.
 
 ## Client-Side Timing
 
@@ -271,7 +350,7 @@ bun run logs:analyze -- trace <traceId>
 bun run logs:analyze -- compare --before before.log --after after.log
 ```
 
-`report` runs slow request ranking, operation hotspot aggregation, duplicate-work detection, state-store diagnostics (including `write_queue.hold_budget_exceeded` findings keyed by the holding mutation label), external command diagnostics, SSE broadcast diagnostics, client timing analysis when `--client-log` is provided, error correlation, convention checks (a `202` response with `durationMs > 1000` is a violation), instrumentation-gap detection, and performance-budget evaluation against `scripts/log-budgets.json` (advisory by default; `--assert-budgets` exits non-zero on breach). See `.claude/skills/cc-performance-log-analysis/SKILL.md` for the budget schema.
+`report` runs slow request ranking, operation hotspot aggregation, duplicate-work detection, state-store diagnostics (including `write_queue.hold_budget_exceeded` findings keyed by the holding mutation label, and `stateReadFloorMs` — read "Reading `state.read.timing` aggregates" above before drawing a conclusion from a slow-accessor or facade-gap finding), external command diagnostics, SSE broadcast diagnostics, client timing analysis when `--client-log` is provided, error correlation, convention checks (a `202` response with `durationMs > 1000` is a violation), instrumentation-gap detection, and performance-budget evaluation against `scripts/log-budgets.json` (advisory by default; `--assert-budgets` exits non-zero on breach). See `.claude/skills/cc-performance-log-analysis/SKILL.md` for the budget schema.
 
 `trace <traceId>` reconstructs timed operation intervals for one trace and reports inclusive time, exclusive time, duplicate work, warnings/errors, and unexplained request time. If unexplained time dominates, add `timed()` coverage before optimizing code.
 

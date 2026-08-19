@@ -5,12 +5,41 @@ Dual-layer: in-memory job tracking (transient) + SQLite (durable history) + SSE 
 ## Architecture
 
 ```
-dispatchJob() → Job Registry (Map) → SSE "job-status" → Zustand running jobs
-  └─ async exec → terminal state
-      ├─ SQLite: updateJobRecord + createNotification
-      ├─ SSE "notification-created" → toast + query invalidation
-      └─ Remove from Job Registry
+dispatchMergeJob() / dispatchCommitJob() / dispatchResolveConflictsJob() / dispatchRebaseJob()
+  → dispatchMachineJob() → Job Registry (Map) → SSE "job-status" → Zustand running jobs
+      └─ XState actor runs unawaited → terminal state
+          ├─ SQLite: updateJobRecord + createNotification
+          ├─ SSE "notification-created" → toast + query invalidation
+          └─ Remove from Job Registry
 ```
+
+The four `dispatch*Job` functions in `src/lib/jobs/queue.ts` are the entry
+points. Each builds a `JobDispatchHost` (whose `prepare` is `prepareDispatch`)
+and hands it to `dispatchMachineJob` in `src/lib/jobs/machine-host.ts`, which
+runs the dispatch under a `job:<type>` trace inheriting the caller's trace
+context and hosts the job on an XState machine. `runRegisteredMergeJob` is the
+one further caller of `dispatchMachineJob`: a graph join that already owns the
+outer git locks registers its merge through the same host, awaiting the outcome
+with a no-op session lock. There is no generic `dispatchJob`; a design that
+names one is describing an API that does not exist.
+
+**This is not a general-purpose background queue.** Three properties make it a
+git-operations mechanism specifically, and each one has to hold for a caller to
+belong here:
+
+- `jobTypeSchema` is a **closed** enum — `commit`, `merge`, `resolve-conflicts`,
+  `rebase`. A new kind of background work means widening that enum plus
+  `deriveNotificationType` / `deriveNotificationTitle`, not registering a
+  handler.
+- The registry is keyed `projectPath::sessionName` and admits **exactly one job
+  per session**; a second dispatch is refused with `JOB_ALREADY_RUNNING` (unless
+  the incumbent is stale and gets force-failed first).
+- Dispatch takes the **single-flight session lock** from
+  `prompt/single-flight.ts` — the same lock graph-workflow git operations take —
+  so anything else holding it makes the dispatch fail with `SESSION_BUSY`.
+
+Work that does not want per-session exclusivity, or that has no session at all,
+needs a different owner.
 
 Three stores, three concerns:
 - **In-memory `Map`** (`globalThis`) — running jobs only; removed on terminal
@@ -26,7 +55,7 @@ prepareDispatch()
   → register in Map + createJobRecord()
   → publish "job-status" (running)
 // Unawaited:
-  → git ops (merge/commit/resolve)
+  → git ops (merge/commit/resolve-conflicts/rebase)
   → publish "job-status" (completed|failed|conflicts)
   → persistTerminalState() → updateJobRecord + createNotification
   → release locks
@@ -34,15 +63,19 @@ prepareDispatch()
 
 ### Job types
 
+`jobTypeSchema` (`src/lib/jobs/schemas.ts`) is the closed set; `jobStatusSchema`
+is `running`, `completed`, `failed`, `conflicts`, `ready-to-land`, `discarded`.
+
 | Type | Outcomes | Notification types |
 |---|---|---|
-| `merge` | completed, failed, conflicts | `merge-completed`/`-failed`/`-conflicts` |
+| `merge` | completed, failed, conflicts, ready-to-land, discarded | `merge-completed`/`-failed`/`-conflicts`/`-ready-to-land`/`-discarded` |
 | `commit` | completed, failed | `commit-completed`/`-failed` |
 | `resolve-conflicts` | completed, failed | `resolve-completed`/`-failed` |
+| `rebase` | completed, failed | `rebase-completed`/`-failed` |
 
 ### Locking
 
-- **Session lock** — same-session concurrency guard (`projectPath::sessionName`)
+- **Session lock** — the single-flight session lock in `prompt/single-flight.ts`, keyed `projectPath::sessionName`. Graph-workflow git operations take the same lock through `createSessionGitLock`, so they and jobs are mutually exclusive per session
 - **Project lock** — required for Phase 2 squash-merge (retried up to 30s, 100ms polling)
 - **Stale recovery** — jobs running >10min auto-failed on next dispatch or startup
 

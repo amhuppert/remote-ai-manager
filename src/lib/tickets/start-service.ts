@@ -5,16 +5,12 @@ import {
 } from "@/lib/agent-backends/schemas";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import { conversationProfileSelectionSchema } from "@/lib/conversations/schemas";
-import { EMPTY_TRANSCRIPT_COMPACTION_ERROR } from "@/lib/context-artifacts/service";
 import type { PublishFn } from "@/lib/events/publication";
 import { createLogger } from "@/lib/logging";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import {
-  ConversationSnapshotSwapError,
-  projectNameFromPath,
   TicketSessionNotLinkableError,
-  type ConversationSnapshotUpdate,
   type EndSessionLinkInput,
   type TicketsRepo,
 } from "@/lib/state-store/tickets-repo";
@@ -22,11 +18,6 @@ import {
   buildAttachmentIndex,
   renderAttachmentIndexLines,
 } from "./attachment-index";
-import type {
-  EnsureConversationCompactionInput,
-  EnsureConversationCompactionResult,
-} from "./attachment-service";
-import type { TicketContentStore } from "./content-store";
 import { publishTicketChange } from "./events";
 import type {
   MaterializedTicketEntry,
@@ -37,7 +28,6 @@ import {
   effectiveSnapshotStatus,
   ticketStartModeSchema,
   type StartTicketOutput,
-  type ConversationAttachmentPayload,
   type TicketAttachment,
   type TicketDetail,
   type TicketError,
@@ -116,7 +106,6 @@ export interface TicketKickoffInput {
 
 export interface TicketStartServiceDeps {
   repo: TicketsRepo;
-  contentStore: Pick<TicketContentStore, "captureText" | "delete">;
   lock: TicketOperationLock;
   resolveProjectPath(projectName: string): Promise<string | null>;
   /** Serializes the complete start workflow against project deletion. */
@@ -124,15 +113,15 @@ export interface TicketStartServiceDeps {
     projectPath: string,
     operation: () => Promise<T>,
   ): Promise<T>;
-  /** Create-if-missing / refresh-if-stale (start-work capture policy). */
-  ensureConversationCompaction(
-    input: EnsureConversationCompactionInput,
-  ): Promise<EnsureConversationCompactionResult>;
-  conversationExists(
-    projectPath: string,
-    sessionName: string | null,
-    conversationId: string,
-  ): Promise<boolean>;
+  /**
+   * Hands an unsettled conversation attachment to the background snapshot
+   * refresher; capture never runs inside the start request.
+   */
+  scheduleConversationSnapshotRefresh(input: {
+    projectName: string;
+    number: number;
+    attachmentId: string;
+  }): void;
   /** Null when the session row does not exist. */
   getSessionLiveness(
     projectPath: string,
@@ -263,17 +252,6 @@ interface PendingStaleLinkDemotion {
   reason: StaleLinkReason;
 }
 
-interface PreparedConversationSnapshot {
-  previousSnapshotKey: string | null;
-  candidateSnapshotKey: string;
-  update: ConversationSnapshotUpdate;
-}
-
-interface PreparedTicketAttachments {
-  attachments: TicketAttachment[];
-  conversationSnapshots: PreparedConversationSnapshot[];
-}
-
 /**
  * Classify an open link against its session row: null when the link is
  * genuinely live, otherwise the demotion reason. Exact incarnation equality
@@ -293,39 +271,6 @@ function classifyStaleLink(
   }
   if (liveness.finished) return "finished";
   return null;
-}
-
-function hasSameConversationSource(
-  left: ConversationAttachmentPayload,
-  right: ConversationAttachmentPayload,
-): boolean {
-  return (
-    left.projectPath === right.projectPath &&
-    left.sessionName === right.sessionName &&
-    left.conversationId === right.conversationId
-  );
-}
-
-function capturedSnapshotWinnerFor(
-  update: ConversationSnapshotUpdate,
-  error: ConversationSnapshotSwapError,
-): ConversationAttachmentPayload | null {
-  if (error.result.status !== "lost") return null;
-  if (effectiveSnapshotStatus(update.previousPayload) !== "pending") {
-    return null;
-  }
-  if (effectiveSnapshotStatus(update.payload) !== "captured") return null;
-
-  const current = error.result.currentPayload;
-  if (current.kind !== "conversation") return null;
-  if (effectiveSnapshotStatus(current) !== "captured") return null;
-  if (current.snapshotKey === null || current.snapshotCapturedAt === null) {
-    return null;
-  }
-  const sameSource =
-    hasSameConversationSource(update.previousPayload, update.payload) &&
-    hasSameConversationSource(update.previousPayload, current);
-  return sameSource ? current : null;
 }
 
 // ============================================================
@@ -360,170 +305,38 @@ export function createTicketStartService(
     }
   }
 
-  async function deleteSnapshotBestEffort(
-    snapshotKey: string,
-    ticketId: string,
-    attachmentId: string,
-    disposition: "discard_candidate" | "retire_previous",
-  ): Promise<void> {
-    try {
-      await deps.contentStore.delete(snapshotKey);
-    } catch (error) {
-      logger.warn("start.snapshot_cleanup_failed", {
-        ticketId,
-        attachmentId,
-        disposition,
-        error: errorMessage(error),
-      });
-    }
-  }
-
-  async function discardConversationSnapshots(
-    ticketId: string,
-    snapshots: PreparedConversationSnapshot[],
-  ): Promise<void> {
-    for (const snapshot of snapshots) {
-      await deleteSnapshotBestEffort(
-        snapshot.candidateSnapshotKey,
-        ticketId,
-        snapshot.update.attachmentId,
-        "discard_candidate",
-      );
-    }
-  }
-
-  async function settleConversationSnapshots(
-    ticketId: string,
-    snapshots: PreparedConversationSnapshot[],
-    linked: TicketDetail,
-  ): Promise<void> {
-    for (const snapshot of snapshots) {
-      const current = linked.attachments.find(
-        (attachment) => attachment.id === snapshot.update.attachmentId,
-      );
-      const adopted =
-        current?.payload.kind === "conversation" &&
-        current.payload.snapshotKey === snapshot.candidateSnapshotKey;
-      const retiredKey = adopted
-        ? snapshot.previousSnapshotKey
-        : snapshot.candidateSnapshotKey;
-      if (retiredKey !== null) {
-        await deleteSnapshotBestEffort(
-          retiredKey,
-          ticketId,
-          snapshot.update.attachmentId,
-          adopted ? "retire_previous" : "discard_candidate",
-        );
-      }
-    }
-  }
-
   /**
-   * Refresh conversation compactions into candidate blobs. The candidates are
-   * safe to materialize immediately, but their payloads are adopted only by
-   * the final link transaction; any earlier failure discards them and leaves
-   * the durable attachment snapshot untouched.
+   * Hand every unsettled conversation attachment to the background refresher.
+   * Capture is a multi-minute LLM run that the start must never wait on, so a
+   * snapshot that was never captured — or whose earlier capture failed —
+   * converges after the session is already usable.
    */
-  async function refreshConversationSnapshots(
-    ticket: TicketDetail,
-  ): Promise<TicketResult<PreparedTicketAttachments>> {
-    const refreshed: TicketAttachment[] = [];
-    const conversationSnapshots: PreparedConversationSnapshot[] = [];
-    try {
-      for (const attachment of ticket.attachments) {
-        const payload = attachment.payload;
-        if (payload.kind !== "conversation") {
-          refreshed.push(attachment);
-          continue;
-        }
-        const exists = await deps.conversationExists(
-          payload.projectPath,
-          payload.sessionName,
-          payload.conversationId,
-        );
-        if (!exists) {
-          logger.info("start.compaction_source_missing", {
-            ticketId: ticket.id,
-            attachmentId: attachment.id,
-          });
-          if (effectiveSnapshotStatus(payload) !== "captured") {
-            await discardConversationSnapshots(
-              ticket.id,
-              conversationSnapshots,
-            );
-            return fail({
-              code: "context_preparation_failed",
-              phase: "content",
-              reason:
-                payload.snapshotError ??
-                "The source conversation is unavailable.",
-            });
-          }
-          refreshed.push(attachment);
-          continue;
-        }
-        const ensured = await deps.ensureConversationCompaction({
-          projectPath: payload.projectPath,
-          projectName: projectNameFromPath(payload.projectPath),
-          sessionName: payload.sessionName,
-          conversationId: payload.conversationId,
-        });
-        if (!ensured.ok) {
-          if (ensured.reason === EMPTY_TRANSCRIPT_COMPACTION_ERROR) {
-            logger.info("start.empty_conversation_skipped", {
-              ticketId: ticket.id,
-              attachmentId: attachment.id,
-              conversationId: payload.conversationId,
-              snapshotStatus: effectiveSnapshotStatus(payload),
-            });
-            continue;
-          }
-          await discardConversationSnapshots(ticket.id, conversationSnapshots);
-          return fail({
-            code: "context_preparation_failed",
-            phase: "content",
-            reason: ensured.reason,
-          });
-        }
-        const candidate = await deps.contentStore.captureText({
-          ticketId: ticket.id,
+  function scheduleUnsettledSnapshotRefreshes(
+    projectName: string,
+    number: number,
+    attachments: TicketAttachment[],
+  ): void {
+    for (const attachment of attachments) {
+      const payload = attachment.payload;
+      if (payload.kind !== "conversation") continue;
+      if (effectiveSnapshotStatus(payload) === "captured") continue;
+      try {
+        deps.scheduleConversationSnapshotRefresh({
+          projectName,
+          number,
           attachmentId: attachment.id,
-          fileName: `compaction-refresh-${deps.generateId()}.md`,
-          text: ensured.markdown,
         });
-        const nextPayload = {
-          kind: "conversation" as const,
-          projectPath: payload.projectPath,
-          sessionName: payload.sessionName,
-          conversationId: payload.conversationId,
-          snapshotKey: candidate.snapshotKey,
-          snapshotCapturedAt: ensured.capturedAt,
-          snapshotStatus: "captured" as const,
-        };
-        conversationSnapshots.push({
-          previousSnapshotKey: payload.snapshotKey,
-          candidateSnapshotKey: candidate.snapshotKey,
-          update: {
-            attachmentId: attachment.id,
-            previousPayload: payload,
-            payload: nextPayload,
-            updatedAt: deps.now(),
-          },
+      } catch (error) {
+        // The start is already committed; an unreachable refresher leaves a
+        // pending attachment the retry command can settle by hand.
+        logger.warn("start.snapshot_schedule_failed", {
+          projectName,
+          number,
+          attachmentId: attachment.id,
+          error: errorMessage(error),
         });
-        refreshed.push({ ...attachment, payload: nextPayload });
       }
-    } catch (error) {
-      await discardConversationSnapshots(ticket.id, conversationSnapshots);
-      return fail({
-        code: "context_preparation_failed",
-        phase: "content",
-        reason: errorMessage(error),
-      });
     }
-    return {
-      ok: true,
-      value: { attachments: refreshed, conversationSnapshots },
-    };
   }
 
   function buildStaleLinkDemotions(
@@ -559,7 +372,6 @@ export function createTicketStartService(
     sessionCreatedAt: string,
     mode: TicketStartMode,
     staleLinks: PendingStaleLinkDemotion[],
-    conversationSnapshotUpdates: ConversationSnapshotUpdate[],
   ): Promise<{
     linked: TicketDetail;
     demotions: PendingStaleLinkDemotion[];
@@ -574,7 +386,6 @@ export function createTicketStartService(
         startMode: mode,
         linkedAt: deps.now(),
         staleLinkDemotions: buildStaleLinkDemotions(demotions),
-        conversationSnapshotUpdates,
       });
     try {
       const linked = await attempt(staleLinks);
@@ -599,57 +410,6 @@ export function createTicketStartService(
       const linked = await attempt(reconciled);
       logStaleLinkDemotions(reconciled);
       return { linked, demotions: reconciled };
-    }
-  }
-
-  async function linkWithSnapshotWinnerReconciliation(
-    identifier: string,
-    projectPath: string,
-    number: number,
-    sessionName: string,
-    sessionCreatedAt: string,
-    mode: TicketStartMode,
-    staleLinks: PendingStaleLinkDemotion[],
-    conversationSnapshotUpdates: ConversationSnapshotUpdate[],
-  ): Promise<{
-    linked: TicketDetail;
-    demotions: PendingStaleLinkDemotion[];
-  }> {
-    let remainingUpdates = conversationSnapshotUpdates;
-    while (true) {
-      try {
-        return await linkWithReconcileRetry(
-          projectPath,
-          number,
-          sessionName,
-          sessionCreatedAt,
-          mode,
-          staleLinks,
-          remainingUpdates,
-        );
-      } catch (error) {
-        if (!(error instanceof ConversationSnapshotSwapError)) throw error;
-        const updateIndex = remainingUpdates.findIndex(
-          (update) => update.attachmentId === error.attachmentId,
-        );
-        const update = remainingUpdates[updateIndex];
-        if (updateIndex < 0 || update === undefined) throw error;
-        const winner = capturedSnapshotWinnerFor(update, error);
-        if (winner === null) throw error;
-        logger.info("start.snapshot_winner_verification_retry", {
-          identifier,
-          attachmentId: update.attachmentId,
-        });
-        remainingUpdates = remainingUpdates.map((candidate, index) =>
-          index === updateIndex
-            ? {
-                ...candidate,
-                previousPayload: winner,
-                payload: winner,
-              }
-            : candidate,
-        );
-      }
     }
   }
 
@@ -758,9 +518,6 @@ export function createTicketStartService(
       ticket,
     );
 
-    const prepared = await refreshConversationSnapshots(ticket);
-    if (!prepared.ok) return prepared;
-
     let provisioned: ProvisionedTicketSession;
     try {
       provisioned = await deps.provisionSession(
@@ -769,10 +526,6 @@ export function createTicketStartService(
         profile,
       );
     } catch (error) {
-      await discardConversationSnapshots(
-        ticket.id,
-        prepared.value.conversationSnapshots,
-      );
       logger.error("start.provision_failed", {
         identifier,
         sessionName,
@@ -792,7 +545,7 @@ export function createTicketStartService(
         sessionName,
         worktreePath: provisioned.worktreePath,
         ticketNumber: number,
-        attachments: prepared.value.attachments,
+        attachments: ticket.attachments,
       });
       await deps.activateTicketCharter({
         projectPath,
@@ -801,15 +554,13 @@ export function createTicketStartService(
         title: ticket.title,
         description: ticket.description,
       });
-      const linkResult = await linkWithSnapshotWinnerReconciliation(
-        identifier,
+      const linkResult = await linkWithReconcileRetry(
         projectPath,
         number,
         sessionName,
         provisioned.createdAt,
         mode,
         staleLinks,
-        prepared.value.conversationSnapshots.map((snapshot) => snapshot.update),
       );
       linked = linkResult.linked;
       committedDemotions = linkResult.demotions;
@@ -850,10 +601,6 @@ export function createTicketStartService(
           });
         }
       }
-      await discardConversationSnapshots(
-        ticket.id,
-        prepared.value.conversationSnapshots,
-      );
       if (error instanceof LiveSessionConflictError) {
         return fail({ code: "active_session", sessionName: error.sessionName });
       }
@@ -871,12 +618,8 @@ export function createTicketStartService(
       });
     }
 
-    await settleConversationSnapshots(
-      ticket.id,
-      prepared.value.conversationSnapshots,
-      linked,
-    );
     await publishForeignDemotions(linked.id, committedDemotions);
+    scheduleUnsettledSnapshotRefreshes(projectName, number, ticket.attachments);
 
     // Kickoff strictly after the link transaction committed, so the first
     // turn already sees the live ticket block. A queue decline surfaces
@@ -889,7 +632,7 @@ export function createTicketStartService(
         identifier,
         title: ticket.title,
         description: ticket.description,
-        attachments: prepared.value.attachments,
+        attachments: ticket.attachments,
       });
       try {
         initialPromptQueued = await deps.queueKickoff({
@@ -925,7 +668,7 @@ export function createTicketStartService(
         projectName,
         ticketNumber: number,
         listItem,
-        attachmentIndexChanged: prepared.value.conversationSnapshots.length > 0,
+        attachmentIndexChanged: false,
         linkedSessionName: sessionName,
       });
     } catch (error) {
