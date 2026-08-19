@@ -5,6 +5,7 @@ import { readConfig } from "@/lib/config/loader";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import { readRepoConfig } from "@/lib/projects/repo-config";
 import type { ApiError } from "@/lib/api/errors";
+import type { WorkflowPlanIssue } from "@/lib/workflows/plan-validation";
 import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
 import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 import {
@@ -23,8 +24,151 @@ import {
   assignmentReferenceRefusal,
   assignmentReferenceRefusalBody,
 } from "./assignment-reference-refusal";
+import { defaultPlanReviewService } from "./plan-review/default-service";
+import { canonicalPlanDefinitionHash } from "./plan-review/schemas";
+import type { PlanReviewLookup } from "./plan-review/service";
+import {
+  planReviewAcknowledgementRequestSchema,
+  planReviewFindingsCommand,
+  REVIEW_CHANGES_REQUESTED_UNACKNOWLEDGED_CODE,
+  type PlanReviewAcknowledgementRefusal,
+  type PlanReviewAdvisory,
+} from "./plan-review/status-schemas";
 
 const logger = createLogger("workflow-graph");
+
+const UNREVIEWED: PlanReviewAdvisory = { state: "unreviewed" };
+
+/**
+ * What the admitted revision's review means for this request (#69 change 5):
+ * the advisory line the response carries, and — for the ONE blocking shape —
+ * the refusal that must be answered before anything is persisted.
+ */
+interface AdmittedRevisionReview {
+  advisory: PlanReviewAdvisory;
+  /** Non-null only for an unacknowledged changes_requested verdict. */
+  refusal: PlanReviewAcknowledgementRefusal | null;
+}
+
+const OPEN = (advisory: PlanReviewAdvisory): AdmittedRevisionReview => ({
+  advisory,
+  refusal: null,
+});
+
+/**
+ * The acknowledgement this request carries, if any. Shape-tolerant on purpose:
+ * a body carrying something other than a hash string acknowledges nothing, and
+ * acknowledging nothing is the case the gate already handles — refusing the
+ * request over the field's TYPE would add a failure path of its own.
+ */
+function submittedAcknowledgement(rawBody: unknown): string | null {
+  const parsed = planReviewAcknowledgementRequestSchema.safeParse(rawBody);
+  if (!parsed.success) return null;
+  return parsed.data.acknowledgeReviewHash?.trim() ?? null;
+}
+
+/**
+ * What is known about the review of the revision just admitted, and whether
+ * that knowledge blocks the save.
+ *
+ * The LOOKUP fails open, without exception: a store that throws costs the
+ * author a sentence of output, never the save, and never a refusal — the gate
+ * is skipped entirely, because a mechanism that can refuse a create when its
+ * own storage is broken is a new way for an execution to fail. Reporting
+ * `unreviewed` on failure is deliberate; the warn log is where the real failure
+ * is recorded.
+ *
+ * The gate itself covers exactly one shape: this exact revision carries a
+ * terminal changes_requested verdict and the request did not acknowledge that
+ * revision's hash. Unreviewed and approved revisions are never gated, and
+ * repairing the plan changes its canonical hash — so the gate clears itself on
+ * the repaired successor rather than following the author forward.
+ */
+function reviewOfAdmittedRevision(
+  draft: WorkflowDefinitionDraft,
+  lookup: PlanReviewLookup,
+  acknowledgement: string | null,
+  scope: Record<string, string>,
+): AdmittedRevisionReview {
+  let definitionHash: string;
+  let latest: ReturnType<PlanReviewLookup["findLatestTerminalReview"]>;
+  try {
+    definitionHash = canonicalPlanDefinitionHash(draft.definition);
+    latest = lookup.findLatestTerminalReview(definitionHash);
+  } catch (error) {
+    // Named for what the failure COSTS, not for the advisory alone: this catch
+    // also skips the acknowledgement gate. Its sibling is
+    // `workflows.plan-review.lookup_failed`, which the service logs when the
+    // STORE throws and the service swallows it into a `null` this layer cannot
+    // tell from an unreviewed revision — so a gate skip surfaces under one name
+    // or the other depending on which layer failed, and an operator tracing one
+    // should search for both.
+    logger.warn("workflow-graph.definition-review.lookup_failed", {
+      ...scope,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return OPEN(UNREVIEWED);
+  }
+
+  if (latest === null) return OPEN(UNREVIEWED);
+  const advisory: PlanReviewAdvisory = {
+    state: latest.verdict,
+    reviewerConversationId: latest.reviewerConversationId,
+    reviewedAt: latest.reviewedAt,
+  };
+  if (latest.verdict !== "changes_requested") return OPEN(advisory);
+  if (acknowledgement === definitionHash) return OPEN(advisory);
+
+  return {
+    advisory,
+    refusal: {
+      definitionHash,
+      verdict: "changes_requested",
+      reviewerConversationId: latest.reviewerConversationId,
+      reviewedAt: latest.reviewedAt,
+      findingsCommand: planReviewFindingsCommand(),
+    },
+  };
+}
+
+/**
+ * The advisory fields a save carries beside its item: the review status of the
+ * exact revision, and the admission warnings this path used to discard — a
+ * planner who goes straight to create never runs `validate`, and dropping them
+ * here made the whole warning tier invisible to that author (#69 change 6).
+ *
+ * `warnings` is omitted when empty, exactly as the validate endpoint omits it,
+ * so the key's presence means there is something to read rather than being a
+ * field every response carries.
+ */
+function saveAdvisoryFields(
+  review: AdmittedRevisionReview,
+  warnings: readonly WorkflowPlanIssue[],
+): { reviewStatus: PlanReviewAdvisory; warnings?: WorkflowPlanIssue[] } {
+  return {
+    reviewStatus: review.advisory,
+    ...(warnings.length === 0 ? {} : { warnings: [...warnings] }),
+  };
+}
+
+/**
+ * 409 rather than 400: the submitted plan is well-formed and the caller is not
+ * confused about the request shape — it conflicts with a verdict already
+ * recorded against these exact bytes, and the two ways out (read the findings,
+ * then revise or acknowledge) are both in the payload.
+ */
+function reviewAcknowledgementRefusalResponse(
+  refusal: PlanReviewAcknowledgementRefusal,
+): Response {
+  return NextResponse.json(
+    {
+      error: `Plan revision ${refusal.definitionHash} has a changes-requested review this request did not acknowledge: read the findings, then either revise the plan or re-submit with acknowledgeReviewHash set to ${refusal.definitionHash}`,
+      code: REVIEW_CHANGES_REQUESTED_UNACKNOWLEDGED_CODE,
+      details: refusal,
+    },
+    { status: 409 },
+  );
+}
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -55,6 +199,14 @@ export interface WorkflowDefinitionRouteDeps {
   ): Promise<unknown>;
   deleteDefinition(projectPath: string, workflowId: string): Promise<boolean>;
   assignmentReferences?: AssignmentReferenceChecker;
+  /**
+   * The review lookup for the admitted revision. Consulted BEFORE persisting,
+   * because it powers two things at once: the advisory the response carries,
+   * which never changes the outcome, and the single sanctioned refusal — an
+   * unacknowledged changes_requested verdict on these exact bytes. It may
+   * refuse nothing else, and a lookup that throws refuses nothing at all.
+   */
+  planReviews: PlanReviewLookup;
 }
 
 const defaultStorage = createWorkflowStorageService();
@@ -73,6 +225,12 @@ const defaultDeps: WorkflowDefinitionRouteDeps = {
     defaultStorage.update({ kind: "project", projectPath }, workflowId, draft),
   deleteDefinition: (projectPath, workflowId) =>
     defaultStorage.delete({ kind: "project", projectPath }, workflowId),
+  planReviews: {
+    // Resolved per call, not at module load: the service opens the live
+    // database, which does not exist yet during the Next.js build.
+    findLatestTerminalReview: (definitionHash) =>
+      defaultPlanReviewService().findLatestTerminalReview(definitionHash),
+  },
 };
 
 function admissionRefusalResponse(validation: {
@@ -149,9 +307,26 @@ export function createWorkflowDefinitionRouteHandlers(
       return admissionRefusalResponse(validation);
     }
 
+    const review = reviewOfAdmittedRevision(
+      validation.launch,
+      deps.planReviews,
+      submittedAcknowledgement(rawBody),
+      { projectPath, caller: "project-create" },
+    );
+    if (review.refusal !== null) {
+      logger.warn("workflow-graph.definition-create.review_unacknowledged", {
+        projectPath,
+        definitionHash: review.refusal.definitionHash,
+      });
+      return reviewAcknowledgementRefusalResponse(review.refusal);
+    }
+
     try {
       const item = await deps.createDefinition(projectPath, validation.launch);
-      return NextResponse.json({ item }, { status: 201 });
+      return NextResponse.json(
+        { item, ...saveAdvisoryFields(review, validation.warnings) },
+        { status: 201 },
+      );
     } catch (error) {
       const refusal = assignmentReferenceRefusal(error);
       if (refusal) return refusal;
@@ -226,13 +401,31 @@ export function createWorkflowDefinitionRouteHandlers(
       return admissionRefusalResponse(validation);
     }
 
+    const review = reviewOfAdmittedRevision(
+      validation.launch,
+      deps.planReviews,
+      submittedAcknowledgement(rawBody),
+      { projectPath, workflowId, caller: "project-replace" },
+    );
+    if (review.refusal !== null) {
+      logger.warn("workflow-graph.definition-replace.review_unacknowledged", {
+        projectPath,
+        workflowId,
+        definitionHash: review.refusal.definitionHash,
+      });
+      return reviewAcknowledgementRefusalResponse(review.refusal);
+    }
+
     try {
       const item = await deps.updateDefinition(
         projectPath,
         workflowId,
         validation.launch,
       );
-      return NextResponse.json({ item });
+      return NextResponse.json({
+        item,
+        ...saveAdvisoryFields(review, validation.warnings),
+      });
     } catch (error) {
       // Ordered before the 404 fallback on purpose: an unresolvable assignment
       // reference is a refusal of the SUBMITTED document, not a missing id, and

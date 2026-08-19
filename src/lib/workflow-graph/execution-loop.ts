@@ -2841,6 +2841,9 @@ export function createGraphWorkflowExecutionLoop(
         contextId,
         unattributedPaths: [...unattributedPaths],
         message: `Lane "${laneId}" has ${verdict.unattributedPaths.length} change(s) that no current member's ownership, scratch, or payload directory accounts for, found while "${contextId}" landed`,
+        // Plan repair fills this in if it speaks; the raise never claims a
+        // verdict it has not heard.
+        summary: null,
       };
       const haltResult = await deps.workflowManager.recordPendingHaltReason({
         projectPath: input.projectPath,

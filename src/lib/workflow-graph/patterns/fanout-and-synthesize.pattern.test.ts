@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { validateWorkflowPlan } from "@/lib/workflows/plan-validation";
+import { structuralWarningsOf } from "./pattern-plan-warnings";
 import { runEngineScenario } from "../compat/engine-harness";
 import type { EngineScenarioRun } from "../compat/engine-harness";
 import { resolveUpstreamInputs } from "../context-outputs";
@@ -113,7 +114,7 @@ describe("Fanout-And-Synthesize, as an ordinary plan (D6 R2.2)", () => {
     const result = validateWorkflowPlan(readPlan());
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.warnings).toEqual([]);
+    expect(structuralWarningsOf(result.warnings)).toEqual([]);
 
     const contexts = result.draft.definition.executionContexts;
     const readers = contexts.filter((context) =>

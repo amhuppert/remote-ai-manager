@@ -1664,6 +1664,18 @@ function buildMaximalExecution(): unknown {
         attempts: 3,
         roundSeq: 4,
       },
+      // Maximal lane-drift halt: the unattributed paths and the plan-repair
+      // verdict on them. Archival is where the verdict has to last longest —
+      // the row is written once and never rewritten — and a decline the
+      // archive drops is a spent round nobody can ever read back.
+      {
+        type: "ownership_violation",
+        laneId: "lane-1",
+        contextId: "ctx-1",
+        unattributedPaths: ["src/unowned.ts"],
+        message: "the lane changed a path no member owns",
+        summary: "Plan repair declined: no member may own a generated file.",
+      },
       // Maximal candidate-instability halt: the drift evidence, the incident
       // kind the halt copy branches on, and the plan-repair verdict. The
       // halt-reason union is a leaf to the durability harness, so this parked

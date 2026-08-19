@@ -5,6 +5,7 @@ import type {
   WorkflowDefaults,
 } from "@/lib/config/schemas";
 import type { AgentAuth } from "@/lib/agent-gateway/token";
+import { unreviewedPlanReviewLookup } from "@/lib/shared/testing/graph-plan-review-fixture";
 import { criterionRecordsOf } from "@/lib/workflow-graph/criteria/criterion-records";
 import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/storage";
 import {
@@ -131,12 +132,15 @@ describe("admitAuthoredWorkflowLaunch", () => {
         covered: false,
       }),
     ]);
-    expect(result.warnings).toEqual([
+    // Containment, not equality: the semantic authoring lints (#69 change 6)
+    // also report against this fixture's charter, and the subject here is the
+    // guard warning surviving admission — not the whole warning set.
+    expect(result.warnings).toContainEqual(
       expect.objectContaining({
         path: "definition.executionContexts[0].outputSchema.properties.verdict.enum",
         message: expect.stringContaining("defer"),
       }),
-    ]);
+    );
   });
 
   it("observes profile and default-reference changes on each request", async () => {
@@ -208,11 +212,15 @@ describe("admitAuthoredWorkflowLaunch", () => {
     });
     expect(admissionLogger.warn).toHaveBeenCalledWith(
       "workflow-graph.authored-launch-admission.rejected",
-      expect.objectContaining({
-        issueCount: 1,
-        warningCount: 1,
-      }),
+      expect.objectContaining({ issueCount: 1 }),
     );
+    // The count itself, not a fixed number: the plan parse produced warnings
+    // (guard coverage plus the semantic authoring lints) and the rejection log
+    // has to carry them even though the launch was refused downstream.
+    const rejection = admissionLogger.warn.mock.calls.find(
+      ([event]) => event === "workflow-graph.authored-launch-admission.rejected",
+    )?.[1] as { warningCount: number } | undefined;
+    expect(rejection?.warningCount).toBeGreaterThan(0);
   });
 
   it("refuses an unregistered caller at the admission boundary", async () => {
@@ -359,8 +367,19 @@ describe("ordinary authored-launch callers", () => {
       workflowDefaults: undefined,
       assignmentReferences: references(globalScope),
     });
-    expect(expectedGlobal).toEqual(expectedProject);
+    expect(expectedGlobal.ok).toBe(true);
     if (!expectedGlobal.ok) return;
+    // The normalized launch is scope-independent. The warning SET is not, and
+    // deliberately so: the charter locator lint resolves against a project
+    // root, and a global-scope template has none, so it is skipped there (#69
+    // change 6). Everything a global template CAN be warned about it is.
+    expect(expectedGlobal.launch).toEqual(expectedProject.launch);
+    expect(expectedGlobal.stableAccountabilityContextIds).toEqual(
+      expectedProject.stableAccountabilityContextIds,
+    );
+    expect(expectedProject.warnings).toEqual(
+      expect.arrayContaining(expectedGlobal.warnings),
+    );
 
     const created: WorkflowDefinitionDraft[] = [];
     const updated: WorkflowDefinitionDraft[] = [];
@@ -370,6 +389,7 @@ describe("ordinary authored-launch callers", () => {
       ...expectedProject.launch,
     });
     const projectHandlers = createWorkflowDefinitionRouteHandlers({
+      planReviews: unreviewedPlanReviewLookup,
       resolveProjectPath: async () => "/repo",
       readConfig: async () => globalConfig,
       readRepoConfig: async () => ({ validation: repoValidation }),
@@ -556,6 +576,7 @@ describe("ordinary authored-launch callers", () => {
       update: [] as WorkflowDefinitionDraft[],
     };
     const projectHandlers = createWorkflowDefinitionRouteHandlers({
+      planReviews: unreviewedPlanReviewLookup,
       resolveProjectPath: async () => "/repo",
       readConfig: async () => globalConfig,
       readRepoConfig: async () => ({ validation: repoValidation }),

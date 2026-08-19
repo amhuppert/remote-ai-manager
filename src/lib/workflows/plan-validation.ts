@@ -19,6 +19,7 @@ import {
   type AssignmentTierLabel,
 } from "@/lib/workflow-graph/assignment-references";
 import { findLegacyAgentShapes } from "@/lib/workflow-graph/schema-cutover-guard";
+import { lintPlanSemantics } from "./plan-lints";
 
 export interface WorkflowPlanIssue {
   /** JSON-path location within the request body, e.g. `definition.tasks.0.contextId`. */
@@ -31,9 +32,10 @@ export interface WorkflowPlanCommandIssue extends WorkflowPlanIssue {
 }
 
 /**
- * `warnings` are located exactly like issues but never refuse the plan: today
- * the guard enum-coverage lint (R3.2), which reports a source whose branches
- * leave declared values unrouted with no else edge.
+ * `warnings` are located exactly like issues but never refuse the plan: the
+ * guard enum-coverage lint (R3.2), which reports a source whose branches leave
+ * declared values unrouted with no else edge, plus the semantic authoring
+ * lints (#69 change 6).
  */
 export type WorkflowPlanValidationResult =
   | {
@@ -56,6 +58,15 @@ export interface WorkflowPlanValidationOptions {
    * project registry exists.
    */
   validationCommandPreflight?: ValidationCommandPreflight;
+  /**
+   * Absolute path to the project the plan is destined for, threaded from
+   * callers that have project identity. The charter locator lint needs a root
+   * to resolve worktree-relative locators against; when none is provided that
+   * lint is skipped entirely rather than guessing one, so a project-unbound
+   * caller (a global template) never reports a source absent on the strength
+   * of a root it invented.
+   */
+  projectRoot?: string;
 }
 
 /**
@@ -342,33 +353,42 @@ export function validateWorkflowPlan(
     };
   }
 
+  // This is the ONE place prose acceptance criteria become records (#69
+  // change 4 stage 1): the accepted draft is what create/replace persist and
+  // what a launch seeds from, while stored/working-definition parses stay
+  // tolerant unions so a reload never rewrites a stored shape
+  // (no-read-renormalization). The semantic lints read THIS value rather than
+  // the raw parse, so a prose criterion is judged as the single record the
+  // context will actually run with.
+  const canonicalDefinition = {
+    ...parsed.data.definition,
+    executionContexts: parsed.data.definition.executionContexts.map(
+      (context) => ({
+        ...context,
+        acceptanceCriteria: criterionRecordsOf(context.acceptanceCriteria),
+      }),
+    ),
+  };
+
   return {
     ok: true,
     draft: {
       name: parsed.data.name,
       description: parsed.data.description ?? null,
-      // This is the ONE place prose acceptance criteria become records (#69
-      // change 4 stage 1): the accepted draft is what create/replace persist
-      // and what a launch seeds from, while stored/working-definition parses
-      // stay tolerant unions so a reload never rewrites a stored shape
-      // (no-read-renormalization).
-      definition: {
-        ...parsed.data.definition,
-        executionContexts: parsed.data.definition.executionContexts.map(
-          (context) => ({
-            ...context,
-            acceptanceCriteria: criterionRecordsOf(context.acceptanceCriteria),
-          }),
-        ),
-      },
+      definition: canonicalDefinition,
       layout: parsed.data.layout,
     },
-    warnings: lintGuardEnumCoverage(
-      parsed.data.definition.executionContexts,
-      parsed.data.definition.edges,
-    ).map((warning) => ({
-      path: structuralIssuePath(warning, parsed.data.definition),
-      message: warning.message,
-    })),
+    warnings: [
+      ...lintGuardEnumCoverage(
+        parsed.data.definition.executionContexts,
+        parsed.data.definition.edges,
+      ).map((warning) => ({
+        path: structuralIssuePath(warning, parsed.data.definition),
+        message: warning.message,
+      })),
+      ...lintPlanSemantics(canonicalDefinition, {
+        projectRoot: options.projectRoot,
+      }),
+    ],
   };
 }

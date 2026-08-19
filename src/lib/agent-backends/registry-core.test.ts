@@ -11,7 +11,6 @@ import {
   backendMetadataIntegritySchema,
   getBackendDescriptor,
   listBackends,
-  listManagedSkillsOwnedCheckoutPaths,
   prepareManagedSkillsCheckout,
   registerBackend,
   _registerBackendForTesting,
@@ -249,26 +248,6 @@ describe("registry-core backend registration policy", () => {
     );
   });
 
-  it("collects only safe checkout-relative paths attested by adapters", async () => {
-    const fake = createTestFakeBackend();
-    const descriptor = {
-      ...fake.descriptor,
-      managedSkills: {
-        ...fake.descriptor.managedSkills,
-        listOwnedCheckoutPaths: async () => [
-          ".agents/skills/command-center",
-          "/absolute",
-          "../escape",
-          ".agents\\foreign",
-        ],
-      },
-    };
-    _registerBackendForTesting(descriptor);
-
-    await expect(
-      listManagedSkillsOwnedCheckoutPaths("/repo/.worktrees/session"),
-    ).resolves.toEqual([".agents/skills/command-center"]);
-  });
 });
 
 describe("descriptor integrity schemas (runtime belt for values the type system cannot vouch for)", () => {

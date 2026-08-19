@@ -91,12 +91,16 @@ describe("maximal authored launch contract", () => {
         stableExistingClaimantContextIds: [],
       }),
     ]);
-    expect(admitted.warnings).toEqual([
+    // The canary is the guard warning surviving admission. The semantic
+    // authoring lints (#69 change 6) also report against this fixture — its
+    // charter locators point at documents no temp project path holds — and
+    // they are advisory, so the contract is containment, not the exact set.
+    expect(admitted.warnings).toContainEqual(
       expect.objectContaining({
         path: expect.stringContaining("outputSchema.properties.verdict.enum"),
         message: expect.stringContaining("defer"),
       }),
-    ]);
+    );
   });
 
   it("keeps one authored launch schema", () => {

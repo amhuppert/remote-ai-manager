@@ -463,7 +463,13 @@ export function formatGraphWorkflowHaltReason(
             ))}
           </ul>
         ),
-        action: `Found while "${reason.contextId}" landed — the lane cannot say which member wrote them. Widen a member's ownership to cover these paths, or remove the writes, then resume.`,
+        // Once plan repair has spoken, its verdict replaces the generic remedy
+        // — the same substitution the plan-defect card makes. Repair declines
+        // this halt often, and a decline the card never shows is a round the
+        // operator paid for and cannot read.
+        action:
+          reason.summary ??
+          `Found while "${reason.contextId}" landed — the lane cannot say which member wrote them. Widen a member's ownership to cover these paths, or remove the writes, then resume.`,
         tone: "attention",
       };
     case "candidate_unstable": {
@@ -492,9 +498,14 @@ export function formatGraphWorkflowHaltReason(
             </pre>
           </>
         ),
-        action: moved
-          ? "Find what keeps changing the worktree between the freeze and the review — a sibling writing into a shared lane, or a stale index under it — then resume. No verdict was rendered, so no work was reopened and no attempt was charged."
-          : "Nothing was seen to move, so the worktree is not the place to look: the rounds kept being discarded before a verdict could land. Check the validator's own runs for results arriving after their round closed, then resume. No verdict was rendered, so no work was reopened and no attempt was charged.",
+        // The repair verdict, when there is one, displaces both remedies: this
+        // halt's cause is usually outside the plan, so the round that looked
+        // and declined is more use than either generic instruction.
+        action:
+          reason.summary ??
+          (moved
+            ? "Find what keeps changing the worktree between the freeze and the review — a sibling writing into a shared lane, or a stale index under it — then resume. No verdict was rendered, so no work was reopened and no attempt was charged."
+            : "Nothing was seen to move, so the worktree is not the place to look: the rounds kept being discarded before a verdict could land. Check the validator's own runs for results arriving after their round closed, then resume. No verdict was rendered, so no work was reopened and no attempt was charged."),
         tone: "attention",
       };
     }

@@ -18,6 +18,19 @@ const GRAPH_PLANNING_SKILL = {
 } as const;
 
 /**
+ * The reviewer's half of the protocol. It ships beside the planning skill
+ * rather than inside it because the planning skill delegates the lenses, the
+ * findings artifact, and the recording flags here — so the verb that records a
+ * verdict has to name it, or a reviewer arriving via `--help` lands on the
+ * rules for authoring a plan instead of judging one.
+ */
+const GRAPH_REVIEW_SKILL = {
+  name: "graph-workflow-review",
+  loadWhen: "before reviewing a plan.json or recording a verdict",
+  path: ".claude/skills/graph-workflow-review/SKILL.md",
+} as const;
+
+/**
  * The lane-family invariant, stated on every lane verb: it resolves the lane's
  * execution + context from the env CC injects at spawn, and runs outside a lane
  * fail with an exit-2 naming the missing variable.
@@ -47,7 +60,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     description:
       "Author, read, launch, and inspect graph workflows — saved multi-context task graphs and their live executions. Authoring walks the canonical chain validate → create → start. The lane verbs (task complete/add, shared-doc upsert, collab request) are a SEPARATE family for the implementer agent inside a running execution.",
     usage: [
-      "cctl workflow <validate|create|replace|edit|list|get|status|start|run|wait|abandon|delete|templates>",
+      "cctl workflow <validate|create|replace|review|edit|list|get|status|start|run|wait|abandon|delete|templates>",
       "cctl workflow <task complete|task add|shared-doc upsert|collab request>  (lane verbs)",
     ],
     flags: [],
@@ -104,6 +117,10 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
         oneLiner:
           "for a targeted change, edit in place instead of re-validating a whole plan",
       },
+      {
+        command: "workflow review",
+        oneLiner: "read the review verdict recorded for this exact revision",
+      },
     ],
     skills: [GRAPH_PLANNING_SKILL],
   },
@@ -112,8 +129,10 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "save a new definition from a validated plan",
     description:
-      "Save a new definition from a validated plan.json. Prints the new workflow id and hints how to start it. The user reviews and edits it in the visual builder before starting.",
-    usage: ["cctl workflow create --file .cc/temp/plan.json [--json]"],
+      "Save a new definition from a validated plan.json. Prints the new workflow id and hints how to start it. The user reviews and edits it in the visual builder before starting. Any `warning: <path>: <message>` lines the same checks `validate` runs would have printed appear above that, so skipping validate never hides them; they never change the exit code. Refused only in one case: this exact revision carries a changes-requested review nobody acknowledged — read the findings, then either revise the plan (which changes its hash and clears the gate on its own) or re-run with --acknowledge-review <hash>.",
+    usage: [
+      "cctl workflow create --file .cc/temp/plan.json [--acknowledge-review <hash>] [--json]",
+    ],
     flags: [
       {
         name: "file",
@@ -121,12 +140,25 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
         valuePlaceholder: "<plan.json>",
         description: "the validated plan to save",
       },
+      {
+        name: "acknowledge-review",
+        kind: "value",
+        valuePlaceholder: "<hash>",
+        description:
+          "save this revision anyway, acknowledging the changes-requested review recorded against that exact hash (the refusal prints it)",
+      },
     ],
     examples: [
       {
         invocation: "cctl workflow create --file .cc/temp/plan.json",
         explanation:
           "returns the workflow id; start it with 'cctl workflow start <id>' after the user reviews it",
+      },
+      {
+        invocation:
+          "cctl workflow create --file .cc/temp/plan.json --acknowledge-review sha256:<64-hex>",
+        explanation:
+          "after a review-changes-requested-unacknowledged refusal: read the findings with 'cctl workflow review --file .cc/temp/plan.json' first — pass the hash the refusal named to save the revision as-is anyway",
       },
     ],
     related: [
@@ -138,6 +170,10 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
         command: "workflow start",
         oneLiner: "launch an execution from the id",
       },
+      {
+        command: "workflow review",
+        oneLiner: "read the full findings behind the review status create prints",
+      },
     ],
     skills: [GRAPH_PLANNING_SKILL],
   },
@@ -146,8 +182,10 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "overwrite an existing definition from a plan file",
     description:
-      "Overwrite an existing definition (<id>) with a plan.json — submit the COMPLETE graph, not a diff (the previous definition is fully overwritten). For a targeted change (one task, add a context, clear an override) prefer `cctl workflow edit` — far cheaper. Re-validate first. No hint — a revision is not a step in the author-then-start chain.",
-    usage: ["cctl workflow replace <id> --file .cc/temp/plan.json [--json]"],
+      "Overwrite an existing definition (<id>) with a plan.json — submit the COMPLETE graph, not a diff (the previous definition is fully overwritten). For a targeted change (one task, add a context, clear an override) prefer `cctl workflow edit` — far cheaper. Re-validate first. No hint — a revision is not a step in the author-then-start chain. Any `warning: <path>: <message>` lines the same checks `validate` runs would have printed appear above the replaced line; they never change the exit code. Refused only in one case: this exact revision carries a changes-requested review nobody acknowledged — read the findings, then either revise the plan (which changes its hash and clears the gate on its own) or re-run with --acknowledge-review <hash>.",
+    usage: [
+      "cctl workflow replace <id> --file .cc/temp/plan.json [--acknowledge-review <hash>] [--json]",
+    ],
     flags: [
       {
         name: "file",
@@ -155,12 +193,25 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
         valuePlaceholder: "<plan.json>",
         description: "the complete replacement graph (not a diff)",
       },
+      {
+        name: "acknowledge-review",
+        kind: "value",
+        valuePlaceholder: "<hash>",
+        description:
+          "replace with this revision anyway, acknowledging the changes-requested review recorded against that exact hash (the refusal prints it)",
+      },
     ],
     examples: [
       {
         invocation: "cctl workflow replace wf-1 --file .cc/temp/plan.json",
         explanation:
           "fully overwrites wf-1 — `cctl workflow get wf-1 --full` first, edit the whole graph, re-validate, then replace",
+      },
+      {
+        invocation:
+          "cctl workflow replace wf-1 --file .cc/temp/plan.json --acknowledge-review sha256:<64-hex>",
+        explanation:
+          "after a review-changes-requested-unacknowledged refusal: read the findings with 'cctl workflow review --file .cc/temp/plan.json' first — pass the hash the refusal named to replace with the revision as-is anyway",
       },
     ],
     related: [
@@ -177,8 +228,84 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
         command: "workflow validate",
         oneLiner: "re-validate the complete graph before replacing",
       },
+      {
+        command: "workflow review",
+        oneLiner: "read the review recorded for the revision you are replacing",
+      },
     ],
     skills: [GRAPH_PLANNING_SKILL],
+  },
+  {
+    path: ["workflow", "review"],
+    dynamicContext: true,
+    summary: "read or record the review verdict bound to a plan revision",
+    description:
+      "Read (default) or record a terminal review of the EXACT plan revision in --file. Identity is the plan's canonical content hash, computed server-side, so re-formatting or re-ordering the same plan finds the same review and changing one word finds none. Read mode prints the verdict, the reviewer, when it was reached, the findings artifact in full, and ready-to-run commands to open the reviewer's own conversation — that is how a planner in a FRESH session recovers changes-requested findings without the original review conversation. Record mode (--verdict) needs --findings for changes-requested; a verdict without the artifact that justifies it is refused. Advisory: an unreviewed plan validates, creates, replaces, and starts freely.",
+    usage: [
+      "cctl workflow review --file .cc/temp/plan.json [--json]",
+      "cctl workflow review --file .cc/temp/plan.json --verdict approved|changes-requested [--findings <path>] [--reviewer <conversation-id>] [--json]",
+    ],
+    flags: [
+      {
+        name: "file",
+        kind: "value",
+        valuePlaceholder: "<plan.json>",
+        description: "the plan revision to read or record a review for",
+      },
+      {
+        name: "verdict",
+        kind: "value",
+        valuePlaceholder: "approved|changes-requested",
+        description:
+          "record this terminal verdict instead of reading the current one",
+      },
+      {
+        name: "findings",
+        kind: "value",
+        valuePlaceholder: "<findings.md>",
+        description:
+          "the findings artifact text to store — required for changes-requested",
+      },
+      {
+        name: "reviewer",
+        kind: "value",
+        valuePlaceholder: "<conversation-id>",
+        description:
+          "the reviewing conversation; defaults to CC_CONVERSATION_ID when set",
+      },
+    ],
+    examples: [
+      {
+        invocation: "cctl workflow review --file .cc/temp/plan.json",
+        explanation:
+          "read the verdict + full findings for this exact revision before revising it — works from any session, and says 'unreviewed' rather than failing when nobody has reviewed it",
+      },
+      {
+        invocation:
+          "cctl workflow review --file .cc/temp/plan.json --verdict changes-requested --findings .cc/temp/findings.md",
+        explanation:
+          "record a changes-requested verdict; the reviewer defaults to this conversation, and the planner recovers these findings with the read form above",
+      },
+    ],
+    related: [
+      {
+        command: "workflow validate",
+        oneLiner: "check the plan is well-formed before reviewing it",
+      },
+      {
+        command: "workflow create",
+        oneLiner: "save the plan — its response repeats this review status",
+      },
+      {
+        command: "conversation read",
+        oneLiner: "open the reviewer conversation this command points at",
+      },
+    ],
+    // Both, in the order a reviewer needs them: the review skill owns this
+    // verb, and the planning skill is the rubric the plan is judged against.
+    skills: [GRAPH_REVIEW_SKILL, GRAPH_PLANNING_SKILL],
+    domainContext:
+      "The review record is advisory and never required: absence of a review blocks nothing. It binds to plan CONTENT, not to a saved workflow id, so a plan can be reviewed before it is ever created.",
   },
   {
     path: ["workflow", "list"],

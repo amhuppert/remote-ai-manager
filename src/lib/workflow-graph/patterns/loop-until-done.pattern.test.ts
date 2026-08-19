@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { validateWorkflowPlan } from "@/lib/workflows/plan-validation";
+import { structuralWarningsOf } from "./pattern-plan-warnings";
 import { workflowSemanticDefinitionSchema } from "../definition-schemas";
 import {
   runEngineScenario,
@@ -246,7 +247,7 @@ describe("Loop-Until-Done template — authoring (R15.3)", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.warnings).toEqual([]);
+    expect(structuralWarningsOf(result.warnings)).toEqual([]);
   });
 });
 

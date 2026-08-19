@@ -116,6 +116,13 @@ export async function admitAuthoredWorkflowLaunch(
         );
   const parsed = validateWorkflowPlan(rawLaunch, {
     validationCommandPreflight,
+    // The document scope already carries the only project root this layer
+    // could honestly claim. A global-scope template has none — it is not
+    // destined for any one worktree — so its charter locators go unchecked
+    // rather than being judged against an arbitrary project.
+    ...(deps.documentScope.kind === "project"
+      ? { projectRoot: deps.documentScope.projectPath }
+      : {}),
   });
   if (!parsed.ok) {
     return rejected(

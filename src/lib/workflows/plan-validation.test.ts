@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createWorkflowDefinition,
   createWorkflowLayout,
@@ -886,5 +889,127 @@ describe("validateWorkflowPlan post-cutover refusal", () => {
     expect(result.issues.map((issue) => issue.path)).toContain(
       "definition.workflowConfig.implementer",
     );
+  });
+});
+
+// ============================================================
+// Semantic authoring lints (#69 change 6)
+// ============================================================
+
+/** A definition that trips every semantic lint at once. */
+function createLintTrippingDefinition() {
+  const definition = createWorkflowDefinition();
+  definition.executionContexts[0] = {
+    ...definition.executionContexts[0]!,
+    description: "d".repeat(2001),
+    acceptanceCriteria: [
+      { id: "ac-sweep", statement: "Every call site is migrated" },
+      { id: "ac-blob", statement: "x".repeat(601) },
+      ...Array.from({ length: 11 }, (_, index) => ({
+        id: `ac-${index + 1}`,
+        statement: "Behavior is pinned",
+      })),
+    ],
+  };
+  definition.tasks[0] = {
+    ...definition.tasks[0]!,
+    instructions: "i".repeat(8001),
+  };
+  return definition;
+}
+
+/** The `lint/<id>` prefix of each warning, for set-level assertions. */
+function lintIds(warnings: { message: string }[]): string[] {
+  return warnings.flatMap(
+    (warning) => warning.message.match(/^lint\/([a-z-]+):/)?.slice(1) ?? [],
+  );
+}
+
+describe("validateWorkflowPlan semantic lints", () => {
+  // An empty directory: every charter locator the fixture declares is absent
+  // from it, which is exactly the incident the locator lint pins.
+  let projectRoot: string;
+
+  beforeAll(() => {
+    projectRoot = mkdtempSync(path.join(tmpdir(), "cc-plan-validation-"));
+  });
+
+  afterAll(() => {
+    rmSync(projectRoot, { recursive: true, force: true });
+  });
+
+  it("returns every lint as a warning on an otherwise valid plan", () => {
+    const result = validateWorkflowPlan(
+      makePlan(createLintTrippingDefinition()),
+      { projectRoot },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(new Set(lintIds(result.warnings))).toEqual(
+      new Set([
+        "criteria-density",
+        "open-quantifier",
+        "source-locator-unresolvable",
+        "oversized-prose",
+      ]),
+    );
+    // The verdict is untouched: a warning is never an issue.
+    expect(result).not.toHaveProperty("issues");
+  });
+
+  it("keeps lint warnings located like issues so the CLI printer renders them", () => {
+    const result = validateWorkflowPlan(
+      makePlan(createLintTrippingDefinition()),
+      { projectRoot },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.warnings).toContainEqual({
+      path: "definition.executionContexts.0.acceptanceCriteria",
+      message: expect.stringContaining("lint/criteria-density"),
+    });
+    expect(result.warnings).toContainEqual({
+      path: "definition.tasks.0.instructions",
+      message: expect.stringContaining("lint/oversized-prose"),
+    });
+    expect(result.warnings).toContainEqual({
+      path: "definition.charter.sourcesOfTruth.0.locator",
+      message: expect.stringContaining("lint/source-locator-unresolvable"),
+    });
+  });
+
+  it("still admits the plan and returns the canonical draft", () => {
+    const result = validateWorkflowPlan(
+      makePlan(createLintTrippingDefinition()),
+      { projectRoot },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.draft.definition.executionContexts[0]?.acceptanceCriteria)
+      .toHaveLength(13);
+  });
+
+  it("skips the locator lint when no project root is available", () => {
+    const result = validateWorkflowPlan(
+      makePlan(createLintTrippingDefinition()),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(lintIds(result.warnings)).not.toContain(
+      "source-locator-unresolvable",
+    );
+    expect(lintIds(result.warnings)).toContain("criteria-density");
+  });
+
+  it("leaves a plan that trips nothing warning-free", () => {
+    const result = validateWorkflowPlan(makePlan(), { projectRoot: undefined });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.warnings).toEqual([]);
   });
 });

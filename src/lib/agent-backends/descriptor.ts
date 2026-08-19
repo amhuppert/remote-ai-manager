@@ -66,12 +66,6 @@ export interface AgentBackendManagedSkills {
    * transport attaches managed skills do not need this hook.
    */
   prepareCheckout?(checkoutPath: string): Promise<void>;
-  /**
-   * Attest checkout-relative paths currently owned by this adapter. Callers
-   * use the result only after the adapter verifies the on-disk object; a
-   * declared collision is not ownership.
-   */
-  listOwnedCheckoutPaths?(checkoutPath: string): Promise<readonly string[]>;
 }
 
 export const continuationStrengthSchema = z.enum([

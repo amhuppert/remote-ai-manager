@@ -644,6 +644,38 @@ describe("graph-workflow-executions-repo durability contract", () => {
     });
   });
 
+  // A lane-drift halt is repairable unattended, and the repair declines more
+  // often than it widens an ownership — the cause is frequently a write no plan
+  // authorized. That verdict is the whole product of the round the operator
+  // paid for, so a reload that drops it puts them back in front of the same
+  // undiagnosed drift with a round already spent.
+  it("carries the ownership_violation halt's repair verdict in the maximal SQLite fixture", () => {
+    const execution = maximalExecution();
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      execution,
+      "2026-03-01T00:00:00Z",
+    );
+
+    const reloaded = createGraphWorkflowExecutionsRepo(db).getActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(
+      reloaded?.secondaryHaltReasons.find(
+        (reason) => reason.type === "ownership_violation",
+      ),
+    ).toEqual({
+      type: "ownership_violation",
+      laneId: "lane-1",
+      contextId: "ctx-1",
+      unattributedPaths: ["src/unowned.ts"],
+      message: "the lane changed a path no member owns",
+      summary: "Plan repair declined: no member may own a generated file.",
+    });
+  });
+
   it("reloads the execution-level advisory index across both indexed kinds", () => {
     const fixture = createPersistenceFixture();
     try {

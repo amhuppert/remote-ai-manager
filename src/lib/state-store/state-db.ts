@@ -1416,6 +1416,43 @@ export const GRAPH_WORKFLOW_PENDING_ARTIFACTS_SCHEMA_DDL = `
     );
 `;
 
+/**
+ * Terminal plan-review verdicts (#69 change 5): one row per concluded review,
+ * bound to the reviewed revision by `workingDefinitionHash` rather than by a
+ * plan id, so the record answers "was THIS revision judged?" after any edit.
+ *
+ * Deliberately unscoped — no project, session, or execution foreign key. A plan
+ * is reviewed before it is created, so at record time there is no execution row
+ * to hang the verdict off, and the review's value is precisely that it outlives
+ * the revision it judged. `reviewer_conversation_id` likewise carries no FK: a
+ * compacted or deleted reviewing conversation must not silently delete the
+ * verdict it produced.
+ *
+ * Many rows per hash by design: a revision can be reviewed more than once, and
+ * the read path takes the most recent by `reviewed_at` rather than assuming a
+ * single verdict. The CHECK pins the terminal-only vocabulary at the storage
+ * layer — a draft or canceled review has no row here at all.
+ *
+ * Exported so migration 0032 applies the identical DDL to pre-floor databases
+ * without a second hand-synced copy.
+ */
+export const GRAPH_PLAN_REVIEWS_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS graph_plan_reviews (
+    id                       TEXT PRIMARY KEY,
+    definition_hash          TEXT NOT NULL,
+    reviewer_conversation_id TEXT NOT NULL,
+    verdict                  TEXT NOT NULL CHECK (
+      verdict IN ('approved', 'changes_requested')
+    ),
+    findings                 TEXT,
+    reviewed_at              TEXT NOT NULL
+  );
+
+  -- The one read shape: every review of one exact revision, newest last.
+  CREATE INDEX IF NOT EXISTS idx_graph_plan_reviews_definition_hash
+    ON graph_plan_reviews (definition_hash, reviewed_at);
+`;
+
 const SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
     version     INTEGER PRIMARY KEY,
@@ -1959,6 +1996,8 @@ const SCHEMA_DDL = `
   ${GRAPH_WORKFLOW_RESULT_DELIVERIES_SCHEMA_DDL}
 
   ${GRAPH_WORKFLOW_PENDING_ARTIFACTS_SCHEMA_DDL}
+
+  ${GRAPH_PLAN_REVIEWS_SCHEMA_DDL}
 `;
 
 function applyConnectionPragmas(db: Db): void {

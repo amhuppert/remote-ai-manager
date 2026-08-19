@@ -44,7 +44,7 @@ const COMPACTION_DETAIL_ATTRS = new Set([
  * the owning project/session from the id, so these need no flags. Compaction
  * first (the dense structured summary) when one exists, then the windowed read.
  */
-function conversationReadCommands(
+export function conversationReadCommands(
   conversationId: string,
   compactStatus: "none" | "fresh" | "stale",
 ): Array<[string, string]> {

@@ -384,6 +384,16 @@ export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
     contextId: z.string().trim().min(1),
     unattributedPaths: z.array(z.string().min(1)).max(50).default([]),
     message: z.string(),
+    /**
+     * The plan-repair supervisor's verdict on this halt, once it has spoken —
+     * the same role `candidate_unstable.summary` plays. Repair declines this
+     * halt often (the write frequently belongs to no plan at all), and without
+     * somewhere to record that, a round the operator paid for leaves the halt
+     * card saying exactly what it said before the round ran. Never part of the
+     * halt's identity: a verdict stamped onto a standing drift is the same
+     * drift, not a second one.
+     */
+    summary: z.string().nullable().default(null),
   }),
   /**
    * A context whose validation rounds kept concluding without a verdict —

@@ -219,7 +219,13 @@ describe("graph-workflow validate route handler", () => {
       makeContext(),
     );
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ ok: true });
+    // `ok` and the absence of issues are the verdict. Advisory warnings may
+    // ride along — the fixture charter's locators do not resolve under the
+    // stub project path, which the semantic lints report (#69 change 6) — and
+    // by construction they never change the verdict.
+    const body: unknown = await response.json();
+    expect(body).toMatchObject({ ok: true });
+    expect(body).not.toHaveProperty("issues");
   });
 
   it("returns the guard enum-coverage warnings alongside ok (R3.2)", async () => {
@@ -265,13 +271,73 @@ describe("graph-workflow validate route handler", () => {
     const body: unknown = await response.json();
     expect(body).toMatchObject({
       ok: true,
-      warnings: [
+      warnings: expect.arrayContaining([
         {
           path: "definition.executionContexts[0].outputSchema.properties.verdict.enum",
           message: expect.stringContaining('"hold"'),
         },
-      ],
+      ]),
     });
+  });
+
+  it("returns the semantic authoring lints alongside ok (#69 change 6)", async () => {
+    const base = createWorkflowDefinition();
+    const definition = {
+      ...base,
+      executionContexts: base.executionContexts.map((context) =>
+        context.id === "context-plan"
+          ? {
+              ...context,
+              acceptanceCriteria: [
+                { id: "ac-sweep", statement: "Every call site is migrated" },
+              ],
+            }
+          : context,
+      ),
+    };
+
+    const response = await handlers.POST(
+      makeRequest(makePlan(definition)),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(200);
+    const body: unknown = await response.json();
+    expect(body).toMatchObject({
+      ok: true,
+      warnings: expect.arrayContaining([
+        {
+          path: "definition.executionContexts.0.acceptanceCriteria.0.statement",
+          message: expect.stringContaining("lint/open-quantifier"),
+        },
+        {
+          // The stub project path has no worktree behind it, so every charter
+          // locator is unresolvable — the incident this lint pins.
+          path: "definition.charter.sourcesOfTruth.0.locator",
+          message: expect.stringContaining("lint/source-locator-unresolvable"),
+        },
+      ]),
+    });
+    expect(body).not.toHaveProperty("issues");
+  });
+
+  it("skips the locator lint for a global-scope template", async () => {
+    const response = await handlers.POST(
+      makeRequest(makePlan(), "good-token", "?tier=global"),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      ok: boolean;
+      warnings?: { message: string }[];
+    };
+    expect(body.ok).toBe(true);
+    expect(
+      (body.warnings ?? []).filter((warning) =>
+        warning.message.startsWith("lint/source-locator-unresolvable"),
+      ),
+    ).toEqual([]);
   });
 
   it("rejects a missing/invalid token with 401", async () => {

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { validateWorkflowPlan } from "@/lib/workflows/plan-validation";
+import { structuralWarningsOf } from "./pattern-plan-warnings";
 import { runEngineScenario } from "../compat/engine-harness";
 import type {
   CompatibilityValidatorTurn,
@@ -156,7 +157,7 @@ describe("Adversarial Verification, as an ordinary plan (D6 R2.3)", () => {
     const result = validateWorkflowPlan(readPlan());
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.warnings).toEqual([]);
+    expect(structuralWarningsOf(result.warnings)).toEqual([]);
 
     expectAdversarialCohort(result.draft.definition, WORKER);
   });
