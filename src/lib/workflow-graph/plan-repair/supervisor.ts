@@ -194,7 +194,8 @@ function haltMatchesSubject(
     haltReason.type !== "circuit_breaker" &&
     haltReason.type !== "max_iterations" &&
     haltReason.type !== "plan_defect" &&
-    haltReason.type !== "candidate_unstable"
+    haltReason.type !== "candidate_unstable" &&
+    haltReason.type !== "ownership_violation"
   ) {
     return false;
   }
@@ -813,7 +814,8 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         nextReason?.type === "max_iterations" ||
         nextReason?.type === "loop_limit_reached" ||
         nextReason?.type === "plan_defect" ||
-        nextReason?.type === "candidate_unstable"
+        nextReason?.type === "candidate_unstable" ||
+        nextReason?.type === "ownership_violation"
       ) {
         nextReason.summary = summary;
       }
@@ -832,7 +834,8 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       haltReason?.type !== "max_iterations" &&
       haltReason?.type !== "loop_limit_reached" &&
       haltReason?.type !== "plan_defect" &&
-      haltReason?.type !== "candidate_unstable"
+      haltReason?.type !== "candidate_unstable" &&
+      haltReason?.type !== "ownership_violation"
     ) {
       return;
     }

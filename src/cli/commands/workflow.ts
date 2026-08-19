@@ -9,6 +9,15 @@ import {
 } from "@/lib/workflow-graph/schemas";
 import { graphWorkflowBoundaryKindSchema } from "@/lib/workflow-graph/event-schemas";
 import { graphWorkflowStatusSchema } from "@/lib/workflow-graph/definition-schemas";
+import {
+  planReviewAcknowledgementRefusalSchema,
+  planReviewAdvisorySchema,
+  planReviewFindingsCommand,
+  planReviewRecordResponseSchema,
+  planReviewStatusResponseSchema,
+  REVIEW_CHANGES_REQUESTED_UNACKNOWLEDGED_CODE,
+  type PlanReviewAdvisory,
+} from "@/lib/workflows/plan-review/status-schemas";
 import { dispatchGroup } from "../dispatch";
 import {
   STDOUT_BUDGET_BYTES,
@@ -219,18 +228,111 @@ const definitionItemSchema = z.object({
   name: z.string(),
   revision: z.number(),
 });
-const mutationResponseSchema = z.object({ item: definitionItemSchema });
 
 /**
- * Located advice the validate endpoint returns beside `ok: true` (today the
- * guard enum-coverage lint). Never affects the exit code — a warned plan is
- * still creatable — so the parse is lenient: an unrecognized shape simply
- * yields no warnings rather than failing a valid plan.
+ * An authoring warning: located exactly like an issue, but never a refusal —
+ * the guard enum-coverage lint and the semantic authoring lints (#69 change 6)
+ * both arrive in this shape, from validate and from create/replace alike.
+ */
+const planWarningSchema = z.object({ path: z.string(), message: z.string() });
+type PlanWarning = z.infer<typeof planWarningSchema>;
+
+/** `warning: <path>: <message>` per warning, newline-terminated. */
+function planWarningLines(warnings: readonly PlanWarning[]): string {
+  return warnings
+    .map((warning) => `warning: ${warning.path}: ${warning.message}\n`)
+    .join("");
+}
+
+const mutationResponseSchema = z.object({
+  item: definitionItemSchema,
+  /**
+   * The advisory review status of the exact revision just saved (#69 change 5).
+   * Optional on the parse: a server that predates it simply prints no advisory
+   * line, which is the same non-event as having no review recorded.
+   */
+  reviewStatus: planReviewAdvisorySchema.optional(),
+  /**
+   * Admission warnings for the saved revision (#69 change 6). Optional for two
+   * distinct reasons that print the same: a server that predates the field, and
+   * a save with nothing to warn about.
+   */
+  warnings: z.array(planWarningSchema).optional(),
+});
+
+/** One advisory line beside a save. Never an error, never an exit code. */
+function planReviewAdvisoryLine(advisory: PlanReviewAdvisory): string {
+  return advisory.state === "unreviewed"
+    ? "plan review: none recorded for this revision (advisory)\n"
+    : `plan review: ${advisory.state} by ${advisory.reviewerConversationId} at ${advisory.reviewedAt}\n`;
+}
+
+/**
+ * The ONE refusal review machinery can produce: this exact revision carries a
+ * changes-requested verdict nobody acknowledged (#69 change 5).
+ *
+ * Rendered as a refusal the caller can act on without a second lookup — the
+ * findings command re-built with THIS caller's plan path (the server can only
+ * emit the placeholder shape, since it never sees the file), and the expected
+ * hash spelled out beside the flag that carries it. Returns null for every
+ * other failure, so the shared mapping keeps owning them.
+ */
+function reviewAcknowledgementFailure(
+  result: Exclude<CliRequestResult, { kind: "ok" }>,
+  planFilePath: string,
+  json: boolean,
+): CliResult | null {
+  if (
+    result.kind !== "error" ||
+    result.code !== REVIEW_CHANGES_REQUESTED_UNACKNOWLEDGED_CODE
+  ) {
+    return null;
+  }
+  const parsed = planReviewAcknowledgementRefusalSchema.safeParse(
+    result.details,
+  );
+  if (!parsed.success) return null;
+  const refusal = parsed.data;
+
+  return failure({
+    // Exit 1, not 2: the plan is well-formed and the invocation is correct —
+    // the server is saying no about state the caller has not read yet.
+    exitCode: EXIT_OPERATION_FAILED,
+    message: result.error,
+    detail: [
+      `  revision: ${refusal.definitionHash}`,
+      `  reviewer: ${refusal.reviewerConversationId}`,
+      `  reviewed: ${refusal.reviewedAt}`,
+    ].join("\n"),
+    hint: `read the findings with '${planReviewFindingsCommand(planFilePath)}', then revise the plan or re-run with --acknowledge-review ${refusal.definitionHash}`,
+    code: result.code,
+    details: refusal,
+    json,
+  });
+}
+
+/**
+ * The plan body plus the acknowledgement, when the caller passed one. Absent
+ * stays absent rather than becoming an explicit null: no acknowledgement is the
+ * ordinary case, and it must not read as acknowledging nothing.
+ */
+function planBodyWithAcknowledgement(
+  plan: Record<string, unknown>,
+  acknowledgement: string | undefined,
+): Record<string, unknown> {
+  return acknowledgement === undefined
+    ? plan
+    : { ...plan, acknowledgeReviewHash: acknowledgement };
+}
+
+/**
+ * Located advice the validate endpoint returns beside `ok: true`. Never affects
+ * the exit code — a warned plan is still creatable — so the parse is lenient:
+ * an unrecognized shape simply yields no warnings rather than failing a valid
+ * plan.
  */
 const validateResponseSchema = z.object({
-  warnings: z
-    .array(z.object({ path: z.string(), message: z.string() }))
-    .optional(),
+  warnings: z.array(planWarningSchema).optional(),
 });
 
 const TEMPLATE_TIERS = ["global", "project"] as const;
@@ -488,6 +590,7 @@ export async function runWorkflow(
       validate: (r) => runWorkflowValidate(r, flags, values, env, host),
       create: (r) => runWorkflowCreate(r, flags, values, env, host),
       replace: (r) => runWorkflowReplace(r, flags, values, env, host),
+      review: (r) => runWorkflowReview(r, flags, values, env, host),
       list: (r) => runWorkflowList(r, flags, values, env, host),
       get: (r) => runWorkflowGet(r, flags, values, env, host),
       edit: (r) => runWorkflowEdit(r, flags, values, env, host),
@@ -558,13 +661,10 @@ async function runWorkflowValidate(
 
   const parsed = validateResponseSchema.safeParse(result.body);
   const warnings = parsed.success ? (parsed.data.warnings ?? []) : [];
-  const warningLines = warnings
-    .map((warning) => `warning: ${warning.path}: ${warning.message}\n`)
-    .join("");
 
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, `${warningLines}plan is valid\n`, {
+    stdout: render(json, `${planWarningLines(warnings)}plan is valid\n`, {
       ok: true,
       ...(warnings.length > 0 ? { warnings } : {}),
       // `workflow create` writes into THIS project, so it is not the next step
@@ -610,25 +710,43 @@ async function runWorkflowCreate(
     tokenSource: context.tokenSource,
     method: "POST",
     path: definitionsPath(context),
-    body: plan.value,
+    body: planBodyWithAcknowledgement(plan.value, values["acknowledge-review"]),
   });
-  if (result.kind !== "ok") return workflowFailure(result, json);
+  if (result.kind !== "ok") {
+    return (
+      reviewAcknowledgementFailure(result, filePath, json) ??
+      workflowFailure(result, json)
+    );
+  }
 
   const parsed = mutationResponseSchema.safeParse(result.body);
   const item = parsed.success ? parsed.data.item : null;
+  const reviewStatus = parsed.success ? parsed.data.reviewStatus : undefined;
+  const warnings = parsed.success ? (parsed.data.warnings ?? []) : [];
   const humanLine = item
     ? `created ${item.name} (id: ${item.id})\n`
     : "workflow created\n";
+  const advisoryLine =
+    reviewStatus === undefined ? "" : planReviewAdvisoryLine(reviewStatus);
 
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, humanLine, {
-      ok: true,
-      ...(item ? { workflowId: item.id } : {}),
-      ...(item
-        ? { hint: `start it with 'cctl workflow start ${item.id}'` }
-        : {}),
-    }),
+    // Warnings first, same as `workflow validate`: they describe the plan that
+    // was just saved, and an author who skipped validate is reading them here
+    // for the first time.
+    stdout: render(
+      json,
+      `${planWarningLines(warnings)}${humanLine}${advisoryLine}`,
+      {
+        ok: true,
+        ...(warnings.length > 0 ? { warnings } : {}),
+        ...(reviewStatus === undefined ? {} : { reviewStatus }),
+        ...(item ? { workflowId: item.id } : {}),
+        ...(item
+          ? { hint: `start it with 'cctl workflow start ${item.id}'` }
+          : {}),
+      },
+    ),
     stderr: "",
   };
 }
@@ -669,21 +787,279 @@ async function runWorkflowReplace(
     tokenSource: context.tokenSource,
     method: "PUT",
     path: `${definitionsPath(context)}/${encodePathSegment(id)}`,
-    body: plan.value,
+    body: planBodyWithAcknowledgement(plan.value, values["acknowledge-review"]),
   });
-  if (result.kind !== "ok") return workflowFailure(result, json);
+  if (result.kind !== "ok") {
+    return (
+      reviewAcknowledgementFailure(result, filePath, json) ??
+      workflowFailure(result, json)
+    );
+  }
 
   const parsed = mutationResponseSchema.safeParse(result.body);
   const item = parsed.success ? parsed.data.item : null;
+  const reviewStatus = parsed.success ? parsed.data.reviewStatus : undefined;
+  const warnings = parsed.success ? (parsed.data.warnings ?? []) : [];
+  const humanLine = item
+    ? `replaced ${item.name} (revision: ${item.revision})\n`
+    : `replaced ${id}\n`;
+  const advisoryLine =
+    reviewStatus === undefined ? "" : planReviewAdvisoryLine(reviewStatus);
   // No hint — replace is a revision, not a step in the author-then-start chain.
   return {
     exitCode: EXIT_OK,
     stdout: render(
       json,
-      item
-        ? `replaced ${item.name} (revision: ${item.revision})\n`
-        : `replaced ${id}\n`,
-      { ok: true, ...(item ? { revision: item.revision } : {}) },
+      `${planWarningLines(warnings)}${humanLine}${advisoryLine}`,
+      {
+        ok: true,
+        ...(warnings.length > 0 ? { warnings } : {}),
+        ...(item ? { revision: item.revision } : {}),
+        ...(reviewStatus === undefined ? {} : { reviewStatus }),
+      },
+    ),
+    stderr: "",
+  };
+}
+
+/** The kebab-case flag vocabulary mapped onto the stored verdict enum. */
+const REVIEW_VERDICT_BY_FLAG: Record<string, "approved" | "changes_requested"> =
+  {
+    approved: "approved",
+    "changes-requested": "changes_requested",
+  };
+
+function planReviewsPath(context: ProjectContext): string {
+  return `${definitionsPath(context)}/reviews`;
+}
+
+/**
+ * `cctl workflow review` — read (default) or record the advisory review verdict
+ * bound to one plan revision (#69 change 5).
+ *
+ * The plan is posted whole and hashed SERVER-side on both paths. The CLI never
+ * computes a definition hash, so the revision identity these records key on has
+ * exactly one implementation and cannot drift between the recording and the
+ * reading side.
+ */
+async function runWorkflowReview(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, "workflow review", json);
+  if (denied) return denied;
+  if (rest.length > 0) {
+    return usageFailure("workflow review takes no positional arguments", json);
+  }
+  const filePath = values["file"];
+  if (filePath === undefined) {
+    return usageFailure("workflow review requires --file <plan.json>", json);
+  }
+
+  const verdictFlag = values["verdict"];
+  const findingsPath = values["findings"];
+  if (verdictFlag === undefined && findingsPath !== undefined) {
+    return usageFailure(
+      "workflow review --findings applies only when recording — add --verdict approved|changes-requested",
+      json,
+    );
+  }
+
+  const plan = await readJsonObjectFile(host, filePath, "plan", json);
+  if (!plan.ok) return plan.result;
+
+  const resolved = await resolveProjectContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const context = resolved.context;
+
+  return verdictFlag === undefined
+    ? readWorkflowPlanReview(context, plan.value, json, host)
+    : recordWorkflowPlanReview({
+        context,
+        plan: plan.value,
+        verdictFlag,
+        findingsPath,
+        reviewerFlag: values["reviewer"],
+        filePath,
+        json,
+        env,
+        host,
+      });
+}
+
+async function readWorkflowPlanReview(
+  context: ProjectContext,
+  plan: Record<string, unknown>,
+  json: boolean,
+  host: CliHost,
+): Promise<CliResult> {
+  const result = await cliRequest(host, {
+    server: context.server,
+    token: context.token,
+    tokenSource: context.tokenSource,
+    method: "POST",
+    path: `${planReviewsPath(context)}/status`,
+    body: { plan },
+  });
+  if (result.kind !== "ok") return workflowFailure(result, json);
+
+  const parsed = planReviewStatusResponseSchema.safeParse(result.body);
+  if (!parsed.success) {
+    return failure({
+      exitCode: EXIT_OPERATION_FAILED,
+      message: "the server returned an unrecognized review status",
+      json,
+    });
+  }
+  const status = parsed.data.status;
+
+  if (status.state === "unreviewed") {
+    return {
+      exitCode: EXIT_OK,
+      // No hint: the next step after "nobody reviewed this" belongs to whoever
+      // decides a review is wanted, and nudging the author toward recording
+      // their own verdict is the one suggestion this command must not make.
+      stdout: render(
+        json,
+        `plan review: none recorded for this revision (advisory)\nrevision: ${status.definitionHash}\n`,
+        { ok: true, status },
+      ),
+      stderr: "",
+    };
+  }
+
+  const lines = [
+    `plan review: ${status.state} by ${status.reviewerConversationId} at ${status.reviewedAt}`,
+    `revision: ${status.definitionHash}`,
+  ];
+  if (status.findings !== null && status.findings.trim().length > 0) {
+    lines.push("findings:", status.findings.trimEnd());
+  }
+  lines.push("reviewer conversation:");
+  if (status.reviewer.note !== null) {
+    lines.push(`  note: ${status.reviewer.note}`);
+  }
+  for (const command of status.reviewer.commands) {
+    lines.push(`  ${command.command}`);
+  }
+
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(json, `${lines.join("\n")}\n`, {
+      ok: true,
+      status,
+      ...(status.state === "changes_requested"
+        ? {
+            hint: "address the findings above, then re-validate the revised plan before creating or replacing it",
+          }
+        : {}),
+    }),
+    stderr: "",
+  };
+}
+
+interface RecordPlanReviewInput {
+  context: ProjectContext;
+  plan: Record<string, unknown>;
+  verdictFlag: string;
+  findingsPath: string | undefined;
+  reviewerFlag: string | undefined;
+  filePath: string;
+  json: boolean;
+  env: CliEnv;
+  host: CliHost;
+}
+
+async function recordWorkflowPlanReview(
+  input: RecordPlanReviewInput,
+): Promise<CliResult> {
+  const { context, json, host } = input;
+  const verdict = REVIEW_VERDICT_BY_FLAG[input.verdictFlag];
+  if (verdict === undefined) {
+    return usageFailure(
+      `unknown --verdict "${input.verdictFlag}" — use approved or changes-requested`,
+      json,
+    );
+  }
+
+  // Shape only, and deliberately: an existence check here would let a lookup
+  // refuse a review, which is a new way for an advisory mechanism to fail.
+  const reviewer = (
+    input.reviewerFlag ??
+    input.env["CC_CONVERSATION_ID"] ??
+    ""
+  ).trim();
+  if (reviewer === "") {
+    return usageFailure(
+      "no reviewer identity — pass --reviewer <conversation-id> or run this from a conversation where CC_CONVERSATION_ID is set",
+      json,
+    );
+  }
+
+  let findings: string | null = null;
+  if (input.findingsPath !== undefined) {
+    const raw = await host.readTextFile(input.findingsPath);
+    if (raw === null) {
+      return usageFailure(
+        `cannot read findings file "${input.findingsPath}"`,
+        json,
+      );
+    }
+    findings = raw;
+  }
+  if (
+    verdict === "changes_requested" &&
+    (findings === null || findings.trim() === "")
+  ) {
+    return usageFailure(
+      "a changes-requested verdict requires its findings artifact — pass --findings <path> naming the file that justifies it",
+      json,
+    );
+  }
+
+  const result = await cliRequest(host, {
+    server: context.server,
+    token: context.token,
+    tokenSource: context.tokenSource,
+    method: "POST",
+    path: planReviewsPath(context),
+    body: {
+      plan: input.plan,
+      verdict,
+      ...(findings === null ? {} : { findings }),
+      reviewerConversationId: reviewer,
+    },
+  });
+  if (result.kind !== "ok") return workflowFailure(result, json);
+
+  const parsed = planReviewRecordResponseSchema.safeParse(result.body);
+  if (!parsed.success) {
+    return failure({
+      exitCode: EXIT_OPERATION_FAILED,
+      message: "the server returned an unrecognized review receipt",
+      json,
+    });
+  }
+  const review = parsed.data;
+
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(
+      json,
+      `recorded ${review.verdict} review of ${review.definitionHash} (reviewer: ${review.reviewerConversationId})\n`,
+      {
+        ok: true,
+        review,
+        ...(review.verdict === "changes_requested"
+          ? {
+              hint: `the planner recovers these findings with 'cctl workflow review --file ${input.filePath}' — no access to this conversation needed`,
+            }
+          : {}),
+      },
     ),
     stderr: "",
   };
@@ -1172,7 +1548,7 @@ async function runWorkflowStatus(
       ? { scope: { project: context.project, session: context.session } }
       : {}),
   });
-  const halt = describePlanDefectHalt(
+  const halt = describeHalt(
     execution.haltReason,
     execution.planRepairRounds,
     haltReveal,
@@ -1233,6 +1609,25 @@ const planDefectHaltReasonSchema = z.object({
   summary: z.string().nullish(),
 });
 
+/**
+ * The candidate-unstable halt as the halt block needs to read it. Lenient for
+ * the same reason as the plan-defect one above, and additionally over
+ * `lastIncident`: a newer server can name an incident this build has never
+ * heard of, and the count and stage are still worth printing. Absent rather
+ * than defaulted, though — the persisted schema's `candidate_mismatch` default
+ * is a statement about legacy ROWS, and restating it for a payload that simply
+ * did not carry the field would print an invented diagnosis as fact.
+ */
+const candidateUnstableHaltReasonSchema = z.object({
+  type: z.literal("candidate_unstable"),
+  contextId: z.string(),
+  stage: z.string(),
+  driftedComponents: z.string().nullish(),
+  lastIncident: z.string().nullish(),
+  consecutiveCount: z.number(),
+  summary: z.string().nullish(),
+});
+
 /** The plan-repair round fields the halt block reports. */
 const planRepairRoundRowSchema = z.object({
   seq: z.number(),
@@ -1283,10 +1678,68 @@ interface PlanDefectHaltView {
     readonly conflictingContract: string;
   }[];
   readonly omission: Omission;
-  readonly repair: {
-    readonly seq: number;
-    readonly outcome: string | null;
-  } | null;
+  readonly repair: RepairRoundView | null;
+}
+
+/**
+ * The candidate-unstable halt block. Nothing here is capped: the stage, the
+ * incident and the count are the whole diagnosis, so the block has nothing to
+ * omit and no reveal to name.
+ */
+interface CandidateUnstableHaltView {
+  readonly type: "candidate_unstable";
+  readonly contextId: string;
+  readonly stage: string;
+  readonly lastIncident: string | null;
+  readonly consecutiveCount: number;
+  readonly driftedComponents: string | null;
+  readonly summary: string | null;
+  readonly repair: RepairRoundView | null;
+}
+
+type HaltView = PlanDefectHaltView | CandidateUnstableHaltView;
+
+interface RepairRoundView {
+  readonly seq: number;
+  readonly outcome: string | null;
+}
+
+/**
+ * The latest repair round answering this halt: same context, same halt type.
+ * Repair may run more than once against one halt and the log is append-only, so
+ * the highest seq is the live verdict; a round for a different halt type on the
+ * same context is not this halt's answer.
+ */
+function latestRepairRound(
+  planRepairRounds: readonly unknown[],
+  haltType: string,
+  contextId: string,
+): RepairRoundView | null {
+  const repair = planRepairRounds
+    .flatMap((round) => {
+      const row = planRepairRoundRowSchema.safeParse(round);
+      return row.success ? [row.data] : [];
+    })
+    .filter(
+      (round) => round.haltType === haltType && round.contextId === contextId,
+    )
+    .reduce<z.infer<typeof planRepairRoundRowSchema> | null>(
+      (latest, round) =>
+        latest === null || round.seq > latest.seq ? round : latest,
+      null,
+    );
+  return repair === null
+    ? null
+    : { seq: repair.seq, outcome: repair.outcome ?? null };
+}
+
+/**
+ * A halt field the block prints only when the payload actually carried it. An
+ * empty string is the halt saying "nothing here" — `drifted:` with nothing
+ * after it would send an operator hunting a writer that does not exist.
+ */
+function nonEmptyText(value: string | null | undefined): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value : null;
 }
 
 /**
@@ -1296,19 +1749,35 @@ interface PlanDefectHaltView {
  * `plan_defect` is the first: it reopens no task and charges no attempt, so the
  * finding it carries is the only thing that says what to repair, and the
  * automatic repair round that already answered it is the difference between "go
- * read the plan" and "repair already declined — decide yourself". Explicit
- * vocabulary rather than a generic dump: a reason type with no entry here keeps
- * the bare `(halted: <type>)` header it has always had, and `--halt` returns the
- * whole reason whatever its type.
+ * read the plan" and "repair already declined — decide yourself".
+ * `candidate_unstable` is the second, for the same reason with different
+ * evidence: the type says a loop was cut, and only the stage, the incident, and
+ * the count say what was looping. Explicit vocabulary rather than a generic
+ * dump: a reason type with no entry here keeps the bare `(halted: <type>)`
+ * header it has always had, and `--halt` returns the whole reason whatever its
+ * type.
  */
-function describePlanDefectHalt(
+function describeHalt(
   haltReason: unknown,
   planRepairRounds: readonly unknown[],
   reveal: string,
-): PlanDefectHaltView | null {
-  const parsed = planDefectHaltReasonSchema.safeParse(haltReason);
-  if (!parsed.success) return null;
-  const reason = parsed.data;
+): HaltView | null {
+  const planDefect = planDefectHaltReasonSchema.safeParse(haltReason);
+  if (planDefect.success) {
+    return describePlanDefectHalt(planDefect.data, planRepairRounds, reveal);
+  }
+  const unstable = candidateUnstableHaltReasonSchema.safeParse(haltReason);
+  if (unstable.success) {
+    return describeCandidateUnstableHalt(unstable.data, planRepairRounds);
+  }
+  return null;
+}
+
+function describePlanDefectHalt(
+  reason: z.infer<typeof planDefectHaltReasonSchema>,
+  planRepairRounds: readonly unknown[],
+  reveal: string,
+): PlanDefectHaltView {
   const bounded = boundedItems(
     reason.planDefects.map((defect) => ({
       title: defect.title,
@@ -1318,43 +1787,47 @@ function describePlanDefectHalt(
     reveal,
   );
 
-  // The latest plan-defect round on this context. Repair may run more than once
-  // against one halt and the log is append-only, so the highest seq is the live
-  // verdict; a round for a different halt type on the same context is not this
-  // halt's answer.
-  const repair = planRepairRounds
-    .flatMap((round) => {
-      const row = planRepairRoundRowSchema.safeParse(round);
-      return row.success ? [row.data] : [];
-    })
-    .filter(
-      (round) =>
-        round.haltType === "plan_defect" &&
-        round.contextId === reason.contextId,
-    )
-    .reduce<z.infer<typeof planRepairRoundRowSchema> | null>(
-      (latest, round) =>
-        latest === null || round.seq > latest.seq ? round : latest,
-      null,
-    );
-
   return {
     type: "plan_defect",
     contextId: reason.contextId,
-    summary:
-      typeof reason.summary === "string" && reason.summary.trim() !== ""
-        ? reason.summary
-        : null,
+    summary: nonEmptyText(reason.summary),
     findings: bounded.items,
     omission: bounded.omission,
-    repair:
-      repair === null
-        ? null
-        : { seq: repair.seq, outcome: repair.outcome ?? null },
+    repair: latestRepairRound(
+      planRepairRounds,
+      "plan_defect",
+      reason.contextId,
+    ),
   };
 }
 
-function formatHaltDetail(halt: PlanDefectHaltView): string[] {
+function describeCandidateUnstableHalt(
+  reason: z.infer<typeof candidateUnstableHaltReasonSchema>,
+  planRepairRounds: readonly unknown[],
+): CandidateUnstableHaltView {
+  return {
+    type: "candidate_unstable",
+    contextId: reason.contextId,
+    stage: reason.stage,
+    lastIncident: nonEmptyText(reason.lastIncident),
+    consecutiveCount: reason.consecutiveCount,
+    driftedComponents: nonEmptyText(reason.driftedComponents),
+    summary: nonEmptyText(reason.summary),
+    repair: latestRepairRound(
+      planRepairRounds,
+      "candidate_unstable",
+      reason.contextId,
+    ),
+  };
+}
+
+function formatHaltDetail(halt: HaltView): string[] {
+  return halt.type === "plan_defect"
+    ? formatPlanDefectHalt(halt)
+    : formatCandidateUnstableHalt(halt);
+}
+
+function formatPlanDefectHalt(halt: PlanDefectHaltView): string[] {
   return [
     `plan defect: ${halt.contextId} — the plan, not the work`,
     `  findings: ${omissionSummary(halt.omission)}`,
@@ -1362,13 +1835,31 @@ function formatHaltDetail(halt: PlanDefectHaltView): string[] {
       `  finding: ${finding.title}`,
       `  contract: ${finding.conflictingContract}`,
     ]),
-    ...(halt.repair === null
-      ? []
-      : [
-          `  repair: round ${halt.repair.seq} ${halt.repair.outcome ?? "in flight"}`,
-        ]),
+    ...formatRepairRound(halt.repair),
     ...(halt.summary === null ? [] : [`  summary: ${halt.summary}`]),
   ];
+}
+
+function formatCandidateUnstableHalt(
+  halt: CandidateUnstableHaltView,
+): string[] {
+  return [
+    `candidate unstable: ${halt.contextId} — validation never reached a verdict`,
+    `  stage: ${halt.stage}`,
+    ...(halt.lastIncident === null ? [] : [`  incident: ${halt.lastIncident}`]),
+    `  consecutive rounds: ${halt.consecutiveCount}`,
+    ...(halt.driftedComponents === null
+      ? []
+      : [`  drifted: ${halt.driftedComponents}`]),
+    ...formatRepairRound(halt.repair),
+    ...(halt.summary === null ? [] : [`  summary: ${halt.summary}`]),
+  ];
+}
+
+function formatRepairRound(repair: RepairRoundView | null): string[] {
+  return repair === null
+    ? []
+    : [`  repair: round ${repair.seq} ${repair.outcome ?? "in flight"}`];
 }
 
 /** Short display label for the structured haltReason (or null when not halted). */
@@ -1424,7 +1915,7 @@ function formatStatusTable(
         `  ${r.id.padEnd(idWidth)}  ${r.status.padEnd(statusWidth)}  ${r.tasks}`,
     )
     .join("\n");
-  const haltView = describePlanDefectHalt(
+  const haltView = describeHalt(
     execution.haltReason,
     execution.planRepairRounds,
     haltReveal,
@@ -1712,11 +2203,7 @@ function formatWorkflowBoundaryResult(result: WorkflowBoundaryResult): string {
   // `halt` line says only that something did. The boundary projection has no
   // repair log, so the round outcome is a `status` detail only. The ambient
   // reveal is right here: the boundary belongs to the session's own execution.
-  const haltView = describePlanDefectHalt(
-    result.haltReason,
-    [],
-    haltFindingsReveal(),
-  );
+  const haltView = describeHalt(result.haltReason, [], haltFindingsReveal());
   const halt =
     haltView === null
       ? []

@@ -1621,6 +1621,19 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
         message: "the rounds never certified a candidate",
         summary: "plan repair declined: a dev server writes into the lane",
       },
+      // Maximal lane-drift halt: the unattributed paths an operator has to see
+      // to widen an ownership, plus the plan-repair verdict on them. The
+      // halt-reason union is a leaf to the durability harness, so this parked
+      // variant is the only thing proving the verdict survives a restart — and
+      // a decline nobody can read back is a round spent for nothing.
+      {
+        type: "ownership_violation",
+        laneId: "lane-1",
+        contextId: "ctx-1",
+        unattributedPaths: ["src/unowned.ts"],
+        message: "the lane changed a path no member owns",
+        summary: "Plan repair declined: no member may own a generated file.",
+      },
       // Maximal loop-budget halt (D4 R10): the execution-scope variant, whose
       // verdict/passCount/totalPassCount fields are what an operator reads back
       // after a restart, so all of them have to survive the round trip.

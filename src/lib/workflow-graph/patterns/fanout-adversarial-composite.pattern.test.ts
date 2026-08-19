@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { acceptanceCriteriaText } from "@/lib/workflow-graph/criteria/criterion-records";
 import { validateWorkflowPlan } from "@/lib/workflows/plan-validation";
+import { structuralWarningsOf } from "./pattern-plan-warnings";
 import { runEngineScenario } from "../compat/engine-harness";
 import type {
   CompatibilityValidatorSeat,
@@ -133,7 +134,7 @@ describe("Fanout-And-Synthesize + Adversarial Verification composite (D6 R2.7)",
     const result = validateWorkflowPlan(readPlan());
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.warnings).toEqual([]);
+    expect(structuralWarningsOf(result.warnings)).toEqual([]);
 
     const definition = result.draft.definition;
     const byId = new Map(

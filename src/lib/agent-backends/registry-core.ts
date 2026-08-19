@@ -272,54 +272,6 @@ export async function prepareManagedSkillsCheckout(
   }
 }
 
-/**
- * Collect exact checkout-relative paths whose on-disk objects are attested as
- * adapter-owned. Adapter failures and unsafe paths fail closed: neither can
- * widen a caller's ownership surface.
- */
-export async function listManagedSkillsOwnedCheckoutPaths(
-  checkoutPath: string,
-): Promise<string[]> {
-  const ownedPaths: string[] = [];
-
-  for (const descriptor of listBackends()) {
-    const listOwnedPaths = descriptor.managedSkills.listOwnedCheckoutPaths;
-    if (!listOwnedPaths) continue;
-
-    let candidates: readonly string[];
-    try {
-      candidates = await listOwnedPaths(checkoutPath);
-    } catch (err) {
-      logger.warn("registry.managed_skills_checkout_ownership_failed", {
-        backend: descriptor.id,
-        checkoutPath,
-        error: getErrorMessage(err),
-      });
-      continue;
-    }
-
-    for (const candidate of candidates) {
-      const segments = candidate.split("/");
-      const safe =
-        candidate.length > 0 &&
-        !candidate.startsWith("/") &&
-        !candidate.includes("\\") &&
-        segments.every((segment) => segment.length > 0 && segment !== "..");
-      if (!safe) {
-        logger.warn("registry.managed_skills_checkout_ownership_rejected", {
-          backend: descriptor.id,
-          checkoutPath,
-          candidate,
-        });
-        continue;
-      }
-      if (!ownedPaths.includes(candidate)) ownedPaths.push(candidate);
-    }
-  }
-
-  return ownedPaths;
-}
-
 export function getConversationBackendFactory(
   backend: AgentBackendId,
 ): ConversationBackendFactory {

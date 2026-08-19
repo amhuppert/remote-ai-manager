@@ -22,10 +22,7 @@ import type {
   AgentTaskResult,
 } from "@/lib/agent-backends/task";
 import type { StructuredOutputFormat } from "./types";
-import type {
-  TaskRunResult,
-  TaskRunUsage,
-} from "./execute-workflow-task-run";
+import type { TaskRunResult, TaskRunUsage } from "./execute-workflow-task-run";
 
 const logger = createLogger("conversation.execute-fresh-task-run");
 

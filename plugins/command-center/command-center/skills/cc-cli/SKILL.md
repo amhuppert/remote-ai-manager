@@ -323,14 +323,17 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl fixture session delete <project> <sessionName>`
 
 - `cctl workflow` — list, inspect, start, and delete graph workflows
-  - `cctl workflow <validate|create|replace|edit|list|get|status|start|run|wait|abandon|delete|templates>`
+  - `cctl workflow <validate|create|replace|review|edit|list|get|status|start|run|wait|abandon|delete|templates>`
   - `cctl workflow <task complete|task add|shared-doc upsert|collab request>  (lane verbs)`
 - `cctl workflow validate` — check a plan.json without saving anything
   - `cctl workflow validate --file .cc/temp/plan.json [--tier global|project] [--json]`
 - `cctl workflow create` — save a new definition from a validated plan
-  - `cctl workflow create --file .cc/temp/plan.json [--json]`
+  - `cctl workflow create --file .cc/temp/plan.json [--acknowledge-review <hash>] [--json]`
 - `cctl workflow replace` — overwrite an existing definition from a plan file
-  - `cctl workflow replace <id> --file .cc/temp/plan.json [--json]`
+  - `cctl workflow replace <id> --file .cc/temp/plan.json [--acknowledge-review <hash>] [--json]`
+- `cctl workflow review` — read or record the review verdict bound to a plan revision
+  - `cctl workflow review --file .cc/temp/plan.json [--json]`
+  - `cctl workflow review --file .cc/temp/plan.json --verdict approved|changes-requested [--findings <path>] [--reviewer <conversation-id>] [--json]`
 - `cctl workflow list` — list this project's saved workflow definitions
   - `cctl workflow list [--json]`
 - `cctl workflow get` — print a definition's outline (or one section, or the full JSON)

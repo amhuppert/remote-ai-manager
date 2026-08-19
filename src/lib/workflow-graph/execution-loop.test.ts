@@ -3471,6 +3471,8 @@ describe("execution loop", () => {
         contextId: "ctx-1",
         unattributedPaths,
         message: expect.stringContaining("lane-plan"),
+        // The raise never claims a repair verdict it has not heard.
+        summary: null,
       });
       // The halt an operator lands on has to be one they can act on: resumable,
       // and eligible for the unattended repair that widens ownership.

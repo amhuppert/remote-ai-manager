@@ -333,9 +333,9 @@ describe("concludeCohort: a plan defect outranks a rejection", () => {
 
     expect(conclusion.kind).toBe("plan_defect");
     if (conclusion.kind !== "plan_defect") return;
-    expect(
-      conclusion.planDefects.map((defect) => defect.assignmentId),
-    ).toEqual(["general", "security-reviewer"]);
+    expect(conclusion.planDefects.map((defect) => defect.assignmentId)).toEqual(
+      ["general", "security-reviewer"],
+    );
     // Every lane that reported is still summarized, in cohort order: the
     // passing sibling reviewed the same candidate and its review is evidence.
     expect(conclusion.summary).toBe(

@@ -104,6 +104,7 @@ describe("evaluatePlanRepairTrigger", () => {
           unattributedPaths: ["scripts/deploy.sh"],
           message:
             'Lane "lane-api" has 1 change no member owns after context "context-implement" landed',
+          summary: null,
         },
       }),
     );

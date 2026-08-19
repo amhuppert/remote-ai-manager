@@ -11,10 +11,12 @@ import {
 } from "@/lib/workflows/workflow-draft/route-handler";
 import { createWorkflowDefinitionRouteHandlers } from "@/lib/workflows/definition-route-handlers";
 import { createWorkflowGenerateRouteHandlers } from "@/lib/workflows/generate-route-handlers";
+import { createPlanReviewRouteHandlers } from "@/lib/workflows/plan-review/route-handlers";
 import { createTemplateLibraryRouteHandlers } from "@/lib/workflow-graph/template-library-route-handlers";
 
 const definitionHandlers = createWorkflowDefinitionRouteHandlers();
 const generateHandlers = createWorkflowGenerateRouteHandlers();
+const planReviewHandlers = createPlanReviewRouteHandlers();
 const templateLibraryHandlers = createTemplateLibraryRouteHandlers();
 
 export const listWorkflowDefinitions = withTracing(async (request, context) =>
@@ -43,6 +45,14 @@ export const deleteWorkflowDefinition = withTracing(async (request, context) =>
 
 export const generateWorkflowDraft = withTracing(async (request, context) =>
   generateHandlers.POST(request, context),
+);
+
+export const recordWorkflowPlanReview = withTracing(async (request, context) =>
+  planReviewHandlers.RECORD(request, context),
+);
+
+export const getWorkflowPlanReviewStatus = withTracing(
+  async (request, context) => planReviewHandlers.STATUS(request, context),
 );
 
 export const listProjectTemplates = withTracing(async (request, context) =>

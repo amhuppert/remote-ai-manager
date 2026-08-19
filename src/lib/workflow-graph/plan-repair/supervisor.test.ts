@@ -361,6 +361,97 @@ describe("plan-repair supervisor", () => {
     ]);
   });
 
+  // An ownership_violation halt is admitted by the trigger for the same reason
+  // — repair can widen the ownership the drift exposed — and declines just as
+  // often, because the write frequently belongs to no member's plan at all.
+  // Without the verdict landing on the halt, the round is spent and the halt
+  // card still says only "a path nobody owns changed".
+  it("records a decline verdict on an ownership_violation halt", async () => {
+    const harness = makeHarness({
+      initial: haltedExecution({
+        haltReason: {
+          type: "ownership_violation",
+          laneId: "delivery",
+          contextId: "context-implement",
+          unattributedPaths: ["src/generated/client.ts"],
+          message: "the lane changed a path no member owns",
+          summary: null,
+        },
+      }),
+      agentResults: [
+        {
+          kind: "verdict",
+          verdict: {
+            planningDefect: false,
+            diagnosis:
+              "A build step regenerates the file; no member may own it",
+            operations: [],
+          },
+          conversationId: "conv-repair-1",
+        },
+      ],
+    });
+    const supervisor = createPlanRepairSupervisor(harness.deps);
+
+    const result = await supervisor.maybeRunPlanRepair(RUN_INPUT);
+
+    expect(result).toMatchObject({ ran: true, outcome: "declined" });
+    const current = harness.current();
+    expect(
+      current?.haltReason?.type === "ownership_violation"
+        ? current.haltReason.summary
+        : null,
+    ).toContain("A build step regenerates the file");
+    expect(harness.published).toEqual([
+      expect.objectContaining({
+        outcome: "declined",
+        haltType: "ownership_violation",
+      }),
+    ]);
+  });
+
+  it("announces exhaustion on an ownership_violation halt", async () => {
+    const spentRound = (seq: number): PlanRepairRound => ({
+      seq,
+      contextId: "context-implement",
+      haltType: "ownership_violation",
+      loopGroupId: null,
+      startedAt: "2026-08-18T00:00:00.000Z",
+      settledAt: "2026-08-18T00:05:00.000Z",
+      outcome: "declined",
+      planningDefect: false,
+      diagnosis: `round ${seq} declined`,
+      operationCount: 0,
+      resumed: false,
+      conversationId: `c${seq}`,
+    });
+    const harness = makeHarness({
+      initial: haltedExecution({
+        haltReason: {
+          type: "ownership_violation",
+          laneId: "delivery",
+          contextId: "context-implement",
+          unattributedPaths: ["src/generated/client.ts"],
+          message: "the lane changed a path no member owns",
+          summary: null,
+        },
+        planRepairRounds: [spentRound(1), spentRound(2)],
+      }),
+    });
+    const supervisor = createPlanRepairSupervisor(harness.deps);
+
+    const result = await supervisor.maybeRunPlanRepair(RUN_INPUT);
+
+    expect(result).toEqual({
+      ran: false,
+      reason: "context_attempts_exhausted",
+    });
+    const halt = harness.current()?.haltReason;
+    expect(
+      halt?.type === "ownership_violation" ? halt.summary : null,
+    ).toContain("exhausted");
+  });
+
   it("announces exhaustion on a candidate_unstable halt", async () => {
     const spentRound = (seq: number): PlanRepairRound => ({
       seq,

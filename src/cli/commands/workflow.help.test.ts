@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -107,5 +107,80 @@ describe("one-off execution help contract", () => {
     expect(JSON.stringify(workflowHelpEntries)).not.toMatch(
       /workflow live release|live release/,
     );
+  });
+});
+
+/**
+ * The acknowledgement flag is the only way past the one refusal review
+ * machinery can produce, so a refused author who runs `--help` has to find it
+ * there — an undocumented escape hatch is a dead end with extra steps.
+ */
+describe("acknowledgement gate help contract", () => {
+  function entry(command: string) {
+    return workflowHelpEntries.find(
+      (candidate) => candidate.path.join(" ") === command,
+    );
+  }
+
+  it.each(["workflow create", "workflow replace"])(
+    "documents --acknowledge-review on %s with a gate example",
+    (command) => {
+      const flag = entry(command)?.flags.find(
+        (candidate) => candidate.name === "acknowledge-review",
+      );
+      expect(flag?.kind).toBe("value");
+      expect(flag?.kind === "value" ? flag.valuePlaceholder : undefined).toBe(
+        "<hash>",
+      );
+      expect(flag?.description).toMatch(/changes-requested/);
+
+      const examples = entry(command)?.examples ?? [];
+      expect(
+        examples.some((example) =>
+          example.invocation.includes("--acknowledge-review"),
+        ),
+        `${command} needs one --acknowledge-review example`,
+      ).toBe(true);
+      expect(
+        entry(command)?.usage.some((line) =>
+          line.includes("--acknowledge-review"),
+        ),
+      ).toBe(true);
+    },
+  );
+});
+
+/**
+ * The review protocol lives in its own skill, and the planning skill delegates
+ * to it rather than restating it. A reviewer who reaches for `--help` on the
+ * verb that records the verdict is therefore one hop from the rules unless the
+ * entry names that skill itself.
+ */
+describe("review verb skill routing", () => {
+  const entry = workflowHelpEntries.find(
+    (candidate) => candidate.path.join(" ") === "workflow review",
+  );
+
+  it("routes the reviewer to the reviewer-facing skill", () => {
+    expect(
+      entry?.skills?.map((skill) => skill.name),
+      "workflow review must name the skill that owns the review protocol",
+    ).toContain("graph-workflow-review");
+  });
+
+  it("keeps the planning skill alongside it as the rubric under review", () => {
+    expect(entry?.skills?.map((skill) => skill.name)).toContain(
+      "graph-workflow-planning",
+    );
+  });
+
+  it("declares a skill path that resolves from the repo root", () => {
+    const review = entry?.skills?.find(
+      (skill) => skill.name === "graph-workflow-review",
+    );
+    expect(
+      existsSync(path.join(REPO_ROOT, review?.path ?? "")),
+      `skills path "${review?.path}" does not exist on disk`,
+    ).toBe(true);
   });
 });

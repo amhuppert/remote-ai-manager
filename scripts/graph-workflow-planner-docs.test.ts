@@ -38,6 +38,15 @@ import {
   sourceOfTruthSchema,
   workflowCharterSchema,
 } from "../src/lib/workflows/charter-schemas";
+import { conversationReadCommands } from "../src/lib/conversations/conversation-ref";
+import {
+  LINT_MESSAGE_PREFIX,
+  lintPlanSemantics,
+} from "../src/lib/workflows/plan-lints";
+import {
+  planReviewFindingsCommand,
+  REVIEW_CHANGES_REQUESTED_UNACKNOWLEDGED_CODE,
+} from "../src/lib/workflows/plan-review/status-schemas";
 
 /**
  * The D4 R16.3 documentation contract. Two halves, both checked against the
@@ -67,6 +76,20 @@ const SKILL_DIRS = [
   ".agents/skills/graph-workflow-planning",
   "plugins/command-center/command-center/skills/graph-workflow-planning",
 ] as const;
+
+/**
+ * The reviewer-facing sibling (ticket #69 change 5). Same three roots for the
+ * same reason: a reviewer runs on whichever agent the operator reached for, and
+ * a protocol that lands in one root is a protocol most reviews never apply.
+ */
+const REVIEW_SKILL_DIRS = [
+  ".claude/skills/graph-workflow-review",
+  ".agents/skills/graph-workflow-review",
+  "plugins/command-center/command-center/skills/graph-workflow-review",
+] as const;
+
+/** Every deployed skill package, canonical copy first. */
+const SKILL_PACKAGES = [SKILL_DIRS, REVIEW_SKILL_DIRS] as const;
 
 const STEERING = ".kiro/steering/workflows.md";
 
@@ -266,6 +289,54 @@ function citedCctlCommands(markdown: string): string[] {
     }
   }
   return [...found];
+}
+
+/**
+ * The exact invocations `cctl workflow review` prints for reaching the
+ * reviewer's own conversation, built by the shipped helper with a placeholder
+ * id. Both skills quote them, so a change to that vocabulary fails here rather
+ * than leaving a planner a command that no longer exists.
+ */
+const REVIEWER_READ_COMMANDS = conversationReadCommands("<id>", "fresh").map(
+  ([, command]) => command,
+);
+
+/**
+ * One plan that crosses every semantic-lint threshold at once, run through the
+ * shipped lint module. The ids and numbers the skill quotes are read back OUT
+ * of these warnings rather than restated in this file, so a retuned threshold
+ * or a renamed lint fails the doc assertion instead of leaving a planner a
+ * stale number to plan against (ticket #69 change 6).
+ */
+function trippingPlanLintWarnings() {
+  return lintPlanSemantics(
+    {
+      charter: {
+        sourcesOfTruth: [
+          { id: "unreachable", locator: "https://example.com/design.md" },
+        ],
+      },
+      executionContexts: [
+        {
+          id: "dense",
+          description: "d".repeat(2100),
+          acceptanceCriteria: [
+            ...Array.from({ length: 12 }, (_, index) => ({
+              id: `record-${index + 1}`,
+              statement: `Obligation ${index + 1} holds.`,
+            })),
+            {
+              id: "sweeping",
+              statement: "The handler covers every call site.",
+            },
+            { id: "blob", statement: "x".repeat(700) },
+          ],
+        },
+      ],
+      tasks: [{ id: "oversized", instructions: "i".repeat(8100) }],
+    },
+    { projectRoot: REPO_ROOT },
+  );
 }
 
 describe("graph-workflow planner docs (D4 R16.3)", () => {
@@ -582,6 +653,182 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
   );
 
   it.each(SKILL_DIRS)(
+    "%s documents the semantic lints with the ids and dials the module emits",
+    (dir) => {
+      const skill = readPackage(dir);
+      const why = "the warning-tier authoring lints";
+
+      const ids = new Set<string>();
+      const thresholds = new Set<string>();
+      for (const warning of trippingPlanLintWarnings()) {
+        expect(
+          warning.message.startsWith(LINT_MESSAGE_PREFIX),
+          `a semantic lint no longer prefixes its message with \`${LINT_MESSAGE_PREFIX}\``,
+        ).toBe(true);
+        ids.add(
+          warning.message.slice(LINT_MESSAGE_PREFIX.length).split(":")[0] ?? "",
+        );
+        for (const [, threshold] of warning.message.matchAll(
+          /\(more than (\d+)\)/g,
+        )) {
+          if (threshold !== undefined) thresholds.add(threshold);
+        }
+      }
+
+      expect(
+        [...ids].sort(),
+        "the tripping plan no longer trips all four semantic lints",
+      ).toEqual([
+        "criteria-density",
+        "open-quantifier",
+        "oversized-prose",
+        "source-locator-unresolvable",
+      ]);
+
+      // The stable id a planner reads off the warning line, prefix included:
+      // that prefix is how advice is told from a structural warning.
+      for (const id of ids) {
+        expectDocuments(skill, `${LINT_MESSAGE_PREFIX}${id}`, why);
+      }
+      // And the dials themselves, quoted from the message a planner will see.
+      expect(thresholds.size, "no lint reports a threshold any more").toBe(4);
+      for (const threshold of thresholds) {
+        expectDocuments(skill, threshold, `${why} — the documented dial`);
+      }
+      // Warning tier: a lint is answered, never a refusal to route around.
+      expectDocuments(skill, "answered rather than ignored", why);
+    },
+  );
+
+  it.each(SKILL_DIRS)(
+    "%s documents the planner's half of plan review",
+    (dir) => {
+      const skill = readPackage(dir);
+      const why = "the planner-facing review flow";
+
+      // The reviewer's protocol lives in its own skill; this one points there.
+      expectDocuments(skill, "graph-workflow-review", why);
+      // Advisory first — absence of a review blocks nothing.
+      expectDocuments(skill, "advisory and never required", why);
+      // Status mode, spelled by the shipped command builder rather than by hand.
+      expectDocuments(
+        skill,
+        planReviewFindingsCommand(".cc/temp/plan.json"),
+        why,
+      );
+      // And how a fresh session reaches the reviewer's own deliberation.
+      for (const command of REVIEWER_READ_COMMANDS) {
+        expectDocuments(skill, command, `${why} — reviewer read commands`);
+      }
+      // The one blocking behavior, its refusal code, and both ways out.
+      expectDocuments(skill, REVIEW_CHANGES_REQUESTED_UNACKNOWLEDGED_CODE, why);
+      expectDocuments(skill, "--acknowledge-review", why);
+      expectDocuments(skill, "invalidates the review", why);
+    },
+  );
+
+  it.each(REVIEW_SKILL_DIRS)(
+    "%s ships the reviewer skill as one thin file",
+    (dir) => {
+      expect(
+        existsSync(path.resolve(REPO_ROOT, dir, "SKILL.md")),
+        `${dir}/SKILL.md is missing — the reviewer skill ships to every deployed root`,
+      ).toBe(true);
+      expect(
+        skillFiles(dir),
+        `${dir} is no longer a single-file skill — the reviewer package is deliberately thin`,
+      ).toEqual(["SKILL.md"]);
+    },
+  );
+
+  it.each(REVIEW_SKILL_DIRS)(
+    "%s carries the two-lens protocol and the terminal-only rule",
+    (dir) => {
+      const skill = read(`${dir}/SKILL.md`);
+      const why = "the review protocol";
+
+      // The completeness rubric is the planning skill's checklist, not a second
+      // list this skill maintains.
+      expectDocuments(skill, "graph-workflow-planning", why);
+      expectDocuments(skill, "Before submitting, confirm", why);
+
+      for (const finding of [
+        "Missing outcome",
+        "Dead handoff",
+        "Uncovered requirement",
+        "Overloaded context",
+        "Misplaced obligation",
+        "Contradictory phase",
+        "Redundant criterion",
+      ]) {
+        expectDocuments(skill, finding, `${why} — lens vocabulary`);
+      }
+
+      // Repairs before additions: the one-sided completeness incentive that
+      // inflated a real plan is exactly what this ordering corrects.
+      expectDocuments(skill, "move, delete, defer, split", why);
+
+      // A finding is located in the ids a verdict can cite, pinned to the issue
+      // schema that carries one of them.
+      expect(
+        shapeKeys(workflowValidatorIssueSchema),
+        "workflowValidatorIssueSchema no longer carries `criterionId`",
+      ).toContain("criterionId");
+      expectDocuments(skill, "criterionId", `${why} — finding location`);
+      expectDocuments(skill, "contextId", `${why} — finding location`);
+
+      // Terminal only: an aborted review records nothing at all.
+      expectDocuments(skill, "Terminal verdicts only", why);
+      expectDocuments(skill, "leaves NO record", why);
+    },
+  );
+
+  it.each(REVIEW_SKILL_DIRS)(
+    "%s documents record mode as the CLI implements it",
+    (dir) => {
+      const skill = read(`${dir}/SKILL.md`);
+      const why = "the review verb";
+
+      expect(
+        new Set(citedCctlCommands(skill)),
+        `${why} — \`cctl workflow review\` is not cited`,
+      ).toContain("workflow review");
+
+      // Every flag the shipped verb declares, taken from its help entry rather
+      // than from a list this file maintains: a flag added or renamed there
+      // fails here instead of leaving the reviewer a stale invocation.
+      const entry = allHelpEntries().find(
+        (candidate) => pathKey(candidate.path) === "workflow review",
+      );
+      expect(
+        entry,
+        "`cctl workflow review` has no help-registry entry",
+      ).toBeDefined();
+      for (const flag of entry?.flags ?? []) {
+        expectDocuments(skill, `--${flag.name}`, `${why} — declared flags`);
+        // The verdict flag's vocabulary is its placeholder: `approved|changes-requested`.
+        const placeholder =
+          flag.kind === "value" ? (flag.valuePlaceholder ?? "") : "";
+        for (const value of placeholder.split("|")) {
+          if (/^[a-z][a-z-]*$/.test(value)) {
+            expectDocuments(skill, value, `${why} — ${flag.name} vocabulary`);
+          }
+        }
+      }
+      // Reviewer identity is captured from the reviewing conversation.
+      expectDocuments(skill, "CC_CONVERSATION_ID", why);
+      // Read mode hands the planner the way into that conversation.
+      for (const command of REVIEWER_READ_COMMANDS) {
+        expectDocuments(skill, command, `${why} — reviewer read commands`);
+      }
+      // Hash binding, and the gate the verdict feeds.
+      expectDocuments(skill, "invalidates the review", why);
+      expectDocuments(skill, REVIEW_CHANGES_REQUESTED_UNACKNOWLEDGED_CODE, why);
+      expectDocuments(skill, "--acknowledge-review", why);
+    },
+  );
+
+  it.each(SKILL_DIRS)(
     "%s only cites schema fields that exist at the tip",
     (dir) => {
       const skill = readPackage(dir);
@@ -593,20 +840,20 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
     },
   );
 
-  it.each([...SKILL_DIRS.map((dir) => `${dir}/SKILL.md`), STEERING])(
-    "%s only cites cctl commands the help registry resolves",
-    (doc) => {
-      const cited = citedCctlCommands(read(doc));
+  it.each([
+    ...SKILL_PACKAGES.flatMap((dirs) => dirs.map((dir) => `${dir}/SKILL.md`)),
+    STEERING,
+  ])("%s only cites cctl commands the help registry resolves", (doc) => {
+    const cited = citedCctlCommands(read(doc));
 
-      expect(cited.length).toBeGreaterThan(0);
-      for (const command of cited) {
-        expect(
-          REGISTRY_KEYS.has(command),
-          `\`cctl ${command}\` is cited but has no help-registry entry`,
-        ).toBe(true);
-      }
-    },
-  );
+    expect(cited.length).toBeGreaterThan(0);
+    for (const command of cited) {
+      expect(
+        REGISTRY_KEYS.has(command),
+        `\`cctl ${command}\` is cited but has no help-registry entry`,
+      ).toBe(true);
+    }
+  });
 
   it.each(
     SKILL_DIRS.flatMap((dir) =>
@@ -651,18 +898,21 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
     }
   });
 
-  it("keeps the skill copies in sync file by file", () => {
-    const canonicalFiles = skillFiles(SKILL_DIRS[0]);
+  it("keeps every skill package's copies in sync file by file", () => {
+    for (const dirs of SKILL_PACKAGES) {
+      const [canonicalDir, ...deployedDirs] = dirs;
+      const canonicalFiles = skillFiles(canonicalDir);
 
-    for (const dir of SKILL_DIRS.slice(1)) {
-      expect(skillFiles(dir), `${dir} ships a different file set`).toEqual(
-        canonicalFiles,
-      );
-      for (const file of canonicalFiles) {
-        expect(
-          read(`${dir}/${file}`),
-          `${dir}/${file} diverges from ${SKILL_DIRS[0]}/${file}`,
-        ).toBe(read(`${SKILL_DIRS[0]}/${file}`));
+      for (const dir of deployedDirs) {
+        expect(skillFiles(dir), `${dir} ships a different file set`).toEqual(
+          canonicalFiles,
+        );
+        for (const file of canonicalFiles) {
+          expect(
+            read(`${dir}/${file}`),
+            `${dir}/${file} diverges from ${canonicalDir}/${file}`,
+          ).toBe(read(`${canonicalDir}/${file}`));
+        }
       }
     }
   });

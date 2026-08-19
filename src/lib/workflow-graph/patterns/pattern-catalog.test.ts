@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { validateWorkflowPlan } from "@/lib/workflows/plan-validation";
+import { structuralWarningsOf } from "./pattern-plan-warnings";
 import type { WorkflowSemanticDefinition } from "../definition-schemas";
 
 /**
@@ -74,12 +75,12 @@ describe("the D6 pattern catalog (R1.1)", () => {
   });
 
   describe.each(CATALOG)("$pattern ($file)", ({ file }) => {
-    it("is accepted by the production authoring path with no warnings", () => {
+    it("is accepted by the production authoring path with no structural warnings", () => {
       const result = validateWorkflowPlan(readPlan(file));
 
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      expect(result.warnings).toEqual([]);
+      expect(structuralWarningsOf(result.warnings)).toEqual([]);
     });
 
     it("declares explicit placement on every authored context", () => {

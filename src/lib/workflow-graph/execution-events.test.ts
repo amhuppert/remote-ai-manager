@@ -1803,6 +1803,7 @@ describe("graph workflow execution event publisher", () => {
         contextId: "context-implement",
         unattributedPaths: ["src/unowned.ts"],
         message: "Unattributed lane write",
+        summary: null,
       },
     });
 
@@ -2047,6 +2048,93 @@ describe("graph workflow execution event publisher", () => {
     ).toEqual([]);
     expect(
       planDefectEvents(
+        publisher.publishExecutionUpdate({
+          projectPath: "/projects/repo",
+          sessionName: "session-1",
+          previousExecution: drained,
+          nextExecution: repairDeclined,
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  // Plan repair may stamp its verdict onto a standing lane-drift halt. The
+  // drift's identity is the lane, the reporting member, and the paths — never
+  // the verdict — so the stamped halt is the SAME drift, and re-announcing it
+  // would put a second incident in the ledger for one unattributed write.
+  it("announces a lane-drift halt once, across the drain and the repair verdict", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-08-18T09:00:00.000Z",
+    });
+    const haltReason = {
+      type: "ownership_violation" as const,
+      laneId: "delivery",
+      contextId: "context-implement",
+      unattributedPaths: ["src/unowned.ts"],
+      message: "Unattributed lane write",
+      summary: null,
+    };
+    const running = createWorkflowExecution({
+      status: "running",
+      activeContextIds: ["context-implement"],
+    });
+    const signalled = createWorkflowExecution({
+      ...running,
+      activeContextIds: [],
+      pendingHaltReason: haltReason,
+    });
+    const drained = createWorkflowExecution({
+      ...signalled,
+      status: "halted",
+      pendingHaltReason: null,
+      haltReason,
+    });
+    const repairDeclined = createWorkflowExecution({
+      ...drained,
+      haltReason: {
+        ...haltReason,
+        summary: "Plan repair declined: no member may own a generated file.",
+      },
+    });
+
+    const driftEvents = (delivery: GraphWorkflowEventDelivery) =>
+      delivery.events.filter(
+        (row) => row.event.type === "graph-workflow-lane-drift-halted",
+      );
+
+    const signalledDelivery = publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution: running,
+      nextExecution: signalled,
+    });
+    publisher.deliver(signalledDelivery);
+
+    expect(driftEvents(signalledDelivery).map((row) => row.event)).toEqual([
+      {
+        type: "graph-workflow-lane-drift-halted",
+        projectName: "repo",
+        sessionName: "session-1",
+        executionId: signalled.id,
+        laneId: "delivery",
+        contextId: "context-implement",
+        unattributedPaths: ["src/unowned.ts"],
+      },
+    ]);
+    expect(
+      driftEvents(
+        publisher.publishExecutionUpdate({
+          projectPath: "/projects/repo",
+          sessionName: "session-1",
+          previousExecution: signalled,
+          nextExecution: drained,
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      driftEvents(
         publisher.publishExecutionUpdate({
           projectPath: "/projects/repo",
           sessionName: "session-1",

@@ -804,6 +804,120 @@ describe("cctl workflow status", () => {
     );
   });
 
+  // A candidate_unstable halt is the other reason whose type name says nothing
+  // actionable: the count, the stage, and which incident it concluded on are
+  // the whole diagnosis, and the repair round that already answered it is the
+  // difference between "go look" and "repair already declined".
+  const candidateUnstableHalt = {
+    type: "candidate_unstable",
+    contextId: "phase-b",
+    stage: "diff_render",
+    driftedComponents: "worktreeHeadSha, diffDigest",
+    lastIncident: "candidate_mismatch",
+    consecutiveCount: 3,
+    message: "validation kept concluding without a verdict",
+    summary: null,
+  };
+
+  it("renders a candidate_unstable halt with the stage, incident, count and drift", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        execution: {
+          ...execution,
+          status: "halted",
+          haltReason: {
+            ...candidateUnstableHalt,
+            summary: "the lane's worktree is shared with an external writer",
+          },
+          planRepairRounds: [
+            {
+              seq: 5,
+              contextId: "phase-b",
+              haltType: "candidate_unstable",
+              outcome: "declined",
+            },
+          ],
+        },
+      }),
+    );
+    const result = await runCli(["workflow", "status"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("candidate unstable: phase-b");
+    expect(result.stdout).toContain("stage: diff_render");
+    expect(result.stdout).toContain("incident: candidate_mismatch");
+    expect(result.stdout).toContain("consecutive rounds: 3");
+    expect(result.stdout).toContain("drifted: worktreeHeadSha, diffDigest");
+    expect(result.stdout).toContain("repair: round 5 declined");
+    expect(result.stdout).toContain(
+      "summary: the lane's worktree is shared with an external writer",
+    );
+    // The contexts table still renders beneath the halt block.
+    expect(result.stdout).toContain("1/3");
+  });
+
+  it("claims no drift for a stale_result_rejected halt, where nothing moved", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        execution: {
+          ...execution,
+          status: "halted",
+          haltReason: {
+            ...candidateUnstableHalt,
+            stage: "specialist_result",
+            lastIncident: "stale_result_rejected",
+            driftedComponents: "",
+            consecutiveCount: 4,
+          },
+          planRepairRounds: [
+            // A round for a DIFFERENT halt on the same context is not this
+            // halt's answer.
+            {
+              seq: 2,
+              contextId: "phase-b",
+              haltType: "plan_defect",
+              outcome: "repaired",
+            },
+          ],
+        },
+      }),
+    );
+    const result = await runCli(["workflow", "status"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("candidate unstable: phase-b");
+    expect(result.stdout).toContain("stage: specialist_result");
+    expect(result.stdout).toContain("incident: stale_result_rejected");
+    expect(result.stdout).toContain("consecutive rounds: 4");
+    expect(result.stdout).not.toContain("drifted:");
+    expect(result.stdout).not.toContain("repair: round");
+    expect(result.stdout).not.toContain("summary:");
+  });
+
+  // The leniency exists for a payload this build does not fully understand, so
+  // it must not answer for one. Naming an incident the halt never reported
+  // would be an invented diagnosis in exactly the case the leniency is for.
+  it("omits the incident line rather than guessing when the halt carries none", async () => {
+    const { lastIncident: _omitted, ...withoutIncident } =
+      candidateUnstableHalt;
+    const host = makeHost(() =>
+      jsonResponse({
+        execution: {
+          ...execution,
+          status: "halted",
+          haltReason: withoutIncident,
+        },
+      }),
+    );
+    const result = await runCli(["workflow", "status"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("candidate unstable: phase-b");
+    expect(result.stdout).toContain("stage: diff_render");
+    expect(result.stdout).toContain("consecutive rounds: 3");
+    expect(result.stdout).not.toContain("incident:");
+  });
+
   it("reports no active execution plainly", async () => {
     const host = makeHost(() => jsonResponse({ execution: null }));
     const result = await runCli(["workflow", "status"], baseEnv, host);
@@ -1425,6 +1539,43 @@ describe("cctl workflow wait", () => {
       "finding: Criterion 3 requires a schema this context never owns",
     );
     expect(result.stdout).toContain("contract: acceptance criterion 3");
+  });
+
+  it("renders the candidate_unstable diagnosis on a halt boundary rather than the bare kind", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        result: {
+          ...boundary("completion"),
+          boundaryKind: "halt",
+          status: "halted",
+          contextId: "context-review",
+          completedAt: null,
+          haltReason: {
+            type: "candidate_unstable",
+            contextId: "context-review",
+            stage: "aggregate",
+            driftedComponents: "worktreeHeadSha",
+            lastIncident: "candidate_mismatch",
+            consecutiveCount: 3,
+            message: "validation kept concluding without a verdict",
+            summary: null,
+          },
+        },
+      }),
+    );
+
+    const result = await runCli(
+      ["workflow", "wait", "exec-wait-1"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("candidate unstable: context-review");
+    expect(result.stdout).toContain("stage: aggregate");
+    expect(result.stdout).toContain("incident: candidate_mismatch");
+    expect(result.stdout).toContain("consecutive rounds: 3");
+    expect(result.stdout).toContain("drifted: worktreeHeadSha");
   });
 
   it("passes an opaque cursor through and returns a boundary that already fired without sleeping", async () => {
@@ -2075,6 +2226,62 @@ describe("cctl workflow create", () => {
     expect(result.stderr).toContain("cannot read");
     expect(host.requests).toHaveLength(0);
   });
+
+  it("prints admission warnings as warning: lines and keeps exit 0", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse(
+          {
+            item: { id: "wf-9", name: "Auth Setup", revision: 1 },
+            warnings: [
+              {
+                path: "definition.executionContexts.0.acceptanceCriteria",
+                message:
+                  'lint/criteria-density: context "context-plan" declares 30 acceptance criteria',
+              },
+            ],
+          },
+          201,
+        ),
+      files,
+    );
+    const result = await runCli(
+      ["workflow", "create", "--file", planFile],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      'warning: definition.executionContexts.0.acceptanceCriteria: lint/criteria-density: context "context-plan" declares 30 acceptance criteria',
+    );
+    expect(result.stdout).toContain("created Auth Setup");
+  });
+
+  it("carries the warnings into the --json envelope", async () => {
+    const warnings = [
+      {
+        path: "definition.tasks.0.instructions",
+        message: "lint/oversized-prose: too long",
+      },
+    ];
+    const host = makeHost(
+      () =>
+        jsonResponse(
+          { item: { id: "wf-9", name: "X", revision: 1 }, warnings },
+          201,
+        ),
+      files,
+    );
+    const result = await runCli(
+      ["workflow", "create", "--file", planFile, "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, warnings });
+  });
 });
 
 describe("cctl workflow replace", () => {
@@ -2134,6 +2341,35 @@ describe("cctl workflow replace", () => {
     const result = await runCli(["workflow", "replace", "wf-1"], baseEnv, host);
     expect(result.exitCode).toBe(2);
     expect(host.requests).toHaveLength(0);
+  });
+
+  it("prints admission warnings above the replaced line and keeps exit 0", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse({
+          item: { id: "wf-1", name: "Auth Setup", revision: 4 },
+          warnings: [
+            {
+              path: "definition.charter.sourcesOfTruth.1.locator",
+              message:
+                'lint/source-locator-unresolvable: charter source "acceptance-criteria" locator "context.acceptanceCriteria" does not resolve',
+            },
+          ],
+        }),
+      files,
+    );
+    const result = await runCli(
+      ["workflow", "replace", "wf-1", "--file", planFile],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const [firstLine] = result.stdout.split("\n");
+    expect(firstLine).toBe(
+      'warning: definition.charter.sourcesOfTruth.1.locator: lint/source-locator-unresolvable: charter source "acceptance-criteria" locator "context.acceptanceCriteria" does not resolve',
+    );
+    expect(result.stdout).toContain("revision: 4");
   });
 });
 

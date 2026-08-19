@@ -32,9 +32,13 @@
         --blue: #8bbcf4;
         --violet: #b6a2f6;
         --shadow: 0 30px 90px rgba(0, 0, 0, 0.34);
-        --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
-        --mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+        --sans:
+          Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        --serif:
+          "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+        --mono:
+          "SFMono-Regular", "Cascadia Code", "Roboto Mono", Consolas, monospace;
         --page: 1240px;
       }
 
@@ -51,8 +55,16 @@
         margin: 0;
         color: var(--ink);
         background:
-          radial-gradient(circle at 8% 2%, rgba(110, 231, 183, 0.12), transparent 34rem),
-          radial-gradient(circle at 95% 10%, rgba(244, 200, 106, 0.09), transparent 30rem),
+          radial-gradient(
+            circle at 8% 2%,
+            rgba(110, 231, 183, 0.12),
+            transparent 34rem
+          ),
+          radial-gradient(
+            circle at 95% 10%,
+            rgba(244, 200, 106, 0.09),
+            transparent 30rem
+          ),
           var(--canvas);
         font: 16px/1.68 var(--sans);
         -webkit-font-smoothing: antialiased;
@@ -67,7 +79,11 @@
         opacity: 0.32;
         background-image:
           linear-gradient(rgba(225, 244, 237, 0.025) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(225, 244, 237, 0.025) 1px, transparent 1px);
+          linear-gradient(
+            90deg,
+            rgba(225, 244, 237, 0.025) 1px,
+            transparent 1px
+          );
         background-size: 48px 48px;
         mask-image: linear-gradient(to bottom, black, transparent 82%);
       }
@@ -163,9 +179,17 @@
         background: var(--mint);
       }
 
-      .brand-mark i:nth-child(1) { height: 8px; opacity: 0.55; }
-      .brand-mark i:nth-child(2) { height: 18px; }
-      .brand-mark i:nth-child(3) { height: 12px; opacity: 0.78; }
+      .brand-mark i:nth-child(1) {
+        height: 8px;
+        opacity: 0.55;
+      }
+      .brand-mark i:nth-child(2) {
+        height: 18px;
+      }
+      .brand-mark i:nth-child(3) {
+        height: 12px;
+        opacity: 0.78;
+      }
 
       .top-actions {
         display: flex;
@@ -414,14 +438,21 @@
         font-size: 11px;
         line-height: 1.35;
         text-decoration: none;
-        transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+        transition:
+          color 150ms ease,
+          border-color 150ms ease,
+          background 150ms ease;
       }
 
       .toc a:hover,
       .toc a.active {
         color: var(--ink);
         border-color: var(--mint);
-        background: linear-gradient(90deg, rgba(110, 231, 183, 0.08), transparent);
+        background: linear-gradient(
+          90deg,
+          rgba(110, 231, 183, 0.08),
+          transparent
+        );
       }
 
       .report-body {
@@ -553,7 +584,12 @@
         height: 1px;
         margin: 72px 0;
         border: 0;
-        background: linear-gradient(90deg, transparent, var(--line-strong), transparent);
+        background: linear-gradient(
+          90deg,
+          transparent,
+          var(--line-strong),
+          transparent
+        );
       }
 
       .table-wrap {
@@ -830,16 +866,22 @@
   </head>
   <body>
     <a class="skip-link" href="#report">Skip to report</a>
-    <div class="progress-track" aria-hidden="true"><div class="progress-bar"></div></div>
+    <div class="progress-track" aria-hidden="true">
+      <div class="progress-bar"></div>
+    </div>
 
     <header class="topbar">
       <div class="topbar-inner">
         <a class="brand" href="#top" aria-label="Back to top">
-          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span class="brand-mark" aria-hidden="true"
+            ><i></i><i></i><i></i
+          ></span>
           Signal Budget
         </a>
         <div class="top-actions">
-          <a href="2026-08-15_token-efficient-agents-command-center.md">Markdown source</a>
+          <a href="2026-08-15_token-efficient-agents-command-center.md"
+            >Markdown source</a
+          >
           <button type="button" onclick="window.print()">Print / PDF</button>
         </div>
       </div>
@@ -849,776 +891,2766 @@
       <section class="hero" aria-labelledby="page-title">
         <div>
           <div class="eyebrow">Command Center research report · 2026-08-15</div>
-          <h1 id="page-title">Token-efficient agents, <em>quality intact.</em></h1>
+          <h1 id="page-title">
+            Token-efficient agents, <em>quality intact.</em>
+          </h1>
           <p class="hero-lede">
-            A design report for reducing total agent cost and context per successful task—by engineering what enters, remains in, and leaves the model's working set.
+            A design report for reducing total agent cost and context per
+            successful task—by engineering what enters, remains in, and leaves
+            the model's working set.
           </p>
           <div class="hero-meta" aria-label="Report attributes">
             <span class="meta-pill"><strong>7</strong> approaches</span>
-            <span class="meta-pill"><strong>4</strong> near-term native moves</span>
+            <span class="meta-pill"
+              ><strong>4</strong> near-term native moves</span
+            >
             <span class="meta-pill"><strong>3</strong> measured pilots</span>
             <span class="meta-pill"><strong>1</strong> explicit no-go</span>
           </div>
         </div>
 
-        <div class="signal-panel" role="group" aria-label="Recommended sequence">
+        <div
+          class="signal-panel"
+          role="group"
+          aria-label="Recommended sequence"
+        >
           <p class="panel-label">The quality-first sequence</p>
           <ol class="priority-flow">
-            <li><strong>Measure</strong>Join token classes, cost, latency, and task outcome.</li>
-            <li><strong>Disclose progressively</strong>Bound output; preserve exact recovery handles.</li>
-            <li><strong>Bound execution</strong>State criteria and budget; enforce in code.</li>
-            <li><strong>Project context</strong>Keep durable state, recent raw context, and lineage.</li>
-            <li><strong>Route last</strong>Escalate at safe boundaries with audit evidence.</li>
+            <li>
+              <strong>Measure</strong>Join token classes, cost, latency, and
+              task outcome.
+            </li>
+            <li>
+              <strong>Disclose progressively</strong>Bound output; preserve
+              exact recovery handles.
+            </li>
+            <li>
+              <strong>Bound execution</strong>State criteria and budget; enforce
+              in code.
+            </li>
+            <li>
+              <strong>Project context</strong>Keep durable state, recent raw
+              context, and lineage.
+            </li>
+            <li>
+              <strong>Route last</strong>Escalate at safe boundaries with audit
+              evidence.
+            </li>
           </ol>
         </div>
       </section>
 
       <section class="thesis" aria-label="Central recommendation">
         <div class="thesis-mark" aria-hidden="true">“</div>
-        <p>Optimize context engineering and deterministic orchestration—not the grammar of the agent's answer.</p>
+        <p>
+          Optimize context engineering and deterministic orchestration—not the
+          grammar of the agent's answer.
+        </p>
       </section>
 
       <div class="layout">
         <nav class="toc" aria-label="Report contents">
           <h2>Contents</h2>
-          <ol><li><a href="#executive-summary">Executive summary</a></li>
-<li><a href="#decision-lens">Decision lens</a></li>
-<li><a href="#1-exact-prefix-prompt-caching">1. Exact-prefix prompt caching</a></li>
-<li><a href="#2-lean-persistent-prompts-and-tool-catalogs">2. Lean persistent prompts and tool catalogs</a></li>
-<li><a href="#3-context-lifecycle-and-stale-observation-masking">3. Context lifecycle and stale-observation masking</a></li>
-<li><a href="#4-progressive-recoverable-tool-output">4. Progressive, recoverable tool output</a></li>
-<li><a href="#5-bounded-success-and-stop-conditions">5. Bounded success and stop conditions</a></li>
-<li><a href="#6-adaptive-model-and-reasoning-effort-routing">6. Adaptive model and reasoning-effort routing</a></li>
-<li><a href="#7-intact-chunk-retrieval-before-lexical-or-lossy-compression">7. Intact-chunk retrieval before lexical or lossy compression</a></li>
-<li><a href="#cross-cutting-command-center-design">Cross-cutting Command Center design</a></li>
-<li><a href="#evaluation-protocol">Evaluation protocol</a></li>
-<li><a href="#final-recommendation">Final recommendation</a></li>
-<li><a href="#sources">Sources</a></li></ol>
+          <ol>
+            <li><a href="#executive-summary">Executive summary</a></li>
+            <li><a href="#decision-lens">Decision lens</a></li>
+            <li>
+              <a href="#1-exact-prefix-prompt-caching"
+                >1. Exact-prefix prompt caching</a
+              >
+            </li>
+            <li>
+              <a href="#2-lean-persistent-prompts-and-tool-catalogs"
+                >2. Lean persistent prompts and tool catalogs</a
+              >
+            </li>
+            <li>
+              <a href="#3-context-lifecycle-and-stale-observation-masking"
+                >3. Context lifecycle and stale-observation masking</a
+              >
+            </li>
+            <li>
+              <a href="#4-progressive-recoverable-tool-output"
+                >4. Progressive, recoverable tool output</a
+              >
+            </li>
+            <li>
+              <a href="#5-bounded-success-and-stop-conditions"
+                >5. Bounded success and stop conditions</a
+              >
+            </li>
+            <li>
+              <a href="#6-adaptive-model-and-reasoning-effort-routing"
+                >6. Adaptive model and reasoning-effort routing</a
+              >
+            </li>
+            <li>
+              <a
+                href="#7-intact-chunk-retrieval-before-lexical-or-lossy-compression"
+                >7. Intact-chunk retrieval before lexical or lossy
+                compression</a
+              >
+            </li>
+            <li>
+              <a href="#cross-cutting-command-center-design"
+                >Cross-cutting Command Center design</a
+              >
+            </li>
+            <li><a href="#evaluation-protocol">Evaluation protocol</a></li>
+            <li><a href="#final-recommendation">Final recommendation</a></li>
+            <li><a href="#sources">Sources</a></li>
+          </ol>
         </nav>
 
         <article class="report-body" id="report">
-          <h2 id="executive-summary"><span>Executive summary</span><a class="heading-anchor" href="#executive-summary" aria-label="Link to Executive summary">#</a></h2><p>Token efficiency should mean <strong>less total provider cost and less context consumed per successful task</strong>, not merely shorter-looking responses. That distinction changes the order in which Command Center should pursue optimizations.</p>
-<p>The strongest opportunities remove or avoid low-value tokens while preserving the agent&#39;s ability to retrieve exact evidence. They also put deterministic work in Command Center rather than asking a model to remember budgets, parse logs, track retries, or decide when mechanical checks have passed.</p>
-<p>The recommended order is:</p>
-<ol>
-<li><strong>Measure the full trajectory.</strong> Preserve cached, uncached, output, reasoning, cost, latency, tool-call, retry, and outcome data for ordinary conversations as well as task runs.</li>
-<li><strong>Finish existing progressive-disclosure patterns.</strong> Generalize bounded output, stable handles, explicit omission metadata, and spill-to-file receipts across <code>cctl</code>.</li>
-<li><strong>Make execution budgets explicit while keeping enforcement deterministic.</strong> Give agents acceptance criteria, scope, remaining budget, and a stop condition; keep retry counts, validation, and halting in the orchestrator.</li>
-<li><strong>Reduce persistent prompt and tool surface.</strong> Inventory prompt segments, trim duplicated always-on guidance, and deliberately enable provider-native lazy tool loading where it proves reliable.</li>
-<li><strong>Pilot provider-aware cache improvements.</strong> Command Center can improve prefix stability and cache telemetry, but the provider adapters—not a generic cross-provider abstraction—must own cache controls.</li>
-<li><strong>Pilot projected context at safe boundaries.</strong> Use compactions, intact transcript units, and auditable supersession when starting a fresh context. Do not pretend Command Center can delete tokens from an opaque provider thread already in progress.</li>
-<li><strong>Add routing only after the measurements exist.</strong> Begin with deterministic escalation tiers at task or lane boundaries, not an LLM router making an extra paid call.</li>
-<li><strong>Do not build a general lexical prompt compressor.</strong> Query-aware selection of intact chunks is useful; deleting words from policies, code, errors, commands, schemas, or active agent state is not.</li>
-</ol>
-<h3 id="recommendation-matrix"><span>Recommendation matrix</span><a class="heading-anchor" href="#recommendation-matrix" aria-label="Link to Recommendation matrix">#</a></h3><div class="table-wrap"><table>
-<thead>
-<tr>
-<th>Approach</th>
-<th>Command Center fit</th>
-<th align="right">Priority</th>
-<th>Primary benefit</th>
-<th>Main quality risk</th>
-<th>Recommendation</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>Exact-prefix prompt caching</td>
-<td>Strong, but provider-mediated</td>
-<td align="right">P1</td>
-<td>Lower cost and time-to-first-token</td>
-<td>Low; cache invalidation is operational rather than semantic</td>
-<td>Instrument conversations, stabilize prefixes, then run adapter-specific experiments</td>
-</tr>
-<tr>
-<td>Lean prompts and tool catalogs</td>
-<td>Very strong</td>
-<td align="right">P1</td>
-<td>Lower recurring input and better signal-to-noise</td>
-<td>Discovery misses if too much becomes hidden</td>
-<td>Add prompt accounting; trim duplication; use provider-native lazy tools</td>
-</tr>
-<tr>
-<td>Stale-observation masking</td>
-<td>Strong at context boundaries</td>
-<td align="right">P2</td>
-<td>Lower input/context load on long trajectories</td>
-<td>Summary drift or removal of still-relevant evidence</td>
-<td>Extend compaction and transcript projection conservatively; preserve exact recovery handles</td>
-</tr>
-<tr>
-<td>Progressive, recoverable tool output</td>
-<td>Very strong; existing precedent</td>
-<td align="right">P1</td>
-<td>Large reduction in tool-result context</td>
-<td>Silent omission or unstable handles</td>
-<td>Generalize bounded output and content-addressed spill receipts across <code>cctl</code></td>
-</tr>
-<tr>
-<td>Bounded success and stop conditions</td>
-<td>Very strong; aligned with current architecture</td>
-<td align="right">P1</td>
-<td>Fewer unnecessary turns, edits, and validations</td>
-<td>Premature stopping if acceptance criteria are weak</td>
-<td>Inject a compact execution contract; keep all enforcement in code</td>
-</tr>
-<tr>
-<td>Adaptive model and effort routing</td>
-<td>Useful but conditional</td>
-<td align="right">P3</td>
-<td>Lower dollar cost for easy work</td>
-<td>Bad routing creates rework and can break continuity</td>
-<td>Start with auditable deterministic escalation tiers after telemetry exists</td>
-</tr>
-<tr>
-<td>Lexical or lossy compression</td>
-<td>Poor as a general platform feature</td>
-<td align="right">P4 / reject broadly</td>
-<td>Smaller long natural-language context</td>
-<td>Dropped constraints, identifiers, negations, or ordering</td>
-<td>Build intact-chunk retrieval instead; allow lossy derivatives only as explicit, recoverable aids</td>
-</tr>
-</tbody></table></div>
-<h2 id="decision-lens"><span>Decision lens</span><a class="heading-anchor" href="#decision-lens" aria-label="Link to Decision lens">#</a></h2><p>Every proposal in this report is evaluated against five outcomes:</p>
-<ul>
-<li><strong>Task quality:</strong> deterministic validation, semantic review, scope control, and operator comprehension.</li>
-<li><strong>Total trajectory usage:</strong> every input, cache write/read, output, reasoning token, tool call, retry, summarizer, router, validator, and sub-agent call.</li>
-<li><strong>Cost per successful task:</strong> not cost per request and not compression ratio.</li>
-<li><strong>Latency:</strong> including preprocessing, cache misses, routing, retrieval, and extra round trips.</li>
-<li><strong>Recoverability:</strong> omitted information remains addressable by a stable handle and exact follow-up action.</li>
-</ul>
-<p>Two distinctions stay important throughout:</p>
-<ol>
-<li><strong>Caching saves money and latency but does not shrink the logical context window.</strong> Cached tokens still enter the model.</li>
-<li><strong>Removing irrelevant context can improve reasoning; compressing task-defining instructions can damage it.</strong> The content being removed matters more than the raw percentage.</li>
-</ol>
-<hr>
-<h2 id="1-exact-prefix-prompt-caching"><span>1. Exact-prefix prompt caching</span><a class="heading-anchor" href="#1-exact-prefix-prompt-caching" aria-label="Link to 1. Exact-prefix prompt caching">#</a></h2><h3 id="general-approach"><span>General approach</span><a class="heading-anchor" href="#general-approach" aria-label="Link to General approach">#</a></h3><p>Prompt caching reuses computation for an identical leading sequence of tokens. Static system instructions, tool schemas, examples, and other common material are placed first; request-specific and time-varying material comes later. When the provider recognizes the prefix, it charges cached input at a lower rate and often reduces time-to-first-token.</p>
-<p>This is the cleanest economic optimization because the model receives the same logical content. Output generation does not need to change, and the approach does not impose a smaller reasoning budget. The <a href="https://developers.openai.com/api/docs/guides/prompt-caching">OpenAI prompt-caching guide</a> explicitly recommends stable prefixes and static-first ordering. A multi-provider agent study, <a href="https://arxiv.org/abs/2601.06007">Don&#39;t Break the Cache</a>, reported substantial cost and latency reductions from disciplined cache boundaries, though exact results depend on provider, workload, and cache policy.</p>
-<p>Caching has limits:</p>
-<ul>
-<li>It does not make the context window smaller.</li>
-<li>A timestamp, reordered tool, regenerated system block, or compaction near the front can invalidate everything after it.</li>
-<li>First-call cache writes can cost more than uncached input.</li>
-<li>Provider APIs expose different controls and usage fields.</li>
-<li>Subscription quotas may not track cached-token economics the same way as API billing.</li>
-</ul>
-<h3 id="command-center-assessment"><span>Command Center assessment</span><a class="heading-anchor" href="#command-center-assessment" aria-label="Link to Command Center assessment">#</a></h3><p><strong>Fit: strong, with provider-specific implementation.</strong> Command Center already creates session instructions once per backend runtime and generally keeps them stable during that runtime. Claude uses a long-lived SDK query session, while Codex starts or resumes a persistent thread. That is a favorable baseline.</p>
-<p>The immediate problem is observability. Task runs already normalize cached-input usage through <code>AgentTaskResult</code> and <code>AgentCallUsageMetrics</code>, but ordinary conversation turns discard most input/output/cache counts even though the provider runtimes receive them. Conversation state has nullable slots for those values, so the missing link is largely in adapter result mapping and the normalized conversation result.</p>
-<p>Relevant seams include:</p>
-<ul>
-<li><code>src/lib/workflows/conversation/actor-implementations.ts</code> — assembles session instructions and creates runtimes.</li>
-<li><code>src/lib/agent-backends/claude/query-session.ts</code> and <code>conversation-runtime.ts</code> — Claude session options, result accounting, and cumulative cost handling.</li>
-<li><code>src/lib/agent-backends/codex/conversation-runtime.ts</code> — Codex thread lifecycle and usage deltas.</li>
-<li><code>src/lib/agent-backends/conversation.ts</code> — normalized conversation turn result.</li>
-<li><code>src/lib/workflows/primitives/agent-call-conversation.ts</code> — conversion to shared usage metrics.</li>
-<li><code>src/lib/workflows/conversation/types.ts</code> — existing persisted usage slots.</li>
-</ul>
-<p>The installed Claude Agent SDK also exposes an option that moves dynamic preset sections out of the system prefix to improve cacheability across users. That is worth an adapter-level experiment, not an unconditional platform default: the SDK documents an authority tradeoff because the moved material arrives in a user message.</p>
-<h4 id="tradeoffs"><span>Tradeoffs</span><a class="heading-anchor" href="#tradeoffs" aria-label="Link to Tradeoffs">#</a></h4><ul>
-<li><strong>Provider coupling:</strong> cache controls belong inside Claude and Codex adapters. A generic <code>cacheMode</code> that pretends the providers have identical semantics would weaken the backend seam.</li>
-<li><strong>Authority changes:</strong> moving dynamic content out of a privileged system block may improve cache hits while slightly weakening instruction priority.</li>
-<li><strong>False confidence:</strong> a high cache-hit ratio can coexist with an oversized prompt. Cost improves while context pressure does not.</li>
-<li><strong>Telemetry volume:</strong> prompt fingerprints and token counts are useful; storing full prompt bodies again would create duplication and potentially expose sensitive text.</li>
-<li><strong>Continuity:</strong> altering instructions on a resumed provider thread may rotate or invalidate continuity. That behavior must be verified per adapter.</li>
-</ul>
-<h4 id="incorporation-sketches"><span>Incorporation sketches</span><a class="heading-anchor" href="#incorporation-sketches" aria-label="Link to Incorporation sketches">#</a></h4><p><strong>Sketch A — complete conversation usage telemetry first.</strong></p>
-<ol>
-<li>Extend the normalized conversation turn result with fresh input, cached input, cache-creation input where available, output, and reasoning-token fields.</li>
-<li>Populate the fields in each provider adapter from its native usage frame.</li>
-<li>Reuse the existing <code>AgentCallUsageMetrics</code> path and persisted conversation slots.</li>
-<li>Emit one structured per-turn usage event containing backend, model, effort, token classes, cost, duration, and cache-hit ratio—never prompt text.</li>
-<li>Show aggregate cache behavior only after per-turn data is trustworthy.</li>
-</ol>
-<p><strong>Sketch B — make instruction layers explicit and fingerprintable.</strong></p>
-<p>Treat the assembled prompt as ordered segments:</p>
-<ol>
-<li>Stable Command Center core and safety contract.</li>
-<li>Stable backend/tool definitions.</li>
-<li>Session-stable project, worktree, profile, and alignment material.</li>
-<li>Turn-dynamic task content and runtime notices.</li>
-</ol>
-<p>Compute segment byte/token estimates and hashes for diagnostics. The composer remains the source of actual text; the diagnostic view describes composition without copying secrets into a second store.</p>
-<p><strong>Sketch C — provider-native cache experiment.</strong></p>
-<ul>
-<li>For Claude, expose the SDK&#39;s dynamic-section exclusion option through the Claude adapter behind an experiment flag and verify authority, cache reads, first-token latency, and task success.</li>
-<li>For Codex, rely on provider behavior unless the SDK exposes a supported cache control. Do not invent client cache keys that the provider ignores.</li>
-<li>Run cold, warm, and post-compaction cases separately.</li>
-</ul>
-<p><strong>Project AGENTS.md / skills contribution.</strong> Keep root instructions stable and place situational procedures behind read-on-demand steering or skills. Avoid timestamps, generated state, or frequently changing inventories in the persistent root contract. Command Center already follows part of this pattern; pruning should be based on prompt-segment measurements rather than aesthetic preference.</p>
-<h4 id="guardrails-and-measures"><span>Guardrails and measures</span><a class="heading-anchor" href="#guardrails-and-measures" aria-label="Link to Guardrails and measures">#</a></h4><ul>
-<li>Cache-read tokens as a share of cache-eligible input.</li>
-<li>Cache writes per successful task.</li>
-<li>Uncached input cost, total cost, and time-to-first-token.</li>
-<li>Prompt-segment size and churn rate.</li>
-<li>Task success and continuity-reset rate.</li>
-<li>Separate cold-start and steady-state reporting.</li>
-</ul>
-<hr>
-<h2 id="2-lean-persistent-prompts-and-tool-catalogs"><span>2. Lean persistent prompts and tool catalogs</span><a class="heading-anchor" href="#2-lean-persistent-prompts-and-tool-catalogs" aria-label="Link to 2. Lean persistent prompts and tool catalogs">#</a></h2><h3 id="general-approach-2"><span>General approach</span><a class="heading-anchor" href="#general-approach-2" aria-label="Link to General approach">#</a></h3><p>Every persistent instruction and eagerly advertised tool competes for attention on every turn. A lean prompt keeps only the small, high-signal contract needed everywhere. Specialized procedures, examples, reference documents, and tool details are loaded when the task actually reaches them.</p>
-<p>This is progressive disclosure applied to both instructions and capabilities:</p>
-<ul>
-<li>A compact root contract explains invariants and where deeper guidance lives.</li>
-<li>Skill descriptions act as a small index; full skill bodies load only when triggered.</li>
-<li>Tool groups expose an outline or search surface before every schema is injected.</li>
-<li>Reference documents appear as paths, descriptions, and retrieval commands rather than full bodies.</li>
-</ul>
-<p>Anthropic&#39;s <a href="https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents">context-engineering guidance</a> recommends the smallest high-signal context that still supports the decision. Its reports on <a href="https://www.anthropic.com/engineering/advanced-tool-use">advanced tool use</a> and <a href="https://www.anthropic.com/engineering/code-execution-with-mcp">code execution with MCP</a> show large vendor-run reductions from tool search, lazy loading, and programmatic filtering. Those headline figures are illustrative rather than a promise for Command Center, but the architectural lesson is sound.</p>
-<h3 id="command-center-assessment-2"><span>Command Center assessment</span><a class="heading-anchor" href="#command-center-assessment-2" aria-label="Link to Command Center assessment">#</a></h3><p><strong>Fit: very strong.</strong> Command Center already contains several good disclosure patterns:</p>
-<ul>
-<li>Reference documents are injected as path/description pointers rather than full content.</li>
-<li>Managed Claude and Codex skills are delivered on demand.</li>
-<li><code>cctl</code> help is organized as a command graph rather than one enormous manual.</li>
-<li>Agent-profile listings omit instruction bodies; callers fetch one qualified profile when needed.</li>
-<li>MCP servers and tools can be disabled through existing overrides.</li>
-</ul>
-<p>The gaps are also concrete:</p>
-<ul>
-<li>The always-on Command Center context and ask guidance are sizeable even though detailed procedures already exist in the <code>agent-context</code> and <code>cc-cli</code> skills.</li>
-<li>The MCP composer eagerly describes configured servers. Existing discovery caching is for UI/inventory management, not model-side lazy loading.</li>
-<li>Claude stdio tool filtering can deny a call without necessarily removing the schema from the prompt.</li>
-<li>Provider-native tool-search capabilities are not deliberately configured or measured by Command Center.</li>
-</ul>
-<p>Relevant seams include <code>src/lib/prompt/sdk-driver.ts</code>, <code>src/lib/mcp/composer.ts</code>, <code>src/lib/mcp/compose-for-conversation.ts</code>, backend MCP translation modules, managed-skill bridges, and the agent-profile composer.</p>
-<h4 id="tradeoffs-2"><span>Tradeoffs</span><a class="heading-anchor" href="#tradeoffs-2" aria-label="Link to Tradeoffs">#</a></h4><ul>
-<li><strong>Discovery misses:</strong> a tool the model never sees cannot be selected. Safety-critical and recovery tools may need to remain eager.</li>
-<li><strong>Extra round trips:</strong> search-then-load adds latency and sometimes another model step, although round trips are usually cheaper than permanently carrying a large catalog.</li>
-<li><strong>Prompt fragmentation:</strong> too many tiny skills can shift cost from model context to human memory and unreliable invocation.</li>
-<li><strong>Provider differences:</strong> one backend may support true deferred schemas while another only supports call-time filtering.</li>
-<li><strong>Hidden duplication:</strong> the same rule in AGENTS.md, a managed skill, an agent profile, and runtime guidance wastes tokens and creates maintenance drift.</li>
-</ul>
-<h4 id="incorporation-sketches-2"><span>Incorporation sketches</span><a class="heading-anchor" href="#incorporation-sketches-2" aria-label="Link to Incorporation sketches">#</a></h4><p><strong>Sketch A — a prompt bill of materials.</strong></p>
-<p>Add a developer-facing diagnostic view for a conversation runtime:</p>
-<ul>
-<li>Segment name and owner.</li>
-<li>Stable, session-stable, or turn-dynamic classification.</li>
-<li>Estimated tokens and bytes.</li>
-<li>Hash/fingerprint and last-change reason.</li>
-<li>Whether the segment is cached, provider-generated, or unavailable to inspect.</li>
-<li>Tool counts by server, with eager/deferred/disabled state where the backend exposes it.</li>
-</ul>
-<p>This is the prerequisite for deciding what to trim. It should be diagnostics, not another canonical prompt representation.</p>
-<p><strong>Sketch B — shrink the always-on Command Center block.</strong></p>
-<p>Keep worktree identity, safety constraints, mandatory communication protocol, and the one-line path to <code>cctl</code> help. Move procedural command detail that the agent can retrieve from managed skills out of the persistent block. Preserve project alignment and agent-profile instructions as privileged session material.</p>
-<p>The change should be tested as a prompt-contract migration: compare task success, tool-discovery failures, clarification requests, and total input—not only the number of lines removed.</p>
-<p><strong>Sketch C — explicit minimal capability surfaces.</strong></p>
-<p>Build on existing MCP overrides rather than adding a parallel tool registry:</p>
-<ul>
-<li>Default unused whole servers off for a session or workflow role.</li>
-<li>Keep a small eager set for universally required operations.</li>
-<li>Enable provider-native tool search for the rest where supported.</li>
-<li>Record which deferred tool was searched, loaded, selected, or missed.</li>
-<li>Treat provider-native discovery as an adapter capability with honest <code>supported</code> / <code>unsupported</code> behavior.</li>
-</ul>
-<p><strong>Sketch D — project-owned guidance stays project-owned.</strong></p>
-<p>Repository-specific testing, logging, architecture, and workflow rules belong in this project&#39;s AGENTS.md, steering files, and project skills. Cross-project <code>cctl</code> protocol belongs in the managed Command Center skill bundle. Agent profiles remain prompt identity only; they should not absorb tool policy or model-routing policy.</p>
-<h4 id="guardrails-and-measures-2"><span>Guardrails and measures</span><a class="heading-anchor" href="#guardrails-and-measures-2" aria-label="Link to Guardrails and measures">#</a></h4><ul>
-<li>Persistent prompt tokens per new runtime.</li>
-<li>Eager tool-schema tokens and number of advertised tools.</li>
-<li>Tool-search steps, discovery misses, and fallbacks.</li>
-<li>Duplicate-rule inventory with one declared owner per rule.</li>
-<li>Task success, time-to-first-tool, and total turns.</li>
-<li>A must-remain-eager allowlist justified by observed need.</li>
-</ul>
-<hr>
-<h2 id="3-context-lifecycle-and-stale-observation-masking"><span>3. Context lifecycle and stale-observation masking</span><a class="heading-anchor" href="#3-context-lifecycle-and-stale-observation-masking" aria-label="Link to 3. Context lifecycle and stale-observation masking">#</a></h2><h3 id="general-approach-3"><span>General approach</span><a class="heading-anchor" href="#general-approach-3" aria-label="Link to General approach">#</a></h3><p>Long-running agents accumulate file reads, search results, test logs, directory listings, old plans, and superseded decisions. Much of that history remains useful as an audit trail but no longer deserves equal weight in the active working context.</p>
-<p>A safe context-lifecycle strategy separates three things:</p>
-<ol>
-<li><strong>Immutable history:</strong> the lossless transcript remains available.</li>
-<li><strong>Durable working state:</strong> current objective, accepted decisions, files changed, validation state, open questions, and exact evidence handles.</li>
-<li><strong>Recent trajectory:</strong> enough uncompressed turns and tool interactions to preserve local reasoning and recovery context.</li>
-</ol>
-<p>Older observations can then be masked or represented by auditable handles when a fresh agent context is seeded. The strongest coding-agent evidence comes from <a href="https://arxiv.org/abs/2508.21433">The Complexity Trap</a>, which found environment observations dominated context and that rolling-window masking roughly halved costs on SWE-bench agents without a significant solve-rate loss. <a href="https://arxiv.org/abs/2509.23586">AgentDiet</a> reports similar input reductions on coding benchmarks. Both are recent research results, not proof that one fixed masking policy will work for every Command Center workload.</p>
-<p>LLM summarization alone is not a sufficient strategy. It can cost another model call, smooth over an incorrect assumption, omit an exact edit anchor, or cause the agent to perform more work. The safe pattern is recent raw context plus structured durable state plus exact recovery handles.</p>
-<h3 id="command-center-assessment-3"><span>Command Center assessment</span><a class="heading-anchor" href="#command-center-assessment-3" aria-label="Link to Command Center assessment">#</a></h3><p><strong>Fit: strong at context boundaries; limited inside active opaque provider sessions.</strong> Command Center owns a lossless transcript and already has sophisticated context artifacts:</p>
-<ul>
-<li>Transcript logical units keep a tool result with its originating tool call.</li>
-<li>Rendering supports outlines, message/sequence ranges, search, tool detail levels, and byte budgets.</li>
-<li>Compactions track both source freshness and prompt/schema/model drift.</li>
-<li>Delta compaction preserves non-superseded decisions and mechanically enforces monotonic source coverage.</li>
-<li>Graph lanes already have a context-limit gate and context-rotation behavior.</li>
-</ul>
-<p>The crucial limitation is provider continuity. Claude and Codex sessions are resumed through opaque provider references. Command Center does not reconstruct and resend an editable full history on every turn. It therefore cannot silently remove old observations from an already-running provider thread. Masking can improve:</p>
-<ul>
-<li><code>cctl</code> transcript reads.</li>
-<li>Compaction inputs and outputs.</li>
-<li>New conversations or graph-lane contexts seeded from an artifact.</li>
-<li>A future explicit &quot;restart from projected context&quot; operation.</li>
-</ul>
-<p>It cannot honestly claim to shrink an active resumed thread without backend support.</p>
-<h4 id="tradeoffs-3"><span>Tradeoffs</span><a class="heading-anchor" href="#tradeoffs-3" aria-label="Link to Tradeoffs">#</a></h4><ul>
-<li><strong>Semantic supersession is hard:</strong> two reads of the same path may differ by range, commit, working-tree state, or intervening writes.</li>
-<li><strong>Summary drift:</strong> a concise artifact can preserve a wrong conclusion more confidently than raw history did.</li>
-<li><strong>Recovery cost:</strong> excessive masking causes re-fetches and can lengthen the trajectory.</li>
-<li><strong>Cache interaction:</strong> starting a fresh projected context may break a warm provider prefix even while reducing context size.</li>
-<li><strong>Continuity loss:</strong> a fresh context can lose provider-native planning state or learned interaction patterns.</li>
-<li><strong>Security and privacy:</strong> derived artifacts must inherit the source material&#39;s access boundary and retention policy.</li>
-</ul>
-<h4 id="incorporation-sketches-3"><span>Incorporation sketches</span><a class="heading-anchor" href="#incorporation-sketches-3" aria-label="Link to Incorporation sketches">#</a></h4><p><strong>Sketch A — expose stable logical-unit handles.</strong></p>
-<p>Promote the transcript&#39;s existing unit segmentation into the read API. Each outline entry should carry a stable sequence range, byte size, tool relationship, and exact follow-up command. A handle such as <code>seq:120-137</code> remains stable as the transcript grows; a positional <code>chunk 4</code> does not.</p>
-<p>If one logical unit exceeds the stdout budget, spill it intact to a file rather than splitting it mid-record. This preserves code, JSON, errors, and paired tool context.</p>
-<p><strong>Sketch B — conservative stale-observation projection.</strong></p>
-<p>Before compaction or a projected-context restart:</p>
-<ol>
-<li>Pair tool uses and results.</li>
-<li>Derive a conservative resource key only for understood, read-only operations.</li>
-<li>Mark an earlier successful read superseded by a later successful read of the same resource and compatible scope.</li>
-<li>Never mask writes, failures, ambiguous calls, safety warnings, accepted decisions, or the current validation failure.</li>
-<li>Record every omission with its original sequence range and replacement sequence.</li>
-</ol>
-<p>Start with a narrow, auditable class such as repeated status reads or identical file-range reads. Do not begin with an LLM deciding what is obsolete.</p>
-<p><strong>Sketch C — explicit restart from projected context.</strong></p>
-<p>If later warranted, make context restart a visible operation:</p>
-<ul>
-<li>Preserve the original transcript and provider reference.</li>
-<li>Generate or refresh a compaction.</li>
-<li>Present the projected seed and its source coverage.</li>
-<li>Start a new backend context with the stable core, current artifact, exact open evidence handles, and a recent raw tail.</li>
-<li>Record the lineage and compare results with uninterrupted continuity.</li>
-</ul>
-<p>This belongs behind a backend capability because restart and resume semantics differ.</p>
-<p><strong>Project AGENTS.md / skills contribution.</strong> A project rule can require re-reading mutable state immediately before acting and treating older reads as historical. The existing <code>cc-cli</code> skill already teaches compaction-first, outline-second, bounded-window-third retrieval. Keep detailed log and source-navigation recipes in project skills, where they load only when relevant.</p>
-<h4 id="guardrails-and-measures-3"><span>Guardrails and measures</span><a class="heading-anchor" href="#guardrails-and-measures-3" aria-label="Link to Guardrails and measures">#</a></h4><ul>
-<li>Input tokens per turn before and after projection.</li>
-<li>Compaction-generation tokens and latency.</li>
-<li>Re-fetch rate and additional tool calls.</li>
-<li>Task success, semantic-review score, and exact-constraint retention.</li>
-<li>Superseded-observation counts by deterministic rule.</li>
-<li>Continuity resets and recovery failures.</li>
-<li>A sampled human audit of every new masking rule before broad enablement.</li>
-</ul>
-<hr>
-<h2 id="4-progressive-recoverable-tool-output"><span>4. Progressive, recoverable tool output</span><a class="heading-anchor" href="#4-progressive-recoverable-tool-output" aria-label="Link to 4. Progressive, recoverable tool output">#</a></h2><h3 id="general-approach-4"><span>General approach</span><a class="heading-anchor" href="#general-approach-4" aria-label="Link to General approach">#</a></h3><p>Tool results are often the largest controllable part of an agent trajectory. The correct default is not &quot;print everything in case it matters&quot; and not &quot;truncate silently.&quot; It is a bounded digest that tells the agent:</p>
-<ul>
-<li>What exists.</li>
-<li>What was returned.</li>
-<li>What was omitted and how much.</li>
-<li>The stable handle for each item.</li>
-<li>The exact command or range that retrieves more.</li>
-<li>Where a full result was written if stdout would be excessive.</li>
-</ul>
-<p>The disclosure ladder is:</p>
-<ol>
-<li>Counts and high-level status.</li>
-<li>Bounded outline with stable handles.</li>
-<li>Scoped detail for one handle or range.</li>
-<li>Explicit full output, spilled to a file past a threshold.</li>
-</ol>
-<p>Round trips are usually cheaper than carrying a large result through every subsequent turn. But compression must remain recoverable. JetBrains&#39; <a href="https://blog.jetbrains.com/ai/2026/07/rtk-claude-code-token-savings/">RTK benchmark</a> is a useful warning: at low reasoning effort the RTK arm showed median increases of 7.6% in cost and 13.8% in turns, while cost was approximately neutral at high effort. The causes were mixed, so the defensible conclusion is that local output reduction can trigger compensating trajectory behavior—not that shortened output alone always causes more calls.</p>
-<h3 id="command-center-assessment-4"><span>Command Center assessment</span><a class="heading-anchor" href="#command-center-assessment-4" aria-label="Link to Command Center assessment">#</a></h3><p><strong>Fit: very strong, and much of the design already exists.</strong> <code>cctl</code> has several production-ready pieces:</p>
-<ul>
-<li>Conversation reads support bounded outlines, ranges, search, and tool detail levels.</li>
-<li>Ticket attachment indexes use stable IDs and print exact retrieval commands.</li>
-<li>Workflow and spec reads default to outlines and targeted selectors.</li>
-<li>Spec reads enforce a 60 KB stdout budget and automatically write oversized content to a content-addressed <code>.cc/temp</code> file with byte count, digest, format, and reason.</li>
-<li>Log analysis already uses ranked limits and explicit finding budgets.</li>
-</ul>
-<p>The implementation is uneven. Conversation truncation does not always expose an exact continuation handle. Ticket attachment retrieval can still dump a full body. Reference documents have no ranged <code>get</code> command. The spec spill-to-file behavior has not been generalized.</p>
-<p>Relevant seams include:</p>
-<ul>
-<li><code>src/lib/conversations/transcript-logical-units.ts</code> and <code>transcript-render.ts</code>.</li>
-<li><code>src/cli/commands/conversation.ts</code>.</li>
-<li><code>src/cli/commands/spec/read.ts</code> and <code>read-envelopes.ts</code>.</li>
-<li><code>src/lib/tickets/attachment-index.ts</code> and <code>src/cli/commands/ticket.ts</code>.</li>
-<li><code>src/lib/workflows/primitives/artifact-registry.ts</code>.</li>
-<li><code>src/lib/logging/log-analysis/</code>.</li>
-</ul>
-<h4 id="tradeoffs-4"><span>Tradeoffs</span><a class="heading-anchor" href="#tradeoffs-4" aria-label="Link to Tradeoffs">#</a></h4><ul>
-<li><strong>Extra calls:</strong> a bounded default can require a drill-down call. This is acceptable only if the next command is obvious and cheap.</li>
-<li><strong>Silent incompleteness:</strong> omission metadata is part of correctness, not decoration. A truncated payload without it is worse than a large payload.</li>
-<li><strong>Unstable handles:</strong> array positions and relevance ranks can change; sequence ranges, IDs, paths, and content digests are safer.</li>
-<li><strong>Upstream loss:</strong> Command Center cannot recover bytes a provider or native tool already discarded. Artifact capture must happen at the owning boundary.</li>
-<li><strong>Temporary-file accumulation:</strong> spill artifacts need bounded retention and must not become durable reference documents automatically.</li>
-<li><strong>Generic-envelope temptation:</strong> domains should keep their meaning. A shared bounded-output helper can standardize budgets and receipts without flattening every command into one universal response type.</li>
-</ul>
-<h4 id="incorporation-sketches-4"><span>Incorporation sketches</span><a class="heading-anchor" href="#incorporation-sketches-4" aria-label="Link to Incorporation sketches">#</a></h4><p><strong>Sketch A — extract the spec spill behavior as a shared composable helper.</strong></p>
-<p>The helper should:</p>
-<ul>
-<li>Accept text and structured renderers plus an explicit stdout budget.</li>
-<li>Preserve the domain command&#39;s normal compact output when under budget.</li>
-<li>Write oversized output atomically beneath <code>.cc/temp/</code>.</li>
-<li>Return a typed receipt containing path, media type, bytes, SHA-256, truncation/spill reason, and exact follow-up actions.</li>
-<li>Never register the temporary artifact as durable unless the user or workflow explicitly promotes it.</li>
-</ul>
-<p>First adopters should be <code>conversation read</code>, compaction <code>get</code>, ticket attachment <code>get</code>, and large diagnostic views.</p>
-<p><strong>Sketch B — sequence-addressed transcript retrieval.</strong></p>
-<p>Return the server&#39;s logical-unit sequence metadata through the CLI instead of dropping it. Every omitted region should include <code>total</code>, <code>returned</code>, <code>truncated</code>, and either a next cursor or an exact <code>--seq-range</code> command. Structured JSON mode must carry the same facts.</p>
-<p><strong>Sketch C — a recoverable tool-result manifest for CC-owned operations.</strong></p>
-<p>For large results Command Center controls, retain:</p>
-<ul>
-<li>A bounded excerpt.</li>
-<li>Total and retained bytes.</li>
-<li>Digest.</li>
-<li>Artifact path or logical handle.</li>
-<li>Whether truncation occurred in Command Center, the provider, or the underlying tool.</li>
-<li>Exact retrieval command.</li>
-</ul>
-<p>The UI can render the excerpt collapsed and offer &quot;view full result&quot; without injecting the full body into every agent-facing view.</p>
-<p><strong>Sketch D — project validation and log output.</strong></p>
-<p>For tools outside Command Center&#39;s direct control, keep project wrappers and skills responsible. Registered validation commands should suppress passing-test noise, retain complete failure detail, disable color, bail where appropriate, and spill pathological output. Command Center&#39;s native validation service should continue to own admission, ordering, and exit status.</p>
-<h4 id="guardrails-and-measures-4"><span>Guardrails and measures</span><a class="heading-anchor" href="#guardrails-and-measures-4" aria-label="Link to Guardrails and measures">#</a></h4><ul>
-<li>Default output bytes/tokens by command.</li>
-<li>Percentage of calls that require a drill-down.</li>
-<li>Follow-up success rate and invalid-handle rate.</li>
-<li>Spill count, artifact size, and retention cleanup.</li>
-<li>Tool-call count and total trajectory cost.</li>
-<li>Task failures attributable to omitted or upstream-truncated evidence.</li>
-<li>Contract tests that every truncated response states what was omitted and how to retrieve it.</li>
-</ul>
-<hr>
-<h2 id="5-bounded-success-and-stop-conditions"><span>5. Bounded success and stop conditions</span><a class="heading-anchor" href="#5-bounded-success-and-stop-conditions" aria-label="Link to 5. Bounded success and stop conditions">#</a></h2><h3 id="general-approach-5"><span>General approach</span><a class="heading-anchor" href="#general-approach-5" aria-label="Link to General approach">#</a></h3><p>Agents often spend excess tokens because the task has no explicit stopping boundary. Instructions such as &quot;think deeply,&quot; &quot;consider several approaches,&quot; or &quot;make it production-ready&quot; can encourage exploration, polish, and validation after the actual requirement is satisfied.</p>
-<p>A bounded execution contract gives the agent:</p>
-<ul>
-<li>The objective.</li>
-<li>The allowed scope.</li>
-<li>Concrete acceptance criteria.</li>
-<li>Relevant non-goals and invariants.</li>
-<li>The smallest-sufficient-change expectation.</li>
-<li>The current execution budget.</li>
-<li>A stop condition and escalation path.</li>
-</ul>
-<p>The model should not enforce its own iteration budget. Deterministic code counts attempts, runs validations, opens circuit breakers, and decides whether another turn is admitted. The model uses the budget information to choose a sensible next action.</p>
-<p>A recent preregistered study of coding prompts found that open-ended requests to develop and compare multiple approaches could multiply reasoning usage, while a bounded-efficiency template retained success with materially less reasoning for some models. The tasks were small and the work is recent, so it supports a measured design direction rather than a universal numeric claim. <a href="https://arxiv.org/abs/2608.01347">Study</a></p>
-<h3 id="command-center-assessment-5"><span>Command Center assessment</span><a class="heading-anchor" href="#command-center-assessment-5" aria-label="Link to Command Center assessment">#</a></h3><p><strong>Fit: exceptionally strong.</strong> This is already Command Center&#39;s architectural direction:</p>
-<ul>
-<li>Graph contexts carry tasks and acceptance criteria.</li>
-<li>Iteration policy, hard limits, circuit breakers, context-limit gates, and total-pass backstops are mechanically enforced.</li>
-<li>Registered validation runs through a central service with explicit cost and admission policy.</li>
-<li>Script validation runs before semantic agent validation.</li>
-<li>Structured-output gates validate the agent&#39;s artifact rather than trusting prose.</li>
-<li>Filesystem write boundaries and workflow task completion are mechanically controlled.</li>
-</ul>
-<p>One useful gap is that the graph engine knows the iteration budget, but the main iteration prompt does not clearly expose current, maximum, and remaining iterations. The agent can therefore be near a hard stop without using that fact to prioritize acceptance criteria over optional polish.</p>
-<p>Relevant seams include <code>src/lib/workflow-graph/iteration-prompt.ts</code>, <code>execution-loop.ts</code>, <code>config-schemas.ts</code>, <code>resolve-config.ts</code>, the circuit-breaker and context-limit primitives, and <code>src/lib/validation/service.ts</code>.</p>
-<h4 id="tradeoffs-5"><span>Tradeoffs</span><a class="heading-anchor" href="#tradeoffs-5" aria-label="Link to Tradeoffs">#</a></h4><ul>
-<li><strong>Bad criteria cause premature completion:</strong> an explicit stop condition is only as good as the acceptance criteria.</li>
-<li><strong>Local optimization:</strong> &quot;smallest change&quot; can discourage necessary architectural work or root-cause fixes if applied dogmatically.</li>
-<li><strong>Prompt duplication:</strong> repeating the full contract on every turn wastes the very tokens being saved.</li>
-<li><strong>Budget gaming:</strong> an agent may rush when shown a low remaining count. The prompt must tell it to surface a blocker rather than declare weak completion.</li>
-<li><strong>Exploration suppression:</strong> some design and debugging tasks genuinely need comparison. The contract needs an escape hatch for unresolved, consequential choices.</li>
-</ul>
-<h4 id="incorporation-sketches-5"><span>Incorporation sketches</span><a class="heading-anchor" href="#incorporation-sketches-5" aria-label="Link to Incorporation sketches">#</a></h4><p><strong>Sketch A — add a compact execution-budget section to graph prompts.</strong></p>
-<p>At each iteration include only current facts the orchestrator owns:</p>
-<ul>
-<li>Current task and acceptance criteria.</li>
-<li>Iteration <code>n</code> of <code>max</code> and remaining count.</li>
-<li>Current deterministic validation state.</li>
-<li>Scope/non-goals already declared for the context.</li>
-<li>A short instruction: satisfy the current criteria before optional polish; do not expand scope; surface a concrete blocker if completion is unsafe.</li>
-</ul>
-<p>The engine remains the sole authority for counting and stopping. Never ask the agent to echo iteration numbers in structured output.</p>
-<p><strong>Sketch B — derive, do not duplicate, the execution contract.</strong></p>
-<p>Compose the prompt section from existing workflow/task fields and resolved config. Do not add a second free-text &quot;efficiency prompt&quot; that can contradict acceptance criteria, validation policy, or context limits.</p>
-<p><strong>Sketch C — preserve cheap-gate-first ordering.</strong></p>
-<p>Continue running deterministic validators before semantic agent validators. Give the agent only actionable failures, not pages of successful checks. When all deterministic gates pass, use the model for the part only a model can judge: whether the change satisfies intent and is appropriately scoped.</p>
-<p><strong>Sketch D — project AGENTS.md / skill guidance.</strong></p>
-<p>A compact project-level rule is appropriate:</p>
-<blockquote>
-<p>Make the smallest sufficient change within the stated scope. Success means the acceptance criteria and registered validation pass. Stop when they do; compare alternatives only when the choice remains consequential and unresolved.</p>
-</blockquote>
-<p>Keep detailed task-authoring advice in a project skill rather than expanding root AGENTS.md. Root guidance should contain only durable rules supported by repeated failures.</p>
-<h4 id="guardrails-and-measures-5"><span>Guardrails and measures</span><a class="heading-anchor" href="#guardrails-and-measures-5" aria-label="Link to Guardrails and measures">#</a></h4><ul>
-<li>Turns and tool calls per completed task.</li>
-<li>Patch size and touched-file count, normalized by task.</li>
-<li>Iterations spent after all acceptance criteria first pass.</li>
-<li>Reopen, reviewer-loss, and regression rates.</li>
-<li>Premature-completion incidents.</li>
-<li>Validation cost by deterministic versus model gate.</li>
-<li>Human assessment of whether the smallest change was actually sufficient.</li>
-</ul>
-<hr>
-<h2 id="6-adaptive-model-and-reasoning-effort-routing"><span>6. Adaptive model and reasoning-effort routing</span><a class="heading-anchor" href="#6-adaptive-model-and-reasoning-effort-routing" aria-label="Link to 6. Adaptive model and reasoning-effort routing">#</a></h2><h3 id="general-approach-6"><span>General approach</span><a class="heading-anchor" href="#general-approach-6" aria-label="Link to General approach">#</a></h3><p>Not every operation needs the most capable model or the highest reasoning effort. Routing assigns cheap, bounded work to an economical configuration and reserves stronger configurations for ambiguous, high-impact, or repeatedly failing work.</p>
-<p>Routing can be:</p>
-<ul>
-<li><strong>Static by role or task class:</strong> naming, classification, compaction, implementation, validation, or plan repair each receive an explicit profile.</li>
-<li><strong>Deterministic escalation:</strong> start at a configured base and move to a stronger tier after defined failure evidence.</li>
-<li><strong>Learned or model-based:</strong> a router predicts difficulty and selects a model.</li>
-<li><strong>Cascade-based:</strong> a cheap model attempts the task; a verifier or failure signal decides whether to escalate.</li>
-</ul>
-<p><a href="https://proceedings.iclr.cc/paper_files/paper/2025/hash/5503a7c69d48a2f86fc00b3dc09de686-Abstract-Conference.html">RouteLLM</a> demonstrates that routing can substantially reduce benchmark cost at matched aggregate quality. Research on <a href="https://proceedings.iclr.cc/paper_files/paper/2025/hash/1b623663fd9b874366f3ce019fdfdd44-Abstract-Conference.html">optimal test-time compute</a> similarly supports allocating more computation to harder questions. These results establish a useful principle, not a ready-made production router for autonomous coding.</p>
-<p>The same principle applies inside a reasoning model. <a href="https://arxiv.org/abs/2503.01141">How Well do LLMs Compress Their Own Chain-of-Thought?</a> finds task-specific minimum reasoning lengths and a general length–accuracy tradeoff, while <a href="https://aclanthology.org/2025.findings-acl.1274/">TALE</a> reports meaningful reasoning-token reductions from adaptive budgets with a modest average quality cost. Together they support effort that adapts to the task rather than one fixed low-token reasoning policy.</p>
-<p>Routing usually saves <strong>dollars</strong>, not necessarily total tokens. A cheaper model may use more tokens, and a mistaken cheap attempt followed by an expensive retry can cost more than starting strong.</p>
-<h3 id="command-center-assessment-6"><span>Command Center assessment</span><a class="heading-anchor" href="#command-center-assessment-6" aria-label="Link to Command Center assessment">#</a></h3><p><strong>Fit: useful, but only after measurement and at explicit boundaries.</strong> Command Center already performs role-specific static routing:</p>
-<ul>
-<li>Conversation model and effort resolve through explicit turn, scoped/last-used, configured profile, and backend defaults.</li>
-<li>Naming uses a cheap, low-effort isolated task.</li>
-<li>Compaction has separate model/effort configuration.</li>
-<li>Plan repair defaults to a strong, high-effort configuration.</li>
-<li>Graph implementers and validators carry concrete backend, model, and reasoning effort through the global → workflow → context cascade.</li>
-</ul>
-<p>This is a good foundation. It also reveals constraints:</p>
-<ul>
-<li>Agent profiles are prompt identity only and must not become runtime-routing policy.</li>
-<li>Graph assignments are resolved and snapshotted for reproducibility.</li>
-<li>Continuity fingerprints include backend, model, and effort; changing an assignment rotates context.</li>
-<li>A backend switch must never reuse an opaque provider reference accidentally.</li>
-</ul>
-<h4 id="tradeoffs-6"><span>Tradeoffs</span><a class="heading-anchor" href="#tradeoffs-6" aria-label="Link to Tradeoffs">#</a></h4><ul>
-<li><strong>Routing regret:</strong> a weak first attempt can introduce flawed code or misleading state that survives escalation.</li>
-<li><strong>Classifier overhead:</strong> an LLM router adds cost, latency, and another failure mode.</li>
-<li><strong>Distribution shift:</strong> task difficulty and model behavior change as providers release updates.</li>
-<li><strong>Continuity disruption:</strong> switching model, effort, or backend can require a fresh lane context.</li>
-<li><strong>Evaluation complexity:</strong> average quality can hide regressions on security, migrations, ambiguous requirements, or large refactors.</li>
-<li><strong>User expectations:</strong> automatic model changes must be visible, explainable, and overridable.</li>
-</ul>
-<h4 id="incorporation-sketches-6"><span>Incorporation sketches</span><a class="heading-anchor" href="#incorporation-sketches-6" aria-label="Link to Incorporation sketches">#</a></h4><p><strong>Sketch A — advisory routing telemetry before automatic routing.</strong></p>
-<p>Record the configuration actually used, task role/class, iterations, validation failures, escalations, final outcome, cost, and latency. Build an offline report that asks, &quot;Could this successful task have used the configured lower tier?&quot; before allowing the system to act on the answer.</p>
-<p><strong>Sketch B — deterministic escalation tiers.</strong></p>
-<p>Extend the workflow config cascade with an optional, typed policy that resolves and snapshots alongside assignments. A first version could contain:</p>
-<ul>
-<li>Concrete base assignment.</li>
-<li>One or more concrete escalation assignments.</li>
-<li>Mechanical triggers such as repeated semantic rejection, circuit-breaker approach, or a declared high-risk task class.</li>
-<li>Maximum escalations.</li>
-</ul>
-<p>A pure router immediately before continuity and dispatch selects the concrete assignment and emits a reason code. Catalog validation remains mandatory. Infrastructure failures should not trigger a more expensive reasoning model.</p>
-<p><strong>Sketch C — route only at safe boundaries.</strong></p>
-<p>Prefer task start, context rotation, or explicit retry boundaries. If an assignment changes, intentionally rotate continuity according to the existing fingerprint rule and seed the new context with durable state. Do not silently switch the model halfway through an opaque thread.</p>
-<p><strong>Sketch D — placement.</strong></p>
-<ul>
-<li>Cross-project routing mechanics and audit data belong in native Command Center code/config.</li>
-<li>This repository&#39;s preferred task taxonomy and default assignments belong in project workflow templates or a project skill.</li>
-<li>Runtime routing does <strong>not</strong> belong in agent profiles or prose-only AGENTS.md rules; those surfaces cannot enforce, validate, or audit the decision.</li>
-</ul>
-<h4 id="guardrails-and-measures-6"><span>Guardrails and measures</span><a class="heading-anchor" href="#guardrails-and-measures-6" aria-label="Link to Guardrails and measures">#</a></h4><ul>
-<li>Cost and latency per successful task by route.</li>
-<li>Escalation rate and reason distribution.</li>
-<li>Routing regret against a strong-model control sample.</li>
-<li>Continuity rotations and failures after escalation.</li>
-<li>Quality by task class, especially high-risk tails.</li>
-<li>Total tokens, not only dollar cost.</li>
-<li>Periodic re-baselining when model versions or pricing change.</li>
-</ul>
-<hr>
-<h2 id="7-intact-chunk-retrieval-before-lexical-or-lossy-compression"><span>7. Intact-chunk retrieval before lexical or lossy compression</span><a class="heading-anchor" href="#7-intact-chunk-retrieval-before-lexical-or-lossy-compression" aria-label="Link to 7. Intact-chunk retrieval before lexical or lossy compression">#</a></h2><h3 id="general-approach-7"><span>General approach</span><a class="heading-anchor" href="#general-approach-7" aria-label="Link to General approach">#</a></h3><p>Lexical prompt compression deletes words or rewrites text to fit a smaller token budget. It can work for long, redundant natural-language support material, but it is dangerous for instructions, code, schemas, commands, errors, numeric limits, and ordered procedures.</p>
-<p>The safer order is:</p>
-<ol>
-<li>Filter irrelevant sources.</li>
-<li>Retrieve and rerank relevant documents, sections, files, transcript units, or ranges.</li>
-<li>Preserve selected chunks verbatim.</li>
-<li>Provide stable handles for nearby or omitted chunks.</li>
-<li>Use a generated summary as an index, not as the sole remaining evidence.</li>
-<li>Apply word-level compression only to explicitly non-authoritative prose, if it still produces an end-to-end win.</li>
-</ol>
-<p>An independent comparison, <a href="https://arxiv.org/abs/2407.08892">Characterizing Prompt Compression Methods</a>, found query-aware extractive reranking generally more reliable than abstractive or token-pruning compression across its evaluated tasks. <a href="https://proceedings.iclr.cc/paper_files/paper/2024/hash/bda88ed2892f5e61c9a9bf215c566913-Abstract-Conference.html">RECOMP</a>, <a href="https://aclanthology.org/2024.acl-long.91/">LongLLMLingua</a>, and <a href="https://aclanthology.org/2024.findings-acl.57/">LLMLingua-2</a> show that learned compression can work on selected retrieval and QA workloads. <a href="https://aclanthology.org/2024.tacl-1.9/">Lost in the Middle</a> explains why removing irrelevant material can sometimes improve reasoning. None of those results justifies rewriting an active coding agent&#39;s governing contract.</p>
-<h3 id="command-center-assessment-7"><span>Command Center assessment</span><a class="heading-anchor" href="#command-center-assessment-7" aria-label="Link to Command Center assessment">#</a></h3><p><strong>Fit: reject a general lexical compressor; strongly support intact retrieval.</strong> Command Center already has better primitives to deepen:</p>
-<ul>
-<li>Transcript logical units and sequence ranges.</li>
-<li>Compaction artifacts with source references and freshness metadata.</li>
-<li>Reference-document pointers.</li>
-<li>Ticket attachments with stable IDs.</li>
-<li>Spec search/get/delta surfaces.</li>
-<li>Artifact registration and content-addressed spill files.</li>
-</ul>
-<p>These can form a retrieval layer without altering authoritative bytes. The platform should preserve a clear distinction between:</p>
-<ul>
-<li><strong>Canonical source:</strong> exact file, transcript, attachment, specification, or command result.</li>
-<li><strong>Derived index:</strong> outline, ranking, compaction, or summary with source handles.</li>
-<li><strong>Ephemeral excerpt:</strong> bounded content selected for one turn.</li>
-</ul>
-<h4 id="tradeoffs-7"><span>Tradeoffs</span><a class="heading-anchor" href="#tradeoffs-7" aria-label="Link to Tradeoffs">#</a></h4><ul>
-<li><strong>Retrieval misses:</strong> the right fact cannot help if it is not selected. Recovery needs to be obvious and cheap.</li>
-<li><strong>Index staleness:</strong> files, tickets, transcripts, and specs evolve at different rates.</li>
-<li><strong>Embedding cost and privacy:</strong> semantic indexes create computation, storage, and data-governance obligations.</li>
-<li><strong>Ranking opacity:</strong> a model may over-trust the top result and ignore uncertainty.</li>
-<li><strong>Summary authority confusion:</strong> users and agents may treat a derived artifact as canonical unless the UI and schema distinguish them.</li>
-<li><strong>Compressor overhead:</strong> preprocessing can erase latency or cost savings, especially on short prompts.</li>
-</ul>
-<p><a href="https://arxiv.org/abs/2604.02985">Prompt Compression in the Wild</a> reinforces that final point: its best reported end-to-end speedup was about 18%, and only when prompt length, compression ratio, hardware, and preprocessing aligned. Outside that operating window, compressor overhead erased the gain.</p>
-<h4 id="incorporation-sketches-7"><span>Incorporation sketches</span><a class="heading-anchor" href="#incorporation-sketches-7" aria-label="Link to Incorporation sketches">#</a></h4><p><strong>Sketch A — retrieval over existing stable handles before embeddings.</strong></p>
-<p>Start with deterministic search and metadata already present:</p>
-<ul>
-<li>Transcript search returning logical units and sequence ranges.</li>
-<li>Reference-document search returning path, heading, line range, digest, and freshness.</li>
-<li>Ticket attachment search returning stable attachment IDs.</li>
-<li>Spec search returning exact element handles.</li>
-</ul>
-<p>Use lexical/regex search and domain filters first. Add semantic retrieval only where measured misses justify its complexity.</p>
-<p><strong>Sketch B — source-grounded compaction.</strong></p>
-<p>Keep the current generated brief, but strengthen its role as an index:</p>
-<ul>
-<li>Every decision, blocker, file, command, and open question carries one or more source handles.</li>
-<li>Superseded statements remain traceable.</li>
-<li>A compact artifact reports coverage, stale-behind count, prompt/schema/model version, and exact refresh command.</li>
-<li>Retrieval can fetch the intact source unit without regenerating the summary.</li>
-</ul>
-<p><strong>Sketch C — opt-in lossy derivatives for long support prose only.</strong></p>
-<p>If a compressor is later evaluated, constrain it to user-provided background prose or retrieved documentation. Never transform:</p>
-<ul>
-<li>System, developer, AGENTS.md, skill, charter, or profile instructions.</li>
-<li>Source code, diffs, patches, schemas, or structured payloads.</li>
-<li>Commands, paths, identifiers, exact errors, numbers, units, or negations.</li>
-<li>Current validation failures or active execution state.</li>
-</ul>
-<p>Store the derivative beside an exact source handle and label it non-authoritative. Evaluate compressor cost and recovery calls as part of the same trajectory.</p>
-<p><strong>Project AGENTS.md / skills contribution.</strong> Keep source-navigation recipes local: use <code>rg</code>, bounded file reads, <code>cctl ... --outline</code>, exact range retrieval, and compaction-first conversation reads. A project skill can encode domain-specific search paths and source-of-truth rules; the root AGENTS.md should not grow a generic compression tutorial.</p>
-<h4 id="guardrails-and-measures-7"><span>Guardrails and measures</span><a class="heading-anchor" href="#guardrails-and-measures-7" aria-label="Link to Guardrails and measures">#</a></h4><ul>
-<li>Retrieval recall on known required facts and constraints.</li>
-<li>Task success and semantic-equivalence review.</li>
-<li>Exact-constraint loss incidents.</li>
-<li>Recovery/drill-down calls after a miss.</li>
-<li>Index freshness and stale-result rate.</li>
-<li>End-to-end cost including retrieval, embedding, reranking, or compressor calls.</li>
-<li>A hard prohibition on lossy transformation of authoritative classes.</li>
-</ul>
-<hr>
-<h2 id="cross-cutting-command-center-design"><span>Cross-cutting Command Center design</span><a class="heading-anchor" href="#cross-cutting-command-center-design" aria-label="Link to Cross-cutting Command Center design">#</a></h2><h3 id="do-not-create-an-agentefficiency-mega-subsystem"><span>Do not create an <code>agentEfficiency</code> mega-subsystem</span><a class="heading-anchor" href="#do-not-create-an-agentefficiency-mega-subsystem" aria-label="Link to Do not create an agentEfficiency mega-subsystem">#</a></h3><p>These optimizations belong with the decisions they affect:</p>
-<div class="table-wrap"><table>
-<thead>
-<tr>
-<th>Responsibility</th>
-<th>Correct owner</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>Provider cache controls and native lazy-tool support</td>
-<td><code>src/lib/agent-backends/&lt;backend&gt;/</code> adapters</td>
-</tr>
-<tr>
-<td>Normalized token and cost vocabulary</td>
-<td>AgentCall/backend-neutral usage schemas</td>
-</tr>
-<tr>
-<td>Prompt segment composition</td>
-<td>Conversation prompt/runtime composition</td>
-</tr>
-<tr>
-<td>Transcript units, compaction, freshness, and projection</td>
-<td>Conversations and context-artifacts domains</td>
-</tr>
-<tr>
-<td>Bounded CLI output and spill receipts</td>
-<td>Shared CLI helper plus domain renderers</td>
-</tr>
-<tr>
-<td>Retry, stop, validation, and execution budgets</td>
-<td>Workflow graph and validation service</td>
-</tr>
-<tr>
-<td>Model/effort policy and escalation</td>
-<td>Workflow config resolution plus backend catalog validation</td>
-</tr>
-<tr>
-<td>Repository-specific work style and navigation</td>
-<td>Project AGENTS.md, steering, and project skills</td>
-</tr>
-</tbody></table></div>
-<p>This preserves Command Center&#39;s composable-module philosophy and avoids a second orchestration path.</p>
-<h3 id="measurement-foundation"><span>Measurement foundation</span><a class="heading-anchor" href="#measurement-foundation" aria-label="Link to Measurement foundation">#</a></h3><p>Before optimizing, Command Center needs a joined view of usage and outcome. A per-call usage record should be able to answer:</p>
-<ul>
-<li>Which project, session, conversation, workflow execution, context, task, and role produced the call?</li>
-<li>Which backend, model, reasoning effort, and agent profile were used?</li>
-<li>How many uncached input, cache-write, cache-read, output, and reasoning tokens were consumed?</li>
-<li>What was the estimated or provider-reported cost and latency?</li>
-<li>Was the call an implementer, validator, compaction, naming, plan-repair, collaboration, router, or ordinary conversation call?</li>
-<li>Which tool calls, retries, context rotations, and escalations followed?</li>
-<li>Did deterministic validation pass, did semantic validation pass, and was the task later reopened?</li>
-</ul>
-<p>Prompt bodies need not be retained for this. Stable segment fingerprints, sizes, ownership labels, and provider request identifiers are sufficient for most diagnosis.</p>
-<h3 id="recommended-delivery-sequence"><span>Recommended delivery sequence</span><a class="heading-anchor" href="#recommended-delivery-sequence" aria-label="Link to Recommended delivery sequence">#</a></h3><h4 id="phase-0-establish-the-denominator"><span>Phase 0 — establish the denominator</span><a class="heading-anchor" href="#phase-0-establish-the-denominator" aria-label="Link to Phase 0 — establish the denominator">#</a></h4><ol>
-<li>Complete conversation token/cache telemetry.</li>
-<li>Define task-outcome joins and cost-per-success reports.</li>
-<li>Add prompt/tool composition diagnostics.</li>
-<li>Build a representative evaluation corpus from completed Command Center work.</li>
-</ol>
-<h4 id="phase-1-no-regret-structural-savings"><span>Phase 1 — no-regret structural savings</span><a class="heading-anchor" href="#phase-1-no-regret-structural-savings" aria-label="Link to Phase 1 — no-regret structural savings">#</a></h4><ol>
-<li>Generalize bounded CLI output and content-addressed spill receipts.</li>
-<li>Add stable transcript chunk handles and exact omission commands.</li>
-<li>Expose iteration budgets and compact stop conditions in graph prompts.</li>
-<li>Prune duplicated always-on Command Center instructions only after segment accounting.</li>
-</ol>
-<h4 id="phase-2-provider-and-context-experiments"><span>Phase 2 — provider and context experiments</span><a class="heading-anchor" href="#phase-2-provider-and-context-experiments" aria-label="Link to Phase 2 — provider and context experiments">#</a></h4><ol>
-<li>A/B Claude prefix-stability options.</li>
-<li>Deliberately configure and observe provider-native lazy tool search.</li>
-<li>Pilot deterministic stale-observation projection for a narrow read-only class.</li>
-<li>Evaluate explicit projected-context restart against uninterrupted continuity.</li>
-</ol>
-<h4 id="phase-3-routing"><span>Phase 3 — routing</span><a class="heading-anchor" href="#phase-3-routing" aria-label="Link to Phase 3 — routing">#</a></h4><ol>
-<li>Produce advisory routing analysis from accumulated data.</li>
-<li>Introduce deterministic escalation tiers at context boundaries.</li>
-<li>Add learned routing only if simple policy leaves a material, measured opportunity.</li>
-</ol>
-<h3 id="explicit-non-goals"><span>Explicit non-goals</span><a class="heading-anchor" href="#explicit-non-goals" aria-label="Link to Explicit non-goals">#</a></h3><ul>
-<li>No Caveman-style output dialect.</li>
-<li>No global word-deletion compressor.</li>
-<li>No LLM deciding its own retry count or whether tests passed.</li>
-<li>No silent context truncation.</li>
-<li>No backend-neutral cache abstraction that erases provider semantics.</li>
-<li>No automatic mid-thread model switch without explicit continuity handling.</li>
-<li>No duplicate prompt policy in AGENTS.md, profiles, managed skills, and runtime blocks.</li>
-</ul>
-<hr>
-<h2 id="evaluation-protocol"><span>Evaluation protocol</span><a class="heading-anchor" href="#evaluation-protocol" aria-label="Link to Evaluation protocol">#</a></h2><p>Each optimization should be evaluated as a complete agent trajectory.</p>
-<h3 id="experimental-shape"><span>Experimental shape</span><a class="heading-anchor" href="#experimental-shape" aria-label="Link to Experimental shape">#</a></h3><ul>
-<li>Start with a 20–50 task pilot across debugging, implementation, refactoring, documentation, workflow authoring, and review. Use the observed variance to perform a power/sensitivity analysis and set the decision sample size against the predeclared non-inferiority margin; the pilot alone does not establish quality preservation.</li>
-<li>Include easy and hard tasks plus exact-constraint-sensitive cases such as migrations, permissions, and structured output.</li>
-<li>Run at least three paired repetitions per arm where cost permits.</li>
-<li>Hold model, reasoning effort, harness, repository state, and validation constant unless that factor is the treatment.</li>
-<li>Compare against both the current baseline and the simplest plausible alternative.</li>
-</ul>
-<h3 id="primary-decision-metric"><span>Primary decision metric</span><a class="heading-anchor" href="#primary-decision-metric" aria-label="Link to Primary decision metric">#</a></h3><p><strong>Provider cost per successful, non-reopened task</strong>, with a predeclared non-inferiority margin for quality.</p>
-<h3 id="secondary-metrics"><span>Secondary metrics</span><a class="heading-anchor" href="#secondary-metrics" aria-label="Link to Secondary metrics">#</a></h3><ul>
-<li>Uncached, cached-read, cache-write, output, and reasoning tokens.</li>
-<li>Context occupancy and prompt/tool segment size.</li>
-<li>Tool calls, turns, retries, validators, sub-agents, and context rotations.</li>
-<li>Wall-clock latency and time-to-first-token.</li>
-<li>Deterministic validation, semantic review, scope, robustness, and operator comprehension.</li>
-<li>Recovery calls caused by omitted or compressed information.</li>
-<li>Results by task class rather than only one aggregate average.</li>
-</ul>
-<h3 id="stop-rules-for-an-experiment"><span>Stop rules for an experiment</span><a class="heading-anchor" href="#stop-rules-for-an-experiment" aria-label="Link to Stop rules for an experiment">#</a></h3><p>Disable or revise a treatment when it:</p>
-<ul>
-<li>Produces a statistically or operationally meaningful quality regression.</li>
-<li>Increases total cost despite shrinking a local token counter.</li>
-<li>Causes unrecoverable evidence loss.</li>
-<li>Creates repeated discovery, continuity, or routing failures.</li>
-<li>Requires enough prompt instructions to erase its own savings.</li>
-</ul>
-<hr>
-<h2 id="final-recommendation"><span>Final recommendation</span><a class="heading-anchor" href="#final-recommendation" aria-label="Link to Final recommendation">#</a></h2><p>Command Center should pursue token efficiency as <strong>context engineering plus deterministic orchestration</strong>, not as a prose-compression feature.</p>
-<p>The best first investments are already adjacent to proven code:</p>
-<ol>
-<li>Preserve conversation cache/token metrics that the adapters currently receive.</li>
-<li>Turn the spec reader&#39;s bounded, content-addressed spill behavior into a shared CLI capability.</li>
-<li>Carry stable transcript handles and explicit omission metadata end to end.</li>
-<li>Show workflow agents their real execution budget while keeping all enforcement mechanical.</li>
-<li>Inventory and reduce persistent prompt/tool surface.</li>
-</ol>
-<p>Those steps are broadly useful across every project Command Center manages, have clear ownership in the existing architecture, and preserve the agent&#39;s reasoning inputs. Context projection and adaptive routing should follow as measured, reversible pilots. Lexical compression should remain outside the critical path unless a narrowly scoped, recoverable experiment demonstrates an end-to-end win.</p>
-<h2 id="sources"><span>Sources</span><a class="heading-anchor" href="#sources" aria-label="Link to Sources">#</a></h2><h3 id="provider-and-practitioner-guidance"><span>Provider and practitioner guidance</span><a class="heading-anchor" href="#provider-and-practitioner-guidance" aria-label="Link to Provider and practitioner guidance">#</a></h3><ul>
-<li><a href="https://developers.openai.com/api/docs/guides/prompt-caching">OpenAI — Prompt caching</a></li>
-<li><a href="https://developers.openai.com/api/docs/guides/latest-model">OpenAI — Latest model guidance</a></li>
-<li><a href="https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents">Anthropic — Effective context engineering for AI agents</a></li>
-<li><a href="https://www.anthropic.com/engineering/advanced-tool-use">Anthropic — Advanced tool use</a></li>
-<li><a href="https://www.anthropic.com/engineering/code-execution-with-mcp">Anthropic — Code execution with MCP</a></li>
-<li><a href="https://www.anthropic.com/engineering/writing-tools-for-agents">Anthropic — Writing effective tools for agents</a></li>
-<li><a href="https://blog.jetbrains.com/ai/2026/07/rtk-claude-code-token-savings/">JetBrains — RTK token-savings benchmark</a></li>
-</ul>
-<h3 id="research"><span>Research</span><a class="heading-anchor" href="#research" aria-label="Link to Research">#</a></h3><ul>
-<li><a href="https://arxiv.org/abs/2601.06007">Don&#39;t Break the Cache: An Evaluation of Prompt Caching for Long-Horizon Agentic Tasks</a></li>
-<li><a href="https://arxiv.org/abs/2508.21433">The Complexity Trap: Simple Observation Masking Is as Efficient as LLM Summarization for Agent Context Management</a></li>
-<li><a href="https://arxiv.org/abs/2509.23586">Reducing Cost of LLM Agents with Trajectory Reduction</a></li>
-<li><a href="https://proceedings.neurips.cc/paper_files/paper/2024/hash/5a7c947568c1b1328ccc5230172e1e7c-Abstract-Conference.html">SWE-agent: Agent-Computer Interfaces Enable Automated Software Engineering</a></li>
-<li><a href="https://proceedings.iclr.cc/paper_files/paper/2025/hash/5503a7c69d48a2f86fc00b3dc09de686-Abstract-Conference.html">RouteLLM: Learning to Route LLMs with Preference Data</a></li>
-<li><a href="https://proceedings.iclr.cc/paper_files/paper/2025/hash/1b623663fd9b874366f3ce019fdfdd44-Abstract-Conference.html">Scaling LLM Test-Time Compute Optimally</a></li>
-<li><a href="https://arxiv.org/abs/2608.01347">Same Task, Different Work: Prompt-Induced Waste in Coding Agents</a></li>
-<li><a href="https://arxiv.org/abs/2503.01141">How Well do LLMs Compress Their Own Chain-of-Thought?</a></li>
-<li><a href="https://aclanthology.org/2025.findings-acl.1274/">TALE: Token-Budget-Aware LLM Reasoning</a></li>
-<li><a href="https://arxiv.org/abs/2407.08892">Characterizing Prompt Compression Methods</a></li>
-<li><a href="https://proceedings.iclr.cc/paper_files/paper/2024/hash/bda88ed2892f5e61c9a9bf215c566913-Abstract-Conference.html">RECOMP: Improving Retrieval-Augmented LMs with Compression and Selective Augmentation</a></li>
-<li><a href="https://aclanthology.org/2024.acl-long.91/">LongLLMLingua: Accelerating and Enhancing LLMs in Long Context Scenarios</a></li>
-<li><a href="https://aclanthology.org/2024.findings-acl.57/">LLMLingua-2: Data Distillation for Efficient and Faithful Task-Agnostic Prompt Compression</a></li>
-<li><a href="https://aclanthology.org/2024.tacl-1.9/">Lost in the Middle: How Language Models Use Long Contexts</a></li>
-<li><a href="https://arxiv.org/abs/2604.02985">Prompt Compression in the Wild: An Empirical Study of End-to-End Performance</a></li>
-</ul>
-<h3 id="evidence-caveat"><span>Evidence caveat</span><a class="heading-anchor" href="#evidence-caveat" aria-label="Link to Evidence caveat">#</a></h3><p>Provider documentation is authoritative for API behavior but not neutral evidence of workload-level savings. Several agent-context and coding-efficiency studies cited here are recent preprints. Their results justify controlled Command Center experiments, not copying their headline percentages into product promises. The repository-specific recommendations are based on a read-only audit of <code>main</code> on 2026-08-15 and should be rechecked against the live code before implementation.</p>
-
+          <h2 id="executive-summary">
+            <span>Executive summary</span
+            ><a
+              class="heading-anchor"
+              href="#executive-summary"
+              aria-label="Link to Executive summary"
+              >#</a
+            >
+          </h2>
+          <p>
+            Token efficiency should mean
+            <strong
+              >less total provider cost and less context consumed per successful
+              task</strong
+            >, not merely shorter-looking responses. That distinction changes
+            the order in which Command Center should pursue optimizations.
+          </p>
+          <p>
+            The strongest opportunities remove or avoid low-value tokens while
+            preserving the agent&#39;s ability to retrieve exact evidence. They
+            also put deterministic work in Command Center rather than asking a
+            model to remember budgets, parse logs, track retries, or decide when
+            mechanical checks have passed.
+          </p>
+          <p>The recommended order is:</p>
+          <ol>
+            <li>
+              <strong>Measure the full trajectory.</strong> Preserve cached,
+              uncached, output, reasoning, cost, latency, tool-call, retry, and
+              outcome data for ordinary conversations as well as task runs.
+            </li>
+            <li>
+              <strong>Finish existing progressive-disclosure patterns.</strong>
+              Generalize bounded output, stable handles, explicit omission
+              metadata, and spill-to-file receipts across <code>cctl</code>.
+            </li>
+            <li>
+              <strong
+                >Make execution budgets explicit while keeping enforcement
+                deterministic.</strong
+              >
+              Give agents acceptance criteria, scope, remaining budget, and a
+              stop condition; keep retry counts, validation, and halting in the
+              orchestrator.
+            </li>
+            <li>
+              <strong>Reduce persistent prompt and tool surface.</strong>
+              Inventory prompt segments, trim duplicated always-on guidance, and
+              deliberately enable provider-native lazy tool loading where it
+              proves reliable.
+            </li>
+            <li>
+              <strong>Pilot provider-aware cache improvements.</strong> Command
+              Center can improve prefix stability and cache telemetry, but the
+              provider adapters—not a generic cross-provider abstraction—must
+              own cache controls.
+            </li>
+            <li>
+              <strong>Pilot projected context at safe boundaries.</strong> Use
+              compactions, intact transcript units, and auditable supersession
+              when starting a fresh context. Do not pretend Command Center can
+              delete tokens from an opaque provider thread already in progress.
+            </li>
+            <li>
+              <strong>Add routing only after the measurements exist.</strong>
+              Begin with deterministic escalation tiers at task or lane
+              boundaries, not an LLM router making an extra paid call.
+            </li>
+            <li>
+              <strong>Do not build a general lexical prompt compressor.</strong>
+              Query-aware selection of intact chunks is useful; deleting words
+              from policies, code, errors, commands, schemas, or active agent
+              state is not.
+            </li>
+          </ol>
+          <h3 id="recommendation-matrix">
+            <span>Recommendation matrix</span
+            ><a
+              class="heading-anchor"
+              href="#recommendation-matrix"
+              aria-label="Link to Recommendation matrix"
+              >#</a
+            >
+          </h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Approach</th>
+                  <th>Command Center fit</th>
+                  <th align="right">Priority</th>
+                  <th>Primary benefit</th>
+                  <th>Main quality risk</th>
+                  <th>Recommendation</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Exact-prefix prompt caching</td>
+                  <td>Strong, but provider-mediated</td>
+                  <td align="right">P1</td>
+                  <td>Lower cost and time-to-first-token</td>
+                  <td>
+                    Low; cache invalidation is operational rather than semantic
+                  </td>
+                  <td>
+                    Instrument conversations, stabilize prefixes, then run
+                    adapter-specific experiments
+                  </td>
+                </tr>
+                <tr>
+                  <td>Lean prompts and tool catalogs</td>
+                  <td>Very strong</td>
+                  <td align="right">P1</td>
+                  <td>Lower recurring input and better signal-to-noise</td>
+                  <td>Discovery misses if too much becomes hidden</td>
+                  <td>
+                    Add prompt accounting; trim duplication; use provider-native
+                    lazy tools
+                  </td>
+                </tr>
+                <tr>
+                  <td>Stale-observation masking</td>
+                  <td>Strong at context boundaries</td>
+                  <td align="right">P2</td>
+                  <td>Lower input/context load on long trajectories</td>
+                  <td>Summary drift or removal of still-relevant evidence</td>
+                  <td>
+                    Extend compaction and transcript projection conservatively;
+                    preserve exact recovery handles
+                  </td>
+                </tr>
+                <tr>
+                  <td>Progressive, recoverable tool output</td>
+                  <td>Very strong; existing precedent</td>
+                  <td align="right">P1</td>
+                  <td>Large reduction in tool-result context</td>
+                  <td>Silent omission or unstable handles</td>
+                  <td>
+                    Generalize bounded output and content-addressed spill
+                    receipts across <code>cctl</code>
+                  </td>
+                </tr>
+                <tr>
+                  <td>Bounded success and stop conditions</td>
+                  <td>Very strong; aligned with current architecture</td>
+                  <td align="right">P1</td>
+                  <td>Fewer unnecessary turns, edits, and validations</td>
+                  <td>Premature stopping if acceptance criteria are weak</td>
+                  <td>
+                    Inject a compact execution contract; keep all enforcement in
+                    code
+                  </td>
+                </tr>
+                <tr>
+                  <td>Adaptive model and effort routing</td>
+                  <td>Useful but conditional</td>
+                  <td align="right">P3</td>
+                  <td>Lower dollar cost for easy work</td>
+                  <td>Bad routing creates rework and can break continuity</td>
+                  <td>
+                    Start with auditable deterministic escalation tiers after
+                    telemetry exists
+                  </td>
+                </tr>
+                <tr>
+                  <td>Lexical or lossy compression</td>
+                  <td>Poor as a general platform feature</td>
+                  <td align="right">P4 / reject broadly</td>
+                  <td>Smaller long natural-language context</td>
+                  <td>
+                    Dropped constraints, identifiers, negations, or ordering
+                  </td>
+                  <td>
+                    Build intact-chunk retrieval instead; allow lossy
+                    derivatives only as explicit, recoverable aids
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <h2 id="decision-lens">
+            <span>Decision lens</span
+            ><a
+              class="heading-anchor"
+              href="#decision-lens"
+              aria-label="Link to Decision lens"
+              >#</a
+            >
+          </h2>
+          <p>
+            Every proposal in this report is evaluated against five outcomes:
+          </p>
+          <ul>
+            <li>
+              <strong>Task quality:</strong> deterministic validation, semantic
+              review, scope control, and operator comprehension.
+            </li>
+            <li>
+              <strong>Total trajectory usage:</strong> every input, cache
+              write/read, output, reasoning token, tool call, retry, summarizer,
+              router, validator, and sub-agent call.
+            </li>
+            <li>
+              <strong>Cost per successful task:</strong> not cost per request
+              and not compression ratio.
+            </li>
+            <li>
+              <strong>Latency:</strong> including preprocessing, cache misses,
+              routing, retrieval, and extra round trips.
+            </li>
+            <li>
+              <strong>Recoverability:</strong> omitted information remains
+              addressable by a stable handle and exact follow-up action.
+            </li>
+          </ul>
+          <p>Two distinctions stay important throughout:</p>
+          <ol>
+            <li>
+              <strong
+                >Caching saves money and latency but does not shrink the logical
+                context window.</strong
+              >
+              Cached tokens still enter the model.
+            </li>
+            <li>
+              <strong
+                >Removing irrelevant context can improve reasoning; compressing
+                task-defining instructions can damage it.</strong
+              >
+              The content being removed matters more than the raw percentage.
+            </li>
+          </ol>
+          <hr />
+          <h2 id="1-exact-prefix-prompt-caching">
+            <span>1. Exact-prefix prompt caching</span
+            ><a
+              class="heading-anchor"
+              href="#1-exact-prefix-prompt-caching"
+              aria-label="Link to 1. Exact-prefix prompt caching"
+              >#</a
+            >
+          </h2>
+          <h3 id="general-approach">
+            <span>General approach</span
+            ><a
+              class="heading-anchor"
+              href="#general-approach"
+              aria-label="Link to General approach"
+              >#</a
+            >
+          </h3>
+          <p>
+            Prompt caching reuses computation for an identical leading sequence
+            of tokens. Static system instructions, tool schemas, examples, and
+            other common material are placed first; request-specific and
+            time-varying material comes later. When the provider recognizes the
+            prefix, it charges cached input at a lower rate and often reduces
+            time-to-first-token.
+          </p>
+          <p>
+            This is the cleanest economic optimization because the model
+            receives the same logical content. Output generation does not need
+            to change, and the approach does not impose a smaller reasoning
+            budget. The
+            <a
+              href="https://developers.openai.com/api/docs/guides/prompt-caching"
+              >OpenAI prompt-caching guide</a
+            >
+            explicitly recommends stable prefixes and static-first ordering. A
+            multi-provider agent study,
+            <a href="https://arxiv.org/abs/2601.06007"
+              >Don&#39;t Break the Cache</a
+            >, reported substantial cost and latency reductions from disciplined
+            cache boundaries, though exact results depend on provider, workload,
+            and cache policy.
+          </p>
+          <p>Caching has limits:</p>
+          <ul>
+            <li>It does not make the context window smaller.</li>
+            <li>
+              A timestamp, reordered tool, regenerated system block, or
+              compaction near the front can invalidate everything after it.
+            </li>
+            <li>First-call cache writes can cost more than uncached input.</li>
+            <li>Provider APIs expose different controls and usage fields.</li>
+            <li>
+              Subscription quotas may not track cached-token economics the same
+              way as API billing.
+            </li>
+          </ul>
+          <h3 id="command-center-assessment">
+            <span>Command Center assessment</span
+            ><a
+              class="heading-anchor"
+              href="#command-center-assessment"
+              aria-label="Link to Command Center assessment"
+              >#</a
+            >
+          </h3>
+          <p>
+            <strong>Fit: strong, with provider-specific implementation.</strong>
+            Command Center already creates session instructions once per backend
+            runtime and generally keeps them stable during that runtime. Claude
+            uses a long-lived SDK query session, while Codex starts or resumes a
+            persistent thread. That is a favorable baseline.
+          </p>
+          <p>
+            The immediate problem is observability. Task runs already normalize
+            cached-input usage through <code>AgentTaskResult</code> and
+            <code>AgentCallUsageMetrics</code>, but ordinary conversation turns
+            discard most input/output/cache counts even though the provider
+            runtimes receive them. Conversation state has nullable slots for
+            those values, so the missing link is largely in adapter result
+            mapping and the normalized conversation result.
+          </p>
+          <p>Relevant seams include:</p>
+          <ul>
+            <li>
+              <code
+                >src/lib/workflows/conversation/actor-implementations.ts</code
+              >
+              — assembles session instructions and creates runtimes.
+            </li>
+            <li>
+              <code>src/lib/agent-backends/claude/query-session.ts</code> and
+              <code>conversation-runtime.ts</code> — Claude session options,
+              result accounting, and cumulative cost handling.
+            </li>
+            <li>
+              <code>src/lib/agent-backends/codex/conversation-runtime.ts</code>
+              — Codex thread lifecycle and usage deltas.
+            </li>
+            <li>
+              <code>src/lib/agent-backends/conversation.ts</code> — normalized
+              conversation turn result.
+            </li>
+            <li>
+              <code
+                >src/lib/workflows/primitives/agent-call-conversation.ts</code
+              >
+              — conversion to shared usage metrics.
+            </li>
+            <li>
+              <code>src/lib/workflows/conversation/types.ts</code> — existing
+              persisted usage slots.
+            </li>
+          </ul>
+          <p>
+            The installed Claude Agent SDK also exposes an option that moves
+            dynamic preset sections out of the system prefix to improve
+            cacheability across users. That is worth an adapter-level
+            experiment, not an unconditional platform default: the SDK documents
+            an authority tradeoff because the moved material arrives in a user
+            message.
+          </p>
+          <h4 id="tradeoffs">
+            <span>Tradeoffs</span
+            ><a
+              class="heading-anchor"
+              href="#tradeoffs"
+              aria-label="Link to Tradeoffs"
+              >#</a
+            >
+          </h4>
+          <ul>
+            <li>
+              <strong>Provider coupling:</strong> cache controls belong inside
+              Claude and Codex adapters. A generic <code>cacheMode</code> that
+              pretends the providers have identical semantics would weaken the
+              backend seam.
+            </li>
+            <li>
+              <strong>Authority changes:</strong> moving dynamic content out of
+              a privileged system block may improve cache hits while slightly
+              weakening instruction priority.
+            </li>
+            <li>
+              <strong>False confidence:</strong> a high cache-hit ratio can
+              coexist with an oversized prompt. Cost improves while context
+              pressure does not.
+            </li>
+            <li>
+              <strong>Telemetry volume:</strong> prompt fingerprints and token
+              counts are useful; storing full prompt bodies again would create
+              duplication and potentially expose sensitive text.
+            </li>
+            <li>
+              <strong>Continuity:</strong> altering instructions on a resumed
+              provider thread may rotate or invalidate continuity. That behavior
+              must be verified per adapter.
+            </li>
+          </ul>
+          <h4 id="incorporation-sketches">
+            <span>Incorporation sketches</span
+            ><a
+              class="heading-anchor"
+              href="#incorporation-sketches"
+              aria-label="Link to Incorporation sketches"
+              >#</a
+            >
+          </h4>
+          <p>
+            <strong
+              >Sketch A — complete conversation usage telemetry first.</strong
+            >
+          </p>
+          <ol>
+            <li>
+              Extend the normalized conversation turn result with fresh input,
+              cached input, cache-creation input where available, output, and
+              reasoning-token fields.
+            </li>
+            <li>
+              Populate the fields in each provider adapter from its native usage
+              frame.
+            </li>
+            <li>
+              Reuse the existing <code>AgentCallUsageMetrics</code> path and
+              persisted conversation slots.
+            </li>
+            <li>
+              Emit one structured per-turn usage event containing backend,
+              model, effort, token classes, cost, duration, and cache-hit
+              ratio—never prompt text.
+            </li>
+            <li>
+              Show aggregate cache behavior only after per-turn data is
+              trustworthy.
+            </li>
+          </ol>
+          <p>
+            <strong
+              >Sketch B — make instruction layers explicit and
+              fingerprintable.</strong
+            >
+          </p>
+          <p>Treat the assembled prompt as ordered segments:</p>
+          <ol>
+            <li>Stable Command Center core and safety contract.</li>
+            <li>Stable backend/tool definitions.</li>
+            <li>
+              Session-stable project, worktree, profile, and alignment material.
+            </li>
+            <li>Turn-dynamic task content and runtime notices.</li>
+          </ol>
+          <p>
+            Compute segment byte/token estimates and hashes for diagnostics. The
+            composer remains the source of actual text; the diagnostic view
+            describes composition without copying secrets into a second store.
+          </p>
+          <p><strong>Sketch C — provider-native cache experiment.</strong></p>
+          <ul>
+            <li>
+              For Claude, expose the SDK&#39;s dynamic-section exclusion option
+              through the Claude adapter behind an experiment flag and verify
+              authority, cache reads, first-token latency, and task success.
+            </li>
+            <li>
+              For Codex, rely on provider behavior unless the SDK exposes a
+              supported cache control. Do not invent client cache keys that the
+              provider ignores.
+            </li>
+            <li>Run cold, warm, and post-compaction cases separately.</li>
+          </ul>
+          <p>
+            <strong>Project AGENTS.md / skills contribution.</strong> Keep root
+            instructions stable and place situational procedures behind
+            read-on-demand steering or skills. Avoid timestamps, generated
+            state, or frequently changing inventories in the persistent root
+            contract. Command Center already follows part of this pattern;
+            pruning should be based on prompt-segment measurements rather than
+            aesthetic preference.
+          </p>
+          <h4 id="guardrails-and-measures">
+            <span>Guardrails and measures</span
+            ><a
+              class="heading-anchor"
+              href="#guardrails-and-measures"
+              aria-label="Link to Guardrails and measures"
+              >#</a
+            >
+          </h4>
+          <ul>
+            <li>Cache-read tokens as a share of cache-eligible input.</li>
+            <li>Cache writes per successful task.</li>
+            <li>Uncached input cost, total cost, and time-to-first-token.</li>
+            <li>Prompt-segment size and churn rate.</li>
+            <li>Task success and continuity-reset rate.</li>
+            <li>Separate cold-start and steady-state reporting.</li>
+          </ul>
+          <hr />
+          <h2 id="2-lean-persistent-prompts-and-tool-catalogs">
+            <span>2. Lean persistent prompts and tool catalogs</span
+            ><a
+              class="heading-anchor"
+              href="#2-lean-persistent-prompts-and-tool-catalogs"
+              aria-label="Link to 2. Lean persistent prompts and tool catalogs"
+              >#</a
+            >
+          </h2>
+          <h3 id="general-approach-2">
+            <span>General approach</span
+            ><a
+              class="heading-anchor"
+              href="#general-approach-2"
+              aria-label="Link to General approach"
+              >#</a
+            >
+          </h3>
+          <p>
+            Every persistent instruction and eagerly advertised tool competes
+            for attention on every turn. A lean prompt keeps only the small,
+            high-signal contract needed everywhere. Specialized procedures,
+            examples, reference documents, and tool details are loaded when the
+            task actually reaches them.
+          </p>
+          <p>
+            This is progressive disclosure applied to both instructions and
+            capabilities:
+          </p>
+          <ul>
+            <li>
+              A compact root contract explains invariants and where deeper
+              guidance lives.
+            </li>
+            <li>
+              Skill descriptions act as a small index; full skill bodies load
+              only when triggered.
+            </li>
+            <li>
+              Tool groups expose an outline or search surface before every
+              schema is injected.
+            </li>
+            <li>
+              Reference documents appear as paths, descriptions, and retrieval
+              commands rather than full bodies.
+            </li>
+          </ul>
+          <p>
+            Anthropic&#39;s
+            <a
+              href="https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents"
+              >context-engineering guidance</a
+            >
+            recommends the smallest high-signal context that still supports the
+            decision. Its reports on
+            <a href="https://www.anthropic.com/engineering/advanced-tool-use"
+              >advanced tool use</a
+            >
+            and
+            <a
+              href="https://www.anthropic.com/engineering/code-execution-with-mcp"
+              >code execution with MCP</a
+            >
+            show large vendor-run reductions from tool search, lazy loading, and
+            programmatic filtering. Those headline figures are illustrative
+            rather than a promise for Command Center, but the architectural
+            lesson is sound.
+          </p>
+          <h3 id="command-center-assessment-2">
+            <span>Command Center assessment</span
+            ><a
+              class="heading-anchor"
+              href="#command-center-assessment-2"
+              aria-label="Link to Command Center assessment"
+              >#</a
+            >
+          </h3>
+          <p>
+            <strong>Fit: very strong.</strong> Command Center already contains
+            several good disclosure patterns:
+          </p>
+          <ul>
+            <li>
+              Reference documents are injected as path/description pointers
+              rather than full content.
+            </li>
+            <li>Managed Claude and Codex skills are delivered on demand.</li>
+            <li>
+              <code>cctl</code> help is organized as a command graph rather than
+              one enormous manual.
+            </li>
+            <li>
+              Agent-profile listings omit instruction bodies; callers fetch one
+              qualified profile when needed.
+            </li>
+            <li>
+              MCP servers and tools can be disabled through existing overrides.
+            </li>
+          </ul>
+          <p>The gaps are also concrete:</p>
+          <ul>
+            <li>
+              The always-on Command Center context and ask guidance are sizeable
+              even though detailed procedures already exist in the
+              <code>agent-context</code> and <code>cc-cli</code> skills.
+            </li>
+            <li>
+              The MCP composer eagerly describes configured servers. Existing
+              discovery caching is for UI/inventory management, not model-side
+              lazy loading.
+            </li>
+            <li>
+              Claude stdio tool filtering can deny a call without necessarily
+              removing the schema from the prompt.
+            </li>
+            <li>
+              Provider-native tool-search capabilities are not deliberately
+              configured or measured by Command Center.
+            </li>
+          </ul>
+          <p>
+            Relevant seams include <code>src/lib/prompt/sdk-driver.ts</code>,
+            <code>src/lib/mcp/composer.ts</code>,
+            <code>src/lib/mcp/compose-for-conversation.ts</code>, backend MCP
+            translation modules, managed-skill bridges, and the agent-profile
+            composer.
+          </p>
+          <h4 id="tradeoffs-2">
+            <span>Tradeoffs</span
+            ><a
+              class="heading-anchor"
+              href="#tradeoffs-2"
+              aria-label="Link to Tradeoffs"
+              >#</a
+            >
+          </h4>
+          <ul>
+            <li>
+              <strong>Discovery misses:</strong> a tool the model never sees
+              cannot be selected. Safety-critical and recovery tools may need to
+              remain eager.
+            </li>
+            <li>
+              <strong>Extra round trips:</strong> search-then-load adds latency
+              and sometimes another model step, although round trips are usually
+              cheaper than permanently carrying a large catalog.
+            </li>
+            <li>
+              <strong>Prompt fragmentation:</strong> too many tiny skills can
+              shift cost from model context to human memory and unreliable
+              invocation.
+            </li>
+            <li>
+              <strong>Provider differences:</strong> one backend may support
+              true deferred schemas while another only supports call-time
+              filtering.
+            </li>
+            <li>
+              <strong>Hidden duplication:</strong> the same rule in AGENTS.md, a
+              managed skill, an agent profile, and runtime guidance wastes
+              tokens and creates maintenance drift.
+            </li>
+          </ul>
+          <h4 id="incorporation-sketches-2">
+            <span>Incorporation sketches</span
+            ><a
+              class="heading-anchor"
+              href="#incorporation-sketches-2"
+              aria-label="Link to Incorporation sketches"
+              >#</a
+            >
+          </h4>
+          <p><strong>Sketch A — a prompt bill of materials.</strong></p>
+          <p>
+            Add a developer-facing diagnostic view for a conversation runtime:
+          </p>
+          <ul>
+            <li>Segment name and owner.</li>
+            <li>Stable, session-stable, or turn-dynamic classification.</li>
+            <li>Estimated tokens and bytes.</li>
+            <li>Hash/fingerprint and last-change reason.</li>
+            <li>
+              Whether the segment is cached, provider-generated, or unavailable
+              to inspect.
+            </li>
+            <li>
+              Tool counts by server, with eager/deferred/disabled state where
+              the backend exposes it.
+            </li>
+          </ul>
+          <p>
+            This is the prerequisite for deciding what to trim. It should be
+            diagnostics, not another canonical prompt representation.
+          </p>
+          <p>
+            <strong
+              >Sketch B — shrink the always-on Command Center block.</strong
+            >
+          </p>
+          <p>
+            Keep worktree identity, safety constraints, mandatory communication
+            protocol, and the one-line path to <code>cctl</code> help. Move
+            procedural command detail that the agent can retrieve from managed
+            skills out of the persistent block. Preserve project alignment and
+            agent-profile instructions as privileged session material.
+          </p>
+          <p>
+            The change should be tested as a prompt-contract migration: compare
+            task success, tool-discovery failures, clarification requests, and
+            total input—not only the number of lines removed.
+          </p>
+          <p>
+            <strong>Sketch C — explicit minimal capability surfaces.</strong>
+          </p>
+          <p>
+            Build on existing MCP overrides rather than adding a parallel tool
+            registry:
+          </p>
+          <ul>
+            <li>
+              Default unused whole servers off for a session or workflow role.
+            </li>
+            <li>Keep a small eager set for universally required operations.</li>
+            <li>
+              Enable provider-native tool search for the rest where supported.
+            </li>
+            <li>
+              Record which deferred tool was searched, loaded, selected, or
+              missed.
+            </li>
+            <li>
+              Treat provider-native discovery as an adapter capability with
+              honest <code>supported</code> / <code>unsupported</code> behavior.
+            </li>
+          </ul>
+          <p>
+            <strong
+              >Sketch D — project-owned guidance stays project-owned.</strong
+            >
+          </p>
+          <p>
+            Repository-specific testing, logging, architecture, and workflow
+            rules belong in this project&#39;s AGENTS.md, steering files, and
+            project skills. Cross-project <code>cctl</code> protocol belongs in
+            the managed Command Center skill bundle. Agent profiles remain
+            prompt identity only; they should not absorb tool policy or
+            model-routing policy.
+          </p>
+          <h4 id="guardrails-and-measures-2">
+            <span>Guardrails and measures</span
+            ><a
+              class="heading-anchor"
+              href="#guardrails-and-measures-2"
+              aria-label="Link to Guardrails and measures"
+              >#</a
+            >
+          </h4>
+          <ul>
+            <li>Persistent prompt tokens per new runtime.</li>
+            <li>Eager tool-schema tokens and number of advertised tools.</li>
+            <li>Tool-search steps, discovery misses, and fallbacks.</li>
+            <li>Duplicate-rule inventory with one declared owner per rule.</li>
+            <li>Task success, time-to-first-tool, and total turns.</li>
+            <li>A must-remain-eager allowlist justified by observed need.</li>
+          </ul>
+          <hr />
+          <h2 id="3-context-lifecycle-and-stale-observation-masking">
+            <span>3. Context lifecycle and stale-observation masking</span
+            ><a
+              class="heading-anchor"
+              href="#3-context-lifecycle-and-stale-observation-masking"
+              aria-label="Link to 3. Context lifecycle and stale-observation masking"
+              >#</a
+            >
+          </h2>
+          <h3 id="general-approach-3">
+            <span>General approach</span
+            ><a
+              class="heading-anchor"
+              href="#general-approach-3"
+              aria-label="Link to General approach"
+              >#</a
+            >
+          </h3>
+          <p>
+            Long-running agents accumulate file reads, search results, test
+            logs, directory listings, old plans, and superseded decisions. Much
+            of that history remains useful as an audit trail but no longer
+            deserves equal weight in the active working context.
+          </p>
+          <p>A safe context-lifecycle strategy separates three things:</p>
+          <ol>
+            <li>
+              <strong>Immutable history:</strong> the lossless transcript
+              remains available.
+            </li>
+            <li>
+              <strong>Durable working state:</strong> current objective,
+              accepted decisions, files changed, validation state, open
+              questions, and exact evidence handles.
+            </li>
+            <li>
+              <strong>Recent trajectory:</strong> enough uncompressed turns and
+              tool interactions to preserve local reasoning and recovery
+              context.
+            </li>
+          </ol>
+          <p>
+            Older observations can then be masked or represented by auditable
+            handles when a fresh agent context is seeded. The strongest
+            coding-agent evidence comes from
+            <a href="https://arxiv.org/abs/2508.21433">The Complexity Trap</a>,
+            which found environment observations dominated context and that
+            rolling-window masking roughly halved costs on SWE-bench agents
+            without a significant solve-rate loss.
+            <a href="https://arxiv.org/abs/2509.23586">AgentDiet</a> reports
+            similar input reductions on coding benchmarks. Both are recent
+            research results, not proof that one fixed masking policy will work
+            for every Command Center workload.
+          </p>
+          <p>
+            LLM summarization alone is not a sufficient strategy. It can cost
+            another model call, smooth over an incorrect assumption, omit an
+            exact edit anchor, or cause the agent to perform more work. The safe
+            pattern is recent raw context plus structured durable state plus
+            exact recovery handles.
+          </p>
+          <h3 id="command-center-assessment-3">
+            <span>Command Center assessment</span
+            ><a
+              class="heading-anchor"
+              href="#command-center-assessment-3"
+              aria-label="Link to Command Center assessment"
+              >#</a
+            >
+          </h3>
+          <p>
+            <strong
+              >Fit: strong at context boundaries; limited inside active opaque
+              provider sessions.</strong
+            >
+            Command Center owns a lossless transcript and already has
+            sophisticated context artifacts:
+          </p>
+          <ul>
+            <li>
+              Transcript logical units keep a tool result with its originating
+              tool call.
+            </li>
+            <li>
+              Rendering supports outlines, message/sequence ranges, search, tool
+              detail levels, and byte budgets.
+            </li>
+            <li>
+              Compactions track both source freshness and prompt/schema/model
+              drift.
+            </li>
+            <li>
+              Delta compaction preserves non-superseded decisions and
+              mechanically enforces monotonic source coverage.
+            </li>
+            <li>
+              Graph lanes already have a context-limit gate and context-rotation
+              behavior.
+            </li>
+          </ul>
+          <p>
+            The crucial limitation is provider continuity. Claude and Codex
+            sessions are resumed through opaque provider references. Command
+            Center does not reconstruct and resend an editable full history on
+            every turn. It therefore cannot silently remove old observations
+            from an already-running provider thread. Masking can improve:
+          </p>
+          <ul>
+            <li><code>cctl</code> transcript reads.</li>
+            <li>Compaction inputs and outputs.</li>
+            <li>
+              New conversations or graph-lane contexts seeded from an artifact.
+            </li>
+            <li>
+              A future explicit &quot;restart from projected context&quot;
+              operation.
+            </li>
+          </ul>
+          <p>
+            It cannot honestly claim to shrink an active resumed thread without
+            backend support.
+          </p>
+          <h4 id="tradeoffs-3">
+            <span>Tradeoffs</span
+            ><a
+              class="heading-anchor"
+              href="#tradeoffs-3"
+              aria-label="Link to Tradeoffs"
+              >#</a
+            >
+          </h4>
+          <ul>
+            <li>
+              <strong>Semantic supersession is hard:</strong> two reads of the
+              same path may differ by range, commit, working-tree state, or
+              intervening writes.
+            </li>
+            <li>
+              <strong>Summary drift:</strong> a concise artifact can preserve a
+              wrong conclusion more confidently than raw history did.
+            </li>
+            <li>
+              <strong>Recovery cost:</strong> excessive masking causes
+              re-fetches and can lengthen the trajectory.
+            </li>
+            <li>
+              <strong>Cache interaction:</strong> starting a fresh projected
+              context may break a warm provider prefix even while reducing
+              context size.
+            </li>
+            <li>
+              <strong>Continuity loss:</strong> a fresh context can lose
+              provider-native planning state or learned interaction patterns.
+            </li>
+            <li>
+              <strong>Security and privacy:</strong> derived artifacts must
+              inherit the source material&#39;s access boundary and retention
+              policy.
+            </li>
+          </ul>
+          <h4 id="incorporation-sketches-3">
+            <span>Incorporation sketches</span
+            ><a
+              class="heading-anchor"
+              href="#incorporation-sketches-3"
+              aria-label="Link to Incorporation sketches"
+              >#</a
+            >
+          </h4>
+          <p><strong>Sketch A — expose stable logical-unit handles.</strong></p>
+          <p>
+            Promote the transcript&#39;s existing unit segmentation into the
+            read API. Each outline entry should carry a stable sequence range,
+            byte size, tool relationship, and exact follow-up command. A handle
+            such as <code>seq:120-137</code> remains stable as the transcript
+            grows; a positional <code>chunk 4</code> does not.
+          </p>
+          <p>
+            If one logical unit exceeds the stdout budget, spill it intact to a
+            file rather than splitting it mid-record. This preserves code, JSON,
+            errors, and paired tool context.
+          </p>
+          <p>
+            <strong
+              >Sketch B — conservative stale-observation projection.</strong
+            >
+          </p>
+          <p>Before compaction or a projected-context restart:</p>
+          <ol>
+            <li>Pair tool uses and results.</li>
+            <li>
+              Derive a conservative resource key only for understood, read-only
+              operations.
+            </li>
+            <li>
+              Mark an earlier successful read superseded by a later successful
+              read of the same resource and compatible scope.
+            </li>
+            <li>
+              Never mask writes, failures, ambiguous calls, safety warnings,
+              accepted decisions, or the current validation failure.
+            </li>
+            <li>
+              Record every omission with its original sequence range and
+              replacement sequence.
+            </li>
+          </ol>
+          <p>
+            Start with a narrow, auditable class such as repeated status reads
+            or identical file-range reads. Do not begin with an LLM deciding
+            what is obsolete.
+          </p>
+          <p>
+            <strong>Sketch C — explicit restart from projected context.</strong>
+          </p>
+          <p>If later warranted, make context restart a visible operation:</p>
+          <ul>
+            <li>Preserve the original transcript and provider reference.</li>
+            <li>Generate or refresh a compaction.</li>
+            <li>Present the projected seed and its source coverage.</li>
+            <li>
+              Start a new backend context with the stable core, current
+              artifact, exact open evidence handles, and a recent raw tail.
+            </li>
+            <li>
+              Record the lineage and compare results with uninterrupted
+              continuity.
+            </li>
+          </ul>
+          <p>
+            This belongs behind a backend capability because restart and resume
+            semantics differ.
+          </p>
+          <p>
+            <strong>Project AGENTS.md / skills contribution.</strong> A project
+            rule can require re-reading mutable state immediately before acting
+            and treating older reads as historical. The existing
+            <code>cc-cli</code> skill already teaches compaction-first,
+            outline-second, bounded-window-third retrieval. Keep detailed log
+            and source-navigation recipes in project skills, where they load
+            only when relevant.
+          </p>
+          <h4 id="guardrails-and-measures-3">
+            <span>Guardrails and measures</span
+            ><a
+              class="heading-anchor"
+              href="#guardrails-and-measures-3"
+              aria-label="Link to Guardrails and measures"
+              >#</a
+            >
+          </h4>
+          <ul>
+            <li>Input tokens per turn before and after projection.</li>
+            <li>Compaction-generation tokens and latency.</li>
+            <li>Re-fetch rate and additional tool calls.</li>
+            <li>
+              Task success, semantic-review score, and exact-constraint
+              retention.
+            </li>
+            <li>Superseded-observation counts by deterministic rule.</li>
+            <li>Continuity resets and recovery failures.</li>
+            <li>
+              A sampled human audit of every new masking rule before broad
+              enablement.
+            </li>
+          </ul>
+          <hr />
+          <h2 id="4-progressive-recoverable-tool-output">
+            <span>4. Progressive, recoverable tool output</span
+            ><a
+              class="heading-anchor"
+              href="#4-progressive-recoverable-tool-output"
+              aria-label="Link to 4. Progressive, recoverable tool output"
+              >#</a
+            >
+          </h2>
+          <h3 id="general-approach-4">
+            <span>General approach</span
+            ><a
+              class="heading-anchor"
+              href="#general-approach-4"
+              aria-label="Link to General approach"
+              >#</a
+            >
+          </h3>
+          <p>
+            Tool results are often the largest controllable part of an agent
+            trajectory. The correct default is not &quot;print everything in
+            case it matters&quot; and not &quot;truncate silently.&quot; It is a
+            bounded digest that tells the agent:
+          </p>
+          <ul>
+            <li>What exists.</li>
+            <li>What was returned.</li>
+            <li>What was omitted and how much.</li>
+            <li>The stable handle for each item.</li>
+            <li>The exact command or range that retrieves more.</li>
+            <li>
+              Where a full result was written if stdout would be excessive.
+            </li>
+          </ul>
+          <p>The disclosure ladder is:</p>
+          <ol>
+            <li>Counts and high-level status.</li>
+            <li>Bounded outline with stable handles.</li>
+            <li>Scoped detail for one handle or range.</li>
+            <li>Explicit full output, spilled to a file past a threshold.</li>
+          </ol>
+          <p>
+            Round trips are usually cheaper than carrying a large result through
+            every subsequent turn. But compression must remain recoverable.
+            JetBrains&#39;
+            <a
+              href="https://blog.jetbrains.com/ai/2026/07/rtk-claude-code-token-savings/"
+              >RTK benchmark</a
+            >
+            is a useful warning: at low reasoning effort the RTK arm showed
+            median increases of 7.6% in cost and 13.8% in turns, while cost was
+            approximately neutral at high effort. The causes were mixed, so the
+            defensible conclusion is that local output reduction can trigger
+            compensating trajectory behavior—not that shortened output alone
+            always causes more calls.
+          </p>
+          <h3 id="command-center-assessment-4">
+            <span>Command Center assessment</span
+            ><a
+              class="heading-anchor"
+              href="#command-center-assessment-4"
+              aria-label="Link to Command Center assessment"
+              >#</a
+            >
+          </h3>
+          <p>
+            <strong
+              >Fit: very strong, and much of the design already exists.</strong
+            >
+            <code>cctl</code> has several production-ready pieces:
+          </p>
+          <ul>
+            <li>
+              Conversation reads support bounded outlines, ranges, search, and
+              tool detail levels.
+            </li>
+            <li>
+              Ticket attachment indexes use stable IDs and print exact retrieval
+              commands.
+            </li>
+            <li>
+              Workflow and spec reads default to outlines and targeted
+              selectors.
+            </li>
+            <li>
+              Spec reads enforce a 60 KB stdout budget and automatically write
+              oversized content to a content-addressed
+              <code>.cc/temp</code> file with byte count, digest, format, and
+              reason.
+            </li>
+            <li>
+              Log analysis already uses ranked limits and explicit finding
+              budgets.
+            </li>
+          </ul>
+          <p>
+            The implementation is uneven. Conversation truncation does not
+            always expose an exact continuation handle. Ticket attachment
+            retrieval can still dump a full body. Reference documents have no
+            ranged <code>get</code> command. The spec spill-to-file behavior has
+            not been generalized.
+          </p>
+          <p>Relevant seams include:</p>
+          <ul>
+            <li>
+              <code>src/lib/conversations/transcript-logical-units.ts</code> and
+              <code>transcript-render.ts</code>.
+            </li>
+            <li><code>src/cli/commands/conversation.ts</code>.</li>
+            <li>
+              <code>src/cli/commands/spec/read.ts</code> and
+              <code>read-envelopes.ts</code>.
+            </li>
+            <li>
+              <code>src/lib/tickets/attachment-index.ts</code> and
+              <code>src/cli/commands/ticket.ts</code>.
+            </li>
+            <li>
+              <code>src/lib/workflows/primitives/artifact-registry.ts</code>.
+            </li>
+            <li><code>src/lib/logging/log-analysis/</code>.</li>
+          </ul>
+          <h4 id="tradeoffs-4">
+            <span>Tradeoffs</span
+            ><a
+              class="heading-anchor"
+              href="#tradeoffs-4"
+              aria-label="Link to Tradeoffs"
+              >#</a
+            >
+          </h4>
+          <ul>
+            <li>
+              <strong>Extra calls:</strong> a bounded default can require a
+              drill-down call. This is acceptable only if the next command is
+              obvious and cheap.
+            </li>
+            <li>
+              <strong>Silent incompleteness:</strong> omission metadata is part
+              of correctness, not decoration. A truncated payload without it is
+              worse than a large payload.
+            </li>
+            <li>
+              <strong>Unstable handles:</strong> array positions and relevance
+              ranks can change; sequence ranges, IDs, paths, and content digests
+              are safer.
+            </li>
+            <li>
+              <strong>Upstream loss:</strong> Command Center cannot recover
+              bytes a provider or native tool already discarded. Artifact
+              capture must happen at the owning boundary.
+            </li>
+            <li>
+              <strong>Temporary-file accumulation:</strong> spill artifacts need
+              bounded retention and must not become durable reference documents
+              automatically.
+            </li>
+            <li>
+              <strong>Generic-envelope temptation:</strong> domains should keep
+              their meaning. A shared bounded-output helper can standardize
+              budgets and receipts without flattening every command into one
+              universal response type.
+            </li>
+          </ul>
+          <h4 id="incorporation-sketches-4">
+            <span>Incorporation sketches</span
+            ><a
+              class="heading-anchor"
+              href="#incorporation-sketches-4"
+              aria-label="Link to Incorporation sketches"
+              >#</a
+            >
+          </h4>
+          <p>
+            <strong
+              >Sketch A — extract the spec spill behavior as a shared composable
+              helper.</strong
+            >
+          </p>
+          <p>The helper should:</p>
+          <ul>
+            <li>
+              Accept text and structured renderers plus an explicit stdout
+              budget.
+            </li>
+            <li>
+              Preserve the domain command&#39;s normal compact output when under
+              budget.
+            </li>
+            <li>
+              Write oversized output atomically beneath <code>.cc/temp/</code>.
+            </li>
+            <li>
+              Return a typed receipt containing path, media type, bytes,
+              SHA-256, truncation/spill reason, and exact follow-up actions.
+            </li>
+            <li>
+              Never register the temporary artifact as durable unless the user
+              or workflow explicitly promotes it.
+            </li>
+          </ul>
+          <p>
+            First adopters should be <code>conversation read</code>, compaction
+            <code>get</code>, ticket attachment <code>get</code>, and large
+            diagnostic views.
+          </p>
+          <p>
+            <strong>Sketch B — sequence-addressed transcript retrieval.</strong>
+          </p>
+          <p>
+            Return the server&#39;s logical-unit sequence metadata through the
+            CLI instead of dropping it. Every omitted region should include
+            <code>total</code>, <code>returned</code>, <code>truncated</code>,
+            and either a next cursor or an exact
+            <code>--seq-range</code> command. Structured JSON mode must carry
+            the same facts.
+          </p>
+          <p>
+            <strong
+              >Sketch C — a recoverable tool-result manifest for CC-owned
+              operations.</strong
+            >
+          </p>
+          <p>For large results Command Center controls, retain:</p>
+          <ul>
+            <li>A bounded excerpt.</li>
+            <li>Total and retained bytes.</li>
+            <li>Digest.</li>
+            <li>Artifact path or logical handle.</li>
+            <li>
+              Whether truncation occurred in Command Center, the provider, or
+              the underlying tool.
+            </li>
+            <li>Exact retrieval command.</li>
+          </ul>
+          <p>
+            The UI can render the excerpt collapsed and offer &quot;view full
+            result&quot; without injecting the full body into every agent-facing
+            view.
+          </p>
+          <p><strong>Sketch D — project validation and log output.</strong></p>
+          <p>
+            For tools outside Command Center&#39;s direct control, keep project
+            wrappers and skills responsible. Registered validation commands
+            should suppress passing-test noise, retain complete failure detail,
+            disable color, bail where appropriate, and spill pathological
+            output. Command Center&#39;s native validation service should
+            continue to own admission, ordering, and exit status.
+          </p>
+          <h4 id="guardrails-and-measures-4">
+            <span>Guardrails and measures</span
+            ><a
+              class="heading-anchor"
+              href="#guardrails-and-measures-4"
+              aria-label="Link to Guardrails and measures"
+              >#</a
+            >
+          </h4>
+          <ul>
+            <li>Default output bytes/tokens by command.</li>
+            <li>Percentage of calls that require a drill-down.</li>
+            <li>Follow-up success rate and invalid-handle rate.</li>
+            <li>Spill count, artifact size, and retention cleanup.</li>
+            <li>Tool-call count and total trajectory cost.</li>
+            <li>
+              Task failures attributable to omitted or upstream-truncated
+              evidence.
+            </li>
+            <li>
+              Contract tests that every truncated response states what was
+              omitted and how to retrieve it.
+            </li>
+          </ul>
+          <hr />
+          <h2 id="5-bounded-success-and-stop-conditions">
+            <span>5. Bounded success and stop conditions</span
+            ><a
+              class="heading-anchor"
+              href="#5-bounded-success-and-stop-conditions"
+              aria-label="Link to 5. Bounded success and stop conditions"
+              >#</a
+            >
+          </h2>
+          <h3 id="general-approach-5">
+            <span>General approach</span
+            ><a
+              class="heading-anchor"
+              href="#general-approach-5"
+              aria-label="Link to General approach"
+              >#</a
+            >
+          </h3>
+          <p>
+            Agents often spend excess tokens because the task has no explicit
+            stopping boundary. Instructions such as &quot;think deeply,&quot;
+            &quot;consider several approaches,&quot; or &quot;make it
+            production-ready&quot; can encourage exploration, polish, and
+            validation after the actual requirement is satisfied.
+          </p>
+          <p>A bounded execution contract gives the agent:</p>
+          <ul>
+            <li>The objective.</li>
+            <li>The allowed scope.</li>
+            <li>Concrete acceptance criteria.</li>
+            <li>Relevant non-goals and invariants.</li>
+            <li>The smallest-sufficient-change expectation.</li>
+            <li>The current execution budget.</li>
+            <li>A stop condition and escalation path.</li>
+          </ul>
+          <p>
+            The model should not enforce its own iteration budget. Deterministic
+            code counts attempts, runs validations, opens circuit breakers, and
+            decides whether another turn is admitted. The model uses the budget
+            information to choose a sensible next action.
+          </p>
+          <p>
+            A recent preregistered study of coding prompts found that open-ended
+            requests to develop and compare multiple approaches could multiply
+            reasoning usage, while a bounded-efficiency template retained
+            success with materially less reasoning for some models. The tasks
+            were small and the work is recent, so it supports a measured design
+            direction rather than a universal numeric claim.
+            <a href="https://arxiv.org/abs/2608.01347">Study</a>
+          </p>
+          <h3 id="command-center-assessment-5">
+            <span>Command Center assessment</span
+            ><a
+              class="heading-anchor"
+              href="#command-center-assessment-5"
+              aria-label="Link to Command Center assessment"
+              >#</a
+            >
+          </h3>
+          <p>
+            <strong>Fit: exceptionally strong.</strong> This is already Command
+            Center&#39;s architectural direction:
+          </p>
+          <ul>
+            <li>Graph contexts carry tasks and acceptance criteria.</li>
+            <li>
+              Iteration policy, hard limits, circuit breakers, context-limit
+              gates, and total-pass backstops are mechanically enforced.
+            </li>
+            <li>
+              Registered validation runs through a central service with explicit
+              cost and admission policy.
+            </li>
+            <li>Script validation runs before semantic agent validation.</li>
+            <li>
+              Structured-output gates validate the agent&#39;s artifact rather
+              than trusting prose.
+            </li>
+            <li>
+              Filesystem write boundaries and workflow task completion are
+              mechanically controlled.
+            </li>
+          </ul>
+          <p>
+            One useful gap is that the graph engine knows the iteration budget,
+            but the main iteration prompt does not clearly expose current,
+            maximum, and remaining iterations. The agent can therefore be near a
+            hard stop without using that fact to prioritize acceptance criteria
+            over optional polish.
+          </p>
+          <p>
+            Relevant seams include
+            <code>src/lib/workflow-graph/iteration-prompt.ts</code>,
+            <code>execution-loop.ts</code>, <code>config-schemas.ts</code>,
+            <code>resolve-config.ts</code>, the circuit-breaker and
+            context-limit primitives, and
+            <code>src/lib/validation/service.ts</code>.
+          </p>
+          <h4 id="tradeoffs-5">
+            <span>Tradeoffs</span
+            ><a
+              class="heading-anchor"
+              href="#tradeoffs-5"
+              aria-label="Link to Tradeoffs"
+              >#</a
+            >
+          </h4>
+          <ul>
+            <li>
+              <strong>Bad criteria cause premature completion:</strong> an
+              explicit stop condition is only as good as the acceptance
+              criteria.
+            </li>
+            <li>
+              <strong>Local optimization:</strong> &quot;smallest change&quot;
+              can discourage necessary architectural work or root-cause fixes if
+              applied dogmatically.
+            </li>
+            <li>
+              <strong>Prompt duplication:</strong> repeating the full contract
+              on every turn wastes the very tokens being saved.
+            </li>
+            <li>
+              <strong>Budget gaming:</strong> an agent may rush when shown a low
+              remaining count. The prompt must tell it to surface a blocker
+              rather than declare weak completion.
+            </li>
+            <li>
+              <strong>Exploration suppression:</strong> some design and
+              debugging tasks genuinely need comparison. The contract needs an
+              escape hatch for unresolved, consequential choices.
+            </li>
+          </ul>
+          <h4 id="incorporation-sketches-5">
+            <span>Incorporation sketches</span
+            ><a
+              class="heading-anchor"
+              href="#incorporation-sketches-5"
+              aria-label="Link to Incorporation sketches"
+              >#</a
+            >
+          </h4>
+          <p>
+            <strong
+              >Sketch A — add a compact execution-budget section to graph
+              prompts.</strong
+            >
+          </p>
+          <p>
+            At each iteration include only current facts the orchestrator owns:
+          </p>
+          <ul>
+            <li>Current task and acceptance criteria.</li>
+            <li>
+              Iteration <code>n</code> of <code>max</code> and remaining count.
+            </li>
+            <li>Current deterministic validation state.</li>
+            <li>Scope/non-goals already declared for the context.</li>
+            <li>
+              A short instruction: satisfy the current criteria before optional
+              polish; do not expand scope; surface a concrete blocker if
+              completion is unsafe.
+            </li>
+          </ul>
+          <p>
+            The engine remains the sole authority for counting and stopping.
+            Never ask the agent to echo iteration numbers in structured output.
+          </p>
+          <p>
+            <strong
+              >Sketch B — derive, do not duplicate, the execution
+              contract.</strong
+            >
+          </p>
+          <p>
+            Compose the prompt section from existing workflow/task fields and
+            resolved config. Do not add a second free-text &quot;efficiency
+            prompt&quot; that can contradict acceptance criteria, validation
+            policy, or context limits.
+          </p>
+          <p><strong>Sketch C — preserve cheap-gate-first ordering.</strong></p>
+          <p>
+            Continue running deterministic validators before semantic agent
+            validators. Give the agent only actionable failures, not pages of
+            successful checks. When all deterministic gates pass, use the model
+            for the part only a model can judge: whether the change satisfies
+            intent and is appropriately scoped.
+          </p>
+          <p><strong>Sketch D — project AGENTS.md / skill guidance.</strong></p>
+          <p>A compact project-level rule is appropriate:</p>
+          <blockquote>
+            <p>
+              Make the smallest sufficient change within the stated scope.
+              Success means the acceptance criteria and registered validation
+              pass. Stop when they do; compare alternatives only when the choice
+              remains consequential and unresolved.
+            </p>
+          </blockquote>
+          <p>
+            Keep detailed task-authoring advice in a project skill rather than
+            expanding root AGENTS.md. Root guidance should contain only durable
+            rules supported by repeated failures.
+          </p>
+          <h4 id="guardrails-and-measures-5">
+            <span>Guardrails and measures</span
+            ><a
+              class="heading-anchor"
+              href="#guardrails-and-measures-5"
+              aria-label="Link to Guardrails and measures"
+              >#</a
+            >
+          </h4>
+          <ul>
+            <li>Turns and tool calls per completed task.</li>
+            <li>Patch size and touched-file count, normalized by task.</li>
+            <li>Iterations spent after all acceptance criteria first pass.</li>
+            <li>Reopen, reviewer-loss, and regression rates.</li>
+            <li>Premature-completion incidents.</li>
+            <li>Validation cost by deterministic versus model gate.</li>
+            <li>
+              Human assessment of whether the smallest change was actually
+              sufficient.
+            </li>
+          </ul>
+          <hr />
+          <h2 id="6-adaptive-model-and-reasoning-effort-routing">
+            <span>6. Adaptive model and reasoning-effort routing</span
+            ><a
+              class="heading-anchor"
+              href="#6-adaptive-model-and-reasoning-effort-routing"
+              aria-label="Link to 6. Adaptive model and reasoning-effort routing"
+              >#</a
+            >
+          </h2>
+          <h3 id="general-approach-6">
+            <span>General approach</span
+            ><a
+              class="heading-anchor"
+              href="#general-approach-6"
+              aria-label="Link to General approach"
+              >#</a
+            >
+          </h3>
+          <p>
+            Not every operation needs the most capable model or the highest
+            reasoning effort. Routing assigns cheap, bounded work to an
+            economical configuration and reserves stronger configurations for
+            ambiguous, high-impact, or repeatedly failing work.
+          </p>
+          <p>Routing can be:</p>
+          <ul>
+            <li>
+              <strong>Static by role or task class:</strong> naming,
+              classification, compaction, implementation, validation, or plan
+              repair each receive an explicit profile.
+            </li>
+            <li>
+              <strong>Deterministic escalation:</strong> start at a configured
+              base and move to a stronger tier after defined failure evidence.
+            </li>
+            <li>
+              <strong>Learned or model-based:</strong> a router predicts
+              difficulty and selects a model.
+            </li>
+            <li>
+              <strong>Cascade-based:</strong> a cheap model attempts the task; a
+              verifier or failure signal decides whether to escalate.
+            </li>
+          </ul>
+          <p>
+            <a
+              href="https://proceedings.iclr.cc/paper_files/paper/2025/hash/5503a7c69d48a2f86fc00b3dc09de686-Abstract-Conference.html"
+              >RouteLLM</a
+            >
+            demonstrates that routing can substantially reduce benchmark cost at
+            matched aggregate quality. Research on
+            <a
+              href="https://proceedings.iclr.cc/paper_files/paper/2025/hash/1b623663fd9b874366f3ce019fdfdd44-Abstract-Conference.html"
+              >optimal test-time compute</a
+            >
+            similarly supports allocating more computation to harder questions.
+            These results establish a useful principle, not a ready-made
+            production router for autonomous coding.
+          </p>
+          <p>
+            The same principle applies inside a reasoning model.
+            <a href="https://arxiv.org/abs/2503.01141"
+              >How Well do LLMs Compress Their Own Chain-of-Thought?</a
+            >
+            finds task-specific minimum reasoning lengths and a general
+            length–accuracy tradeoff, while
+            <a href="https://aclanthology.org/2025.findings-acl.1274/">TALE</a>
+            reports meaningful reasoning-token reductions from adaptive budgets
+            with a modest average quality cost. Together they support effort
+            that adapts to the task rather than one fixed low-token reasoning
+            policy.
+          </p>
+          <p>
+            Routing usually saves <strong>dollars</strong>, not necessarily
+            total tokens. A cheaper model may use more tokens, and a mistaken
+            cheap attempt followed by an expensive retry can cost more than
+            starting strong.
+          </p>
+          <h3 id="command-center-assessment-6">
+            <span>Command Center assessment</span
+            ><a
+              class="heading-anchor"
+              href="#command-center-assessment-6"
+              aria-label="Link to Command Center assessment"
+              >#</a
+            >
+          </h3>
+          <p>
+            <strong
+              >Fit: useful, but only after measurement and at explicit
+              boundaries.</strong
+            >
+            Command Center already performs role-specific static routing:
+          </p>
+          <ul>
+            <li>
+              Conversation model and effort resolve through explicit turn,
+              scoped/last-used, configured profile, and backend defaults.
+            </li>
+            <li>Naming uses a cheap, low-effort isolated task.</li>
+            <li>Compaction has separate model/effort configuration.</li>
+            <li>
+              Plan repair defaults to a strong, high-effort configuration.
+            </li>
+            <li>
+              Graph implementers and validators carry concrete backend, model,
+              and reasoning effort through the global → workflow → context
+              cascade.
+            </li>
+          </ul>
+          <p>This is a good foundation. It also reveals constraints:</p>
+          <ul>
+            <li>
+              Agent profiles are prompt identity only and must not become
+              runtime-routing policy.
+            </li>
+            <li>
+              Graph assignments are resolved and snapshotted for
+              reproducibility.
+            </li>
+            <li>
+              Continuity fingerprints include backend, model, and effort;
+              changing an assignment rotates context.
+            </li>
+            <li>
+              A backend switch must never reuse an opaque provider reference
+              accidentally.
+            </li>
+          </ul>
+          <h4 id="tradeoffs-6">
+            <span>Tradeoffs</span
+            ><a
+              class="heading-anchor"
+              href="#tradeoffs-6"
+              aria-label="Link to Tradeoffs"
+              >#</a
+            >
+          </h4>
+          <ul>
+            <li>
+              <strong>Routing regret:</strong> a weak first attempt can
+              introduce flawed code or misleading state that survives
+              escalation.
+            </li>
+            <li>
+              <strong>Classifier overhead:</strong> an LLM router adds cost,
+              latency, and another failure mode.
+            </li>
+            <li>
+              <strong>Distribution shift:</strong> task difficulty and model
+              behavior change as providers release updates.
+            </li>
+            <li>
+              <strong>Continuity disruption:</strong> switching model, effort,
+              or backend can require a fresh lane context.
+            </li>
+            <li>
+              <strong>Evaluation complexity:</strong> average quality can hide
+              regressions on security, migrations, ambiguous requirements, or
+              large refactors.
+            </li>
+            <li>
+              <strong>User expectations:</strong> automatic model changes must
+              be visible, explainable, and overridable.
+            </li>
+          </ul>
+          <h4 id="incorporation-sketches-6">
+            <span>Incorporation sketches</span
+            ><a
+              class="heading-anchor"
+              href="#incorporation-sketches-6"
+              aria-label="Link to Incorporation sketches"
+              >#</a
+            >
+          </h4>
+          <p>
+            <strong
+              >Sketch A — advisory routing telemetry before automatic
+              routing.</strong
+            >
+          </p>
+          <p>
+            Record the configuration actually used, task role/class, iterations,
+            validation failures, escalations, final outcome, cost, and latency.
+            Build an offline report that asks, &quot;Could this successful task
+            have used the configured lower tier?&quot; before allowing the
+            system to act on the answer.
+          </p>
+          <p><strong>Sketch B — deterministic escalation tiers.</strong></p>
+          <p>
+            Extend the workflow config cascade with an optional, typed policy
+            that resolves and snapshots alongside assignments. A first version
+            could contain:
+          </p>
+          <ul>
+            <li>Concrete base assignment.</li>
+            <li>One or more concrete escalation assignments.</li>
+            <li>
+              Mechanical triggers such as repeated semantic rejection,
+              circuit-breaker approach, or a declared high-risk task class.
+            </li>
+            <li>Maximum escalations.</li>
+          </ul>
+          <p>
+            A pure router immediately before continuity and dispatch selects the
+            concrete assignment and emits a reason code. Catalog validation
+            remains mandatory. Infrastructure failures should not trigger a more
+            expensive reasoning model.
+          </p>
+          <p><strong>Sketch C — route only at safe boundaries.</strong></p>
+          <p>
+            Prefer task start, context rotation, or explicit retry boundaries.
+            If an assignment changes, intentionally rotate continuity according
+            to the existing fingerprint rule and seed the new context with
+            durable state. Do not silently switch the model halfway through an
+            opaque thread.
+          </p>
+          <p><strong>Sketch D — placement.</strong></p>
+          <ul>
+            <li>
+              Cross-project routing mechanics and audit data belong in native
+              Command Center code/config.
+            </li>
+            <li>
+              This repository&#39;s preferred task taxonomy and default
+              assignments belong in project workflow templates or a project
+              skill.
+            </li>
+            <li>
+              Runtime routing does <strong>not</strong> belong in agent profiles
+              or prose-only AGENTS.md rules; those surfaces cannot enforce,
+              validate, or audit the decision.
+            </li>
+          </ul>
+          <h4 id="guardrails-and-measures-6">
+            <span>Guardrails and measures</span
+            ><a
+              class="heading-anchor"
+              href="#guardrails-and-measures-6"
+              aria-label="Link to Guardrails and measures"
+              >#</a
+            >
+          </h4>
+          <ul>
+            <li>Cost and latency per successful task by route.</li>
+            <li>Escalation rate and reason distribution.</li>
+            <li>Routing regret against a strong-model control sample.</li>
+            <li>Continuity rotations and failures after escalation.</li>
+            <li>Quality by task class, especially high-risk tails.</li>
+            <li>Total tokens, not only dollar cost.</li>
+            <li>
+              Periodic re-baselining when model versions or pricing change.
+            </li>
+          </ul>
+          <hr />
+          <h2 id="7-intact-chunk-retrieval-before-lexical-or-lossy-compression">
+            <span
+              >7. Intact-chunk retrieval before lexical or lossy
+              compression</span
+            ><a
+              class="heading-anchor"
+              href="#7-intact-chunk-retrieval-before-lexical-or-lossy-compression"
+              aria-label="Link to 7. Intact-chunk retrieval before lexical or lossy compression"
+              >#</a
+            >
+          </h2>
+          <h3 id="general-approach-7">
+            <span>General approach</span
+            ><a
+              class="heading-anchor"
+              href="#general-approach-7"
+              aria-label="Link to General approach"
+              >#</a
+            >
+          </h3>
+          <p>
+            Lexical prompt compression deletes words or rewrites text to fit a
+            smaller token budget. It can work for long, redundant
+            natural-language support material, but it is dangerous for
+            instructions, code, schemas, commands, errors, numeric limits, and
+            ordered procedures.
+          </p>
+          <p>The safer order is:</p>
+          <ol>
+            <li>Filter irrelevant sources.</li>
+            <li>
+              Retrieve and rerank relevant documents, sections, files,
+              transcript units, or ranges.
+            </li>
+            <li>Preserve selected chunks verbatim.</li>
+            <li>Provide stable handles for nearby or omitted chunks.</li>
+            <li>
+              Use a generated summary as an index, not as the sole remaining
+              evidence.
+            </li>
+            <li>
+              Apply word-level compression only to explicitly non-authoritative
+              prose, if it still produces an end-to-end win.
+            </li>
+          </ol>
+          <p>
+            An independent comparison,
+            <a href="https://arxiv.org/abs/2407.08892"
+              >Characterizing Prompt Compression Methods</a
+            >, found query-aware extractive reranking generally more reliable
+            than abstractive or token-pruning compression across its evaluated
+            tasks.
+            <a
+              href="https://proceedings.iclr.cc/paper_files/paper/2024/hash/bda88ed2892f5e61c9a9bf215c566913-Abstract-Conference.html"
+              >RECOMP</a
+            >,
+            <a href="https://aclanthology.org/2024.acl-long.91/"
+              >LongLLMLingua</a
+            >, and
+            <a href="https://aclanthology.org/2024.findings-acl.57/"
+              >LLMLingua-2</a
+            >
+            show that learned compression can work on selected retrieval and QA
+            workloads.
+            <a href="https://aclanthology.org/2024.tacl-1.9/"
+              >Lost in the Middle</a
+            >
+            explains why removing irrelevant material can sometimes improve
+            reasoning. None of those results justifies rewriting an active
+            coding agent&#39;s governing contract.
+          </p>
+          <h3 id="command-center-assessment-7">
+            <span>Command Center assessment</span
+            ><a
+              class="heading-anchor"
+              href="#command-center-assessment-7"
+              aria-label="Link to Command Center assessment"
+              >#</a
+            >
+          </h3>
+          <p>
+            <strong
+              >Fit: reject a general lexical compressor; strongly support intact
+              retrieval.</strong
+            >
+            Command Center already has better primitives to deepen:
+          </p>
+          <ul>
+            <li>Transcript logical units and sequence ranges.</li>
+            <li>
+              Compaction artifacts with source references and freshness
+              metadata.
+            </li>
+            <li>Reference-document pointers.</li>
+            <li>Ticket attachments with stable IDs.</li>
+            <li>Spec search/get/delta surfaces.</li>
+            <li>Artifact registration and content-addressed spill files.</li>
+          </ul>
+          <p>
+            These can form a retrieval layer without altering authoritative
+            bytes. The platform should preserve a clear distinction between:
+          </p>
+          <ul>
+            <li>
+              <strong>Canonical source:</strong> exact file, transcript,
+              attachment, specification, or command result.
+            </li>
+            <li>
+              <strong>Derived index:</strong> outline, ranking, compaction, or
+              summary with source handles.
+            </li>
+            <li>
+              <strong>Ephemeral excerpt:</strong> bounded content selected for
+              one turn.
+            </li>
+          </ul>
+          <h4 id="tradeoffs-7">
+            <span>Tradeoffs</span
+            ><a
+              class="heading-anchor"
+              href="#tradeoffs-7"
+              aria-label="Link to Tradeoffs"
+              >#</a
+            >
+          </h4>
+          <ul>
+            <li>
+              <strong>Retrieval misses:</strong> the right fact cannot help if
+              it is not selected. Recovery needs to be obvious and cheap.
+            </li>
+            <li>
+              <strong>Index staleness:</strong> files, tickets, transcripts, and
+              specs evolve at different rates.
+            </li>
+            <li>
+              <strong>Embedding cost and privacy:</strong> semantic indexes
+              create computation, storage, and data-governance obligations.
+            </li>
+            <li>
+              <strong>Ranking opacity:</strong> a model may over-trust the top
+              result and ignore uncertainty.
+            </li>
+            <li>
+              <strong>Summary authority confusion:</strong> users and agents may
+              treat a derived artifact as canonical unless the UI and schema
+              distinguish them.
+            </li>
+            <li>
+              <strong>Compressor overhead:</strong> preprocessing can erase
+              latency or cost savings, especially on short prompts.
+            </li>
+          </ul>
+          <p>
+            <a href="https://arxiv.org/abs/2604.02985"
+              >Prompt Compression in the Wild</a
+            >
+            reinforces that final point: its best reported end-to-end speedup
+            was about 18%, and only when prompt length, compression ratio,
+            hardware, and preprocessing aligned. Outside that operating window,
+            compressor overhead erased the gain.
+          </p>
+          <h4 id="incorporation-sketches-7">
+            <span>Incorporation sketches</span
+            ><a
+              class="heading-anchor"
+              href="#incorporation-sketches-7"
+              aria-label="Link to Incorporation sketches"
+              >#</a
+            >
+          </h4>
+          <p>
+            <strong
+              >Sketch A — retrieval over existing stable handles before
+              embeddings.</strong
+            >
+          </p>
+          <p>Start with deterministic search and metadata already present:</p>
+          <ul>
+            <li>
+              Transcript search returning logical units and sequence ranges.
+            </li>
+            <li>
+              Reference-document search returning path, heading, line range,
+              digest, and freshness.
+            </li>
+            <li>Ticket attachment search returning stable attachment IDs.</li>
+            <li>Spec search returning exact element handles.</li>
+          </ul>
+          <p>
+            Use lexical/regex search and domain filters first. Add semantic
+            retrieval only where measured misses justify its complexity.
+          </p>
+          <p><strong>Sketch B — source-grounded compaction.</strong></p>
+          <p>
+            Keep the current generated brief, but strengthen its role as an
+            index:
+          </p>
+          <ul>
+            <li>
+              Every decision, blocker, file, command, and open question carries
+              one or more source handles.
+            </li>
+            <li>Superseded statements remain traceable.</li>
+            <li>
+              A compact artifact reports coverage, stale-behind count,
+              prompt/schema/model version, and exact refresh command.
+            </li>
+            <li>
+              Retrieval can fetch the intact source unit without regenerating
+              the summary.
+            </li>
+          </ul>
+          <p>
+            <strong
+              >Sketch C — opt-in lossy derivatives for long support prose
+              only.</strong
+            >
+          </p>
+          <p>
+            If a compressor is later evaluated, constrain it to user-provided
+            background prose or retrieved documentation. Never transform:
+          </p>
+          <ul>
+            <li>
+              System, developer, AGENTS.md, skill, charter, or profile
+              instructions.
+            </li>
+            <li>
+              Source code, diffs, patches, schemas, or structured payloads.
+            </li>
+            <li>
+              Commands, paths, identifiers, exact errors, numbers, units, or
+              negations.
+            </li>
+            <li>Current validation failures or active execution state.</li>
+          </ul>
+          <p>
+            Store the derivative beside an exact source handle and label it
+            non-authoritative. Evaluate compressor cost and recovery calls as
+            part of the same trajectory.
+          </p>
+          <p>
+            <strong>Project AGENTS.md / skills contribution.</strong> Keep
+            source-navigation recipes local: use <code>rg</code>, bounded file
+            reads, <code>cctl ... --outline</code>, exact range retrieval, and
+            compaction-first conversation reads. A project skill can encode
+            domain-specific search paths and source-of-truth rules; the root
+            AGENTS.md should not grow a generic compression tutorial.
+          </p>
+          <h4 id="guardrails-and-measures-7">
+            <span>Guardrails and measures</span
+            ><a
+              class="heading-anchor"
+              href="#guardrails-and-measures-7"
+              aria-label="Link to Guardrails and measures"
+              >#</a
+            >
+          </h4>
+          <ul>
+            <li>Retrieval recall on known required facts and constraints.</li>
+            <li>Task success and semantic-equivalence review.</li>
+            <li>Exact-constraint loss incidents.</li>
+            <li>Recovery/drill-down calls after a miss.</li>
+            <li>Index freshness and stale-result rate.</li>
+            <li>
+              End-to-end cost including retrieval, embedding, reranking, or
+              compressor calls.
+            </li>
+            <li>
+              A hard prohibition on lossy transformation of authoritative
+              classes.
+            </li>
+          </ul>
+          <hr />
+          <h2 id="cross-cutting-command-center-design">
+            <span>Cross-cutting Command Center design</span
+            ><a
+              class="heading-anchor"
+              href="#cross-cutting-command-center-design"
+              aria-label="Link to Cross-cutting Command Center design"
+              >#</a
+            >
+          </h2>
+          <h3 id="do-not-create-an-agentefficiency-mega-subsystem">
+            <span
+              >Do not create an
+              <code>agentEfficiency</code> mega-subsystem</span
+            ><a
+              class="heading-anchor"
+              href="#do-not-create-an-agentefficiency-mega-subsystem"
+              aria-label="Link to Do not create an agentEfficiency mega-subsystem"
+              >#</a
+            >
+          </h3>
+          <p>These optimizations belong with the decisions they affect:</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Responsibility</th>
+                  <th>Correct owner</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Provider cache controls and native lazy-tool support</td>
+                  <td>
+                    <code>src/lib/agent-backends/&lt;backend&gt;/</code>
+                    adapters
+                  </td>
+                </tr>
+                <tr>
+                  <td>Normalized token and cost vocabulary</td>
+                  <td>AgentCall/backend-neutral usage schemas</td>
+                </tr>
+                <tr>
+                  <td>Prompt segment composition</td>
+                  <td>Conversation prompt/runtime composition</td>
+                </tr>
+                <tr>
+                  <td>
+                    Transcript units, compaction, freshness, and projection
+                  </td>
+                  <td>Conversations and context-artifacts domains</td>
+                </tr>
+                <tr>
+                  <td>Bounded CLI output and spill receipts</td>
+                  <td>Shared CLI helper plus domain renderers</td>
+                </tr>
+                <tr>
+                  <td>Retry, stop, validation, and execution budgets</td>
+                  <td>Workflow graph and validation service</td>
+                </tr>
+                <tr>
+                  <td>Model/effort policy and escalation</td>
+                  <td>
+                    Workflow config resolution plus backend catalog validation
+                  </td>
+                </tr>
+                <tr>
+                  <td>Repository-specific work style and navigation</td>
+                  <td>Project AGENTS.md, steering, and project skills</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            This preserves Command Center&#39;s composable-module philosophy and
+            avoids a second orchestration path.
+          </p>
+          <h3 id="measurement-foundation">
+            <span>Measurement foundation</span
+            ><a
+              class="heading-anchor"
+              href="#measurement-foundation"
+              aria-label="Link to Measurement foundation"
+              >#</a
+            >
+          </h3>
+          <p>
+            Before optimizing, Command Center needs a joined view of usage and
+            outcome. A per-call usage record should be able to answer:
+          </p>
+          <ul>
+            <li>
+              Which project, session, conversation, workflow execution, context,
+              task, and role produced the call?
+            </li>
+            <li>
+              Which backend, model, reasoning effort, and agent profile were
+              used?
+            </li>
+            <li>
+              How many uncached input, cache-write, cache-read, output, and
+              reasoning tokens were consumed?
+            </li>
+            <li>
+              What was the estimated or provider-reported cost and latency?
+            </li>
+            <li>
+              Was the call an implementer, validator, compaction, naming,
+              plan-repair, collaboration, router, or ordinary conversation call?
+            </li>
+            <li>
+              Which tool calls, retries, context rotations, and escalations
+              followed?
+            </li>
+            <li>
+              Did deterministic validation pass, did semantic validation pass,
+              and was the task later reopened?
+            </li>
+          </ul>
+          <p>
+            Prompt bodies need not be retained for this. Stable segment
+            fingerprints, sizes, ownership labels, and provider request
+            identifiers are sufficient for most diagnosis.
+          </p>
+          <h3 id="recommended-delivery-sequence">
+            <span>Recommended delivery sequence</span
+            ><a
+              class="heading-anchor"
+              href="#recommended-delivery-sequence"
+              aria-label="Link to Recommended delivery sequence"
+              >#</a
+            >
+          </h3>
+          <h4 id="phase-0-establish-the-denominator">
+            <span>Phase 0 — establish the denominator</span
+            ><a
+              class="heading-anchor"
+              href="#phase-0-establish-the-denominator"
+              aria-label="Link to Phase 0 — establish the denominator"
+              >#</a
+            >
+          </h4>
+          <ol>
+            <li>Complete conversation token/cache telemetry.</li>
+            <li>Define task-outcome joins and cost-per-success reports.</li>
+            <li>Add prompt/tool composition diagnostics.</li>
+            <li>
+              Build a representative evaluation corpus from completed Command
+              Center work.
+            </li>
+          </ol>
+          <h4 id="phase-1-no-regret-structural-savings">
+            <span>Phase 1 — no-regret structural savings</span
+            ><a
+              class="heading-anchor"
+              href="#phase-1-no-regret-structural-savings"
+              aria-label="Link to Phase 1 — no-regret structural savings"
+              >#</a
+            >
+          </h4>
+          <ol>
+            <li>
+              Generalize bounded CLI output and content-addressed spill
+              receipts.
+            </li>
+            <li>
+              Add stable transcript chunk handles and exact omission commands.
+            </li>
+            <li>
+              Expose iteration budgets and compact stop conditions in graph
+              prompts.
+            </li>
+            <li>
+              Prune duplicated always-on Command Center instructions only after
+              segment accounting.
+            </li>
+          </ol>
+          <h4 id="phase-2-provider-and-context-experiments">
+            <span>Phase 2 — provider and context experiments</span
+            ><a
+              class="heading-anchor"
+              href="#phase-2-provider-and-context-experiments"
+              aria-label="Link to Phase 2 — provider and context experiments"
+              >#</a
+            >
+          </h4>
+          <ol>
+            <li>A/B Claude prefix-stability options.</li>
+            <li>
+              Deliberately configure and observe provider-native lazy tool
+              search.
+            </li>
+            <li>
+              Pilot deterministic stale-observation projection for a narrow
+              read-only class.
+            </li>
+            <li>
+              Evaluate explicit projected-context restart against uninterrupted
+              continuity.
+            </li>
+          </ol>
+          <h4 id="phase-3-routing">
+            <span>Phase 3 — routing</span
+            ><a
+              class="heading-anchor"
+              href="#phase-3-routing"
+              aria-label="Link to Phase 3 — routing"
+              >#</a
+            >
+          </h4>
+          <ol>
+            <li>Produce advisory routing analysis from accumulated data.</li>
+            <li>
+              Introduce deterministic escalation tiers at context boundaries.
+            </li>
+            <li>
+              Add learned routing only if simple policy leaves a material,
+              measured opportunity.
+            </li>
+          </ol>
+          <h3 id="explicit-non-goals">
+            <span>Explicit non-goals</span
+            ><a
+              class="heading-anchor"
+              href="#explicit-non-goals"
+              aria-label="Link to Explicit non-goals"
+              >#</a
+            >
+          </h3>
+          <ul>
+            <li>No Caveman-style output dialect.</li>
+            <li>No global word-deletion compressor.</li>
+            <li>
+              No LLM deciding its own retry count or whether tests passed.
+            </li>
+            <li>No silent context truncation.</li>
+            <li>
+              No backend-neutral cache abstraction that erases provider
+              semantics.
+            </li>
+            <li>
+              No automatic mid-thread model switch without explicit continuity
+              handling.
+            </li>
+            <li>
+              No duplicate prompt policy in AGENTS.md, profiles, managed skills,
+              and runtime blocks.
+            </li>
+          </ul>
+          <hr />
+          <h2 id="evaluation-protocol">
+            <span>Evaluation protocol</span
+            ><a
+              class="heading-anchor"
+              href="#evaluation-protocol"
+              aria-label="Link to Evaluation protocol"
+              >#</a
+            >
+          </h2>
+          <p>
+            Each optimization should be evaluated as a complete agent
+            trajectory.
+          </p>
+          <h3 id="experimental-shape">
+            <span>Experimental shape</span
+            ><a
+              class="heading-anchor"
+              href="#experimental-shape"
+              aria-label="Link to Experimental shape"
+              >#</a
+            >
+          </h3>
+          <ul>
+            <li>
+              Start with a 20–50 task pilot across debugging, implementation,
+              refactoring, documentation, workflow authoring, and review. Use
+              the observed variance to perform a power/sensitivity analysis and
+              set the decision sample size against the predeclared
+              non-inferiority margin; the pilot alone does not establish quality
+              preservation.
+            </li>
+            <li>
+              Include easy and hard tasks plus exact-constraint-sensitive cases
+              such as migrations, permissions, and structured output.
+            </li>
+            <li>
+              Run at least three paired repetitions per arm where cost permits.
+            </li>
+            <li>
+              Hold model, reasoning effort, harness, repository state, and
+              validation constant unless that factor is the treatment.
+            </li>
+            <li>
+              Compare against both the current baseline and the simplest
+              plausible alternative.
+            </li>
+          </ul>
+          <h3 id="primary-decision-metric">
+            <span>Primary decision metric</span
+            ><a
+              class="heading-anchor"
+              href="#primary-decision-metric"
+              aria-label="Link to Primary decision metric"
+              >#</a
+            >
+          </h3>
+          <p>
+            <strong>Provider cost per successful, non-reopened task</strong>,
+            with a predeclared non-inferiority margin for quality.
+          </p>
+          <h3 id="secondary-metrics">
+            <span>Secondary metrics</span
+            ><a
+              class="heading-anchor"
+              href="#secondary-metrics"
+              aria-label="Link to Secondary metrics"
+              >#</a
+            >
+          </h3>
+          <ul>
+            <li>
+              Uncached, cached-read, cache-write, output, and reasoning tokens.
+            </li>
+            <li>Context occupancy and prompt/tool segment size.</li>
+            <li>
+              Tool calls, turns, retries, validators, sub-agents, and context
+              rotations.
+            </li>
+            <li>Wall-clock latency and time-to-first-token.</li>
+            <li>
+              Deterministic validation, semantic review, scope, robustness, and
+              operator comprehension.
+            </li>
+            <li>Recovery calls caused by omitted or compressed information.</li>
+            <li>
+              Results by task class rather than only one aggregate average.
+            </li>
+          </ul>
+          <h3 id="stop-rules-for-an-experiment">
+            <span>Stop rules for an experiment</span
+            ><a
+              class="heading-anchor"
+              href="#stop-rules-for-an-experiment"
+              aria-label="Link to Stop rules for an experiment"
+              >#</a
+            >
+          </h3>
+          <p>Disable or revise a treatment when it:</p>
+          <ul>
+            <li>
+              Produces a statistically or operationally meaningful quality
+              regression.
+            </li>
+            <li>
+              Increases total cost despite shrinking a local token counter.
+            </li>
+            <li>Causes unrecoverable evidence loss.</li>
+            <li>
+              Creates repeated discovery, continuity, or routing failures.
+            </li>
+            <li>
+              Requires enough prompt instructions to erase its own savings.
+            </li>
+          </ul>
+          <hr />
+          <h2 id="final-recommendation">
+            <span>Final recommendation</span
+            ><a
+              class="heading-anchor"
+              href="#final-recommendation"
+              aria-label="Link to Final recommendation"
+              >#</a
+            >
+          </h2>
+          <p>
+            Command Center should pursue token efficiency as
+            <strong>context engineering plus deterministic orchestration</strong
+            >, not as a prose-compression feature.
+          </p>
+          <p>The best first investments are already adjacent to proven code:</p>
+          <ol>
+            <li>
+              Preserve conversation cache/token metrics that the adapters
+              currently receive.
+            </li>
+            <li>
+              Turn the spec reader&#39;s bounded, content-addressed spill
+              behavior into a shared CLI capability.
+            </li>
+            <li>
+              Carry stable transcript handles and explicit omission metadata end
+              to end.
+            </li>
+            <li>
+              Show workflow agents their real execution budget while keeping all
+              enforcement mechanical.
+            </li>
+            <li>Inventory and reduce persistent prompt/tool surface.</li>
+          </ol>
+          <p>
+            Those steps are broadly useful across every project Command Center
+            manages, have clear ownership in the existing architecture, and
+            preserve the agent&#39;s reasoning inputs. Context projection and
+            adaptive routing should follow as measured, reversible pilots.
+            Lexical compression should remain outside the critical path unless a
+            narrowly scoped, recoverable experiment demonstrates an end-to-end
+            win.
+          </p>
+          <h2 id="sources">
+            <span>Sources</span
+            ><a
+              class="heading-anchor"
+              href="#sources"
+              aria-label="Link to Sources"
+              >#</a
+            >
+          </h2>
+          <h3 id="provider-and-practitioner-guidance">
+            <span>Provider and practitioner guidance</span
+            ><a
+              class="heading-anchor"
+              href="#provider-and-practitioner-guidance"
+              aria-label="Link to Provider and practitioner guidance"
+              >#</a
+            >
+          </h3>
+          <ul>
+            <li>
+              <a
+                href="https://developers.openai.com/api/docs/guides/prompt-caching"
+                >OpenAI — Prompt caching</a
+              >
+            </li>
+            <li>
+              <a
+                href="https://developers.openai.com/api/docs/guides/latest-model"
+                >OpenAI — Latest model guidance</a
+              >
+            </li>
+            <li>
+              <a
+                href="https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents"
+                >Anthropic — Effective context engineering for AI agents</a
+              >
+            </li>
+            <li>
+              <a href="https://www.anthropic.com/engineering/advanced-tool-use"
+                >Anthropic — Advanced tool use</a
+              >
+            </li>
+            <li>
+              <a
+                href="https://www.anthropic.com/engineering/code-execution-with-mcp"
+                >Anthropic — Code execution with MCP</a
+              >
+            </li>
+            <li>
+              <a
+                href="https://www.anthropic.com/engineering/writing-tools-for-agents"
+                >Anthropic — Writing effective tools for agents</a
+              >
+            </li>
+            <li>
+              <a
+                href="https://blog.jetbrains.com/ai/2026/07/rtk-claude-code-token-savings/"
+                >JetBrains — RTK token-savings benchmark</a
+              >
+            </li>
+          </ul>
+          <h3 id="research">
+            <span>Research</span
+            ><a
+              class="heading-anchor"
+              href="#research"
+              aria-label="Link to Research"
+              >#</a
+            >
+          </h3>
+          <ul>
+            <li>
+              <a href="https://arxiv.org/abs/2601.06007"
+                >Don&#39;t Break the Cache: An Evaluation of Prompt Caching for
+                Long-Horizon Agentic Tasks</a
+              >
+            </li>
+            <li>
+              <a href="https://arxiv.org/abs/2508.21433"
+                >The Complexity Trap: Simple Observation Masking Is as Efficient
+                as LLM Summarization for Agent Context Management</a
+              >
+            </li>
+            <li>
+              <a href="https://arxiv.org/abs/2509.23586"
+                >Reducing Cost of LLM Agents with Trajectory Reduction</a
+              >
+            </li>
+            <li>
+              <a
+                href="https://proceedings.neurips.cc/paper_files/paper/2024/hash/5a7c947568c1b1328ccc5230172e1e7c-Abstract-Conference.html"
+                >SWE-agent: Agent-Computer Interfaces Enable Automated Software
+                Engineering</a
+              >
+            </li>
+            <li>
+              <a
+                href="https://proceedings.iclr.cc/paper_files/paper/2025/hash/5503a7c69d48a2f86fc00b3dc09de686-Abstract-Conference.html"
+                >RouteLLM: Learning to Route LLMs with Preference Data</a
+              >
+            </li>
+            <li>
+              <a
+                href="https://proceedings.iclr.cc/paper_files/paper/2025/hash/1b623663fd9b874366f3ce019fdfdd44-Abstract-Conference.html"
+                >Scaling LLM Test-Time Compute Optimally</a
+              >
+            </li>
+            <li>
+              <a href="https://arxiv.org/abs/2608.01347"
+                >Same Task, Different Work: Prompt-Induced Waste in Coding
+                Agents</a
+              >
+            </li>
+            <li>
+              <a href="https://arxiv.org/abs/2503.01141"
+                >How Well do LLMs Compress Their Own Chain-of-Thought?</a
+              >
+            </li>
+            <li>
+              <a href="https://aclanthology.org/2025.findings-acl.1274/"
+                >TALE: Token-Budget-Aware LLM Reasoning</a
+              >
+            </li>
+            <li>
+              <a href="https://arxiv.org/abs/2407.08892"
+                >Characterizing Prompt Compression Methods</a
+              >
+            </li>
+            <li>
+              <a
+                href="https://proceedings.iclr.cc/paper_files/paper/2024/hash/bda88ed2892f5e61c9a9bf215c566913-Abstract-Conference.html"
+                >RECOMP: Improving Retrieval-Augmented LMs with Compression and
+                Selective Augmentation</a
+              >
+            </li>
+            <li>
+              <a href="https://aclanthology.org/2024.acl-long.91/"
+                >LongLLMLingua: Accelerating and Enhancing LLMs in Long Context
+                Scenarios</a
+              >
+            </li>
+            <li>
+              <a href="https://aclanthology.org/2024.findings-acl.57/"
+                >LLMLingua-2: Data Distillation for Efficient and Faithful
+                Task-Agnostic Prompt Compression</a
+              >
+            </li>
+            <li>
+              <a href="https://aclanthology.org/2024.tacl-1.9/"
+                >Lost in the Middle: How Language Models Use Long Contexts</a
+              >
+            </li>
+            <li>
+              <a href="https://arxiv.org/abs/2604.02985"
+                >Prompt Compression in the Wild: An Empirical Study of
+                End-to-End Performance</a
+              >
+            </li>
+          </ul>
+          <h3 id="evidence-caveat">
+            <span>Evidence caveat</span
+            ><a
+              class="heading-anchor"
+              href="#evidence-caveat"
+              aria-label="Link to Evidence caveat"
+              >#</a
+            >
+          </h3>
+          <p>
+            Provider documentation is authoritative for API behavior but not
+            neutral evidence of workload-level savings. Several agent-context
+            and coding-efficiency studies cited here are recent preprints. Their
+            results justify controlled Command Center experiments, not copying
+            their headline percentages into product promises. The
+            repository-specific recommendations are based on a read-only audit
+            of <code>main</code> on 2026-08-15 and should be rechecked against
+            the live code before implementation.
+          </p>
         </article>
       </div>
     </main>
 
     <footer class="footer">
       <div class="footer-inner">
-        <div><strong>Command Center</strong> · Token-efficient agents without sacrificing quality</div>
+        <div>
+          <strong>Command Center</strong> · Token-efficient agents without
+          sacrificing quality
+        </div>
         <div>Research baseline: main · 2026-08-15</div>
       </div>
     </footer>
@@ -1627,7 +3659,9 @@
       const progressBar = document.querySelector(".progress-bar");
       const tocLinks = [...document.querySelectorAll(".toc a")];
       const sections = tocLinks
-        .map((link) => document.getElementById(link.getAttribute("href").slice(1)))
+        .map((link) =>
+          document.getElementById(link.getAttribute("href").slice(1)),
+        )
         .filter(Boolean);
 
       function updateReadingState() {
@@ -1641,7 +3675,8 @@
         }
 
         for (const link of tocLinks) {
-          const isActive = active && link.getAttribute("href") === "#" + active.id;
+          const isActive =
+            active && link.getAttribute("href") === "#" + active.id;
           link.classList.toggle("active", Boolean(isActive));
           if (isActive) link.setAttribute("aria-current", "location");
           else link.removeAttribute("aria-current");

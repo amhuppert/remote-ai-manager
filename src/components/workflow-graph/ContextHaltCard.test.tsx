@@ -451,4 +451,74 @@ describe("ContextHaltCard candidate-unstable presentation", () => {
       screen.queryByText(/Find what keeps changing the worktree/),
     ).not.toBeInTheDocument();
   });
+
+  // The field has been persisted since the halt existed but never reached the
+  // card, so a repair round that spoke on this halt looked to the operator
+  // exactly like one that never ran.
+  it("replaces the generic remedy with the plan-repair verdict once it has spoken", () => {
+    render(
+      <ContextHaltCard
+        primary={{
+          ...candidateUnstableHalt,
+          summary: "Plan repair declined: a dev server writes into the lane.",
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "Plan repair declined: a dev server writes into the lane.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Find what keeps changing the worktree/),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("ContextHaltCard lane-drift presentation", () => {
+  const ownershipViolationHalt: GraphWorkflowHaltReason = {
+    type: "ownership_violation",
+    laneId: "delivery",
+    contextId: "context-implement",
+    unattributedPaths: ["src/generated/client.ts"],
+    message: "the lane changed a path no member owns",
+    summary: null,
+  };
+
+  it("leads with the unattributed paths and the generic widen-or-remove remedy", () => {
+    render(<ContextHaltCard primary={ownershipViolationHalt} />);
+
+    expect(
+      screen.getByText(/Lane "delivery" changed 1 path\(s\) no member owns/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("src/generated/client.ts")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Widen a member's ownership to cover these paths/),
+    ).toBeInTheDocument();
+  });
+
+  // Repair declines this halt often — the write frequently belongs to no plan
+  // at all — and the decline is the whole product of a round the operator paid
+  // for. Without it on the card, the round is invisible and the advice is the
+  // same advice they already had.
+  it("replaces the generic remedy with the plan-repair verdict once it has spoken", () => {
+    render(
+      <ContextHaltCard
+        primary={{
+          ...ownershipViolationHalt,
+          summary: "Plan repair declined: no member may own a generated file.",
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "Plan repair declined: no member may own a generated file.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Widen a member's ownership to cover these paths/),
+    ).not.toBeInTheDocument();
+  });
 });

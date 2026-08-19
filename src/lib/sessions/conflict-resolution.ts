@@ -76,9 +76,7 @@ export interface ConflictResolutionDeps {
   ): Promise<TaskRunResult>;
   /** One-shot entrypoint for `fresh-run` dispatch (graph joins — see
    *  {@link AgentTurnDispatch}); same result contract, no conversation. */
-  executeFreshTaskRun?(
-    input: ExecuteFreshTaskRunInput,
-  ): Promise<TaskRunResult>;
+  executeFreshTaskRun?(input: ExecuteFreshTaskRunInput): Promise<TaskRunResult>;
   /**
    * Describes the commits arriving from the target branch (the other side of
    * the conflicts), annotated with recorded merge intents. Best-effort: null

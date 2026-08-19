@@ -40,6 +40,7 @@ import { addSpecDeliveryVerdicts } from "./0029-add-spec-delivery-verdicts";
 import { jobRecordParkedMerge } from "./0029-job-record-parked-merge";
 import { nativeSddV2Cutover } from "./0030-native-sdd-v2-cutover";
 import { graphWorkflowCandidateUnstableHalt } from "./0031-graph-workflow-candidate-unstable-halt";
+import { addGraphPlanReviews } from "./0032-add-graph-plan-reviews";
 
 /**
  * Ordered registry of state-store migrations. Append new migrations here in
@@ -92,6 +93,7 @@ export const migrations: readonly StateMigration[] = [
   // applies before the version flips.
   nativeSddV2Cutover,
   graphWorkflowCandidateUnstableHalt,
+  addGraphPlanReviews,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

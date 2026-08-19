@@ -43,9 +43,7 @@ export interface ValidationFixDeps {
   ): Promise<TaskRunResult>;
   /** One-shot entrypoint for the `fresh-run` dispatch (graph joins — see
    *  {@link AgentTurnDispatch}); same result contract, no conversation. */
-  executeFreshTaskRun?(
-    input: ExecuteFreshTaskRunInput,
-  ): Promise<TaskRunResult>;
+  executeFreshTaskRun?(input: ExecuteFreshTaskRunInput): Promise<TaskRunResult>;
 }
 
 const defaultDeps: ValidationFixDeps = {};

@@ -79,7 +79,9 @@ describe("a plan-defect round concludes without reopening or charging anything",
     // the rejecting sibling contributes findings but no defect of its own — the
     // record groups both by seat, which is where the attribution lives.
     expect(round?.specialists["general"]?.issues).toHaveLength(1);
-    expect(round?.specialists["security-reviewer"]?.planDefects).toBeUndefined();
+    expect(
+      round?.specialists["security-reviewer"]?.planDefects,
+    ).toBeUndefined();
     expect(round?.specialists["security-reviewer"]?.issues).toHaveLength(1);
   });
 

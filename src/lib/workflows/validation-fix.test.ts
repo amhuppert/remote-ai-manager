@@ -300,9 +300,7 @@ describe("validation-fix (executeWorkflowTaskRun)", () => {
 
 describe("validation-fix (fresh-run dispatch, #78)", () => {
   it("runs a fresh task in the merge worktree and never resumes a conversation", async () => {
-    const executeWorkflowTaskRun = vi
-      .fn()
-      .mockResolvedValue(textOk("unused"));
+    const executeWorkflowTaskRun = vi.fn().mockResolvedValue(textOk("unused"));
     const executeFreshTaskRun = vi
       .fn()
       .mockResolvedValue(textOk("fixes applied"));
@@ -335,7 +333,9 @@ describe("validation-fix (fresh-run dispatch, #78)", () => {
 
   it("maps a fresh-run error result to a failed fix", async () => {
     const deps = createTestDeps({
-      executeFreshTaskRun: vi.fn().mockResolvedValue(errResult("agent exploded")),
+      executeFreshTaskRun: vi
+        .fn()
+        .mockResolvedValue(errResult("agent exploded")),
     });
     const { fixValidationErrors } = createValidationFixer(deps);
     const result = await fixValidationErrors({

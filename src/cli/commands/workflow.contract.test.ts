@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAgentProfileLibraryService } from "@/lib/agent-profiles/library-service";
+import { unreviewedPlanReviewLookup } from "@/lib/shared/testing/graph-plan-review-fixture";
 import { createAgentProfileStorage } from "@/lib/agent-profiles/storage";
 import {
   createAssignmentReferenceChecker,
@@ -244,6 +245,7 @@ function routeHost(
     executionDeps,
   } = overrides;
   const definitionHandlers = createWorkflowDefinitionRouteHandlers({
+    planReviews: unreviewedPlanReviewLookup,
     resolveProjectPath: async () => PROJECT_PATH,
     readConfig: async () => VALIDATION_GLOBAL_CONFIG,
     readRepoConfig: async () => null,

@@ -1,5 +1,18 @@
 import { NextRequest } from "next/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
+import { unreviewedPlanReviewLookup } from "@/lib/shared/testing/graph-plan-review-fixture";
+import {
+  createPersistenceFixture,
+  type PersistenceFixture,
+} from "@/lib/shared/testing/persistence-fixture";
+import { createGraphPlanReviewsRepo } from "@/lib/state-store/graph-plan-reviews-repo";
+import { planDefinitionHash } from "./plan-review/schemas";
+import {
+  createPlanReviewService,
+  type PlanReviewLookup,
+  type PlanReviewStore,
+} from "./plan-review/service";
 import {
   createWorkflowDefinition,
   createWorkflowDefinitionRecord,
@@ -96,6 +109,7 @@ describe("workflow definition route handlers", () => {
     createDefinition,
     updateDefinition,
     deleteDefinition,
+    planReviews: unreviewedPlanReviewLookup,
   });
 
   beforeEach(() => {
@@ -602,5 +616,486 @@ describe("workflow definition route handlers", () => {
       ),
     ).toBe(true);
     expect(createDefinition).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The advisory review status create and replace report for the exact revision
+ * they admitted (#69 change 5). The whole point of these tests is what does NOT
+ * happen: nothing here may turn a successful save into a failure.
+ */
+describe("create/replace review advisory", () => {
+  const resolveProjectPath = vi.fn<(_name: string) => Promise<string | null>>();
+  const readConfig = vi.fn<() => Promise<GlobalConfig>>();
+  const readRepoConfig =
+    vi.fn<(_projectPath: string) => Promise<PerRepoConfig | null>>();
+  const createDefinition = vi.fn();
+  const updateDefinition = vi.fn();
+
+  let fixture: PersistenceFixture;
+
+  function handlersWith(planReviews: PlanReviewLookup) {
+    return createWorkflowDefinitionRouteHandlers({
+      resolveProjectPath,
+      readConfig,
+      readRepoConfig,
+      listDefinitions: vi.fn(),
+      getDefinition: vi.fn(),
+      createDefinition,
+      updateDefinition,
+      deleteDefinition: vi.fn(),
+      planReviews,
+    });
+  }
+
+  const record = createWorkflowDefinitionRecord();
+  const planBody = {
+    name: "Workflow Graph",
+    description: "Create workflow",
+    definition: record.definition,
+    layout: record.layout,
+  };
+
+  /** The service over a real repository — the production read path. */
+  function realLookup(): PlanReviewLookup {
+    return createPlanReviewService(createGraphPlanReviewsRepo(fixture.db));
+  }
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    readConfig.mockResolvedValue(MOCK_CONFIG);
+    readRepoConfig.mockResolvedValue(null);
+    resolveProjectPath.mockResolvedValue("/repo");
+    createDefinition.mockResolvedValue(createWorkflowDefinitionRecord());
+    updateDefinition.mockResolvedValue(createWorkflowDefinitionRecord());
+    fixture = createPersistenceFixture();
+  });
+
+  afterEach(() => {
+    fixture.close();
+  });
+
+  /** Record a verdict against whatever hash the admitted plan actually gets. */
+  function recordVerdictForAdmittedPlan(
+    verdict: "approved" | "changes_requested",
+  ): void {
+    const hashed = planDefinitionHash(planBody);
+    if (!hashed.ok) throw new Error("fixture plan does not validate");
+    createPlanReviewService(
+      createGraphPlanReviewsRepo(fixture.db),
+    ).recordPlanReview({
+      id: "review-1",
+      definitionHash: hashed.hash,
+      reviewerConversationId: "conv-reviewer-1",
+      verdict,
+      findings: verdict === "approved" ? null : "Split the second context.",
+      reviewedAt: "2026-08-18T12:00:00.000Z",
+    });
+  }
+
+  it("reports the recorded verdict for the exact admitted revision on create", async () => {
+    recordVerdictForAdmittedPlan("approved");
+
+    const response = await handlersWith(realLookup()).CREATE(
+      makeRequest("/api/projects/repo/workflows", "POST", planBody),
+      makeContext({ name: "repo" }),
+    );
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { reviewStatus?: unknown };
+    expect(body.reviewStatus).toEqual({
+      state: "approved",
+      reviewerConversationId: "conv-reviewer-1",
+      reviewedAt: "2026-08-18T12:00:00.000Z",
+    });
+  });
+
+  it("reports the recorded verdict on replace", async () => {
+    recordVerdictForAdmittedPlan("changes_requested");
+    const hashed = planDefinitionHash(planBody);
+    if (!hashed.ok) throw new Error("fixture plan does not validate");
+
+    const response = await handlersWith(realLookup()).UPDATE(
+      makeRequest("/api/projects/repo/workflows/wf-1", "PUT", {
+        ...planBody,
+        // The acknowledgement gate covers this exact revision; acknowledging it
+        // is what leaves the VERDICT REPORTING this test is about observable.
+        acknowledgeReviewHash: hashed.hash,
+      }),
+      makeContext({ name: "repo", workflowId: "wf-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      reviewStatus?: { state?: string };
+    };
+    expect(body.reviewStatus?.state).toBe("changes_requested");
+    expect(updateDefinition).toHaveBeenCalled();
+  });
+
+  it("still creates an unreviewed plan, reporting unreviewed", async () => {
+    const response = await handlersWith(realLookup()).CREATE(
+      makeRequest("/api/projects/repo/workflows", "POST", planBody),
+      makeContext({ name: "repo" }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      reviewStatus: { state: "unreviewed" },
+    });
+    expect(createDefinition).toHaveBeenCalled();
+  });
+
+  it("still replaces an unreviewed plan, reporting unreviewed", async () => {
+    const response = await handlersWith(realLookup()).UPDATE(
+      makeRequest("/api/projects/repo/workflows/wf-1", "PUT", planBody),
+      makeContext({ name: "repo", workflowId: "wf-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      reviewStatus: { state: "unreviewed" },
+    });
+    expect(updateDefinition).toHaveBeenCalled();
+  });
+
+  it("fails open when the review REPOSITORY throws: the create succeeds, the failure is logged", async () => {
+    const log = createCapturingLogger();
+    const brokenStore: PlanReviewStore = {
+      record: () => {},
+      listByDefinitionHash: () => {
+        throw new Error("graph_plan_reviews table is missing");
+      },
+    };
+
+    const response = await handlersWith(
+      createPlanReviewService(brokenStore, log),
+    ).CREATE(
+      makeRequest("/api/projects/repo/workflows", "POST", planBody),
+      makeContext({ name: "repo" }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      reviewStatus: { state: "unreviewed" },
+    });
+    const warned = log.entries.find(
+      (entry) => entry.message === "workflows.plan-review.lookup_failed",
+    );
+    expect(warned?.level).toBe("warn");
+    expect(warned?.fields["error"]).toContain("table is missing");
+  });
+
+  it("fails open when the LOOKUP itself throws: the replace still succeeds", async () => {
+    const response = await handlersWith({
+      findLatestTerminalReview: () => {
+        throw new Error("review service unavailable");
+      },
+    }).UPDATE(
+      makeRequest("/api/projects/repo/workflows/wf-1", "PUT", planBody),
+      makeContext({ name: "repo", workflowId: "wf-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      reviewStatus: { state: "unreviewed" },
+    });
+    expect(updateDefinition).toHaveBeenCalled();
+  });
+
+  /**
+   * The one operation shape review machinery blocks: re-submitting the EXACT
+   * revision a changes-requested review rejected, without acknowledging it.
+   * Every test here is paired with the case that must stay open, because the
+   * gate's whole risk is widening past that one shape.
+   */
+  describe("acknowledgement gate", () => {
+    /** The canonical hash the admitted plan actually gets. */
+    function admittedHash(): string {
+      const hashed = planDefinitionHash(planBody);
+      if (!hashed.ok) throw new Error("fixture plan does not validate");
+      return hashed.hash;
+    }
+
+    function acknowledged(hash: string) {
+      return { ...planBody, acknowledgeReviewHash: hash };
+    }
+
+    async function refusalBodyOf(response: Response) {
+      return (await response.json()) as {
+        error?: string;
+        code?: string;
+        details?: Record<string, unknown>;
+      };
+    }
+
+    it("refuses an unacknowledged create of the rejected revision, before persisting", async () => {
+      recordVerdictForAdmittedPlan("changes_requested");
+
+      const response = await handlersWith(realLookup()).CREATE(
+        makeRequest("/api/projects/repo/workflows", "POST", planBody),
+        makeContext({ name: "repo" }),
+      );
+
+      expect(response.status).toBe(409);
+      const body = await refusalBodyOf(response);
+      expect(body.code).toBe("review-changes-requested-unacknowledged");
+      expect(body.details).toEqual({
+        definitionHash: admittedHash(),
+        verdict: "changes_requested",
+        reviewerConversationId: "conv-reviewer-1",
+        reviewedAt: "2026-08-18T12:00:00.000Z",
+        findingsCommand: "cctl workflow review --file <plan.json>",
+      });
+      expect(createDefinition).not.toHaveBeenCalled();
+    });
+
+    it("refuses an unacknowledged replace of the rejected revision", async () => {
+      recordVerdictForAdmittedPlan("changes_requested");
+
+      const response = await handlersWith(realLookup()).UPDATE(
+        makeRequest("/api/projects/repo/workflows/wf-1", "PUT", planBody),
+        makeContext({ name: "repo", workflowId: "wf-1" }),
+      );
+
+      expect(response.status).toBe(409);
+      expect((await refusalBodyOf(response)).code).toBe(
+        "review-changes-requested-unacknowledged",
+      );
+      expect(updateDefinition).not.toHaveBeenCalled();
+    });
+
+    it("clears the gate on create when the acknowledgement equals the submitted revision, still reporting the advisory", async () => {
+      recordVerdictForAdmittedPlan("changes_requested");
+
+      const response = await handlersWith(realLookup()).CREATE(
+        makeRequest(
+          "/api/projects/repo/workflows",
+          "POST",
+          acknowledged(admittedHash()),
+        ),
+        makeContext({ name: "repo" }),
+      );
+
+      expect(response.status).toBe(201);
+      expect(await response.json()).toMatchObject({
+        reviewStatus: {
+          state: "changes_requested",
+          reviewerConversationId: "conv-reviewer-1",
+        },
+      });
+      expect(createDefinition).toHaveBeenCalled();
+    });
+
+    it("clears the gate on replace when the acknowledgement matches", async () => {
+      recordVerdictForAdmittedPlan("changes_requested");
+
+      const response = await handlersWith(realLookup()).UPDATE(
+        makeRequest(
+          "/api/projects/repo/workflows/wf-1",
+          "PUT",
+          acknowledged(admittedHash()),
+        ),
+        makeContext({ name: "repo", workflowId: "wf-1" }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        reviewStatus: { state: "changes_requested" },
+      });
+      expect(updateDefinition).toHaveBeenCalled();
+    });
+
+    it("does not let an acknowledgement of a DIFFERENT revision through, and names the expected hash", async () => {
+      recordVerdictForAdmittedPlan("changes_requested");
+
+      const response = await handlersWith(realLookup()).CREATE(
+        makeRequest(
+          "/api/projects/repo/workflows",
+          "POST",
+          acknowledged(`sha256:${"ab".repeat(32)}`),
+        ),
+        makeContext({ name: "repo" }),
+      );
+
+      expect(response.status).toBe(409);
+      const body = await refusalBodyOf(response);
+      expect(body.details?.["definitionHash"]).toBe(admittedHash());
+      expect(body.error).toContain(admittedHash());
+      expect(createDefinition).not.toHaveBeenCalled();
+    });
+
+    it("never gates an APPROVED revision: create and replace succeed with no acknowledgement", async () => {
+      recordVerdictForAdmittedPlan("approved");
+
+      const created = await handlersWith(realLookup()).CREATE(
+        makeRequest("/api/projects/repo/workflows", "POST", planBody),
+        makeContext({ name: "repo" }),
+      );
+      const replaced = await handlersWith(realLookup()).UPDATE(
+        makeRequest("/api/projects/repo/workflows/wf-1", "PUT", planBody),
+        makeContext({ name: "repo", workflowId: "wf-1" }),
+      );
+
+      expect(created.status).toBe(201);
+      expect(replaced.status).toBe(200);
+      expect(createDefinition).toHaveBeenCalled();
+      expect(updateDefinition).toHaveBeenCalled();
+    });
+
+    it("never gates an UNREVIEWED revision: create and replace succeed with no acknowledgement", async () => {
+      const created = await handlersWith(realLookup()).CREATE(
+        makeRequest("/api/projects/repo/workflows", "POST", planBody),
+        makeContext({ name: "repo" }),
+      );
+      const replaced = await handlersWith(realLookup()).UPDATE(
+        makeRequest("/api/projects/repo/workflows/wf-1", "PUT", planBody),
+        makeContext({ name: "repo", workflowId: "wf-1" }),
+      );
+
+      expect(created.status).toBe(201);
+      expect(replaced.status).toBe(200);
+      expect(createDefinition).toHaveBeenCalled();
+      expect(updateDefinition).toHaveBeenCalled();
+    });
+
+    it("skips the gate when the lookup fails: the create succeeds unreviewed and the failure is logged", async () => {
+      const log = createCapturingLogger();
+      const brokenStore: PlanReviewStore = {
+        record: () => {},
+        listByDefinitionHash: () => {
+          throw new Error("graph_plan_reviews table is missing");
+        },
+      };
+
+      const response = await handlersWith(
+        createPlanReviewService(brokenStore, log),
+      ).CREATE(
+        makeRequest("/api/projects/repo/workflows", "POST", planBody),
+        makeContext({ name: "repo" }),
+      );
+
+      expect(response.status).toBe(201);
+      expect(await response.json()).toMatchObject({
+        reviewStatus: { state: "unreviewed" },
+      });
+      expect(createDefinition).toHaveBeenCalled();
+      expect(
+        log.entries.find(
+          (entry) => entry.message === "workflows.plan-review.lookup_failed",
+        )?.level,
+      ).toBe("warn");
+    });
+
+    it("skips the gate when the LOOKUP itself throws on replace", async () => {
+      const response = await handlersWith({
+        findLatestTerminalReview: () => {
+          throw new Error("review service unavailable");
+        },
+      }).UPDATE(
+        makeRequest("/api/projects/repo/workflows/wf-1", "PUT", planBody),
+        makeContext({ name: "repo", workflowId: "wf-1" }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        reviewStatus: { state: "unreviewed" },
+      });
+      expect(updateDefinition).toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * Admission has always produced warnings; create and replace used to drop
+   * them on the floor, so an author who skipped `validate` never saw one.
+   */
+  describe("admission warnings", () => {
+    /** A plan whose criteria trip the open-quantifier lint (#69 change 6). */
+    const warnedPlanBody = {
+      ...planBody,
+      definition: {
+        ...record.definition,
+        executionContexts: record.definition.executionContexts.map(
+          (context, index) =>
+            index === 0
+              ? {
+                  ...context,
+                  acceptanceCriteria: [
+                    {
+                      id: "ac-sweep",
+                      statement: "Every call site is migrated",
+                    },
+                  ],
+                }
+              : context,
+        ),
+      },
+    };
+
+    it("returns the admission warnings on create", async () => {
+      const response = await handlersWith(unreviewedPlanReviewLookup).CREATE(
+        makeRequest("/api/projects/repo/workflows", "POST", warnedPlanBody),
+        makeContext({ name: "repo" }),
+      );
+
+      expect(response.status).toBe(201);
+      const body = (await response.json()) as {
+        warnings?: { path: string; message: string }[];
+      };
+      expect(body.warnings).toContainEqual({
+        path: "definition.executionContexts.0.acceptanceCriteria.0.statement",
+        message: expect.stringContaining("lint/open-quantifier"),
+      });
+      // Advisory to the last: the plan is still persisted.
+      expect(createDefinition).toHaveBeenCalled();
+    });
+
+    it("returns the admission warnings on replace", async () => {
+      const response = await handlersWith(unreviewedPlanReviewLookup).UPDATE(
+        makeRequest("/api/projects/repo/workflows/wf-1", "PUT", warnedPlanBody),
+        makeContext({ name: "repo", workflowId: "wf-1" }),
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        warnings?: { path: string; message: string }[];
+      };
+      expect(body.warnings).toContainEqual({
+        path: "definition.executionContexts.0.acceptanceCriteria.0.statement",
+        message: expect.stringContaining("lint/open-quantifier"),
+      });
+      expect(updateDefinition).toHaveBeenCalled();
+    });
+
+    it("omits the key entirely when a plan warns about nothing", async () => {
+      // A real project root with a charter locator that actually resolves in
+      // it: the clean case has to be reachable, or "warnings" would be a field
+      // every response carries and no author would read.
+      resolveProjectPath.mockResolvedValue(process.cwd());
+      const response = await handlersWith(unreviewedPlanReviewLookup).CREATE(
+        makeRequest("/api/projects/repo/workflows", "POST", {
+          ...planBody,
+          definition: {
+            ...record.definition,
+            charter: makeTestCharter({
+              sourcesOfTruth: [
+                {
+                  rank: 1,
+                  id: "engineering-contract",
+                  label: "Repository engineering contract",
+                  type: "document",
+                  locator: "AGENTS.md",
+                  description: "The rules every context implements under",
+                },
+              ],
+            }),
+          },
+        }),
+        makeContext({ name: "repo" }),
+      );
+
+      expect(response.status).toBe(201);
+      expect(await response.json()).not.toHaveProperty("warnings");
+    });
   });
 });

@@ -83,7 +83,9 @@ async function haltedOnPlanDefect(
   const execution = createCohortExecution({ assignmentIds: ["general"] });
   const harness = createHarness({
     execution:
-      options.repairEnabled === false ? withRepairDisabled(execution) : execution,
+      options.repairEnabled === false
+        ? withRepairDisabled(execution)
+        : execution,
     productionSignalHalt: true,
     runContextValidator: async (input) => ({
       result: planDefectResult(input.validator.id),
@@ -260,7 +262,9 @@ describe("a plan-defect halt routes into plan repair", () => {
     // repair has spoken, and the halt is what explains it to an operator.
     expect(after.haltReason?.type).toBe("plan_defect");
     expect(
-      after.haltReason?.type === "plan_defect" ? after.haltReason.summary : null,
+      after.haltReason?.type === "plan_defect"
+        ? after.haltReason.summary
+        : null,
     ).toContain(DECLINE_DIAGNOSIS);
     // Resuming the reopen loop is exactly what this halt exists to escape: a
     // decline must not hand the implementer back a contract nobody repaired.

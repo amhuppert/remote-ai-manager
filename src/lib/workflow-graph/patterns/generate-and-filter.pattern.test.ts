@@ -16,6 +16,7 @@ import {
 } from "@/lib/agent-gateway/token";
 import { LANE_CAPABILITY_HEADER } from "@/lib/agent-gateway/lane-capability";
 import { validateWorkflowPlan } from "@/lib/workflows/plan-validation";
+import { structuralWarningsOf } from "./pattern-plan-warnings";
 import { workflowSemanticDefinitionSchema } from "../definition-schemas";
 import { runEngineScenario } from "../compat/engine-harness";
 import type {
@@ -454,7 +455,7 @@ describe("Generate-And-Filter template — authoring (R15.2)", () => {
     if (!result.ok) return;
     // A warned plan is still creatable, but a pattern template nobody should
     // copy is not a pattern proof.
-    expect(result.warnings).toEqual([]);
+    expect(structuralWarningsOf(result.warnings)).toEqual([]);
   });
 });
 

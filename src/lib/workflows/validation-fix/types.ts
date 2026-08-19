@@ -24,4 +24,3 @@ export interface RunMergeValidationMode {
 }
 
 export type MergeValidationMode = { mode: "skip" } | RunMergeValidationMode;
-

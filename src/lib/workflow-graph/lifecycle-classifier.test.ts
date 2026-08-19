@@ -732,6 +732,7 @@ describe("halt resumability and the lease it decides", () => {
       contextId: "ctx-1",
       unattributedPaths: ["scripts/deploy.sh"],
       message: 'Lane "lane-api" has 1 change no member owns',
+      summary: null,
     },
   };
 

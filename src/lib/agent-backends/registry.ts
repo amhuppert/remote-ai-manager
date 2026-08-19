@@ -3,7 +3,6 @@ export {
   getTaskRunner,
   getBackendDescriptor,
   listBackends,
-  listManagedSkillsOwnedCheckoutPaths,
   prepareManagedSkillsCheckout,
 } from "./registry-core";
 
@@ -25,7 +24,6 @@ import {
 import { createClaudeFailureClassifier } from "./claude/failure-classifier";
 import { createCodexFailureClassifier } from "./codex/failure-classifier";
 import { prepareCodexManagedSkillsCheckout } from "./codex/managed-skills-bridge";
-import { listCodexManagedSkillsOwnedCheckoutPaths } from "./codex/managed-skills-bridge";
 
 /**
  * Idempotent production registration of the supported backends. Called on
@@ -54,8 +52,6 @@ export function bootstrapBackends(): void {
         runtimeConfig: createCodexRuntimeConfigAdapter(),
         taskRunner: codexTaskRunner,
         prepareManagedSkillsCheckout: prepareCodexManagedSkillsCheckout,
-        listManagedSkillsOwnedCheckoutPaths:
-          listCodexManagedSkillsOwnedCheckoutPaths,
         mcp: codexMcpCapabilities,
         failureClassifier: createCodexFailureClassifier(),
       }),

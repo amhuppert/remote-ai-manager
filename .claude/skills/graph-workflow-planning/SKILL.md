@@ -306,6 +306,36 @@ For a single-use plan that should not become a saved definition, launch it direc
 
 To revise a saved definition after feedback, use targeted edits (`cctl workflow get` + `cctl workflow edit`) rather than resubmitting the whole plan — see [references/revising-and-recovery.md](references/revising-and-recovery.md). Editing a saved definition never mutates a running execution; tell the user when a fresh execution is needed.
 
+### Semantic authoring lints
+
+Alongside the structural checks, `validate` runs four semantic lints over the plan and prints each hit as `warning: <json path>: lint/<id>: <detail>`. `create` and `replace` print the same lines above their own output, so going straight to create never hides them. They are **warning tier only**: no lint can refuse a plan or change an exit code.
+
+| lint id | catches |
+|---|---|
+| `lint/criteria-density` | a context with more than 12 acceptance-criteria records, or one statement longer than 600 characters — a contract no single validator round can weigh, or a prose blob wearing one record's id |
+| `lint/open-quantifier` | `every`, `all`, `complete`, or `maximal` in a criterion statement — a sweep over a surface the plan never inventories, discovered one site per round |
+| `lint/source-locator-unresolvable` | a charter source whose locator does not resolve to a file or directory inside the worktree (a URL, an absolute path, an escaping path, a path that is not there) — every agent scoped to it reports it absent, every round |
+| `lint/oversized-prose` | task instructions longer than 8000 characters, or a context description longer than 2000 — durable reference material that belongs in a shared document |
+
+Those numbers are dials, not judgments: each is the point past which a real execution's plan stopped being reviewable, and a plan can cross one for a good reason. The `lint/` prefix marks advice, so it is never mistaken for a structural warning.
+
+Answer each one rather than ignoring it — the same rule the submit checklist already applies to every `warning:` line. Answering means repairing the plan or having a specific reason the warning does not apply to this plan; scrolling past is neither.
+
+### Getting the plan reviewed
+
+Review is advisory and never required — an unreviewed plan validates, creates, replaces, and starts freely. When a plan IS reviewed, the verdict binds to the exact revision (the plan's canonical content hash, computed server-side), so get the revision you actually intend to submit reviewed, not an intermediate draft.
+
+- Hand the reviewer the final `.cc/temp/plan.json` and point them at the `graph-workflow-review` skill. The review protocol — the two lenses, the findings artifact, the recording flags — lives there, not here.
+- Check the verdict yourself with `cctl workflow review --file .cc/temp/plan.json`. It reads rather than records unless `--verdict` is passed, and exits 0 either way. A reviewed revision prints the verdict, the reviewer conversation, when it was reached, the revision hash, the findings artifact in full, and ready-to-run commands that open the reviewer's own conversation (`cctl conversation read <id> --outline`, plus `cctl conversation compaction get <id> --json` when a completed compaction exists) — that is how you recover findings in a fresh session. An unreviewed one prints `plan review: none recorded for this revision (advisory)`.
+- `cctl workflow create` and `cctl workflow replace` each print one advisory line for the revision they just saved: none recorded, `approved`, or `changes_requested` with the reviewer and the time. It is a status line; it never changes the exit code.
+
+**The acknowledgement gate** is the only blocking behavior in the whole mechanism. `create` and `replace` refuse a revision carrying an *unacknowledged changes-requested* review with the code `review-changes-requested-unacknowledged`; approved and unreviewed revisions are never gated, and `validate`, `run`, and `start` are never gated at all. The refusal names the revision hash, the reviewer, the review time, and the command that retrieves the findings. Two ways out:
+
+1. **Repair the plan** — the ordinary path. Read the findings (`cctl workflow review --file .cc/temp/plan.json`), fix what they name, re-validate. Repairing changes the plan's hash, so the gate clears on its own — and the new revision carries no verdict at all, so it needs its own review.
+2. **Acknowledge and proceed** — re-run with `--acknowledge-review <hash>` (the flag exists on both `create` and `replace`), passing the hash the refusal printed. That is a read receipt, not an approval: it records that you saw the findings and submitted anyway.
+
+**Any repair invalidates the review.** A revised plan is a different revision and no verdict carries forward by hand, so the reviewer re-records against the exact final revision. Budget for that round trip instead of reviewing a draft you already know will change.
+
 ### Before submitting, confirm
 
 - The `graph-workflow-planning` skill was used, and the relevant references were read for any machinery the plan uses.
@@ -320,3 +350,4 @@ To revise a saved definition after feedback, use targeted edits (`cctl workflow 
 - No task instruction asks an implementer to commit, stash, rebase, or clean the tree.
 - If the plan uses guards, loops, or expansion: the checklist in [references/dynamic-control-flow.md](references/dynamic-control-flow.md) passes.
 - `cctl workflow validate` passes on the final `.cc/temp/plan.json`, and any warnings it prints are answered rather than ignored.
+- If the plan was reviewed, the revision being submitted is the revision that was reviewed — every repair since then invalidated the verdict and earns a re-review.

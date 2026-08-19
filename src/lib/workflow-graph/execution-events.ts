@@ -615,6 +615,8 @@ function haltReasonsEqual(
         // again after a repair, and the member that noticed says which landing
         // it was found at.
         previous.contextId === next.contextId &&
+        // `summary` is deliberately NOT part of the identity: plan repair
+        // stamps its verdict onto a standing drift, and that is the same drift.
         arraysEqual(previous.unattributedPaths, next.unattributedPaths)
       );
   }
