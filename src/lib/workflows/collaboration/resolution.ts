@@ -33,18 +33,19 @@ import {
   type AsymmetricCollaborationSliceResult,
 } from "./envelope";
 import {
-  callPrimitive,
-  parseAndInjectArtifact,
+  produceCollaborationStep,
   trackArtifact,
   type ArtifactTracker,
 } from "./helpers";
-import { validateGeneratedArtifactFiles } from "./artifact-files";
+import type { CollaborationStepLedger } from "./step-ledger";
 
 export interface RunProposedChangesStepContext {
   input: AsymmetricCollaborationSliceInput;
   deps: AsymmetricCollaborationSliceDeps;
   now: () => string;
   tracker: ArtifactTracker;
+  /** The prior attempt's recorded outputs; null for a run with no history. */
+  ledger: CollaborationStepLedger | null;
   backendForAgent: (agent: CollaborationFlowAgent) => CollaborationAgent;
   agentOneDraft: CollaborationInitialDraftOutput;
   agentTwoDraft: CollaborationInitialDraftOutput;
@@ -79,30 +80,15 @@ export async function runProposedChangesStep(
     workflowId: input.workflowId,
     round,
   });
-  const proposedChangesCall = await callPrimitive({
-    input,
-    deps,
-    flowAgent: "agent_one",
-    backend: backendForAgent("agent_one"),
-    prompt: proposedChangesPrompt,
-  });
-  if (proposedChangesCall.kind === "failed") {
-    return {
-      kind: "failed",
-      result: await failRun({
-        input,
-        deps,
-        now,
-        tracker,
-        flowAgent: "agent_one",
-        errorSummary: proposedChangesCall.errorSummary,
-      }),
-    };
-  }
-  const proposedChanges = parseAndInjectArtifact(
-    "agent_one",
-    proposedChangesCall.result,
-    {
+  const step =
+    await produceCollaborationStep<CollaborationProposedChangesOutput>({
+      input,
+      deps,
+      ledger: ctx.ledger,
+      key: { kind: "proposed_changes", round },
+      flowAgent: "agent_one",
+      backend: backendForAgent("agent_one"),
+      prompt: proposedChangesPrompt,
       contentSchema: collaborationProposedChangesContentSchema,
       fullSchema: collaborationProposedChangesOutputSchema,
       injection: {
@@ -111,9 +97,8 @@ export async function runProposedChangesStep(
         target_agent: "agent_two",
         round,
       },
-    },
-  );
-  if (!proposedChanges.success) {
+    });
+  if (step.kind === "failed") {
     return {
       kind: "failed",
       result: await failRun({
@@ -122,32 +107,19 @@ export async function runProposedChangesStep(
         now,
         tracker,
         flowAgent: "agent_one",
-        errorSummary: proposedChanges.error,
+        errorSummary: step.errorSummary,
+        cause: step.cause,
       }),
     };
   }
-  const validation = await validateGeneratedArtifactFiles({
-    worktreePath: input.worktreePath,
-    workflowId: input.workflowId,
-    artifact: proposedChanges.value,
-  });
-  if (!validation.success) {
-    return {
-      kind: "failed",
-      result: await failRun({
-        input,
-        deps,
-        now,
-        tracker,
-        flowAgent: "agent_one",
-        errorSummary: `proposed_changes (agent_one) artifact_files: ${validation.error}`,
-      }),
-    };
+  if (step.kind === "replayed") {
+    return { kind: "ok", proposedChanges: step.artifact };
   }
-  await trackArtifact(tracker, proposedChanges.value);
+
+  await trackArtifact(tracker, step.artifact);
   await persistArtifactsSnapshot(input, deps, now, tracker);
 
-  return { kind: "ok", proposedChanges: proposedChanges.value };
+  return { kind: "ok", proposedChanges: step.artifact };
 }
 
 export interface RunResolutionDecisionStepContext {
@@ -155,6 +127,8 @@ export interface RunResolutionDecisionStepContext {
   deps: AsymmetricCollaborationSliceDeps;
   now: () => string;
   tracker: ArtifactTracker;
+  /** The prior attempt's recorded outputs; null for a run with no history. */
+  ledger: CollaborationStepLedger | null;
   backendForAgent: (agent: CollaborationFlowAgent) => CollaborationAgent;
   agentOneDraft: CollaborationInitialDraftOutput;
   agentTwoDraft: CollaborationInitialDraftOutput;
@@ -195,30 +169,15 @@ export async function runResolutionDecisionStep(
     negotiationRound: round,
     workflowId: input.workflowId,
   });
-  const resolutionCall = await callPrimitive({
-    input,
-    deps,
-    flowAgent: "agent_one",
-    backend: backendForAgent("agent_one"),
-    prompt: resolutionPrompt,
-  });
-  if (resolutionCall.kind === "failed") {
-    return {
-      kind: "failed",
-      result: await failRun({
-        input,
-        deps,
-        now,
-        tracker,
-        flowAgent: "agent_one",
-        errorSummary: resolutionCall.errorSummary,
-      }),
-    };
-  }
-  const resolution = parseAndInjectArtifact(
-    "agent_one",
-    resolutionCall.result,
-    {
+  const step =
+    await produceCollaborationStep<CollaborationResolutionDecisionOutput>({
+      input,
+      deps,
+      ledger: ctx.ledger,
+      key: { kind: "resolution_decision", round },
+      flowAgent: "agent_one",
+      backend: backendForAgent("agent_one"),
+      prompt: resolutionPrompt,
       contentSchema: collaborationResolutionDecisionContentSchema,
       fullSchema: collaborationResolutionDecisionOutputSchema,
       injection: {
@@ -227,9 +186,8 @@ export async function runResolutionDecisionStep(
         target_agent: "agent_two",
         round,
       },
-    },
-  );
-  if (!resolution.success) {
+    });
+  if (step.kind === "failed") {
     return {
       kind: "failed",
       result: await failRun({
@@ -238,30 +196,18 @@ export async function runResolutionDecisionStep(
         now,
         tracker,
         flowAgent: "agent_one",
-        errorSummary: resolution.error,
+        errorSummary: step.errorSummary,
+        cause: step.cause,
       }),
     };
   }
-  const validation = await validateGeneratedArtifactFiles({
-    worktreePath: input.worktreePath,
-    workflowId: input.workflowId,
-    artifact: resolution.value,
-  });
-  if (!validation.success) {
-    return {
-      kind: "failed",
-      result: await failRun({
-        input,
-        deps,
-        now,
-        tracker,
-        flowAgent: "agent_one",
-        errorSummary: `resolution_decision (agent_one) artifact_files: ${validation.error}`,
-      }),
-    };
+  if (step.kind === "replayed") {
+    tracker.negotiationRoundsCompleted = round;
+    return { kind: "ok", resolution: step.artifact };
   }
-  await trackArtifact(tracker, resolution.value);
+
+  await trackArtifact(tracker, step.artifact);
   await persistArtifactsSnapshot(input, deps, now, tracker);
 
-  return { kind: "ok", resolution: resolution.value };
+  return { kind: "ok", resolution: step.artifact };
 }

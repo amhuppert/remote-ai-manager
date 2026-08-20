@@ -29,7 +29,10 @@ const PROCESS_RESTART_ERROR_SUMMARY =
   "process restart - in-memory worker not found";
 
 type RecoveryAction =
-  | { kind: "fail" }
+  /** `featureSnapshotPatch` rides the SAME update as the status change, so a
+   *  workflow type whose resumability is decided from its snapshot never has a
+   *  window where it reads as failed without saying why. */
+  | { kind: "fail"; featureSnapshotPatch?: Record<string, unknown> }
   | { kind: "preserve_paused"; pauseGateKind: GateKind; resumeToken: string };
 
 type RecoveryActionResolver = (input: {
@@ -141,7 +144,24 @@ export async function recoverActiveWorkflowEnvelopes(
         continue;
       }
 
-      await repo.markFailed(envelope.workflowId, PROCESS_RESTART_ERROR_SUMMARY);
+      const existingSnapshot =
+        envelope.featureSnapshot &&
+        typeof envelope.featureSnapshot === "object" &&
+        !Array.isArray(envelope.featureSnapshot)
+          ? (envelope.featureSnapshot as Record<string, unknown>)
+          : {};
+      await repo.update(envelope.workflowId, {
+        status: "failed",
+        errorSummary: PROCESS_RESTART_ERROR_SUMMARY,
+        ...(action.featureSnapshotPatch
+          ? {
+              featureSnapshot: {
+                ...existingSnapshot,
+                ...action.featureSnapshotPatch,
+              },
+            }
+          : {}),
+      });
       summary.failed++;
       logger.warn("workflow-envelope.recovery.running_failed", {
         projectPath,

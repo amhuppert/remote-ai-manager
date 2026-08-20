@@ -83,6 +83,8 @@ const okConversation: PublicConversationState = {
   pendingQueue: [],
   lastSeenAlignmentVersion: null,
   pendingAgentNotices: [],
+  owner: null,
+  turnGeneration: 0,
 };
 
 describe("project conversation lifecycle mutations", () => {

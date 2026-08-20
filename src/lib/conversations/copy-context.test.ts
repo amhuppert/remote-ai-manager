@@ -44,6 +44,8 @@ function makeConversation(overrides: Record<string, unknown> = {}) {
     pendingQueue: [],
     lastSeenAlignmentVersion: null,
     pendingAgentNotices: [],
+    owner: null,
+    turnGeneration: 0,
     profileSnapshot: null,
     profileLockedAt: null,
     ...overrides,

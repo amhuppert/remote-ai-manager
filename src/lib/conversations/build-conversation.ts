@@ -99,6 +99,11 @@ export function buildConversation(
     lastSeenAlignmentVersion: null,
     pendingAgentNotices: [],
     pendingQueue: [],
+    // A new conversation is free and has admitted no turns. Both are advanced
+    // by whoever admits the first one — prompt admission or a collaboration
+    // claim — never at creation.
+    owner: null,
+    turnGeneration: 0,
     // Resolved and composed by the caller before this row exists, so the
     // snapshot is durable before the conversation's first provider runtime can
     // be created (R6). A caller that supplies none leaves the row legacy —

@@ -70,21 +70,28 @@ import {
   type CollaborationCounterProposalOutput,
   type CollaborationFinalAnswerOutput,
   type CollaborationFlowAgent,
-  type CollaborationInitialDraftOutput,
   type CollaborationOpenConflictsOutput,
   type CollaborationResolutionDecisionOutput,
 } from "./types";
 import {
-  callPrimitive,
-  parseAndInjectArtifact,
+  produceCollaborationStep,
   trackArtifact,
   type ArtifactTracker,
 } from "./helpers";
+import {
+  collaborationFailureClass,
+  type CollaborationFailureCause,
+} from "./failure-cause";
+import {
+  buildCollaborationStepLedger,
+  type CollaborationStepLedger,
+  type LedgerRejection,
+} from "./step-ledger";
+import type { CollaborationArtifactStreamRead } from "./artifacts-store";
 import type { CollaborationSessionContext } from "./session-context";
 import {
   findGeneratedArtifactRef,
   readGeneratedArtifactFile,
-  validateGeneratedArtifactFiles,
 } from "./artifact-files";
 import { runInitialDraftsPhase } from "./initial-draft";
 import { runCrossReviewPhase } from "./cross-review";
@@ -165,6 +172,17 @@ export interface AsymmetricCollaborationSliceInput {
   resume?: {
     userAnswersByQuestionId?: Record<string, string>;
   };
+  /**
+   * Which attempt of this workflow is running. Every durable write the slice
+   * makes is fenced on it, so a superseded attempt that is still winding down
+   * cannot mutate state its successor now owns.
+   */
+  attemptEpoch?: number;
+  /**
+   * The conversation turn generation this run claimed. Persisted so a later
+   * resume can prove no other turn has been admitted in between.
+   */
+  claimedTurnGeneration?: number;
 }
 
 export type AsymmetricCollaborationSliceResult =
@@ -247,6 +265,15 @@ export interface AsymmetricCollaborationSliceDeps {
     input: { workflowId: string; timestamp: string },
   ): Promise<unknown>;
   /**
+   * Hands the conversation back so the user can type again, fenced on the exact
+   * attempt: a superseded attempt finishing late must not free a conversation
+   * its successor now holds. Returns whether this call released it.
+   */
+  releaseConversationOwner?(
+    conversationId: string,
+    owner: { workflowId: string; attemptEpoch: number },
+  ): Promise<boolean>;
+  /**
    * Persists the primary lane's advanced backend ref onto the originating
    * conversation after the final answer is committed, so subsequent normal
    * turns continue from where collab left off. Failures are logged and do
@@ -278,12 +305,16 @@ export interface AsymmetricCollaborationSliceDeps {
     artifact: CollaborationArtifact,
   ): Promise<void>;
   /**
-   * Reads the workflow's artifact stream back from the sidecar in append
-   * order. Load-bearing on resume: `initializeEnvelope` rehydrates the prior
-   * `open_conflicts`-bearing stream from here (the slice may re-enter in a
-   * fresh process). Omit in tests that never resume.
+   * Reads the workflow's recorded artifact stream back from the durable
+   * sidecar. Load-bearing on resume: it is the whole of what a re-entering run
+   * knows about what already happened, and the slice may re-enter in a fresh
+   * process. The STRICT read — absence, I/O failure and skipped lines kept
+   * apart — because "no entries" and "could not read" must not both mean
+   * "start over". Omit in tests that never resume.
    */
-  readArtifacts?(workflowId: string): Promise<CollaborationArtifact[]>;
+  readArtifactStream?(
+    workflowId: string,
+  ): Promise<CollaborationArtifactStreamRead<CollaborationArtifact>>;
   now?: () => string;
 }
 
@@ -313,37 +344,62 @@ export async function runAsymmetricCollaborationSlice(
     negotiationRoundsCompleted: 0,
     ...(deps.appendArtifact
       ? {
-          appendSink: (artifact: CollaborationArtifact) =>
-            deps.appendArtifact!(input.workflowId, artifact),
+          appendSink: async (artifact: CollaborationArtifact) => {
+            // Fenced like every other durable write: a superseded attempt that
+            // appended here would put a duplicate key in the log and make the
+            // next resume refuse the whole stream.
+            const envelope = await deps.envelopeStore.read(input.workflowId);
+            if (envelope !== null && !ownsAttempt(input, envelope)) {
+              logger.warn("collaboration.asymmetric.fenced_append_refused", {
+                workflowId: input.workflowId,
+                attemptEpoch: input.attemptEpoch,
+                artifactKind: artifact.kind,
+              });
+              return;
+            }
+            await deps.appendArtifact!(input.workflowId, artifact);
+          },
         }
       : {}),
   };
 
   await initializeLanes(input, deps, now, backendForAgent);
-  const { resumeArtifacts, resumeNegotiationRoundsCompleted } =
-    await initializeEnvelope(input, deps, now);
-  publishStatus(deps, input.workflowId, "running", {
-    kind: "asymmetric_started",
-    primaryAgentBackend: input.primaryAgentBackend,
-  });
+  const { ledger, rejection } = await initializeEnvelope(input, deps, now);
 
-  if (resumeArtifacts !== null) {
-    return runResumeFinalAnswer({
+  if (rejection !== null) {
+    // Re-dispatching an untrusted stream would either bill a completed run a
+    // second time or splice fresh upstream work onto stale downstream
+    // artifacts. Neither is recoverable, so this is terminal.
+    return failRun({
       input,
       deps,
       now,
       tracker,
-      backendForAgent,
-      resumeArtifacts,
-      negotiationRoundsCompleted: resumeNegotiationRoundsCompleted,
+      flowAgent: "agent_one",
+      errorSummary: `recorded artifact stream is unusable (${rejection.code}); this collaboration cannot be resumed and must be restarted`,
+      cause: { kind: "ledger_unusable", code: rejection.code },
     });
   }
+
+  // Prior outputs seed the in-run accumulator WITHOUT the append sink: those
+  // lines are already on disk, and re-appending them would corrupt the very
+  // log the next re-entry reads.
+  if (ledger !== null) {
+    tracker.artifacts.push(...ledger.recorded);
+    tracker.negotiationRoundsCompleted = ledger.negotiationRoundsCompleted;
+  }
+
+  publishStatus(deps, input.workflowId, "running", {
+    kind: "asymmetric_started",
+    primaryAgentBackend: input.primaryAgentBackend,
+  });
 
   const initialDraftsOutcome = await runInitialDraftsPhase({
     input,
     deps,
     now,
     tracker,
+    ledger,
     backendForAgent,
   });
   if (initialDraftsOutcome.kind === "failed") {
@@ -366,6 +422,7 @@ export async function runAsymmetricCollaborationSlice(
     deps,
     now,
     tracker,
+    ledger,
     backendForAgent,
     agentOneDraft,
     agentTwoDraft,
@@ -410,6 +467,7 @@ export async function runAsymmetricCollaborationSlice(
       deps,
       now,
       tracker,
+      ledger,
       backendForAgent,
       agentOneDraft,
       agentTwoDraft,
@@ -425,6 +483,7 @@ export async function runAsymmetricCollaborationSlice(
       deps,
       now,
       tracker,
+      ledger,
       backendForAgent,
       agentOneDraft,
       agentTwoDraft,
@@ -443,6 +502,7 @@ export async function runAsymmetricCollaborationSlice(
       deps,
       now,
       tracker,
+      ledger,
       backendForAgent,
       agentOneDraft,
       agentTwoDraft,
@@ -509,15 +569,27 @@ export async function runAsymmetricCollaborationSlice(
   }
 
   if (policyDecision.kind === "ask_user") {
-    return await pauseForUserInput({
-      input,
-      deps,
-      now,
-      reason: policyDecision.reason,
-      negotiationRoundsCompleted: roundsCompleted,
-      tracker,
-      latestResolutionDecision,
-    });
+    // A gate is asked once per round. A recorded `open_conflicts` for this
+    // round PLUS an explicit resume payload means the user was shown the
+    // questions and chose to proceed — the pause was persisted before the
+    // resume token that authorized this re-entry was ever handed out. Without
+    // that payload the artifact alone proves only that questions were
+    // generated, so the run pauses again rather than assuming consent.
+    const gateAlreadyServed =
+      input.resume !== undefined &&
+      ledger?.replay({ kind: "open_conflicts", round: roundsCompleted }) !=
+        null;
+    if (!gateAlreadyServed) {
+      return await pauseForUserInput({
+        input,
+        deps,
+        now,
+        reason: policyDecision.reason,
+        negotiationRoundsCompleted: roundsCompleted,
+        tracker,
+        latestResolutionDecision,
+      });
+    }
   }
 
   // policyDecision.kind === "final"
@@ -540,27 +612,15 @@ export async function runAsymmetricCollaborationSlice(
       : {}),
     ...(userAnswers.length > 0 ? { userAnswers } : {}),
   });
-  const finalAnswerCall = await callPrimitive({
-    input,
-    deps,
-    flowAgent: "agent_one",
-    backend: backendForAgent("agent_one"),
-    prompt: finalAnswerPrompt,
-  });
-  if (finalAnswerCall.kind === "failed") {
-    return failRun({
+  const finalAnswerStep =
+    await produceCollaborationStep<CollaborationFinalAnswerOutput>({
       input,
       deps,
-      now,
-      tracker,
+      ledger,
+      key: { kind: "final_answer" },
       flowAgent: "agent_one",
-      errorSummary: finalAnswerCall.errorSummary,
-    });
-  }
-  const finalAnswer = parseAndInjectArtifact(
-    "agent_one",
-    finalAnswerCall.result,
-    {
+      backend: backendForAgent("agent_one"),
+      prompt: finalAnswerPrompt,
       contentSchema: collaborationFinalAnswerContentSchema,
       fullSchema: collaborationFinalAnswerOutputSchema,
       injection: {
@@ -568,31 +628,16 @@ export async function runAsymmetricCollaborationSlice(
         agent: "agent_one",
         round: roundsCompleted,
       },
-    },
-  );
-  if (!finalAnswer.success) {
-    return failRun({
-      input,
-      deps,
-      now,
-      tracker,
-      flowAgent: "agent_one",
-      errorSummary: finalAnswer.error,
     });
-  }
-  const finalAnswerValidation = await validateGeneratedArtifactFiles({
-    worktreePath: input.worktreePath,
-    workflowId: input.workflowId,
-    artifact: finalAnswer.value,
-  });
-  if (!finalAnswerValidation.success) {
+  if (finalAnswerStep.kind === "failed") {
     return failRun({
       input,
       deps,
       now,
       tracker,
       flowAgent: "agent_one",
-      errorSummary: `final_answer (agent_one) artifact_files: ${finalAnswerValidation.error}`,
+      errorSummary: finalAnswerStep.errorSummary,
+      cause: finalAnswerStep.cause,
     });
   }
 
@@ -601,7 +646,8 @@ export async function runAsymmetricCollaborationSlice(
     deps,
     now,
     tracker,
-    finalAnswer: finalAnswer.value,
+    finalAnswer: finalAnswerStep.artifact,
+    alreadyRecorded: finalAnswerStep.kind === "replayed",
     negotiationRoundsCompleted: roundsCompleted,
   });
 }
@@ -670,13 +716,14 @@ async function readPrimaryLaneAdvancedRef(
 
 interface InitializeEnvelopeOutcome {
   /**
-   * Pre-existing artifact stream when the envelope was already paused with an
-   * `open_conflicts` artifact and the caller supplied a `resume` payload. The
-   * slice short-circuits the draft/negotiation phases when this is non-null
-   * and jumps straight to the final-answer phase using the rehydrated stream.
+   * The prior attempt's recorded outputs, or null for a run with no usable
+   * history. Every step consults it before dispatching, so a re-entering run
+   * pays the model only for what never completed.
    */
-  resumeArtifacts: CollaborationArtifact[] | null;
-  resumeNegotiationRoundsCompleted: number;
+  ledger: CollaborationStepLedger | null;
+  /** Set when a recorded stream exists but cannot be trusted to replay. The
+   *  run fails terminally rather than re-dispatching as if it were fresh. */
+  rejection: LedgerRejection | null;
 }
 
 async function initializeEnvelope(
@@ -686,17 +733,28 @@ async function initializeEnvelope(
 ): Promise<InitializeEnvelopeOutcome> {
   const timestamp = now();
 
-  // Resume rehydrate reads the prior artifact stream from the durable sidecar,
-  // not the envelope blob. The slice may re-enter in a fresh process after a
-  // pause, so this read MUST come from durable storage. Read before the upsert
-  // so the synchronous mutator can decide the short-circuit from already-loaded
-  // data.
-  const previousArtifacts: CollaborationArtifact[] = deps.readArtifacts
-    ? await deps.readArtifacts(input.workflowId)
-    : [];
+  // The recorded stream comes from the durable sidecar, not the envelope blob:
+  // the slice may re-enter in a fresh process, so this read MUST come from
+  // durable storage. Read before the upsert so the mutator sees a settled
+  // decision.
+  const read = deps.readArtifactStream
+    ? await deps.readArtifactStream(input.workflowId)
+    : ({ kind: "absent" } as const);
 
-  let resumeArtifacts: CollaborationArtifact[] | null = null;
-  let resumeNegotiationRoundsCompleted = 0;
+  let ledger: CollaborationStepLedger | null = null;
+  let rejection: LedgerRejection | null = null;
+
+  if (read.kind === "unreadable") {
+    rejection = { code: "unreadable", detail: read.error };
+  } else if (read.kind === "ok") {
+    const outcome = buildCollaborationStepLedger({
+      stream: read.entries,
+      negotiationRounds: input.negotiationRounds,
+      corruptLineIndexes: read.skipped,
+    });
+    if (outcome.kind === "ok") ledger = outcome.ledger;
+    else if (outcome.kind === "unusable") rejection = outcome.reason;
+  }
 
   await deps.envelopeStore.upsert(input.workflowId, (existing) => {
     const previousSnapshot = (existing?.featureSnapshot ?? {}) as Record<
@@ -716,14 +774,6 @@ async function initializeEnvelope(
       ...(input.resume?.userAnswersByQuestionId ?? {}),
     };
 
-    const hasOpenConflictsArtifact = previousArtifacts.some(
-      (a) => a.kind === "open_conflicts",
-    );
-    if (hasOpenConflictsArtifact && input.resume !== undefined) {
-      resumeArtifacts = [...previousArtifacts];
-      resumeNegotiationRoundsCompleted = previousRoundsCompleted;
-    }
-
     return {
       workflowId: input.workflowId,
       workflowType: COLLABORATION_WORKFLOW_TYPE,
@@ -738,7 +788,10 @@ async function initializeEnvelope(
         primaryAgentBackend: input.primaryAgentBackend,
         ...(input.agents !== undefined ? { agents: input.agents } : {}),
         negotiationRounds: input.negotiationRounds,
-        negotiationRoundsCompleted: previousRoundsCompleted,
+        // Derived from the recorded stream when there is one, so the counter
+        // can never disagree with the log it summarizes.
+        negotiationRoundsCompleted:
+          ledger?.negotiationRoundsCompleted ?? previousRoundsCompleted,
         autonomousResolutionThreshold: input.autonomousResolutionThreshold,
         // The run's captured premises. Written on every entry with the same
         // snapshot the caller resolved once — on resume that is the value
@@ -748,11 +801,23 @@ async function initializeEnvelope(
         ...(input.conversationId !== undefined
           ? { conversationId: input.conversationId }
           : {}),
+        ...(input.attemptEpoch !== undefined
+          ? { attemptEpoch: input.attemptEpoch }
+          : {}),
+        ...(input.claimedTurnGeneration !== undefined
+          ? { claimedTurnGeneration: input.claimedTurnGeneration }
+          : {}),
+        // Durable image replay refs. Without these a resumed run that must
+        // re-run an initial draft would send a different prompt than the one
+        // the original attempt sent.
+        ...(input.imageRefs !== undefined
+          ? { imageRefs: input.imageRefs }
+          : {}),
       },
     };
   });
 
-  return { resumeArtifacts, resumeNegotiationRoundsCompleted };
+  return { ledger, rejection };
 }
 
 function findLatestOpenConflicts(
@@ -819,6 +884,27 @@ export async function persistArtifactsSnapshot(
   });
 }
 
+/**
+ * Whether this attempt is still the one the envelope belongs to.
+ *
+ * Terminal status alone cannot answer it. Once a resume moves the envelope back
+ * to `running`, a superseded attempt's late write would pass a status check and
+ * clobber its successor's state — status is not worker identity. The epoch is.
+ */
+function ownsAttempt(
+  input: AsymmetricCollaborationSliceInput,
+  existing: WorkflowEnvelope,
+): boolean {
+  if (input.attemptEpoch === undefined) return true;
+  const snapshot = existing.featureSnapshot;
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    return true;
+  }
+  const recorded = (snapshot as Record<string, unknown>)["attemptEpoch"];
+  if (typeof recorded !== "number") return true;
+  return recorded === input.attemptEpoch;
+}
+
 async function updateEnvelope(
   input: AsymmetricCollaborationSliceInput,
   deps: AsymmetricCollaborationSliceDeps,
@@ -832,6 +918,13 @@ async function updateEnvelope(
       );
     }
     if (existing.status === "completed" || existing.status === "failed") {
+      return existing;
+    }
+    if (!ownsAttempt(input, existing)) {
+      logger.warn("collaboration.asymmetric.fenced_write_refused", {
+        workflowId: input.workflowId,
+        attemptEpoch: input.attemptEpoch,
+      });
       return existing;
     }
     const next = mutate(existing);
@@ -853,6 +946,13 @@ export interface FailRunContext {
   now: () => string;
   flowAgent: CollaborationFlowAgent;
   errorSummary: string;
+  /**
+   * Why the run failed, in the vocabulary that decides whether the user is
+   * offered a resume. Defaults to `unhandled` (operational) so a caller that
+   * has not yet been taught the distinction errs toward letting the user try
+   * again rather than silently declaring the work unrecoverable.
+   */
+  cause?: CollaborationFailureCause;
   tracker?: ArtifactTracker;
 }
 
@@ -860,18 +960,22 @@ export async function failRun(
   ctx: FailRunContext,
 ): Promise<Extract<AsymmetricCollaborationSliceResult, { kind: "failed" }>> {
   const { input, deps, now, flowAgent, errorSummary, tracker } = ctx;
+  const cause: CollaborationFailureCause = ctx.cause ?? { kind: "unhandled" };
+  const failureClass = collaborationFailureClass(cause);
   const timestamp = now();
   await updateEnvelope(input, deps, now, (existing) => {
     const previous = (existing.featureSnapshot ?? {}) as Record<
       string,
       unknown
     >;
-    const featureSnapshot = tracker
-      ? {
-          ...previous,
-          negotiationRoundsCompleted: tracker.negotiationRoundsCompleted,
-        }
-      : previous;
+    const featureSnapshot = {
+      ...previous,
+      ...(tracker
+        ? { negotiationRoundsCompleted: tracker.negotiationRoundsCompleted }
+        : {}),
+      failureCause: cause,
+      failureClass,
+    };
     return {
       ...existing,
       status: "failed" satisfies WorkflowEnvelopeStatus,
@@ -995,6 +1099,10 @@ interface FinalizeFinalContext {
   deps: AsymmetricCollaborationSliceDeps;
   now: () => string;
   finalAnswer: CollaborationFinalAnswerOutput;
+  /** True when the artifact came from the recorded log rather than a fresh
+   *  call. Its line is already on disk, so committing it again would put two
+   *  `final_answer` entries in the stream and make the next read unusable. */
+  alreadyRecorded?: boolean;
   negotiationRoundsCompleted: number;
   tracker: ArtifactTracker;
 }
@@ -1009,7 +1117,9 @@ export async function finalizeFinal(
 > {
   const { input, deps, now, finalAnswer, negotiationRoundsCompleted, tracker } =
     ctx;
-  await trackArtifact(tracker, finalAnswer);
+  if (ctx.alreadyRecorded !== true) {
+    await trackArtifact(tracker, finalAnswer);
+  }
 
   const answerRef = findGeneratedArtifactRef(
     finalAnswer,
@@ -1063,6 +1173,8 @@ export async function finalizeFinal(
       });
     }
   }
+
+  await releaseOriginatingConversationOwner(input, deps);
 
   if (input.conversationId && deps.markConversationAwaiting) {
     try {
@@ -1143,13 +1255,20 @@ export async function finalizeFinal(
 async function markOriginatingConversationAwaiting(
   input: Pick<
     AsymmetricCollaborationSliceInput,
-    "conversationId" | "workflowId"
+    "conversationId" | "workflowId" | "attemptEpoch"
   >,
-  deps: Pick<AsymmetricCollaborationSliceDeps, "markConversationAwaiting">,
+  deps: Pick<
+    AsymmetricCollaborationSliceDeps,
+    "markConversationAwaiting" | "releaseConversationOwner"
+  >,
   timestamp: string,
   logContext: { reason: "failed" | "user_stopped"; errorSummary?: string },
 ): Promise<void> {
-  if (!input.conversationId || !deps.markConversationAwaiting) return;
+  if (!input.conversationId) return;
+
+  await releaseOriginatingConversationOwner(input, deps);
+
+  if (!deps.markConversationAwaiting) return;
 
   try {
     await deps.markConversationAwaiting(input.conversationId, {
@@ -1164,6 +1283,34 @@ async function markOriginatingConversationAwaiting(
       ...(logContext.errorSummary
         ? { errorSummary: logContext.errorSummary }
         : {}),
+      error: getErrorMessage(err),
+    });
+  }
+}
+
+/**
+ * Free the conversation for the next prompt. Idempotent and attempt-fenced, so
+ * a late release from a superseded attempt is a no-op rather than a hand-back
+ * of a conversation its successor is actively using.
+ */
+async function releaseOriginatingConversationOwner(
+  input: Pick<
+    AsymmetricCollaborationSliceInput,
+    "conversationId" | "workflowId" | "attemptEpoch"
+  >,
+  deps: Pick<AsymmetricCollaborationSliceDeps, "releaseConversationOwner">,
+): Promise<void> {
+  if (!input.conversationId || !deps.releaseConversationOwner) return;
+  if (input.attemptEpoch === undefined) return;
+  try {
+    await deps.releaseConversationOwner(input.conversationId, {
+      workflowId: input.workflowId,
+      attemptEpoch: input.attemptEpoch,
+    });
+  } catch (err) {
+    logger.warn("collaboration.asymmetric.conversation_release_failed", {
+      workflowId: input.workflowId,
+      conversationId: input.conversationId,
       error: getErrorMessage(err),
     });
   }
@@ -1218,169 +1365,6 @@ async function finalizeUserStopped(
     reason: "user_stopped",
     negotiationRoundsCompleted,
   };
-}
-
-interface RunResumeFinalAnswerContext {
-  input: AsymmetricCollaborationSliceInput;
-  deps: AsymmetricCollaborationSliceDeps;
-  now: () => string;
-  tracker: ArtifactTracker;
-  backendForAgent: (agent: CollaborationFlowAgent) => CollaborationAgent;
-  resumeArtifacts: CollaborationArtifact[];
-  negotiationRoundsCompleted: number;
-}
-
-async function runResumeFinalAnswer(
-  ctx: RunResumeFinalAnswerContext,
-): Promise<AsymmetricCollaborationSliceResult> {
-  const {
-    input,
-    deps,
-    now,
-    tracker,
-    backendForAgent,
-    resumeArtifacts,
-    negotiationRoundsCompleted,
-  } = ctx;
-
-  tracker.artifacts.push(...resumeArtifacts);
-  tracker.negotiationRoundsCompleted = negotiationRoundsCompleted;
-
-  const agentOneInitialDraft = findInitialDraftByAgent(
-    resumeArtifacts,
-    "agent_one",
-  );
-  const agentTwoInitialDraft = findInitialDraftByAgent(
-    resumeArtifacts,
-    "agent_two",
-  );
-  const latestCounterProposal = findLatestCounterProposal(resumeArtifacts);
-  const latestResolutionDecision =
-    findLatestResolutionDecision(resumeArtifacts);
-
-  if (
-    !agentOneInitialDraft ||
-    !agentTwoInitialDraft ||
-    !latestCounterProposal ||
-    !latestResolutionDecision
-  ) {
-    return failRun({
-      input,
-      deps,
-      now,
-      tracker,
-      flowAgent: "agent_one",
-      errorSummary:
-        "resume requested but the persisted artifact stream is missing required prerequisites for the final-answer phase",
-    });
-  }
-
-  const latestOpenConflicts = findLatestOpenConflicts(tracker.artifacts);
-  const userAnswers = buildUserAnswerList(
-    latestOpenConflicts,
-    input.resume?.userAnswersByQuestionId,
-  );
-  const finalAnswerPrompt = buildAgentOneFinalAnswerPrompt({
-    userPrompt: input.brief,
-    ownDraft: agentOneInitialDraft,
-    otherDraft: agentTwoInitialDraft,
-    latestCounterProposal,
-    latestResolutionDecision,
-    workflowId: input.workflowId,
-    round: negotiationRoundsCompleted,
-    artifactStream: [...tracker.artifacts],
-    ...(latestOpenConflicts !== null
-      ? { openConflicts: latestOpenConflicts }
-      : {}),
-    ...(userAnswers.length > 0 ? { userAnswers } : {}),
-  });
-
-  logger.info("collaboration.asymmetric.resume_short_circuit", {
-    workflowId: input.workflowId,
-    resumedArtifactCount: resumeArtifacts.length,
-    userAnswerCount: userAnswers.length,
-  });
-
-  const finalAnswerCall = await callPrimitive({
-    input,
-    deps,
-    flowAgent: "agent_one",
-    backend: backendForAgent("agent_one"),
-    prompt: finalAnswerPrompt,
-  });
-  if (finalAnswerCall.kind === "failed") {
-    return failRun({
-      input,
-      deps,
-      now,
-      tracker,
-      flowAgent: "agent_one",
-      errorSummary: finalAnswerCall.errorSummary,
-    });
-  }
-  const finalAnswer = parseAndInjectArtifact(
-    "agent_one",
-    finalAnswerCall.result,
-    {
-      contentSchema: collaborationFinalAnswerContentSchema,
-      fullSchema: collaborationFinalAnswerOutputSchema,
-      injection: {
-        kind: "final_answer",
-        agent: "agent_one",
-        round: negotiationRoundsCompleted,
-      },
-    },
-  );
-  if (!finalAnswer.success) {
-    return failRun({
-      input,
-      deps,
-      now,
-      tracker,
-      flowAgent: "agent_one",
-      errorSummary: finalAnswer.error,
-    });
-  }
-  return finalizeFinal({
-    input,
-    deps,
-    now,
-    tracker,
-    finalAnswer: finalAnswer.value,
-    negotiationRoundsCompleted,
-  });
-}
-
-function findInitialDraftByAgent(
-  artifacts: readonly CollaborationArtifact[],
-  agent: CollaborationFlowAgent,
-): CollaborationInitialDraftOutput | null {
-  for (const artifact of artifacts) {
-    if (artifact.kind === "initial_draft" && artifact.agent === agent) {
-      return artifact;
-    }
-  }
-  return null;
-}
-
-function findLatestCounterProposal(
-  artifacts: readonly CollaborationArtifact[],
-): CollaborationCounterProposalOutput | null {
-  for (let i = artifacts.length - 1; i >= 0; i--) {
-    const artifact = artifacts[i]!;
-    if (artifact.kind === "counter_proposal") return artifact;
-  }
-  return null;
-}
-
-function findLatestResolutionDecision(
-  artifacts: readonly CollaborationArtifact[],
-): CollaborationResolutionDecisionOutput | null {
-  for (let i = artifacts.length - 1; i >= 0; i--) {
-    const artifact = artifacts[i]!;
-    if (artifact.kind === "resolution_decision") return artifact;
-  }
-  return null;
 }
 
 function publishStatus(

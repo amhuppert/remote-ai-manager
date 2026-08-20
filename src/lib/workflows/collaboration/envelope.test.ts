@@ -253,6 +253,12 @@ interface BuiltDeps {
    * the artifact stream now lives in the sidecar, not the envelope blob.
    */
   artifactSidecar: Map<string, CollaborationArtifact[]>;
+  /** Conversation-ownership releases, in order. A collaboration that ends
+   *  without one leaves the user unable to prompt in their own conversation. */
+  releasedOwners: Array<{
+    conversationId: string;
+    owner: { workflowId: string; attemptEpoch: number };
+  }>;
 }
 
 async function buildDeps(
@@ -286,6 +292,7 @@ async function buildDeps(
   > = [];
 
   const artifactSidecar = new Map<string, CollaborationArtifact[]>();
+  const releasedOwners: BuiltDeps["releasedOwners"] = [];
 
   const deps: AsymmetricCollaborationSliceDeps = {
     callAgent: programmed.callAgent,
@@ -301,9 +308,15 @@ async function buildDeps(
       existing.push(artifact);
       artifactSidecar.set(workflowId, existing);
     },
-    readArtifacts: async (workflowId) => [
-      ...(artifactSidecar.get(workflowId) ?? []),
-    ],
+    releaseConversationOwner: async (conversationId, owner) => {
+      releasedOwners.push({ conversationId, owner });
+      return true;
+    },
+    readArtifactStream: async (workflowId: string) => {
+      const entries = artifactSidecar.get(workflowId);
+      if (entries === undefined) return { kind: "absent" as const };
+      return { kind: "ok" as const, entries: [...entries], skipped: [] };
+    },
     ...(options.appendTranscriptEntry
       ? { appendTranscriptEntry: options.appendTranscriptEntry }
       : {}),
@@ -322,6 +335,7 @@ async function buildDeps(
     capturedPushDispatches,
     laneService,
     artifactSidecar,
+    releasedOwners,
   };
 }
 
@@ -1938,5 +1952,324 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
 
     expect(result.kind).toBe("failed");
     expect(updateCalls).toEqual([]);
+  });
+});
+
+describe("runAsymmetricCollaborationSlice — resuming after an operational failure", () => {
+  /**
+   * Seed the durable sidecar as a prior attempt would have left it, and
+   * materialize the generated markdown each recorded artifact names — a
+   * replayed artifact points at real files a resumed run may read.
+   */
+  function seedSidecar(
+    built: Awaited<ReturnType<typeof buildDeps>>,
+    artifacts: CollaborationArtifact[],
+  ): void {
+    const rehomed = artifacts.map((a) =>
+      rehomeGeneratedArtifactPaths(a, "wf-asym"),
+    );
+    for (const artifact of rehomed) materializeGeneratedFiles(artifact);
+    built.artifactSidecar.set("wf-asym", rehomed);
+  }
+
+  function requestKinds(programmed: ScriptedAgentCall): string[] {
+    return programmed.receivedRequests.map((req) => {
+      const backend =
+        req.kind === "conversation_turn"
+          ? (req.backend ?? "claude")
+          : req.backend;
+      return `${req.laneRef?.laneId ?? "?"}:${backend}`;
+    });
+  }
+
+  // The ticket's core promise: an outage mid-negotiation must not throw away
+  // the rounds already paid for.
+  it("replays every recorded step and calls the model only for the missing one", async () => {
+    const programmed = makeProgrammedCallAgent({
+      // agent_two — only the counter-proposal that never completed.
+      codex: [
+        makeBackendResult(
+          "codex",
+          makeAgentTwoCounterProposalRound2({ round: 2 }),
+        ),
+      ],
+      // agent_one — the rest of round 2, then the final answer.
+      claude: [
+        makeBackendResult(
+          "claude",
+          makeResolutionDecisionFinal({
+            round: 2,
+            remaining_disagreements: [],
+          }),
+        ),
+        makeBackendResult("claude", makeFinalAnswer({ round: 2 })),
+      ],
+    });
+    const built = await buildDeps(programmed);
+    seedSidecar(built, [
+      makeAgentOneInitialDraft(),
+      makeAgentTwoInitialDraft(),
+      makeAgentTwoCrossReview(),
+      makeAgentOneProposedChanges({ round: 1 }),
+      makeAgentTwoCounterProposalRound1({ round: 1 }),
+      makeResolutionDecisionContinue({ round: 1 }),
+      makeAgentOneProposedChanges({ round: 2 }),
+    ]);
+    const seededLength = built.artifactSidecar.get("wf-asym")!.length;
+
+    const result = await runAsymmetricCollaborationSlice(
+      baseInput({ primaryAgentBackend: "claude", negotiationRounds: 3 }),
+      built.deps,
+    );
+
+    expect(result.kind).toBe("completed_final");
+    // Seven recorded steps replayed for free; only the three that never ran
+    // cost a model call.
+    expect(requestKinds(programmed)).toEqual([
+      "agent_two:codex",
+      "agent_one:claude",
+      "agent_one:claude",
+    ]);
+
+    // Replayed lines are already on disk: re-entry must not append them again.
+    const sidecar = built.artifactSidecar.get("wf-asym")!;
+    expect(sidecar).toHaveLength(seededLength + 3);
+    const keys = sidecar.map((a) =>
+      a.kind === "initial_draft"
+        ? `${a.kind}:${a.agent}`
+        : a.kind === "cross_review" || a.kind === "final_answer"
+          ? a.kind
+          : `${a.kind}:${a.round}`,
+    );
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  // When one model has an outage during the parallel draft phase, the healthy
+  // peer's draft is still committed — so the sidecar legitimately holds one
+  // draft, and only the failed peer should be re-dispatched.
+  it("re-dispatches only the peer whose initial draft is missing", async () => {
+    const programmed = makeProgrammedCallAgent({
+      claude: [
+        makeBackendResult("claude", makeAgentOneInitialDraft()),
+        makeBackendResult("claude", makeAgentOneProposedChanges({ round: 1 })),
+        makeBackendResult(
+          "claude",
+          makeResolutionDecisionFinal({
+            round: 1,
+            remaining_disagreements: [],
+          }),
+        ),
+        makeBackendResult("claude", makeFinalAnswer({ round: 1 })),
+      ],
+      codex: [
+        makeBackendResult("codex", makeAgentTwoCrossReview()),
+        makeBackendResult(
+          "codex",
+          makeAgentTwoCounterProposalRound1({ round: 1 }),
+        ),
+      ],
+    });
+    const built = await buildDeps(programmed);
+    seedSidecar(built, [makeAgentTwoInitialDraft()]);
+
+    const result = await runAsymmetricCollaborationSlice(
+      baseInput({ primaryAgentBackend: "claude" }),
+      built.deps,
+    );
+
+    expect(result.kind).toBe("completed_final");
+    // agent_two's draft replayed; the very first live call is agent_one's.
+    expect(requestKinds(programmed)[0]).toBe("agent_one:claude");
+    expect(
+      programmed.receivedRequests.filter(
+        (r) => r.laneRef?.laneId === "agent_two",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("presents replayed drafts to later prompts in canonical order", async () => {
+    const programmed = makeProgrammedCallAgent({
+      codex: [
+        makeBackendResult(
+          "codex",
+          makeAgentTwoCounterProposalRound1({ round: 1 }),
+        ),
+      ],
+      claude: [
+        makeBackendResult(
+          "claude",
+          makeResolutionDecisionFinal({
+            round: 1,
+            remaining_disagreements: [],
+          }),
+        ),
+        makeBackendResult("claude", makeFinalAnswer({ round: 1 })),
+      ],
+    });
+    const built = await buildDeps(programmed);
+    // Agent Two's draft landed on disk FIRST — the append-only order a real
+    // parallel phase can produce.
+    seedSidecar(built, [
+      makeAgentTwoInitialDraft(),
+      makeAgentOneInitialDraft(),
+      makeAgentTwoCrossReview(),
+      makeAgentOneProposedChanges({ round: 1 }),
+    ]);
+
+    const result = await runAsymmetricCollaborationSlice(
+      baseInput({ primaryAgentBackend: "claude" }),
+      built.deps,
+    );
+
+    expect(result.kind).toBe("completed_final");
+    // The final-answer prompt is the one that replays the whole recorded
+    // stream. It must list Agent One's draft before Agent Two's even though
+    // Agent Two's landed on disk first — an append-only file cannot be
+    // reordered, so the canonical order has to come from the ledger.
+    const finalPrompt = programmed.receivedRequests.at(-1)!.prompt;
+    const ledgerSection = finalPrompt.slice(
+      finalPrompt.indexOf(
+        "--- complete artifact stream before final answer ---",
+      ),
+    );
+    expect(ledgerSection).toContain("initial_draft (agent=agent_one)");
+    expect(
+      ledgerSection.indexOf("initial_draft (agent=agent_one)"),
+    ).toBeLessThan(ledgerSection.indexOf("initial_draft (agent=agent_two)"));
+  });
+
+  // A stream the ledger cannot trust must never be re-dispatched as if fresh:
+  // that would re-run a completed run and bill it twice.
+  it("fails terminally rather than restarting when the recorded stream has a hole", async () => {
+    const programmed = makeProgrammedCallAgent({ claude: [], codex: [] });
+    const built = await buildDeps(programmed);
+    seedSidecar(built, [
+      makeAgentOneInitialDraft(),
+      makeAgentTwoInitialDraft(),
+      makeAgentTwoCrossReview(),
+      // round 1's proposed_changes is missing beneath its own counter-proposal
+      makeAgentTwoCounterProposalRound1({ round: 1 }),
+    ]);
+
+    const result = await runAsymmetricCollaborationSlice(
+      baseInput({ primaryAgentBackend: "claude" }),
+      built.deps,
+    );
+
+    expect(result.kind).toBe("failed");
+    expect(programmed.receivedRequests).toEqual([]);
+  });
+});
+
+describe("runAsymmetricCollaborationSlice — handing the conversation back", () => {
+  function completingCalls() {
+    return makeProgrammedCallAgent({
+      claude: [
+        makeBackendResult("claude", makeAgentOneInitialDraft()),
+        makeBackendResult("claude", makeAgentOneProposedChanges({ round: 1 })),
+        makeBackendResult(
+          "claude",
+          makeResolutionDecisionFinal({
+            round: 1,
+            remaining_disagreements: [],
+          }),
+        ),
+        makeBackendResult("claude", makeFinalAnswer({ round: 1 })),
+      ],
+      codex: [
+        makeBackendResult("codex", makeAgentTwoInitialDraft()),
+        makeBackendResult("codex", makeAgentTwoCrossReview()),
+        makeBackendResult(
+          "codex",
+          makeAgentTwoCounterProposalRound1({ round: 1 }),
+        ),
+      ],
+    });
+  }
+
+  // The ordinary end of a collaboration. If ownership were not released here
+  // the user could never prompt in that conversation again — prompt admission
+  // refuses an owned conversation.
+  it("releases the conversation when the run completes with a final answer", async () => {
+    const programmed = completingCalls();
+    const built = await buildDeps(programmed);
+
+    const result = await runAsymmetricCollaborationSlice(
+      baseInput({
+        primaryAgentBackend: "claude",
+        conversationId: "conv-1",
+        attemptEpoch: 3,
+      }),
+      built.deps,
+    );
+
+    expect(result.kind).toBe("completed_final");
+    expect(built.releasedOwners).toEqual([
+      {
+        conversationId: "conv-1",
+        owner: { workflowId: "wf-asym", attemptEpoch: 3 },
+      },
+    ]);
+  });
+
+  it("releases the conversation when the run fails", async () => {
+    const programmed = makeProgrammedCallAgent({
+      claude: [makeFailedResult("claude", "provider down")],
+      codex: [makeBackendResult("codex", makeAgentTwoInitialDraft())],
+    });
+    const built = await buildDeps(programmed);
+
+    const result = await runAsymmetricCollaborationSlice(
+      baseInput({
+        primaryAgentBackend: "claude",
+        conversationId: "conv-1",
+        attemptEpoch: 1,
+      }),
+      built.deps,
+    );
+
+    expect(result.kind).toBe("failed");
+    expect(built.releasedOwners).toHaveLength(1);
+  });
+
+  // A paused run keeps the conversation: the user's next act is answering the
+  // question through the pause UI, which resumes the SAME run rather than
+  // starting a competing turn.
+  it("keeps the conversation while paused for user input", async () => {
+    const programmed = makeProgrammedCallAgent({
+      claude: [
+        makeBackendResult("claude", makeAgentOneInitialDraft()),
+        makeBackendResult("claude", makeAgentOneProposedChanges({ round: 1 })),
+        makeBackendResult(
+          "claude",
+          makeResolutionDecisionAskUser({
+            round: 1,
+            user_questions: [makeUserQuestion()],
+          }),
+        ),
+      ],
+      codex: [
+        makeBackendResult("codex", makeAgentTwoInitialDraft()),
+        makeBackendResult("codex", makeAgentTwoCrossReview()),
+        makeBackendResult(
+          "codex",
+          makeAgentTwoCounterProposalRound1({ round: 1 }),
+        ),
+      ],
+    });
+    const built = await buildDeps(programmed);
+
+    const result = await runAsymmetricCollaborationSlice(
+      baseInput({
+        primaryAgentBackend: "claude",
+        conversationId: "conv-1",
+        attemptEpoch: 1,
+        negotiationRounds: 1,
+      }),
+      built.deps,
+    );
+
+    expect(result.kind).toBe("paused_for_user_input");
+    expect(built.releasedOwners).toEqual([]);
   });
 });

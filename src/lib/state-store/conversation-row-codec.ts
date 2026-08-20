@@ -7,6 +7,7 @@ import {
 } from "@/lib/shared/session-ref-codec";
 import {
   askQuestionItemSchema,
+  conversationOwnerSchema,
   conversationRoleSchema,
   conversationStatusSchema,
   forkedFromSchema,
@@ -160,6 +161,8 @@ export interface SharedConversationRawColumns {
   pending_agent_notices: string | null;
   profile_snapshot: string | null;
   profile_locked_at: string | null;
+  conversation_owner: string | null;
+  turn_generation: number;
 }
 
 const pendingQueueArraySchema = z.array(pendingQueuedMessageSchema);
@@ -328,6 +331,21 @@ export function decodeSharedConversationColumns(
     return throwConversationValidationError(id, profileSnapshot.issues);
   }
 
+  // A null column is the free conversation — the legacy and the ordinary state.
+  // A PRESENT but unparseable owner throws: a half-understood claim is worse
+  // than no claim, because a resumed turn would write into a conversation it
+  // cannot prove it still holds.
+  const owner = parseJsonColumn(
+    "owner",
+    row.conversation_owner,
+    conversationOwnerSchema,
+    "default",
+    null,
+  );
+  if (!owner.ok) {
+    return throwConversationValidationError(id, owner.issues);
+  }
+
   const candidate: Record<string, unknown> = {
     name: row.name,
     nameOrigin: nameOriginResult.data,
@@ -358,6 +376,8 @@ export function decodeSharedConversationColumns(
     pendingAgentNotices: pendingAgentNotices.value ?? [],
     profileSnapshot: profileSnapshot.value ?? null,
     profileLockedAt: row.profile_locked_at,
+    owner: owner.value ?? null,
+    turnGeneration: row.turn_generation,
   };
   if (mcpOverrides.value !== undefined) {
     candidate.mcpOverrides = mcpOverrides.value;
@@ -637,6 +657,8 @@ export interface SharedConversationBindColumns {
   pending_agent_notices: string | null;
   profile_snapshot: string | null;
   profile_locked_at: string | null;
+  conversation_owner: string | null;
+  turn_generation: number;
 }
 
 export function encodeSharedConversationColumns(
@@ -680,6 +702,8 @@ export function encodeSharedConversationColumns(
     pending_agent_notices: jsonOrNull(conversation.pendingAgentNotices),
     profile_snapshot: jsonOrNull(conversation.profileSnapshot),
     profile_locked_at: conversation.profileLockedAt,
+    conversation_owner: jsonOrNull(conversation.owner),
+    turn_generation: conversation.turnGeneration,
   };
 }
 
@@ -796,6 +820,16 @@ const CONVERSATION_COLUMN_MAP = [
     "pendingAgentNotices",
     "pending_agent_notices",
     (c: ConversationState) => jsonOrNull(c.pendingAgentNotices),
+  ],
+  [
+    "owner",
+    "conversation_owner",
+    (c: ConversationState) => jsonOrNull(c.owner),
+  ],
+  [
+    "turnGeneration",
+    "turn_generation",
+    (c: ConversationState) => c.turnGeneration,
   ],
   [
     "profileSnapshot",

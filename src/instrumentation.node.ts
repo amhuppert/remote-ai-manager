@@ -318,17 +318,23 @@ export function createStartupRegistrar(
             // UI can surface a resume affordance. Once an in-memory worker
             // registry exists, swap this predicate for a lookup against it.
             isWorkerActive: () => false,
-            // Collaboration envelopes are recoverable: we mark them `paused` with
-            // a synthetic resume token so the UI can surface a recovery action
-            // that triggers `manager.resume` and replays the slice from the last
-            // completed round. Other workflow types fall through to the default
-            // `markFailed` behavior.
+            // A collaboration severed by a restart is FAILED, and operationally
+            // so: the process died, not the work. Marking it failed is both
+            // truthful and what makes it resumable — the resume path replays the
+            // recorded artifacts and re-runs only what never completed.
+            //
+            // It used to be marked `paused` with a synthetic `recovery-<id>`
+            // token instead. No client could supply that token, and the slice
+            // had no replay, so the "recovery action" it advertised would have
+            // re-run the whole collaboration from the first draft.
             resolveInactiveAction: ({ envelope }) => {
               if (envelope.workflowType === "collaboration") {
                 return {
-                  kind: "preserve_paused",
-                  pauseGateKind: "human_approval",
-                  resumeToken: `recovery-${envelope.workflowId}`,
+                  kind: "fail",
+                  featureSnapshotPatch: {
+                    failureCause: { kind: "process_restart" },
+                    failureClass: "operational",
+                  },
                 };
               }
               return { kind: "fail" };

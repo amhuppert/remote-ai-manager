@@ -41,6 +41,8 @@ function makeConversation(
     pendingQueue: [],
     lastSeenAlignmentVersion: null,
     pendingAgentNotices: [],
+    owner: null,
+    turnGeneration: 0,
     forkedFrom: null,
     role: null,
     activeTurnSource: null,

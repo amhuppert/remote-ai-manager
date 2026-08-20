@@ -727,7 +727,8 @@ export function useCollaborationResumeMutation(
 
   return useMutation({
     mutationFn: (params: {
-      resumeToken: string;
+      /** Omitted when resuming a FAILED run: there are no answers to bind. */
+      resumeToken?: string;
       conversationId: string;
       userAnswers?: Record<string, string>;
     }) =>
@@ -738,7 +739,9 @@ export function useCollaborationResumeMutation(
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            resumeToken: params.resumeToken,
+            ...(params.resumeToken !== undefined
+              ? { resumeToken: params.resumeToken }
+              : {}),
             conversationId: params.conversationId,
             userAnswers: params.userAnswers ?? {},
           }),

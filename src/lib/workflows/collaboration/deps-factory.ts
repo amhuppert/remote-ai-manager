@@ -22,6 +22,7 @@
 
 import path from "node:path";
 import { createLogger } from "@/lib/logging";
+import { releaseConversationOwnership } from "@/lib/conversations/ownership";
 import { getErrorMessage } from "@/lib/shared/errors";
 import {
   createLaneService,
@@ -36,7 +37,7 @@ import { safeAppendTranscriptEntry } from "@/lib/prompt/transcript";
 import { dispatchPushForCollaborationEvent } from "@/lib/push-notification/dispatcher";
 import {
   appendCollaborationArtifact,
-  readCollaborationArtifacts,
+  readCollaborationArtifactStream,
 } from "./artifacts-store";
 import { collaborationArtifactSchema } from "./types";
 import type { AsymmetricCollaborationSliceDeps } from "./envelope";
@@ -178,6 +179,16 @@ export function createCollaborationDeps(
         projectName,
         storeSessionName: sessionName,
       }),
+    releaseConversationOwner: async (conversationId, owner) =>
+      releaseConversationOwnership(
+        mutateConversation,
+        {
+          projectPath: input.projectPath,
+          storeSessionName: input.sessionName,
+          conversationId,
+        },
+        { kind: "collaboration", ...owner },
+      ),
     markConversationAwaiting: async (conversationId) => {
       // `unread = true` mirrors the regular conversation finish path
       // (`markUnreadOnFinish`) so the originating conversation pins to
@@ -255,7 +266,7 @@ export function createCollaborationDeps(
       ),
     appendArtifact: (workflowId, artifact) =>
       appendCollaborationArtifact(workflowId, artifact),
-    readArtifacts: (workflowId) =>
-      readCollaborationArtifacts(workflowId, collaborationArtifactSchema),
+    readArtifactStream: (workflowId: string) =>
+      readCollaborationArtifactStream(workflowId, collaborationArtifactSchema),
   };
 }

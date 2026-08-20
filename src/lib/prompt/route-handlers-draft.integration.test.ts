@@ -79,6 +79,10 @@ function createHandlers(
     getConversation: store.getConversation,
     getActiveGraphWorkflowExecution: async () => null,
     isConversationBusy: () => false,
+    admitConversationTurn: async () => ({
+      kind: "admit" as const,
+      turnGeneration: 1,
+    }),
     executePromptStream,
     getCollaborationManager: makeManager,
     setConversationPendingPromptText: store.setConversationPendingPromptText,

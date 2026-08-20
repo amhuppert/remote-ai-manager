@@ -32,6 +32,10 @@ function createTestDeps(): PromptRouteDeps {
       return session?.graphWorkflowExecution ?? null;
     }),
     isConversationBusy: vi.fn().mockReturnValue(false),
+    admitConversationTurn: async () => ({
+      kind: "admit" as const,
+      turnGeneration: 1,
+    }),
     executePromptStream: vi.fn().mockResolvedValue(undefined),
     getCollaborationManager: vi.fn().mockReturnValue(makeMockManager()),
     setConversationPendingPromptText: vi.fn().mockResolvedValue(undefined),
@@ -97,6 +101,10 @@ const testSession = {
 
 const testConversation = {
   id: "conv-1",
+  // Free: no non-prompt turn holds it. The production decoder always supplies
+  // this, so a fake that omits it would test a shape that cannot occur.
+  owner: null,
+  turnGeneration: 0,
   status: "awaiting" as const,
   createdAt: "2024-01-01T00:00:00Z",
   lastActivityAt: "2024-01-01T00:00:00Z",
@@ -273,6 +281,49 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
     expect(response.status).toBe(403);
     const body = await response.json();
     expect(body.code).toBe("MANAGED_CONVERSATION");
+  });
+
+  // A collaboration occupies the conversation for minutes or hours. Admitting
+  // a prompt alongside it would interleave two turns in one transcript and
+  // leave the collaboration unable to prove, on resume, that the conversation
+  // is still the one it claimed.
+  it("refuses a prompt while a collaboration holds the conversation", async () => {
+    vi.mocked(deps.getConversation).mockResolvedValue({
+      ...testConversation,
+      owner: { kind: "collaboration", workflowId: "wf-7", attemptEpoch: 1 },
+    } as ConversationState);
+
+    const response = await handlers.conversationPOST(
+      makeRequest({ prompt: "Hello" }),
+      makeConvParams(),
+    );
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body.code).toBe("CONVERSATION_OWNED");
+    expect(body.error).toContain("wf-7");
+  });
+
+  // The read-only guard above is only the fast answer; the authoritative check
+  // lives inside the admission mutation, which is what makes it atomic against
+  // a claim that lands mid-request.
+  it("refuses when the durable admission finds the conversation owned", async () => {
+    deps.admitConversationTurn = async () => ({
+      kind: "refuse" as const,
+      owner: {
+        kind: "collaboration" as const,
+        workflowId: "wf-9",
+        attemptEpoch: 2,
+      },
+    });
+
+    const response = await handlers.conversationPOST(
+      makeRequest({ prompt: "Hello" }),
+      makeConvParams(),
+    );
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("CONVERSATION_OWNED");
   });
 
   it("returns 404 when conversation is not found", async () => {

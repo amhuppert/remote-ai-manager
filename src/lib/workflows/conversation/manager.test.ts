@@ -728,6 +728,8 @@ describe("conversation manager", () => {
         pendingAgentNotices: [],
         profileSnapshot: null,
         profileLockedAt: null,
+        owner: null,
+        turnGeneration: 0,
       };
 
       applySyncDerivedFields(context, conv);

@@ -39,6 +39,12 @@ import {
 } from "@/lib/conversation-commands/parse";
 import { isConversationBusy as defaultIsConversationBusy } from "@/lib/prompt/single-flight";
 import {
+  admitConversationTurn,
+  type ConversationOwnershipRef,
+  type TurnAdmissionDecision,
+} from "@/lib/conversations/ownership";
+import { mutateConversation as defaultMutateConversation } from "@/lib/state-store";
+import {
   runPromptRequestSchema,
   pendingPromptRequestSchema,
   type PendingPromptRequest,
@@ -121,6 +127,11 @@ export interface PromptRouteDeps {
     sessionName: string,
     conversationId: string,
   ) => boolean;
+  /** Durably admits an ordinary prompt turn: refuses an owned conversation and
+   *  moves the turn generation in ONE mutation. */
+  admitConversationTurn: (
+    scope: ConversationOwnershipRef,
+  ) => Promise<TurnAdmissionDecision>;
   executePromptStream: typeof defaultExecutePromptStream;
   getCollaborationManager: () => CollaborationManager;
   setConversationPendingPromptText(
@@ -143,6 +154,8 @@ const defaultDeps: PromptRouteDeps = {
   getConversation: defaultGetConversation,
   getActiveGraphWorkflowExecution: defaultGetActiveGraphWorkflowExecution,
   isConversationBusy: defaultIsConversationBusy,
+  admitConversationTurn: (scope) =>
+    admitConversationTurn(defaultMutateConversation, scope),
   executePromptStream: defaultExecutePromptStream,
   getCollaborationManager: getDefaultCollaborationManager,
   setConversationPendingPromptText: defaultSetConversationPendingPromptText,
@@ -359,6 +372,20 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
       });
     }
 
+    // A conversation held by a long-running non-prompt turn (Collaboration
+    // Mode) refuses every prompt, including a second `/collab`. The durable
+    // check inside the admission mutation below is the authoritative one; this
+    // is the cheap early answer using the record already in hand.
+    if (conversation.owner) {
+      return NextResponse.json(
+        {
+          error: `Conversation is held by a running collaboration (workflow "${conversation.owner.workflowId}")`,
+          code: "CONVERSATION_OWNED",
+        } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+
     if (deps.isConversationBusy(projectPath, sessionName, conversationId)) {
       return NextResponse.json(
         {
@@ -477,6 +504,25 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
           status: 500,
         });
       }
+    }
+
+    // Admission is the moment the turn generation moves — before the transcript
+    // or the provider sees anything — so a collaboration that later tries to
+    // reclaim this conversation can tell that a turn happened even if the
+    // conversation is idle again by then.
+    const admission = await deps.admitConversationTurn({
+      projectPath,
+      storeSessionName: sessionName,
+      conversationId,
+    });
+    if (admission.kind === "refuse") {
+      return NextResponse.json(
+        {
+          error: `Conversation is held by a running collaboration (workflow "${admission.owner.workflowId}")`,
+          code: "CONVERSATION_OWNED",
+        } satisfies ApiError,
+        { status: 409 },
+      );
     }
 
     const encoder = new TextEncoder();

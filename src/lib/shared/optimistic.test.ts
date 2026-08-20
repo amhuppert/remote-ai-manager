@@ -19,6 +19,8 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
       {
         profileSnapshot: null,
         profileLockedAt: null,
+        owner: null,
+        turnGeneration: 0,
         id: "conv-1",
         scope: "session",
         nameOrigin: "default",

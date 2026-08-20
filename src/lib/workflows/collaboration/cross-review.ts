@@ -24,18 +24,19 @@ import {
   type AsymmetricCollaborationSliceResult,
 } from "./envelope";
 import {
-  callPrimitive,
-  parseAndInjectArtifact,
+  produceCollaborationStep,
   trackArtifact,
   type ArtifactTracker,
 } from "./helpers";
-import { validateGeneratedArtifactFiles } from "./artifact-files";
+import type { CollaborationStepLedger } from "./step-ledger";
 
 export interface RunCrossReviewPhaseContext {
   input: AsymmetricCollaborationSliceInput;
   deps: AsymmetricCollaborationSliceDeps;
   now: () => string;
   tracker: ArtifactTracker;
+  /** The prior attempt's recorded outputs; null for a run with no history. */
+  ledger: CollaborationStepLedger | null;
   backendForAgent: (agent: CollaborationFlowAgent) => CollaborationAgent;
   agentOneDraft: CollaborationInitialDraftOutput;
   agentTwoDraft: CollaborationInitialDraftOutput;
@@ -68,59 +69,24 @@ export async function runCrossReviewPhase(
     workflowId: input.workflowId,
     round: 0,
   });
-  const crossReviewCall = await callPrimitive({
+  const step = await produceCollaborationStep<CollaborationCrossReviewOutput>({
     input,
     deps,
+    ledger: ctx.ledger,
+    key: { kind: "cross_review" },
     flowAgent: "agent_two",
     backend: backendForAgent("agent_two"),
     prompt: crossReviewPrompt,
-  });
-  if (crossReviewCall.kind === "failed") {
-    return {
-      kind: "failed",
-      result: await failRun({
-        input,
-        deps,
-        now,
-        tracker,
-        flowAgent: "agent_two",
-        errorSummary: crossReviewCall.errorSummary,
-      }),
-    };
-  }
-  const crossReview = parseAndInjectArtifact(
-    "agent_two",
-    crossReviewCall.result,
-    {
-      contentSchema: collaborationCrossReviewContentSchema,
-      fullSchema: collaborationCrossReviewOutputSchema,
-      injection: {
-        kind: "cross_review",
-        agent: "agent_two",
-        target_agent: "agent_one",
-        round: 0,
-      },
+    contentSchema: collaborationCrossReviewContentSchema,
+    fullSchema: collaborationCrossReviewOutputSchema,
+    injection: {
+      kind: "cross_review",
+      agent: "agent_two",
+      target_agent: "agent_one",
+      round: 0,
     },
-  );
-  if (!crossReview.success) {
-    return {
-      kind: "failed",
-      result: await failRun({
-        input,
-        deps,
-        now,
-        tracker,
-        flowAgent: "agent_two",
-        errorSummary: crossReview.error,
-      }),
-    };
-  }
-  const validation = await validateGeneratedArtifactFiles({
-    worktreePath: input.worktreePath,
-    workflowId: input.workflowId,
-    artifact: crossReview.value,
   });
-  if (!validation.success) {
+  if (step.kind === "failed") {
     return {
       kind: "failed",
       result: await failRun({
@@ -129,12 +95,17 @@ export async function runCrossReviewPhase(
         now,
         tracker,
         flowAgent: "agent_two",
-        errorSummary: `cross_review (agent_two) artifact_files: ${validation.error}`,
+        errorSummary: step.errorSummary,
+        cause: step.cause,
       }),
     };
   }
-  await trackArtifact(tracker, crossReview.value);
+  if (step.kind === "replayed") {
+    return { kind: "ok", crossReview: step.artifact };
+  }
+
+  await trackArtifact(tracker, step.artifact);
   await persistArtifactsSnapshot(input, deps, now, tracker);
 
-  return { kind: "ok", crossReview: crossReview.value };
+  return { kind: "ok", crossReview: step.artifact };
 }

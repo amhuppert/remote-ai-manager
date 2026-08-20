@@ -200,6 +200,61 @@ export async function readCollaborationArtifacts<T>(
 }
 
 /**
+ * The strict read: the same stream, but with absence, I/O failure, and skipped
+ * lines kept apart.
+ *
+ * `readCollaborationArtifacts` collapses all three into `[]`, which is right
+ * for a display path — a hydration that shows nothing beats one that throws.
+ * It is wrong for resume, where `[]` means "fresh run, do everything again":
+ * a transient read failure would re-dispatch a completed run, and a dropped
+ * interior line would splice a fresh upstream output onto stale downstream
+ * artifacts derived from a different one. Resume consumes this reader and
+ * refuses on anything but `ok` with nothing skipped.
+ */
+export type CollaborationArtifactStreamRead<T> =
+  | { kind: "absent" }
+  | { kind: "ok"; entries: T[]; skipped: number[] }
+  | { kind: "unreadable"; error: string };
+
+export async function readCollaborationArtifactStream<T>(
+  workflowId: string,
+  schema: z.ZodType<T>,
+  configDir?: string,
+): Promise<CollaborationArtifactStreamRead<T>> {
+  const filePath = await getCollaborationArtifactsPath(workflowId, configDir);
+  if (!existsSync(filePath)) return { kind: "absent" };
+
+  let raw: string;
+  try {
+    raw = await readFile(filePath, "utf-8");
+  } catch (err) {
+    const error = getErrorMessage(err);
+    logger.warn("collaboration.artifacts.strict_read_failed", {
+      workflowId,
+      filePath,
+      error,
+    });
+    return { kind: "unreadable", error };
+  }
+
+  const { entries, parseFailures, invalidLines } =
+    parseAndValidateArtifactLines(raw, schema);
+  const skipped = [
+    ...parseFailures.map((f) => f.lineIndex),
+    ...invalidLines.map((l) => l.lineIndex),
+  ].sort((a, b) => a - b);
+
+  if (skipped.length > 0) {
+    logger.warn("collaboration.artifacts.strict_read_skipped_lines", {
+      workflowId,
+      skippedLineIndexes: skipped,
+    });
+  }
+
+  return { kind: "ok", entries, skipped };
+}
+
+/**
  * Remove a workflow's sidecar file. Best-effort and idempotent: a missing
  * file is not an error. Invoked from session deletion alongside transcript
  * removal so artifact files do not outlive their session.

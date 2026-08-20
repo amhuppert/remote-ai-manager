@@ -91,6 +91,17 @@ export interface CollabPassageProps {
   onStop?: () => void;
   onRefClick?: (ref: CollaborationReference) => void;
   errorSummary?: string;
+  /** Whether this failed run may be resumed. Absent or false renders restart
+   *  guidance instead of a control that would only ever be refused. */
+  resumable?: boolean;
+  /** What the run failed at, when the backend classified it. */
+  failureKind?: string;
+  /** Resumes the failed run. Absent when the surface cannot resume. */
+  onResume?: () => void;
+  resumePending?: boolean;
+  /** The server's refusal, shown inline so the user learns why here rather
+   *  than from a disappearing toast. */
+  resumeError?: string;
 }
 
 export interface NegotiationRound {
@@ -720,6 +731,11 @@ export default function CollabPassage({
   onStop,
   onRefClick,
   errorSummary,
+  resumable,
+  failureKind,
+  onResume,
+  resumePending,
+  resumeError,
 }: CollabPassageProps): React.JSX.Element {
   const grouped = groupCollabArtifacts(artifacts);
   const isTerminal = isCollabPassageTerminal(status);
@@ -934,10 +950,39 @@ export default function CollabPassage({
         >
           <span className="font-mono text-[0.78rem] font-semibold text-red">
             Collaboration failed
+            {failureKind ? ` — ${failureKind}` : ""}
           </span>
           <span className="font-mono text-[0.78rem] [overflow-wrap:anywhere] whitespace-pre-wrap">
             {errorSummary}
           </span>
+          {resumable && onResume ? (
+            <div className="mt-xs flex flex-wrap items-center gap-sm">
+              <button
+                type="button"
+                onClick={onResume}
+                disabled={resumePending}
+                className="rounded-sm border border-solid [border-color:color-mix(in_srgb,var(--red)_40%,transparent)] px-sm py-[0.15rem] font-mono text-[0.72rem] text-red disabled:opacity-60"
+              >
+                {resumePending ? "Resuming…" : "Resume collaboration"}
+              </button>
+              <span className="font-mono text-[0.7rem] opacity-70">
+                Picks up from the last completed round.
+              </span>
+            </div>
+          ) : (
+            <span className="mt-xs font-mono text-[0.7rem] opacity-70">
+              This collaboration cannot be resumed — start a new one to
+              continue.
+            </span>
+          )}
+          {resumeError ? (
+            <span
+              role="status"
+              className="font-mono text-[0.72rem] [overflow-wrap:anywhere] whitespace-pre-wrap opacity-80"
+            >
+              {resumeError}
+            </span>
+          ) : null}
         </div>
       ) : null}
 

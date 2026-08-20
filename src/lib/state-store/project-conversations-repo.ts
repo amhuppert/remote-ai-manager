@@ -137,6 +137,8 @@ const projectConversationsTableRowSchema = z.object({
   profile_snapshot: z.string().nullable(),
   profile_locked_at: z.string().nullable(),
   creation_request_id: z.string().nullable(),
+  conversation_owner: z.string().nullable(),
+  turn_generation: z.number().int(),
 });
 type ProjectConversationsTableRow = z.infer<
   typeof projectConversationsTableRowSchema
@@ -183,6 +185,8 @@ interface ProjectSqlBindRow {
   profile_snapshot: string | null;
   profile_locked_at: string | null;
   creation_request_id: string | null;
+  conversation_owner: string | null;
+  turn_generation: number;
 }
 
 function conversationToProjectSqlBind(
@@ -242,6 +246,8 @@ const PROJECT_CONVERSATION_COLUMN_KEYS: ReadonlyArray<
   "profile_snapshot",
   "profile_locked_at",
   "creation_request_id",
+  "conversation_owner",
+  "turn_generation",
 ];
 
 /**
@@ -367,7 +373,7 @@ export function createProjectConversationsRepo(
        mcp_overrides, mcp_runtime, agent_capability_overrides, agent_capabilities_runtime,
        unread, spawned_session_ids, pending_queue, last_seen_alignment_version, pending_agent_notices,
        profile_snapshot, profile_locked_at,
-       creation_request_id
+       creation_request_id, conversation_owner, turn_generation
      ) VALUES (
        @id, @project_path, @name, @name_origin, @transcript_path, @status,
        @prompt_count, @created_at, @last_activity_at, @source, @summary, @archived, @open,
@@ -377,7 +383,7 @@ export function createProjectConversationsRepo(
        @mcp_overrides, @mcp_runtime, @agent_capability_overrides, @agent_capabilities_runtime,
        @unread, @spawned_session_ids, @pending_queue, @last_seen_alignment_version, @pending_agent_notices,
        @profile_snapshot, @profile_locked_at,
-       @creation_request_id
+       @creation_request_id, @conversation_owner, @turn_generation
      )
      ON CONFLICT(id) DO UPDATE SET
        project_path               = excluded.project_path,
@@ -416,7 +422,9 @@ export function createProjectConversationsRepo(
        pending_agent_notices      = excluded.pending_agent_notices,
        profile_snapshot           = excluded.profile_snapshot,
        profile_locked_at          = excluded.profile_locked_at,
-       creation_request_id        = excluded.creation_request_id`,
+       creation_request_id        = excluded.creation_request_id,
+       conversation_owner         = excluded.conversation_owner,
+       turn_generation            = excluded.turn_generation`,
   );
   // The machine snapshot lives in the owner-discriminated sidecar table, not on
   // the project-conversation row. Its cleanup is DB-enforced by the AFTER DELETE

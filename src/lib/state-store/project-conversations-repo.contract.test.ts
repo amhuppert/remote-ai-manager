@@ -212,6 +212,12 @@ function buildMaximalProjectConversation(): ConversationState {
       resolvedInstructionHash: `sha256:${"2".repeat(64)}`,
     },
     profileLockedAt: "2026-02-01T09:00:00.000Z",
+    owner: {
+      kind: "collaboration",
+      workflowId: "wf-maximal",
+      attemptEpoch: 3,
+    },
+    turnGeneration: 11,
   });
 }
 

@@ -49,9 +49,12 @@ export interface UseCollabRowRendererArgs {
   ) => void;
   collabResumeMutation: {
     isPending: boolean;
+    /** The server's refusal text, when the last attempt was refused. */
+    error?: { message: string } | null;
     mutate: (
       input: {
-        resumeToken: string;
+        /** Omitted for a failed run: no answers, nothing to bind. */
+        resumeToken?: string;
         conversationId: string;
         userAnswers: Record<string, string>;
       },
@@ -134,6 +137,19 @@ export function useCollabRowRenderer({
                 }
               : undefined
           }
+          onResume={
+            collabEnvelopeForConversation.status === "failed"
+              ? () =>
+                  collabResumeMutation.mutate(
+                    { conversationId, userAnswers: {} },
+                    { onSuccess: () => {} },
+                  )
+              : undefined
+          }
+          resumePending={collabResumeMutation.isPending}
+          {...(collabResumeMutation.error
+            ? { resumeError: collabResumeMutation.error.message }
+            : {})}
           onRefClick={handleCollabRefClick}
         />
       </div>

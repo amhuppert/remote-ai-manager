@@ -40,7 +40,9 @@ import {
   collaborationStopRequestSchema,
   CollaborationConversationMismatchError,
   CollaborationConversationNotFoundError,
-  CollaborationNotPausedError,
+  CollaborationNotResumableError,
+  CollaborationResumeRefusedError,
+  CollaborationConversationOwnershipError,
   CollaborationNotStoppableError,
   CollaborationResumeTokenMismatchError,
   CollaborationModelEffortValidationError,
@@ -676,10 +678,42 @@ export function createCollaborationRouteHandlers(
             status: 403,
           });
         }
-        if (err instanceof CollaborationNotPausedError) {
-          return NextResponse.json({ error: err.message } satisfies ApiError, {
-            status: 409,
+        if (err instanceof CollaborationNotResumableError) {
+          return NextResponse.json(
+            {
+              error: err.message,
+              code: "COLLABORATION_NOT_RESUMABLE",
+            } satisfies ApiError,
+            { status: 409 },
+          );
+        }
+        // The run exists and failed, but a gate refused it. The message is
+        // written for the user and names restart as the way forward.
+        if (err instanceof CollaborationResumeRefusedError) {
+          logger.info("collaboration.route.resume_refused", {
+            workflowId: workflowResolution.workflowId,
+            refusal: err.refusal.code,
           });
+          return NextResponse.json(
+            {
+              error: err.message,
+              code: "COLLABORATION_RESUME_REFUSED",
+            } satisfies ApiError,
+            { status: 409 },
+          );
+        }
+        if (err instanceof CollaborationConversationOwnershipError) {
+          logger.info("collaboration.route.resume_conversation_taken", {
+            workflowId: workflowResolution.workflowId,
+            reason: err.reason,
+          });
+          return NextResponse.json(
+            {
+              error: err.message,
+              code: "COLLABORATION_CONVERSATION_TAKEN",
+            } satisfies ApiError,
+            { status: 409 },
+          );
         }
         // The envelope survives, but its captured premises do not, so it can
         // never be resumed — a state conflict, like resuming a run that is not

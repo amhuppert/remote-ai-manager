@@ -654,3 +654,85 @@ describe("CollabPassage pending cards", () => {
     expect(document.querySelector('[data-collab-pending="true"]')).toBeNull();
   });
 });
+
+describe("CollabPassage — failed run recovery affordance", () => {
+  const failedProps = {
+    workflowId: "wf-1",
+    primary: "claude" as const,
+    status: "failed" as const,
+    artifacts: [],
+    errorSummary: "backend_error: provider unavailable",
+  };
+
+  it("offers a resume control for an operational failure", () => {
+    const onResume = vi.fn();
+    render(
+      <CollabPassage
+        {...failedProps}
+        resumable
+        failureKind="backend_error"
+        onResume={onResume}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /resume collaboration/i }),
+    );
+    expect(onResume).toHaveBeenCalledTimes(1);
+  });
+
+  it("names what failed so the user can tell an outage from a bad prompt", () => {
+    render(
+      <CollabPassage
+        {...failedProps}
+        resumable
+        failureKind="quota_exhausted"
+        onResume={vi.fn()}
+      />,
+    );
+    expect(screen.getByLabelText("Collaboration failure")).toHaveTextContent(
+      "quota_exhausted",
+    );
+  });
+
+  // A run the agents decided to fail would reach the same conclusion again, so
+  // offering a button that can only ever be refused would be a false promise.
+  it("offers restart guidance instead when the failure is not resumable", () => {
+    render(
+      <CollabPassage {...failedProps} resumable={false} onResume={vi.fn()} />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /resume collaboration/i }),
+    ).toBeNull();
+    expect(screen.getByLabelText("Collaboration failure")).toHaveTextContent(
+      /cannot be resumed/i,
+    );
+  });
+
+  it("disables the control while a resume is in flight", () => {
+    render(
+      <CollabPassage
+        {...failedProps}
+        resumable
+        onResume={vi.fn()}
+        resumePending
+      />,
+    );
+    expect(screen.getByRole("button", { name: /resuming/i })).toBeDisabled();
+  });
+
+  it("shows the server's refusal inline rather than losing it", () => {
+    render(
+      <CollabPassage
+        {...failedProps}
+        resumable
+        onResume={vi.fn()}
+        resumeError="This collaboration had already asked you a question."
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "already asked you a question",
+    );
+  });
+});

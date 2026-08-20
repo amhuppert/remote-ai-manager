@@ -1553,6 +1553,8 @@ const SCHEMA_DDL = `
     agent_capabilities_runtime TEXT,
     unread                INTEGER NOT NULL DEFAULT 0,
     pending_queue         TEXT,
+    conversation_owner    TEXT,
+    turn_generation       INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (project_path, session_name)
       REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
   );
@@ -1600,6 +1602,8 @@ const SCHEMA_DDL = `
     last_seen_alignment_version INTEGER,
     pending_agent_notices TEXT,
     creation_request_id   TEXT,
+    conversation_owner    TEXT,
+    turn_generation       INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (project_path) REFERENCES projects(root_path) ON DELETE CASCADE
   );
 
@@ -2129,6 +2133,26 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
   // nullable with no row rewrite: null is the meaningful legacy value (D27), so
   // every pre-feature conversation reads back as no-profile rather than being
   // backfilled with a profile it never ran under.
+  // Conversation ownership, on both conversation tables. Additive with no row
+  // rewrite: null owner and generation 0 are the meaningful legacy values —
+  // nothing that predates the column was ever held by a non-prompt turn, and a
+  // generation only has to be monotonic from whenever it starts counting.
+  { table: "conversations", column: "conversation_owner", type: "TEXT" },
+  {
+    table: "conversations",
+    column: "turn_generation",
+    type: "INTEGER NOT NULL DEFAULT 0",
+  },
+  {
+    table: "project_conversations",
+    column: "conversation_owner",
+    type: "TEXT",
+  },
+  {
+    table: "project_conversations",
+    column: "turn_generation",
+    type: "INTEGER NOT NULL DEFAULT 0",
+  },
   { table: "conversations", column: "profile_snapshot", type: "TEXT" },
   { table: "conversations", column: "profile_locked_at", type: "TEXT" },
   { table: "project_conversations", column: "profile_snapshot", type: "TEXT" },

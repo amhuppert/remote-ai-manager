@@ -66,6 +66,8 @@ function conv(
     backendRef: null,
     lastSeenAlignmentVersion: null,
     pendingAgentNotices: [],
+    owner: null,
+    turnGeneration: 0,
     ...overrides,
   };
 }

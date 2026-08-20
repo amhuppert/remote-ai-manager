@@ -47,6 +47,8 @@ function makePlannerSession(
       {
         profileSnapshot: null,
         profileLockedAt: null,
+        owner: null,
+        turnGeneration: 0,
         id: conversationId,
         scope: "session",
         nameOrigin: "default",

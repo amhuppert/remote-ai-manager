@@ -80,6 +80,8 @@ function makeConversation(
     backendRef: null,
     lastSeenAlignmentVersion: null,
     pendingAgentNotices: [],
+    owner: null,
+    turnGeneration: 0,
     ...o,
   };
 }

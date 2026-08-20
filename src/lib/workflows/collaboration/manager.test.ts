@@ -29,7 +29,9 @@ import {
   CollaborationStartConflictError,
   CollaborationConversationMismatchError,
   CollaborationConversationNotFoundError,
-  CollaborationNotPausedError,
+  CollaborationNotResumableError,
+  CollaborationConversationOwnershipError,
+  CollaborationResumeRefusedError,
   CollaborationNotStoppableError,
   CollaborationProfileResolutionError,
   CollaborationResumeTokenMismatchError,
@@ -66,7 +68,17 @@ import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import { assembleUserContentBlocks } from "@/lib/workflows/conversation/assemble-user-blocks";
 import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
 import type { PublishScopedStatusInput } from "@/lib/events/publication";
-import { makeFinalAnswer } from "./test-fixtures";
+import {
+  makeAgentOneInitialDraft,
+  makeAgentOneProposedChanges,
+  makeAgentTwoCounterProposalRound1,
+  makeAgentTwoCrossReview,
+  makeAgentTwoInitialDraft,
+  makeFinalAnswer,
+  makeOpenConflicts,
+  makeResolutionDecisionContinue,
+} from "./test-fixtures";
+import type { OwnershipReclaimDecision } from "@/lib/conversations/ownership";
 import { buildCollaborationUserTranscriptEntry } from "./transcript";
 import { _createTestDb } from "@/lib/state-store/state-db";
 import { createStateStore } from "@/lib/state-store/store";
@@ -419,6 +431,7 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
     persistStart: async (input) => {
       persistedStarts.push(input);
       if (options.persistStartError) throw options.persistStartError;
+      return { claimedTurnGeneration: input.expectedPromptCount + 1 };
     },
     stopRegistry,
     createDeps: () => options.sliceDepsOverride ?? makeStubSliceDeps(),
@@ -2055,7 +2068,7 @@ describe("createCollaborationManager.resume", () => {
     ).rejects.toBeInstanceOf(CollaborationConversationMismatchError);
   });
 
-  it("throws CollaborationNotPausedError when the workflow is not paused", async () => {
+  it("throws CollaborationNotResumableError when the workflow is not paused", async () => {
     const envelopeStore = createInMemoryWorkflowEnvelopeStore();
     const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
     await repo.create(
@@ -2080,7 +2093,7 @@ describe("createCollaborationManager.resume", () => {
         conversationId: "conv-1",
         userAnswers: {},
       }),
-    ).rejects.toBeInstanceOf(CollaborationNotPausedError);
+    ).rejects.toBeInstanceOf(CollaborationNotResumableError);
   });
 
   it("throws CollaborationResumeTokenMismatchError when the token does not match", async () => {
@@ -2636,5 +2649,274 @@ describe("buildStandaloneCollaborationCallerInput", () => {
     expect(callerInput.originatingConversationId).toBe("conv-originating");
     expect(callerInput.projectPath).toBe("/projects/example");
     expect(callerInput.sessionName).toBe("sess-1");
+  });
+});
+
+describe("collaboration manager — resuming a failed run", () => {
+  const FAILED_SNAPSHOT = {
+    brief: "design X",
+    conversationId: "conv-1",
+    primaryAgentBackend: "claude" as const,
+    negotiationRounds: 3,
+    negotiationRoundsCompleted: 1,
+    autonomousResolutionThreshold: "major" as const,
+    sessionContext: EMPTY_COLLABORATION_SESSION_CONTEXT,
+    agents: {
+      agent_one: { backend: "claude" as const, model: "opus" },
+      agent_two: { backend: "codex" as const, model: "gpt-5.6" },
+    },
+    attemptEpoch: 1,
+    claimedTurnGeneration: 4,
+    failureCause: {
+      kind: "agent_call" as const,
+      failureKind: "backend_error" as const,
+      retryable: true,
+    },
+    failureClass: "operational" as const,
+  };
+
+  const MID_NEGOTIATION_STREAM = [
+    makeAgentOneInitialDraft(),
+    makeAgentTwoInitialDraft(),
+    makeAgentTwoCrossReview(),
+    makeAgentOneProposedChanges({ round: 1 }),
+    makeAgentTwoCounterProposalRound1({ round: 1 }),
+    makeResolutionDecisionContinue({ round: 1 }),
+  ];
+
+  async function setup(
+    options: {
+      snapshot?: Record<string, unknown>;
+      stream?: CollaborationArtifact[];
+      reclaim?: OwnershipReclaimDecision;
+      errorSummary?: string;
+    } = {},
+  ) {
+    const envelopeStore = createInMemoryWorkflowEnvelopeStore();
+    const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+    await repo.create(
+      buildEnvelope({
+        workflowId: "wf-failed",
+        status: "failed",
+        errorSummary: options.errorSummary ?? "backend_error: provider down",
+        featureSnapshot: options.snapshot ?? FAILED_SNAPSHOT,
+      }),
+    );
+
+    const scripted = buildScriptedDeps({
+      envelopeStoreOverride: envelopeStore,
+    });
+    const reclaimCalls: unknown[] = [];
+    const deps: Partial<CollaborationManagerDeps> = {
+      ...scripted.deps,
+      readArtifactStream: async () => ({
+        kind: "ok" as const,
+        entries: options.stream ?? MID_NEGOTIATION_STREAM,
+        skipped: [],
+      }),
+      reclaimConversationOwner: async (input) => {
+        reclaimCalls.push(input);
+        return options.reclaim ?? { kind: "claim", reason: "still_owner" };
+      },
+    };
+    return {
+      manager: createCollaborationManager(deps),
+      repo,
+      reclaimCalls,
+      runSliceCalls: scripted.runSliceCalls,
+    };
+  }
+
+  const resumeRequest = {
+    projectPath: "/p",
+    sessionName: "s",
+    workflowId: "wf-failed",
+    conversationId: "conv-1",
+    resumeToken: "unused-for-failures",
+    userAnswers: {},
+  };
+
+  // The capability the ticket asks for.
+  it("resumes an operational failure and dispatches the slice under a fresh attempt", async () => {
+    const { manager, repo, runSliceCalls } = await setup();
+
+    const result = await manager.resume(resumeRequest);
+    expect(result.status).toBe("resumed");
+
+    const envelope = await repo.get("wf-failed");
+    expect(envelope?.status).toBe("running");
+    // The banner's cause is cleared; the run is no longer failed.
+    expect(envelope?.errorSummary).toBeUndefined();
+    const snapshot = envelope?.featureSnapshot as Record<string, unknown>;
+    expect(snapshot["attemptEpoch"]).toBe(2);
+    expect(snapshot["resumeCount"]).toBe(1);
+    expect(snapshot["resumedFromErrorSummary"]).toBe(
+      "backend_error: provider down",
+    );
+
+    // The slice runs under the NEW epoch, so writes from the dead attempt are
+    // fenced out.
+    expect(runSliceCalls).toHaveLength(1);
+    expect(runSliceCalls[0]!.input.attemptEpoch).toBe(2);
+    expect(runSliceCalls[0]!.input.claimedTurnGeneration).toBe(4);
+  });
+
+  it("takes the conversation back before moving the envelope", async () => {
+    const { manager, reclaimCalls } = await setup();
+    await manager.resume(resumeRequest);
+    expect(reclaimCalls).toHaveLength(1);
+    expect(reclaimCalls[0]).toMatchObject({
+      conversationId: "conv-1",
+      owner: { workflowId: "wf-failed", attemptEpoch: 2 },
+      request: { claimedTurnGeneration: 4 },
+    });
+  });
+
+  // A refusal must leave a failed envelope failed — never running with no
+  // worker, which would strand the run and lock the conversation.
+  it("leaves the envelope failed when the conversation was taken", async () => {
+    const { manager, repo, runSliceCalls } = await setup({
+      reclaim: {
+        kind: "refuse",
+        reason: "turn_intervened",
+        detail: "another turn happened",
+      },
+    });
+
+    await expect(manager.resume(resumeRequest)).rejects.toBeInstanceOf(
+      CollaborationConversationOwnershipError,
+    );
+
+    const envelope = await repo.get("wf-failed");
+    expect(envelope?.status).toBe("failed");
+    expect(runSliceCalls).toHaveLength(0);
+  });
+
+  it.each([
+    [
+      "a run the agents decided to fail",
+      { ...FAILED_SNAPSHOT, failureCause: { kind: "policy_fail" as const } },
+      undefined,
+    ],
+    [
+      "a run whose staffing was never stored",
+      { ...FAILED_SNAPSHOT, agents: undefined },
+      undefined,
+    ],
+    [
+      "a run that had already asked the user a question",
+      FAILED_SNAPSHOT,
+      [...MID_NEGOTIATION_STREAM, makeOpenConflicts({ round: 1 })],
+    ],
+    [
+      "a run that had already begun its final answer",
+      FAILED_SNAPSHOT,
+      [...MID_NEGOTIATION_STREAM, makeFinalAnswer({ round: 1 })],
+    ],
+  ])("refuses %s, changing nothing", async (_label, snapshot, stream) => {
+    const { manager, repo, runSliceCalls } = await setup({
+      snapshot: snapshot as Record<string, unknown>,
+      ...(stream ? { stream } : {}),
+    });
+
+    await expect(manager.resume(resumeRequest)).rejects.toBeInstanceOf(
+      CollaborationResumeRefusedError,
+    );
+
+    const envelope = await repo.get("wf-failed");
+    expect(envelope?.status).toBe("failed");
+    expect(runSliceCalls).toHaveLength(0);
+  });
+
+  // A transient read error must never be read as "nothing happened yet".
+  it("refuses rather than restarting when the recorded stream is unreadable", async () => {
+    const envelopeStore = createInMemoryWorkflowEnvelopeStore();
+    const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+    await repo.create(
+      buildEnvelope({
+        workflowId: "wf-failed",
+        status: "failed",
+        errorSummary: "boom",
+        featureSnapshot: FAILED_SNAPSHOT,
+      }),
+    );
+    const scripted = buildScriptedDeps({
+      envelopeStoreOverride: envelopeStore,
+    });
+    const manager = createCollaborationManager({
+      ...scripted.deps,
+      readArtifactStream: async () => ({
+        kind: "unreadable" as const,
+        error: "EIO",
+      }),
+      reclaimConversationOwner: async () => ({
+        kind: "claim" as const,
+        reason: "still_owner" as const,
+      }),
+    });
+
+    await expect(manager.resume(resumeRequest)).rejects.toBeInstanceOf(
+      CollaborationResumeRefusedError,
+    );
+    expect(scripted.runSliceCalls).toHaveLength(0);
+  });
+});
+
+describe("collaboration manager — stopping releases the conversation", () => {
+  // Stopping a PAUSED run has no live slice to hand the conversation back, so
+  // the manager must do it. Without this the user is locked out of their own
+  // conversation permanently: prompt admission refuses an owned conversation,
+  // and nothing would ever clear the owner.
+  it("releases conversation ownership when stopping a paused run", async () => {
+    const envelopeStore = createInMemoryWorkflowEnvelopeStore();
+    const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+    await repo.create(
+      buildEnvelope({
+        workflowId: "wf-paused-stop",
+        status: "paused",
+        pause: {
+          pauseKind: "post_turn",
+          gateKind: "human_approval",
+          resumeToken: "tok",
+        },
+        featureSnapshot: {
+          brief: "design X",
+          conversationId: "conv-1",
+          attemptEpoch: 1,
+        },
+      }),
+    );
+
+    const released: unknown[] = [];
+    const scripted = buildScriptedDeps({
+      envelopeStoreOverride: envelopeStore,
+    });
+    const manager = createCollaborationManager({
+      ...scripted.deps,
+      releaseConversationOwner: async (input) => {
+        released.push(input);
+        return true;
+      },
+    });
+
+    await manager.stop({
+      projectPath: "/p",
+      sessionName: "s",
+      workflowId: "wf-paused-stop",
+      conversationId: "conv-1",
+    });
+
+    expect(released).toEqual([
+      {
+        projectPath: "/p",
+        sessionName: "s",
+        conversationId: "conv-1",
+        owner: {
+          kind: "collaboration",
+          workflowId: "wf-paused-stop",
+          attemptEpoch: 1,
+        },
+      },
+    ]);
   });
 });

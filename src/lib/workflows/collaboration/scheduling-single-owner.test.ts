@@ -330,7 +330,11 @@ describe("collaboration lane scheduling — single acquisition owner", () => {
       appendArtifact: async (_workflowId, artifact) => {
         artifactSidecar.push(artifact);
       },
-      readArtifacts: async () => [...artifactSidecar],
+      readArtifactStream: async () => ({
+        kind: "ok" as const,
+        entries: [...artifactSidecar],
+        skipped: [],
+      }),
     };
 
     const input: AsymmetricCollaborationSliceInput = {

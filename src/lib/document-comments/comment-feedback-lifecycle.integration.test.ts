@@ -572,6 +572,10 @@ describe("document comment + feedback lifecycle (real store)", () => {
       getConversation: fx.store.getConversation,
       getActiveGraphWorkflowExecution: async () => null,
       isConversationBusy: () => false,
+      admitConversationTurn: async () => ({
+        kind: "admit" as const,
+        turnGeneration: 1,
+      }),
       executePromptStream: vi.fn(),
       getCollaborationManager: () => ({}) as unknown as CollaborationManager,
       setConversationPendingPromptText: async () => {},

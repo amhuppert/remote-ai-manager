@@ -83,6 +83,14 @@ export interface CollabPassageProps {
   artifacts: CollaborationArtifact[];
   submittedAnswers: Record<string, string>;
   errorSummary?: string;
+  /**
+   * Whether a failed run may be resumed. Read off the envelope rather than
+   * discovered by attempting one, so an ineligible run never offers a control
+   * that would only ever 409 — and offering it is a promise, not a guess.
+   */
+  resumable?: boolean;
+  /** What the run failed at, when it recorded a backend classification. */
+  failureKind?: string;
 }
 
 const VALID_THRESHOLDS: ReadonlySet<CollaborationAutonomousResolutionThreshold> =
@@ -261,5 +269,38 @@ export function envelopeToCollabPassageProps(
     ...(envelope.errorSummary !== undefined
       ? { errorSummary: envelope.errorSummary }
       : {}),
+    ...(envelope.status === "failed"
+      ? { resumable: readResumable(envelope.featureSnapshot) }
+      : {}),
+    ...(readFailureKind(envelope.featureSnapshot) !== null
+      ? { failureKind: readFailureKind(envelope.featureSnapshot)! }
+      : {}),
   };
+}
+
+function snapshotRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/**
+ * Only an OPERATIONAL failure is worth offering a resume for. A run the agents
+ * decided to fail, or one whose premises are gone, would reach the same place
+ * again. An envelope written before failures were classified says nothing, and
+ * silence means no offer.
+ */
+function readResumable(featureSnapshot: unknown): boolean {
+  const snapshot = snapshotRecord(featureSnapshot);
+  return snapshot?.["failureClass"] === "operational";
+}
+
+function readFailureKind(featureSnapshot: unknown): string | null {
+  const cause = snapshotRecord(
+    snapshotRecord(featureSnapshot)?.["failureCause"],
+  );
+  const kind = cause?.["kind"];
+  if (kind !== "agent_call") return typeof kind === "string" ? kind : null;
+  const failureKind = cause?.["failureKind"];
+  return typeof failureKind === "string" ? failureKind : null;
 }

@@ -41,6 +41,7 @@ import { jobRecordParkedMerge } from "./0029-job-record-parked-merge";
 import { nativeSddV2Cutover } from "./0030-native-sdd-v2-cutover";
 import { graphWorkflowCandidateUnstableHalt } from "./0031-graph-workflow-candidate-unstable-halt";
 import { addGraphPlanReviews } from "./0032-add-graph-plan-reviews";
+import { conversationOwnership } from "./0033-conversation-ownership";
 
 /**
  * Ordered registry of state-store migrations. Append new migrations here in
@@ -94,6 +95,7 @@ export const migrations: readonly StateMigration[] = [
   nativeSddV2Cutover,
   graphWorkflowCandidateUnstableHalt,
   addGraphPlanReviews,
+  conversationOwnership,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

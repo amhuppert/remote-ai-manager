@@ -254,6 +254,7 @@ describe("collaboration structured-output repair contract", () => {
       deps,
       now: deps.now!,
       tracker,
+      ledger: null,
       backendForAgent: (agent) => (agent === "agent_one" ? "claude" : "codex"),
     });
 

@@ -248,6 +248,7 @@ describe("runInitialDraftsPhase", () => {
       deps: harness.deps,
       now: harness.deps.now!,
       tracker: harness.tracker,
+      ledger: null,
       backendForAgent: harness.backendForAgent,
     });
 
@@ -314,6 +315,7 @@ describe("runInitialDraftsPhase", () => {
       deps: harness.deps,
       now: harness.deps.now!,
       tracker: harness.tracker,
+      ledger: null,
       backendForAgent: harness.backendForAgent,
     });
 
@@ -369,6 +371,7 @@ describe("runInitialDraftsPhase", () => {
       deps: harness.deps,
       now: harness.deps.now!,
       tracker: harness.tracker,
+      ledger: null,
       backendForAgent: harness.backendForAgent,
     });
 
@@ -465,6 +468,7 @@ describe("runInitialDraftsPhase alignment seen-version recording", () => {
       deps: harness.deps,
       now: harness.deps.now!,
       tracker: harness.tracker,
+      ledger: null,
       backendForAgent: harness.backendForAgent,
     });
 

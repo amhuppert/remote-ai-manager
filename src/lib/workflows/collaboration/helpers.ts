@@ -11,6 +11,12 @@
  */
 
 import { getErrorMessage } from "@/lib/shared/errors";
+import type { CollaborationFailureCause } from "./failure-cause";
+import type {
+  CollaborationStepKey,
+  CollaborationStepLedger,
+} from "./step-ledger";
+import { validateGeneratedArtifactFiles } from "./artifact-files";
 import {
   DEFAULT_LANE_WRITE_CAPABILITY,
   type AgentCallRequest,
@@ -204,7 +210,17 @@ export interface CallPrimitiveContext {
 
 export type CallPrimitiveOutcome =
   | { kind: "ok"; result: AgentCallResult }
-  | { kind: "failed"; errorSummary: string };
+  | {
+      kind: "failed";
+      errorSummary: string;
+      /**
+       * The backend classifier's own verdict, preserved rather than flattened
+       * into `errorSummary`. It is what lets a failed run say whether the
+       * provider was unavailable — the difference between offering the user a
+       * resume and telling them to start over.
+       */
+      cause: CollaborationFailureCause;
+    };
 
 /**
  * The lane's governing instruction string: session context first, then the
@@ -285,19 +301,35 @@ export async function callPrimitive(
   try {
     result = await deps.callAgent(request);
   } catch (err) {
-    return { kind: "failed", errorSummary: getErrorMessage(err) };
+    return {
+      kind: "failed",
+      errorSummary: getErrorMessage(err),
+      cause: { kind: "unhandled" },
+    };
   }
 
   if (result.outcome.kind === "failed") {
+    const error = result.outcome.error;
     return {
       kind: "failed",
-      errorSummary: `${result.outcome.error.failureKind}: ${result.outcome.error.message}`,
+      errorSummary: `${error.failureKind}: ${error.message}`,
+      cause: {
+        kind: "agent_call",
+        failureKind: error.failureKind,
+        ...(error.retryable !== undefined
+          ? { retryable: error.retryable }
+          : {}),
+        ...(error.retryAfterHint !== undefined
+          ? { retryAfterHint: error.retryAfterHint }
+          : {}),
+      },
     };
   }
   if (result.outcome.kind === "paused") {
     return {
       kind: "failed",
       errorSummary: `unexpected pause from lane (pauseKind=${result.outcome.pauseKind}, resumeToken=${result.outcome.resumeToken})`,
+      cause: { kind: "unhandled" },
     };
   }
 
@@ -309,4 +341,99 @@ export async function callPrimitive(
   });
 
   return { kind: "ok", result };
+}
+
+// ============================================================
+// One collaboration step: replay it, or produce it.
+// ============================================================
+
+export interface ProduceCollaborationStepContext<F> {
+  input: AsymmetricCollaborationSliceInput;
+  deps: AsymmetricCollaborationSliceDeps;
+  /** The prior attempt's recorded outputs, or null for a run with no history. */
+  ledger: CollaborationStepLedger | null;
+  /** What identifies this step in the log. A key already recorded is a step
+   *  that already ran, so it is replayed instead of dispatched again. */
+  key: CollaborationStepKey;
+  flowAgent: CollaborationFlowAgent;
+  backend: CollaborationAgent;
+  prompt: BuiltCollaborationPrompt;
+  contentSchema: ParseSchema<unknown>;
+  fullSchema: ParseSchema<F>;
+  injection: ArtifactInjection;
+  imageRefs?: readonly ConversationImageRef[];
+  writeCapability?: LaneWriteCapability;
+}
+
+export type ProduceCollaborationStepOutcome<F> =
+  /** Recorded by an earlier attempt. Already on disk and already in the
+   *  tracker, so the caller must NOT commit it again. */
+  | { kind: "replayed"; artifact: F }
+  | { kind: "produced"; artifact: F }
+  | { kind: "failed"; errorSummary: string; cause: CollaborationFailureCause };
+
+/**
+ * Runs one collaboration step end to end, or replays it from the ledger.
+ *
+ * Deliberately does NOT commit the artifact or terminalize the run: the
+ * parallel initial-draft phase must gather both peers before either failure is
+ * final, and committing inside two concurrent calls would make the on-disk
+ * order non-deterministic. The caller owns `trackArtifact` and `failRun`.
+ */
+export async function produceCollaborationStep<F>(
+  ctx: ProduceCollaborationStepContext<F>,
+): Promise<ProduceCollaborationStepOutcome<F>> {
+  const replayed = ctx.ledger?.replay(ctx.key) ?? null;
+  if (replayed !== null) {
+    return { kind: "replayed", artifact: replayed as F };
+  }
+
+  const call = await callPrimitive({
+    input: ctx.input,
+    deps: ctx.deps,
+    flowAgent: ctx.flowAgent,
+    backend: ctx.backend,
+    prompt: ctx.prompt,
+    ...(ctx.imageRefs !== undefined ? { imageRefs: ctx.imageRefs } : {}),
+    ...(ctx.writeCapability !== undefined
+      ? { writeCapability: ctx.writeCapability }
+      : {}),
+  });
+  if (call.kind === "failed") {
+    return {
+      kind: "failed",
+      errorSummary: call.errorSummary,
+      cause: call.cause,
+    };
+  }
+
+  const parsed = parseAndInjectArtifact(ctx.flowAgent, call.result, {
+    contentSchema: ctx.contentSchema,
+    fullSchema: ctx.fullSchema,
+    injection: ctx.injection,
+  });
+  if (!parsed.success) {
+    return {
+      kind: "failed",
+      errorSummary: parsed.error,
+      cause: { kind: "structured_output" },
+    };
+  }
+
+  const validation = await validateGeneratedArtifactFiles({
+    worktreePath: ctx.input.worktreePath,
+    workflowId: ctx.input.workflowId,
+    artifact: parsed.value as Parameters<
+      typeof validateGeneratedArtifactFiles
+    >[0]["artifact"],
+  });
+  if (!validation.success) {
+    return {
+      kind: "failed",
+      errorSummary: `${ctx.injection.kind} (${ctx.flowAgent}) artifact_files: ${validation.error}`,
+      cause: { kind: "artifact_files" },
+    };
+  }
+
+  return { kind: "produced", artifact: parsed.value };
 }

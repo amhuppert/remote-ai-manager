@@ -210,6 +210,8 @@ const conversationsTableRowSchema = z.object({
   pending_agent_notices: z.string().nullable(),
   profile_snapshot: z.string().nullable(),
   profile_locked_at: z.string().nullable(),
+  conversation_owner: z.string().nullable(),
+  turn_generation: z.number().int(),
 });
 type ConversationsTableRow = z.infer<typeof conversationsTableRowSchema>;
 
@@ -250,6 +252,8 @@ interface SqlBindRow {
   pending_agent_notices: string | null;
   profile_snapshot: string | null;
   profile_locked_at: string | null;
+  conversation_owner: string | null;
+  turn_generation: number;
 }
 
 /**
@@ -384,6 +388,8 @@ const CONVERSATION_COLUMN_KEYS: ReadonlyArray<keyof ConversationsTableRow> = [
   "pending_agent_notices",
   "profile_snapshot",
   "profile_locked_at",
+  "conversation_owner",
+  "turn_generation",
 ];
 
 /**
@@ -485,7 +491,7 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        debug_mode, agent_backend, backend_ref,
        mcp_overrides, mcp_runtime, agent_capability_overrides, agent_capabilities_runtime,
        unread, pending_queue, last_seen_alignment_version, pending_agent_notices,
-       profile_snapshot, profile_locked_at
+       profile_snapshot, profile_locked_at, conversation_owner, turn_generation
      ) VALUES (
        @id, @project_path, @session_name, @name, @name_origin, @transcript_path, @status,
        @prompt_count, @created_at, @last_activity_at, @source, @summary, @archived,
@@ -494,7 +500,7 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        @debug_mode, @agent_backend, @backend_ref,
        @mcp_overrides, @mcp_runtime, @agent_capability_overrides, @agent_capabilities_runtime,
        @unread, @pending_queue, @last_seen_alignment_version, @pending_agent_notices,
-       @profile_snapshot, @profile_locked_at
+       @profile_snapshot, @profile_locked_at, @conversation_owner, @turn_generation
      )
      ON CONFLICT(id) DO UPDATE SET
        project_path               = excluded.project_path,
@@ -531,7 +537,9 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        last_seen_alignment_version = excluded.last_seen_alignment_version,
        pending_agent_notices      = excluded.pending_agent_notices,
        profile_snapshot           = excluded.profile_snapshot,
-       profile_locked_at          = excluded.profile_locked_at`,
+       profile_locked_at          = excluded.profile_locked_at,
+       conversation_owner         = excluded.conversation_owner,
+       turn_generation            = excluded.turn_generation`,
   );
   // The machine snapshot lives in the owner-discriminated sidecar table, not on
   // the conversation row. Its cleanup is DB-enforced by the AFTER DELETE trigger

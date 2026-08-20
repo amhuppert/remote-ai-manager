@@ -78,6 +78,8 @@ function baseConversation(overrides: Record<string, unknown> = {}) {
     unread: false,
     lastSeenAlignmentVersion: null,
     pendingAgentNotices: [],
+    owner: null,
+    turnGeneration: 0,
     profileSnapshot: null,
     profileLockedAt: null,
     pendingQueue: [],

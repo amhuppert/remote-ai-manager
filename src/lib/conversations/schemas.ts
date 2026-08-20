@@ -266,6 +266,23 @@ export type NameOrigin = z.infer<typeof nameOriginSchema>;
  * stored or projected. The two schemas below differ ONLY in how they carry the
  * resolved agent profile, so an ordinary new field belongs here.
  */
+/**
+ * A non-prompt holder of a conversation.
+ *
+ * Ownership is what makes a long-running turn safe to resume: the holder can
+ * prove the conversation is still the one it claimed, rather than inferring it
+ * from status (which a crash leaves stale) or from a completed-turn counter
+ * (which a cached actor can write back unchanged). `attemptEpoch` distinguishes
+ * successive attempts of the SAME workflow, so a superseded attempt cannot act
+ * on a conversation its successor now holds.
+ */
+export const conversationOwnerSchema = z.object({
+  kind: z.literal("collaboration"),
+  workflowId: z.string().min(1),
+  attemptEpoch: z.number().int().nonnegative(),
+});
+export type ConversationOwner = z.infer<typeof conversationOwnerSchema>;
+
 const conversationStateFieldsSchema = z.object({
   id: conversationIdSchema,
   scope: conversationScopeSchema,
@@ -336,6 +353,22 @@ const conversationStateFieldsSchema = z.object({
   // into the next runtime's session instructions and cleared. `.default([])`
   // decodes conversations persisted before this field existed.
   pendingAgentNotices: z.array(z.string()).default([]),
+  // Who holds this conversation for a turn that is not an ordinary prompt, or
+  // null when it is free. Prompt admission refuses an owned conversation, and
+  // a long-running owner (Collaboration Mode) re-checks that it is still the
+  // owner before writing anything back. `.default(null)` decodes conversations
+  // persisted before this field existed — correctly, since none of them were
+  // ever owned.
+  owner: conversationOwnerSchema.nullable().default(null),
+  // Turns ADMITTED into this conversation, incremented in the same durable
+  // mutation that admits one — before any transcript or provider effect.
+  //
+  // Distinct from `promptCount`, which counts turns that COMPLETED and is
+  // written back by the conversation actor. An actor cached from before an
+  // out-of-band claim still holds the old count and will write it back, so
+  // `promptCount` cannot prove that no turn intervened; a row-level increment
+  // at admission can. `.default(0)` decodes pre-feature conversations.
+  turnGeneration: z.number().int().nonnegative().default(0),
 });
 
 /**

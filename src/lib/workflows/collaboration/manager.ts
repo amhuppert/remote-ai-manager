@@ -106,7 +106,23 @@ import {
   type CollaborationArtifact,
   type CollaborationResolvedAgent,
 } from "./types";
-import { readCollaborationArtifacts } from "./artifacts-store";
+import {
+  readCollaborationArtifacts,
+  readCollaborationArtifactStream,
+  type CollaborationArtifactStreamRead,
+} from "./artifacts-store";
+import { buildCollaborationStepLedger } from "./step-ledger";
+import { collaborationFailureCauseSchema } from "./failure-cause";
+import {
+  decideResumeEligibility,
+  describeResumeRefusal,
+  type ResumeRefusal,
+} from "./resume-eligibility";
+import {
+  reclaimConversationOwnership,
+  releaseConversationOwnership,
+  type OwnershipReclaimDecision,
+} from "@/lib/conversations/ownership";
 import { dispatchPushForCollaborationEvent } from "@/lib/push-notification/dispatcher";
 import {
   publishScopedStatus,
@@ -214,6 +230,12 @@ async function markEnvelopeFailedAfterSliceThrow(input: {
 
 const logger = createLogger("workflows.collaboration.manager");
 
+/**
+ * The attempt a fresh run is its first. Every claim increments from here, so an
+ * epoch is both the attempt count and the fence a superseded attempt fails.
+ */
+export const COLLABORATION_INITIAL_ATTEMPT_EPOCH = 1;
+
 export const collaborationStartRequestSchema = z.object({
   brief: z.string().trim().min(1, "brief is required"),
   negotiationRounds: z.number().int().min(1).max(20),
@@ -243,7 +265,14 @@ type CollaborationStartRequest = z.infer<
 >;
 
 export const collaborationResumeRequestSchema = z.object({
-  resumeToken: z.string().trim().min(1, "resumeToken is required"),
+  /**
+   * Required only for a PAUSED run, where it binds a set of answers to the
+   * exact question set that produced them. A failed run carries no answers, so
+   * there is nothing to bind — the attempt epoch fences that path instead. The
+   * status-specific requirement is enforced in `resume`, which is the only
+   * place that knows which status it is looking at.
+   */
+  resumeToken: z.string().trim().min(1).optional(),
   conversationId: z.string().trim().min(1, "conversationId is required"),
   userAnswers: z.record(z.string(), z.string()).default({}),
 });
@@ -346,9 +375,17 @@ export class CollaborationStartConflictError extends Error {
   }
 }
 
+export interface CollaborationStartClaim {
+  /** The conversation's turn generation AFTER this claim. A resume compares
+   *  the record against this to prove no other turn intervened. */
+  claimedTurnGeneration: number;
+}
+
 export function createCollaborationStartPersister(
   deps: CollaborationStartPersisterDeps,
-): (input: CollaborationStartPersistenceInput) => Promise<void> {
+): (
+  input: CollaborationStartPersistenceInput,
+) => Promise<CollaborationStartClaim> {
   return async (input) => {
     const transcriptPath = await deps.getTranscriptPath(input.conversationId);
     const timestamp = deps.now();
@@ -360,7 +397,11 @@ export function createCollaborationStartPersister(
       (conversation) => {
         const isIdle =
           conversation.status === "new" || conversation.status === "awaiting";
-        if (conversation.promptCount !== input.expectedPromptCount || !isIdle) {
+        if (
+          conversation.promptCount !== input.expectedPromptCount ||
+          !isIdle ||
+          conversation.owner !== null
+        ) {
           throw new CollaborationStartConflictError(input.conversationId);
         }
         const prior = {
@@ -368,6 +409,8 @@ export function createCollaborationStartPersister(
           status: conversation.status,
           transcriptPath: conversation.transcriptPath,
           lastActivityAt: conversation.lastActivityAt,
+          turnGeneration: conversation.turnGeneration,
+          owner: conversation.owner,
         };
         conversation.promptCount += 1;
         conversation.status = "running";
@@ -375,6 +418,15 @@ export function createCollaborationStartPersister(
           conversation.transcriptPath = transcriptPath;
         }
         conversation.lastActivityAt = timestamp;
+        // Claiming and admitting are the same act for a collaboration: it takes
+        // the conversation AND occupies its next turn. Both land here so a
+        // prompt cannot slip between them.
+        conversation.turnGeneration += 1;
+        conversation.owner = {
+          kind: "collaboration",
+          workflowId: input.workflowId,
+          attemptEpoch: COLLABORATION_INITIAL_ATTEMPT_EPOCH,
+        };
         return prior;
       },
     );
@@ -426,6 +478,8 @@ export function createCollaborationStartPersister(
             conversation.status = priorState.status;
             conversation.transcriptPath = priorState.transcriptPath;
             conversation.lastActivityAt = priorState.lastActivityAt;
+            conversation.turnGeneration = priorState.turnGeneration;
+            conversation.owner = priorState.owner;
           },
         );
       } catch (compensationError) {
@@ -446,7 +500,9 @@ export function createCollaborationStartPersister(
       workflowId: input.workflowId,
       conversationId: input.conversationId,
       imageCount: input.imageRefs.length,
+      claimedTurnGeneration: priorState.turnGeneration + 1,
     });
+    return { claimedTurnGeneration: priorState.turnGeneration + 1 };
   };
 }
 
@@ -679,7 +735,7 @@ export interface CollaborationManagerDeps {
     modelId?: string;
     effort?: string;
     codexFastMode?: boolean;
-  }): Promise<void>;
+  }): Promise<CollaborationStartClaim>;
 
   /**
    * Tracks abort signals for in-flight collaboration runs so a stop request
@@ -802,6 +858,30 @@ export interface CollaborationManagerDeps {
    * `readCollaborationArtifacts`; tests inject a deterministic reader.
    */
   readArtifacts(workflowId: string): Promise<CollaborationArtifact[]>;
+  /** The STRICT read resume decides from — absence, I/O failure and skipped
+   *  lines kept apart, because "nothing recorded" and "could not read" must
+   *  not both mean "start over". */
+  readArtifactStream(
+    workflowId: string,
+  ): Promise<CollaborationArtifactStreamRead<CollaborationArtifact>>;
+  /** Hands the originating conversation back, fenced on the exact attempt.
+   *  Stop needs its own path to this: a paused run has no live slice to do it,
+   *  and an owner nothing ever clears locks the user out of the conversation. */
+  releaseConversationOwner(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+    owner: { kind: "collaboration"; workflowId: string; attemptEpoch: number };
+  }): Promise<boolean>;
+  /** Takes the originating conversation back for a new attempt, refusing when
+   *  another turn has been admitted since this run claimed it. */
+  reclaimConversationOwner(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+    owner: { kind: "collaboration"; workflowId: string; attemptEpoch: number };
+    request: { workflowId: string; claimedTurnGeneration: number };
+  }): Promise<OwnershipReclaimDecision>;
 
   publishStatus(
     input: Omit<
@@ -1076,6 +1156,38 @@ const defaultDeps: CollaborationManagerDeps = {
       sessionName: input.sessionName,
     });
   },
+  readArtifactStream(workflowId) {
+    return readCollaborationArtifactStream(
+      workflowId,
+      collaborationArtifactSchema,
+    );
+  },
+  releaseConversationOwner({
+    projectPath,
+    sessionName,
+    conversationId,
+    owner,
+  }) {
+    return releaseConversationOwnership(
+      defaultMutateConversation,
+      { projectPath, storeSessionName: sessionName, conversationId },
+      owner,
+    );
+  },
+  reclaimConversationOwner({
+    projectPath,
+    sessionName,
+    conversationId,
+    owner,
+    request,
+  }) {
+    return reclaimConversationOwnership(
+      defaultMutateConversation,
+      { projectPath, storeSessionName: sessionName, conversationId },
+      owner,
+      request,
+    );
+  },
   readArtifacts(workflowId) {
     return readCollaborationArtifacts(workflowId, collaborationArtifactSchema);
   },
@@ -1161,15 +1273,39 @@ export class CollaborationConversationMismatchError extends Error {
   }
 }
 
-export class CollaborationNotPausedError extends Error {
+export class CollaborationNotResumableError extends Error {
   constructor(
     public readonly workflowId: string,
     public readonly status: string,
   ) {
     super(
-      `Workflow "${workflowId}" is not paused (status=${status}); resume only valid for paused workflows`,
+      `Workflow "${workflowId}" is not resumable (status=${status}); resume is valid for paused or failed workflows`,
     );
-    this.name = "CollaborationNotPausedError";
+    this.name = "CollaborationNotResumableError";
+  }
+}
+
+/** A failed run the eligibility gates refused, with the user-facing reason. */
+export class CollaborationResumeRefusedError extends Error {
+  constructor(
+    public readonly workflowId: string,
+    public readonly refusal: ResumeRefusal,
+    message: string,
+  ) {
+    super(message);
+    this.name = "CollaborationResumeRefusedError";
+  }
+}
+
+/** The conversation is no longer the one this collaboration claimed. */
+export class CollaborationConversationOwnershipError extends Error {
+  constructor(
+    public readonly workflowId: string,
+    public readonly reason: string,
+    detail: string,
+  ) {
+    super(detail);
+    this.name = "CollaborationConversationOwnershipError";
   }
 }
 
@@ -1464,24 +1600,9 @@ export function createCollaborationManager(
 
       const stopController = deps.stopRegistry.register(workflowId);
 
-      const sliceInput: AsymmetricCollaborationSliceInput = {
-        workflowId,
-        brief,
-        worktreePath: session.worktreePath,
-        sessionKey,
-        primaryAgentBackend,
-        agents,
-        negotiationRounds: parsed.negotiationRounds,
-        autonomousResolutionThreshold: parsed.autonomousResolutionThreshold,
-        sessionContext,
-        conversationId: parsed.conversationId,
-        priorBackendRef: conversation.backendRef ?? undefined,
-        imageRefs,
-        stopSignal: stopController.signal,
-      };
-
+      let startClaim: CollaborationStartClaim;
       try {
-        await deps.persistStart({
+        startClaim = await deps.persistStart({
           projectPath: input.projectPath,
           sessionName: input.sessionName,
           workflowId,
@@ -1499,6 +1620,26 @@ export function createCollaborationManager(
         deps.stopRegistry.release(workflowId);
         throw error;
       }
+
+      // Built after the claim so the run records the generation it actually
+      // took, not one read before another turn could have been admitted.
+      const sliceInput: AsymmetricCollaborationSliceInput = {
+        workflowId,
+        brief,
+        worktreePath: session.worktreePath,
+        sessionKey,
+        primaryAgentBackend,
+        agents,
+        negotiationRounds: parsed.negotiationRounds,
+        autonomousResolutionThreshold: parsed.autonomousResolutionThreshold,
+        sessionContext,
+        conversationId: parsed.conversationId,
+        priorBackendRef: conversation.backendRef ?? undefined,
+        imageRefs,
+        stopSignal: stopController.signal,
+        attemptEpoch: COLLABORATION_INITIAL_ATTEMPT_EPOCH,
+        claimedTurnGeneration: startClaim.claimedTurnGeneration,
+      };
 
       logger.info("collaboration.manager.start", {
         projectPath: input.projectPath,
@@ -1601,13 +1742,20 @@ export function createCollaborationManager(
           parsed.conversationId,
         );
       }
-      if (envelope.status !== "paused") {
-        throw new CollaborationNotPausedError(
+      const resumingFailure = envelope.status === "failed";
+      if (envelope.status !== "paused" && !resumingFailure) {
+        throw new CollaborationNotResumableError(
           input.workflowId,
           envelope.status,
         );
       }
-      if (envelope.pause?.resumeToken !== parsed.resumeToken) {
+      // The pause token binds a set of answers to the specific question set
+      // that produced them. A failure resume carries no answers, so there is
+      // nothing to bind — the attempt epoch is what fences it instead.
+      if (
+        !resumingFailure &&
+        envelope.pause?.resumeToken !== parsed.resumeToken
+      ) {
         throw new CollaborationResumeTokenMismatchError(input.workflowId);
       }
 
@@ -1656,6 +1804,95 @@ export function createCollaborationManager(
       const conversationId = parsed.conversationId;
       const completedRounds = extractCompletedRounds(existingSnapshot);
 
+      // Everything a resumed failure must be true about is checked BEFORE
+      // anything moves, so a refusal leaves the run exactly where it was and
+      // the user can act on the reason.
+      let resumeAttemptEpoch = COLLABORATION_INITIAL_ATTEMPT_EPOCH;
+      let claimedTurnGeneration: number | undefined;
+      if (resumingFailure) {
+        const read = await deps.readArtifactStream(input.workflowId);
+        const ledgerOutcome =
+          read.kind === "ok"
+            ? buildCollaborationStepLedger({
+                stream: read.entries,
+                negotiationRounds,
+                corruptLineIndexes: read.skipped,
+              })
+            : read.kind === "absent"
+              ? ({ kind: "empty" } as const)
+              : ({
+                  kind: "unusable",
+                  reason: { code: "unreadable", detail: read.error },
+                } as const);
+
+        const missingPremises: string[] = [];
+        if (
+          !collaborationAgentsMapSchema.safeParse(existingSnapshot["agents"])
+            .success
+        ) {
+          missingPremises.push("agents");
+        }
+        if (typeof existingSnapshot["claimedTurnGeneration"] !== "number") {
+          missingPremises.push("claimedTurnGeneration");
+        }
+        const recordedEpoch = existingSnapshot["attemptEpoch"];
+        if (typeof recordedEpoch !== "number") {
+          missingPremises.push("attemptEpoch");
+        }
+
+        const failureCauseParse = collaborationFailureCauseSchema.safeParse(
+          existingSnapshot["failureCause"],
+        );
+
+        const eligibility = decideResumeEligibility({
+          status: envelope.status,
+          failureCause: failureCauseParse.success
+            ? failureCauseParse.data
+            : null,
+          ledger: ledgerOutcome.kind === "ok" ? ledgerOutcome.ledger : null,
+          ledgerRejection:
+            ledgerOutcome.kind === "unusable" ? ledgerOutcome.reason : null,
+          missingPremises,
+          snapshotRoundsCompleted: completedRounds,
+        });
+        if (eligibility.kind === "refused") {
+          throw new CollaborationResumeRefusedError(
+            input.workflowId,
+            eligibility.refusal,
+            describeResumeRefusal(eligibility.refusal),
+          );
+        }
+
+        claimedTurnGeneration = existingSnapshot[
+          "claimedTurnGeneration"
+        ] as number;
+        resumeAttemptEpoch = (recordedEpoch as number) + 1;
+
+        // Take the conversation back before the envelope moves. A refusal here
+        // must leave a failed envelope failed, not a running one with no worker.
+        const reclaim = await deps.reclaimConversationOwner({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          conversationId,
+          owner: {
+            kind: "collaboration",
+            workflowId: input.workflowId,
+            attemptEpoch: resumeAttemptEpoch,
+          },
+          request: {
+            workflowId: input.workflowId,
+            claimedTurnGeneration,
+          },
+        });
+        if (reclaim.kind === "refuse") {
+          throw new CollaborationConversationOwnershipError(
+            input.workflowId,
+            reclaim.reason,
+            reclaim.detail,
+          );
+        }
+      }
+
       // A run, including its pause, is one logical turn: the premises the two
       // peers negotiated under are the persisted ones. Parsing before
       // markRunning keeps an unresumable envelope paused rather than stranding
@@ -1678,15 +1915,34 @@ export function createCollaborationManager(
         ...parsed.userAnswers,
       };
 
+      const priorResumeCount =
+        typeof existingSnapshot["resumeCount"] === "number"
+          ? (existingSnapshot["resumeCount"] as number)
+          : 0;
       const updatedSnapshot: Record<string, unknown> = {
         ...existingSnapshot,
         userAnswersByQuestionId,
+        attemptEpoch: resumeAttemptEpoch,
+        ...(resumingFailure
+          ? {
+              resumeCount: priorResumeCount + 1,
+              // Keep what it recovered from; the banner is cleared but the
+              // history should survive the run it explains.
+              resumedFromErrorSummary: envelope.errorSummary ?? null,
+            }
+          : {}),
       };
 
+      // The epoch, the snapshot and the status move together: a worker that
+      // started against epoch N must never find the record still advertising
+      // N-1, and a failed envelope must not be left running without one.
       await repo.update(input.workflowId, {
+        status: "running",
         featureSnapshot: updatedSnapshot,
+        ...(resumingFailure
+          ? { phase: "asymmetric_resumed", errorSummary: undefined }
+          : {}),
       });
-      await repo.markRunning(input.workflowId);
 
       const sessionKey = `${input.projectPath}::${input.sessionName}`;
       const laneService = deps.buildLaneService({
@@ -1769,6 +2025,10 @@ export function createCollaborationManager(
         conversationId,
         stopSignal: stopController.signal,
         resume: { userAnswersByQuestionId },
+        attemptEpoch: resumeAttemptEpoch,
+        ...(claimedTurnGeneration !== undefined
+          ? { claimedTurnGeneration }
+          : {}),
       };
 
       logger.info("collaboration.manager.resume", {
@@ -1880,6 +2140,36 @@ export function createCollaborationManager(
         featureSnapshot: nextSnapshot,
         ...(envelope.pause !== undefined ? { pause: undefined } : {}),
       });
+
+      // Hand the conversation back for the same reason the envelope transition
+      // above is unconditional: a paused run has no slice to do it, and an
+      // owner nobody clears would refuse every future prompt in that
+      // conversation. Idempotent — a live slice that also releases is a no-op.
+      const stoppedEpoch = existingSnapshot["attemptEpoch"];
+      if (input.conversationId) {
+        try {
+          await deps.releaseConversationOwner({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            conversationId: input.conversationId,
+            owner: {
+              kind: "collaboration",
+              workflowId: input.workflowId,
+              attemptEpoch:
+                typeof stoppedEpoch === "number"
+                  ? stoppedEpoch
+                  : COLLABORATION_INITIAL_ATTEMPT_EPOCH,
+            },
+          });
+        } catch (err) {
+          logger.warn("collaboration.manager.stop_release_failed", {
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            workflowId: input.workflowId,
+            error: getErrorMessage(err),
+          });
+        }
+      }
 
       try {
         deps.publishStatus({

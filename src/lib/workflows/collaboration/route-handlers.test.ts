@@ -13,7 +13,7 @@ import {
   CollaborationStartConflictError,
   CollaborationConversationMismatchError,
   CollaborationConversationNotFoundError,
-  CollaborationNotPausedError,
+  CollaborationNotResumableError,
   CollaborationNotStoppableError,
   CollaborationResumeTokenMismatchError,
   CollaborationSessionNotFoundError,
@@ -1018,7 +1018,7 @@ describe("collaboration route handlers — RESUME", () => {
 
   it("returns 409 when the workflow is not paused", async () => {
     const { manager } = buildScriptedManager({
-      resumeError: new CollaborationNotPausedError("wf-1", "running"),
+      resumeError: new CollaborationNotResumableError("wf-1", "running"),
     });
     const handlers = createCollaborationRouteHandlers({
       resolveProjectPath: async () => "/projects/example",

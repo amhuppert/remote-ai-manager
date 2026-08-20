@@ -111,6 +111,8 @@ function makeConversation(
     pendingQueue: [],
     lastSeenAlignmentVersion: null,
     pendingAgentNotices: [],
+    owner: null,
+    turnGeneration: 0,
     ...overrides,
   });
 }

@@ -25,18 +25,19 @@ import {
   type AsymmetricCollaborationSliceResult,
 } from "./envelope";
 import {
-  callPrimitive,
-  parseAndInjectArtifact,
+  produceCollaborationStep,
   trackArtifact,
   type ArtifactTracker,
 } from "./helpers";
-import { validateGeneratedArtifactFiles } from "./artifact-files";
+import type { CollaborationStepLedger } from "./step-ledger";
 
 export interface RunCounterProposalStepContext {
   input: AsymmetricCollaborationSliceInput;
   deps: AsymmetricCollaborationSliceDeps;
   now: () => string;
   tracker: ArtifactTracker;
+  /** The prior attempt's recorded outputs; null for a run with no history. */
+  ledger: CollaborationStepLedger | null;
   backendForAgent: (agent: CollaborationFlowAgent) => CollaborationAgent;
   agentOneDraft: CollaborationInitialDraftOutput;
   agentTwoDraft: CollaborationInitialDraftOutput;
@@ -77,30 +78,15 @@ export async function runCounterProposalStep(
     workflowId: input.workflowId,
     round,
   });
-  const counterProposalCall = await callPrimitive({
-    input,
-    deps,
-    flowAgent: "agent_two",
-    backend: backendForAgent("agent_two"),
-    prompt: counterProposalPrompt,
-  });
-  if (counterProposalCall.kind === "failed") {
-    return {
-      kind: "failed",
-      result: await failRun({
-        input,
-        deps,
-        now,
-        tracker,
-        flowAgent: "agent_two",
-        errorSummary: counterProposalCall.errorSummary,
-      }),
-    };
-  }
-  const counterProposal = parseAndInjectArtifact(
-    "agent_two",
-    counterProposalCall.result,
-    {
+  const step =
+    await produceCollaborationStep<CollaborationCounterProposalOutput>({
+      input,
+      deps,
+      ledger: ctx.ledger,
+      key: { kind: "counter_proposal", round },
+      flowAgent: "agent_two",
+      backend: backendForAgent("agent_two"),
+      prompt: counterProposalPrompt,
       contentSchema: collaborationCounterProposalContentSchema,
       fullSchema: collaborationCounterProposalOutputSchema,
       injection: {
@@ -109,9 +95,8 @@ export async function runCounterProposalStep(
         target_agent: "agent_one",
         round,
       },
-    },
-  );
-  if (!counterProposal.success) {
+    });
+  if (step.kind === "failed") {
     return {
       kind: "failed",
       result: await failRun({
@@ -120,30 +105,17 @@ export async function runCounterProposalStep(
         now,
         tracker,
         flowAgent: "agent_two",
-        errorSummary: counterProposal.error,
+        errorSummary: step.errorSummary,
+        cause: step.cause,
       }),
     };
   }
-  const validation = await validateGeneratedArtifactFiles({
-    worktreePath: input.worktreePath,
-    workflowId: input.workflowId,
-    artifact: counterProposal.value,
-  });
-  if (!validation.success) {
-    return {
-      kind: "failed",
-      result: await failRun({
-        input,
-        deps,
-        now,
-        tracker,
-        flowAgent: "agent_two",
-        errorSummary: `counter_proposal (agent_two) artifact_files: ${validation.error}`,
-      }),
-    };
+  if (step.kind === "replayed") {
+    return { kind: "ok", counterProposal: step.artifact };
   }
-  await trackArtifact(tracker, counterProposal.value);
+
+  await trackArtifact(tracker, step.artifact);
   await persistArtifactsSnapshot(input, deps, now, tracker);
 
-  return { kind: "ok", counterProposal: counterProposal.value };
+  return { kind: "ok", counterProposal: step.artifact };
 }

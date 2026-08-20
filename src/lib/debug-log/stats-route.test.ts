@@ -53,6 +53,8 @@ const BASE_CONVERSATION: ConversationState = {
   unread: false,
   lastSeenAlignmentVersion: null,
   pendingAgentNotices: [],
+  owner: null,
+  turnGeneration: 0,
   pendingQueue: [],
 };
 

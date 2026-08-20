@@ -31,12 +31,12 @@ import {
   type AsymmetricCollaborationSliceResult,
 } from "./envelope";
 import {
-  callPrimitive,
-  parseAndInjectArtifact,
+  produceCollaborationStep,
   trackArtifact,
   type ArtifactTracker,
+  type ProduceCollaborationStepOutcome,
 } from "./helpers";
-import { validateGeneratedArtifactFiles } from "./artifact-files";
+import type { CollaborationStepLedger } from "./step-ledger";
 
 const logger = createLogger("workflows.collaboration.initial-draft");
 
@@ -45,6 +45,10 @@ export interface RunInitialDraftsPhaseContext {
   deps: AsymmetricCollaborationSliceDeps;
   now: () => string;
   tracker: ArtifactTracker;
+  /** The prior attempt's recorded outputs; null for a run with no history.
+   *  A peer whose draft is already recorded is not dispatched again — the
+   *  common shape after one model has an outage. */
+  ledger: CollaborationStepLedger | null;
   backendForAgent: (agent: CollaborationFlowAgent) => CollaborationAgent;
 }
 
@@ -76,94 +80,85 @@ export async function runInitialDraftsPhase(
   // Both drafts run concurrently: each agent's writes are confined to its
   // own artifact paths (the prompts forbid touching anything else), so the
   // per-session write lock is deliberately bypassed via `artifact_only`.
-  const [agentOneDraftCall, agentTwoDraftCall] = await Promise.all([
-    callPrimitive({
+  // Both peers run concurrently, but nothing is committed until BOTH have
+  // settled: the sidecar is append-only, so committing inside the concurrent
+  // calls would make its order depend on which model answered first, and a
+  // resumed run replays that order.
+  const [agentOneStep, agentTwoStep] = await Promise.all([
+    produceCollaborationStep<CollaborationInitialDraftOutput>({
       input,
       deps,
+      ledger: ctx.ledger,
+      key: { kind: "initial_draft", agent: "agent_one" },
       flowAgent: "agent_one",
       backend: backendForAgent("agent_one"),
       prompt: agentOneInitialPrompt,
-      imageRefs: input.imageRefs,
+      contentSchema: collaborationInitialDraftContentSchema,
+      fullSchema: collaborationInitialDraftOutputSchema,
+      injection: { kind: "initial_draft", agent: "agent_one", round: 0 },
+      ...(input.imageRefs !== undefined ? { imageRefs: input.imageRefs } : {}),
       writeCapability: "artifact_only",
     }),
-    callPrimitive({
+    produceCollaborationStep<CollaborationInitialDraftOutput>({
       input,
       deps,
+      ledger: ctx.ledger,
+      key: { kind: "initial_draft", agent: "agent_two" },
       flowAgent: "agent_two",
       backend: backendForAgent("agent_two"),
       prompt: agentTwoInitialPrompt,
-      imageRefs: input.imageRefs,
+      contentSchema: collaborationInitialDraftContentSchema,
+      fullSchema: collaborationInitialDraftOutputSchema,
+      injection: { kind: "initial_draft", agent: "agent_two", round: 0 },
+      ...(input.imageRefs !== undefined ? { imageRefs: input.imageRefs } : {}),
       writeCapability: "artifact_only",
     }),
   ]);
 
-  // Process both initial-draft outcomes BEFORE deciding to fail. If one
-  // peer failed but the other succeeded, the successful peer's artifact is
-  // tracked, registered, and persisted so the partial run remains visible
-  // in the snapshot.
+  // Commit in canonical agent_one-then-agent_two order, and only what this
+  // attempt produced: a replayed draft is already on disk and already in the
+  // tracker. A peer that succeeded is preserved even when its sibling failed,
+  // so the next attempt re-dispatches only the peer that never finished.
+  const steps: Array<
+    [
+      CollaborationFlowAgent,
+      ProduceCollaborationStepOutcome<CollaborationInitialDraftOutput>,
+    ]
+  > = [
+    ["agent_one", agentOneStep],
+    ["agent_two", agentTwoStep],
+  ];
+  for (const [flowAgent, step] of steps) {
+    if (step.kind !== "produced") continue;
+    await trackArtifact(tracker, step.artifact);
+    await persistArtifactsSnapshot(input, deps, now, tracker);
+    logger.debug("collaboration.initial_draft.committed", {
+      workflowId: input.workflowId,
+      flowAgent,
+    });
+  }
+
+  for (const [flowAgent, step] of steps) {
+    if (step.kind !== "failed") continue;
+    return {
+      kind: "failed",
+      result: await failRun({
+        input,
+        deps,
+        now,
+        tracker,
+        flowAgent,
+        errorSummary: step.errorSummary,
+        cause: step.cause,
+      }),
+    };
+  }
+
   const agentOneDraft =
-    agentOneDraftCall.kind === "ok"
-      ? parseAndInjectArtifact("agent_one", agentOneDraftCall.result, {
-          contentSchema: collaborationInitialDraftContentSchema,
-          fullSchema: collaborationInitialDraftOutputSchema,
-          injection: { kind: "initial_draft", agent: "agent_one", round: 0 },
-        })
-      : null;
+    agentOneStep.kind === "failed" ? null : agentOneStep.artifact;
   const agentTwoDraft =
-    agentTwoDraftCall.kind === "ok"
-      ? parseAndInjectArtifact("agent_two", agentTwoDraftCall.result, {
-          contentSchema: collaborationInitialDraftContentSchema,
-          fullSchema: collaborationInitialDraftOutputSchema,
-          injection: { kind: "initial_draft", agent: "agent_two", round: 0 },
-        })
-      : null;
-
-  if (agentOneDraft && agentOneDraft.success) {
-    const validation = await validateGeneratedArtifactFiles({
-      worktreePath: input.worktreePath,
-      workflowId: input.workflowId,
-      artifact: agentOneDraft.value,
-    });
-    if (!validation.success) {
-      return {
-        kind: "failed",
-        result: await failRun({
-          input,
-          deps,
-          now,
-          tracker,
-          flowAgent: "agent_one",
-          errorSummary: `initial_draft (agent_one) artifact_files: ${validation.error}`,
-        }),
-      };
-    }
-    await trackArtifact(tracker, agentOneDraft.value);
-    await persistArtifactsSnapshot(input, deps, now, tracker);
-  }
-  if (agentTwoDraft && agentTwoDraft.success) {
-    const validation = await validateGeneratedArtifactFiles({
-      worktreePath: input.worktreePath,
-      workflowId: input.workflowId,
-      artifact: agentTwoDraft.value,
-    });
-    if (!validation.success) {
-      return {
-        kind: "failed",
-        result: await failRun({
-          input,
-          deps,
-          now,
-          tracker,
-          flowAgent: "agent_two",
-          errorSummary: `initial_draft (agent_two) artifact_files: ${validation.error}`,
-        }),
-      };
-    }
-    await trackArtifact(tracker, agentTwoDraft.value);
-    await persistArtifactsSnapshot(input, deps, now, tracker);
-  }
-
-  if (agentOneDraftCall.kind === "failed") {
+    agentTwoStep.kind === "failed" ? null : agentTwoStep.artifact;
+  if (!agentOneDraft || !agentTwoDraft) {
     return {
       kind: "failed",
       result: await failRun({
@@ -171,58 +166,16 @@ export async function runInitialDraftsPhase(
         deps,
         now,
         tracker,
-        flowAgent: "agent_one",
-        errorSummary: agentOneDraftCall.errorSummary,
-      }),
-    };
-  }
-  if (agentTwoDraftCall.kind === "failed") {
-    return {
-      kind: "failed",
-      result: await failRun({
-        input,
-        deps,
-        now,
-        tracker,
-        flowAgent: "agent_two",
-        errorSummary: agentTwoDraftCall.errorSummary,
-      }),
-    };
-  }
-  if (!agentOneDraft || !agentOneDraft.success) {
-    return {
-      kind: "failed",
-      result: await failRun({
-        input,
-        deps,
-        now,
-        tracker,
-        flowAgent: "agent_one",
-        errorSummary: agentOneDraft ? agentOneDraft.error : "agent_one missing",
-      }),
-    };
-  }
-  if (!agentTwoDraft || !agentTwoDraft.success) {
-    return {
-      kind: "failed",
-      result: await failRun({
-        input,
-        deps,
-        now,
-        tracker,
-        flowAgent: "agent_two",
-        errorSummary: agentTwoDraft ? agentTwoDraft.error : "agent_two missing",
+        flowAgent: !agentOneDraft ? "agent_one" : "agent_two",
+        errorSummary: "initial_draft did not produce an artifact",
+        cause: { kind: "structured_output" },
       }),
     };
   }
 
   await recordAlignmentSeenForRun(input, deps);
 
-  return {
-    kind: "ok",
-    agentOneDraft: agentOneDraft.value,
-    agentTwoDraft: agentTwoDraft.value,
-  };
+  return { kind: "ok", agentOneDraft, agentTwoDraft };
 }
 
 /**

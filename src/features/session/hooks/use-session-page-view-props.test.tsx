@@ -55,6 +55,8 @@ function makeConversation(): PublicConversationState {
     pendingQueue: [],
     lastSeenAlignmentVersion: null,
     pendingAgentNotices: [],
+    owner: null,
+    turnGeneration: 0,
   });
 }
 
