@@ -17,10 +17,12 @@
  * check, which every sibling conversation in the session also passes.
  *
  * WHETHER — {@link authorizeExecutionMutation}. A signature proves issuance,
- * not currency, so the policy re-reads the execution: an agent conversation
- * must be the run's immutable recorded origin, and a lane must still be the
- * conversation driving its own context on its own execution. Human UI is
- * admitted unconditionally, which is the invariant this must not erode.
+ * not currency, so the policy re-reads the execution: a lane must still be the
+ * conversation driving its own context on its own execution, and a conversation
+ * must satisfy the act's {@link ExecutionMutationAuthority} — session
+ * membership for steering a run, the run's recorded origin for answering a
+ * question the run posed. Human UI is admitted unconditionally, which is the
+ * invariant this must not erode.
  *
  * Both answers are about the state the route READ. What keeps them true of the
  * state the route WRITES is {@link ./principal-fence}, which pins the act to
@@ -177,15 +179,47 @@ export type MutationAuthorization =
       originConversationId: string | null;
     };
 
+/**
+ * Which conversations an act on a launched execution admits.
+ *
+ * `any_session_conversation` is membership authority: every conversation the
+ * classifier verified into this session. Every verb that STEERS a run — the
+ * lifecycle verbs and live editing — uses it. Acting on a run in flight is
+ * work on the run rather than a decision about its launch, the conversation
+ * holding the context to pause or repair it is routinely not the one that
+ * typed the launch, and a UI-launched run records no origin at all, which
+ * under the rule below meant no agent could ever act on it.
+ *
+ * `origin_conversation` is launch authority: only the run's immutable recorded
+ * origin, and a run whose origin was deleted admits no agent at all — nobody
+ * inherits the vacancy. Answering a context's approval gate uses it, because
+ * the run posed that question to whoever launched it; membership authority
+ * would let any sibling answer on their behalf. `any_session_conversation`
+ * correspondingly retires the deleted-origin refusal, whose only job is to
+ * keep that vacancy from being inherited.
+ *
+ * Neither value touches lane authority: a lane must still be the conversation
+ * currently driving its own context on its own execution, because that is a
+ * currency check rather than an ownership one.
+ */
+export type ExecutionMutationAuthority =
+  | "origin_conversation"
+  | "any_session_conversation";
+
 export function authorizeExecutionMutation(input: {
   principal: WorkflowRequestPrincipal;
   execution: PrincipalExecutionFacts;
+  /** Defaults to launch authority, so a new caller inherits the narrow rule. */
+  authority?: ExecutionMutationAuthority;
 }): MutationAuthorization {
   const { principal, execution } = input;
+  const originGated =
+    (input.authority ?? "origin_conversation") === "origin_conversation";
 
   if (principal.kind === "human_ui") return { kind: "allowed" };
 
   if (
+    originGated &&
     execution.originConversationId !== null &&
     !execution.originConversationExists
   ) {
@@ -197,6 +231,7 @@ export function authorizeExecutionMutation(input: {
   }
 
   if (principal.kind === "conversation") {
+    if (!originGated) return { kind: "allowed" };
     // Null origin is refused rather than matched: an unowned run would
     // otherwise admit every agent whose own id is also absent, and "no origin"
     // must mean "no agent", not "any agent".

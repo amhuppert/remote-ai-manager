@@ -4,9 +4,13 @@
  * {@link ./request-principal} decides WHO is calling and WHETHER they may act;
  * this turns those answers into the one refusal vocabulary every mutation route
  * speaks. It lives apart from any single route module because three of them —
- * the lifecycle verbs, live edit, and charter amendment — must answer
- * identically: a caller refused by one must not be admitted by another simply
- * because that route grew its own check.
+ * the lifecycle verbs, live edit, and charter amendment — must answer from the
+ * SAME policy: a caller refused by one must not be admitted by another simply
+ * because that route grew its own check. Where they legitimately differ — every
+ * verb that STEERS a run admits any verified session conversation, while
+ * answering a context's approval gate keeps the run's recorded origin — the
+ * difference is a declared `authority` the policy module interprets, never a
+ * second check a route performs for itself.
  *
  * Every refusal here is WRITE-FREE by construction: the guard reads state and
  * builds a response, and the routes call it before the mutation they perform.
@@ -30,6 +34,7 @@ import {
 import {
   authorizeExecutionMutation,
   classifyWorkflowRequestPrincipal,
+  type ExecutionMutationAuthority,
   type WorkflowRequestPrincipal,
 } from "./request-principal";
 
@@ -71,7 +76,7 @@ export function unverifiedPrincipalResponse(verb: string): Response {
       error: `This agent cannot ${verb} a workflow: it presented no verified conversation capability.`,
       code: "unverified_principal",
       instruction:
-        "Run this from the ordinary session conversation that launched the run, or act from the Command Center UI. Lanes, the planner, and collaboration runtimes hold no launch authority.",
+        "Run this from an ordinary session conversation, or act from the Command Center UI. The planner and collaboration runtimes are minted no capability and cannot act on a run.",
     },
     { status: 403 },
   );
@@ -351,7 +356,7 @@ export type GuardedExecutionMutation = {
  * Returns a ready-to-return refusal, or the established principal plus the
  * fence that keeps its authorization attached to the execution it was granted
  * over. `execution` null means the verb has no run to scope against yet, so any
- * verified principal is admitted and the per-execution origin check happens
+ * verified principal is admitted and the per-execution authority check happens
  * once the run is resolved.
  */
 export async function guardExecutionMutation(input: {
@@ -360,6 +365,11 @@ export async function guardExecutionMutation(input: {
   deps: WorkflowMutationGuardDeps;
   verb: string;
   execution: GraphWorkflowExecution | null;
+  /**
+   * Which conversations this act admits. Omitted means launch authority — the
+   * narrow rule — so a verb that never states one cannot widen by accident.
+   */
+  authority?: ExecutionMutationAuthority;
   /**
    * The project the session lives in. Part of the fence rather than inferred,
    * because the fence names a (projectPath, sessionName) pair: a fenced act's
@@ -396,6 +406,7 @@ export async function guardExecutionMutation(input: {
   const execution = input.execution;
   const authorization = authorizeExecutionMutation({
     principal,
+    authority: input.authority,
     execution: {
       executionId: execution.id,
       originConversationId: execution.ownerConversationId,

@@ -212,16 +212,19 @@ export function createGraphWorkflowRuntimeEditRouteHandlers(
     }
     const { projectPath, sessionName, session } = resolved;
 
-    // A live edit restructures a run in flight, so it is scoped exactly like
-    // the lifecycle verbs: the human UI session-wide, an agent only on the run
-    // it originated or the lane it is currently driving (R9.1/R9.4). Guarded
-    // before the apply below, which commits — a refusal must be write-free.
+    // A live edit is authored work on the plan a run is executing, not a
+    // decision about the launch, so authority here is session MEMBERSHIP: the
+    // human UI, any conversation the session verified, and the lane currently
+    // driving its own context. The lifecycle verbs keep the narrower origin
+    // rule. Guarded before the apply below, which commits — a refusal must be
+    // write-free.
     const guarded = await guardExecutionMutation({
       request,
       session,
       deps,
       verb: "edit",
       projectPath,
+      authority: "any_session_conversation",
       execution: await deps.getActiveExecution(projectPath, sessionName),
     });
     if ("refusal" in guarded) return guarded.refusal;

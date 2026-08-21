@@ -6025,10 +6025,12 @@ describe("graph workflow abandon route — the audited end of a resumable halt",
 
   describe("who may end the lease holder's tenure", () => {
     /**
-     * The ordinary-conversation half of the shared mutation contract: the
-     * human UI and immutable ORIGIN may abandon, while a sibling ordinary
-     * conversation may not. Current and stale lane authority are exercised by
-     * the common mutation table and the archive-turnover regression below.
+     * The ordinary-conversation half of the shared mutation contract: abandon
+     * reads session MEMBERSHIP, so the human UI and any verified conversation
+     * may end the tenure, and what the audit records is the signed identity of
+     * whichever one did. An agent that cannot prove which conversation it is
+     * still may not. Current and stale lane authority are exercised by the
+     * common mutation table and the archive-turnover regression below.
      */
     async function seedOwnedHalt(ownerConversationId: string): Promise<void> {
       await seedActive(haltedExecution({ ownerConversationId }));
@@ -6119,17 +6121,27 @@ describe("graph workflow abandon route — the audited end of a resumable halt",
       },
     );
 
-    it("refuses a verified sibling conversation that did not originate the run", async () => {
-      const response = await abandonAs("valid", capabilityFor("conv-sibling"));
-
-      expect(response.status).toBe(403);
-      await expect(response.json()).resolves.toMatchObject({
-        code: "non_origin_principal",
+    // The audit is where a claim would do damage under membership authority:
+    // every session conversation is admitted, so the actor recorded must still
+    // be the SIGNED identity rather than the id the caller typed in a header.
+    it("admits a verified sibling conversation and attributes the audit to its signed identity", async () => {
+      const response = await abandonAs("valid", {
+        ...capabilityFor("conv-sibling"),
+        [OWNER_CONVERSATION_HEADER]: "conv-origin",
       });
-      await expectUntouchedLeaseHolder();
+
+      expect(response.status).toBe(200);
+      const archived = await fixture.store.listArchivedGraphWorkflowExecutions(
+        PROJECT_PATH,
+        SESSION_NAME,
+      );
+      expect(archived[0]!.abandonment?.actor).toEqual({
+        kind: "conversation",
+        conversationId: "conv-sibling",
+      });
     });
 
-    it("refuses a verified conversation over a run no conversation originated", async () => {
+    it("admits a verified conversation over a run no conversation originated", async () => {
       const { handlers } = buildStack("valid");
       await seedActive(haltedExecution());
       await fixture.seedConversation(
@@ -6148,8 +6160,15 @@ describe("graph workflow abandon route — the audited end of a resumable halt",
         routeContext(),
       );
 
-      expect(response.status).toBe(403);
-      await expectUntouchedLeaseHolder();
+      expect(response.status).toBe(200);
+      const archived = await fixture.store.listArchivedGraphWorkflowExecutions(
+        PROJECT_PATH,
+        SESSION_NAME,
+      );
+      expect(archived[0]!.abandonment?.actor).toEqual({
+        kind: "conversation",
+        conversationId: "conv-sibling",
+      });
     });
 
     it("admits the origin conversation and attributes the audit to it", async () => {
@@ -7279,8 +7298,14 @@ describe("graph workflow mutation principals", () => {
    * authority is a property of the route FAMILY, so a verb that grows its own
    * dispatch branch fails here rather than going unnoticed because only pause
    * ever had a principal test.
+   *
+   * The two tables are the two authorities. The lifecycle verbs read session
+   * MEMBERSHIP: steering a run in flight is work any conversation the session
+   * verified may do. Resolving a context's approval gate keeps launch
+   * authority, because it answers a question the run posed to whoever launched
+   * it rather than steering the run.
    */
-  const MUTATIONS: readonly MutationAct[] = [
+  const MEMBERSHIP_MUTATIONS: readonly MutationAct[] = [
     {
       verb: "pause",
       act: (stack, headers) => pause(stack, headers),
@@ -7350,6 +7375,9 @@ describe("graph workflow mutation principals", () => {
         ),
       write: (stack) => stack.resetExecutionContextAssignment,
     },
+  ];
+
+  const ORIGIN_MUTATIONS: readonly MutationAct[] = [
     {
       verb: "resolve-approval",
       act: (stack, headers) =>
@@ -7366,42 +7394,47 @@ describe("graph workflow mutation principals", () => {
     },
   ];
 
-  // R9.1 — the same act, from two conversations, must diverge on origin alone.
-  it("refuses a non-origin conversation and names the origin, then admits the origin", async () => {
-    const refusedStack = buildStack({
+  /** Every guarded verb, for the cases both authorities answer identically. */
+  const MUTATIONS: readonly MutationAct[] = [
+    ...MEMBERSHIP_MUTATIONS,
+    ...ORIGIN_MUTATIONS,
+  ];
+
+  const cases = (mutations: readonly MutationAct[]) =>
+    mutations.map((mutation) => [mutation.verb, mutation] as const);
+
+  // The same act from the origin and from a sibling now converges: membership
+  // authority means which conversation launched the run is not what decides.
+  it("admits the origin conversation and a sibling alike", async () => {
+    const originStack = buildStack({
       execution: ownedExecution(),
       transport: "valid",
     });
-    const refused = await pause(
-      refusedStack,
-      conversationCapability(SIBLING_CONV),
-    );
-
-    expect(refused.status).toBe(403);
-    await expect(refused.json()).resolves.toMatchObject({
-      code: "non_origin_principal",
-      originConversationId: ORIGIN_CONV,
-    });
-    // A refusal must leave the run untouched.
-    expect(refusedStack.pauseExecution).not.toHaveBeenCalled();
-
-    const admittedStack = buildStack({
-      execution: ownedExecution(),
-      transport: "valid",
-    });
-    const admitted = await pause(
-      admittedStack,
+    const fromOrigin = await pause(
+      originStack,
       conversationCapability(ORIGIN_CONV),
     );
 
-    expect(admitted.status).toBe(200);
-    expect(admittedStack.pauseExecution).toHaveBeenCalledTimes(1);
+    expect(fromOrigin.status).toBe(200);
+    expect(originStack.pauseExecution).toHaveBeenCalledTimes(1);
+
+    const siblingStack = buildStack({
+      execution: ownedExecution(),
+      transport: "valid",
+    });
+    const fromSibling = await pause(
+      siblingStack,
+      conversationCapability(SIBLING_CONV),
+    );
+
+    expect(fromSibling.status).toBe(200);
+    expect(siblingStack.pauseExecution).toHaveBeenCalledTimes(1);
   });
 
   // R9.2 — human UI authority is session-wide, whatever launched the run. The
   // write is asserted, not just the status: a guard that admitted the caller
   // and then dropped the act on the floor would pass a status-only check.
-  it.each(MUTATIONS.map((mutation) => [mutation.verb, mutation] as const))(
+  it.each(cases(MUTATIONS))(
     "admits a credential-free human UI %s on a run another conversation launched",
     async (_verb, mutation) => {
       const stack = buildStack({
@@ -7416,8 +7449,29 @@ describe("graph workflow mutation principals", () => {
     },
   );
 
-  // R9.1 — the origin is named on every verb, and every refusal is write-free.
-  it.each(MUTATIONS.map((mutation) => [mutation.verb, mutation] as const))(
+  // The write is asserted, not just the status: a guard that admitted the
+  // caller and then dropped the act on the floor would pass a status-only check.
+  it.each(cases(MEMBERSHIP_MUTATIONS))(
+    "admits a session conversation's %s on a run it did not launch",
+    async (_verb, mutation) => {
+      const stack = buildStack({
+        execution: ownedExecution(),
+        transport: "valid",
+      });
+
+      const response = await mutation.act(
+        stack,
+        conversationCapability(SIBLING_CONV),
+      );
+
+      expect(response.status).toBe(200);
+      expect(mutation.write(stack).mock.calls).toHaveLength(1);
+    },
+  );
+
+  // Answering a context's approval gate is not steering the run, so it keeps
+  // launch authority: the origin is named, and the refusal is write-free.
+  it.each(cases(ORIGIN_MUTATIONS))(
     "refuses a non-origin conversation's %s write-free, naming the origin",
     async (_verb, mutation) => {
       const stack = buildStack({
@@ -7439,13 +7493,16 @@ describe("graph workflow mutation principals", () => {
     },
   );
 
-  it("refuses a non-origin abandon before dispatch when the body names a stale execution", async () => {
+  // Authorization is against the ACTIVE run; the body's id is ADDRESSING. An
+  // admitted caller therefore reaches the service's separate execution-mismatch
+  // refusal rather than being answered by the principal guard.
+  it("dispatches an admitted abandon that names a stale execution to the service", async () => {
     const stack = buildStack({
       execution: ownedExecution(),
       transport: "valid",
     });
 
-    const response = await stack.handlers.ABANDON(
+    await stack.handlers.ABANDON(
       makeRequest(
         `${BASE_URL}/abandon`,
         "POST",
@@ -7455,16 +7512,13 @@ describe("graph workflow mutation principals", () => {
       routeContext(),
     );
 
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toMatchObject({
-      code: "non_origin_principal",
-      originConversationId: ORIGIN_CONV,
-    });
-    expect(stack.abandonExecution).not.toHaveBeenCalled();
+    expect(stack.abandonExecution).toHaveBeenCalledWith(
+      expect.objectContaining({ executionId: "execution-stale" }),
+    );
   });
 
   // R10.1 — "cannot launch" is not "cannot act": the lane drives its own run.
-  it.each(MUTATIONS.map((mutation) => [mutation.verb, mutation] as const))(
+  it.each(cases(MUTATIONS))(
     "admits the current lane's %s on the execution it is driving",
     async (_verb, mutation) => {
       const stack = buildStack({
@@ -7522,23 +7576,33 @@ describe("graph workflow mutation principals", () => {
   });
 
   // R9.4 — an id the caller merely presents is not authority, even when it
-  // names a conversation this session really has.
+  // names a conversation this session really has. Read on the verb that still
+  // discriminates by origin: under membership authority the claim buys nothing
+  // because the signed sibling identity is already admitted.
   it("refuses an agent whose claimed conversation header is not its signed identity", async () => {
     const stack = buildStack({
       execution: ownedExecution(),
       transport: "valid",
     });
 
-    const response = await pause(stack, {
-      ...conversationCapability(SIBLING_CONV),
-      [OWNER_CONVERSATION_HEADER]: ORIGIN_CONV,
-    });
+    const response = await stack.handlers.RESOLVE_APPROVAL(
+      makeRequest(
+        `${BASE_URL}/resolve-approval`,
+        "POST",
+        { contextId: "context-plan", decision: "approve" },
+        {
+          ...conversationCapability(SIBLING_CONV),
+          [OWNER_CONVERSATION_HEADER]: ORIGIN_CONV,
+        },
+      ),
+      routeContext(),
+    );
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toMatchObject({
       code: "non_origin_principal",
     });
-    expect(stack.pauseExecution).not.toHaveBeenCalled();
+    expect(stack.recordApprovalDecision).not.toHaveBeenCalled();
   });
 
   // R9.4 — a deleted origin leaves a run no agent can act on, while the human
@@ -7572,17 +7636,66 @@ describe("graph workflow mutation principals", () => {
     expect(humanStack.pauseExecution).toHaveBeenCalledTimes(1);
   });
 
-  it.each(MUTATIONS.map((mutation) => [mutation.verb, mutation] as const))(
+  const sessionWithoutOriginConversation = () =>
+    makeSession({
+      conversations: [
+        makeConversation(SIBLING_CONV),
+        makeConversation(LANE_CONV),
+      ],
+    });
+
+  // A lane's authority to drive its own context never came from the origin
+  // conversation; the deleted-origin gate refused it only as collateral of the
+  // rule that the origin is the one conversation that may act.
+  it.each(cases(MEMBERSHIP_MUTATIONS))(
+    "admits the current lane's %s once the execution origin is deleted",
+    async (_verb, mutation) => {
+      const stack = buildStack({
+        execution: ownedExecution(),
+        session: sessionWithoutOriginConversation(),
+        transport: "valid",
+      });
+
+      const response = await mutation.act(
+        stack,
+        laneCapability({
+          executionId: "execution-owned",
+          contextId: "context-plan",
+          conversationId: LANE_CONV,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(mutation.write(stack).mock.calls).toHaveLength(1);
+    },
+  );
+
+  it.each(cases(MEMBERSHIP_MUTATIONS))(
+    "admits a session conversation's %s once the execution origin is deleted",
+    async (_verb, mutation) => {
+      const stack = buildStack({
+        execution: ownedExecution(),
+        session: sessionWithoutOriginConversation(),
+        transport: "valid",
+      });
+
+      const response = await mutation.act(
+        stack,
+        conversationCapability(SIBLING_CONV),
+      );
+
+      expect(response.status).toBe(200);
+      expect(mutation.write(stack).mock.calls).toHaveLength(1);
+    },
+  );
+
+  // Under launch authority the vacancy is inherited by nobody, lane included.
+  it.each(cases(ORIGIN_MUTATIONS))(
     "refuses the current lane's %s write-free once the execution origin is deleted",
     async (_verb, mutation) => {
       const stack = buildStack({
         execution: ownedExecution(),
-        session: makeSession({
-          conversations: [
-            makeConversation(SIBLING_CONV),
-            makeConversation(LANE_CONV),
-          ],
-        }),
+        session: sessionWithoutOriginConversation(),
         transport: "valid",
       });
 
@@ -7607,7 +7720,7 @@ describe("graph workflow mutation principals", () => {
   // R9.4 — the cheapest escalation on the port: present a junk lane header and
   // nothing else. Reading "failed to authenticate" as "must be the browser"
   // would answer it with session-wide authority.
-  it.each(MUTATIONS.map((mutation) => [mutation.verb, mutation] as const))(
+  it.each(cases(MUTATIONS))(
     "refuses a forged lane credential's %s write-free instead of reading it as the human UI",
     async (_verb, mutation) => {
       const stack = buildStack({
@@ -7659,7 +7772,7 @@ describe("graph workflow mutation principals", () => {
   // "the session's active run". Those diverge exactly when E1 settles and a
   // successor takes the lease in the gap, and that is when an authorization
   // that named E1's origin must NOT be spent on E2.
-  it.each(MUTATIONS.map((mutation) => [mutation.verb, mutation] as const))(
+  it.each(cases(MUTATIONS))(
     "refuses the origin's %s once a successor took the lease mid-act",
     async (_verb, mutation) => {
       const stack = buildStack({
@@ -7683,7 +7796,7 @@ describe("graph workflow mutation principals", () => {
     },
   );
 
-  it.each(MUTATIONS.map((mutation) => [mutation.verb, mutation] as const))(
+  it.each(cases(MUTATIONS))(
     "carries a current lane's %s authority no further than its own execution",
     async (_verb, mutation) => {
       const stack = buildStack({
@@ -7714,7 +7827,7 @@ describe("graph workflow mutation principals", () => {
   // R9.2 — the human UI is session-wide by contract, so it is deliberately
   // NOT fenced: "pause whatever this session is running" is the act, and
   // pinning it to a run the operator has since replaced would break it.
-  it.each(MUTATIONS.map((mutation) => [mutation.verb, mutation] as const))(
+  it.each(cases(MUTATIONS))(
     "leaves the human UI's %s unfenced across a lease turnover",
     async (_verb, mutation) => {
       const stack = buildStack({

@@ -36,6 +36,8 @@ interface Invocation {
   bail: string;
   workers: string;
   heapMb: string;
+  /** Vitest's own pool override, which must never reach the launcher. */
+  maxForks: string;
 }
 
 let invocations: Invocation[] = [];
@@ -57,7 +59,7 @@ function writeNodeStub(binDir: string): void {
     stub,
     [
       "#!/usr/bin/env bash",
-      `printf '%s\\t%s\\t%s\\t%s\\n' "$*" "\${CC_TEST_BAIL:-<unset>}" "\${CC_TEST_WORKERS:-<unset>}" "\${CC_TEST_HEAP_MB:-<unset>}" >> "$FULL_SUITE_TEST_LOG"`,
+      `printf '%s\\t%s\\t%s\\t%s\\t%s\\n' "$*" "\${CC_TEST_BAIL:-<unset>}" "\${CC_TEST_WORKERS:-<unset>}" "\${CC_TEST_HEAP_MB:-<unset>}" "\${VITEST_MAX_FORKS:-<unset>}" >> "$FULL_SUITE_TEST_LOG"`,
       "exit 0",
     ].join("\n"),
     "utf8",
@@ -102,6 +104,9 @@ beforeAll(() => {
         PATH: `${binDir}:${process.env.PATH ?? ""}`,
         FULL_SUITE_TEST_LOG: logPath,
         TARGET_BRANCH: "main",
+        // A hostile ambient value: Vitest would apply this over the pool size
+        // the launcher computes, so the wrapper has to clear it.
+        VITEST_MAX_FORKS: "8",
       },
     });
     exitCode = 0;
@@ -119,9 +124,15 @@ beforeAll(() => {
     .split("\n")
     .filter(Boolean)
     .map((line) => {
-      const [args = "", bail = "", workers = "", heapMb = ""] =
+      const [args = "", bail = "", workers = "", heapMb = "", maxForks = ""] =
         line.split("\t");
-      return { args: args.split(" ").filter(Boolean), bail, workers, heapMb };
+      return {
+        args: args.split(" ").filter(Boolean),
+        bail,
+        workers,
+        heapMb,
+        maxForks,
+      };
     });
 
   writeFileSync(logPath, "", "utf8");
@@ -135,6 +146,9 @@ beforeAll(() => {
         PATH: `${binDir}:${process.env.PATH ?? ""}`,
         FULL_SUITE_TEST_LOG: logPath,
         TARGET_BRANCH: "main",
+        // A hostile ambient value: Vitest would apply this over the pool size
+        // the launcher computes, so the wrapper has to clear it.
+        VITEST_MAX_FORKS: "8",
       },
     });
     changedExitCode = 0;
@@ -152,9 +166,15 @@ beforeAll(() => {
     .split("\n")
     .filter(Boolean)
     .map((line) => {
-      const [args = "", bail = "", workers = "", heapMb = ""] =
+      const [args = "", bail = "", workers = "", heapMb = "", maxForks = ""] =
         line.split("\t");
-      return { args: args.split(" ").filter(Boolean), bail, workers, heapMb };
+      return {
+        args: args.split(" ").filter(Boolean),
+        bail,
+        workers,
+        heapMb,
+        maxForks,
+      };
     });
 });
 
@@ -192,6 +212,18 @@ describe("test-full-suite validation command", () => {
       workers: "8",
       heapMb: "1536",
     });
+  });
+
+  // The worker count above is a REQUEST the launcher clamps to what the machine
+  // can hold. Vitest applies VITEST_MAX_FORKS over `poolOptions.forks` after
+  // config resolution, so a value reaching the launcher — exported by the
+  // wrapper or inherited from the caller — silently spends the whole ceiling on
+  // a box budgeted for a fraction of it. That does not fail a test: the fork
+  // fleet starves the main process until a worker's `onTaskUpdate` RPC times
+  // out, killing a run in which everything passed.
+  it("clears Vitest's own pool override so the machine budget stays authoritative", () => {
+    expect(invocations.at(0)?.maxForks).toBe("<unset>");
+    expect(changedInvocations.at(0)?.maxForks).toBe("<unset>");
   });
 
   it("is registered in CommandCenter.json with an executable script", () => {

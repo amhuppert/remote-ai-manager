@@ -131,7 +131,7 @@ await startVitest(
 );
 ```
 
-The `startVitest` options are the final configuration layer. Both `maxForks` and `execArgv` are therefore authoritative even if candidate configuration declares larger values. Keep this launcher in the canonical project root with the wrapper; do not generate it inside each candidate worktree.
+The `startVitest` options are the final CONFIGURATION layer. Both `maxForks` and `execArgv` are therefore authoritative even if candidate configuration declares larger values. Two environment variables still outrank them: Vitest applies `VITEST_MAX_FORKS`/`VITEST_MIN_FORKS` over `resolved.poolOptions.forks` after config resolution, so a wrapper that exports the raw ceiling through them defeats the budget it just computed. Neither belongs in a wrapper — see below. Keep this launcher in the canonical project root with the wrapper; do not generate it inside each candidate worktree.
 
 ## Validation wrapper invocation
 
@@ -147,8 +147,12 @@ readonly TEST_HEAP_MB=2048
 export NODE_OPTIONS="--max-old-space-size=${TEST_HEAP_MB}"
 export CC_TEST_WORKERS="$TEST_WORKERS"
 export CC_TEST_HEAP_MB="$TEST_HEAP_MB"
-export VITEST_MAX_FORKS="$TEST_WORKERS"
-export VITEST_MIN_FORKS=1
+# Never export these two: Vitest applies them after config resolution, so they
+# override the clamped worker count the launcher passes to `startVitest`. Unset
+# them so an ambient value in the caller's shell cannot do it either. The
+# oversubscribed run does not fail a test — it starves the Vitest main process
+# until a worker's `onTaskUpdate` RPC times out and kills a fully passing run.
+unset VITEST_MAX_FORKS VITEST_MIN_FORKS
 export CLAUDECODE=1
 
 # Changed wrapper only:

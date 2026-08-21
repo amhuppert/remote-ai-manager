@@ -1029,19 +1029,27 @@ describe("graph workflow runtime edit route principals", () => {
 
   function buildStack(
     transport: "absent" | "valid",
-    /**
-     * The session's conversations. A lane conversation IS a conversation on the
-     * session, so the default carries it: a lane capability signs no session,
-     * and membership is the only thing binding it to this one.
-     */
-    conversationIds: readonly string[] = [
+    options: {
+      /**
+       * The session's conversations. A lane conversation IS a conversation on
+       * the session, so the default carries it: a lane capability signs no
+       * session, and membership is the only thing binding it to this one.
+       */
+      conversationIds?: readonly string[];
+      /** The execution the route reads when it guards the caller. */
+      execution?: GraphWorkflowExecution;
+      /** The execution present at write time, for turnover fencing. */
+      activeAtWriteTime?: GraphWorkflowExecution;
+    } = {},
+  ) {
+    const conversationIds = options.conversationIds ?? [
       ORIGIN_CONV,
       SIBLING_CONV,
       LANE_CONV,
       RETIRED_LANE_CONV,
-    ],
-    activeAtWriteTime?: GraphWorkflowExecution,
-  ) {
+    ];
+    const { activeAtWriteTime } = options;
+    const readExecution = options.execution ?? ownedExecution();
     const applyMutation = vi.fn();
     const mutateActive = vi.fn<
       GraphWorkflowRuntimeEditRouteDeps["mutateActive"]
@@ -1054,7 +1062,7 @@ describe("graph workflow runtime edit route principals", () => {
         );
       }
       applyMutation();
-      return activeAtWriteTime ?? ownedExecution();
+      return activeAtWriteTime ?? readExecution;
     });
     const buildLiveEditDeps = vi.fn(async () => TEST_LIVE_EDIT_DEPS);
 
@@ -1062,7 +1070,7 @@ describe("graph workflow runtime edit route principals", () => {
       resolveProjectPath: async (name: string) =>
         name === "repo" ? PROJECT_PATH : null,
       getSession: async () => principalSession(conversationIds),
-      getActiveExecution: async () => ownedExecution(),
+      getActiveExecution: async () => readExecution,
       mutateActive,
       buildLiveEditDeps,
       prepareAssignmentSnapshots: stubAssignmentSnapshotPreparation(),
@@ -1128,7 +1136,11 @@ describe("graph workflow runtime edit route principals", () => {
     ),
   });
 
-  it("refuses a non-origin conversation's edit write-free, naming the origin", async () => {
+  // Editing a run in flight is authored work, and the conversation holding the
+  // context to fix a plan is routinely not the one that typed the launch. The
+  // edit route therefore reads authority from session membership, which the
+  // verified capability already proves.
+  it("admits a session conversation that did not launch the run", async () => {
     const stack = buildStack("valid");
 
     const response = await stack.handlers.POST(
@@ -1136,14 +1148,38 @@ describe("graph workflow runtime edit route principals", () => {
       routeParams,
     );
 
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toMatchObject({
-      code: "non_origin_principal",
-      originConversationId: ORIGIN_CONV,
+    expect(response.status).not.toBe(403);
+    expect(stack.buildLiveEditDeps).toHaveBeenCalled();
+  });
+
+  it("admits a session conversation's edit of a run with no recorded origin", async () => {
+    // A UI-launched run records no origin at all, which under the origin rule
+    // meant no agent could ever edit it.
+    const unowned = ownedExecution();
+    unowned.ownerConversationId = null;
+    const stack = buildStack("valid", { execution: unowned });
+
+    const response = await stack.handlers.POST(
+      editRequest(capabilityFor(SIBLING_CONV)),
+      routeParams,
+    );
+
+    expect(response.status).not.toBe(403);
+    expect(stack.buildLiveEditDeps).toHaveBeenCalled();
+  });
+
+  it("admits a session conversation's edit when the recorded origin was deleted", async () => {
+    const stack = buildStack("valid", {
+      conversationIds: [SIBLING_CONV, LANE_CONV],
     });
-    expect(stack.mutateActive).not.toHaveBeenCalled();
-    // Not even the edit machinery was constructed for a refused caller.
-    expect(stack.buildLiveEditDeps).not.toHaveBeenCalled();
+
+    const response = await stack.handlers.POST(
+      editRequest(capabilityFor(SIBLING_CONV)),
+      routeParams,
+    );
+
+    expect(response.status).not.toBe(403);
+    expect(stack.buildLiveEditDeps).toHaveBeenCalled();
   });
 
   it("refuses a token-bearing agent that presents no capability", async () => {
@@ -1201,7 +1237,7 @@ describe("graph workflow runtime edit route principals", () => {
       ...rebound.taskStates["task-plan-1"]!,
       lastConversationId: "conv-successor-lane",
     };
-    const stack = buildStack("valid", undefined, rebound);
+    const stack = buildStack("valid", { activeAtWriteTime: rebound });
 
     const response = await stack.handlers.POST(
       editRequest(laneCapabilityFor(LANE_CONV)),
@@ -1216,21 +1252,21 @@ describe("graph workflow runtime edit route principals", () => {
     expect(stack.applyMutation).not.toHaveBeenCalled();
   });
 
-  it("refuses the current lane's edit when the execution origin was deleted", async () => {
-    const stack = buildStack("valid", [SIBLING_CONV, LANE_CONV]);
+  // A lane's authority to restructure the run it drives never came from the
+  // origin conversation; the deleted-origin gate refused it only as collateral
+  // of the rule that the origin is the one conversation that may act.
+  it("admits the current lane's edit when the execution origin was deleted", async () => {
+    const stack = buildStack("valid", {
+      conversationIds: [SIBLING_CONV, LANE_CONV],
+    });
 
     const response = await stack.handlers.POST(
       editRequest(laneCapabilityFor(LANE_CONV)),
       routeParams,
     );
 
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toMatchObject({
-      code: "origin_conversation_absent",
-      originConversationId: ORIGIN_CONV,
-    });
-    expect(stack.mutateActive).not.toHaveBeenCalled();
-    expect(stack.buildLiveEditDeps).not.toHaveBeenCalled();
+    expect(response.status).not.toBe(403);
+    expect(stack.buildLiveEditDeps).toHaveBeenCalled();
   });
 
   it("refuses a lane whose binding has moved on, write-free", async () => {
@@ -1274,7 +1310,9 @@ describe("graph workflow runtime edit route principals", () => {
     // A lane capability carries no session in its signature, so a credential
     // minted for another session — or one whose conversation was deleted — is
     // caught here or not at all.
-    const stack = buildStack("valid", [ORIGIN_CONV, SIBLING_CONV]);
+    const stack = buildStack("valid", {
+      conversationIds: [ORIGIN_CONV, SIBLING_CONV],
+    });
 
     const response = await stack.handlers.POST(
       editRequest(laneCapabilityFor(LANE_CONV)),

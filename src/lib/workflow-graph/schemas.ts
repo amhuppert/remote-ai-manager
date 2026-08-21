@@ -2225,9 +2225,9 @@ export type GraphWorkflowLaunchDocument = z.infer<
  * The audit an explicit abandon writes (D7 decision D5). Status stays `halted`
  * — the run's final engine state is a fact — and the Abandoned disposition is
  * derived from the presence of this record, which is also what ends the run's
- * lease. The admitted actors are a human UI caller and the origin conversation
- * under its verified identity, so the actor carries that identity rather than a
- * free-text label nobody can attribute afterwards.
+ * lease. The admitted actors are a human UI caller and any conversation the
+ * session verified, each under its signed identity, so the actor carries that
+ * identity rather than a free-text label nobody can attribute afterwards.
  */
 export const graphWorkflowAbandonmentSchema = z.object({
   abandonedAt: z.string(),

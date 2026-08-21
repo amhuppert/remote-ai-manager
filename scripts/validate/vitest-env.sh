@@ -8,7 +8,16 @@
 # TEST_WORKERS is a CEILING REQUEST. The launcher clamps it to what the machine
 # can hold (scripts/validate/worker-budget.mjs) rather than spawning it blindly,
 # so validation cannot oversubscribe a box the vitest config would have sized
-# down.
+# down. It travels as CC_TEST_WORKERS, which only the launcher reads.
+#
+# VITEST_MAX_FORKS/VITEST_MIN_FORKS are deliberately NOT exported, and are
+# unset if a caller's shell already carries them. Vitest applies those two over
+# `resolved.poolOptions.forks` AFTER config resolution, so they outrank both the
+# budget the launcher computes and the vitest config default — exporting the raw
+# ceiling through them ran the full pool on a machine budgeted for a third of
+# it. The symptom is not a failing test: the fork fleet starves the vitest main
+# process until a worker's `onTaskUpdate` RPC goes unanswered, and the run dies
+# on an unhandled timeout with every test passing.
 #
 # Callers must set SCRIPT_DIR and source common.sh first.
 
@@ -19,8 +28,7 @@ export NODE_OPTIONS="--max-old-space-size=${TEST_COORDINATOR_HEAP_MB}"
 export CC_TEST_WORKERS="$TEST_WORKERS"
 export CC_TEST_HEAP_MB="$TEST_HEAP_MB"
 export CC_TEST_COORDINATOR_HEAP_MB="$TEST_COORDINATOR_HEAP_MB"
-export VITEST_MAX_FORKS="$TEST_WORKERS"
-export VITEST_MIN_FORKS=1
+unset VITEST_MAX_FORKS VITEST_MIN_FORKS
 
 run_vitest() {
   run_quiet env NODE_ENV=test node "$SCRIPT_DIR/vitest-launcher.mjs" "$@"

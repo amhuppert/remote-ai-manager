@@ -468,6 +468,111 @@ describe("authorizeExecutionMutation", () => {
   });
 });
 
+describe("authorizeExecutionMutation under any_session_conversation authority", () => {
+  it("admits a conversation that did not launch the run", () => {
+    expect(
+      authorizeExecutionMutation({
+        principal: { kind: "conversation", conversationId: "sibling-conv" },
+        execution: facts(),
+        authority: "any_session_conversation",
+      }),
+    ).toEqual({ kind: "allowed" });
+  });
+
+  it("admits a conversation on an unowned run", () => {
+    // A run launched from the UI records no origin at all. Under the origin
+    // rule that means no agent may act; under membership it means there is
+    // simply no origin to compare against.
+    expect(
+      authorizeExecutionMutation({
+        principal: { kind: "conversation", conversationId: "any-conv" },
+        execution: facts({ originConversationId: null }),
+        authority: "any_session_conversation",
+      }),
+    ).toEqual({ kind: "allowed" });
+  });
+
+  it("admits a conversation whose run's recorded origin was deleted", () => {
+    // The deleted-origin refusal exists to stop a successor inheriting the
+    // vacancy under the origin rule. Membership inherits nothing, so the
+    // vacancy is not a refusal here.
+    expect(
+      authorizeExecutionMutation({
+        principal: { kind: "conversation", conversationId: "successor-conv" },
+        execution: facts({
+          originConversationId: "deleted-origin",
+          originConversationExists: false,
+        }),
+        authority: "any_session_conversation",
+      }),
+    ).toEqual({ kind: "allowed" });
+  });
+
+  it("admits the current lane of a run whose recorded origin was deleted", () => {
+    // A lane's authority never came from the origin conversation; the deleted-
+    // origin gate refused it only as collateral of the rule above.
+    expect(
+      authorizeExecutionMutation({
+        principal: {
+          kind: "lane",
+          executionId: "exec-1",
+          contextId: "context-a",
+          conversationId: "lane-conv",
+        },
+        execution: facts({
+          originConversationExists: false,
+          boundLaneConversationId: () => "lane-conv",
+        }),
+        authority: "any_session_conversation",
+      }),
+    ).toEqual({ kind: "allowed" });
+  });
+
+  it("still refuses a lane whose binding has moved on", () => {
+    // Membership widens WHICH conversations may act, not whether a replaced
+    // lane may keep acting on the context it no longer drives.
+    expect(
+      authorizeExecutionMutation({
+        principal: {
+          kind: "lane",
+          executionId: "exec-1",
+          contextId: "context-a",
+          conversationId: "retired-lane-conv",
+        },
+        execution: facts({
+          boundLaneConversationId: () => "current-lane-conv",
+        }),
+        authority: "any_session_conversation",
+      }),
+    ).toEqual({
+      kind: "refused",
+      code: "stale_lane_principal",
+      originConversationId: "origin-conv",
+    });
+  });
+
+  it("still refuses a lane capability scoped to a different execution", () => {
+    expect(
+      authorizeExecutionMutation({
+        principal: {
+          kind: "lane",
+          executionId: "other-exec",
+          contextId: "context-a",
+          conversationId: "lane-conv",
+        },
+        execution: facts({
+          boundLaneConversationId: () => "lane-conv",
+        }),
+        authority: "any_session_conversation",
+      }),
+    ).toEqual({
+      kind: "refused",
+      code: "stale_lane_principal",
+      originConversationId: "origin-conv",
+    });
+  });
+});
+
 describe("authorizeWorkflowLaunch", () => {
   it("admits the human UI", () => {
     expect(authorizeWorkflowLaunch({ kind: "human_ui" })).toEqual({

@@ -384,6 +384,24 @@ APPEND ops, `add-context` and `add-edge`; `remove-context`, `remove-edge`, and
 `update-edge` stay quiescence-gated for every caller including the two exempt
 paths. Never mint a third exemption: expansion and loop unrolling share this one.
 
+Mutation **authority** is a separate axis from editability. It is owned by
+`workflow-graph/request-principal.ts` and applied through the one
+`guardExecutionMutation`, which every mutation route passes. Every verb that
+STEERS a run — live edit, pause, resume, abort, abandon, and the two resets —
+declares `any_session_conversation`: the human UI, any conversation the session
+verified, and the lane currently driving its own context may all act. Acting on
+a run in flight is work on the run rather than a decision about its launch, and
+a UI-launched run records no origin conversation for an agent to be. Launch
+itself (`run`/`start`) never had an origin rule — it admits any verified
+conversation and refuses a lane as nesting.
+
+Resolving a context's approval gate is the one guarded verb that keeps
+`origin_conversation`: only the run's recorded origin (or the lane whose gate it
+is) may answer a question the run posed to whoever launched it, and a deleted
+origin admits no agent at all. Omitting `authority` on a new guarded verb
+inherits that narrow rule. Lane currency is never relaxed by either value, and
+neither value admits an agent that cannot prove which conversation it is.
+
 ## Ask-user-questions gate (`awaiting_user_input`)
 
 When `askUserQuestions` resolves enabled for a context, its implementer and

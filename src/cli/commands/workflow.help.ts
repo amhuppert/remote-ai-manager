@@ -685,7 +685,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "audit and abandon a resumably halted execution",
     description:
-      "End one explicitly addressed, resumably halted execution and relocate it into History. --reason is required and becomes part of the durable abandonment audit. The mutation is authorized by the server-verified origin-conversation or own-lane capability; the claimed execution id is addressing, never authority. Running work must be aborted instead. There is no release verb.",
+      "End one explicitly addressed, resumably halted execution and relocate it into History. --reason is required and becomes part of the durable abandonment audit. The mutation is authorized by any server-verified session-conversation or own-lane capability, and the audit records that signed identity; the claimed execution id is addressing, never authority. Running work must be aborted instead. There is no release verb.",
     usage: ["cctl workflow abandon <executionId> --reason <reason> [--json]"],
     flags: [
       {

@@ -336,8 +336,15 @@ describe("ClaudeConversationRuntime — SDK options", () => {
       });
 
       expect(envOfLastQuery()?.["CC_CONVERSATION_ID"]).toBe("conv-originating");
-      expect(envOfLastQuery()?.[CONVERSATION_CAPABILITY_ENV_VAR]).toBe(
-        undefined,
+      // "None" is the env contract's falsy sense, not key absence. This runtime
+      // builds its env from the real process env, and when the suite itself
+      // runs inside a spawned agent session that env already carries a
+      // CC_CONVERSATION_CAPABILITY key — which the contract NEUTRALIZES to ""
+      // rather than deleting, because a delete would resurrect the parent's
+      // value under the SDK env merge. Absent and "" are the same answer here:
+      // nothing usable reached the runtime.
+      expect(envOfLastQuery()?.[CONVERSATION_CAPABILITY_ENV_VAR] ?? "").toBe(
+        "",
       );
 
       runtime.close();

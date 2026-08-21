@@ -2767,6 +2767,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
       session: resolved.session,
       deps,
       verb: "pause",
+      authority: "any_session_conversation",
       projectPath: resolved.projectPath,
       execution: await deps.getActiveExecution(
         resolved.projectPath,
@@ -2821,6 +2822,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
       session: resolved.session,
       deps,
       verb: "resume",
+      authority: "any_session_conversation",
       projectPath: resolved.projectPath,
       execution: await deps.getActiveExecution(
         resolved.projectPath,
@@ -2902,6 +2904,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
       session: resolved.session,
       deps,
       verb: "abort",
+      authority: "any_session_conversation",
       projectPath: resolved.projectPath,
       execution: await deps.getActiveExecution(
         resolved.projectPath,
@@ -3006,12 +3009,12 @@ export function createGraphWorkflowExecutionRouteHandlers(
       );
     }
 
-    // The shared mutation contract admits the human UI, the run's immutable
-    // ORIGIN conversation, or the execution's current lane. A sibling ordinary
-    // conversation proves who it is but has no authority over this run, while a
-    // stale lane fails freshness. Authorization is against the active run even
-    // when the body names a stale id; only an admitted caller reaches the
-    // service's separate execution-mismatch refusal.
+    // The shared mutation contract admits the human UI, any conversation this
+    // session verified, or the execution's current lane. An agent that cannot
+    // prove which conversation it is has no authority, and a stale lane fails
+    // freshness. Authorization is against the active run even when the body
+    // names a stale id; only an admitted caller reaches the service's separate
+    // execution-mismatch refusal.
     const active = await deps.getActiveExecution(
       resolved.projectPath,
       resolved.sessionName,
@@ -3021,6 +3024,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
       session: resolved.session,
       deps,
       verb: "abandon",
+      authority: "any_session_conversation",
       projectPath: resolved.projectPath,
       execution: active,
     });
@@ -3096,14 +3100,16 @@ export function createGraphWorkflowExecutionRouteHandlers(
       resolved.sessionName,
     );
     // A reset discards a context's work, so it is scoped exactly like the
-    // lifecycle verbs rather than admitted on transport alone. Authorization is
-    // answered before the state ladder below: a caller with no business here
-    // learns that, not which execution the session happens to hold.
+    // sibling lifecycle verbs rather than admitted on transport alone.
+    // Authorization is answered before the state ladder below: a caller with no
+    // business here learns that, not which execution the session happens to
+    // hold.
     const guarded = await guardExecutionMutation({
       request,
       session: resolved.session,
       deps,
       verb: "reset a context of",
+      authority: "any_session_conversation",
       projectPath: resolved.projectPath,
       execution: activeExecution,
     });
@@ -3176,6 +3182,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
       session: resolved.session,
       deps,
       verb: "reset an assignment of",
+      authority: "any_session_conversation",
       projectPath: resolved.projectPath,
       execution: activeExecution,
     });
@@ -3302,10 +3309,11 @@ export function createGraphWorkflowExecutionRouteHandlers(
       );
     }
 
-    // Deciding a context's approval gate advances the run, so it passes the
-    // same principal gate as the lifecycle verbs. It is not the DEFINITION
-    // decision, which is human-only: a lane's own gate is part of the work the
-    // run is doing, and the origin conversation may answer it.
+    // Deciding a context's approval gate ANSWERS a question the run posed to
+    // whoever launched it, rather than steering the run the way its sibling
+    // verbs do, so it is the one guarded verb that keeps launch authority:
+    // the human UI, the run's recorded origin, or the lane whose own gate it
+    // is. It is still not the DEFINITION decision, which is human-only.
     const guarded = await guardExecutionMutation({
       request,
       session: resolved.session,

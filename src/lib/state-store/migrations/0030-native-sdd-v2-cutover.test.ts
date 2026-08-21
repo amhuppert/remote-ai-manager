@@ -1356,7 +1356,10 @@ describe("0030 native-SDD v2 cutover preflight", () => {
     } finally {
       readBack.close();
     }
-  });
+    // Two full serializations of the frozen fixture plus the fsync-per-step
+    // pre-open cutover put this case within a second of the 15s default, so it
+    // tips over on a loaded machine while the code under test is fine.
+  }, 60_000);
 
   it.each<LinkedActiveStatus>(["pending", "running", "paused", "halted"])(
     "refuses a linked %s execution before manifest or quarantine and leaves both stores identical",
