@@ -207,6 +207,13 @@ describe("Topbar", () => {
       total: 0,
       unreadCount: 0,
     });
+    // The validation budget indicator is mounted on every page; default it to
+    // an idle budget so a quiet bar stays quiet.
+    api.json("GET", "/api/validation-budget", {
+      available: true,
+      capacity: { limit: 8, inUse: 0, queueDepth: 0 },
+      runs: [],
+    });
     setActiveConversations([]);
   });
 
@@ -497,6 +504,41 @@ describe("Topbar", () => {
       "href",
       "/specs?project=command-center",
     );
+  });
+
+  it("opens the validation budget sheet from the overflow menu", async () => {
+    const user = userEvent.setup();
+    // A busy budget, so the indicator has something to show.
+    api.json("GET", "/api/validation-budget", {
+      available: true,
+      capacity: { limit: 8, inUse: 7, queueDepth: 2 },
+      runs: [
+        {
+          runId: "vrun-1",
+          commandName: "test",
+          status: "running",
+          cost: 7,
+          projectName: "command-center",
+          sessionName: "csm/budget",
+          conversationId: "conv-1",
+          position: null,
+        },
+      ],
+    });
+    renderWithQuery(
+      <Topbar breadcrumbs={[{ label: "tickets" }]} page="tickets" />,
+    );
+    await user.click(screen.getByRole("button", { name: "More destinations" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Validation budget/ }),
+    );
+
+    // The sheet is mounted as a sibling of the menu, so it survives the
+    // menu's unmount on select.
+    expect(
+      await screen.findByRole("dialog", { name: "Validation budget" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("7 of 8 units")).toBeInTheDocument();
   });
 
   it("does not expose the workflow atlas as a global destination", async () => {

@@ -1,6 +1,11 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api/fetcher";
+import { validationBudgetResponseSchema } from "@/lib/validation/api-schemas";
+import {
+  buildValidationBudgetView,
+  type ValidationBudgetView,
+} from "@/lib/validation/budget-view";
 import { validationKeys } from "@/lib/validation/query-keys";
 import {
   validationCommandsResponseSchema,
@@ -17,6 +22,33 @@ export function useValidationCommandsQuery() {
     // hand; a short window keeps panel switches from refetching constantly.
     staleTime: 60_000,
   });
+}
+
+/**
+ * Global validation budget for the topbar indicator.
+ *
+ * No `refetchInterval`: the validation service already publishes a
+ * `validation-run` event at every lifecycle phase, and
+ * `registerValidationSseReactions` invalidates this key from them. The
+ * `staleTime` only governs remounts (navigating between pages) — SSE
+ * invalidation refetches an observed query regardless of it.
+ */
+export function useValidationBudgetQuery() {
+  return useQuery({
+    queryKey: validationKeys.budget(),
+    queryFn: () =>
+      apiFetch("/api/validation-budget", validationBudgetResponseSchema),
+    staleTime: 30_000,
+  });
+}
+
+/** The rendered budget, or null when there is nothing worth showing. */
+export function useValidationBudgetView(): ValidationBudgetView | null {
+  const { data } = useValidationBudgetQuery();
+  return useMemo(
+    () => (data === undefined ? null : buildValidationBudgetView(data)),
+    [data],
+  );
 }
 
 /**

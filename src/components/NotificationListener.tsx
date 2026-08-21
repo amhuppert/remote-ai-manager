@@ -20,6 +20,7 @@ import { registerMcpSseReactions } from "@/lib/mcp/sse-reactions";
 import { registerSessionAlignmentSseReactions } from "@/lib/session-alignment/sse-reactions";
 import { registerSpecSseReactions } from "@/lib/specs/sse-reactions";
 import { registerTicketSseReactions } from "@/lib/tickets/sse-reactions";
+import { registerValidationSseReactions } from "@/lib/validation/sse-reactions";
 import { registerWorkflowSseReactions } from "@/lib/workflows/sse-reactions";
 import {
   useAddOrUpdateJob,
@@ -105,6 +106,7 @@ export default function NotificationListener(): null {
     registerSpecSseReactions(es, { queryClient });
     registerTicketSseReactions(es, { queryClient });
     registerContextArtifactSseReactions(es, { queryClient });
+    registerValidationSseReactions(es, { queryClient });
     registerJobsReconnectReconciliation(es, {
       queryClient,
       reconcileJobs: (jobs) => actionsRef.current.reconcileJobs(jobs),

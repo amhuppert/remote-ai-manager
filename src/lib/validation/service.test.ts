@@ -1973,3 +1973,105 @@ describe("graceful shutdown", () => {
     expect(service.poll(running.runId).result?.kind).toBe("interrupted");
   });
 });
+
+describe("global budget read", () => {
+  it("reports capacity and every active run, naming projects rather than paths", async () => {
+    // `test` costs 8 against a limit of 8, so the second submission queues.
+    const running = await service.submit(request({ commandName: "test" }));
+    const queued = await service.submit(
+      request({ commandName: "typecheck", wait: true }),
+    );
+    await flush();
+    if (running.kind !== "accepted" || queued.kind !== "accepted") {
+      throw new Error("expected both submissions to be accepted");
+    }
+
+    const budget = await service.budget();
+
+    expect(budget.available).toBe(true);
+    expect(budget.capacity).toEqual({ limit: 8, inUse: 8, queueDepth: 1 });
+    expect(budget.runs).toEqual([
+      {
+        runId: running.runId,
+        commandName: "test",
+        status: "running",
+        cost: 8,
+        projectName: "app",
+        sessionName: "s1",
+        conversationId: "c1",
+        position: null,
+      },
+      {
+        runId: queued.runId,
+        commandName: "typecheck",
+        status: "queued",
+        cost: 2,
+        projectName: "app",
+        sessionName: "s1",
+        conversationId: "c1",
+        position: 0,
+      },
+    ]);
+  });
+
+  it("reports an idle budget with no runs", async () => {
+    const budget = await service.budget();
+
+    expect(budget).toEqual({
+      available: true,
+      capacity: { limit: 8, inUse: 0, queueDepth: 0 },
+      runs: [],
+    });
+  });
+
+  it("marks the budget unavailable when startup recovery closed admission", async () => {
+    // A row left running by a previous process whose group cannot be
+    // classified — recovery fails and admission never opens.
+    repo.submit({
+      runId: "stale-orphan",
+      source: "agent_cli",
+      commandName: "test",
+      cost: 8,
+      queueOrder: repo.nextQueueOrder(),
+      status: "queued",
+      nonce: "nonce-stale-orphan",
+      leaseToken: "tok",
+      leaseExpiresAt: "2026-08-05T09:59:00.000Z",
+      processGroupPid: null,
+      projectPath: "/projects/app",
+      worktreePath: "/projects/app/.worktrees/s1",
+      sessionName: "s1",
+      conversationId: "conv-recovery",
+      workflowExecutionId: null,
+      workflowContextId: null,
+      workflowRole: null,
+      submittedAt: "2026-08-05T09:00:00.000Z",
+      startedAt: null,
+      finishedAt: null,
+      queueMs: null,
+      execMs: null,
+      requestedScope: "changed",
+      effectiveScope: "full",
+      scopedPathCount: 0,
+      exitCode: null,
+      timedOut: false,
+    });
+    repo.admit("stale-orphan");
+    repo.markStarted("stale-orphan", {
+      startedAt: "2026-08-05T09:00:01.000Z",
+      queueMs: 1_000,
+      processGroupPid: 999,
+    });
+    const failedRecovery = buildService({
+      identity: {
+        classifyGroup: async () => "unverifiable",
+        killGroup: async () => {},
+      },
+    });
+
+    const budget = await failedRecovery.budget();
+
+    expect(failedRecovery.isAvailable()).toBe(false);
+    expect(budget.available).toBe(false);
+  });
+});

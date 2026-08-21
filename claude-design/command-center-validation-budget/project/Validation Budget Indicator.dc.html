@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/fonts/fonts.css">
+<link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.css">
+<link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/styles.css">
+<script src="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.js"></script>
+<style>
+html, body { margin: 0; padding: 0; background: #06090f; color: #dce2f0; font-family: var(--font-body), Manrope, sans-serif; }
+a { color: #00e5ff; text-decoration: none; }
+a:hover { color: #00b8cc; }
+@keyframes ccPulseDot { 0%, 100% { opacity: 1 } 50% { opacity: 0.4 } }
+@keyframes ccRingPulse { 0%, 100% { filter: drop-shadow(0 0 2px rgba(0,229,255,0.45)) } 50% { filter: drop-shadow(0 0 7px rgba(0,229,255,0.9)) } }
+@keyframes ccQueuePulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(255,179,0,0.35) } 50% { box-shadow: 0 0 0 4px rgba(255,179,0,0) } }
+@keyframes ccBarSlide { 0% { background-position: 0 0 } 100% { background-position: 16px 0 } }
+</style>
+</helmet>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+<symbol id="ic-specs" viewBox="0 0 16 16" fill="none"><path d="M4 2.5 H10.5 L13 5 V13.5 H4 Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"></path><path d="M10.5 2.5 V5 H13 M6 8.2 L7.4 9.6 L10 6.8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"></path></symbol>
+<symbol id="ic-tickets" viewBox="0 0 16 16" fill="none"><rect x="2" y="3.5" width="12" height="9.5" rx="1.4" stroke="currentColor" stroke-width="1.2"></rect><path d="M4.5 6.5 H11.5 M4.5 9 H8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"></path></symbol>
+<symbol id="ic-templates" viewBox="0 0 16 16" fill="none"><rect x="2" y="4.5" width="9" height="9" rx="1.4" stroke="currentColor" stroke-width="1.2"></rect><path d="M5 4.5 V3.4 A1.4 1.4 0 0 1 6.4 2 H13 A1 1 0 0 1 14 3 V9.6 A1.4 1.4 0 0 1 12.6 11 H11.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"></path></symbol>
+<symbol id="ic-gear" viewBox="0 0 16 16" fill="none"><path d="M6.92 2.91 L6.54 1.15 L9.46 1.15 L9.08 2.91 A5.2 5.2 0 0 1 10.83 3.64 L11.81 2.13 L13.87 4.19 L12.36 5.17 A5.2 5.2 0 0 1 13.09 6.92 L14.85 6.54 L14.85 9.46 L13.09 9.08 A5.2 5.2 0 0 1 12.36 10.83 L13.87 11.81 L11.81 13.87 L10.83 12.36 A5.2 5.2 0 0 1 9.08 13.09 L9.46 14.85 L6.54 14.85 L6.92 13.09 A5.2 5.2 0 0 1 5.17 12.36 L4.19 13.87 L2.13 11.81 L3.64 10.83 A5.2 5.2 0 0 1 2.91 9.08 L1.15 9.46 L1.15 6.54 L2.91 6.92 A5.2 5.2 0 0 1 3.64 5.17 L2.13 4.19 L4.19 2.13 L5.17 3.64 A5.2 5.2 0 0 1 6.92 2.91 Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"></path><circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.2"></circle></symbol>
+<symbol id="ic-quickticket" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><rect x="1.5" y="4" width="9.5" height="8" rx="1.4"></rect><path d="M3.7 6.8h5.1M3.7 9.2h2.9"></path><path d="M13.2 5.6v4.8M10.8 8h4.8"></path></symbol>
+<symbol id="ic-search" viewBox="0 0 16 16" fill="none"><path d="m11 11 3 3M7 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10Z" stroke="currentColor" stroke-linecap="round" stroke-width="1.4"></path></symbol>
+<symbol id="ic-arrow" viewBox="0 0 16 16" fill="none"><path d="M3 8h10m-3.5-3.5L13 8l-3.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></symbol>
+</svg>
+
+<section style="display:flex;flex-direction:column;gap:28px;padding:40px">
+  <div style="display:flex;flex-direction:column;gap:8px;max-width:900px">
+    <div style="font-family:var(--font-mono);font-size:0.7rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:#738699">Turn 1 · committed direction</div>
+    <h1 style="margin:0;font-family:var(--font-display),Anybody,sans-serif;font-size:2.1rem;font-weight:800;letter-spacing:-0.03em;line-height:1.1;color:#dce2f0">Global validation budget <span style="color:#00e5ff;text-shadow:0 0 30px rgba(0,229,255,0.6)">indicator</span></h1>
+    <p style="margin:0;font-family:var(--font-mono);font-size:0.8rem;line-height:1.6;color:#7b899f;text-wrap:pretty">A ring gauge in the Ground Control topbar, with the detail popover open. Data throughout: limit 8, 7 units in use across 3 running commands, 9 queued. Below the desktop frame, the mobile treatment — the gauge survives beside the overflow button, and the full detail opens as a sheet from the <a href="#1d">1d</a> menu row.</p>
+  </div>
+
+  <div style="display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start">
+
+    <div id="1d" style="display:flex;flex-direction:column;gap:14px;width:1280px">
+      <div style="display:flex;align-items:baseline;gap:12px">
+        <span style="display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:22px;padding:0 8px;border:1px solid rgba(0,229,255,0.3);border-radius:999px;background:rgba(0,229,255,0.15);font-family:var(--font-mono);font-size:0.7rem;font-weight:600;color:#00e5ff">1d</span>
+        <span style="font-family:var(--font-display),Anybody,sans-serif;font-size:1.05rem;font-weight:800;letter-spacing:-0.01em;color:#dce2f0">Gauge and allocation map</span>
+        <span style="font-family:var(--font-mono);font-size:0.75rem;color:#7b899f">Smallest footprint in the bar; the panel is spacious and explains what is holding the budget.</span>
+      </div>
+
+      <div style="position:relative;width:1280px;height:620px;overflow:hidden;border:1px solid #243048;border-radius:10px;background:#0b1019;color:#dce2f0;font-family:var(--font-body),Manrope,sans-serif">
+        <header style="position:relative;z-index:40;display:flex;height:48px;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid #1a2338;background:rgba(11,16,25,0.85);backdrop-filter:blur(16px) saturate(140%)">
+          <div style="display:flex;align-items:center;gap:12px">
+            <span style="font-family:var(--font-display),Anybody,sans-serif;font-size:1.1rem;font-weight:800;letter-spacing:-0.02em;color:#00e5ff;text-shadow:0 0 20px rgba(0,229,255,0.6)">CC</span>
+            <div style="height:20px;width:1px;background:#243048"></div>
+            <nav style="display:flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:0.8rem;color:#7b899f">projects</nav>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <button type="button" style="display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;border:1px solid #243048;border-radius:4px;background:transparent;color:#7b899f;cursor:pointer"><svg width="18" height="18"><use href="#ic-quickticket"></use></svg></button>
+            <a href="#1d" style="display:inline-flex;height:28px;align-items:center;gap:6px;padding:0 10px;border:1px solid #243048;border-radius:4px;font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;color:#7b899f"><svg width="16" height="16"><use href="#ic-specs"></use></svg><span style="line-height:1">Specs</span></a>
+            <a href="#1d" style="display:inline-flex;height:28px;align-items:center;gap:6px;padding:0 10px;border:1px solid #243048;border-radius:4px;font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;color:#7b899f"><svg width="16" height="16"><use href="#ic-tickets"></use></svg><span style="line-height:1">Tickets</span></a>
+            <a href="#1d" style="display:inline-flex;height:28px;align-items:center;gap:6px;padding:0 10px;border:1px solid #243048;border-radius:4px;font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;color:#7b899f"><svg width="16" height="16"><use href="#ic-templates"></use></svg><span style="line-height:1">Templates</span></a>
+            <a href="#1d" style="display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:4px;color:#7b899f"><svg width="16" height="16"><use href="#ic-gear"></use></svg></a>
+            <div style="display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:0.72rem;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;color:#7b899f"><span style="width:7px;height:7px;border-radius:50%;background:#ffb300;box-shadow:0 0 8px rgba(255,179,0,0.15),0 0 3px #ffb300;animation:ccPulseDot 2.5s ease-in-out infinite"></span>3 sessions running</div>
+            <div style="height:20px;width:1px;background:#243048"></div>
+
+            <div style="position:relative">
+              <button type="button" onClick="{{ toggleD }}" style="display:inline-flex;align-items:center;gap:7px;padding:0;border:0;background:transparent;cursor:pointer">
+                <svg width="22" height="22" viewBox="0 0 22 22" style="animation:ccRingPulse 3s ease-in-out infinite"><circle cx="11" cy="11" r="8" fill="none" stroke="#141d2e" stroke-width="3"></circle><circle cx="11" cy="11" r="8" fill="none" stroke="#ffb300" stroke-width="3" stroke-linecap="round" stroke-dasharray="44 50.3" transform="rotate(-90 11 11)"></circle></svg>
+                <span style="font-family:var(--font-mono);font-size:0.72rem;font-weight:600;color:#dce2f0">7<span style="color:#738699">/8</span></span>
+              </button>
+
+              <sc-if value="{{ openD }}" hint-placeholder-val="{{ true }}">
+              <div style="position:absolute;top:34px;right:0;z-index:60;width:400px;border:1px solid #243048;border-radius:6px;background:#1a2740;box-shadow:0 12px 32px rgba(0,0,0,0.35);overflow:hidden">
+                <div style="display:flex;align-items:center;gap:14px;padding:16px 16px 14px;border-bottom:1px solid #1a2338">
+                  <svg width="52" height="52" viewBox="0 0 52 52"><circle cx="26" cy="26" r="20" fill="none" stroke="#141d2e" stroke-width="6"></circle><circle cx="26" cy="26" r="20" fill="none" stroke="#ffb300" stroke-width="6" stroke-linecap="round" stroke-dasharray="110 125.7" transform="rotate(-90 26 26)"></circle></svg>
+                  <div style="display:flex;flex-direction:column;gap:3px">
+                    <span style="font-family:var(--font-mono);font-size:1.1rem;font-weight:700;color:#dce2f0">7 of 8 units</span>
+                    <span style="font-family:var(--font-body),Manrope,sans-serif;font-size:0.8rem;color:#7b899f">1 unit free — nothing in the queue fits it</span>
+                  </div>
+                </div>
+                <div style="padding:14px 16px;border-bottom:1px solid #1a2338">
+                  <div style="display:flex;gap:4px;margin-bottom:6px">
+                    <span style="flex:4;height:26px;border-radius:3px;background:rgba(0,229,255,0.15);border:1px solid rgba(0,229,255,0.3);box-sizing:border-box;display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:0.66rem;font-weight:600;color:#00e5ff">test</span>
+                    <span style="flex:2;height:26px;border-radius:3px;background:rgba(0,229,255,0.15);border:1px solid rgba(0,229,255,0.3);box-sizing:border-box;display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:0.66rem;font-weight:600;color:#00e5ff">lint</span>
+                    <span style="flex:1;height:26px;border-radius:3px;background:rgba(0,229,255,0.15);border:1px solid rgba(0,229,255,0.3);box-sizing:border-box"></span>
+                    <span style="flex:1;height:26px;border-radius:3px;background:#141d2e;border:1px dashed #243048;box-sizing:border-box"></span>
+                  </div>
+                  <div style="font-family:var(--font-mono);font-size:0.66rem;color:#738699">4 + 2 + 1 allocated · 1 free of 8</div>
+                </div>
+                <div style="padding:12px 16px 6px;font-family:var(--font-mono);font-size:0.72rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#7b899f">Running now</div>
+                <div style="display:flex;flex-direction:column;gap:4px;padding:0 10px 10px">
+                  <a href="#1d" style="display:flex;align-items:center;gap:12px;padding:9px 10px;border:1px solid #141d2e;border-radius:6px;color:inherit"><span style="display:flex;flex-direction:column;gap:2px;flex:1"><span style="font-family:var(--font-mono);font-size:0.82rem;font-weight:700;color:#dce2f0">test</span><span style="font-family:var(--font-mono);font-size:0.7rem;color:#738699">command-center</span></span><span style="display:inline-flex;align-items:center;justify-content:center;padding:2px 8px;border-radius:999px;background:rgba(0,229,255,0.15);font-family:var(--font-mono);font-size:0.7rem;font-weight:600;color:#00e5ff">4u</span><svg width="12" height="12" style="color:#00b8cc"><use href="#ic-arrow"></use></svg></a>
+                  <a href="#1d" style="display:flex;align-items:center;gap:12px;padding:9px 10px;border:1px solid #141d2e;border-radius:6px;color:inherit"><span style="display:flex;flex-direction:column;gap:2px;flex:1"><span style="font-family:var(--font-mono);font-size:0.82rem;font-weight:700;color:#dce2f0">lint</span><span style="font-family:var(--font-mono);font-size:0.7rem;color:#738699">taskgarden</span></span><span style="display:inline-flex;align-items:center;justify-content:center;padding:2px 8px;border-radius:999px;background:rgba(0,229,255,0.15);font-family:var(--font-mono);font-size:0.7rem;font-weight:600;color:#00e5ff">2u</span><svg width="12" height="12" style="color:#00b8cc"><use href="#ic-arrow"></use></svg></a>
+                  <a href="#1d" style="display:flex;align-items:center;gap:12px;padding:9px 10px;border:1px solid #141d2e;border-radius:6px;color:inherit"><span style="display:flex;flex-direction:column;gap:2px;flex:1"><span style="font-family:var(--font-mono);font-size:0.82rem;font-weight:700;color:#dce2f0">format</span><span style="font-family:var(--font-mono);font-size:0.7rem;color:#738699">command-center</span></span><span style="display:inline-flex;align-items:center;justify-content:center;padding:2px 8px;border-radius:999px;background:rgba(0,229,255,0.15);font-family:var(--font-mono);font-size:0.7rem;font-weight:600;color:#00e5ff">1u</span><svg width="12" height="12" style="color:#00b8cc"><use href="#ic-arrow"></use></svg></a>
+                </div>
+                <div style="padding:10px 16px 6px;border-top:1px solid #1a2338;display:flex;align-items:baseline;gap:8px"><span style="font-family:var(--font-mono);font-size:0.72rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#ffb300">Next up</span><span style="font-family:var(--font-mono);font-size:0.7rem;color:#738699">9 queued</span></div>
+                <div style="display:flex;flex-direction:column;padding:0 16px 14px">
+                  <a href="#1d" style="display:flex;align-items:center;gap:10px;padding:6px 0;color:inherit"><span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;border:1px solid rgba(255,179,0,0.35);font-family:var(--font-mono);font-size:0.62rem;color:#ffb300">1</span><span style="font-family:var(--font-mono);font-size:0.78rem;font-weight:600;color:#dce2f0;min-width:72px">test</span><span style="flex:1;font-family:var(--font-mono);font-size:0.72rem;color:#7b899f">taskgarden</span><span style="font-family:var(--font-mono);font-size:0.7rem;color:#738699">4u</span></a>
+                  <a href="#1d" style="display:flex;align-items:center;gap:10px;padding:6px 0;color:inherit"><span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;border:1px solid #243048;font-family:var(--font-mono);font-size:0.62rem;color:#738699">2</span><span style="font-family:var(--font-mono);font-size:0.78rem;font-weight:600;color:#dce2f0;min-width:72px">typecheck</span><span style="flex:1;font-family:var(--font-mono);font-size:0.72rem;color:#7b899f">command-center</span><span style="font-family:var(--font-mono);font-size:0.7rem;color:#738699">2u</span></a>
+                  <a href="#1d" style="display:flex;align-items:center;gap:10px;padding:6px 0;color:inherit"><span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;border:1px solid #243048;font-family:var(--font-mono);font-size:0.62rem;color:#738699">3</span><span style="font-family:var(--font-mono);font-size:0.78rem;font-weight:600;color:#dce2f0;min-width:72px">test</span><span style="flex:1;font-family:var(--font-mono);font-size:0.72rem;color:#7b899f">cc-plugins</span><span style="font-family:var(--font-mono);font-size:0.7rem;color:#738699">4u</span></a>
+                  <span style="padding:6px 0 0;font-family:var(--font-mono);font-size:0.7rem;color:#738699">+6 more queued</span>
+                </div>
+              </div>
+              </sc-if>
+            </div>
+          </div>
+        </header>
+
+        <div style="display:grid;grid-template-columns:340px minmax(0,1fr);height:572px">
+          <div style="display:flex;flex-direction:column;overflow:hidden;border-right:1px solid #243048;background:#0b1019">
+            <div style="display:flex;min-height:28px;align-items:center;padding:10px 10px 8px;border-bottom:1px solid #1a2338"><span style="font-family:var(--font-mono);font-size:0.72rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:#7b899f">Active Conversations <span style="font-weight:500;color:#738699">(7)</span></span></div>
+            <div style="display:flex;flex-direction:column;gap:8px;padding:10px">
+              <div style="display:flex;height:30px;align-items:center;gap:8px;padding:0 8px;border:1px solid #243048;border-radius:4px;background:#111825;color:#738699"><svg width="13" height="13"><use href="#ic-search"></use></svg><span style="font-family:var(--font-mono);font-size:0.78rem;color:#738699">Filter conversations...</span></div>
+              <div style="display:flex;gap:2px;padding:3px;border:1px solid #243048;border-radius:4px;background:#111825">
+                <span style="display:inline-flex;height:24px;flex:1;align-items:center;justify-content:center;gap:4px;border-radius:3px;background:#1a2740;font-family:var(--font-mono);font-size:0.7rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#dce2f0">All <span style="color:#00e5ff">7</span></span>
+                <span style="display:inline-flex;height:24px;flex:1;align-items:center;justify-content:center;gap:4px;border-radius:3px;font-family:var(--font-mono);font-size:0.7rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#7b899f">Needs <span style="color:#738699">2</span></span>
+                <span style="display:inline-flex;height:24px;flex:1;align-items:center;justify-content:center;gap:4px;border-radius:3px;font-family:var(--font-mono);font-size:0.7rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#7b899f">Run <span style="color:#738699">3</span></span>
+                <span style="display:inline-flex;height:24px;flex:1;align-items:center;justify-content:center;gap:4px;border-radius:3px;font-family:var(--font-mono);font-size:0.7rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#7b899f">Session <span style="color:#738699">0</span></span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px;padding:12px;border:1px solid #141d2e;border-radius:6px">
+                <div style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:#00e5ff;box-shadow:0 0 6px rgba(0,229,255,0.3)"></span><span style="flex:1;font-family:var(--font-mono);font-size:0.86rem;font-weight:700;color:#dce2f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">validation budget indicator</span><span style="font-family:var(--font-mono);font-size:0.7rem;color:#738699">2m</span></div>
+                <div style="font-family:var(--font-mono);font-size:0.72rem;color:#738699">command-center / csm/validation-budget</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px;padding:12px;border:1px solid #141d2e;border-radius:6px">
+                <div style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:#ffb300;box-shadow:0 0 6px rgba(255,179,0,0.15)"></span><span style="flex:1;font-family:var(--font-mono);font-size:0.86rem;font-weight:700;color:#dce2f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">spec import delivery</span><span style="font-family:var(--font-mono);font-size:0.7rem;color:#738699">14m</span></div>
+                <div style="font-family:var(--font-mono);font-size:0.72rem;color:#738699">taskgarden / csm/spec-import</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px;padding:12px;border:1px solid #141d2e;border-radius:6px">
+                <div style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:#00e676;box-shadow:0 0 6px rgba(0,230,118,0.15)"></span><span style="flex:1;font-family:var(--font-mono);font-size:0.86rem;font-weight:700;color:#dce2f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">merge machinery hardening</span><span style="font-family:var(--font-mono);font-size:0.7rem;color:#738699">1h</span></div>
+                <div style="font-family:var(--font-mono);font-size:0.72rem;color:#738699">command-center / csm/merge-hardening</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="padding:16px;overflow:hidden">
+            <h2 style="margin:0 0 8px;font-family:var(--font-display),Anybody,sans-serif;font-size:2.4rem;font-weight:800;letter-spacing:-0.03em;line-height:1.1;color:#dce2f0">Ground <span style="color:#00e5ff;text-shadow:0 0 30px rgba(0,229,255,0.6)">Control</span></h2>
+            <p style="margin:0 0 32px;font-family:var(--font-mono);font-size:0.82rem;color:#7b899f">~/code — 6 repositories discovered</p>
+            <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:16px">
+              <div style="flex:1;min-width:200px;max-width:360px;padding:8px 12px;border:1px solid #243048;border-radius:6px;background:#111825;font-family:var(--font-mono);font-size:0.78rem;color:#738699">Search projects...</div>
+              <div style="display:flex;gap:2px;padding:3px;border:1px solid #243048;border-radius:6px;background:#111825">
+                <span style="display:flex;min-height:28px;align-items:center;gap:4px;padding:5px 10px;border-radius:4px;background:#00e5ff;font-family:var(--font-mono);font-size:0.72rem;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;color:#06090f">all 6</span>
+                <span style="display:flex;min-height:28px;align-items:center;gap:4px;padding:5px 10px;border-radius:4px;font-family:var(--font-mono);font-size:0.72rem;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;color:#7b899f">active 4</span>
+                <span style="display:flex;min-height:28px;align-items:center;gap:4px;padding:5px 10px;border-radius:4px;font-family:var(--font-mono);font-size:0.72rem;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;color:#7b899f">running 3</span>
+                <span style="display:flex;min-height:28px;align-items:center;gap:4px;padding:5px 10px;border-radius:4px;font-family:var(--font-mono);font-size:0.72rem;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;color:#7b899f">idle 2</span>
+              </div>
+            </div>
+            <div style="display:flex;min-height:28px;align-items:center;gap:8px;margin-bottom:8px"><span style="font-family:var(--font-mono);font-size:0.72rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#7b899f">Pinned</span><span style="font-family:var(--font-mono);font-size:0.7rem;color:#738699">(2)</span></div>
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+              <div style="position:relative;padding:24px;border:1px solid #243048;border-left:3px solid #00e5ff;border-radius:10px;background:#172033;box-shadow:inset 3px 0 8px -4px rgba(0,229,255,0.15),0 0 16px -4px rgba(0,229,255,0.12)">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px"><span style="font-family:var(--font-mono);font-size:1.05rem;font-weight:600;letter-spacing:-0.01em;color:#dce2f0">command-center</span><span style="display:inline-flex;align-items:center;justify-content:center;padding:2px 8px;border-radius:999px;background:rgba(0,229,255,0.15);box-shadow:0 0 6px rgba(0,229,255,0.15);font-family:var(--font-mono);font-size:0.7rem;font-weight:600;line-height:1.3;color:#00e5ff">running</span></div>
+                <div style="margin-bottom:16px;font-family:var(--font-mono);font-size:0.72rem;color:#738699">~/code/command-center</div>
+                <div style="display:flex;gap:16px;padding-top:12px;border-top:1px solid #1a2338"><span style="display:flex;flex-direction:column;gap:2px"><span style="font-family:var(--font-mono);font-size:1.2rem;font-weight:700;color:#dce2f0">4</span><span style="font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:#738699">Sessions</span></span></div>
+              </div>
+              <div style="position:relative;padding:24px;border:1px solid #243048;border-radius:10px;background:#111825">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px"><span style="font-family:var(--font-mono);font-size:1.05rem;font-weight:600;letter-spacing:-0.01em;color:#dce2f0">taskgarden</span><span style="display:inline-flex;align-items:center;justify-content:center;padding:2px 8px;border-radius:999px;background:rgba(0,229,255,0.15);box-shadow:0 0 6px rgba(0,229,255,0.15);font-family:var(--font-mono);font-size:0.7rem;font-weight:600;line-height:1.3;color:#00e5ff">2 sessions</span></div>
+                <div style="margin-bottom:16px;font-family:var(--font-mono);font-size:0.72rem;color:#738699">~/code/taskgarden</div>
+                <div style="display:flex;gap:16px;padding-top:12px;border-top:1px solid #1a2338"><span style="display:flex;flex-direction:column;gap:2px"><span style="font-family:var(--font-mono);font-size:1.2rem;font-weight:700;color:#dce2f0">2</span><span style="font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:#738699">Sessions</span></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <sc-if value="{{ showMobile }}" hint-placeholder-val="{{ true }}">
+      <div style="display:flex;gap:16px;align-items:flex-start">
+        <div style="position:relative;width:320px;height:420px;overflow:hidden;border:1px solid #243048;border-radius:10px;background:#0b1019">
+          <header style="display:flex;height:48px;align-items:center;justify-content:space-between;padding:0 12px;border-bottom:1px solid #1a2338;background:rgba(11,16,25,0.85)">
+            <div style="display:flex;align-items:center;gap:8px"><span style="font-family:var(--font-display),Anybody,sans-serif;font-size:0.95rem;font-weight:800;color:#00e5ff;text-shadow:0 0 20px rgba(0,229,255,0.6)">CC</span><span style="font-family:var(--font-mono);font-size:0.8rem;color:#7b899f">projects</span></div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <svg width="20" height="20" viewBox="0 0 22 22"><circle cx="11" cy="11" r="8" fill="none" stroke="#141d2e" stroke-width="3"></circle><circle cx="11" cy="11" r="8" fill="none" stroke="#ffb300" stroke-width="3" stroke-linecap="round" stroke-dasharray="44 50.3" transform="rotate(-90 11 11)"></circle></svg>
+              <span style="display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border:1px solid #243048;border-radius:4px;font-family:var(--font-mono);font-size:1rem;letter-spacing:0.08em;color:#7b899f">•••</span>
+            </div>
+          </header>
+          <div style="position:absolute;top:52px;right:10px;width:250px;padding:4px;border:1px solid #243048;border-radius:6px;background:#1a2740;box-shadow:0 12px 32px rgba(0,0,0,0.35)">
+            <div style="display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:4px;background:#1c2841">
+              <svg width="18" height="18" viewBox="0 0 22 22"><circle cx="11" cy="11" r="8" fill="none" stroke="#141d2e" stroke-width="3"></circle><circle cx="11" cy="11" r="8" fill="none" stroke="#ffb300" stroke-width="3" stroke-linecap="round" stroke-dasharray="44 50.3" transform="rotate(-90 11 11)"></circle></svg>
+              <span style="flex:1;font-family:var(--font-body),Manrope,sans-serif;font-size:0.82rem;color:#dce2f0">Validation budget</span>
+              <span style="font-family:var(--font-mono);font-size:0.72rem;font-weight:600;color:#dce2f0">7/8</span>
+            </div>
+            <div style="padding:9px 10px;font-family:var(--font-body),Manrope,sans-serif;font-size:0.82rem;color:#7b899f">Quick ticket</div>
+            <div style="padding:9px 10px;font-family:var(--font-body),Manrope,sans-serif;font-size:0.82rem;color:#7b899f">Specs</div>
+            <div style="padding:9px 10px;font-family:var(--font-body),Manrope,sans-serif;font-size:0.82rem;color:#7b899f">Workflow Templates</div>
+            <div style="padding:9px 10px;font-family:var(--font-body),Manrope,sans-serif;font-size:0.82rem;color:#7b899f">System Configuration</div>
+          </div>
+          <div style="position:absolute;left:0;right:0;bottom:0;padding:10px 12px;border-top:1px solid #1a2338;font-family:var(--font-mono);font-size:0.68rem;color:#738699">A 20px ring fits the bar even on a 360px phone</div>
+        </div>
+
+        <div style="position:relative;width:320px;height:420px;overflow:hidden;border:1px solid #243048;border-radius:10px;background:#0b1019">
+          <div style="position:absolute;inset:0;background:rgba(6,9,15,0.6)"></div>
+          <div style="position:absolute;left:0;right:0;bottom:0;border-top:1px solid #243048;border-radius:10px 10px 0 0;background:#111825;box-shadow:0 -12px 32px rgba(0,0,0,0.35)">
+            <div style="display:flex;justify-content:center;padding:8px"><span style="width:36px;height:4px;border-radius:2px;background:#243048"></span></div>
+            <div style="display:flex;align-items:center;gap:12px;padding:4px 16px 14px;border-bottom:1px solid #1a2338">
+              <svg width="44" height="44" viewBox="0 0 52 52"><circle cx="26" cy="26" r="20" fill="none" stroke="#141d2e" stroke-width="6"></circle><circle cx="26" cy="26" r="20" fill="none" stroke="#ffb300" stroke-width="6" stroke-linecap="round" stroke-dasharray="110 125.7" transform="rotate(-90 26 26)"></circle></svg>
+              <div style="display:flex;flex-direction:column;gap:2px"><span style="font-family:var(--font-mono);font-size:0.95rem;font-weight:700;color:#dce2f0">7 of 8 units</span><span style="font-family:var(--font-body),Manrope,sans-serif;font-size:0.76rem;color:#7b899f">9 queued behind them</span></div>
+            </div>
+            <div style="padding:12px 16px 8px"><div style="display:flex;gap:4px"><span style="flex:4;height:22px;border-radius:3px;background:rgba(0,229,255,0.15);border:1px solid rgba(0,229,255,0.3);box-sizing:border-box"></span><span style="flex:2;height:22px;border-radius:3px;background:rgba(0,229,255,0.15);border:1px solid rgba(0,229,255,0.3);box-sizing:border-box"></span><span style="flex:1;height:22px;border-radius:3px;background:rgba(0,229,255,0.15);border:1px solid rgba(0,229,255,0.3);box-sizing:border-box"></span><span style="flex:1;height:22px;border-radius:3px;background:#141d2e;border:1px dashed #243048;box-sizing:border-box"></span></div></div>
+            <div style="padding:0 10px 10px">
+              <a href="#1d" style="display:flex;align-items:center;gap:10px;min-height:44px;padding:0 10px;border:1px solid #141d2e;border-radius:6px;margin-bottom:4px;color:inherit"><span style="flex:1;font-family:var(--font-mono);font-size:0.8rem;font-weight:700;color:#dce2f0">test <span style="font-size:0.7rem;font-weight:400;color:#738699">command-center</span></span><span style="font-family:var(--font-mono);font-size:0.7rem;font-weight:600;color:#00e5ff">4u</span></a>
+              <a href="#1d" style="display:flex;align-items:center;gap:10px;min-height:44px;padding:0 10px;border:1px solid #141d2e;border-radius:6px;margin-bottom:4px;color:inherit"><span style="flex:1;font-family:var(--font-mono);font-size:0.8rem;font-weight:700;color:#dce2f0">lint <span style="font-size:0.7rem;font-weight:400;color:#738699">taskgarden</span></span><span style="font-family:var(--font-mono);font-size:0.7rem;font-weight:600;color:#00e5ff">2u</span></a>
+              <a href="#1d" style="display:flex;align-items:center;gap:10px;min-height:44px;padding:0 10px;color:inherit"><span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;border:1px solid rgba(255,179,0,0.35);font-family:var(--font-mono);font-size:0.62rem;color:#ffb300">1</span><span style="flex:1;font-family:var(--font-mono);font-size:0.8rem;font-weight:600;color:#dce2f0">test <span style="font-size:0.7rem;font-weight:400;color:#738699">taskgarden</span></span><span style="font-family:var(--font-mono);font-size:0.7rem;color:#738699">4u</span></a>
+            </div>
+          </div>
+        </div>
+      </div>
+      </sc-if>
+    </div>
+
+  </div>
+</section>
+
+<sc-if value="{{ showSource }}" hint-placeholder-val="{{ true }}">
+<section style="display:flex;flex-direction:column;gap:14px;padding:0 40px 60px">
+  <div style="display:flex;align-items:baseline;gap:12px">
+    <span style="display:inline-flex;align-items:center;justify-content:center;height:22px;padding:0 8px;border:1px solid #243048;border-radius:999px;font-family:var(--font-mono);font-size:0.7rem;font-weight:600;color:#738699">source</span>
+    <span style="font-family:var(--font-display),Anybody,sans-serif;font-size:1.05rem;font-weight:800;color:#dce2f0">Ground Control today</span>
+    <span style="font-family:var(--font-mono);font-size:0.75rem;color:#7b899f">Recreated from ProjectsIndexPage, Topbar, WorkRailMain, ConversationSidebar and ProjectCard — no indicator.</span>
+  </div>
+  <div style="position:relative;width:1440px;height:900px;overflow:hidden;border:1px solid #243048;border-radius:10px;background:#0b1019;color:#dce2f0;font-family:var(--font-body),Manrope,sans-serif">
+    <header style="display:flex;height:48px;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid #1a2338;background:rgba(11,16,25,0.85)">
+      <div style="display:flex;align-items:center;gap:12px">
+        <span style="font-family:var(--font-display),Anybody,sans-serif;font-size:1.1rem;font-weight:800;letter-spacing:-0.02em;color:#00e5ff;text-shadow:0 0 20px rgba(0,229,255,0.6)">CC</span>
+        <div style="height:20px;width:1px;background:#243048"></div>
+        <nav style="display:flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:0.8rem;color:#7b899f">projects</nav>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <button type="button" style="display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;border:1px solid #243048;border-radius:4px;background:transparent;color:#7b899f;cursor:pointer"><svg width="18" height="18"><use href="#ic-quickticket"></use></svg></button>
+        <a href="#1a" style="display:inline-flex;height:28px;align-items:center;gap:6px;padding:0 10px;border:1px solid #243048;border-radius:4px;font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;color:#7b899f"><svg width="16" height="16"><use href="#ic-specs"></use></svg><span style="line-height:1">Specs</span></a>
+        <a href="#1a" style="display:inline-flex;height:28px;align-items:center;gap:6px;padding:0 10px;border:1px solid #243048;border-radius:4px;font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;color:#7b899f"><svg width="16" height="16"><use href="#ic-tickets"></use></svg><span style="line-height:1">Tickets</span></a>
+        <a href="#1a" style="display:inline-flex;height:28px;align-items:center;gap:6px;padding:0 10px;border:1px solid #243048;border-radius:4px;font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;color:#7b899f"><svg width="16" height="16"><use href="#ic-templates"></use></svg><span style="line-height:1">Templates</span></a>
+        <a href="#1a" style="display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:4px;color:#7b899f"><svg width="16" height="16"><use href="#ic-gear"></use></svg></a>
+        <div style="display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:0.72rem;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;color:#7b899f"><span style="width:7px;height:7px;border-radius:50%;background:#ffb300;box-shadow:0 0 8px rgba(255,179,0,0.15),0 0 3px #ffb300;animation:ccPulseDot 2.5s ease-in-out infinite"></span>3 sessions running</div>
+      </div>
+    </header>
+    <div style="display:grid;grid-template-columns:340px minmax(0,1fr);height:852px">
+      <div style="display:flex;flex-direction:column;overflow:hidden;border-right:1px solid #243048;background:#0b1019">
+        <div style="display:flex;min-height:28px;align-items:center;padding:10px 10px 8px;border-bottom:1px solid #1a2338"><span style="font-family:var(--font-mono);font-size:0.72rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:#7b899f">Active Conversations <span style="font-weight:500;color:#738699">(7)</span></span></div>
+        <div style="display:flex;flex-direction:column;gap:8px;padding:10px">
+          <div style="display:flex;height:30px;align-items:center;gap:8px;padding:0 8px;border:1px solid #243048;border-radius:4px;background:#111825;color:#738699"><svg width="13" height="13"><use href="#ic-search"></use></svg><span style="font-family:var(--font-mono);font-size:0.78rem;color:#738699">Filter conversations...</span></div>
+          <div style="display:flex;gap:2px;padding:3px;border:1px solid #243048;border-radius:4px;background:#111825">
+            <span style="display:inline-flex;height:24px;flex:1;align-items:center;justify-content:center;gap:4px;border-radius:3px;background:#1a2740;font-family:var(--font-mono);font-size:0.7rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#dce2f0">All <span style="color:#00e5ff">7</span></span>
+            <span style="display:inline-flex;height:24px;flex:1;align-items:center;justify-content:center;gap:4px;border-radius:3px;font-family:var(--font-mono);font-size:0.7rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#7b899f">Needs <span style="color:#738699">2</span></span>
+            <span style="display:inline-flex;height:24px;flex:1;align-items:center;justify-content:center;gap:4px;border-radius:3px;font-family:var(--font-mono);font-size:0.7rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#7b899f">Run <span style="color:#738699">3</span></span>
+            <span style="display:inline-flex;height:24px;flex:1;align-items:center;justify-content:center;gap:4px;border-radius:3px;font-family:var(--font-mono);font-size:0.7rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#7b899f">Session <span style="color:#738699">0</span></span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:5px;padding:12px;border:1px solid #141d2e;border-radius:6px;box-shadow:inset 2px 0 0 #ffb300">
+            <div style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:#ffb300;box-shadow:0 0 6px #ffb300"></span><span style="flex:1;font-family:var(--font-mono);font-size:0.86rem;font-weight:700;color:#dce2f0">spec import delivery</span><span style="font-family:var(--font-mono);font-size:0.7rem;color:#738699">14m</span></div>
+            <div style="font-family:var(--font-mono);font-size:0.72rem;color:#738699">taskgarden / csm/spec-import</div>
+            <div style="font-family:var(--font-body),Manrope,sans-serif;font-size:0.75rem;color:#ffb300">Asks · approve the migration plan?</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:5px;padding:12px;border:1px solid #141d2e;border-radius:6px">
+            <div style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:#00e5ff;box-shadow:0 0 6px rgba(0,229,255,0.3)"></span><span style="flex:1;font-family:var(--font-mono);font-size:0.86rem;font-weight:700;color:#dce2f0">validation budget indicator</span><span style="font-family:var(--font-mono);font-size:0.7rem;color:#738699">2m</span></div>
+            <div style="font-family:var(--font-mono);font-size:0.72rem;color:#738699">command-center / csm/validation-budget</div>
+            <div style="font-family:var(--font-body),Manrope,sans-serif;font-size:0.75rem;color:#7b899f">Running · reading the scheduler ledger</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:5px;padding:12px;border:1px solid #141d2e;border-radius:6px">
+            <div style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:#00e676;box-shadow:0 0 6px rgba(0,230,118,0.15)"></span><span style="flex:1;font-family:var(--font-mono);font-size:0.86rem;font-weight:700;color:#dce2f0">merge machinery hardening</span><span style="font-family:var(--font-mono);font-size:0.7rem;color:#738699">1h</span></div>
+            <div style="font-family:var(--font-mono);font-size:0.72rem;color:#738699">command-center / csm/merge-hardening</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:5px;padding:12px;border:1px solid #141d2e;border-radius:6px">
+            <div style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:#448aff;box-shadow:0 0 6px rgba(68,138,255,0.15)"></span><span style="flex:1;font-family:var(--font-mono);font-size:0.86rem;font-weight:700;color:#dce2f0">topbar density pass</span><span style="font-family:var(--font-mono);font-size:0.7rem;color:#738699">3h</span></div>
+            <div style="font-family:var(--font-mono);font-size:0.72rem;color:#738699">command-center / csm/topbar-density</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:5px;padding:12px;border:1px solid #141d2e;border-radius:6px">
+            <div style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:#00e676;box-shadow:0 0 6px rgba(0,230,118,0.15)"></span><span style="flex:1;font-family:var(--font-mono);font-size:0.86rem;font-weight:700;color:#dce2f0">graph workflow audit</span><span style="font-family:var(--font-mono);font-size:0.7rem;color:#738699">5h</span></div>
+            <div style="font-family:var(--font-mono);font-size:0.72rem;color:#738699">taskgarden / csm/graph-audit</div>
+          </div>
+        </div>
+      </div>
+      <div style="padding:16px 16px 0;overflow:hidden">
+        <h2 style="margin:0 0 8px;font-family:var(--font-display),Anybody,sans-serif;font-size:2.4rem;font-weight:800;letter-spacing:-0.03em;line-height:1.1;color:#dce2f0">Ground <span style="color:#00e5ff;text-shadow:0 0 30px rgba(0,229,255,0.6)">Control</span></h2>
+        <p style="margin:0 0 32px;font-family:var(--font-mono);font-size:0.82rem;color:#7b899f">~/code — 6 repositories discovered</p>
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:16px">
+          <div style="flex:1;min-width:200px;max-width:360px;padding:8px 12px;border:1px solid #243048;border-radius:6px;background:#111825;font-family:var(--font-mono);font-size:0.78rem;color:#738699">Search projects...</div>
+          <div style="display:flex;gap:2px;padding:3px;border:1px solid #243048;border-radius:6px;background:#111825">
+            <span style="display:flex;min-height:28px;align-items:center;gap:4px;padding:5px 10px;border-radius:4px;background:#00e5ff;font-family:var(--font-mono);font-size:0.72rem;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;color:#06090f">all 6</span>
+            <span style="display:flex;min-height:28px;align-items:center;gap:4px;padding:5px 10px;border-radius:4px;font-family:var(--font-mono);font-size:0.72rem;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;color:#7b899f">active 4</span>
+            <span style="display:flex;min-height:28px;align-items:center;gap:4px;padding:5px 10px;border-radius:4px;font-family:var(--font-mono);font-size:0.72rem;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;color:#7b899f">running 3</span>
+            <span style="display:flex;min-height:28px;align-items:center;gap:4px;padding:5px 10px;border-radius:4px;font-family:var(--font-mono);font-size:0.72rem;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;color:#7b899f">idle 2</span>
+          </div>
+          <span style="display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border:1px solid #243048;border-radius:6px;font-family:var(--font-mono);font-size:0.72rem;font-weight:500;color:#7b899f">Archived (1)</span>
+        </div>
+        <div style="display:flex;min-height:28px;align-items:center;gap:8px;margin-bottom:8px"><span style="font-family:var(--font-mono);font-size:0.72rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#7b899f">Pinned</span><span style="font-family:var(--font-mono);font-size:0.7rem;color:#738699">(2)</span></div>
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px">
+          <div style="position:relative;padding:24px;border:1px solid rgba(255,183,77,0.25);border-left:3px solid #00e5ff;border-radius:10px;background:#172033;box-shadow:inset 3px 0 8px -4px rgba(0,229,255,0.15),0 0 16px -4px rgba(0,229,255,0.12)">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px"><span style="font-family:var(--font-mono);font-size:1.05rem;font-weight:600;color:#dce2f0">command-center</span><span style="display:inline-flex;align-items:center;gap:8px"><span style="color:#ffb300;filter:drop-shadow(0 0 4px rgba(255,179,0,0.5))">★</span><span style="display:inline-flex;align-items:center;justify-content:center;padding:2px 8px;border-radius:999px;background:rgba(0,229,255,0.15);box-shadow:0 0 6px rgba(0,229,255,0.15);font-family:var(--font-mono);font-size:0.7rem;font-weight:600;line-height:1.3;color:#00e5ff">running</span></span></div>
+            <div style="margin-bottom:16px;font-family:var(--font-mono);font-size:0.72rem;color:#738699">~/code/command-center</div>
+            <div style="display:flex;gap:16px;padding-top:12px;border-top:1px solid #1a2338"><span style="display:flex;flex-direction:column;gap:2px"><span style="font-family:var(--font-mono);font-size:1.2rem;font-weight:700;color:#dce2f0">4</span><span style="font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:#738699">Sessions</span></span><span style="display:flex;flex-direction:column;gap:2px"><span style="font-family:var(--font-mono);font-size:1.2rem;font-weight:700;color:#dce2f0">0</span><span style="font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:#738699">Prompts</span></span><span style="display:flex;flex-direction:column;gap:2px"><span style="font-family:var(--font-mono);font-size:1.2rem;font-weight:700;color:#738699">—</span><span style="font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:#738699">Last active</span></span></div>
+          </div>
+          <div style="position:relative;padding:24px;border:1px solid #243048;border-radius:10px;background:#111825">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px"><span style="font-family:var(--font-mono);font-size:1.05rem;font-weight:600;color:#dce2f0">taskgarden</span><span style="display:inline-flex;align-items:center;gap:8px"><span style="color:#ffb300;filter:drop-shadow(0 0 4px rgba(255,179,0,0.5))">★</span><span style="display:inline-flex;align-items:center;justify-content:center;padding:2px 8px;border-radius:999px;background:rgba(0,229,255,0.15);box-shadow:0 0 6px rgba(0,229,255,0.15);font-family:var(--font-mono);font-size:0.7rem;font-weight:600;line-height:1.3;color:#00e5ff">2 sessions</span></span></div>
+            <div style="margin-bottom:16px;font-family:var(--font-mono);font-size:0.72rem;color:#738699">~/code/taskgarden</div>
+            <div style="display:flex;gap:16px;padding-top:12px;border-top:1px solid #1a2338"><span style="display:flex;flex-direction:column;gap:2px"><span style="font-family:var(--font-mono);font-size:1.2rem;font-weight:700;color:#dce2f0">2</span><span style="font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:#738699">Sessions</span></span><span style="display:flex;flex-direction:column;gap:2px"><span style="font-family:var(--font-mono);font-size:1.2rem;font-weight:700;color:#dce2f0">0</span><span style="font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:#738699">Prompts</span></span><span style="display:flex;flex-direction:column;gap:2px"><span style="font-family:var(--font-mono);font-size:1.2rem;font-weight:700;color:#738699">—</span><span style="font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:#738699">Last active</span></span></div>
+          </div>
+          <div></div>
+        </div>
+        <div style="position:relative;height:1px;margin:24px 0;background:linear-gradient(90deg,transparent,#243048,#2e3d5c,#243048,transparent)"></div>
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px">
+          <div style="position:relative;padding:24px;border:1px solid #243048;border-radius:10px;background:#111825">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px"><span style="font-family:var(--font-mono);font-size:1.05rem;font-weight:600;color:#dce2f0">cc-plugins</span><span style="display:inline-flex;align-items:center;gap:8px"><span style="color:#738699">☆</span><span style="display:inline-flex;align-items:center;justify-content:center;padding:2px 8px;border-radius:999px;background:rgba(0,229,255,0.15);box-shadow:0 0 6px rgba(0,229,255,0.15);font-family:var(--font-mono);font-size:0.7rem;font-weight:600;line-height:1.3;color:#00e5ff">running</span></span></div>
+            <div style="margin-bottom:16px;font-family:var(--font-mono);font-size:0.72rem;color:#738699">~/code/cc-plugins</div>
+            <div style="display:flex;gap:16px;padding-top:12px;border-top:1px solid #1a2338"><span style="display:flex;flex-direction:column;gap:2px"><span style="font-family:var(--font-mono);font-size:1.2rem;font-weight:700;color:#dce2f0">1</span><span style="font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:#738699">Sessions</span></span><span style="display:flex;flex-direction:column;gap:2px"><span style="font-family:var(--font-mono);font-size:1.2rem;font-weight:700;color:#dce2f0">0</span><span style="font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:#738699">Prompts</span></span><span style="display:flex;flex-direction:column;gap:2px"><span style="font-family:var(--font-mono);font-size:1.2rem;font-weight:700;color:#738699">—</span><span style="font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:#738699">Last active</span></span></div>
+          </div>
+          <div style="position:relative;padding:24px;border:1px solid #141d2e;border-radius:10px;background:#0b1019">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px"><span style="font-family:var(--font-mono);font-size:1.05rem;font-weight:600;color:#7b899f">voice-notes</span><span style="display:inline-flex;align-items:center;gap:8px"><span style="color:#738699">☆</span><span style="display:inline-flex;align-items:center;justify-content:center;padding:2px 8px;border-radius:999px;background:#172033;font-family:var(--font-mono);font-size:0.7rem;font-weight:600;line-height:1.3;color:#7b899f">idle</span></span></div>
+            <div style="margin-bottom:16px;font-family:var(--font-mono);font-size:0.72rem;color:#738699">~/code/voice-notes</div>
+            <div style="display:flex;gap:16px;padding-top:12px;border-top:1px solid #1a2338"><span style="display:flex;flex-direction:column;gap:2px"><span style="font-family:var(--font-mono);font-size:1.2rem;font-weight:700;color:#dce2f0">0</span><span style="font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:#738699">Sessions</span></span><span style="display:flex;flex-direction:column;gap:2px"><span style="font-family:var(--font-mono);font-size:1.2rem;font-weight:700;color:#dce2f0">0</span><span style="font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:#738699">Prompts</span></span><span style="display:flex;flex-direction:column;gap:2px"><span style="font-family:var(--font-mono);font-size:1.2rem;font-weight:700;color:#738699">—</span><span style="font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:#738699">Last active</span></span></div>
+          </div>
+          <div style="position:relative;padding:24px;border:1px solid #141d2e;border-radius:10px;background:#0b1019">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px"><span style="font-family:var(--font-mono);font-size:1.05rem;font-weight:600;color:#7b899f">dotfiles</span><span style="display:inline-flex;align-items:center;gap:8px"><span style="color:#738699">☆</span><span style="display:inline-flex;align-items:center;justify-content:center;padding:2px 8px;border-radius:999px;background:#172033;font-family:var(--font-mono);font-size:0.7rem;font-weight:600;line-height:1.3;color:#7b899f">idle</span></span></div>
+            <div style="margin-bottom:16px;font-family:var(--font-mono);font-size:0.72rem;color:#738699">~/code/dotfiles</div>
+            <div style="display:flex;gap:16px;padding-top:12px;border-top:1px solid #1a2338"><span style="display:flex;flex-direction:column;gap:2px"><span style="font-family:var(--font-mono);font-size:1.2rem;font-weight:700;color:#dce2f0">0</span><span style="font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:#738699">Sessions</span></span><span style="display:flex;flex-direction:column;gap:2px"><span style="font-family:var(--font-mono);font-size:1.2rem;font-weight:700;color:#dce2f0">0</span><span style="font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:#738699">Prompts</span></span><span style="display:flex;flex-direction:column;gap:2px"><span style="font-family:var(--font-mono);font-size:1.2rem;font-weight:700;color:#738699">—</span><span style="font-family:var(--font-mono);font-size:0.7rem;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:#738699">Last active</span></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+</sc-if>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;showMobile&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Board&quot;},&quot;showSource&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Board&quot;}}">
+class Component extends DCLogic {
+  state = { open: { d: true } };
+
+  toggle(key) {
+    this.setState((s) => ({ open: { ...s.open, [key]: !s.open[key] } }));
+  }
+
+  renderVals() {
+    return {
+      openD: this.state.open.d,
+      toggleD: () => this.toggle("d"),
+      showMobile: this.props.showMobile ?? true,
+      showSource: this.props.showSource ?? true,
+    };
+  }
+}
+</script>
+</body>
+</html>

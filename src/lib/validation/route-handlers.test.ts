@@ -18,11 +18,13 @@ import {
   _setValidationProductionRouteDepsForTesting,
   createProjectValidationHandlers,
   createSessionValidationHandlers,
+  createValidationBudgetRouteHandlers,
   createValidationCommandsRouteHandlers,
   sessionValidationPOST,
 } from "./route-handlers";
 import {
   VALIDATION_POLL_MAX_WAIT_MS,
+  validationBudgetResponseSchema,
   validationPollResponseSchema,
 } from "./api-schemas";
 import { validationCommandsResponseSchema } from "./schemas";
@@ -84,6 +86,11 @@ function serviceFake(overrides: Partial<ValidationService> = {}): {
     service: {
       whenReady: async () => {},
       isAvailable: () => true,
+      budget: async () => ({
+        available: true,
+        capacity: { limit: 8, inUse: 4, queueDepth: 1 },
+        runs: [],
+      }),
       async submit(request) {
         submissions.push(request);
         return {
@@ -762,6 +769,51 @@ describe("GET /api/validation-commands", () => {
         throw new Error("no base dir");
       },
       readRepoConfig: async () => null,
+    });
+
+    const response = await GET();
+    expect(response.status).toBe(500);
+  });
+});
+
+describe("GET /api/validation-budget", () => {
+  it("answers the service snapshot in the wire shape", async () => {
+    const { GET } = createValidationBudgetRouteHandlers({
+      service: {
+        budget: async () => ({
+          available: true,
+          capacity: { limit: 8, inUse: 7, queueDepth: 9 },
+          runs: [
+            {
+              runId: "vrun-1",
+              commandName: "test",
+              status: "running" as const,
+              cost: 4,
+              projectName: "command-center",
+              sessionName: "csm/budget",
+              conversationId: "conv-1",
+              position: null,
+            },
+          ],
+        }),
+      },
+    });
+
+    const response = await GET();
+    // Parsing with the wire schema is the point: it fails if the service's
+    // snapshot and the contract the client parses ever drift apart.
+    const body = validationBudgetResponseSchema.parse(await response.json());
+    expect(body.capacity).toEqual({ limit: 8, inUse: 7, queueDepth: 9 });
+    expect(body.runs[0]?.projectName).toBe("command-center");
+  });
+
+  it("returns 500 when the budget read fails", async () => {
+    const { GET } = createValidationBudgetRouteHandlers({
+      service: {
+        budget: async () => {
+          throw new Error("config unreadable");
+        },
+      },
     });
 
     const response = await GET();

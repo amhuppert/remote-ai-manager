@@ -16,6 +16,11 @@ import {
   GlobalProjectSwitcher,
 } from "@/components/topbar/NavSwitchers";
 import QuickTicketButton from "@/components/topbar/QuickTicketButton";
+import {
+  ValidationBudgetIndicator,
+  ValidationBudgetMenuItem,
+  ValidationBudgetSheet,
+} from "@/components/topbar/ValidationBudgetIndicator";
 import { useActiveConversationsQuery } from "@/lib/active-conversations/queries";
 import { activeConversationNeedsAttention } from "@/lib/active-conversations/row-helpers";
 import { useNotificationsQuery } from "@/lib/notifications/queries";
@@ -200,6 +205,10 @@ export default function Topbar({
 
   const templatesActive = pathname?.startsWith("/templates") ?? false;
   const configActive = pathname === "/config";
+  // The mobile budget sheet is opened from the overflow menu but mounted
+  // outside it: Radix unmounts the menu content on close, which would take a
+  // dialog nested inside it down before it could open.
+  const [budgetSheetOpen, setBudgetSheetOpen] = useState(false);
 
   return (
     <>
@@ -449,6 +458,9 @@ export default function Topbar({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <QuickTicketButton pathname={pathname} presentation="menu-item" />
+              <ValidationBudgetMenuItem
+                onSelect={() => setBudgetSheetOpen(true)}
+              />
               <DropdownMenuItem asChild>
                 <Link href={specsHref}>Specs</Link>
               </DropdownMenuItem>
@@ -466,8 +478,18 @@ export default function Topbar({
           {page === "detail" && (
             <div className="topbar-status-session">{sessionControls}</div>
           )}
+          {/* Rendered by the topbar rather than through a page's status slot:
+              the validation budget is one global ledger, so it belongs on
+              every page — including session detail, where contention is felt. */}
+          {hydrated && <ValidationBudgetIndicator />}
         </div>
       </header>
+      {hydrated && (
+        <ValidationBudgetSheet
+          open={budgetSheetOpen}
+          onOpenChange={setBudgetSheetOpen}
+        />
+      )}
       {projectSegment === undefined ? (
         <GlobalProjectSwitcher
           activeProject={null}

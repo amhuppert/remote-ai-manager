@@ -5,6 +5,8 @@ import {
 } from "@/lib/events/publication";
 import { createLogger, type Logger } from "@/lib/logging";
 import type { ValidationRunsRepo } from "@/lib/state-store/validation-runs-repo";
+import { projectNameFromPath } from "@/lib/state-store/tickets-repo";
+import type { ValidationBudgetResponse } from "./api-schemas";
 import {
   createValidationLeaseManager,
   type LeaseCancelAuthorization,
@@ -278,6 +280,12 @@ export interface ValidationService {
   submit(request: ValidationSubmitRequest): Promise<ValidationSubmission>;
   /** Registry + policy enablement and the global active-capacity snapshot. */
   list(caller: ValidationCallerRef): Promise<ValidationListResult>;
+  /**
+   * Caller-independent capacity read for the budget indicator. The budget is
+   * global, so this resolves no caller identity and applies no policy — it
+   * reports what the ledger holds and whether admission is open at all.
+   */
+  budget(): Promise<ValidationBudgetResponse>;
   /**
    * Lease-exempt, always-queueing submission for system-owned gates (script
    * validator, lane merge, Smart Merge, Smart Commit). Waiting for capacity
@@ -1211,6 +1219,34 @@ export function createValidationService(
     };
   }
 
+  async function budget(): Promise<ValidationBudgetResponse> {
+    await gate.whenOpen();
+    const global = await deps.config.readGlobal();
+    lastKnownLimit = global.concurrencyLimit;
+
+    const queue = deps.repo.findQueued();
+    const queuePositions = new Map(
+      queue.map((row, position) => [row.runId, position]),
+    );
+    return {
+      available: !initFailed,
+      capacity: {
+        limit: global.concurrencyLimit,
+        ...deps.scheduler.snapshot(),
+      },
+      runs: [...deps.repo.findRunning(), ...queue].map((row) => ({
+        runId: row.runId,
+        commandName: row.commandName,
+        status: row.status as "queued" | "running",
+        cost: row.cost,
+        projectName: projectNameFromPath(row.projectPath),
+        sessionName: row.sessionName,
+        conversationId: row.conversationId,
+        position: queuePositions.get(row.runId) ?? null,
+      })),
+    };
+  }
+
   async function submitSystem(
     request: ValidationSystemSubmitRequest,
   ): Promise<ValidationSubmission> {
@@ -1494,6 +1530,7 @@ export function createValidationService(
     isAvailable: () => !initFailed,
     submit,
     list,
+    budget,
     submitSystem,
     waitForCompletion,
     waitForStatusChange,

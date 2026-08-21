@@ -1000,6 +1000,11 @@ function fakeService(overrides: Partial<ValidationService>): ValidationService {
   return {
     whenReady: async () => {},
     isAvailable: () => true,
+    budget: async () => ({
+      available: true,
+      capacity: { limit: 8, inUse: 0, queueDepth: 0 },
+      runs: [],
+    }),
     submit: async () => ({
       kind: "invalid",
       reason: "service_unavailable",

@@ -227,6 +227,25 @@
   --animate-collab-scan: skeleton-shimmer 1.8s linear infinite;
   --animate-collab-ellipsis: collab-ellipsis 1.4s steps(4, end) infinite;
 
+  /* Validation budget gauge (topbar): the ring breathes while validation work
+     holds the global budget, so the indicator reads as live rather than as a
+     static number. The glow pulses, not the stroke, so the arc's value stays
+     legible mid-cycle. The colour comes from `--cc-ring-glow`, set by the
+     gauge's tone class, so one keyframe serves both the cyan (running) and
+     amber (queue waiting) states. Keyframes live inside `@theme` — the
+     `animate-tk-*` precedent above — so no global stylesheet is involved. */
+  --animate-ring-pulse: ring-pulse 3s ease-in-out infinite;
+
+  @keyframes ring-pulse {
+    0%,
+    100% {
+      filter: drop-shadow(0 0 2px var(--cc-ring-glow));
+    }
+    50% {
+      filter: drop-shadow(0 0 7px var(--cc-ring-glow));
+    }
+  }
+
   @keyframes tk-card-land {
     from {
       box-shadow:

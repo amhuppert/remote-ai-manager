@@ -178,3 +178,42 @@ export const validationListResponseSchema = z.object({
 export type ValidationListResponse = z.infer<
   typeof validationListResponseSchema
 >;
+
+// ============================================================
+// Global budget read (topbar indicator)
+// ============================================================
+
+/**
+ * One active run as the budget indicator needs it. Deliberately narrower than
+ * `validationActiveRunSchema`: no scopes, no source, and `projectName` rather
+ * than `projectPath` — the indicator names and links to work, it does not
+ * reproduce the agent CLI's listing. `sessionName`/`conversationId` are both
+ * nullable because system-owned runs (lane merge, Smart Merge, Smart Commit,
+ * script validator) belong to a project and nothing finer.
+ */
+export const validationBudgetRunSchema = z.object({
+  runId: z.string().min(1),
+  commandName: z.string().min(1),
+  status: z.enum(["queued", "running"]),
+  cost: z.number().int().positive(),
+  projectName: z.string().min(1),
+  sessionName: z.string().min(1).nullable(),
+  conversationId: z.string().min(1).nullable(),
+  /** FIFO index among queued runs; null while running. */
+  position: z.number().int().nonnegative().nullable(),
+});
+export type ValidationBudgetRun = z.infer<typeof validationBudgetRunSchema>;
+
+export const validationBudgetResponseSchema = z.object({
+  /**
+   * False when startup recovery failed and admission is closed. The ledger may
+   * still hold rows from before the failure, so the indicator hides rather
+   * than reporting a capacity number that no longer governs anything.
+   */
+  available: z.boolean(),
+  capacity: validationCapacitySchema,
+  runs: z.array(validationBudgetRunSchema),
+});
+export type ValidationBudgetResponse = z.infer<
+  typeof validationBudgetResponseSchema
+>;

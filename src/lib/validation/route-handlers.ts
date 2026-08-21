@@ -21,6 +21,7 @@ import {
   VALIDATION_LEASE_HEADER,
   validationPollQuerySchema,
   validationSubmitBodySchema,
+  type ValidationBudgetResponse,
   type ValidationCancelResponse,
   type ValidationListResponse,
   type ValidationPollResponse,
@@ -436,6 +437,7 @@ const serviceProxy: ValidationService = {
   isAvailable: () => getValidationService().isAvailable(),
   submit: (request) => getValidationService().submit(request),
   list: (caller) => getValidationService().list(caller),
+  budget: () => getValidationService().budget(),
   submitSystem: (request) => getValidationService().submitSystem(request),
   waitForCompletion: (runId) => getValidationService().waitForCompletion(runId),
   waitForStatusChange: (runId, signal) =>
@@ -477,6 +479,42 @@ export const projectValidationPollGET = withTracing(projectHandlers.POLL, {
   longPoll: true,
 });
 export const projectValidationCancelPOST = withTracing(projectHandlers.CANCEL);
+
+const budgetHandlers = createValidationBudgetRouteHandlers({
+  service: serviceProxy,
+});
+
+export const validationBudgetGET = withTracing(budgetHandlers.GET);
+
+/**
+ * Global budget read for the topbar indicator.
+ *
+ * Unauthenticated like `/api/validation-commands`, and for the same reason:
+ * it is a UI read whose payload carries command NAMES and project names but
+ * never a command's underlying executable. It takes no caller identity
+ * because the budget it reports is global — the run blocking you may belong
+ * to any project.
+ */
+export interface ValidationBudgetRouteDeps {
+  service: Pick<ValidationService, "budget">;
+}
+
+export function createValidationBudgetRouteHandlers(
+  deps: ValidationBudgetRouteDeps,
+) {
+  async function GET(): Promise<Response> {
+    try {
+      const budget = await deps.service.budget();
+      return NextResponse.json(budget satisfies ValidationBudgetResponse);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to read validation budget";
+      return NextResponse.json({ error: message }, { status: 500 });
+    }
+  }
+
+  return { GET };
+}
 
 /**
  * Validation-registry route handler logic — extracted for dependency
