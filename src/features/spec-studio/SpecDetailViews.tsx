@@ -520,6 +520,8 @@ export function initialDetailViewForDeepLink(
   // The delivery-approval deep link (notification rows, halt cards, banner,
   // phase CTA) must open Execution or its merge-gate target never mounts.
   if (rawHandle === "delivery") return "execution";
+  // Same contract for the launch control, which lives in Delivery plan.
+  if (rawHandle === "launch") return "plan";
   if (rawHandle === null || slug === undefined) return "overview";
   try {
     const kind = parseElementHandle(rawHandle, slug).kind;

@@ -1,48 +1,37 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 
-import { finalizeDeliveryPlanLaunch } from "@/lib/specs/delivery-plan-finalization";
+import { sessionKeys } from "@/lib/sessions/query-keys";
+import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { DeliveryPlanPreviewView } from "@/lib/specs/delivery-plan-views";
 import { createMaximalAuthoredWorkflowLaunchFixture } from "@/lib/workflow-graph/testing/maximal-authored-launch";
 
-import { reviewView } from "./delivery-plan-review.fixtures";
+import { previewView, reviewView } from "./delivery-plan-review.fixtures";
 import { SpecDeliveryPlanReviewContent } from "./SpecDeliveryPlanReview";
 
-function finalizedPreview(): DeliveryPlanPreviewView {
-  const binding = {
-    dispositions: [],
-    claims: [
-      {
-        contextId: "context-integrate",
-        criterionElementIds: ["criterion-1"],
-      },
-    ],
-  };
-  const launch = finalizeDeliveryPlanLaunch({
-    specId: "spec-native-sdd",
-    specSlug: "native-sdd",
-    attemptId: "attempt-2",
-    candidateId: "candidate-2",
-    launch: createMaximalAuthoredWorkflowLaunchFixture(),
-  });
+const sessions: SessionListItem[] = [
+  {
+    sessionName: "delivery-run",
+    worktreePath: "/tmp/delivery-run",
+    branchName: "cc/delivery-run",
+    targetBranch: "main",
+    parentSessionName: null,
+    createdAt: "2026-08-14T00:00:00.000Z",
+    lastActivityAt: "2026-08-14T00:00:00.000Z",
+    archived: false,
+    finished: false,
+    source: "cc",
+    creationMode: "normal",
+    tddEnabled: true,
+    derivedStatus: "idle",
+    promptCount: 0,
+    derivedLastActivityAt: "2026-08-14T00:00:00.000Z",
+    collabContribution: null,
+    hasActiveGraphWorkflow: false,
+  },
+];
 
-  return {
-    stage: "proposed",
-    attemptId: "attempt-2",
-    specSlug: "native-sdd",
-    draftRevision: 2,
-    pinnedRevisionId: "revision-2",
-    candidateId: "candidate-2",
-    candidateHash: "sha256:candidate-2",
-    snapshotId: "snapshot-2",
-    approvable: true,
-    approvability: "Finalized candidate is ready for sign-off.",
-    launch,
-    binding,
-  };
-}
-
-const proposedPreview = finalizedPreview();
+const proposedPreview = previewView();
 const proposedReview = reviewView({
   document: {
     schemaVersion: 2,
@@ -102,6 +91,7 @@ const meta = {
           mutations: { retry: false },
         },
       });
+      queryClient.setQueryData(sessionKeys.list("demo"), sessions);
       return (
         <QueryClientProvider client={queryClient}>
           <div className="min-h-[40rem] p-lg">
@@ -117,6 +107,33 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const FinalizedCandidate = {} satisfies Story;
+
+/** Sign-off is recorded, so the launch control is the one act still owed. */
+export const SignedOffReadyToLaunch = {
+  args: {
+    review: reviewView({
+      attempt: { status: "approved" },
+      approval: {
+        candidateId: "candidate-2",
+        candidateHash: "sha256:candidate-2",
+        snapshotId: "snapshot-2",
+        approvedAt: "2026-08-14T01:00:00.000Z",
+        approvedBy: { kind: "human" },
+      },
+      nextAct: {
+        actor: "human",
+        command: "cctl spec start native-sdd",
+        reason: "Start the signed one-off graph launch.",
+      },
+      document: {
+        schemaVersion: 2,
+        launch: proposedPreview.launch,
+        binding: proposedPreview.binding,
+      },
+    }),
+    preview: proposedPreview,
+  },
+} satisfies Story;
 
 export const AuthoredDraft = {
   args: {

@@ -307,7 +307,6 @@ const GRAPH_STRUCTURE_FIELD_EXEMPTIONS = [
  * or types a launch with the graph's own schema; none may declare its own.
  */
 const SPEC_LAUNCH_SCHEMA_CONSUMERS = [
-  "src/cli/commands/spec/write.ts",
   "src/lib/specs/delivery-plan-finalization.ts",
   "src/lib/specs/delivery-plan-seed.ts",
   "src/lib/specs/delivery-plan-service.ts",

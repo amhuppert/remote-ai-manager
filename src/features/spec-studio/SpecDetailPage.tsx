@@ -137,10 +137,22 @@ function SpecDetailPageInner(): React.JSX.Element {
 
   useEffect(() => {
     if (detail === undefined || deepLinkId === null) return;
-    const target = document.getElementById(deepLinkId);
-    if (target === null) return;
-    target.scrollIntoView({ block: "center" });
-    target.focus({ preventScroll: true });
+    const focusTarget = (): boolean => {
+      const target = document.getElementById(deepLinkId);
+      if (target === null) return false;
+      target.scrollIntoView({ block: "center" });
+      target.focus({ preventScroll: true });
+      return true;
+    };
+    if (focusTarget()) return;
+    // A target can mount a whole read later than `detail` — the launch control
+    // waits on the plan preview — so resolving once against the detail would
+    // land on nothing exactly when a human follows the CTA that named it.
+    const observer = new MutationObserver(() => {
+      if (focusTarget()) observer.disconnect();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
   }, [deepLinkId, detail]);
 
   return (
@@ -521,7 +533,7 @@ export interface DetailStatePresentation {
    * the retrying contract that lands on the focused control after the page
    * loads — instead of the bare `?view=` top of the surface.
    */
-  el?: "delivery";
+  el?: "delivery" | "launch";
 }
 
 const bannerLineClass = {
@@ -1052,6 +1064,9 @@ export function detailStatePresentation(
         (deliveryPlan.attempt.status === "approved" ||
           deliveryPlan.attempt.status === "parked")
       ) {
+        // The CTA names an act, so it must land on the control that performs
+        // it. Addressing the surface alone resolved to the page a human
+        // reading the plan was already on, which read as a dead button (#7).
         return {
           tone: "green",
           banner: "Ready to execute",
@@ -1059,6 +1074,7 @@ export function detailStatePresentation(
             "The approved delivery-plan candidate is the exact graph execution will launch.",
           action: "Start execution",
           view: "plan",
+          el: "launch",
         };
       }
       if (deliveryPlan.attempt.status === "draft") {
@@ -2077,6 +2093,7 @@ export function resolveDeepLinkId(
   // Gate-name literals are persisted in notification rows forever, so this
   // mapping is permanent: ?el=delivery focuses the merge-gate panel.
   if (rawHandle === "delivery") return "merge-gate";
+  if (rawHandle === "launch") return "delivery-plan-launch";
   if (rawHandle === null || slug === undefined) return null;
   try {
     return toDeepLinkElementId(parseElementHandle(rawHandle, slug));

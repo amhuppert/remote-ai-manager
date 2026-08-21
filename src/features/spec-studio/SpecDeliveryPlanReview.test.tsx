@@ -4,50 +4,16 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createMaximalAuthoredWorkflowLaunchFixture } from "@/lib/workflow-graph/testing/maximal-authored-launch";
-import { finalizeDeliveryPlanLaunch } from "@/lib/specs/delivery-plan-finalization";
 import type { DeliveryPlanPreviewView } from "@/lib/specs/delivery-plan-views";
 import { specKeys } from "@/lib/specs/query-keys";
 
-import { reviewView } from "./delivery-plan-review.fixtures";
+import { previewView, reviewView } from "./delivery-plan-review.fixtures";
 import SpecDeliveryPlanReview, {
   SpecDeliveryPlanReviewContent,
 } from "./SpecDeliveryPlanReview";
 
-function finalizedPreview(): DeliveryPlanPreviewView {
-  const launch = finalizeDeliveryPlanLaunch({
-    specId: "spec-native-sdd",
-    specSlug: "native-sdd",
-    attemptId: "attempt-2",
-    candidateId: "candidate-2",
-    launch: createMaximalAuthoredWorkflowLaunchFixture(),
-  });
-
-  return {
-    stage: "proposed",
-    attemptId: "attempt-2",
-    specSlug: "native-sdd",
-    draftRevision: 2,
-    pinnedRevisionId: "revision-2",
-    candidateId: "candidate-2",
-    candidateHash: "sha256:candidate-2",
-    snapshotId: "snapshot-2",
-    approvable: true,
-    approvability: "Finalized candidate is ready for sign-off.",
-    launch,
-    binding: {
-      dispositions: [],
-      claims: [
-        {
-          contextId: "context-integrate",
-          criterionElementIds: ["criterion-1"],
-        },
-      ],
-    },
-  };
-}
-
 function renderReview() {
-  const preview = finalizedPreview();
+  const preview = previewView();
   const review = reviewView({
     document: {
       schemaVersion: 2,
@@ -123,7 +89,7 @@ function renderReview() {
  * sign-off would not be approving.
  */
 function renderMismatchedIdentity() {
-  const preview = finalizedPreview();
+  const preview = previewView();
   const review = reviewView({
     attempt: {
       candidateId: "candidate-3",
@@ -296,7 +262,7 @@ describe("SpecDeliveryPlanReview", () => {
 
   it("reads the launch preview for the draft revision it reviewed", async () => {
     const review = reviewView();
-    const preview = finalizedPreview();
+    const preview = previewView();
     const fetch = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input);
       const body = url.includes("plan-preview") ? preview : review;

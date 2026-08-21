@@ -26,6 +26,7 @@ import type {
 } from "@/lib/specs/delivery-plan-views";
 
 import SpecDeliveryPlanApproval from "./SpecDeliveryPlanApproval";
+import SpecDeliveryPlanLaunch from "./SpecDeliveryPlanLaunch";
 import SpecDeliveryPlanComments from "./SpecDeliveryPlanComments";
 
 function AttemptHeader({
@@ -492,6 +493,7 @@ export function SpecDeliveryPlanReviewContent({
             review={review}
             candidate={candidate}
           />
+          <SpecDeliveryPlanLaunch projectName={projectName} review={review} />
           <BindingTable review={review} />
           <BindingOutcomes projectName={projectName} review={review} />
           <SpecDeliveryPlanComments projectName={projectName} review={review} />
