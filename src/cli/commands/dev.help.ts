@@ -8,10 +8,10 @@ export const devHelpEntries: CommandHelpEntry[] = [
   {
     path: ["dev"],
     dynamicContext: true,
-    summary: "list, ensure, and stop dev servers",
+    summary: "list, ensure, stop, and diagnose dev servers",
     description:
-      "Manage this session's dev servers — the app processes CC spawns per worktree (ports, local/remote URLs, liveness).",
-    usage: ["cctl dev <list|ensure|stop>"],
+      "Manage this session's dev servers — the app processes CC spawns per worktree (ports, local/remote URLs, liveness). A CC dev server is a second CC instance with its own database, logs, transcripts, and api-token; `dev doctor` reports both instances side by side.",
+    usage: ["cctl dev <list|ensure|stop|doctor>"],
     flags: [],
     examples: [],
     related: [],
@@ -96,6 +96,43 @@ export const devHelpEntries: CommandHelpEntry[] = [
       {
         command: "dev ensure",
         oneLiner: "restart a server and wait for liveness",
+      },
+    ],
+  },
+  {
+    path: ["dev", "doctor"],
+    dynamicContext: true,
+    summary: "show which CC instance you are driving (managing vs dev server)",
+    description:
+      "Report the managing CC server and this session's dev server side by side — build stamp, the state directory each owns, the cctl each publishes — and name which one a bare `cctl` verb reaches. Run it when something you created through the CLI does not appear in the dev server's UI: a dev server is a separate CC instance, so server-owned state (validation runs, workflow executions, jobs, notifications, conversations) created on one is invisible in the other. It resolves the dev server and authenticates with THAT server's token, which is why `cctl doctor --server <devUrl>` 401s by hand — the ambient CC_API_TOKEN belongs to the managing instance.",
+    usage: ["cctl dev doctor [<serverName>]"],
+    flags: [],
+    examples: [
+      {
+        invocation: "cctl dev doctor",
+        explanation:
+          "differing `config dir` values mean two instances and two databases — produce state INSIDE the dev server (`cctl fixture`) rather than through a bare verb",
+      },
+    ],
+    domainContext:
+      "Reads the dev-server registry without stating a build, so it still answers when this binary is skewed against either instance — diagnosing that skew is one of its jobs.",
+    related: [
+      {
+        command: "doctor",
+        oneLiner: "diagnose one server you name, with your own token",
+      },
+      {
+        command: "fixture session create",
+        oneLiner: "produce state inside the dev instance instead of this one",
+      },
+      { command: "dev list", oneLiner: "server names, ports, and log paths" },
+    ],
+    skills: [
+      {
+        name: "cc-live-feature-test",
+        loadWhen:
+          "when a live test's state is not showing up in the dev server's UI",
+        path: ".claude/skills/cc-live-feature-test/SKILL.md",
       },
     ],
   },

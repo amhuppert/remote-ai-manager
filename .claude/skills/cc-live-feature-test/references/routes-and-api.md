@@ -2,6 +2,8 @@
 
 Deep-link URLs and REST contracts for seeding/tearing down live-test state. Base URL comes from `cctl dev ensure <server>` (`localUrl`, e.g. `http://localhost:3001`) — never assume a port. Prefer `cctl fixture` commands over raw curl where they exist; the contracts below are the fallback and the source of truth for what those commands do.
 
+Every route here belongs to the **worktree dev server** — a separate CC instance from the one your agent session lives in (see SKILL.md, "Which instance am I driving?"). The same paths exist on the managing server and answer about entirely different state.
+
 ## Page routes (deep-link instead of click-navigating)
 
 | URL | What it shows |
@@ -22,7 +24,7 @@ Param parser (source of truth): `src/lib/conversations/hrefs.ts` (`parseConversa
 
 ## REST contracts for test fixtures
 
-All paths relative to the dev server base URL. Local requests need no auth token (a token exists at `<worktree>/.config/api-token` if an endpoint ever returns 401).
+All paths relative to the dev server base URL. The project/session/conversation routes below need no auth token. The `/api/agent/*` gateway does, and it is **that instance's own** token at `<worktree>/.config/api-token` — the ambient `CC_API_TOKEN` authenticates the managing server and 401s here.
 
 ### Create session — returns a ready conversation
 ```

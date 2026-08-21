@@ -10,8 +10,8 @@ export const metaHelpEntries: CommandHelpEntry[] = [
     path: ["doctor"],
     summary: "check connectivity, auth, and build parity with the CC server",
     description:
-      "The connectivity/auth/build diagnostic. Run it first whenever any cctl command exits 3. Success prints the server URL, the server and cli build stamps, your resolved identity, and token validity.",
-    usage: ["cctl doctor"],
+      "The connectivity/auth/build diagnostic for ONE server — the ambient CC_SERVER_URL, or whichever `--server` names. Run it first whenever any cctl command exits 3. Success prints the server URL, the server and cli build stamps, the state directory that server owns, the cctl it publishes (the recovery binary for an exit-4 skew), your resolved identity, and token validity.",
+    usage: ["cctl doctor [--server <url>]"],
     flags: [],
     examples: [
       {
@@ -19,8 +19,18 @@ export const metaHelpEntries: CommandHelpEntry[] = [
         explanation:
           "run after any exit-3 failure to tell a down server from a rejected token",
       },
+      {
+        invocation: "cctl doctor --server <url>",
+        explanation:
+          "prints that server's `cliPath` — the binary to re-run after an exit-4 build skew. Every instance mints its own token, so a URL other than yours needs that instance's; `cctl dev doctor` does that resolution for a dev server",
+      },
     ],
     related: [
+      {
+        command: "dev doctor",
+        oneLiner:
+          "diagnose the managing/dev-server pair, each with its own token",
+      },
       { command: "version", oneLiner: "print just the cctl build stamp" },
       {
         command: "exit-codes",

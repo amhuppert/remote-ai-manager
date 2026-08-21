@@ -21,7 +21,7 @@ import {
   recordServerBaseUrl,
   verifyRecordedServerBaseUrl,
 } from "./lib/agent-gateway/server-url";
-import { BUILD_INFO } from "./lib/build-info";
+import { getBuildInfo } from "./lib/build-info";
 import path from "node:path";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger, runAsTrace } from "./lib/logging";
@@ -107,7 +107,9 @@ const defaultStartupDeps: StartupDeps = {
     installCctl({
       bundlePath: path.join(process.cwd(), "dist", "cctl", "cctl.mjs"),
       configDir: getConfigDirPath(),
-      expectedBuildInfo: BUILD_INFO,
+      // The identity this process pinned, so the binary it publishes is the one
+      // it will keep answering for — the parity gate refuses anything else.
+      expectedBuildInfo: getBuildInfo(),
     }),
   publishManagedSkills: publishManagedSkillBundleAtStartup,
   recordServerBaseUrl: () => recordServerBaseUrl(),

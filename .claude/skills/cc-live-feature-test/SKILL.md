@@ -23,6 +23,45 @@ This is the known-good loop — an efficient round is ~7 browser calls:
 5. **Verify against durable state** — transcript JSONL, SQLite, API — never the optimistic UI alone.
 6. Clean up: `cctl fixture session delete`, `playwright-cli -s=<name> close`.
 
+## Which instance am I driving? (read before anything else)
+
+A live test involves **two independent CC instances**. `cctl dev ensure` does not start "your app" — it starts a *second CC server* with its own database, config, api-token, published `cctl`, and discovered-projects list. Meanwhile the `cctl` in your environment points at the **managing** instance, the one your agent session lives in.
+
+| | Managing CC | Worktree dev server |
+|---|---|---|
+| URL | ambient `CC_SERVER_URL` (e.g. `:3000`) | `cctl dev ensure`'s `localUrl` |
+| Config dir (DB, logs, transcripts) | production (`~/Library/Application Support/cc`) | `<worktree>/.config` |
+| Your agent session lives here | yes | no |
+| A bare `cctl <verb>` talks to | this one | never this one |
+| The live test must drive | never | always |
+
+**Every step of a live test — seeding, the action under test, and verification — targets the dev server.** A state-producing verb run from your own session (`cctl validate run`, `cctl workflow start`, `cctl spec …`) hits the **managing** instance and is invisible in the dev server's UI and DB. That is not a bug in the feature.
+
+This is a trap rather than an ordinary mistake because **it is invisible in the happy path**: reads of *discovered* state (projects, files) behave identically against either instance. Only **server-owned durable state** diverges — the validation ledger, workflow executions, jobs, notifications, conversations. So the failure looks like "the feature doesn't work" instead of "you asked the wrong server".
+
+### The diagnostic
+
+When live state "isn't showing up", run:
+
+```bash
+cctl dev doctor          # both instances side by side, each with its own token
+```
+
+It prints each instance's build, **config dir**, and published `cctl`, and names which one a bare `cctl` reaches. **Differing `config dir` values mean two databases** — anything you created through the CLI is in the other one. (The older tell works too: a config value you never set differing between CLI and UI — e.g. a concurrency limit reading `8` in one and `16` in the other — is two instances, not a bug.)
+
+Don't hand-roll this as `cctl doctor --server <devUrl>`: every instance mints its own token, so the ambient `CC_API_TOKEN` 401s there. `dev doctor` resolves the dev server and uses *that server's* token. To diagnose one specific URL you already have a token for, `cctl doctor --server <url>` prints its `serverBuild`, `configDir`, and `cliPath` (in text and in `--json`).
+
+### Producing server-owned state *inside* the dev server
+
+Step 2 below covers driving agent *turns*. For state only a server-side service can create, the move is to **run the verb from a session that lives on the dev server**:
+
+1. `cctl fixture session create <scratch-project>` — creates the session **on the dev server**.
+2. `cctl fixture prompt <project> <session> --text "run: <the cctl verb>" --wait` — the agent inside that session inherits *the dev server's* `CC_SERVER_URL` and `CC_API_TOKEN`, so its verbs land in the dev server's ledger and show up in its UI.
+
+`cctl fixture` is the one command family that works from **any** `cctl` binary — it addresses two instances by design, so it states no build stamp and the build-parity gate does not apply. You do not need a special binary for it.
+
+Caveat worth knowing before you design the scenario: **`cctl validate run` always blocks to a verdict** — its `--wait` chooses queue-admission over a fail-fast refusal, not whether to block. To get overlapping runs, the agent must background them within a single bash call.
+
 ## Core principles (read first)
 
 1. **Live + real LLM, every time.** Drive the actual running app with Playwright and let real agent turns execute. No stubbed backends.
@@ -31,6 +70,8 @@ This is the known-good loop — an efficient round is ~7 browser calls:
 4. **Verify the test target is safe.** Confirm you are pointed at a worktree-local database, NOT production (see Step 0). Live testing creates and deletes real sessions/conversations/prompts — doing that against the production DB is destructive.
 
 ## Step 0 — Safety: confirm you are NOT pointed at the production DB
+
+The section above says which instance to *drive*; this one is the other half — confirming the instance you are about to mutate is the worktree's and not production.
 
 `cctl dev ensure`'s **default behavior must create local configuration state in the current worktree** — i.e. start the dev server with `CC_CONFIG_DIR` resolving to `<worktree>/.config`, giving an isolated `command-center.db`, logs, and transcripts. Verify this before doing anything that mutates state.
 
@@ -54,7 +95,11 @@ If `cctl dev ensure` did NOT produce a worktree-local `.config` (no `CC_CONFIG_D
 ## Step 1 — Environment setup
 
 1. **Get the URL with `cctl dev ensure`.** Never assume a port (3000/3002/6006): every worktree gets its own. Use the printed `localUrl`/`remoteUrl`. `cctl dev list --json` also gives `logFilePath` (the dev server's stdout/stderr — useful for startup/runtime errors and the HTTP access log).
-2. **Use the dev server's own `cctl`, not the one on PATH.** Every CC server publishes a `cctl` stamped with its own build to `<its configDir>/bin/cctl`. The binary on your PATH belongs to whichever server installed it — normally the main instance — so it does **not** contain your worktree's CLI changes: new verbs are missing, removed flags still parse, and help describes the old surface. Use `<worktree>/.config/bin/cctl` for anything testing your own changes. A command that crosses the boundary now exits **4** naming both builds, and `cctl doctor --server <url>` prints that server's `cliPath`.
+2. **Pick the binary by which server the command talks to.** Every CC server publishes a `cctl` stamped with its own build to `<its configDir>/bin/cctl`, and a binary addressing a server it did not come from exits **4** naming both builds.
+   - **Testing your own CLI changes** (new verbs, changed flags/help) → `<worktree>/.config/bin/cctl`. The PATH binary belongs to the managing instance and does not contain them.
+   - **Ordinary CC actions on your session** (`cctl dev ensure`, `notify`, `ask`, `validate run`) → the PATH binary, which is that server's own.
+   - **`cctl fixture`** → either. It spans both instances by design and is exempt from the gate.
+   - Hit an exit 4? `cctl doctor --server <url>` prints that server's `cliPath` (text and `--json`); `cctl dev doctor` prints both instances' at once.
 3. **Locate the durable state** (all under the worktree-local config dir from Step 0):
    - SQLite DB: `<config>/command-center.db` (e.g. `sqlite3 <config>/command-center.db ".tables"`)
    - NDJSON logs: `<config>/logs/...` — use the **`debug-logs` skill** for structure, locations, `traceId` tracing, and query recipes. Don't re-derive log layout here.

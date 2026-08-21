@@ -1,7 +1,6 @@
 import path from "node:path";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { z } from "zod";
-import { devServersStatusResponseSchema } from "@/lib/dev-server/schemas";
 import { dispatchGroup } from "../dispatch";
 import { withForensics } from "../job-wait";
 import {
@@ -22,7 +21,7 @@ import {
   type FetchInit,
   type GlobalFlags,
 } from "../shared";
-import { devServerRequestPath, inferDevCommandTarget } from "./dev-target";
+import { resolveRunningDevInstance } from "./dev-target";
 
 /**
  * `cctl fixture session create|delete / prompt / status` — test-state
@@ -35,6 +34,17 @@ import { devServerRequestPath, inferDevCommandTarget } from "./dev-target";
  *
  * Local dev servers do not enforce API auth, so requests to the target
  * carry no token; a 401 surfaces through the shared request mapping.
+ *
+ * fixture is the one command family that spans TWO CC instances — a small read
+ * against the managing server to learn which dev server is this context's, then
+ * the fixture work against that dev server — so it is the one family the build
+ * parity gate cannot be applied to: the dev server runs the branch and the
+ * binary comes from the installed build, so a stamp that satisfies one hop is
+ * refused by the other and no invocation exists. Every request here is
+ * therefore `unstamped` (see `CliRequestParams.unstamped`), which is also what
+ * the browser and this command's own pre-warm fetches already do. What replaces
+ * the gate is that each response is schema-parsed and a parse failure is
+ * reported as one — never degraded into a plausible-looking empty result.
  */
 
 const createdSessionSchema = z.object({
@@ -132,67 +142,27 @@ async function resolveFixtureTarget(
     };
   }
 
-  const inferred = inferDevCommandTarget(flags, env);
-  if (!inferred.ok) {
-    return {
-      ok: false,
-      result: usageFailure(inferred.message, json),
-    };
-  }
+  const session = await resolveSessionContext(flags, env, host);
+  if (!session.ok) return session;
 
-  const resolved = await resolveSessionContext(flags, env, host);
-  if (!resolved.ok) return resolved;
-  const context = resolved.context;
-
-  const result = await cliRequest(host, {
-    server: context.server,
-    token: context.token,
-    tokenSource: context.tokenSource,
-    method: "GET",
-    path: devServerRequestPath(context, inferred.target),
+  const resolved = await resolveRunningDevInstance({
+    flags,
+    selector: {
+      name: values["dev"],
+      disambiguate: "pass --dev <name> to select one",
+      bypass: "or name the dev server directly with --target <devUrl>",
+    },
+    context: session.context,
+    env,
+    host,
   });
-  if (result.kind !== "ok") {
-    return { ok: false, result: failureFromRequest(result, json) };
-  }
+  if (!resolved.ok) return resolved;
 
-  const parsed = devServersStatusResponseSchema.safeParse(result.body);
-  const running = (parsed.success ? parsed.data.servers : []).filter(
-    (s) => s.status === "running" && s.port !== null,
-  );
-  if (running.length === 0) {
-    return {
-      ok: false,
-      result: failure({
-        exitCode: EXIT_OPERATION_FAILED,
-        message: "no running dev server to target",
-        hint: "start one with 'cctl dev ensure', then re-run",
-        json,
-      }),
-    };
-  }
-  const devName = values["dev"];
-  const target =
-    devName === undefined
-      ? running.length === 1
-        ? running[0]
-        : undefined
-      : running.find((s) => s.serverName === devName);
-  if (target === undefined) {
-    return {
-      ok: false,
-      result: usageFailure(
-        devName === undefined
-          ? `multiple dev servers running (${running.map((s) => s.serverName).join(", ")}); pass --dev <name> to select one`
-          : `no running dev server named "${devName}" (running: ${running.map((s) => s.serverName).join(", ")})`,
-        json,
-      ),
-    };
-  }
   return {
     ok: true,
     target: {
-      url: `http://localhost:${target.port}`,
-      worktreePath: target.worktreePath,
+      url: resolved.instance.url,
+      worktreePath: resolved.instance.worktreePath,
     },
   };
 }
@@ -211,6 +181,7 @@ async function targetRequest(
     tokenSource: null,
     method,
     path: pathAndQuery,
+    unstamped: true,
     ...(body !== undefined ? { body } : {}),
   });
 }

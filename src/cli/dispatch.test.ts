@@ -42,6 +42,7 @@ describe("dispatchGroup", () => {
           return ok;
         },
         stop: async () => ok,
+        doctor: async () => ok,
       },
     });
     expect(result).toBe(ok);
@@ -57,13 +58,14 @@ describe("dispatchGroup", () => {
         list: async () => ok,
         ensure: async () => ok,
         stop: async () => ok,
+        doctor: async () => ok,
       },
     });
     expect(result.exitCode).toBe(EXIT_USAGE);
     // The verb list is the registry's own children (order preserved), not a
     // hand-written string in the group module.
     expect(result.stderr).toContain(
-      "dev requires a subcommand: list, ensure, or stop",
+      "dev requires a subcommand: list, ensure, stop, or doctor",
     );
   });
 
@@ -76,12 +78,15 @@ describe("dispatchGroup", () => {
         list: async () => ok,
         ensure: async () => ok,
         stop: async () => ok,
+        doctor: async () => ok,
       },
     });
     expect(result.exitCode).toBe(EXIT_USAGE);
     expect(result.stderr).toContain('unknown dev subcommand "frobnicate"');
     // Steers back to the real children.
-    expect(result.stderr).toContain("dev subcommands: list, ensure, or stop");
+    expect(result.stderr).toContain(
+      "dev subcommands: list, ensure, stop, or doctor",
+    );
   });
 
   it("renders a single-verb group's subcommand list without a trailing 'or'", async () => {
@@ -135,6 +140,7 @@ describe("dispatchGroup", () => {
         list: async () => ok,
         ensure: async () => ok,
         stop: async () => ok,
+        doctor: async () => ok,
       },
     });
     expect(result.exitCode).toBe(EXIT_USAGE);

@@ -3,7 +3,7 @@ import path from "node:path";
 import packageMetadata from "../../../package.json";
 import { getTaskRunner } from "@/lib/agent-backends/registry";
 import { resolveConfiguredAgentBackendDefaults } from "@/lib/agent-backends/conversation-policy";
-import { BUILD_INFO } from "@/lib/build-info";
+import { getBuildInfo } from "@/lib/build-info";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import { getConfigDirPath, readConfig } from "@/lib/config/loader";
 import { compactionEnvelopeToMarkdown } from "@/lib/context-artifacts/render-markdown";
@@ -155,9 +155,10 @@ export function getTicketOperationLock(): TicketOperationLock {
 }
 
 function quickTicketDiagnosticEnvironment() {
+  const build = getBuildInfo();
   return {
-    sha: BUILD_INFO.sha,
-    buildTime: BUILD_INFO.buildTime,
+    sha: build.sha,
+    buildTime: build.buildTime,
     appVersion: packageMetadata.version,
     platform: `${process.platform}-${process.arch}-node${process.versions.node}`,
   };

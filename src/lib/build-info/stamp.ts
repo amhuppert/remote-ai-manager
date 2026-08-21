@@ -34,6 +34,33 @@ export function toVersionResponse(info: BuildInfo): VersionResponse {
   };
 }
 
+/** Holds the identity a process pinned; empty until its first read. */
+export interface BuildIdentityPin {
+  info?: BuildInfo;
+}
+
+/**
+ * The build identity of the process holding `pin` — the first one it ever saw.
+ *
+ * A server publishes its own `cctl` at boot and then refuses any binary whose
+ * stamp differs, so its identity must outlive whatever the generated module
+ * says later. In `next dev` it does not: `bun run build:info` regenerates the
+ * stamp and Next hot-reloads the module, so a `bun run build` or `bun install`
+ * in the worktree silently retargets the RUNNING server and orphans the binary
+ * it already published — which its own agents then get exit 4 from. Pinning on
+ * first read makes identity a property of the process, so the published binary
+ * and the server that published it cannot drift apart while it runs.
+ *
+ * Production never regenerates the module, so this is a no-op there.
+ */
+export function pinBuildIdentity(
+  pin: BuildIdentityPin,
+  current: BuildInfo,
+): BuildInfo {
+  pin.info ??= current;
+  return pin.info;
+}
+
 /**
  * Render the generated build-info module source. Written by
  * scripts/generate-build-info.ts to src/lib/build-info/build-info.generated.ts

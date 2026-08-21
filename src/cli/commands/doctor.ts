@@ -1,6 +1,3 @@
-import { z } from "zod";
-import { BUILD_INFO, formatBuildStamp } from "@/lib/build-info";
-import { getErrorMessage } from "@/lib/shared/errors";
 import {
   EXIT_OK,
   EXIT_OPERATION_FAILED,
@@ -16,18 +13,7 @@ import {
   type CliResult,
   type GlobalFlags,
 } from "../shared";
-
-const handshakeResponseSchema = z.object({
-  serverBuild: z.string(),
-  identity: z.object({
-    project: z.string().nullable(),
-    session: z.string().nullable(),
-    conversation: z.string().nullable(),
-  }),
-  tokenValid: z.boolean(),
-  /** Absent on servers older than the build-parity recovery path. */
-  cliPath: z.string().optional(),
-});
+import { probeHandshake, type HandshakeFacts } from "./handshake-probe";
 
 /**
  * `cctl doctor` — connectivity, build-stamp, and identity diagnosis against
@@ -42,6 +28,10 @@ const handshakeResponseSchema = z.object({
  * The handshake endpoint is scope-agnostic — it echoes whatever identity it is
  * given — so `doctor` is project-supported: a project agent diagnosing its server
  * connection reports `session=-` rather than losing the command.
+ *
+ * `doctor` diagnoses ONE server, the one it is pointed at. Diagnosing the
+ * managing/dev-server PAIR is `cctl dev doctor`, which owns the dev-server
+ * registry and each instance's own token.
  */
 export async function runDoctor(
   flags: GlobalFlags,
@@ -72,53 +62,38 @@ export async function runDoctor(
     conversation: flags.conversation ?? env["CC_CONVERSATION_ID"] ?? null,
   };
 
-  const cliBuild = formatBuildStamp(BUILD_INFO);
-  const url = new URL("/api/agent/handshake", server);
-  for (const [key, value] of Object.entries(identity)) {
-    if (value !== null) url.searchParams.set(key, value);
-  }
-  const headers: Record<string, string> = { "x-cc-cli-build": cliBuild };
-  if (token !== null) headers["authorization"] = `Bearer ${token}`;
+  const outcome = await probeHandshake(host, {
+    server,
+    token,
+    tokenSource,
+    identity,
+  });
 
-  let response: Response;
-  try {
-    response = await host.fetch(url.toString(), { method: "GET", headers });
-  } catch (error) {
+  if (outcome.kind === "unreachable") {
     return connectionFailure({
       message: `cctl doctor: cannot reach the CC server at ${server} — is the CC server running?`,
-      detail: getErrorMessage(error),
+      detail: outcome.detail,
       hint: "start the CC server, then re-run `cctl doctor`",
       json,
     });
   }
-
-  if (response.status === 401) {
-    const message =
-      token === null
-        ? "cctl doctor: no API token — pass --token, set CC_API_TOKEN, or run the CC server once to provision <configDir>/api-token"
-        : `cctl doctor: the server rejected the API token (source: ${tokenSource})`;
-    return connectionFailure({
-      message,
-      hint: "pass --token or set CC_API_TOKEN to the server's <configDir>/api-token value, then re-run `cctl doctor`",
+  if (outcome.kind === "unauthorized") {
+    return tokenFailure({
+      server,
+      ambient: env["CC_SERVER_URL"],
+      token,
+      tokenSource,
       json,
     });
   }
-  if (!response.ok) {
+  if (outcome.kind === "http_error") {
     return failure({
       exitCode: EXIT_OPERATION_FAILED,
-      message: `cctl doctor: handshake failed (HTTP ${response.status})`,
+      message: `cctl doctor: handshake failed (HTTP ${outcome.status})`,
       json,
     });
   }
-
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    body = undefined;
-  }
-  const parsed = handshakeResponseSchema.safeParse(body);
-  if (!parsed.success) {
+  if (outcome.kind === "not_a_cc_server") {
     return failure({
       exitCode: EXIT_OPERATION_FAILED,
       message:
@@ -127,54 +102,94 @@ export async function runDoctor(
     });
   }
 
-  const {
-    serverBuild,
-    identity: echoedIdentity,
-    tokenValid,
-    cliPath,
-  } = parsed.data;
-  const buildMatch = serverBuild === cliBuild;
-  // Naming the wrong cause here is worse than saying nothing: an agent that
-  // reads "transient" runs the command anyway, against a surface from another
-  // tree. Every CC server publishes its own cctl, so skew means wrong binary
-  // until proven otherwise, and the recovery is that server's own path.
-  const warning = buildMatch
-    ? ""
-    : [
-        `warning: this cctl is build ${cliBuild}; ${server} is build ${serverBuild}`,
-        cliPath === undefined
-          ? "  that server publishes its own cctl at <its configDir>/bin/cctl — run that binary against it"
-          : `  run that server's own binary instead: ${cliPath}`,
-        "  (a server restart alone does not change the stamp — a differing stamp is a differing build)",
-        "",
-      ].join("\n");
-
-  const identityLine = [
-    `project=${echoedIdentity.project ?? "-"}`,
-    `session=${echoedIdentity.session ?? "-"}`,
-    `conversation=${echoedIdentity.conversation ?? "-"}`,
-  ].join(" ");
-  const humanStdout = [
-    `server        ${server}`,
-    `server build  ${serverBuild}`,
-    `cli build     ${cliBuild}`,
-    ...(cliPath === undefined ? [] : [`server cctl   ${cliPath}`]),
-    `identity      ${identityLine}`,
-    `token         valid (source: ${tokenSource ?? "-"})`,
-  ].join("\n");
-
+  const facts = outcome.facts;
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, `${humanStdout}\n`, {
+    stdout: render(json, `${humanReport(facts)}\n`, {
       ok: true,
-      server,
-      serverBuild,
-      cliBuild,
-      buildMatch,
-      identity: echoedIdentity,
-      tokenValid,
-      tokenSource,
+      server: facts.server,
+      serverBuild: facts.serverBuild,
+      cliBuild: facts.cliBuild,
+      buildMatch: facts.buildMatch,
+      identity: facts.identity,
+      tokenValid: facts.tokenValid,
+      tokenSource: facts.tokenSource,
+      // Both are what the build-skew refusal's own hint sends the caller here
+      // for: which binary to re-run, and which instance's state they are in.
+      ...(facts.cliPath === undefined ? {} : { cliPath: facts.cliPath }),
+      ...(facts.configDir === undefined ? {} : { configDir: facts.configDir }),
     }),
-    stderr: warning,
+    stderr: skewWarning(facts),
   };
+}
+
+/**
+ * A rejected token is ambiguous in a way that matters: every CC instance mints
+ * its own, and the one in the environment belongs to the instance that launched
+ * this agent. Read as "your token is broken", the caller re-reads the same file;
+ * read as "wrong instance", they go get the right one.
+ */
+function tokenFailure(input: {
+  server: string;
+  ambient: string | undefined;
+  token: string | null;
+  tokenSource: string | null;
+  json: boolean;
+}): CliResult {
+  const { server, ambient, token, tokenSource, json } = input;
+  if (token === null) {
+    return connectionFailure({
+      message:
+        "cctl doctor: no API token — pass --token, set CC_API_TOKEN, or run the CC server once to provision <configDir>/api-token",
+      hint: "pass --token or set CC_API_TOKEN to the server's <configDir>/api-token value, then re-run `cctl doctor`",
+      json,
+    });
+  }
+  const crossInstance = ambient !== undefined && ambient !== server;
+  return connectionFailure({
+    message: crossInstance
+      ? `cctl doctor: ${server} rejected the API token — the one in this environment (source: ${tokenSource ?? "-"}) authenticates ${ambient}, and every CC instance mints its own`
+      : `cctl doctor: the server rejected the API token (source: ${tokenSource})`,
+    hint: crossInstance
+      ? "read that instance's token from its own <configDir>/api-token, or run `cctl dev doctor` — it resolves this session's dev server and uses that server's token for you"
+      : "pass --token or set CC_API_TOKEN to the server's <configDir>/api-token value, then re-run `cctl doctor`",
+    json,
+  });
+}
+
+function humanReport(facts: HandshakeFacts): string {
+  const identityLine = [
+    `project=${facts.identity.project ?? "-"}`,
+    `session=${facts.identity.session ?? "-"}`,
+    `conversation=${facts.identity.conversation ?? "-"}`,
+  ].join(" ");
+  return [
+    `server        ${facts.server}`,
+    `server build  ${facts.serverBuild}`,
+    `cli build     ${facts.cliBuild}`,
+    ...(facts.configDir === undefined
+      ? []
+      : [`config dir    ${facts.configDir}`]),
+    ...(facts.cliPath === undefined ? [] : [`server cctl   ${facts.cliPath}`]),
+    `identity      ${identityLine}`,
+    `token         valid (source: ${facts.tokenSource ?? "-"})`,
+  ].join("\n");
+}
+
+/**
+ * Naming the wrong cause here is worse than saying nothing: an agent that reads
+ * "transient" runs the command anyway, against a surface from another tree.
+ * Every CC server publishes its own cctl, so skew means wrong binary until
+ * proven otherwise, and the recovery is that server's own path.
+ */
+function skewWarning(facts: HandshakeFacts): string {
+  if (facts.buildMatch) return "";
+  return [
+    `warning: this cctl is build ${facts.cliBuild}; ${facts.server} is build ${facts.serverBuild}`,
+    facts.cliPath === undefined
+      ? "  that server publishes its own cctl at <its configDir>/bin/cctl — run that binary against it"
+      : `  run that server's own binary instead: ${facts.cliPath}`,
+    "  (a server keeps the build it booted with, so a differing stamp is a differing build)",
+    "",
+  ].join("\n");
 }

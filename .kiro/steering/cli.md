@@ -180,6 +180,22 @@ run` and `workflow run` it chooses whether to block at all. Each leaf's help sta
 contract — that is where the split is documented, and a rename would break the ecosystem's muscle
 memory for a naming issue with no recorded failure.
 
+**Build parity has exactly one exemption, and it is a property of the TARGET, not of the
+verb.** Every command addresses the single CC instance that owns the caller's session, so the gate's
+question — "is this binary the surface that server published?" — is answerable. `fixture` addresses a
+SECOND instance (a worktree dev server running the branch, while the binary comes from the installed
+build), so the two differ by construction and no binary satisfies both hops: the gate forbade the
+command instead of protecting anything, and `cctl fixture` had no working invocation from a branch
+worktree at all. Requests that cross into another instance therefore set
+`CliRequestParams.unstamped` and are read as ordinary API clients — the same thing the browser and
+this command's own pre-warm fetches already are. It is bounded to callers using only the plain
+project/session/conversation REST surface, and what replaces the gate is that every response is
+schema-parsed and a parse failure is REPORTED rather than degraded into a plausible empty result
+(reading a drifted dev-servers envelope as "none running" is the failure this clause exists to
+prevent). A server's own build identity is pinned for the life of its process
+(`pinBuildIdentity`), so the binary it publishes at boot cannot be orphaned by a regenerated stamp;
+`cctl dev doctor` is where an agent sees both instances and their state directories at once.
+
 `validate run` discloses what its verdict actually covers: a pass prints one verdict line with the
 resolved scope and, when the server resolved a file list, the matched-file count. A zero-match pass
 says so and still exits `0`, because merge gates depend on green semantics; `--require-match` is the

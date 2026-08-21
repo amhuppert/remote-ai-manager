@@ -40,7 +40,7 @@ bun run build
 
 `bun run lint` also runs the architecture seam ratchet; the registered `lint` command does not, because `seams` owns it. Database migrations run during server startup; before changing persistence, follow `.kiro/steering/tech.md` and `src/lib/state-store/migrations/README.md`.
 
-In Command Center sessions, run `cctl dev ensure` before browser, Playwright, Storybook, or Next.js diagnostics. Use the returned session-scoped URL; never assume a port.
+In Command Center sessions, run `cctl dev ensure` before browser, Playwright, Storybook, or Next.js diagnostics. Use the returned session-scoped URL; never assume a port. That dev server is a **separate CC instance** with its own database, logs, transcripts, and api-token: anything you create through the ambient `cctl` lands on the managing server and will never appear in it. To produce state inside it, use `cctl fixture`; to see both instances side by side, `cctl dev doctor`.
 
 ## Worktree and live-state safety
 

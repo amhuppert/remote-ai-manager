@@ -11,7 +11,7 @@ import { NextResponse } from "next/server";
 
 import { createLogger, withTracing } from "@/lib/logging";
 
-import { BUILD_INFO } from "./build-info.generated";
+import { getBuildInfo } from "./index";
 import { toVersionResponse, type BuildInfo } from "./stamp";
 
 const log = createLogger("build-info");
@@ -20,9 +20,7 @@ export interface VersionRouteDeps {
   getBuildInfo(): BuildInfo;
 }
 
-const defaultDeps: VersionRouteDeps = {
-  getBuildInfo: () => BUILD_INFO,
-};
+const defaultDeps: VersionRouteDeps = { getBuildInfo };
 
 export function createVersionRouteHandlers(
   deps: VersionRouteDeps = defaultDeps,

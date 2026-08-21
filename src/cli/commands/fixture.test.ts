@@ -108,6 +108,93 @@ function makeHost(
   };
 }
 
+/**
+ * Both CC instances gated, as they are during any branch work: the managing
+ * server runs the installed build and the worktree dev server runs the branch,
+ * so whichever stamp a binary carries is skewed against one of them. This host
+ * refuses every stamped caller the way `src/middleware.ts` does — no binary can
+ * satisfy the pair, which is exactly why fixture states no build at all.
+ */
+function refusingEverySkewedCaller(
+  host: CliHost & { requests: RecordedRequest[] },
+): CliHost & { requests: RecordedRequest[] } {
+  const inner = host.fetch;
+  host.fetch = async (url, init) => {
+    if (init.headers?.["x-cc-cli-build"] !== undefined) {
+      host.requests.push({ url, init });
+      return jsonResponse(
+        {
+          error:
+            "refused before execution: this cctl is not the build this server published",
+          code: "build_skew",
+          details: { serverBuild: "another-build", serverCliPath: null },
+        },
+        409,
+      );
+    }
+    return inner(url, init);
+  };
+  return host;
+}
+
+describe("fixture across a build-skewed instance pair", () => {
+  it("creates the session when neither server would accept this binary's build", async () => {
+    const host = refusingEverySkewedCaller(
+      makeHost(({ url, init }) => {
+        if (
+          url === `${TARGET}/api/projects/scratch/sessions` &&
+          init.method === "POST"
+        ) {
+          return jsonResponse(createdSession(), 201);
+        }
+        return null;
+      }),
+    );
+
+    const result = await runCli(
+      ["fixture", "session", "create", "scratch", "--skip-warm", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).sessionName).toBe("fx-test");
+    expect(
+      host.requests.filter(
+        (r) => r.init.headers?.["x-cc-cli-build"] !== undefined,
+      ),
+    ).toEqual([]);
+  });
+
+  it("runs a turn when neither server would accept this binary's build", async () => {
+    const conversationsUrl = `${TARGET}/api/projects/scratch/sessions/fx-test/conversations`;
+    const host = refusingEverySkewedCaller(
+      makeHost(({ url, init }) => {
+        if (url === conversationsUrl && init.method === "GET") {
+          return jsonResponse([{ id: "c1", status: "new", archived: false }]);
+        }
+        if (url === `${conversationsUrl}/c1/prompt` && init.method === "POST") {
+          return sseResponse("event: done\ndata: {}\n\n");
+        }
+        return null;
+      }),
+    );
+
+    const result = await runCli(
+      ["fixture", "prompt", "scratch", "fx-test", "--text", "go", "--wait"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(
+      host.requests.filter(
+        (r) => r.init.headers?.["x-cc-cli-build"] !== undefined,
+      ),
+    ).toEqual([]);
+  });
+});
+
 describe("cctl fixture session create", () => {
   function createHost() {
     return makeHost(({ url, init }) => {
@@ -348,6 +435,49 @@ describe("fixture target resolution", () => {
     expect(host.requests.filter(({ init }) => init.method === "POST")).toEqual(
       [],
     );
+  });
+
+  // Unstamped requests give up the build gate, so a drifted envelope has to be
+  // reported as one: read as "no servers", it sends the caller to start a dev
+  // server that is already running.
+  it("reports an unreadable dev-servers envelope instead of reading it as none", async () => {
+    const host = makeHost(() => null);
+    host.fetch = async (url, init) => {
+      host.requests.push({ url, init });
+      if (url === DEV_SERVERS_URL) {
+        return jsonResponse({ devServers: [{ name: "nextjs", state: "up" }] });
+      }
+      return jsonResponse({ error: "unrouted" }, 404);
+    };
+
+    const result = await runCli(
+      ["fixture", "session", "create", "scratch"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("unexpected dev-servers response");
+    expect(result.stderr).not.toContain("cctl dev ensure");
+  });
+
+  it("names the repointed-CC_SERVER_URL trap when the managing server cannot resolve the session", async () => {
+    const host = makeHost(() => null);
+    host.fetch = async (url, init) => {
+      host.requests.push({ url, init });
+      return jsonResponse({ error: "Project not found" }, 404);
+    };
+
+    const result = await runCli(
+      ["fixture", "session", "create", "scratch"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Project not found");
+    expect(result.stderr).toContain("CC_SERVER_URL");
+    expect(result.stderr).toContain("--target");
   });
 
   it("refuses to run against the managing CC server", async () => {

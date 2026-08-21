@@ -7,6 +7,7 @@ import {
   EXIT_OPERATION_FAILED,
   checkFlags,
   cliRequest,
+  connectionFailure,
   encodePathSegment,
   failure,
   failureFromRequestNotFoundAsUsage,
@@ -19,7 +20,16 @@ import {
   type CliResult,
   type GlobalFlags,
 } from "../shared";
-import { devServerRequestPath, inferDevCommandTarget } from "./dev-target";
+import {
+  devServerRequestPath,
+  inferDevCommandTarget,
+  resolveRunningDevInstance,
+} from "./dev-target";
+import {
+  probeHandshake,
+  type HandshakeFacts,
+  type HandshakeOutcome,
+} from "./handshake-probe";
 
 const DEV_TARGET_ERROR_CODES = new Set([
   "INVALID_DEV_SERVER_TARGET",
@@ -113,7 +123,209 @@ export async function runDev(
       list: (r) => runDevList(r, flags, values, env, host),
       ensure: (r) => runDevEnsure(r, flags, values, env, host),
       stop: (r) => runDevStop(r, flags, values, env, host),
+      doctor: (r) => runDevDoctor(r, flags, values, env, host),
     },
+  });
+}
+
+/** One instance's line block in the `dev doctor` report. */
+function instanceBlock(
+  heading: string,
+  facts: HandshakeFacts,
+  extra: string[] = [],
+): string[] {
+  return [
+    heading,
+    `  build       ${facts.serverBuild}`,
+    ...(facts.configDir === undefined
+      ? []
+      : [`  config dir  ${facts.configDir}`]),
+    ...(facts.cliPath === undefined ? [] : [`  its cctl    ${facts.cliPath}`]),
+    ...extra,
+  ];
+}
+
+/**
+ * `cctl dev doctor [<serverName>]` — "which CC instance am I driving?"
+ *
+ * A worktree dev server is a SECOND, fully independent CC instance: its own
+ * database, transcripts, logs, api-token, and published cctl. Nothing else in
+ * the CLI shows that, and the split is invisible in the happy path — reads of
+ * discovered state (projects, files) look identical against either instance,
+ * and only server-owned durable state (validation runs, workflow executions,
+ * jobs, notifications, conversations) diverges. So an agent runs a state-
+ * producing verb against the managing server, looks for it in the dev server's
+ * UI, finds nothing, and concludes the feature is broken.
+ *
+ * This prints both instances side by side and names which one a bare `cctl`
+ * verb reaches. Two properties are what make it usable at the moment of
+ * confusion: it resolves the dev server itself (no port or path to know), and
+ * it authenticates with THAT server's token, since the ambient one belongs to
+ * the managing instance and would only 401.
+ */
+async function runDevDoctor(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, "dev doctor", json);
+  if (denied) return denied;
+  if (rest.length > 1) {
+    return usageFailure("dev doctor takes at most one <serverName>", json);
+  }
+
+  const session = await resolveSessionContext(flags, env, host);
+  if (!session.ok) return session.result;
+  const context = session.context;
+
+  const resolved = await resolveRunningDevInstance({
+    flags,
+    selector: {
+      name: rest[0],
+      disambiguate: "name one: `cctl dev doctor <serverName>`",
+    },
+    context,
+    env,
+    host,
+  });
+  if (!resolved.ok) return resolved.result;
+  const instance = resolved.instance;
+
+  const identity = {
+    project: context.project,
+    session: context.session,
+    conversation: flags.conversation ?? env["CC_CONVERSATION_ID"] ?? null,
+  };
+
+  const managing = await probeHandshake(host, {
+    server: context.server,
+    token: context.token,
+    tokenSource: context.tokenSource,
+    identity,
+  });
+  if (managing.kind !== "ok") {
+    return probeFailure(
+      `the managing server ${context.server}`,
+      managing,
+      json,
+    );
+  }
+
+  // The dev instance mints its own token; the ambient one authenticates the
+  // managing server and is exactly what makes a hand-rolled `doctor --server
+  // <devUrl>` 401. Its config dir is the worktree convention the dev script
+  // sets (CC_CONFIG_DIR=$PWD/.config) — enough to get in, after which the
+  // handshake reports where that instance's state actually lives.
+  const tokenPath =
+    instance.worktreePath === null
+      ? null
+      : `${instance.worktreePath}/.config/api-token`;
+  const devToken =
+    tokenPath === null
+      ? null
+      : ((await host.readTextFile(tokenPath))?.trim() ?? "");
+  if (devToken === null || devToken === "") {
+    return connectionFailure({
+      message: `no API token for the dev server at ${instance.url}${tokenPath === null ? "" : ` — nothing readable at ${tokenPath}`}`,
+      hint: "start it with `cctl dev ensure` (a CC server provisions its token on first boot), then re-run",
+      json,
+    });
+  }
+
+  const dev = await probeHandshake(host, {
+    server: instance.url,
+    token: devToken,
+    tokenSource: "file",
+    identity,
+  });
+  if (dev.kind !== "ok") {
+    return probeFailure(`the dev server ${instance.url}`, dev, json);
+  }
+
+  const sameInstance =
+    managing.facts.configDir !== undefined &&
+    managing.facts.configDir === dev.facts.configDir;
+  const bareTalksTo = sameInstance ? "both (one instance)" : context.server;
+
+  const human = [
+    ...instanceBlock(
+      `managing      ${context.server}  (your agent session lives here)`,
+      managing.facts,
+    ),
+    ...instanceBlock(
+      `dev ${instance.serverName}    ${instance.url}  (worktree instance${sameInstance ? "" : " — separate database, logs, transcripts"})`,
+      dev.facts,
+      instance.worktreePath === null
+        ? []
+        : [`  worktree    ${instance.worktreePath}`],
+    ),
+    `cli build     ${managing.facts.cliBuild}`,
+    `bare \`cctl\`   ${bareTalksTo}`,
+  ].join("\n");
+
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(json, `${human}\n`, {
+      ok: true,
+      managing: instanceFacts(context.server, managing.facts),
+      dev: {
+        serverName: instance.serverName,
+        worktreePath: instance.worktreePath,
+        ...instanceFacts(instance.url, dev.facts),
+      },
+      cliBuild: managing.facts.cliBuild,
+      sameInstance,
+      ...(sameInstance
+        ? {}
+        : {
+            hint: `state produced by a bare \`cctl\` verb lands on ${context.server} and never appears in ${instance.url} — run the verb from a session ON the dev server (\`cctl fixture\`) to produce state there`,
+          }),
+    }),
+    stderr: "",
+  };
+}
+
+function instanceFacts(server: string, facts: HandshakeFacts) {
+  return {
+    server,
+    serverBuild: facts.serverBuild,
+    buildMatch: facts.buildMatch,
+    ...(facts.configDir === undefined ? {} : { configDir: facts.configDir }),
+    ...(facts.cliPath === undefined ? {} : { cliPath: facts.cliPath }),
+  };
+}
+
+/** Render a failed probe as the exit class its cause belongs to. */
+function probeFailure(
+  label: string,
+  outcome: Exclude<HandshakeOutcome, { kind: "ok" }>,
+  json: boolean,
+): CliResult {
+  if (outcome.kind === "unreachable") {
+    return connectionFailure({
+      message: `cannot reach ${label}`,
+      detail: outcome.detail,
+      hint: "check it is running with `cctl dev list`, then re-run",
+      json,
+    });
+  }
+  if (outcome.kind === "unauthorized") {
+    return connectionFailure({
+      message: `${label} rejected its own API token`,
+      hint: "restart it with `cctl dev ensure` so it re-provisions <configDir>/api-token",
+      json,
+    });
+  }
+  return failure({
+    exitCode: EXIT_OPERATION_FAILED,
+    message:
+      outcome.kind === "http_error"
+        ? `${label} failed the handshake (HTTP ${outcome.status})`
+        : `${label} returned an unreadable handshake — is it a CC server?`,
+    json,
   });
 }
 

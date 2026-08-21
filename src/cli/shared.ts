@@ -1146,6 +1146,22 @@ export interface CliRequestParams {
   principalCapabilities?: CliPrincipalCapabilities;
   /** Bound the complete HTTP operation; the real host aborts at this deadline. */
   timeoutMs?: number;
+  /**
+   * Send no build stamp, so the server's parity gate reads this as an ordinary
+   * API client — the browser, curl, an internal fetch — rather than as its own
+   * published cctl.
+   *
+   * The gate asks "is this binary the command surface THIS server published",
+   * which is the right question for every verb that drives the one CC instance
+   * owning the caller's session. `fixture` is the exception it cannot answer:
+   * it deliberately addresses a SECOND instance (a worktree dev server), which
+   * runs the branch while the binary comes from the installed build, so the two
+   * differ by construction and no binary satisfies both hops. There the gate
+   * forbids the command's purpose instead of protecting anything. Confined to
+   * callers that use only the plain project/session/conversation REST surface
+   * the browser already drives, and whose every response is schema-parsed.
+   */
+  unstamped?: boolean;
 }
 
 function coerceIssues(value: unknown): RequestIssue[] | undefined {
@@ -1238,7 +1254,9 @@ function coerceReminders(value: unknown): string[] | undefined {
 
 function buildRequestInit(params: CliRequestParams): FetchInit {
   const headers: Record<string, string> = {
-    "x-cc-cli-build": formatBuildStamp(BUILD_INFO),
+    ...(params.unstamped === true
+      ? {}
+      : { "x-cc-cli-build": formatBuildStamp(BUILD_INFO) }),
     "content-type": "application/json",
     ...(params.headers ?? {}),
     ...(params.principalCapabilities?.conversation

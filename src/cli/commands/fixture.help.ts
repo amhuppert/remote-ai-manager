@@ -14,7 +14,7 @@ import type { CommandHelpEntry } from "../help-types";
  * not only the hub.
  */
 const TARGET_NOTE =
-  "Targets the invoking session or workflow context's WORKTREE dev server (auto-resolved via `cctl dev`), never the managing CC instance — fixtures create and delete real sessions. Workflow identity is verified server-side and resolves the canonical lane worktree without falling back to the session. An explicit --target equal to the managing server is refused. `--dev <serverName>` disambiguates when several dev servers run.";
+  "Targets the invoking session or workflow context's WORKTREE dev server (auto-resolved via `cctl dev`), never the managing CC instance — fixtures create and delete real sessions. Workflow identity is verified server-side and resolves the canonical lane worktree without falling back to the session. An explicit --target equal to the managing server is refused. `--dev <serverName>` disambiguates when several dev servers run. Because it spans two CC instances that run different builds by construction, fixture states no build stamp and is exempt from the build-parity gate — it works from any cctl, including one skewed against either server. Run `cctl dev doctor` when you are unsure which instance holds the state you are looking for.";
 
 const CC_LIVE_FEATURE_TEST = {
   name: "cc-live-feature-test",
@@ -36,6 +36,10 @@ export const fixtureHelpEntries: CommandHelpEntry[] = [
       {
         command: "dev ensure",
         oneLiner: "start the worktree dev server fixtures run against",
+      },
+      {
+        command: "dev doctor",
+        oneLiner: "check which instance holds the state you are looking for",
       },
     ],
     skills: [CC_LIVE_FEATURE_TEST],

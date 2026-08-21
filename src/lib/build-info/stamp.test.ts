@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   buildInfoSchema,
   formatBuildStamp,
+  pinBuildIdentity,
   renderBuildInfoModule,
   toVersionResponse,
   versionResponseSchema,
+  type BuildIdentityPin,
 } from "./stamp";
 
 describe("formatBuildStamp", () => {
@@ -88,6 +90,33 @@ describe("toVersionResponse", () => {
     });
 
     expect(versionResponseSchema.safeParse(response).success).toBe(true);
+  });
+});
+
+describe("pinBuildIdentity", () => {
+  const booted = {
+    sha: "abc1234",
+    buildTime: "2026-08-21T18:00:10.164Z",
+    message: "boot build",
+  };
+  // What `bun run build:info` writes mid-process — a `bun run build`, a
+  // `bun install`, or a sibling `bun run dev` all rewrite the generated module
+  // while the dev server is up, and Next hot-reloads it.
+  const regenerated = {
+    sha: "abc1234",
+    buildTime: "2026-08-21T18:01:06.523Z",
+    message: "boot build",
+  };
+
+  it("keeps the identity a process booted with when the module is regenerated", () => {
+    const pin: BuildIdentityPin = {};
+
+    expect(pinBuildIdentity(pin, booted)).toEqual(booted);
+    expect(pinBuildIdentity(pin, regenerated)).toEqual(booted);
+  });
+
+  it("reads the current module in a process that has not pinned yet", () => {
+    expect(pinBuildIdentity({}, regenerated)).toEqual(regenerated);
   });
 });
 

@@ -300,14 +300,16 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl docs delete` — deregister a reference document
   - `cctl docs delete <id>`
 
-- `cctl dev` — list, ensure, and stop dev servers
-  - `cctl dev <list|ensure|stop>`
+- `cctl dev` — list, ensure, stop, and diagnose dev servers
+  - `cctl dev <list|ensure|stop|doctor>`
 - `cctl dev list` — show configured dev servers with status and URLs
   - `cctl dev list [--json]`
 - `cctl dev ensure` — start a dev server and block until it is live
   - `cctl dev ensure [<serverName>]`
 - `cctl dev stop` — stop a running dev server
   - `cctl dev stop <serverName>`
+- `cctl dev doctor` — show which CC instance you are driving (managing vs dev server)
+  - `cctl dev doctor [<serverName>]`
 
 - `cctl fixture` — scaffold test sessions and run prompts against a dev server
   - `cctl fixture <session create|session delete|prompt|status>`
@@ -624,7 +626,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl exit-codes [--json]`
 
 - `cctl doctor` — check connectivity, auth, and build parity with the CC server
-  - `cctl doctor`
+  - `cctl doctor [--server <url>]`
 
 - `cctl version` — print the cctl build stamp
   - `cctl version`
@@ -925,10 +927,20 @@ cctl conversation compaction get 0197a3c2-... --format markdown
 Manage this session's **dev servers** — the app processes CC spawns per worktree
 (ports, local/remote URLs, liveness).
 
+A dev server is **a second CC instance**, not just your app on another port: it
+has its own database, logs, transcripts, api-token, published `cctl`, and
+discovered-projects list. The ambient `cctl` in your environment talks to the
+**managing** instance — the one your session lives in — so state you create with
+a bare verb never appears in the dev server's UI or DB. That split is invisible
+in the happy path, because reads of *discovered* state (projects, files) look
+identical against either one; only server-owned durable state (validation runs,
+workflow executions, jobs, notifications, conversations) diverges.
+
 ```
 cctl dev list [--json]
 cctl dev ensure [<serverName>]
 cctl dev stop <serverName>
+cctl dev doctor [<serverName>]
 ```
 
 - `list` — show every configured server with its status and the `local`/`remote`
@@ -943,6 +955,16 @@ cctl dev stop <serverName>
   drive and how to re-check liveness.
 - `stop` — stop a named server (ownership-verified, so externally owned listeners
   are never killed). Terminal — **no hint**.
+- `doctor` — report the managing server and this session's dev server **side by
+  side**: build stamp, the state directory each owns, and the `cctl` each
+  publishes, plus which one a bare `cctl` verb reaches. Run it whenever something
+  you created through the CLI does not show up in the dev server — differing
+  `config dir` values mean two databases. It resolves the dev server and
+  authenticates with *that server's* token, which is why the hand-rolled
+  `cctl doctor --server <devUrl>` exits `3`: every instance mints its own token
+  and the ambient `CC_API_TOKEN` belongs to the managing one. The registry read
+  states no build, so it still answers when your binary is skewed against either
+  instance.
 
 Always run `cctl dev ensure` **before** driving Playwright, browser, visual, or
 Next.js tools — never assume ports like 3000 or 6006 belong to your worktree;
@@ -963,6 +985,15 @@ verifying features in the running app. Every verb targets the session's
 **worktree dev server** (auto-resolved through `cctl dev`'s registry), never
 the managing CC instance: fixtures create and delete real sessions, and an
 explicit `--target` equal to the managing server is refused.
+
+This is the one command family that addresses **two** CC instances, and the only
+one exempt from the build-parity gate: the dev server runs your branch while your
+binary comes from whichever server published it, so the two builds differ by
+construction and any stamp would be refused by one hop or the other. fixture
+therefore states no build and works from **any** `cctl` — including one skewed
+against both servers. It is also how you produce **server-owned state inside the
+dev server**: prompt an agent in a fixture session and its own `CC_SERVER_URL`
+and `CC_API_TOKEN` point at that instance, so the verbs it runs land there.
 
 ```
 cctl fixture session create <project> [--name <n>] [--dev <serverName>] [--target <url>] [--skip-warm]

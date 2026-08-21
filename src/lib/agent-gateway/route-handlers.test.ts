@@ -62,6 +62,10 @@ describe("GET /api/agent/handshake", () => {
       // The recovery for a build mismatch is this server's own binary, so the
       // handshake has to name it rather than leave the caller guessing.
       cliPath: cctlInstallPath(dir),
+      // Two CC instances are distinguishable only by the state they own, and
+      // this is that identity: same config dir means same DB, logs, and
+      // transcripts. It is the tell for "my CLI and the UI disagree".
+      configDir: dir,
     });
   });
 

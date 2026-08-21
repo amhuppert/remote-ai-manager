@@ -33,6 +33,8 @@ export interface AgentGatewayDeps {
   getBootNonce?(): string | null;
   /** Absolute path of the cctl this server publishes. */
   getCliPath?(): string;
+  /** Absolute path of the state directory this server owns. */
+  getConfigDir?(): string;
 }
 
 export function createAgentGatewayHandlers(deps: AgentGatewayDeps = {}) {
@@ -41,9 +43,9 @@ export function createAgentGatewayHandlers(deps: AgentGatewayDeps = {}) {
   );
   const getServerBuildStamp = deps.getServerBuildStamp ?? getBuildStamp;
   const getBootNonce = deps.getBootNonce ?? getServerBootNonce;
-  const getCliPath =
-    deps.getCliPath ??
-    (() => cctlInstallPath(deps.configDir ?? getConfigDirPath()));
+  const getConfigDir =
+    deps.getConfigDir ?? (() => deps.configDir ?? getConfigDirPath());
+  const getCliPath = deps.getCliPath ?? (() => cctlInstallPath(getConfigDir()));
 
   async function handshakeGET(request: Request): Promise<Response> {
     const denied = await auth.requireToken(request);
@@ -67,9 +69,19 @@ export function createAgentGatewayHandlers(deps: AgentGatewayDeps = {}) {
 
     log.info("agent-gateway.handshake", { ...identity, cliBuild });
     // cliPath is what makes a build mismatch actionable: this server owns a
-    // stamped binary, and doctor is the command that can name it.
+    // stamped binary, and doctor is the command that can name it. configDir
+    // answers the question one build stamp cannot — WHICH INSTANCE this is.
+    // Several CC servers run at once (the managing instance plus a dev server
+    // per worktree), they share nothing but the machine, and the state a caller
+    // is looking for lives under exactly one of these paths.
     return NextResponse.json(
-      { serverBuild, identity, tokenValid: true, cliPath: getCliPath() },
+      {
+        serverBuild,
+        identity,
+        tokenValid: true,
+        cliPath: getCliPath(),
+        configDir: getConfigDir(),
+      },
       { headers },
     );
   }
