@@ -133,9 +133,10 @@ import {
   type GraphWorkflowExecutionSeed,
 } from "./execution-repository";
 import {
-  contextIdsResumingInfraHalt,
+  concludeValidationRound,
   isValidationRoundOpen,
   resetValidationRoundAttempts,
+  validationRoundResumeDispositions,
 } from "@/lib/workflow-graph/validation-round";
 interface GraphWorkflowExecutionRepository {
   getActive(
@@ -2422,6 +2423,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     let mergeRetryContextIds: string[] = [];
     let resetJoinIds: string[] = [];
     let laneConversationIdsToAbort: string[] = [];
+    // What this resume did to the rounds its halts left open. Assigned from
+    // inside the reducer, like the merge-retry ids, so a re-run reducer reports
+    // the committed pass rather than every attempt's accumulation.
+    let refilledRoundContextIds: string[] = [];
+    let retiredRoundContextIds: string[] = [];
 
     const nextExecution = await deps.executionRepository.mutateActive(
       projectPath,
@@ -2497,9 +2503,9 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         // it resolved, so lifecycle.jsonl halt→resume pairs stay verifiable.
         resumeCapture.resolvedHaltReason = execution.haltReason;
         // Captured here for the same reason — the halt reasons are cleared
-        // below, and which contexts they named decides whose validation round
-        // gets its attempt budget back.
-        const infraHaltContextIds = contextIdsResumingInfraHalt([
+        // below, and which contexts they named decides what happens to the
+        // rounds those halts deliberately left open.
+        const roundDispositions = validationRoundResumeDispositions([
           execution.haltReason,
           ...execution.secondaryHaltReasons,
         ]);
@@ -2542,6 +2548,8 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         execution.loopEpoch += 1;
 
         const retryIds: string[] = [];
+        const refilledRoundIds: string[] = [];
+        const retiredRoundIds: string[] = [];
         for (const contextState of Object.values(execution.contextStates)) {
           // Starting a new loop generation invalidates any scheduling
           // reservation from the old one: a superseded pass may have stamped a
@@ -2593,24 +2601,43 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
             // resumable halt in name only.
             contextState.consecutiveCandidateMismatchCount = 0;
           }
-          // Resume is the manual retry decision for an infrastructure halt too:
-          // the lanes that never reached a verdict get their attempt budget
-          // back, so the round can actually run again. Without this the halt is
-          // resumable in name only — every unsettled lane comes back already at
-          // the bound and re-halts on the first pass (D5). Only for the contexts
-          // the halt named, though: a restart-driven resume carries no halt
-          // reason, and giving it a reset would refill the budget on every
-          // server bounce.
+          // Resume is the manual retry decision for the two halts that leave a
+          // round open, and it owes them opposite things (see
+          // `validationRoundResumeDispositions`). An infrastructure halt gets a
+          // REFILL: the lanes that never reached a verdict get their attempt
+          // budget back, so the round can actually run again — without it the
+          // halt is resumable in name only, every unsettled lane coming back at
+          // the bound to re-halt on the first pass (D5). A plan defect gets a
+          // RETIREMENT: the recovery has rewritten the plan its seats judged, so
+          // the round has nothing left to say, and leaving it open would either
+          // replay a defect already repaired or lock the implementer out of the
+          // tasks the repair just added (#86).
+          //
+          // Only for the contexts a halt named: a restart-driven resume carries
+          // no halt reason at all, and its round is legitimately resumable.
           const round = contextState.validationRound;
-          if (
-            round &&
-            isValidationRoundOpen(round) &&
-            infraHaltContextIds.has(contextState.contextId)
-          ) {
-            contextState.validationRound = resetValidationRoundAttempts(round);
+          if (round && isValidationRoundOpen(round)) {
+            const disposition = roundDispositions.get(contextState.contextId);
+            if (disposition === "refill") {
+              contextState.validationRound =
+                resetValidationRoundAttempts(round);
+              refilledRoundIds.push(contextState.contextId);
+            } else if (disposition === "retire") {
+              // `null`, not a verdict: no validator judged the repaired plan,
+              // and the candidate has not necessarily moved. Concluded rather
+              // than erased — `seq` outlives the round it numbers, and the
+              // frozen candidate and findings stay readable.
+              contextState.validationRound = concludeValidationRound(
+                round,
+                null,
+              );
+              retiredRoundIds.push(contextState.contextId);
+            }
           }
         }
         mergeRetryContextIds = retryIds;
+        refilledRoundContextIds = refilledRoundIds;
+        retiredRoundContextIds = retiredRoundIds;
         execution.pendingMergeRetry = retryIds;
 
         hasInterrupted = Object.values(execution.taskStates).some(
@@ -2672,6 +2699,10 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       resetContextIds: Object.values(nextExecution.contextStates)
         .filter((cs) => cs.status === "ready")
         .map((cs) => cs.contextId),
+      // A retired round records `outcome: null`, so the halt→resume pair in
+      // lifecycle.jsonl is where an operator reads WHY it ended.
+      refilledRoundContextIds,
+      retiredRoundContextIds,
     });
     if (mergeRetryContextIds.length > 0) {
       execLogger.lifecycle("resume.merge_retry_scheduled", {

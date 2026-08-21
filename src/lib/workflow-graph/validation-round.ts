@@ -199,7 +199,8 @@ export function admitSpecialists(
  * reached a verdict gets its attempt budget back.
  *
  * This is the ONLY thing that clears an attempt count, and it is reachable only
- * through {@link contextIdsResumingInfraHalt}. The count lives in the round
+ * through the `refill` disposition of
+ * {@link validationRoundResumeDispositions}. The count lives in the round
  * record so it survives a crash — a restart that silently reset it would hand a
  * broken provider three fresh dispatches every time the server bounced, and the
  * fixed bound of three would bound nothing (D5). Resuming an infrastructure halt
@@ -233,29 +234,56 @@ export function resetValidationRoundAttempts(
 }
 
 /**
- * The contexts a resume is giving attempt budget back to: exactly the ones an
- * infrastructure halt named.
+ * What a resume does to a round its own halt deliberately left open.
  *
- * Resume has two callers that look identical at the execution level and are not.
+ * Two halts leave one behind, for opposite reasons, so they need opposite
+ * answers. An infrastructure halt kept the round so its settled verdicts would
+ * not be thrown away; a plan defect kept it so the recovery could READ the
+ * frozen candidate and the seats' findings. Once that recovery has spoken, the
+ * verdicts judged a contract that no longer exists.
+ */
+export type ResumeRoundDisposition =
+  /** Keep the round open; give the unsettled lanes their attempt budget back. */
+  | "refill"
+  /** End the round. Nothing it collected may be recorded. */
+  | "retire";
+
+/**
+ * What each context's open round is owed by this resume — or nothing, for a
+ * context no halt reason named.
+ *
+ * Resume has callers that look identical at the execution level and are not.
  * One is an operator clearing a `validator_infra_error` halt — a human decided
- * the provider is worth another try. The other is the restart path, where
+ * the provider is worth another try, so the budget is genuinely new. Another is
+ * the recovery that answers a `plan_defect` halt (plan repair's edit, or an
+ * operator's), where the round has to GO: its seats judged the plan the repair
+ * just rewrote, and a round that outlived that rewrite either replays a defect
+ * already fixed or refuses to release the candidate to the implementer the
+ * repair's new tasks need (#86). The third is the restart path, where
  * `normalizeAfterRestart` pauses a still-running execution with no halt reason
- * at all and the operator resumes that pause; nobody looked at anything there,
- * so a reset would let a crash loop buy three fresh dispatches per bounce.
+ * at all; nobody looked at anything there, so a refill would let a crash loop
+ * buy three fresh dispatches per bounce and a retirement would discard a round
+ * that is legitimately resumable.
  *
  * Scoped per context because halt reasons are: a sibling context's open round is
- * not what the operator resolved.
+ * not what the operator resolved. Retiring wins when one context is named by
+ * both, because a refill exists to PRESERVE verdicts and a repaired contract is
+ * exactly the case where those verdicts no longer describe anything.
  */
-export function contextIdsResumingInfraHalt(
+export function validationRoundResumeDispositions(
   haltReasons: readonly (GraphWorkflowHaltReason | null | undefined)[],
-): ReadonlySet<string> {
-  const contextIds = new Set<string>();
+): ReadonlyMap<string, ResumeRoundDisposition> {
+  const dispositions = new Map<string, ResumeRoundDisposition>();
   for (const reason of haltReasons) {
     if (reason?.type === "validator_infra_error") {
-      contextIds.add(reason.contextId);
+      if (!dispositions.has(reason.contextId)) {
+        dispositions.set(reason.contextId, "refill");
+      }
+    } else if (reason?.type === "plan_defect") {
+      dispositions.set(reason.contextId, "retire");
     }
   }
-  return contextIds;
+  return dispositions;
 }
 
 /**

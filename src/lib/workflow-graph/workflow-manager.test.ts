@@ -5911,6 +5911,241 @@ describe("graph workflow manager", () => {
     ).toMatchObject({ attempts: 2 });
   });
 
+  /**
+   * The halt a plan defect records, naming one context and one open round.
+   * `roundSeq` matches `openCohortRound`'s seq because the halt is the round's
+   * own conclusion, not a separate observation of it.
+   */
+  function planDefectHalt(contextId: string): GraphWorkflowHaltReason {
+    return {
+      type: "plan_defect",
+      contextId,
+      planDefects: [
+        {
+          assignmentId: "general",
+          title: "Criterion is unsatisfiable under the run's ui-only invariant",
+          description: "The criterion requires a server change.",
+          whyNotLocallyRemediable:
+            "No task in this context may touch the server.",
+          conflictingContract: "acceptance criterion [history-rows]",
+        },
+      ],
+      roundSeq: 2,
+      summary: null,
+    };
+  }
+
+  it("resume retires the validation round its plan-defect halt left open", async () => {
+    // The halt leaves the round OPEN on purpose, so the frozen candidate and the
+    // seats' verdicts stay readable to the repair that answers it. Nothing else
+    // on the recovery path retires it — so a repair that ADDS TASKS comes back
+    // to a loop that must seed an implementer against a round still owning the
+    // candidate, and the seed guard turns a resumable halt into
+    // execution_loop_failed (#86).
+    const baseExecution = createWorkflowExecution();
+    const contextState = baseExecution.contextStates["context-plan"]!;
+    const repository = createRepository(
+      createWorkflowExecution({
+        ...baseExecution,
+        status: "halted",
+        activeContextIds: [],
+        haltReason: planDefectHalt("context-plan"),
+        contextStates: {
+          ...baseExecution.contextStates,
+          "context-plan": {
+            ...contextState,
+            status: "ready",
+            validationRound: openCohortRound({}),
+          },
+        },
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const execution = await manager.resume("/repo", "session-1");
+
+    const round = execution.contextStates["context-plan"]?.validationRound;
+    expect(round?.phase).toBe("concluded");
+    // Retired without a verdict: no validator judged the repaired plan, and the
+    // candidate did not necessarily move, so neither `failed` nor
+    // `candidate_mismatch` is the true claim (D1).
+    expect(round?.outcome).toBeNull();
+    // Retired, not erased — `seq` has to outlive the round it numbers, and the
+    // frozen evidence stays readable.
+    expect(round?.seq).toBe(2);
+    expect(round?.candidate.candidateTreeHash).toBe("tree-a");
+    expect(round?.specialists["general"]).toMatchObject({
+      state: "verdict_pass",
+      summary: "general is satisfied.",
+    });
+  });
+
+  it("a retired plan-defect round cannot carry its stale defects into the next one", async () => {
+    // The other half of the same leak: with no tasks to seed, a still-open round
+    // whose candidate has not moved is RESUMED, and carriedForwardCohortLanes
+    // rebuilds the seat's stored planDefects into a fresh plan_defect aggregate
+    // — the identical halt, seconds later, with the repair invisible. Observed
+    // on lane-canvas-kit (#86): four plan-defect halts, all on roundSeq 4.
+    const baseExecution = createWorkflowExecution();
+    const contextState = baseExecution.contextStates["context-plan"]!;
+    const defectedRound = openCohortRound({});
+    const repository = createRepository(
+      createWorkflowExecution({
+        ...baseExecution,
+        status: "halted",
+        activeContextIds: [],
+        haltReason: planDefectHalt("context-plan"),
+        contextStates: {
+          ...baseExecution.contextStates,
+          "context-plan": {
+            ...contextState,
+            status: "ready",
+            validationRound: {
+              ...defectedRound,
+              specialists: {
+                ...defectedRound.specialists,
+                general: {
+                  ...defectedRound.specialists["general"]!,
+                  state: "verdict_fail",
+                  summary: "The criterion cannot be met here.",
+                  planDefects: [
+                    {
+                      title: "Criterion is unsatisfiable",
+                      description: "The criterion requires a server change.",
+                      whyNotLocallyRemediable:
+                        "No task in this context may touch the server.",
+                      conflictingContract:
+                        "acceptance criterion [history-rows]",
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const execution = await manager.resume("/repo", "session-1");
+
+    // A concluded round is never resumable, so the next pass freezes a fresh
+    // candidate and dispatches the cohort instead of replaying this verdict.
+    expect(
+      execution.contextStates["context-plan"]?.validationRound?.phase,
+    ).toBe("concluded");
+  });
+
+  it("resume retires the round only for the context its plan-defect halt names", async () => {
+    // Halt reasons are per-context, exactly as they are for the infrastructure
+    // case above: a sibling's open round is not what the repair answered.
+    const baseExecution = createWorkflowExecution();
+    const planState = baseExecution.contextStates["context-plan"]!;
+    const siblingState = baseExecution.contextStates["context-implement"]!;
+    const repository = createRepository(
+      createWorkflowExecution({
+        ...baseExecution,
+        status: "halted",
+        activeContextIds: [],
+        haltReason: planDefectHalt("context-plan"),
+        contextStates: {
+          ...baseExecution.contextStates,
+          "context-plan": {
+            ...planState,
+            status: "ready",
+            validationRound: openCohortRound({}),
+          },
+          "context-implement": {
+            ...siblingState,
+            status: "ready",
+            validationRound: openCohortRound({
+              state: "running",
+              attempts: 2,
+            }),
+          },
+        },
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const execution = await manager.resume("/repo", "session-1");
+
+    expect(
+      execution.contextStates["context-plan"]?.validationRound?.phase,
+    ).toBe("concluded");
+    expect(
+      execution.contextStates["context-implement"]?.validationRound?.phase,
+    ).toBe("specialists");
+  });
+
+  it("a context named by both a plan-defect and an infrastructure halt retires rather than refills", async () => {
+    // Retiring wins. A refill exists to PRESERVE the verdicts a round already
+    // collected, and a repaired contract is exactly the case where those
+    // verdicts judged a plan that no longer exists.
+    const baseExecution = createWorkflowExecution();
+    const contextState = baseExecution.contextStates["context-plan"]!;
+    const repository = createRepository(
+      createWorkflowExecution({
+        ...baseExecution,
+        status: "halted",
+        activeContextIds: [],
+        haltReason: planDefectHalt("context-plan"),
+        secondaryHaltReasons: [
+          {
+            type: "validator_infra_error",
+            contextId: "context-plan",
+            engine: "claude",
+            infraReason: "exception",
+            message: "provider unavailable",
+            summary: null,
+            assignmentId: "perf-reviewer",
+            attempts: 3,
+            roundSeq: 2,
+          },
+        ],
+        contextStates: {
+          ...baseExecution.contextStates,
+          "context-plan": {
+            ...contextState,
+            status: "ready",
+            validationRound: openCohortRound({}),
+          },
+        },
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const execution = await manager.resume("/repo", "session-1");
+
+    expect(
+      execution.contextStates["context-plan"]?.validationRound?.phase,
+    ).toBe("concluded");
+  });
+
   it("resume preserves merged-failed contexts and populates pendingMergeRetry", async () => {
     const baseExecution = createWorkflowExecution();
     const repository = createRepository(

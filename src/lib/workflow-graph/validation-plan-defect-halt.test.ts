@@ -120,6 +120,66 @@ describe("a plan-defect conclusion halts the run and touches nothing else", () =
     );
   });
 
+  it("admits the implementer the repair's new tasks need, once the resume has retired the round", async () => {
+    // The deadlock this ticket is named for (#86). The halt leaves the round
+    // open so the repair can read it; a repair that ADDS TASKS then hands back a
+    // context that owes work under a round frozen before that work existed. The
+    // loop must seed an implementer, and the seed guard refuses while a round
+    // still owns the candidate — a throw that escapes as `execution_loop_failed`
+    // and re-halts identically on every subsequent resume.
+    const harness = defectAndRejectionHarness();
+    await harness.run();
+    // The pending reason becomes the halt the recovery actually reads.
+    await harness.drainAndHalt();
+
+    // What the plan repair leaves behind, applied the way the live-edit core
+    // does: a task in the definition and a state to go with it.
+    await harness.repository.mutateActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      (execution) => {
+        const next = structuredClone(execution);
+        next.workingDefinition.tasks = [
+          ...next.workingDefinition.tasks,
+          {
+            id: "task-plan-2",
+            contextId: "context-plan",
+            order: 2,
+            title: "Satisfy the repaired criterion",
+            instructions: "Implement what the repaired contract now asks for.",
+            // What the live-edit core stamps on a task added under a launched
+            // execution, plan repair's included (`runtime-edits.ts:3101`).
+            source: "user",
+          },
+        ];
+        next.taskStates["task-plan-2"] = {
+          taskId: "task-plan-2",
+          contextId: "context-plan",
+          order: 2,
+          status: "pending",
+          summary: null,
+          startedAt: null,
+          completedAt: null,
+          lastConversationId: null,
+          failureMessage: null,
+          failureHistory: [],
+        };
+        return next;
+      },
+    );
+
+    await harness.resumeHalt();
+
+    // The retirement the resume owes this halt: without it the seed below is
+    // refused with "validation round 1 still owns the candidate".
+    expect(harness.contextState()?.validationRound?.phase).toBe("concluded");
+
+    // Reaching the implementer dispatch IS the claim: this harness refuses to
+    // run one, so its own refusal is the proof that the seed got past the guard.
+    // Before the fix the rejection was the guard's instead.
+    await expect(harness.run()).rejects.toThrow(/must not run the implementer/);
+  });
+
   it("keeps the frozen candidate and every seat's verdict readable through SQLite", async () => {
     const harness = defectAndRejectionHarness();
     await harness.run();

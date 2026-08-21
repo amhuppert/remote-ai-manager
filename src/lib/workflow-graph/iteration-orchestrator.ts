@@ -4214,19 +4214,38 @@ export function createGraphWorkflowIterationOrchestrator(
         // run. Leave the context wherever the new owner put it, and report no
         // continuation so this iteration's caller stops rather than racing the
         // re-dispatch.
+        //
+        // `halted` is the same loss of ownership reached by the other door. A
+        // halt signalled from inside this iteration records a PENDING reason and
+        // leaves `execution.status` on "running" (see `signalHalt`), so the
+        // mid-flight guard above cannot see it, and the thrown
+        // `IterationHaltedError` is swallowed by both loops. Validation only
+        // runs once every task is done, so the finalizer then finds nothing
+        // remaining and would write `completed` over the context its own halt
+        // just stopped — releasing the lane to land and merge work no validator
+        // certified. The halt owns the context now; resume is what moves it.
         if (
           finalizedContextState.status === "ready" ||
-          finalizedContextState.status === "pending"
+          finalizedContextState.status === "pending" ||
+          finalizedContextState.status === "halted"
         ) {
+          const withheldReason =
+            finalizedContextState.status === "halted"
+              ? "context_halted"
+              : "context_rescheduled";
           execLogger?.iteration(
             input.contextId,
             "iteration.finalize_withheld_context_rescheduled",
-            { conversationId, status: finalizedContextState.status },
+            {
+              conversationId,
+              status: finalizedContextState.status,
+              reason: withheldReason,
+            },
           );
           logger.info("graph-workflow.iteration.finalize_withheld", {
             executionId: finalizedExecution.id,
             contextId: input.contextId,
-            reason: "context_rescheduled",
+            reason: withheldReason,
             status: finalizedContextState.status,
           });
           shouldContinueInContext = false;
