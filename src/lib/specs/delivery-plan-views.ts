@@ -9,7 +9,10 @@ import {
   finalizedDeliveryPlanDocumentSchema,
 } from "./delivery-plan";
 import { workflowDefinitionMutationSchema } from "@/lib/workflow-graph/definition-schemas";
-import { lintFindingSchema } from "./view-schemas";
+import {
+  lintFindingSchema,
+  specStartedExecutionViewSchema,
+} from "./view-schemas";
 
 const nonNegativeInt = z.number().int().nonnegative();
 
@@ -228,6 +231,43 @@ export const deliveryPlanPreviewViewSchema = z
 export type DeliveryPlanPreviewView = z.infer<
   typeof deliveryPlanPreviewViewSchema
 >;
+
+/**
+ * The `start-execution` receipt. A start either launches one identified
+ * candidate or parks one; no legacy shape exists. Both the CLI and Spec Studio
+ * read the same union so a launch surface cannot drift from what the route
+ * answers.
+ */
+const deliveryPlanReceiptCandidateSchema = z
+  .object({
+    attemptId: z.string().min(1),
+    candidateId: z.string().min(1),
+    candidateHash: z.string().min(1),
+  })
+  .strict();
+const launchedDeliveryPlanReceiptSchema = deliveryPlanReceiptCandidateSchema
+  .extend({
+    workflowExecutionId: z.string().min(1),
+    resolvedDefinitionHash: z.string().min(1),
+  })
+  .strict();
+const parkedDeliveryPlanReceiptSchema = deliveryPlanReceiptCandidateSchema
+  .extend({ nextAct: deliveryPlanNextActSchema })
+  .strict();
+export const launchedSpecExecutionReceiptSchema = z
+  .object({
+    execution: specStartedExecutionViewSchema,
+    launch: workflowDefinitionMutationSchema,
+    deliveryPlan: launchedDeliveryPlanReceiptSchema,
+  })
+  .strict();
+export type LaunchedSpecExecutionReceipt = z.infer<
+  typeof launchedSpecExecutionReceiptSchema
+>;
+export const specStartExecutionReceiptSchema = z.union([
+  launchedSpecExecutionReceiptSchema,
+  z.object({ parked: parkedDeliveryPlanReceiptSchema }).strict(),
+]);
 
 export const deliveryPlanDocumentDiffSchema = z
   .object({ launchChanged: z.boolean(), bindingChanged: z.boolean() })

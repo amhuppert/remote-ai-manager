@@ -21,12 +21,11 @@ import {
 } from "@/lib/specs/handles";
 import { LINT_SEVERITY_LABEL, draftHealth } from "@/lib/specs/draft-health";
 import { postLaunchPathActs } from "@/lib/specs/delivery-plan";
-import { workflowDefinitionMutationSchema } from "@/lib/workflow-graph/definition-schemas";
 import {
   deliveryPlanEditRequestSchema,
   deliveryPlanMutationViewSchema,
-  deliveryPlanNextActSchema,
   deliveryPlanPreviewViewSchema,
+  specStartExecutionReceiptSchema,
   type DeliveryPlanMutationView,
 } from "@/lib/specs/delivery-plan-views";
 import { graphWorkflowLaunchLabel } from "@/lib/workflow-graph/launch-presentation";
@@ -52,7 +51,6 @@ import {
   specLintViewSchema,
   specProposeResultViewSchema,
   specQuestionViewSchema,
-  specStartedExecutionViewSchema,
   type SpecEditContextView,
   type SpecProposeResultView,
 } from "@/lib/specs/view-schemas";
@@ -212,33 +210,7 @@ const advanceStageSchema = z.literal("requirements");
 const advanceResponseSchema = z
   .object({ revision: specRevisionSchema })
   .strict();
-const deliveryPlanCandidateSchema = z
-  .object({
-    attemptId: z.string().min(1),
-    candidateId: z.string().min(1),
-    candidateHash: z.string().min(1),
-  })
-  .strict();
-const launchedDeliveryPlanSchema = deliveryPlanCandidateSchema
-  .extend({
-    workflowExecutionId: z.string().min(1),
-    resolvedDefinitionHash: z.string().min(1),
-  })
-  .strict();
-const parkedDeliveryPlanSchema = deliveryPlanCandidateSchema
-  .extend({ nextAct: deliveryPlanNextActSchema })
-  .strict();
-/** A start either launches one identified candidate or parks one; no legacy shape exists. */
-const startResponseSchema = z.union([
-  z
-    .object({
-      execution: specStartedExecutionViewSchema,
-      launch: workflowDefinitionMutationSchema,
-      deliveryPlan: launchedDeliveryPlanSchema,
-    })
-    .strict(),
-  z.object({ parked: parkedDeliveryPlanSchema }).strict(),
-]);
+const startResponseSchema = specStartExecutionReceiptSchema;
 // The discovered-task file is the server's own capture payload shape (minus
 // the fixed kind), so local validation cannot drift from what the
 // capture-scope-amendment action accepts.

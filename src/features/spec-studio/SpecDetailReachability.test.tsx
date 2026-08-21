@@ -6,6 +6,7 @@ import { renderWithQuery } from "@/test/component-mocks";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 import type { SpecDetailView } from "@/lib/specs/queries";
 
+import { previewView, reviewView } from "./delivery-plan-review.fixtures";
 import {
   specControlsDetailFixture,
   strandedProposalDetailFixture,
@@ -164,6 +165,122 @@ describe("stranded proposal reachability", () => {
       "href",
       `${DETAIL_HREF}?view=review&revision=revision-2`,
     );
+  });
+});
+
+describe("ready-to-execute reachability", () => {
+  let api: FetchFixture;
+
+  beforeEach(() => {
+    api = installFetchFixture();
+    api.json("GET", "/api/specs/command-center/native-sdd/lint", {
+      revisionId: "revision-1",
+      findings: [],
+    });
+    api.json("GET", "/api/specs/command-center/native-sdd/plan/review", {
+      ...reviewView({
+        attempt: { status: "approved" },
+        approval: {
+          candidateId: "candidate-2",
+          candidateHash: "sha256:candidate-2",
+          snapshotId: "snapshot-2",
+          approvedAt: "2026-08-14T01:00:00.000Z",
+          approvedBy: { kind: "human" },
+        },
+      }),
+    });
+  });
+
+  afterEach(() => api.restore());
+
+  // The reported bug: the CTA pointed at `?view=plan`, so a human reading the
+  // plan clicked "Start execution" and the link resolved to the page they were
+  // already on. It must address the control that can actually launch (#7).
+  it("addresses the launch control rather than the surface already on screen", async () => {
+    renderWithQuery(
+      <SpecDetailContent
+        detail={specControlsDetailFixture()}
+        projectName="command-center"
+        requestedSlug="native-sdd"
+        view="plan"
+        onViewChange={() => {}}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("link", { name: "Start execution" }),
+    ).toHaveAttribute("href", `${DETAIL_HREF}?el=launch`);
+  });
+});
+
+describe("launch deep-link cold load", () => {
+  let api: FetchFixture;
+  const scrollIntoView = vi.fn();
+
+  beforeEach(() => {
+    api = installFetchFixture();
+    scrollIntoView.mockClear();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    window.history.replaceState({}, "", `${DETAIL_HREF}?el=launch`);
+  });
+
+  afterEach(() => {
+    api.restore();
+    window.history.replaceState({}, "", "/");
+  });
+
+  // The launch control sits behind the plan-preview read, so it mounts a
+  // whole query AFTER `detail` resolves. A contract that retried only on the
+  // detail would land on nothing exactly when a human followed the CTA.
+  it("focuses the launch control once the preview it waits on resolves", async () => {
+    let releasePreview!: () => void;
+    const previewGate = new Promise<void>((resolve) => {
+      releasePreview = resolve;
+    });
+    api.json(
+      "GET",
+      DETAIL_HREF.replace("/specs", "/api/specs"),
+      specControlsDetailFixture(),
+    );
+    api.json("GET", "/api/specs/command-center/native-sdd/lint", {
+      revisionId: "revision-1",
+      findings: [],
+    });
+    api.json("GET", "/api/specs/command-center/native-sdd/plan/review", {
+      ...reviewView({
+        attempt: { status: "approved" },
+        approval: {
+          candidateId: "candidate-2",
+          candidateHash: "sha256:candidate-2",
+          snapshotId: "snapshot-2",
+          approvedAt: "2026-08-14T01:00:00.000Z",
+          approvedBy: { kind: "human" },
+        },
+      }),
+    });
+    api.json("GET", "/api/projects/command-center/sessions", { sessions: [] });
+    api.reply(
+      "GET",
+      "/api/specs/command-center/native-sdd/plan-preview",
+      async () => {
+        await previewGate;
+        return { json: previewView() };
+      },
+    );
+
+    renderWithQuery(<SpecDetailPage />);
+
+    await screen.findByText("Reading the launch preview…");
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    releasePreview();
+
+    const launch = await screen.findByRole("region", { name: "Plan launch" });
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+    expect(document.activeElement).toBe(launch);
   });
 });
 
