@@ -1534,6 +1534,34 @@ describe("CodexConversationRuntime", () => {
       expect(result.structuredOutput).toBeUndefined();
     });
 
+    it("reads the null a required-and-nullable key comes back as into the omission the authored schema describes", async () => {
+      setupThread([
+        threadStarted(),
+        agentMessageCompleted('{"summary": "clean", "planDefects": null}'),
+        turnCompleted(),
+      ]);
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({
+          outputFormat: {
+            type: "json_schema",
+            schema: {
+              type: "object",
+              properties: {
+                summary: { type: "string" },
+                planDefects: { type: "array", items: { type: "string" } },
+              },
+              required: ["summary"],
+              additionalProperties: false,
+            },
+          },
+        }),
+        deps,
+      );
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      expect(result.structuredOutput).toEqual({ summary: "clean" });
+    });
+
     it("returns undefined structuredOutput when outputFormat is not set", async () => {
       setupThread([
         threadStarted(),
@@ -1547,7 +1575,11 @@ describe("CodexConversationRuntime", () => {
     });
 
     it("passes outputSchema to runStreamed when outputFormat is set", async () => {
-      const schema = { type: "object", properties: { x: { type: "number" } } };
+      const schema = {
+        type: "object",
+        properties: { x: { type: "number" } },
+        required: ["x"],
+      };
       const thread = makeCapturingThread(minimalSuccessEvents());
       startThreadFn.mockReturnValue(thread);
 

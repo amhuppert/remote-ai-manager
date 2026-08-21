@@ -40,10 +40,13 @@ import {
 } from "./pricing";
 import {
   CODEX_DEFAULT_STALL_TIMEOUT_MS,
-  projectSchemaForCodex,
   toSdkModelReasoningEffort,
   toStringEnv,
 } from "./shared";
+import {
+  projectSchemaForCodex,
+  restoreCodexOptionalOmissions,
+} from "./output-schema";
 import { createStallWatchdog } from "../stall-watchdog";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createCodexFailureClassifier } from "./failure-classifier";
@@ -715,7 +718,10 @@ export class CodexTaskRunner implements AgentTaskRunner {
 
         if (input.outputSchema && !turn.error) {
           try {
-            structuredOutput = JSON.parse(turn.finalResponse);
+            structuredOutput = restoreCodexOptionalOmissions(
+              input.outputSchema,
+              JSON.parse(turn.finalResponse),
+            );
           } catch {
             // finalResponse is not valid JSON despite outputSchema being set
           }

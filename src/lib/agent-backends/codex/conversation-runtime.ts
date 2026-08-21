@@ -62,7 +62,11 @@ import type { ConversationTarget } from "@/lib/conversations/conversation-target
 import { getCachedInstanceToken } from "@/lib/agent-gateway/token";
 import { getServerBaseUrl } from "@/lib/agent-gateway/server-url";
 import { getConfigDirPath, readConfig } from "@/lib/config/loader";
-import { projectSchemaForCodex, toStringEnv } from "./shared";
+import { toStringEnv } from "./shared";
+import {
+  projectSchemaForCodex,
+  restoreCodexOptionalOmissions,
+} from "./output-schema";
 import { translatePortableMcpToCodex } from "./mcp-translation";
 import {
   buildCodexMcpServersConfig,
@@ -451,7 +455,10 @@ export class CodexConversationRuntime
     let structuredOutput: unknown;
     if (this.outputFormat && acc.lastAgentMessageText) {
       try {
-        structuredOutput = JSON.parse(acc.lastAgentMessageText);
+        structuredOutput = restoreCodexOptionalOmissions(
+          this.outputFormat.schema,
+          JSON.parse(acc.lastAgentMessageText),
+        );
       } catch {
         // Not valid JSON despite outputFormat being set
       }

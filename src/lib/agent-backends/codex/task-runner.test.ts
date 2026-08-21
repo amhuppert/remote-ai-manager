@@ -796,6 +796,51 @@ describe("CodexTaskRunner", () => {
     });
   });
 
+  it("closes required over an authored-optional key so the provider does not refuse the dispatch", async () => {
+    const schema = {
+      type: "object",
+      properties: {
+        summary: { type: "string" },
+        planDefects: { type: "array", items: { type: "string" } },
+      },
+      required: ["summary"],
+      additionalProperties: false,
+    };
+
+    await runner.run(makeRequest({ outputSchema: schema }));
+
+    const runOptions = runMock.mock.calls[0]?.[1] as {
+      outputSchema?: { required?: unknown };
+    };
+    expect(runOptions.outputSchema?.required).toEqual([
+      "summary",
+      "planDefects",
+    ]);
+    expect(schema.required).toEqual(["summary"]);
+  });
+
+  it("reads the null a required-and-nullable key comes back as into the omission the authored schema describes", async () => {
+    runMock.mockResolvedValue({
+      finalResponse: JSON.stringify({ summary: "clean", planDefects: null }),
+    });
+
+    const result = await runner.run(
+      makeRequest({
+        outputSchema: {
+          type: "object",
+          properties: {
+            summary: { type: "string" },
+            planDefects: { type: "array", items: { type: "string" } },
+          },
+          required: ["summary"],
+          additionalProperties: false,
+        },
+      }),
+    );
+
+    expect(result.structuredOutput).toEqual({ summary: "clean" });
+  });
+
   it("aborts the running thread when an external signal fires", async () => {
     const external = new AbortController();
     runMock.mockImplementation(

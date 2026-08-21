@@ -5,62 +5,6 @@
 import type { ModelReasoningEffort } from "@openai/codex-sdk";
 import type { CodexReasoningEffort } from "@/lib/agent-backends/schemas";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function hasOwn(target: Record<string, unknown>, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(target, key);
-}
-
-function inferPrimitiveConstType(
-  value: unknown,
-): "string" | "number" | "boolean" | "null" | null {
-  if (value === null) return "null";
-  if (typeof value === "string") return "string";
-  if (typeof value === "boolean") return "boolean";
-  if (typeof value === "number" && Number.isFinite(value)) return "number";
-  return null;
-}
-
-function projectCodexSchemaNode(value: unknown): unknown {
-  if (!isRecord(value)) return value;
-
-  const projected: Record<string, unknown> = { ...value };
-  if (!hasOwn(value, "type") && hasOwn(value, "const")) {
-    const inferredType = inferPrimitiveConstType(value.const);
-    if (inferredType !== null) projected.type = inferredType;
-  }
-
-  if (isRecord(value.properties)) {
-    projected.properties = Object.fromEntries(
-      Object.entries(value.properties).map(([key, schema]) => [
-        key,
-        projectCodexSchemaNode(schema),
-      ]),
-    );
-  }
-  if (isRecord(value.items)) {
-    projected.items = projectCodexSchemaNode(value.items);
-  }
-  if (Array.isArray(value.oneOf)) {
-    projected.oneOf = value.oneOf.map(projectCodexSchemaNode);
-  }
-
-  return projected;
-}
-
-/**
- * Adds the redundant `type` Codex requires beside primitive `const` values.
- * The authored schema stays intact because CC's validator intentionally treats
- * a bare `const` as the canonical contract and validates model output against it.
- */
-export function projectSchemaForCodex(
-  schema: Record<string, unknown>,
-): Record<string, unknown> {
-  return projectCodexSchemaNode(schema) as Record<string, unknown>;
-}
-
 /**
  * Widen a CC reasoning-effort value to the Codex SDK's `ModelReasoningEffort`.
  *
