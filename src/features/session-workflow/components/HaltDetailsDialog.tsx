@@ -18,6 +18,7 @@ import {
   type OutputSchemaHaltEvidenceByContext,
 } from "@/components/workflow-graph/derive-output-schema-halt";
 import JoinConflictRecoveryCard from "@/components/workflow-graph/JoinConflictRecoveryCard";
+import type { JoinConflictSummary } from "@/components/workflow-graph/join-conflict-summary";
 import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
 import type { ConflictDecisionInput, ConflictEntry } from "@/lib/jobs/schemas";
 import { cn } from "@/lib/ui/cn";
@@ -36,6 +37,14 @@ export interface HaltDetailsDialogProps {
   conflictAnalysis: ConflictEntry[] | null;
   /** Whether the execution is in a resumable status (halted/paused). */
   canResume: boolean;
+  /**
+   * Why a resume this status would otherwise offer cannot be taken yet — the
+   * page's one answer, so this view cannot contradict the bar beside it. The
+   * resuming acts (Resume, Retry join) render disabled and say why; everything
+   * else in the view is a read or a navigation and stays available, because a
+   * halt the operator cannot resume is precisely the one they need to read.
+   */
+  resumeBlockedReason?: string | null;
   onResume(conflictGuidance?: ConflictDecisionInput[]): void;
   isMutating: boolean;
   isResuming: boolean;
@@ -52,6 +61,12 @@ export interface HaltDetailsDialogProps {
    * action is not offered rather than offered dead.
    */
   onEditSchema?(contextId: string): void;
+  /** The failed join as the operator sees it — lane, members, merge outcomes. */
+  joinConflict?: JoinConflictSummary | null;
+  /** Opens the blocked member's runtime (its lane worktree and branch). */
+  onOpenLaneWorktree?(contextId: string): void;
+  /** Opens the blocked member's placement, where its owned paths are edited. */
+  onEditOwnership?(contextId: string): void;
 }
 
 export default function HaltDetailsDialog({
@@ -61,11 +76,15 @@ export default function HaltDetailsDialog({
   secondary = [],
   conflictAnalysis,
   canResume,
+  resumeBlockedReason = null,
   onResume,
   isMutating,
   isResuming,
   outputSchemaEvidence,
   onEditSchema,
+  joinConflict = null,
+  onOpenLaneWorktree,
+  onEditOwnership,
 }: HaltDetailsDialogProps): React.JSX.Element {
   const hasConflictRecovery =
     canResume &&
@@ -135,7 +154,7 @@ export default function HaltDetailsDialog({
           {formatted.actionHref && (
             <Link
               href={formatted.actionHref}
-              className="w-fit text-[0.74rem] font-semibold text-cyan hover:underline"
+              className="w-fit text-[0.74rem] font-semibold text-cyan hover:underline max-768:inline-flex max-768:min-h-[44px] max-768:items-center"
             >
               Open the merge gate →
             </Link>
@@ -144,11 +163,29 @@ export default function HaltDetailsDialog({
             <JoinConflictRecoveryCard
               conflictFiles={primary.conflictFiles}
               analysis={conflictAnalysis}
+              summary={joinConflict}
               onRetry={(guidance) =>
                 onResume(guidance.length > 0 ? guidance : undefined)
               }
+              {...(onOpenLaneWorktree !== undefined
+                ? {
+                    onOpenLaneWorktree: (contextId: string) => {
+                      onOpenChange(false);
+                      onOpenLaneWorktree(contextId);
+                    },
+                  }
+                : {})}
+              {...(onEditOwnership !== undefined
+                ? {
+                    onEditOwnership: (contextId: string) => {
+                      onOpenChange(false);
+                      onEditOwnership(contextId);
+                    },
+                  }
+                : {})}
               isRetrying={isResuming}
               disabled={isMutating}
+              retryBlockedReason={resumeBlockedReason}
             />
           )}
           {secondary.length > 0 && (
@@ -185,6 +222,7 @@ export default function HaltDetailsDialog({
                         <DialogClose asChild>
                           <Button
                             size="sm"
+                            touch
                             layoutClassName="w-fit"
                             onClick={() => onEditSchema(evidence.contextId)}
                           >
@@ -201,11 +239,11 @@ export default function HaltDetailsDialog({
         </div>
         <DialogActions layoutClassName="mt-lg">
           <DialogClose asChild>
-            <Button>Close</Button>
+            <Button touch>Close</Button>
           </DialogClose>
           {editSchemaContextId !== null && (
             <DialogClose asChild>
-              <Button onClick={() => onEditSchema?.(editSchemaContextId)}>
+              <Button touch onClick={() => onEditSchema?.(editSchemaContextId)}>
                 Edit schema
               </Button>
             </DialogClose>
@@ -213,11 +251,16 @@ export default function HaltDetailsDialog({
           {canResume && !hasConflictRecovery && (
             <Button
               variant="primary"
+              touch
               onClick={() => onResume()}
-              disabled={isMutating}
+              disabled={isMutating || resumeBlockedReason !== null}
               loading={isResuming}
             >
-              {isResuming ? "Resuming…" : "Resume"}
+              {isResuming
+                ? "Resuming…"
+                : resumeBlockedReason !== null
+                  ? `Resume — ${resumeBlockedReason}`
+                  : "Resume"}
             </Button>
           )}
         </DialogActions>

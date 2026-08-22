@@ -107,3 +107,43 @@ export const CurrentSelected: Story = {
     selectedExecutionId: current.id,
   },
 };
+
+/** Tenure, not terminality: a paused run still holds the lease, so it is Current. */
+export const PausedCurrent: Story = {
+  args: {
+    current: { ...current, status: "paused" },
+    selectedExecutionId: current.id,
+  },
+};
+
+/** A resumably halted run also keeps the lease — the halt headline rides its row. */
+export const ResumablyHaltedCurrent: Story = {
+  args: {
+    current: {
+      ...current,
+      status: "halted",
+      haltReason: {
+        type: "agent_turn_failed",
+        contextId: "context-implement",
+        engine: "claude",
+        cause: "sdk_error",
+        message: "SDK stream ended unexpectedly",
+      },
+    },
+    selectedExecutionId: current.id,
+  },
+};
+
+/** No run holds the lease: the rail is History alone, read-only and deep-linkable. */
+export const HistoryOnly: Story = {
+  args: {
+    current: null,
+  },
+};
+
+/** The rail's collapse control appears only for a page that owns the state. */
+export const Collapsible: Story = {
+  args: {
+    onCollapse: fn(),
+  },
+};

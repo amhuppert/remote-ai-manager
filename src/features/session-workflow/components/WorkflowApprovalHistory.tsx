@@ -3,14 +3,7 @@
 import { useMemo } from "react";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-
-interface ApprovalHistoryEntry {
-  key: string;
-  label: string;
-  occurredAt: string;
-  conversationId: string | null;
-  message: string | null;
-}
+import { deriveApprovalHistory } from "./approval-history";
 
 function formatApprovalTime(value: string): string {
   return new Intl.DateTimeFormat(undefined, {
@@ -21,89 +14,6 @@ function formatApprovalTime(value: string): string {
   }).format(new Date(value));
 }
 
-function definitionApprovalEntry(
-  execution: GraphWorkflowExecution,
-): ApprovalHistoryEntry | null {
-  const approval = execution.definitionApproval;
-  if (approval === null) return null;
-
-  if (approval.approvedAt !== null) {
-    return {
-      key: "definition-approved",
-      label: "Definition approved",
-      occurredAt: approval.approvedAt,
-      conversationId: null,
-      message: null,
-    };
-  }
-
-  if (
-    execution.status === "aborted" &&
-    execution.haltReason?.type === "aborted" &&
-    execution.haltReason.cause === "definition_rejected"
-  ) {
-    return {
-      key: "definition-rejected",
-      label: "Definition rejected",
-      occurredAt: execution.completedAt ?? approval.requestedAt,
-      conversationId: null,
-      message: execution.haltReason.summary,
-    };
-  }
-
-  return {
-    key: "definition-requested",
-    label: "Definition requested approval",
-    occurredAt: approval.requestedAt,
-    conversationId: null,
-    message: null,
-  };
-}
-
-function contextApprovalEntries(
-  execution: GraphWorkflowExecution,
-  events: readonly GraphWorkflowExecutionEvent[],
-): ApprovalHistoryEntry[] {
-  const titleByContextId = new Map(
-    execution.workingDefinition.executionContexts.map((context) => [
-      context.id,
-      context.title,
-    ]),
-  );
-
-  return events.flatMap((entry, index): ApprovalHistoryEntry[] => {
-    const event = entry.event;
-    if (event.type === "graph-workflow-approval-pending") {
-      const title =
-        event.contextTitle ??
-        titleByContextId.get(event.contextId) ??
-        event.contextId;
-      return [
-        {
-          key: `context-requested:${index}:${event.contextId}:${event.requestedAt}`,
-          label: `${title} requested approval`,
-          occurredAt: event.requestedAt,
-          conversationId: event.conversationId,
-          message: null,
-        },
-      ];
-    }
-    if (event.type === "graph-workflow-approval-resolved") {
-      const title = titleByContextId.get(event.contextId) ?? event.contextId;
-      return [
-        {
-          key: `context-resolved:${index}:${event.contextId}:${event.decidedAt}`,
-          label: `${title} ${event.decision}`,
-          occurredAt: event.decidedAt,
-          conversationId: event.conversationId,
-          message: event.message,
-        },
-      ];
-    }
-    return [];
-  });
-}
-
 export default function WorkflowApprovalHistory({
   execution,
   events,
@@ -111,13 +21,10 @@ export default function WorkflowApprovalHistory({
   execution: GraphWorkflowExecution;
   events: readonly GraphWorkflowExecutionEvent[];
 }) {
-  const entries = useMemo(() => {
-    const definition = definitionApprovalEntry(execution);
-    return [
-      ...(definition === null ? [] : [definition]),
-      ...contextApprovalEntries(execution, events),
-    ];
-  }, [events, execution]);
+  const entries = useMemo(
+    () => deriveApprovalHistory(execution, events),
+    [events, execution],
+  );
 
   if (entries.length === 0) return null;
 

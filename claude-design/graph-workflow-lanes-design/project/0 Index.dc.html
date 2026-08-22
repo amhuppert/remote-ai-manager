@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/styles.css">
+  <script src="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.js"></script>
+  <style>
+    html, body { height:auto !important; max-height:none !important; overflow:visible !important; background:#04070c !important; }
+    body { margin:0; font-family:var(--font-mono); }
+    a { color:var(--cyan); text-decoration:none; }
+    a:hover { color:var(--text-primary); }
+    .ix-card { display:flex; flex-direction:column; gap:6px; border:1px solid var(--border-subtle); border-radius:10px; background:var(--bg-base); padding:16px 18px; text-decoration:none; }
+    .ix-card:hover { border-color:var(--cc-cyan-a40); background:var(--cc-cyan-a04); }
+    .ix-card:focus-visible { outline:2px solid var(--cyan); outline-offset:2px; }
+    .ix-note { font-family:var(--font-body); font-size:13px; line-height:1.65; color:var(--text-secondary); }
+    .ix-note b { color:var(--text-primary); font-weight:600; }
+    .ix-note code { font-family:var(--font-mono); color:var(--text-primary); font-size:12px; }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration:.001ms !important; transition-duration:.001ms !important; } }
+  </style>
+</helmet>
+
+<section style="display:flex;flex-direction:column;gap:34px;padding:48px;min-width:1720px;max-width:1800px">
+
+  <div style="max-width:960px">
+    <h1 style="margin:0;font:800 30px/1.15 var(--font-display);color:var(--text-primary);letter-spacing:-.015em">Graph workflow — lanes-first builder and execution</h1>
+    <p class="ix-note" style="margin:12px 0 0">
+      Implementation-ready design bundle. The engine, schemas, persistence and execution behaviour are unchanged; one intentional frontend behaviour
+      change is approved — dragging a context between swimlanes edits its existing <code>placement.lane</code>. <b>Read README.md first</b>: it holds
+      the canonical fixture, the approved decisions, the execution state/action matrix, the cascade granularity matrix, the inspector relocation map,
+      responsive behaviour, and the explicit out-of-scope list. Every screen below is built on that one fixture.
+    </p>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;max-width:1300px">
+    <a class="ix-card" href="Workflow Execution.dc.html">
+      <span style="font:600 .95rem var(--font-mono);color:var(--text-primary)">Workflow Execution</span>
+      <span class="ix-note" style="font-size:12.5px">Lanes canvas, tenure rail, context inspector. Running · paused · resumably halted · awaiting context approval · join conflict · historical read-only. Live-edit flow end to end.</span>
+    </a>
+    <a class="ix-card" href="Workflow Builder.dc.html">
+      <span style="font:600 .95rem var(--font-mono);color:var(--text-primary)">Workflow Builder</span>
+      <span class="ix-note" style="font-size:12.5px">Definitions sidebar, full toolbar, lane canvas, config rail. Drag between lanes — valid, refused, ephemeral lane. Save / dirty / validation-error states.</span>
+    </a>
+    <a class="ix-card" href="Workflow Mobile.dc.html">
+      <span style="font:600 .95rem var(--font-mono);color:var(--text-primary)">Workflow Mobile</span>
+      <span class="ix-note" style="font-size:12.5px">≤768px. Builder Graph · Defs · Inspector; execution Graph · Inspector · Log; Current/History sheet; nested config push navigation.</span>
+    </a>
+    <a class="ix-card" href="Config Panel.dc.html">
+      <span style="font:600 .95rem var(--font-mono);color:var(--text-primary)">Config Panel <span style="color:var(--text-tertiary);font-weight:400">· component</span></span>
+      <span class="ix-note" style="font-size:12.5px">The configuration editor both pages mount. Host-aware, four affordance modes, block / role / field cascade, live schema linting.</span>
+    </a>
+    <a class="ix-card" href="Context Node.dc.html">
+      <span style="font:600 .95rem var(--font-mono);color:var(--text-primary)">Context Node <span style="color:var(--text-tertiary);font-weight:400">· component</span></span>
+      <span class="ix-note" style="font-size:12.5px">The node every canvas mounts. Props-driven; the variant gallery is below.</span>
+    </a>
+    <div class="ix-card" style="border-style:dashed;background:transparent">
+      <span style="font:600 .95rem var(--font-mono);color:var(--text-tertiary)">ARCHIVE …</span>
+      <span class="ix-note" style="font-size:12.5px">Four superseded exploration files, each opening with an archived banner. Provenance only — not specifications. The round-first transcript exploration in the archive is <b>discarded</b>; conversation-first history is canonical.</span>
+    </div>
+  </div>
+
+  <div style="height:1px;background:var(--border-dim)"></div>
+
+  <div>
+    <h2 style="margin:0 0 6px;font:700 18px var(--font-mono);color:var(--text-primary)">Context node — every state</h2>
+    <p class="ix-note" style="margin:0 0 20px;max-width:900px">
+      One component, one anatomy: title and status · <b>lane chip, this context's grade, and its owned paths</b> · the crew ledger (implementer, then
+      each validator seat with its authority) · progress · a footer that carries iteration and loop pass. A cyan dot marks a value set on this context;
+      the reason is in the node's accessible name, so it is not hover-only. A lane never carries a grade — every grade you see belongs to the context
+      showing it.
+    </p>
+    <div style="display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start">
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <span style="font:500 .7rem var(--font-mono);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.08em">running · selected</span>
+        <dc-import name="Context Node" title="Implement checkout" status="running" lane="delivery" laneState="active" grade="owned" paths="src/checkout, src/risk" implModel="opus-4.1" implEffort="high" implSetHere="true" seats="security:blocking:claude:sonnet-4.5|style:advisory:claude:haiku-4.5" tasksDone="3" tasksTotal="5" footer="3/5 tasks · iteration 2 · pass 2 of 3" selected="true" width="264" hint-size="264px,210px"></dc-import>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <span style="font:500 .7rem var(--font-mono);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.08em">completed · full grade</span>
+        <dc-import name="Context Node" title="Plan the migration" status="completed" lane="plan" laneState="merged" grade="full" implModel="sonnet-4.5" implEffort="medium" seats="reviewer:blocking:claude:sonnet-4.5" tasksDone="3" tasksTotal="3" footer="3/3 tasks · joined 09:38" width="264" hint-size="264px,190px"></dc-import>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <span style="font:500 .7rem var(--font-mono);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.08em">pending · waiting for the lane</span>
+        <dc-import name="Context Node" title="Rollout switch" status="pending" lane="delivery" laneState="active" grade="full" implModel="opus-4.1" implEffort="medium" seats="security:blocking:claude:sonnet-4.5" tasksDone="0" tasksTotal="2" footer="0/2 tasks" notice="Full grade — waits for exclusive occupancy of delivery." noticeTone="amber" width="264" hint-size="264px,230px"></dc-import>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <span style="font:500 .7rem var(--font-mono);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.08em">read-only · session lane</span>
+        <dc-import name="Context Node" title="Release notes" status="pending" lane="session" laneState="session" grade="readOnly" implModel="haiku-4.5" implEffort="low" seats="" tasksDone="0" tasksTotal="2" footer="0/2 tasks · delivers through its output schema" width="264" hint-size="264px,170px"></dc-import>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <span style="font:500 .7rem var(--font-mono);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.08em">halted · resumable</span>
+        <dc-import name="Context Node" title="Implement checkout" status="halted" lane="delivery" laneState="active" grade="owned" paths="src/checkout, src/risk" implModel="opus-4.1" implEffort="high" implSetHere="true" seats="security:blocking:claude:sonnet-4.5" tasksDone="3" tasksTotal="5" footer="halted at iteration 2" notice="Output contract rejected: unsupported keyword minLength." width="264" hint-size="264px,230px"></dc-import>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <span style="font:500 .7rem var(--font-mono);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.08em">awaiting context approval</span>
+        <dc-import name="Context Node" title="Implement checkout" status="approval" lane="delivery" laneState="active" grade="owned" paths="src/checkout, src/risk" implModel="opus-4.1" implEffort="high" implSetHere="true" seats="security:blocking:claude:sonnet-4.5|style:advisory:claude:haiku-4.5" tasksDone="5" tasksTotal="5" footer="candidate ready · iteration 2" notice="Approval lets orchestration continue — it does not land the lane." noticeTone="amber" width="264" hint-size="264px,250px"></dc-import>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <span style="font:500 .7rem var(--font-mono);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.08em">draft · builder</span>
+        <dc-import name="Context Node" title="Settings surface" status="draft" lane="delivery" laneState="pending" grade="owned" paths="src/settings" implModel="opus-4.1" implEffort="medium" seats="security:blocking:claude:sonnet-4.5|style:advisory:claude:haiku-4.5" tasksDone="0" tasksTotal="0" footer="3 tasks · all inherited" width="264" hint-size="264px,190px"></dc-import>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <span style="font:500 .7rem var(--font-mono);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.08em">published · derived UI state</span>
+        <dc-import name="Context Node" title="Plan the migration" status="published" lane="plan" laneState="merged" grade="full" implModel="sonnet-4.5" implEffort="medium" seats="" tasksDone="3" tasksTotal="3" footer="published to the session worktree" width="264" hint-size="264px,170px"></dc-import>
+      </div>
+    </div>
+    <p class="ix-note" style="margin:18px 0 0;max-width:900px">
+      <b>Published is derived.</b> It is shown after publication so the canvas can say what happened, and it is never treated as a stored context
+      status — the stored statuses are the engine's, and the node's other seven states are those.
+    </p>
+  </div>
+
+  <div style="height:1px;background:var(--border-dim)"></div>
+
+  <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px;max-width:1300px">
+    <div>
+      <h2 style="margin:0 0 10px;font:700 16px var(--font-mono);color:var(--text-primary)">What an implementer must not re-decide</h2>
+      <ul class="ix-note" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:7px">
+        <li>A lane has no grade. Grade, and owned paths, belong to the context. Lane headers show status, membership and a grade <i>summary</i> only.</li>
+        <li>Crossing a lane during a drag writes <code>placement.lane</code> and nothing else; grade and paths carry across verbatim; invalid drops are refused without mutating the draft.</li>
+        <li>An empty lane is client-only, never serialized, and does not make the definition dirty.</li>
+        <li>The cascade is Global → Workflow → Context at three granularities — block, role (agent validation), field (collaboration, lane-merge validation). Reset clears at that same granularity; Reset all clears the tier, it does not restore a fixture.</li>
+        <li>Live configuration is context-oriented and snapshot-based, in one of four modes: editable, pause-to-edit, frozen, read-only.</li>
+        <li>Current versus History is the execution lease, not terminality.</li>
+        <li>Approval, lane join and publication are three different things, and definition approval is a fourth.</li>
+        <li>Conversation is the durable history row; iterations are events inside it.</li>
+      </ul>
+    </div>
+    <div>
+      <h2 style="margin:0 0 10px;font:700 16px var(--font-mono);color:var(--text-primary)">Out of scope</h2>
+      <ul class="ix-note" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:7px">
+        <li>Backend, engine, schema or persistence changes.</li>
+        <li>A persistent lane entity.</li>
+        <li>Generic live Workflow-default editing.</li>
+        <li>A builder Launch action, and any new launch behaviour.</li>
+        <li>New validator de-duplication behaviour — rendering and ownership are unchanged.</li>
+        <li>New approval or join semantics.</li>
+        <li>New authoring for graph fields that are not authorable today.</li>
+        <li>Unrelated existing product bugs.</li>
+      </ul>
+      <h2 style="margin:22px 0 10px;font:700 16px var(--font-mono);color:var(--text-primary)">Design-system notes</h2>
+      <p class="ix-note" style="margin:0">
+        The 420px rail is the one approved exception to the 340px standard (470px for the standalone component study). Everything else follows the
+        system: Geist Mono for interface text and Manrope for conversation prose, 0.7rem minimum, token colours and spacing, 4/6/10px and pill radii,
+        canonical SVG icons with no Unicode glyph used as an icon, violet reserved for Codex, pulse only on live status, reduced-motion honoured, and
+        every interactive element a real focusable control.
+      </p>
+    </div>
+  </div>
+</section>
+
+</x-dc>
+</body>
+</html>

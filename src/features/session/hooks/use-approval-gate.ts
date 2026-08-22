@@ -15,14 +15,6 @@ export interface ApprovalGateStanding {
   contextId: string;
   contextTitle: string | null;
   requestedAt: string;
-  /**
-   * Whether this gate was frozen under a file-ownership envelope (R15.2). Read
-   * from the PARKED record's frozen scope, never from the context's live
-   * placement: placement is editable while the gate stands, and re-deriving it
-   * here would silently turn a decision frozen under an envelope into a
-   * whole-tree one the moment a paused execution is re-placed.
-   */
-  enveloped: boolean;
 }
 
 /**
@@ -62,7 +54,6 @@ export function deriveApprovalGateStanding(
       contextId: contextState.contextId,
       contextTitle: context?.title ?? null,
       requestedAt: record.requestedAt,
-      enveloped: record.approvalScope.kind !== "whole_tree",
     };
   }
   return null;
@@ -98,8 +89,9 @@ export function useApprovalGate({
       ? execution.origin.definitionId
       : null,
   );
-  // Fetched only for an enveloped context. A full-access member is left on the
-  // whole-tree view it has always been reviewed under, so it costs no request.
+  // Asked for every parked gate. The frozen scope is the API's answer to give,
+  // not this hook's to pre-empt: skipping the request for a full-access member
+  // left the panel with no candidate state and an immediately-live Approve.
   const scopedChanges = useApprovalScopedChanges(
     projectName,
     sessionName,
@@ -124,6 +116,8 @@ export function useApprovalGate({
   return {
     contextTitle: standing.contextTitle,
     workflowName: seedDefinitionQuery.data?.item.name ?? null,
+    iteration:
+      execution.contextStates[standing.contextId]?.iterationCount ?? null,
     requestedAt: standing.requestedAt,
     isSubmitting: resolveMutation.isPending,
     conversationBusy,

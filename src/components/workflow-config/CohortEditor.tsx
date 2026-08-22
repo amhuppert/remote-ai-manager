@@ -18,7 +18,7 @@ import { ContextValidatorEditor } from "./FieldEditors";
  * that seeds a cohort (add, re-enable) would then seed a different reviewer
  * than an unconfigured workflow runs with.
  */
-function seededAssignment(): ValidatorAssignment {
+export function seededAssignment(): ValidatorAssignment {
   const seed = SEEDED_WORKFLOW_DEFAULTS.contextValidator.assignments[0];
   if (!seed) {
     throw new Error(
@@ -36,7 +36,10 @@ function seededAssignment(): ValidatorAssignment {
  * lane, a verdict, and a reset all address, so it must survive every later edit
  * to the assignment's profile.
  */
-function freshAssignmentId(taken: ReadonlySet<string>, base: string): string {
+export function freshAssignmentId(
+  taken: ReadonlySet<string>,
+  base: string,
+): string {
   if (!taken.has(base)) return base;
   for (let suffix = 2; ; suffix += 1) {
     const candidate = `${base}-${suffix}`;
@@ -73,7 +76,7 @@ export function toggleCohortEnabled(
  * used for either — red belongs to a verdict that HAS failed, not to a seat
  * that could.
  */
-const AUTHORITY_PRESENTATION: Record<
+export const AUTHORITY_PRESENTATION: Record<
   ValidatorAuthority,
   { label: string; tone: "amber" | "neutral" }
 > = {

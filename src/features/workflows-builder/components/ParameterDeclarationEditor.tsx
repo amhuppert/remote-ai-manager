@@ -25,9 +25,9 @@ const PARAMETER_TYPES: ReadonlyArray<{ value: ParameterType; label: string }> =
     { value: "enum", label: "Enum" },
   ];
 
-// Shared `.wb-field` control recipe, mirrored from WorkflowInspectorPanel so the
-// editor slots into the inspector surface with the same look. Kept local because
-// these are field-level control classes, not a promotable primitive.
+// Shared `.wb-field` control recipe so the editor slots into the configuration
+// panel with the same look. Kept local because these are field-level control
+// classes, not a promotable primitive.
 const FIELD_INPUT =
   "w-full rounded-sm border border-solid border-border-default bg-bg-base px-[10px] py-[8px] font-[inherit] text-[0.78rem] text-text-primary outline-none transition-[border-color] duration-150 focus:border-cyan focus:shadow-[0_0_0_1px_var(--cyan-glow)]";
 const FIELD_TEXTAREA = "min-h-[64px] resize-y leading-[1.5]";

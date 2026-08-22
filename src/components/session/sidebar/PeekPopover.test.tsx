@@ -14,6 +14,7 @@ import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/catalog"
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import { useCollaborationStore } from "@/stores/collaboration.store";
 import PeekPopover from "@/components/session/sidebar/PeekPopover";
+import type { ApprovalScopedChanges } from "@/components/ApprovalGatePanel";
 
 vi.mock("@/lib/logging", () => ({
   createLogger: () => ({
@@ -581,7 +582,12 @@ describe("PeekPopover", () => {
       return {
         isSubmitting: false,
         executionSuspended: false,
-        scopedChanges: null,
+        // A resolved candidate is the minimum every parked gate carries; the
+        // peek offers live Approve/Reject, so it never renders one without.
+        scopedChanges: {
+          status: "ready",
+          candidate: { scope: "whole_tree" },
+        } satisfies ApprovalScopedChanges,
         onApprove: vi.fn(),
         onReject: vi.fn(),
         ...overrides,
@@ -598,34 +604,43 @@ describe("PeekPopover", () => {
         approvalGate: gateProps({
           scopedChanges: {
             status: "ready",
-            ownedPaths: ["src/api"],
-            diff: {
-              files: [
-                {
-                  filePath: "src/api/handler.ts",
-                  additions: 1,
-                  deletions: 0,
-                  hunks: [
-                    {
-                      header: "@@ -1 +1,2 @@",
-                      lines: [
-                        { type: "hunk-header", content: "@@ -1 +1,2 @@" },
-                        { type: "add", content: "export const handler = 2;" },
-                      ],
-                    },
-                  ],
-                },
-              ],
-              totalAdditions: 1,
-              totalDeletions: 0,
+            candidate: {
+              scope: "owned",
+              ownedPaths: ["src/api"],
+              diff: {
+                files: [
+                  {
+                    filePath: "src/api/handler.ts",
+                    additions: 1,
+                    deletions: 0,
+                    hunks: [
+                      {
+                        header: "@@ -1 +1,2 @@",
+                        lines: [
+                          { type: "hunk-header", content: "@@ -1 +1,2 @@" },
+                          {
+                            type: "add",
+                            content: "export const handler = 2;",
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+                totalAdditions: 1,
+                totalDeletions: 0,
+              },
             },
           },
         }),
       });
 
-      const changes = screen.getByTestId("approval-gate-scoped-changes");
-      expect(changes).toHaveTextContent("src/api/handler.ts");
-      expect(changes).toHaveTextContent("owned: src/api");
+      expect(
+        screen.getByTestId("approval-gate-scoped-changes"),
+      ).toHaveTextContent("src/api/handler.ts");
+      expect(screen.getByTestId("approval-candidate-state")).toHaveTextContent(
+        "1 file · +1 −0 · scoped to src/api",
+      );
     });
 
     it("does not offer Approve in the peek before the frozen artifact loads", () => {
@@ -660,7 +675,9 @@ describe("PeekPopover", () => {
 
       const panel = screen.getByTestId("approval-gate-panel");
       expect(panel).toBeInTheDocument();
-      expect(screen.getByText("Implement")).toBeInTheDocument();
+      expect(
+        screen.getByText("Context approval — Implement"),
+      ).toBeInTheDocument();
       const editor = screen.getByLabelText("Reply text");
       expect(editor).toBeInTheDocument();
       expect(
@@ -717,12 +734,13 @@ describe("PeekPopover", () => {
         approvalGate: gateProps({ onReject }),
       });
 
-      fireEvent.click(screen.getByRole("button", { name: "Reject" }));
       fireEvent.change(
-        screen.getByPlaceholderText("Explain what needs to change..."),
+        screen.getByPlaceholderText(
+          "Required to reject — returned to the implementer",
+        ),
         { target: { value: "needs more tests" } },
       );
-      fireEvent.click(screen.getByRole("button", { name: "Submit rejection" }));
+      fireEvent.click(screen.getByRole("button", { name: "Reject" }));
       expect(onReject).toHaveBeenCalledWith("needs more tests");
     });
 

@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/styles.css">
+  <script src="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.js"></script>
+  <style>
+    html, body { height: auto !important; max-height: none !important; overflow: visible !important; background: #04070c !important; }
+    body { margin: 0; font-family: var(--font-body, "Manrope", sans-serif); }
+    a { color: var(--cyan, #00e5ff); text-decoration: none; }
+    a:hover { color: var(--text-primary, #dce2f0); }
+  </style>
+</helmet>
+<div role="note" style="position:sticky;top:0;z-index:999;display:flex;align-items:center;gap:12px;background:#2b0b0b;border-bottom:2px solid #e5484d;color:#ffd7d7;font:600 14px/1.5 ui-monospace,monospace;padding:14px 24px">ARCHIVED — superseded exploration. This is NOT an accepted design and must not be implemented. The canonical files are listed in README.md §1.</div>
+
+
+<section style="display:flex;flex-direction:column;gap:40px;padding:48px 48px 0;min-width:2660px">
+  <div id="2a" data-screen-label="2a Interactive drill-in panel">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px">
+      <a href="#2a" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cyan-glow-strong);border-radius:6px;background:var(--cc-cyan-a08);font:700 12px var(--font-mono);color:var(--cyan)">2a</a>
+      <span style="font:700 15px var(--font-body);color:var(--text-primary)">Interactive — <a href="#1b">1b</a> navigation, <a href="#1d">1d</a> rows · all four drill-ins live</span>
+      <span style="font-size:12.5px;color:var(--text-secondary)">click a group card to push · toggle, cycle values, reset overrides — provenance and counts update everywhere</span>
+    </div>
+    <div style="display:flex;gap:32px;align-items:flex-start">
+      <div style="width:440px;height:820px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:10px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 16px 48px rgba(0,0,0,.45)">
+
+        <sc-if value="{{ isRoot }}" hint-placeholder-val="{{ true }}">
+        <div style="padding:14px 16px;border-bottom:1px solid var(--border-dim)">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font:700 15px var(--font-body);color:var(--text-primary)">Implement checkout</span>
+            <span style="margin-left:auto;font:600 10.5px var(--font-mono);color:{{ totalColor }}">{{ totalLabel }}</span>
+          </div>
+          <div style="margin-top:4px;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">ctx_checkout · lane payments · read-write</div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px">
+          <sc-for list="{{ cards }}" as="card" hint-placeholder-count="4">
+            <div onClick="{{ card.open }}" style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base);cursor:pointer">
+              <div style="display:flex;align-items:center;gap:8px;padding:11px 14px">
+                <span style="font:700 11px var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-primary)">{{ card.title }}</span>
+                <sc-for list="{{ card.badges }}" as="b" hint-placeholder-count="1">
+                  <span style="display:inline-flex;align-items:center;gap:5px;font:600 9.5px var(--font-mono);border-radius:999px;padding:1px 8px;color:{{ b.color }};border:1px solid {{ b.border }};background:{{ b.bg }}">{{ b.text }}</span>
+                </sc-for>
+                <span style="margin-left:auto;color:var(--text-tertiary)">›</span>
+              </div>
+              <div style="padding:0 14px 12px;display:flex;flex-direction:column;gap:5px">
+                <sc-for list="{{ card.lines }}" as="line" hint-placeholder-count="3">
+                  <div style="display:flex;gap:8px;font:400 11.5px var(--font-mono)"><span style="color:var(--text-tertiary);width:104px;flex-shrink:0">{{ line.k }}</span><span style="color:{{ line.c }}">{{ line.v }}</span></div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-for>
+          <div style="margin-top:auto;padding:10px 2px 0;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">read-only summary — editing happens one level in</div>
+        </div>
+        </sc-if>
+
+        <sc-if value="{{ isGroup }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border-dim)">
+          <span onClick="{{ back }}" title="Implement checkout" style="flex-shrink:0;color:var(--cyan);font:600 12px var(--font-mono);cursor:pointer;white-space:nowrap">‹ Back</span>
+          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:700 12px var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-primary)">{{ groupTitle }}</span>
+          <div style="margin-left:auto;flex-shrink:0;display:flex;align-items:center;gap:6px">
+            <sc-for list="{{ groupBadges }}" as="b" hint-placeholder-count="1">
+              <span style="display:inline-flex;align-items:center;gap:5px;font:600 9.5px var(--font-mono);border-radius:999px;padding:1px 8px;color:{{ b.color }};border:1px solid {{ b.border }};background:{{ b.bg }}">{{ b.text }}</span>
+            </sc-for>
+          </div>
+        </div>
+        <div style="flex:1;overflow-y:auto">
+          <sc-for list="{{ rows }}" as="row" hint-placeholder-count="5">
+            <div style="border-left:2px solid {{ row.edge }}">
+              <div style="display:flex;align-items:center;gap:8px;padding:10px 14px">
+                <span onClick="{{ row.onExpand }}" style="color:var(--text-tertiary);font-size:10px;cursor:{{ row.caretCursor }};width:10px;flex-shrink:0">{{ row.caret }}</span>
+                <span style="font:500 12px var(--font-body);color:{{ row.labelColor }}">{{ row.label }}</span>
+                <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+                  <sc-if value="{{ row.isChip }}" hint-placeholder-val="{{ false }}">
+                    <span onClick="{{ row.onCycle }}" style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border-default);border-radius:5px;background:var(--bg-base);padding:4px 9px;font:400 11px var(--font-mono);cursor:pointer;color:{{ row.valueColor }}">{{ row.valueText }} ▾</span>
+                  </sc-if>
+                  <sc-if value="{{ row.isText }}" hint-placeholder-val="{{ true }}">
+                    <span style="font:400 11px var(--font-mono);color:{{ row.valueColor }}">{{ row.valueText }}</span>
+                  </sc-if>
+                  <sc-if value="{{ row.hasTier }}" hint-placeholder-val="{{ true }}">
+                    <span title="{{ row.tierTitle }}" style="font:400 10px var(--font-mono);color:var(--text-tertiary);border:1px solid var(--border-default);border-radius:3px;padding:1px 5px">{{ row.tier }}</span>
+                  </sc-if>
+                  <sc-if value="{{ row.isSwitch }}" hint-placeholder-val="{{ false }}">
+                    <x-import component-from-global-scope="CommandCenterUI.Switch" checked="{{ row.checked }}" onCheckedChange="{{ row.onToggle }}" aria-label="{{ row.label }}" hint-size="36px,20px"></x-import>
+                  </sc-if>
+                  <sc-if value="{{ row.showReset }}" hint-placeholder-val="{{ false }}">
+                    <span onClick="{{ row.onReset }}" title="reset to inherit" style="color:var(--cyan);cursor:pointer;font-size:12px">↺</span>
+                  </sc-if>
+                  <sc-if value="{{ row.isLink }}" hint-placeholder-val="{{ false }}">
+                    <span style="color:var(--text-tertiary);font-size:11px">›</span>
+                  </sc-if>
+                </div>
+              </div>
+              <sc-if value="{{ row.hasHelper }}" hint-placeholder-val="{{ false }}">
+                <div style="padding:0 14px 9px 14px;font:400 10.5px var(--font-mono);color:{{ row.helperColor }}">{{ row.helper }}</div>
+              </sc-if>
+              <sc-if value="{{ row.showDetail }}" hint-placeholder-val="{{ false }}">
+                <div style="margin:0 14px 10px;border:1px solid var(--border-dim);border-radius:5px;background:var(--bg-base);padding:8px 10px;display:flex;flex-direction:column;gap:5px;opacity:{{ row.detailOpacity }}">
+                  <sc-for list="{{ row.detail }}" as="d" hint-placeholder-count="2">
+                    <div style="display:flex;gap:8px;font:400 10.5px var(--font-mono)"><span style="color:var(--text-primary);width:70px;flex-shrink:0">{{ d.k }}</span><span style="color:var(--text-tertiary)">{{ d.v }}</span></div>
+                  </sc-for>
+                </div>
+              </sc-if>
+            </div>
+          </sc-for>
+          <sc-if value="{{ hasAdv }}" hint-placeholder-val="{{ false }}">
+            <div onClick="{{ toggleAdv }}" style="display:flex;align-items:center;gap:8px;padding:12px 14px;border-top:1px solid var(--border-dim);cursor:pointer">
+              <span style="color:var(--text-tertiary);font-size:10px">{{ advCaret }}</span>
+              <span style="font:600 10.5px var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-tertiary)">Advanced</span>
+              <span style="font:400 10.5px var(--font-mono);color:var(--text-tertiary)">{{ advNames }}</span>
+              <span style="margin-left:auto;font:600 10px var(--font-mono);color:var(--text-tertiary);border:1px solid var(--border-default);border-radius:999px;padding:0 7px">{{ advCount }}</span>
+            </div>
+          </sc-if>
+        </div>
+        </sc-if>
+
+        <div style="padding:10px 14px;border-top:1px solid var(--border-dim);display:flex;align-items:center;gap:10px;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">
+          <span><span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--cyan)"></span> set here</span>
+          <span>W workflow</span>
+          <span>G global</span>
+          <span style="margin-left:auto;color:var(--cyan);cursor:pointer" onClick="{{ resetAll }}">reset context</span>
+        </div>
+      </div>
+
+      <div style="width:400px;display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          <sc-for list="{{ jump }}" as="j" hint-placeholder-count="5">
+            <span onClick="{{ j.go }}" style="cursor:pointer;font:600 10.5px var(--font-mono);text-transform:uppercase;letter-spacing:.06em;border-radius:5px;padding:4px 10px;color:{{ j.color }};border:1px solid {{ j.border }};background:{{ j.bg }}">{{ j.label }}</span>
+          </sc-for>
+        </div>
+        <div style="font-size:12.5px;line-height:1.65;color:var(--text-secondary)">
+          <div style="font:700 13px var(--font-body);color:var(--text-primary);margin-bottom:8px">What is live</div>
+          Root is a pure read-out; the four group screens carry the editing. Switches flip, value chips cycle their options, and any value that stops matching its inherited one flips to <span style="color:var(--cyan);font-family:var(--font-mono)">set here</span> — cyan edge stripe, <span style="font-family:var(--font-mono)">↺</span> reset, and a helper line naming the value it replaced. Turning an inherited gate off reads as <span style="color:var(--red);font-family:var(--font-mono)">Disabled</span>, red edge, with its cohort kept underneath (expand the caret on Context validator).
+          <div style="margin-top:10px">Rarely-used settings sit under <span style="font-family:var(--font-mono)">Advanced</span> on each screen and are hidden until asked for — except when overridden, in which case they are pulled up automatically so nothing deviating can hide. Group cards and the header count recompute from the same state.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section style="display:flex;flex-direction:column;gap:48px;padding:48px;min-width:2660px">
+
+  <div style="max-width:1100px">
+    <div style="font:800 26px/1.2 var(--font-display);color:var(--text-primary);letter-spacing:-0.01em">Inspector config — scan, hide, show provenance</div>
+    <div style="margin-top:10px;font-size:13.5px;line-height:1.6;color:var(--text-secondary);max-width:880px">
+      Five treatments of the right panel for the same fixture: context <span style="font-family:var(--font-mono);color:var(--text-primary)">Implement checkout</span> with 3 deviations (implementer overridden, iteration policy overridden, context validator disabled) and 8 inherited settings. Every option keeps the codebase's cascade vocabulary — Global / Workflow / Overridden / Disabled — but changes what the panel leads with. <a href="#1e">1e</a> applies the same language to the workflow tab. Options combine: <a href="#1a">1a</a>+<a href="#1c">1c</a> and <a href="#1b">1b</a>+<a href="#1d">1d</a> are natural pairs.
+    </div>
+    <div style="margin-top:14px;display:flex;flex-wrap:wrap;gap:8px 20px;font:500 11px var(--font-mono);color:var(--text-tertiary)">
+      <span><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--cyan);box-shadow:0 0 4px var(--cyan-glow)"></span> overridden here</span>
+      <span><span style="display:inline-block;width:6px;height:6px;border-radius:50%;border:1px solid var(--text-tertiary);box-sizing:border-box"></span> from workflow</span>
+      <span><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--border-strong)"></span> global default</span>
+      <span><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--red);box-shadow:0 0 4px var(--red-glow)"></span> disabled here</span>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-wrap:wrap;gap:44px;align-items:flex-start">
+
+    <!-- ================= 1a Overrides-first ledger ================= -->
+    <div id="1a" data-screen-label="1a Overrides-first ledger" style="width:470px">
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px">
+        <a href="#1a" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cyan-glow-strong);border-radius:6px;background:var(--cc-cyan-a08);font:700 12px var(--font-mono);color:var(--cyan)">1a</a>
+        <span style="font:700 15px var(--font-body);color:var(--text-primary)">Overrides-first ledger</span>
+      </div>
+      <div style="width:440px;height:820px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:10px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 16px 48px rgba(0,0,0,.45)">
+        <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border-dim)">
+          <div style="display:flex;gap:2px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-base);padding:2px">
+            <span style="padding:4px 12px;border-radius:4px;font:600 10.5px var(--font-mono);text-transform:uppercase;letter-spacing:.06em;color:var(--text-tertiary)">Workflow</span>
+            <span style="padding:4px 12px;border-radius:4px;background:var(--bg-elevated);color:var(--text-primary);font:600 10.5px var(--font-mono);text-transform:uppercase;letter-spacing:.06em">Context</span>
+          </div>
+          <span style="margin-left:auto;color:var(--text-tertiary);font-size:13px">⟩⟩</span>
+        </div>
+        <div style="padding:14px 16px 12px;border-bottom:1px solid var(--border-dim)">
+          <div style="font:700 15px var(--font-body);color:var(--text-primary)">Implement checkout</div>
+          <div style="margin-top:4px;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">ctx_checkout · lane payments · read-write</div>
+          <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+            <span style="display:inline-flex;align-items:center;gap:4px;border:1px solid var(--cc-cyan-a25);background:var(--cc-cyan-a08);color:var(--cyan);border-radius:999px;padding:2px 9px;font:600 10.5px var(--font-mono)">◆ opus-4.5 · high</span>
+            <span style="display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border-default);background:var(--bg-base);color:var(--text-secondary);border-radius:999px;padding:2px 9px;font:600 10.5px var(--font-mono)">▣ script ×2</span>
+            <span style="display:inline-flex;align-items:center;gap:4px;border:1px solid var(--amber-dim);background:var(--amber-glow);color:var(--amber);border-radius:999px;padding:2px 9px;font:600 10.5px var(--font-mono)">✓ approval</span>
+            <span style="margin-left:auto;font:600 10.5px var(--font-mono);color:var(--cyan)">3 overrides</span>
+          </div>
+        </div>
+        <div style="flex:1;overflow:hidden;padding:14px 16px;display:flex;flex-direction:column;gap:16px">
+
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+              <span style="font:700 10.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--cyan)">Changed on this context</span>
+              <span style="font:600 10px var(--font-mono);color:var(--cyan);border:1px solid var(--cc-cyan-a25);border-radius:999px;padding:0 7px">3</span>
+              <span style="flex:1;height:1px;background:var(--border-dim)"></span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div style="border:1px solid var(--border-subtle);border-left:2px solid var(--cyan);border-radius:6px;background:var(--bg-base);padding:10px 12px">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span style="font:700 11px var(--font-mono);text-transform:uppercase;letter-spacing:.06em;color:var(--text-primary)">Implementer</span>
+                  <span style="font:400 11.5px var(--font-mono);color:var(--text-primary)">claude · opus-4.5 · high</span>
+                  <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font:600 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.07em;color:var(--cyan)"><span style="width:5px;height:5px;border-radius:50%;background:var(--cyan);box-shadow:0 0 4px var(--cyan-glow)"></span>Overridden</span>
+                </div>
+                <div style="margin-top:6px;display:flex;align-items:center;gap:8px;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">
+                  <span>inherits sonnet-4.5 · medium — Workflow</span>
+                  <span style="margin-left:auto;color:var(--cyan);cursor:pointer">↺ reset to inherit</span>
+                </div>
+              </div>
+              <div style="border:1px solid var(--border-subtle);border-left:2px solid var(--cyan);border-radius:6px;background:var(--bg-base);padding:10px 12px">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span style="font:700 11px var(--font-mono);text-transform:uppercase;letter-spacing:.06em;color:var(--text-primary)">Iteration policy</span>
+                  <span style="font:400 11.5px var(--font-mono);color:var(--text-primary)">max 8 · continuity · 180k</span>
+                  <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font:600 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.07em;color:var(--cyan)"><span style="width:5px;height:5px;border-radius:50%;background:var(--cyan);box-shadow:0 0 4px var(--cyan-glow)"></span>Overridden</span>
+                </div>
+                <div style="margin-top:6px;display:flex;align-items:center;gap:8px;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">
+                  <span>inherits max 5 · continuity on — Global</span>
+                  <span style="margin-left:auto;color:var(--cyan);cursor:pointer">↺ reset to inherit</span>
+                </div>
+              </div>
+              <div style="border:1px solid var(--border-subtle);border-left:2px solid var(--red-dim);border-radius:6px;background:var(--bg-base);padding:10px 12px">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span style="font:700 11px var(--font-mono);text-transform:uppercase;letter-spacing:.06em;color:var(--text-primary)">Context validator</span>
+                  <span style="font:400 11.5px var(--font-mono);color:var(--text-tertiary);text-decoration:line-through">2 validators</span>
+                  <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font:600 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.07em;color:var(--red)"><span style="width:5px;height:5px;border-radius:50%;background:var(--red);box-shadow:0 0 4px var(--red-glow)"></span>Disabled</span>
+                </div>
+                <div style="margin-top:6px;display:flex;align-items:center;gap:8px;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">
+                  <span>dormant cohort from Workflow</span>
+                  <span style="margin-left:auto;color:var(--cyan);cursor:pointer">re-enable</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+              <span style="font:700 10.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Inherited</span>
+              <span style="font:600 10px var(--font-mono);color:var(--text-tertiary);border:1px solid var(--border-default);border-radius:999px;padding:0 7px">8</span>
+              <span style="flex:1;height:1px;background:var(--border-dim)"></span>
+            </div>
+            <div style="display:flex;flex-direction:column">
+              <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:5px">
+                <span style="width:6px;height:6px;border-radius:50%;border:1px solid var(--text-tertiary);box-sizing:border-box;flex-shrink:0"></span>
+                <span style="font:500 11.5px var(--font-body);color:var(--text-secondary)">Script validator</span>
+                <span style="margin-left:auto;font:400 11px var(--font-mono);color:var(--text-tertiary)">bun test · bun lint</span>
+                <span style="font:600 9px var(--font-mono);color:var(--text-tertiary);border:1px solid var(--border-default);border-radius:3px;padding:1px 4px">W</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:5px;background:var(--bg-hover);border:1px solid var(--border-subtle)">
+                <span style="width:6px;height:6px;border-radius:50%;border:1px solid var(--text-tertiary);box-sizing:border-box;flex-shrink:0"></span>
+                <span style="font:500 11.5px var(--font-body);color:var(--text-primary)">Human approval gate</span>
+                <span style="margin-left:auto;font:400 11px var(--font-mono);color:var(--text-tertiary)">on · before merge</span>
+                <span style="font:600 9px var(--font-mono);color:var(--text-tertiary);border:1px solid var(--border-default);border-radius:3px;padding:1px 4px">W</span>
+                <span style="font:600 10px var(--font-mono);color:var(--cyan);border:1px solid var(--cc-cyan-a25);border-radius:4px;padding:2px 7px;background:var(--cc-cyan-a08);cursor:pointer">override</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:5px">
+                <span style="width:6px;height:6px;border-radius:50%;background:var(--border-strong);flex-shrink:0"></span>
+                <span style="font:500 11.5px var(--font-body);color:var(--text-secondary)">Agent validation</span>
+                <span style="margin-left:auto;font:400 11px var(--font-mono);color:var(--text-tertiary)">security · style</span>
+                <span style="font:600 9px var(--font-mono);color:var(--text-tertiary);border:1px solid var(--border-default);border-radius:3px;padding:1px 4px">G</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:5px">
+                <span style="width:6px;height:6px;border-radius:50%;background:var(--border-strong);flex-shrink:0"></span>
+                <span style="font:500 11.5px var(--font-body);color:var(--text-secondary)">Ask user questions</span>
+                <span style="margin-left:auto;font:400 11px var(--font-mono);color:var(--text-tertiary)">off</span>
+                <span style="font:600 9px var(--font-mono);color:var(--text-tertiary);border:1px solid var(--border-default);border-radius:3px;padding:1px 4px">G</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:5px">
+                <span style="width:6px;height:6px;border-radius:50%;background:var(--border-strong);flex-shrink:0"></span>
+                <span style="font:500 11.5px var(--font-body);color:var(--text-secondary)">Collaboration</span>
+                <span style="margin-left:auto;font:400 11px var(--font-mono);color:var(--text-tertiary)">off</span>
+                <span style="font:600 9px var(--font-mono);color:var(--text-tertiary);border:1px solid var(--border-default);border-radius:3px;padding:1px 4px">G</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-top:6px;border-top:1px solid var(--border-dim);cursor:pointer">
+                <span style="color:var(--text-tertiary);font-size:10px">▸</span>
+                <span style="font:600 10.5px var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-tertiary)">Advanced</span>
+                <span style="font:400 10.5px var(--font-mono);color:var(--text-tertiary)">circuit breaker · plan repair · agent task add</span>
+                <span style="margin-left:auto;font:600 10px var(--font-mono);color:var(--text-tertiary);border:1px solid var(--border-default);border-radius:999px;padding:0 7px">3</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:12px;width:440px;font-size:12.5px;line-height:1.6;color:var(--text-secondary)">
+        The panel sorts by deviation, not by category. Everything you changed sits on top as cards with the inherited value they replaced; everything default compresses to one line each; the three settings almost nobody touches collapse under <span style="font-family:var(--font-mono)">Advanced</span>. Hovering an inherited row reveals <span style="color:var(--cyan);font-family:var(--font-mono)">override</span> (shown on the approval row). Scanning cost: 3 cards + 8 lines instead of 12 equal blocks.
+      </div>
+    </div>
+
+    <!-- ================= 1b Drill-in stack ================= -->
+    <div id="1b" data-screen-label="1b Summary + drill-in screens" style="width:960px">
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px">
+        <a href="#1b" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cyan-glow-strong);border-radius:6px;background:var(--cc-cyan-a08);font:700 12px var(--font-mono);color:var(--cyan)">1b</a>
+        <span style="font:700 15px var(--font-body);color:var(--text-primary)">Summary screen + drill-in editors</span>
+      </div>
+      <div style="display:flex;gap:36px;align-items:flex-start">
+        <div style="width:440px;height:820px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:10px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 16px 48px rgba(0,0,0,.45)">
+          <div style="padding:14px 16px;border-bottom:1px solid var(--border-dim)">
+            <div style="font:700 15px var(--font-body);color:var(--text-primary)">Implement checkout</div>
+            <div style="margin-top:4px;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">ctx_checkout · lane payments · read-write</div>
+          </div>
+          <div style="flex:1;padding:14px 16px;display:flex;flex-direction:column;gap:10px;overflow:hidden">
+
+            <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base);cursor:pointer">
+              <div style="display:flex;align-items:center;gap:8px;padding:11px 14px">
+                <span style="font:700 11px var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-primary)">Agents</span>
+                <span style="display:inline-flex;align-items:center;gap:5px;font:600 9.5px var(--font-mono);color:var(--cyan);border:1px solid var(--cc-cyan-a25);background:var(--cc-cyan-a08);border-radius:999px;padding:1px 8px"><span style="width:5px;height:5px;border-radius:50%;background:var(--cyan)"></span>1 override</span>
+                <span style="margin-left:auto;color:var(--text-tertiary)">›</span>
+              </div>
+              <div style="padding:0 14px 12px;display:flex;flex-direction:column;gap:5px">
+                <div style="display:flex;gap:8px;font:400 11.5px var(--font-mono)"><span style="color:var(--text-tertiary);width:110px;flex-shrink:0">implementer</span><span style="color:var(--cyan)">opus-4.5 · high ●</span></div>
+                <div style="display:flex;gap:8px;font:400 11.5px var(--font-mono)"><span style="color:var(--text-tertiary);width:110px;flex-shrink:0">collaboration</span><span style="color:var(--text-secondary)">off</span></div>
+              </div>
+            </div>
+
+            <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base);cursor:pointer;outline:1px solid var(--cc-cyan-a25)">
+              <div style="display:flex;align-items:center;gap:8px;padding:11px 14px">
+                <span style="font:700 11px var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-primary)">Quality gates</span>
+                <span style="display:inline-flex;align-items:center;gap:5px;font:600 9.5px var(--font-mono);color:var(--red);border:1px solid var(--red-dim);background:var(--red-glow);border-radius:999px;padding:1px 8px"><span style="width:5px;height:5px;border-radius:50%;background:var(--red)"></span>1 disabled</span>
+                <span style="margin-left:auto;color:var(--text-tertiary)">›</span>
+              </div>
+              <div style="padding:0 14px 12px;display:flex;flex-direction:column;gap:5px">
+                <div style="display:flex;gap:8px;font:400 11.5px var(--font-mono)"><span style="color:var(--text-tertiary);width:110px;flex-shrink:0">validator</span><span style="color:var(--red)">disabled ●</span></div>
+                <div style="display:flex;gap:8px;font:400 11.5px var(--font-mono)"><span style="color:var(--text-tertiary);width:110px;flex-shrink:0">script</span><span style="color:var(--text-secondary)">bun test · bun lint</span></div>
+                <div style="display:flex;gap:8px;font:400 11.5px var(--font-mono)"><span style="color:var(--text-tertiary);width:110px;flex-shrink:0">approval</span><span style="color:var(--text-secondary)">on · before merge</span></div>
+                <div style="display:flex;gap:8px;font:400 11.5px var(--font-mono)"><span style="color:var(--text-tertiary);width:110px;flex-shrink:0">questions</span><span style="color:var(--text-secondary)">off</span></div>
+              </div>
+            </div>
+
+            <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base);cursor:pointer">
+              <div style="display:flex;align-items:center;gap:8px;padding:11px 14px">
+                <span style="font:700 11px var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-primary)">Execution policy</span>
+                <span style="display:inline-flex;align-items:center;gap:5px;font:600 9.5px var(--font-mono);color:var(--cyan);border:1px solid var(--cc-cyan-a25);background:var(--cc-cyan-a08);border-radius:999px;padding:1px 8px"><span style="width:5px;height:5px;border-radius:50%;background:var(--cyan)"></span>1 override</span>
+                <span style="margin-left:auto;color:var(--text-tertiary)">›</span>
+              </div>
+              <div style="padding:0 14px 12px;display:flex;flex-direction:column;gap:5px">
+                <div style="display:flex;gap:8px;font:400 11.5px var(--font-mono)"><span style="color:var(--text-tertiary);width:110px;flex-shrink:0">iterations</span><span style="color:var(--cyan)">max 8 · 180k ●</span></div>
+                <div style="display:flex;gap:8px;font:400 11.5px var(--font-mono)"><span style="color:var(--text-tertiary);width:110px;flex-shrink:0">breaker</span><span style="color:var(--text-secondary)">halt after 3 fails</span></div>
+                <div style="display:flex;gap:8px;font:400 11.5px var(--font-mono)"><span style="color:var(--text-tertiary);width:110px;flex-shrink:0">plan repair</span><span style="color:var(--text-secondary)">on · 2/context</span></div>
+              </div>
+            </div>
+
+            <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base);cursor:pointer">
+              <div style="display:flex;align-items:center;gap:8px;padding:11px 14px">
+                <span style="font:700 11px var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-primary)">Output &amp; placement</span>
+                <span style="margin-left:auto;color:var(--text-tertiary)">›</span>
+              </div>
+              <div style="padding:0 14px 12px;display:flex;flex-direction:column;gap:5px">
+                <div style="display:flex;gap:8px;font:400 11.5px var(--font-mono)"><span style="color:var(--text-tertiary);width:110px;flex-shrink:0">placement</span><span style="color:var(--text-secondary)">payments · read-write</span></div>
+                <div style="display:flex;gap:8px;font:400 11.5px var(--font-mono)"><span style="color:var(--text-tertiary);width:110px;flex-shrink:0">schema</span><span style="color:var(--text-secondary)">declared · 4 fields</span></div>
+              </div>
+            </div>
+
+            <div style="margin-top:auto;padding:10px 2px 0;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">read-only summary — editing happens one level in</div>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;height:820px"><span style="font-size:20px;color:var(--text-tertiary)">→</span></div>
+
+        <div style="width:440px;height:820px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:10px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 16px 48px rgba(0,0,0,.45)">
+          <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border-dim)">
+            <span style="color:var(--cyan);font:600 12px var(--font-mono);cursor:pointer">‹ Implement checkout</span>
+            <span style="font:700 12px var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-primary)">Quality gates</span>
+          </div>
+          <div style="flex:1;padding:14px 16px;display:flex;flex-direction:column;gap:10px;overflow:hidden">
+
+            <div style="border:1px solid var(--border-subtle);border-left:2px solid var(--red-dim);border-radius:8px;background:var(--bg-base)">
+              <div style="display:flex;align-items:center;gap:8px;padding:11px 14px">
+                <span style="color:var(--text-secondary);font-size:10px">▾</span>
+                <span style="font:700 11px var(--font-mono);text-transform:uppercase;letter-spacing:.06em;color:var(--text-primary)">Context validator</span>
+                <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font:600 9.5px var(--font-mono);text-transform:uppercase;color:var(--red)"><span style="width:5px;height:5px;border-radius:50%;background:var(--red);box-shadow:0 0 4px var(--red-glow)"></span>Disabled</span>
+                <x-import component-from-global-scope="CommandCenterUI.Switch" checked="{{ off }}" aria-label="Context validator enabled" hint-size="36px,20px"></x-import>
+              </div>
+              <div style="border-top:1px solid var(--border-dim);padding:12px 14px;display:flex;flex-direction:column;gap:8px;opacity:.6">
+                <div style="display:flex;align-items:center;gap:8px;border:1px solid var(--border-subtle);border-radius:5px;padding:7px 10px">
+                  <span style="font:600 11px var(--font-mono);color:var(--text-primary)">security</span>
+                  <span style="font:400 11px var(--font-mono);color:var(--text-tertiary)">claude · sonnet-4.5</span>
+                  <span style="margin-left:auto;font:400 10px var(--font-mono);color:var(--text-tertiary)">dormant</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;border:1px solid var(--border-subtle);border-radius:5px;padding:7px 10px">
+                  <span style="font:600 11px var(--font-mono);color:var(--text-primary)">style</span>
+                  <span style="font:400 11px var(--font-mono);color:var(--text-tertiary)">claude · haiku-4</span>
+                  <span style="margin-left:auto;font:400 10px var(--font-mono);color:var(--text-tertiary)">dormant</span>
+                </div>
+                <div style="font:400 10.5px var(--font-mono);color:var(--text-tertiary)">cohort defined at Workflow · kept while disabled</div>
+              </div>
+            </div>
+
+            <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base)">
+              <div style="display:flex;align-items:center;gap:8px;padding:11px 14px">
+                <span style="color:var(--text-tertiary);font-size:10px">▸</span>
+                <span style="font:700 11px var(--font-mono);text-transform:uppercase;letter-spacing:.06em;color:var(--text-primary)">Script validator</span>
+                <span style="font:400 11px var(--font-mono);color:var(--text-secondary)">bun test · bun lint</span>
+                <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font:600 9.5px var(--font-mono);text-transform:uppercase;color:var(--text-tertiary)"><span style="width:5px;height:5px;border-radius:50%;border:1px solid var(--text-tertiary);box-sizing:border-box"></span>Workflow</span>
+              </div>
+            </div>
+
+            <div style="border:1px solid var(--amber-dim);border-radius:8px;background:var(--amber-glow)">
+              <div style="display:flex;align-items:center;gap:8px;padding:11px 14px">
+                <span style="color:var(--text-tertiary);font-size:10px">▸</span>
+                <span style="font:700 11px var(--font-mono);text-transform:uppercase;letter-spacing:.06em;color:var(--text-primary)">Human approval gate</span>
+                <span style="font:400 11px var(--font-mono);color:var(--text-secondary)">before merge</span>
+                <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font:600 9.5px var(--font-mono);text-transform:uppercase;color:var(--text-tertiary)"><span style="width:5px;height:5px;border-radius:50%;border:1px solid var(--text-tertiary);box-sizing:border-box"></span>Workflow</span>
+                <x-import component-from-global-scope="CommandCenterUI.Switch" checked="{{ on }}" aria-label="Human approval gate" hint-size="36px,20px"></x-import>
+              </div>
+            </div>
+
+            <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base)">
+              <div style="display:flex;align-items:center;gap:8px;padding:11px 14px">
+                <span style="color:var(--text-tertiary);font-size:10px">▸</span>
+                <span style="font:700 11px var(--font-mono);text-transform:uppercase;letter-spacing:.06em;color:var(--text-primary)">Ask user questions</span>
+                <span style="font:400 11px var(--font-mono);color:var(--text-secondary)">off</span>
+                <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font:600 9.5px var(--font-mono);text-transform:uppercase;color:var(--text-tertiary)"><span style="width:5px;height:5px;border-radius:50%;background:var(--border-strong)"></span>Global</span>
+                <x-import component-from-global-scope="CommandCenterUI.Switch" checked="{{ off }}" aria-label="Ask user questions" hint-size="36px,20px"></x-import>
+              </div>
+            </div>
+
+            <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base)">
+              <div style="display:flex;align-items:center;gap:8px;padding:11px 14px">
+                <span style="color:var(--text-tertiary);font-size:10px">▸</span>
+                <span style="font:700 11px var(--font-mono);text-transform:uppercase;letter-spacing:.06em;color:var(--text-primary)">Agent validation</span>
+                <span style="font:400 11px var(--font-mono);color:var(--text-secondary)">security · style</span>
+                <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font:600 9.5px var(--font-mono);text-transform:uppercase;color:var(--text-tertiary)"><span style="width:5px;height:5px;border-radius:50%;background:var(--border-strong)"></span>Global</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:12px;width:916px;font-size:12.5px;line-height:1.6;color:var(--text-secondary)">
+        Two-level panel, like OS settings. The root screen is a pure read-out — four cards, one line per setting, override dots inline — so scanning never fights with editing affordances. Clicking a card pushes a group screen where the full <span style="font-family:var(--font-mono)">InspectorConfigBlock</span> editors live (existing component, unchanged). Rarely-used settings cost one line on the root instead of a whole block. Trade-off: two clicks to edit.
+      </div>
+    </div>
+
+    <!-- ================= 1c Cascade matrix ================= -->
+    <div id="1c" data-screen-label="1c Cascade matrix" style="width:530px">
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px">
+        <a href="#1c" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cyan-glow-strong);border-radius:6px;background:var(--cc-cyan-a08);font:700 12px var(--font-mono);color:var(--cyan)">1c</a>
+        <span style="font:700 15px var(--font-body);color:var(--text-primary)">Cascade matrix — compare mode</span>
+      </div>
+      <div style="width:500px;height:820px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:10px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 16px 48px rgba(0,0,0,.45)">
+        <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border-dim)">
+          <span style="font:700 13px var(--font-body);color:var(--text-primary)">Implement checkout</span>
+          <div style="margin-left:auto;display:flex;gap:2px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-base);padding:2px">
+            <span style="padding:3px 10px;border-radius:4px;font:600 10px var(--font-mono);text-transform:uppercase;color:var(--text-tertiary)">List</span>
+            <span style="padding:3px 10px;border-radius:4px;background:var(--bg-elevated);color:var(--text-primary);font:600 10px var(--font-mono);text-transform:uppercase">Compare</span>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:132px 1fr 1fr 1fr;border-bottom:1px solid var(--border-dim);background:var(--bg-base)">
+          <span style="padding:8px 14px"></span>
+          <span style="padding:8px 10px;font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-tertiary)">Global</span>
+          <span style="padding:8px 10px;font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-tertiary)">Workflow</span>
+          <span style="padding:8px 10px;font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--cyan)">This context</span>
+        </div>
+        <div style="flex:1;overflow:hidden;font-family:var(--font-mono)">
+          <div style="display:grid;grid-template-columns:132px 1fr 1fr 1fr;border-bottom:1px solid var(--border-dim);align-items:center">
+            <span style="padding:10px 14px;font:600 10.5px var(--font-mono);color:var(--text-primary)">implementer</span>
+            <span style="padding:10px 10px;font-size:10.5px;color:var(--text-tertiary)">sonnet-4<br>medium</span>
+            <span style="padding:10px 10px;font-size:10.5px;color:var(--text-secondary)">sonnet-4.5<br>medium</span>
+            <span style="margin:6px 8px;padding:4px 6px;font-size:10.5px;color:var(--cyan);border:1px solid var(--cc-cyan-a25);border-radius:5px;background:var(--cc-cyan-a08)">opus-4.5<br>high ✓</span>
+          </div>
+          <div style="display:grid;grid-template-columns:132px 1fr 1fr 1fr;border-bottom:1px solid var(--border-dim);align-items:center">
+            <span style="padding:10px 14px;font:600 10.5px var(--font-mono);color:var(--text-primary)">validator</span>
+            <span style="padding:10px 10px;font-size:10.5px;color:var(--text-tertiary)">1 seat</span>
+            <span style="padding:10px 10px;font-size:10.5px;color:var(--text-secondary)">2 seats</span>
+            <span style="margin:6px 8px;padding:4px 6px;font-size:10.5px;color:var(--red);border:1px solid var(--red-dim);border-radius:5px;background:var(--red-glow)">disabled ✓</span>
+          </div>
+          <div style="display:grid;grid-template-columns:132px 1fr 1fr 1fr;border-bottom:1px solid var(--border-dim);align-items:center">
+            <span style="padding:10px 14px;font:600 10.5px var(--font-mono);color:var(--text-primary)">script</span>
+            <span style="padding:10px 10px;font-size:10.5px;color:var(--text-tertiary)">—</span>
+            <span style="margin:6px 8px;padding:4px 6px;font-size:10.5px;color:var(--text-primary);border:1px solid var(--border-strong);border-radius:5px;background:var(--bg-elevated)">2 cmds ✓</span>
+            <span style="padding:10px 10px;font-size:10.5px;color:var(--text-tertiary)">inherits ←</span>
+          </div>
+          <div style="display:grid;grid-template-columns:132px 1fr 1fr 1fr;border-bottom:1px solid var(--border-dim);align-items:center">
+            <span style="padding:10px 14px;font:600 10.5px var(--font-mono);color:var(--text-primary)">approval</span>
+            <span style="padding:10px 10px;font-size:10.5px;color:var(--text-tertiary)">off</span>
+            <span style="margin:6px 8px;padding:4px 6px;font-size:10.5px;color:var(--amber);border:1px solid var(--amber-dim);border-radius:5px;background:var(--amber-glow)">on ✓</span>
+            <span style="padding:10px 10px;font-size:10.5px;color:var(--text-tertiary)">inherits ←</span>
+          </div>
+          <div style="display:grid;grid-template-columns:132px 1fr 1fr 1fr;border-bottom:1px solid var(--border-dim);align-items:center">
+            <span style="padding:10px 14px;font:600 10.5px var(--font-mono);color:var(--text-primary)">questions</span>
+            <span style="margin:6px 8px;padding:4px 6px;font-size:10.5px;color:var(--text-primary);border:1px solid var(--border-strong);border-radius:5px;background:var(--bg-elevated)">off ✓</span>
+            <span style="padding:10px 10px;font-size:10.5px;color:var(--text-tertiary)">—</span>
+            <span style="padding:10px 10px;font-size:10.5px;color:var(--text-tertiary)">—</span>
+          </div>
+          <div style="display:grid;grid-template-columns:132px 1fr 1fr 1fr;border-bottom:1px solid var(--border-dim);align-items:center">
+            <span style="padding:10px 14px;font:600 10.5px var(--font-mono);color:var(--text-primary)">iterations</span>
+            <span style="padding:10px 10px;font-size:10.5px;color:var(--text-tertiary)">max 5</span>
+            <span style="padding:10px 10px;font-size:10.5px;color:var(--text-tertiary)">—</span>
+            <span style="margin:6px 8px;padding:4px 6px;font-size:10.5px;color:var(--cyan);border:1px solid var(--cc-cyan-a25);border-radius:5px;background:var(--cc-cyan-a08)">max 8 ✓</span>
+          </div>
+          <div style="display:grid;grid-template-columns:132px 1fr 1fr 1fr;border-bottom:1px solid var(--border-dim);align-items:center">
+            <span style="padding:10px 14px;font:600 10.5px var(--font-mono);color:var(--text-primary)">breaker</span>
+            <span style="margin:6px 8px;padding:4px 6px;font-size:10.5px;color:var(--text-primary);border:1px solid var(--border-strong);border-radius:5px;background:var(--bg-elevated)">3 fails ✓</span>
+            <span style="padding:10px 10px;font-size:10.5px;color:var(--text-tertiary)">—</span>
+            <span style="padding:10px 10px;font-size:10.5px;color:var(--text-tertiary)">—</span>
+          </div>
+          <div style="display:grid;grid-template-columns:132px 1fr 1fr 1fr;border-bottom:1px solid var(--border-dim);align-items:center">
+            <span style="padding:10px 14px;font:600 10.5px var(--font-mono);color:var(--text-primary)">plan repair</span>
+            <span style="margin:6px 8px;padding:4px 6px;font-size:10.5px;color:var(--text-primary);border:1px solid var(--border-strong);border-radius:5px;background:var(--bg-elevated)">on · 2/ctx ✓</span>
+            <span style="padding:10px 10px;font-size:10.5px;color:var(--text-tertiary)">—</span>
+            <span style="padding:10px 10px;font-size:10.5px;color:var(--text-tertiary)">—</span>
+          </div>
+          <div style="display:grid;grid-template-columns:132px 1fr 1fr 1fr;border-bottom:1px solid var(--border-dim);align-items:center">
+            <span style="padding:10px 14px;font:600 10.5px var(--font-mono);color:var(--text-primary)">task add</span>
+            <span style="margin:6px 8px;padding:4px 6px;font-size:10.5px;color:var(--text-primary);border:1px solid var(--border-strong);border-radius:5px;background:var(--bg-elevated)">allowed ✓</span>
+            <span style="padding:10px 10px;font-size:10.5px;color:var(--text-tertiary)">—</span>
+            <span style="padding:10px 10px;font-size:10.5px;color:var(--text-tertiary)">—</span>
+          </div>
+          <div style="display:grid;grid-template-columns:132px 1fr 1fr 1fr;align-items:center">
+            <span style="padding:10px 14px;font:600 10.5px var(--font-mono);color:var(--text-primary)">collab</span>
+            <span style="margin:6px 8px;padding:4px 6px;font-size:10.5px;color:var(--text-primary);border:1px solid var(--border-strong);border-radius:5px;background:var(--bg-elevated)">off ✓</span>
+            <span style="padding:10px 10px;font-size:10.5px;color:var(--text-tertiary)">—</span>
+            <span style="padding:10px 10px;font-size:10.5px;color:var(--text-tertiary)">—</span>
+          </div>
+        </div>
+        <div style="padding:10px 16px;border-top:1px solid var(--border-dim);font:400 10.5px var(--font-mono);color:var(--text-tertiary)">✓ winning cell · — inherits from the left · click any cell to set at that tier</div>
+      </div>
+      <div style="margin-top:12px;width:500px;font-size:12.5px;line-height:1.6;color:var(--text-secondary)">
+        A second <em>mode</em> of the panel rather than a replacement — the List/Compare toggle in the header. One glance answers "what changed, at which tier, and what would it fall back to" for the whole context; resetting an override is deleting a cell. Best paired with <a href="#1a">1a</a> as its default List view. This is also the view that makes a wrong-tier override (workflow value shadowed by a stale context value) visible.
+      </div>
+    </div>
+
+    <!-- ================= 1d Filterable settings list ================= -->
+    <div id="1d" data-screen-label="1d Filterable settings list" style="width:470px">
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px">
+        <a href="#1d" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cyan-glow-strong);border-radius:6px;background:var(--cc-cyan-a08);font:700 12px var(--font-mono);color:var(--cyan)">1d</a>
+        <span style="font:700 15px var(--font-body);color:var(--text-primary)">Flat list + filter — inline editing</span>
+      </div>
+      <div style="width:440px;height:820px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:10px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 16px 48px rgba(0,0,0,.45)">
+        <div style="padding:12px 14px;border-bottom:1px solid var(--border-dim);display:flex;flex-direction:column;gap:10px">
+          <div style="display:flex;align-items:center;gap:8px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-base);padding:7px 10px">
+            <span style="color:var(--text-tertiary);font-size:12px">⌕</span>
+            <span style="font:400 12px var(--font-mono);color:var(--text-tertiary)">filter settings…</span>
+          </div>
+          <div style="display:flex;gap:2px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-base);padding:2px">
+            <span style="flex:1;text-align:center;padding:4px 0;border-radius:4px;font:600 10px var(--font-mono);text-transform:uppercase;color:var(--text-tertiary)">Modified <span style="color:var(--cyan)">3</span></span>
+            <span style="flex:1;text-align:center;padding:4px 0;border-radius:4px;background:var(--bg-elevated);color:var(--text-primary);font:600 10px var(--font-mono);text-transform:uppercase">Common</span>
+            <span style="flex:1;text-align:center;padding:4px 0;border-radius:4px;font:600 10px var(--font-mono);text-transform:uppercase;color:var(--text-tertiary)">All 14</span>
+          </div>
+        </div>
+        <div style="flex:1;overflow:hidden">
+          <div style="padding:10px 14px 4px;font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Agents</div>
+          <div style="display:flex;align-items:center;gap:8px;padding:9px 14px;border-left:2px solid var(--cyan)">
+            <span style="font:500 12px var(--font-body);color:var(--text-primary)">Implementer</span>
+            <span style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border-default);border-radius:5px;background:var(--bg-base);padding:4px 9px;font:400 11px var(--font-mono);color:var(--cyan)">opus-4.5 · high ▾</span>
+            <span title="reset to inherit" style="color:var(--text-tertiary);cursor:pointer;font-size:12px">↺</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:9px 14px;border-left:2px solid transparent">
+            <span style="font:500 12px var(--font-body);color:var(--text-secondary)">Collaboration</span>
+            <span style="margin-left:auto;font:400 11px var(--font-mono);color:var(--text-tertiary)">off</span>
+            <x-import component-from-global-scope="CommandCenterUI.Switch" checked="{{ off }}" aria-label="Collaboration" hint-size="36px,20px"></x-import>
+          </div>
+          <div style="padding:12px 14px 4px;font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Quality gates</div>
+          <div style="display:flex;align-items:center;gap:8px;padding:9px 14px;border-left:2px solid var(--red-dim)">
+            <span style="font:500 12px var(--font-body);color:var(--text-primary)">Context validator</span>
+            <span style="margin-left:auto;font:400 11px var(--font-mono);color:var(--red)">disabled</span>
+            <x-import component-from-global-scope="CommandCenterUI.Switch" checked="{{ off }}" aria-label="Context validator" hint-size="36px,20px"></x-import>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:9px 14px;border-left:2px solid transparent">
+            <span style="font:500 12px var(--font-body);color:var(--text-secondary)">Script validator</span>
+            <span style="margin-left:auto;font:400 11px var(--font-mono);color:var(--text-tertiary)">bun test · bun lint</span>
+            <span style="color:var(--text-tertiary);font-size:11px">›</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:9px 14px;border-left:2px solid transparent;background:var(--bg-hover)">
+            <span style="font:500 12px var(--font-body);color:var(--text-primary)">Human approval gate</span>
+            <span style="margin-left:auto;font:400 10px var(--font-mono);color:var(--text-tertiary);border:1px solid var(--border-default);border-radius:3px;padding:1px 5px">W</span>
+            <x-import component-from-global-scope="CommandCenterUI.Switch" checked="{{ on }}" tone="green" aria-label="Human approval gate" hint-size="36px,20px"></x-import>
+          </div>
+          <div style="padding:2px 14px 8px;margin-left:2px;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">inherited from Workflow — toggling creates a context override</div>
+          <div style="padding:12px 14px 4px;font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Execution policy</div>
+          <div style="display:flex;align-items:center;gap:8px;padding:9px 14px;border-left:2px solid var(--cyan)">
+            <span style="font:500 12px var(--font-body);color:var(--text-primary)">Max iterations</span>
+            <span style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border-default);border-radius:5px;background:var(--bg-base);padding:4px 9px;font:400 11px var(--font-mono);color:var(--cyan)">8</span>
+            <span title="reset to inherit" style="color:var(--text-tertiary);cursor:pointer;font-size:12px">↺</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:9px 14px;border-left:2px solid transparent">
+            <span style="font:500 12px var(--font-body);color:var(--text-secondary)">Continuity limit</span>
+            <span style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border-default);border-radius:5px;background:var(--bg-base);padding:4px 9px;font:400 11px var(--font-mono);color:var(--text-secondary)">180k tokens</span>
+          </div>
+          <div style="padding:12px 14px 4px;display:flex;align-items:center;gap:8px">
+            <span style="font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Advanced · hidden by Common</span>
+            <span style="flex:1;height:1px;background:var(--border-dim)"></span>
+            <span style="font:600 10px var(--font-mono);color:var(--cyan);cursor:pointer">show 6</span>
+          </div>
+          <div style="padding:6px 14px;font:400 10.5px var(--font-mono);color:var(--text-tertiary);opacity:.7">circuit breaker · plan repair · agent task add · agent validation · ask user questions · output schema</div>
+        </div>
+        <div style="padding:10px 14px;border-top:1px solid var(--border-dim);display:flex;align-items:center;gap:6px;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">
+          <span style="width:5px;height:5px;border-radius:50%;background:var(--cyan)"></span> left edge marks values set on this context
+        </div>
+      </div>
+      <div style="margin-top:12px;width:440px;font-size:12.5px;line-height:1.6;color:var(--text-secondary)">
+        The IDE-settings pattern: every setting is one row with its control inline — no disclosure needed for the common cases. A curated <span style="font-family:var(--font-mono)">Common</span> filter is the default (≈8 rows); <span style="font-family:var(--font-mono)">Modified</span> shows only deviations; <span style="font-family:var(--font-mono)">All</span> is the escape hatch, searchable. Provenance is an edge stripe + tier tag instead of a badge row, and editing an inherited row silently promotes it to a context override (helper line under the hovered row).
+      </div>
+    </div>
+
+    <!-- ================= 1e Workflow tab ================= -->
+    <div id="1e" data-screen-label="1e Workflow tab with downstream overrides" style="width:470px">
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px">
+        <a href="#1e" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cyan-glow-strong);border-radius:6px;background:var(--cc-cyan-a08);font:700 12px var(--font-mono);color:var(--cyan)">1e</a>
+        <span style="font:700 15px var(--font-body);color:var(--text-primary)">Workflow tab — defaults + who deviates</span>
+      </div>
+      <div style="width:440px;height:820px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:10px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 16px 48px rgba(0,0,0,.45)">
+        <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border-dim)">
+          <div style="display:flex;gap:2px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-base);padding:2px">
+            <span style="padding:4px 12px;border-radius:4px;background:var(--bg-elevated);color:var(--text-primary);font:600 10.5px var(--font-mono);text-transform:uppercase;letter-spacing:.06em">Workflow</span>
+            <span style="padding:4px 12px;border-radius:4px;font:600 10.5px var(--font-mono);text-transform:uppercase;letter-spacing:.06em;color:var(--text-tertiary)">Context</span>
+          </div>
+        </div>
+        <div style="padding:14px 16px 12px;border-bottom:1px solid var(--border-dim)">
+          <div style="font:700 15px var(--font-body);color:var(--text-primary)">checkout-v2 release train</div>
+          <div style="margin-top:4px;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">6 contexts · 3 lanes · defaults below apply to all unless a context overrides</div>
+        </div>
+        <div style="flex:1;overflow:hidden;padding:14px 16px;display:flex;flex-direction:column;gap:14px">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+              <span style="font:700 10.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Defaults for all contexts</span>
+              <span style="flex:1;height:1px;background:var(--border-dim)"></span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div style="border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base)">
+                <div style="display:flex;align-items:center;gap:8px;padding:9px 12px">
+                  <span style="font:600 11.5px var(--font-body);color:var(--text-primary)">Implementer</span>
+                  <span style="font:400 11px var(--font-mono);color:var(--text-secondary)">sonnet-4.5 · medium</span>
+                  <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font:600 9.5px var(--font-mono);color:var(--cyan);border:1px solid var(--cc-cyan-a25);background:var(--cc-cyan-a08);border-radius:999px;padding:1px 8px;cursor:pointer">↳ 2 ctx</span>
+                </div>
+                <div style="margin:0 12px 10px;border:1px solid var(--border-dim);border-radius:5px;background:var(--bg-surface);padding:8px 10px;display:flex;flex-direction:column;gap:5px">
+                  <div style="font:600 9px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">overridden by</div>
+                  <div style="display:flex;gap:8px;font:400 10.5px var(--font-mono)"><a href="#1a" style="color:var(--cyan)">Implement checkout</a><span style="color:var(--text-secondary)">opus-4.5 · high</span></div>
+                  <div style="display:flex;gap:8px;font:400 10.5px var(--font-mono)"><span style="color:var(--cyan)">Hotfix audit log</span><span style="color:var(--text-secondary)">haiku-4 · low</span></div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base)">
+                <span style="font:600 11.5px var(--font-body);color:var(--text-primary)">Context validator</span>
+                <span style="font:400 11px var(--font-mono);color:var(--text-secondary)">security · style</span>
+                <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font:600 9.5px var(--font-mono);color:var(--red);border:1px solid var(--red-dim);background:var(--red-glow);border-radius:999px;padding:1px 8px;cursor:pointer">⊘ 1 ctx</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base)">
+                <span style="font:600 11.5px var(--font-body);color:var(--text-primary)">Human approval gate</span>
+                <span style="font:400 11px var(--font-mono);color:var(--text-secondary)">on · before merge</span>
+                <span style="margin-left:auto;font:400 10px var(--font-mono);color:var(--text-tertiary)">all inherit</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base)">
+                <span style="font:600 11.5px var(--font-body);color:var(--text-primary)">Iteration policy</span>
+                <span style="font:400 11px var(--font-mono);color:var(--text-secondary)">max 5 · continuity on</span>
+                <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font:600 9.5px var(--font-mono);color:var(--cyan);border:1px solid var(--cc-cyan-a25);background:var(--cc-cyan-a08);border-radius:999px;padding:1px 8px;cursor:pointer">↳ 1 ctx</span>
+              </div>
+            </div>
+          </div>
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+              <span style="font:700 10.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--violet)">Workflow-only</span>
+              <span style="flex:1;height:1px;background:var(--border-dim)"></span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base)">
+                <span style="font:600 11.5px var(--font-body);color:var(--text-primary)">Lane-merge validation</span>
+                <span style="margin-left:auto;font:400 11px var(--font-mono);color:var(--text-secondary)">sequential · 2 commands</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base)">
+                <span style="font:600 11.5px var(--font-body);color:var(--text-primary)">Launch parameters</span>
+                <span style="margin-left:auto;font:400 11px var(--font-mono);color:var(--text-secondary)">2 params</span>
+                <span style="color:var(--text-tertiary);font-size:11px">›</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base)">
+                <span style="font:600 11.5px var(--font-body);color:var(--text-primary)">Charter</span>
+                <span style="margin-left:auto;font:400 11px var(--font-mono);color:var(--text-secondary)">3 invariants · 2 sources</span>
+                <span style="color:var(--text-tertiary);font-size:11px">›</span>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 2px;border-top:1px solid var(--border-dim);cursor:pointer">
+            <span style="color:var(--text-tertiary);font-size:10px">▸</span>
+            <span style="font:600 10.5px var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-tertiary)">Advanced defaults</span>
+            <span style="font:400 10.5px var(--font-mono);color:var(--text-tertiary)">breaker · plan repair · task add · collab · questions · script</span>
+            <span style="margin-left:auto;font:600 10px var(--font-mono);color:var(--text-tertiary);border:1px solid var(--border-default);border-radius:999px;padding:0 7px">6</span>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:12px;width:440px;font-size:12.5px;line-height:1.6;color:var(--text-secondary)">
+        The workflow tab's job is different from the context tab's: "what does a new context get, and which contexts deviate". Each default carries a <span style="color:var(--cyan);font-family:var(--font-mono)">↳ N ctx</span> chip; expanding it (shown on Implementer) lists the deviating contexts with their values — click-through selects that context. Workflow-only settings (lane-merge, launch params, charter) get their own group so they stop reading like cascade rows. Pairs with any of <a href="#1a">1a</a>–<a href="#1d">1d</a>.
+      </div>
+    </div>
+
+  </div>
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const GROUPS = [
+  { key: "agents", title: "Agents" },
+  { key: "gates", title: "Quality gates" },
+  { key: "policy", title: "Execution policy" },
+  { key: "output", title: "Output & placement" },
+];
+
+const INITIAL = {
+  implementer: { g: "agents", label: "Implementer", short: "implementer", kind: "chip", opts: ["sonnet-4.5 · medium", "opus-4.5 · high", "haiku-4 · low"], i: 1, base: 0, from: "workflow" },
+  collaboration: { g: "agents", label: "Collaboration", short: "collaboration", kind: "switch", on: false, base: false, from: "global", adv: true, onText: "on · 2 seats", offText: "off" },
+  validator: { g: "gates", label: "Context validator", short: "validator", kind: "switch", on: false, base: true, from: "workflow", onText: "security · style", offText: "disabled", detail: [["security", "claude · sonnet-4.5 · dormant"], ["style", "claude · haiku-4 · dormant"]] },
+  script: { g: "gates", label: "Script validator", short: "script", kind: "chip", opts: ["bun test · bun lint", "bun test", "none"], i: 0, base: 0, from: "workflow" },
+  approval: { g: "gates", label: "Human approval gate", short: "approval", kind: "switch", on: true, base: true, from: "workflow", onText: "before merge", offText: "off" },
+  questions: { g: "gates", label: "Ask user questions", short: "questions", kind: "switch", on: false, base: false, from: "global", adv: true, onText: "on", offText: "off" },
+  agentValidation: { g: "gates", label: "Agent validation", short: "agent validation", kind: "link", value: "security · style", from: "global", adv: true },
+  iterations: { g: "policy", label: "Max iterations", short: "iterations", kind: "chip", opts: ["max 5", "max 8", "max 12"], i: 1, base: 0, from: "global" },
+  continuity: { g: "policy", label: "Continuity limit", short: "continuity", kind: "chip", opts: ["180k tokens", "120k tokens", "off"], i: 0, base: 0, from: "workflow" },
+  breaker: { g: "policy", label: "Circuit breaker", short: "breaker", kind: "chip", opts: ["halt after 3 fails", "halt after 5 fails", "never halt"], i: 0, base: 0, from: "global", adv: true },
+  planRepair: { g: "policy", label: "Plan repair", short: "plan repair", kind: "switch", on: true, base: true, from: "global", adv: true, onText: "on · 2/context", offText: "off" },
+  taskAdd: { g: "policy", label: "Agent task add", short: "task add", kind: "switch", on: true, base: true, from: "global", adv: true, onText: "allowed", offText: "blocked" },
+  placement: { g: "output", label: "Placement", short: "placement", kind: "link", value: "payments · read-write", from: "context" },
+  schema: { g: "output", label: "Output schema", short: "schema", kind: "link", value: "declared · 4 fields", from: "context" },
+  inputs: { g: "output", label: "Upstream inputs", short: "inputs", kind: "link", value: "2 contexts", from: "context", adv: true },
+};
+
+const TIER = { workflow: "W", global: "G", context: "ctx" };
+const TIER_NAME = { workflow: "Workflow", global: "Global defaults", context: "This context only" };
+
+class Component extends DCLogic {
+  state = {
+    screen: "root",
+    s: JSON.parse(JSON.stringify(INITIAL)),
+    expanded: {},
+    adv: {},
+  };
+
+  src(st) {
+    if (st.kind === "chip") return st.i === st.base ? st.from : "ctx";
+    if (st.kind === "switch") return st.on === st.base ? st.from : st.on ? "ctx" : "disabled";
+    return st.from;
+  }
+
+  val(st) {
+    if (st.kind === "chip") return st.opts[st.i];
+    if (st.kind === "switch") return st.on ? st.onText : st.offText;
+    return st.value;
+  }
+
+  edit(key, fn) {
+    this.setState((prev) => {
+      const s = { ...prev.s, [key]: { ...prev.s[key] } };
+      fn(s[key]);
+      return { s };
+    });
+  }
+
+  counts(groupKey) {
+    let over = 0, off = 0;
+    Object.values(this.state.s).forEach((st) => {
+      if (groupKey && st.g !== groupKey) return;
+      const src = this.src(st);
+      if (src === "ctx") over++;
+      if (src === "disabled") off++;
+    });
+    return { over, off };
+  }
+
+  badges(groupKey) {
+    const { over, off } = this.counts(groupKey);
+    const out = [];
+    if (over) out.push({ text: over + (over === 1 ? " override" : " overrides"), color: "var(--cyan)", border: "var(--cc-cyan-a25)", bg: "var(--cc-cyan-a08)" });
+    if (off) out.push({ text: off + " disabled", color: "var(--red)", border: "var(--red-dim)", bg: "var(--red-glow)" });
+    return out;
+  }
+
+  buildRows(groupKey) {
+    const showAdv = !!this.state.adv[groupKey];
+    return Object.entries(this.state.s)
+      .filter(([, st]) => st.g === groupKey)
+      .map(([key, st]) => ({ key, st, src: this.src(st) }))
+      .filter((r) => showAdv || !r.st.adv || r.src === "ctx" || r.src === "disabled")
+      .map(({ key, st, src }) => {
+        const isCtx = src === "ctx", isOff = src === "disabled";
+        const expanded = !!this.state.expanded[key];
+        let helper = "";
+        if (isCtx) helper = st.kind === "chip"
+          ? "overrides " + st.opts[st.base] + " from " + TIER_NAME[st.from]
+          : "overrides " + (st.base ? st.onText : st.offText) + " from " + TIER_NAME[st.from];
+        if (isOff) helper = "switched off here — value kept, defined at " + TIER_NAME[st.from];
+        return {
+          key, label: st.label,
+          isChip: st.kind === "chip",
+          isSwitch: st.kind === "switch",
+          isLink: st.kind === "link",
+          isText: st.kind !== "chip",
+          checked: !!st.on,
+          valueText: this.val(st),
+          valueColor: isCtx ? "var(--cyan)" : isOff ? "var(--red)" : "var(--text-secondary)",
+          labelColor: isCtx || isOff ? "var(--text-primary)" : "var(--text-secondary)",
+          edge: isCtx ? "var(--cyan)" : isOff ? "var(--red-dim)" : "transparent",
+          hasTier: !isCtx && !isOff && st.from !== "context",
+          tier: TIER[st.from],
+          tierTitle: "inherited from " + TIER_NAME[st.from],
+          showReset: isCtx || isOff,
+          hasHelper: !!helper,
+          helper,
+          helperColor: isOff ? "var(--red-dim)" : "var(--text-tertiary)",
+          hasDetail: !!st.detail,
+          caret: st.detail ? (expanded ? "▾" : "▸") : "",
+          caretCursor: st.detail ? "pointer" : "default",
+          showDetail: !!st.detail && expanded,
+          detailOpacity: isOff ? 0.55 : 1,
+          detail: (st.detail || []).map(([k, v]) => ({ k, v })),
+          onToggle: () => this.edit(key, (x) => { x.on = !x.on; }),
+          onCycle: () => this.edit(key, (x) => { x.i = (x.i + 1) % x.opts.length; }),
+          onReset: () => this.edit(key, (x) => { if (x.kind === "chip") x.i = x.base; else x.on = x.base; }),
+          onExpand: () => this.setState((p) => ({ expanded: { ...p.expanded, [key]: !p.expanded[key] } })),
+        };
+      });
+  }
+
+  renderVals() {
+    const screen = this.state.screen;
+    const isRoot = screen === "root";
+    const group = GROUPS.find((g) => g.key === screen);
+    const total = this.counts(null);
+
+    const cards = GROUPS.map((g) => ({
+      title: g.title,
+      badges: this.badges(g.key),
+      open: () => this.setState({ screen: g.key }),
+      lines: Object.values(this.state.s)
+        .filter((st) => st.g === g.key)
+        .map((st) => ({ st, src: this.src(st) }))
+        .filter((r) => !r.st.adv || r.src === "ctx" || r.src === "disabled")
+        .map(({ st, src }) => ({
+          k: st.short,
+          v: this.val(st) + (src === "ctx" || src === "disabled" ? " ●" : ""),
+          c: src === "ctx" ? "var(--cyan)" : src === "disabled" ? "var(--red)" : "var(--text-secondary)",
+        })),
+    }));
+
+    let rows = [], advHidden = [], gBadges = [];
+    if (group) {
+      rows = this.buildRows(group.key);
+      gBadges = this.badges(group.key);
+      advHidden = Object.values(this.state.s).filter(
+        (st) => st.g === group.key && st.adv && this.src(st) !== "ctx" && this.src(st) !== "disabled",
+      );
+    }
+    const advOpen = group ? !!this.state.adv[group.key] : false;
+    const advAll = group ? Object.values(this.state.s).filter((st) => st.g === group.key && st.adv) : [];
+
+    return {
+      isRoot,
+      isGroup: !isRoot,
+      groupTitle: group ? group.title : "",
+      groupBadges: gBadges,
+      cards,
+      rows,
+      totalLabel: total.over + total.off === 0
+        ? "all inherited"
+        : total.over + " overridden" + (total.off ? " · " + total.off + " off" : ""),
+      totalColor: total.over + total.off === 0 ? "var(--text-tertiary)" : "var(--cyan)",
+      hasAdv: !!group && advAll.length > 0 && (advOpen || advHidden.length > 0),
+      advCaret: advOpen ? "▾" : "▸",
+      advCount: advOpen ? advAll.length : advHidden.length,
+      advNames: advOpen ? "shown" : advHidden.map((st) => st.short).join(" · "),
+      toggleAdv: () => group && this.setState((p) => ({ adv: { ...p.adv, [group.key]: !p.adv[group.key] } })),
+      back: () => this.setState({ screen: "root" }),
+      resetAll: () => this.setState({ s: JSON.parse(JSON.stringify(INITIAL)), screen: "root" }),
+      jump: [{ key: "root", title: "Summary" }].concat(GROUPS).map((g) => {
+        const active = screen === (g.key || "root");
+        return {
+          label: g.title,
+          go: () => this.setState({ screen: g.key }),
+          color: active ? "var(--cyan)" : "var(--text-tertiary)",
+          border: active ? "var(--cc-cyan-a25)" : "var(--border-default)",
+          bg: active ? "var(--cc-cyan-a08)" : "transparent",
+        };
+      }),
+      on: true, off: false, t14: 14,
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -7,14 +7,29 @@ import ConversationTranscript, {
 } from "@/components/conversation/ConversationTranscript";
 import { useSessionQuery } from "@/lib/sessions/queries";
 import { useQuickTicketConversationRegistration } from "@/components/quick-ticket/useQuickTicketConversationRegistration";
+import { CloseIcon } from "@/components/icons";
+import { StatusChip } from "@/components/ui/StatusChip";
 
+/**
+ * The Log surface: one workflow conversation, opened from a task, a validator
+ * seat, or a History conversation row (README §11).
+ *
+ * The header names the conversation itself — id and the role that owns it —
+ * because with a validator cohort several transcripts belong to one context and
+ * one task, so a context/task title alone no longer identifies which transcript
+ * is on screen. The context/task path stays as a second line: it is still the
+ * only thing that says where the reader came from.
+ */
 interface WorkflowConversationViewerProps {
   projectName: string;
   sessionName: string;
   conversationId: string;
   isLive: boolean;
+  /** The use site this transcript belongs to: `Implementer`, `Validator · security`. */
+  role: string;
   contextTitle: string;
-  taskTitle: string;
+  /** Only when the transcript was opened from a task rather than a lane. */
+  taskTitle?: string;
   onClose: () => void;
 }
 
@@ -25,6 +40,7 @@ export default function WorkflowConversationViewer({
   sessionName,
   conversationId,
   isLive,
+  role,
   contextTitle,
   taskTitle,
   onClose,
@@ -38,7 +54,7 @@ export default function WorkflowConversationViewer({
     projectName,
     sessionName,
     conversationId,
-    title: taskTitle,
+    title: taskTitle ?? role,
   });
 
   const panelBodyRef = useRef<HTMLDivElement | null>(null);
@@ -49,32 +65,47 @@ export default function WorkflowConversationViewer({
       data-testid="wf-transcript-viewer"
       className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg-void [&>.prompt-panel]:min-h-0 [&>.prompt-panel]:flex-1 max-768:[.app[data-page=workflow][data-mobile-panel=graph]_&]:hidden max-768:[.app[data-page=workflow][data-mobile-panel=inspector]_&]:hidden"
     >
-      <header className="flex min-h-[44px] shrink-0 items-center gap-[10px] border-b border-border-dim bg-bg-surface px-md py-2">
+      <header className="flex shrink-0 items-center gap-[10px] border-b border-border-dim bg-bg-surface px-md py-2">
         <button
-          className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-sm border border-border-subtle bg-transparent p-0 text-[0.72rem] text-text-tertiary transition-all duration-150 hover:border-border-default hover:bg-bg-hover hover:text-text-secondary"
+          className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-sm border border-solid border-border-subtle bg-transparent p-0 text-text-tertiary transition-colors duration-150 hover:border-border-default hover:bg-bg-hover hover:text-text-secondary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:size-[44px]"
           onClick={onClose}
           type="button"
-          aria-label="Close transcript"
+          aria-label="Close transcript and return to graph"
         >
-          ✕
+          <CloseIcon size={12} />
         </button>
-        <div className="flex min-w-0 items-center gap-[6px] overflow-hidden">
-          <span className="overflow-hidden font-mono text-[0.72rem] font-semibold text-ellipsis whitespace-nowrap text-text-secondary">
-            {contextTitle}
+        <div className="flex min-w-0 flex-col gap-[2px]">
+          <span
+            data-testid="transcript-identity"
+            className="overflow-hidden font-mono text-[0.78rem] font-semibold text-ellipsis whitespace-nowrap text-text-primary"
+          >
+            {conversationId}
+            <span className="mx-[5px] text-text-tertiary">&middot;</span>
+            <span className="font-medium text-text-secondary">{role}</span>
           </span>
-          <span className="shrink-0 font-mono text-[0.72rem] text-text-tertiary">
-            /
-          </span>
-          <span className="overflow-hidden font-mono text-[0.72rem] font-medium text-ellipsis whitespace-nowrap text-text-primary">
-            {taskTitle}
+          <span
+            data-testid="transcript-breadcrumb"
+            className="overflow-hidden font-mono text-[0.7rem] text-ellipsis whitespace-nowrap text-text-tertiary"
+          >
+            {taskTitle === undefined
+              ? contextTitle
+              : `${contextTitle} / ${taskTitle}`}
           </span>
         </div>
-        {isLive && (
-          <span className="ml-auto flex shrink-0 items-center gap-[6px] font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-cyan uppercase">
-            <span className="h-[6px] w-[6px] shrink-0 animate-[pulse-dot_2s_ease-in-out_infinite] rounded-full bg-cyan shadow-[0_0_6px_var(--cyan-glow)]" />
-            Live
-          </span>
-        )}
+        <StatusChip
+          tone={isLive ? "cyan" : "neutral"}
+          layoutClassName="ml-auto shrink-0"
+          data-testid="transcript-status"
+          {...(isLive
+            ? {
+                icon: (
+                  <span className="h-[6px] w-[6px] shrink-0 animate-[pulse-dot_2s_ease-in-out_infinite] rounded-full bg-cyan shadow-[0_0_6px_var(--cyan-glow)] motion-reduce:animate-none" />
+                ),
+              }
+            : {})}
+        >
+          {isLive ? "live" : "ended"}
+        </StatusChip>
       </header>
       <ConversationPanel
         conversations={false}

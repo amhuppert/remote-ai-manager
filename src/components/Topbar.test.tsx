@@ -586,6 +586,43 @@ describe("Topbar", () => {
     expect(screen.getByRole("navigation")).toHaveClass("max-[360px]:hidden");
   });
 
+  // README §12 — every interactive target on a touch viewport is at least 44px.
+  // The topbar is on both reworked workflow pages, so its two targets that stay
+  // on screen below 768px are the current breadcrumb and the More menu's rows.
+  it("gives its mobile targets a 44px minimum", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(
+      <Topbar
+        breadcrumbs={[
+          { label: "projects", href: "/projects" },
+          {
+            label: "command-center",
+            href: "/projects/command-center",
+            isProject: true,
+          },
+          { label: "Workflow", href: "/projects/command-center/s/workflow" },
+        ]}
+        page="detail"
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Workflow" })).toHaveClass(
+      "max-768:min-h-[44px]",
+    );
+
+    await user.click(screen.getByRole("button", { name: "More destinations" }));
+    for (const name of [
+      /Quick ticket/,
+      "Specs",
+      "Workflow Templates",
+      "System Configuration",
+    ]) {
+      expect(screen.getByRole("menuitem", { name })).toHaveClass(
+        "max-768:min-h-[44px]",
+      );
+    }
+  });
+
   it("opens Quick ticket from the mobile destinations menu", async () => {
     navigationState.pathname = "/tickets";
     window.history.replaceState({}, "", "/tickets?project=command-center");

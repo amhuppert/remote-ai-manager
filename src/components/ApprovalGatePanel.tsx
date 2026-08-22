@@ -13,6 +13,11 @@ import {
   DIFF_LINE_BASE,
   DIFF_LINE_TYPE,
 } from "@/components/git/diff-row-classes";
+import {
+  AlertTriangleIcon,
+  CheckIcon,
+} from "@/components/workflow-config-panel/icons";
+import { Spinner } from "@/components/ui/Spinner";
 import type { SessionDiff } from "@/lib/git/schemas";
 import { cn } from "@/lib/ui/cn";
 
@@ -30,11 +35,12 @@ const ACTION_BTN_VARIANT = {
     "bg-cyan border-cyan font-semibold text-text-inverse hover:bg-cyan-dim hover:border-cyan-dim hover:shadow-[0_0_20px_var(--color-cyan-glow)]",
   danger:
     "bg-transparent border-[var(--cc-red-border)] font-medium text-red hover:bg-red-glow hover:border-red-dim",
-  ghost:
-    "bg-transparent border-transparent font-medium text-text-secondary hover:bg-bg-hover hover:border-border-default hover:text-cyan",
 } as const;
 
 const HINT_BASE = "font-mono text-[0.7rem]";
+
+const NOTE_CLASS =
+  "m-0 font-mono text-[0.72rem] leading-[1.55] text-text-secondary";
 
 /**
  * The change set an ENVELOPED context's reviewer decides on (R15.2): the
@@ -50,15 +56,29 @@ const HINT_BASE = "font-mono text-[0.7rem]";
  * Null on the props for a full-access member, which keeps the whole-tree
  * approval view the session's own diff surface already provides.
  */
+export type ApprovalCandidate =
+  /** An enveloped member: the frozen change set inside the paths it owns. */
+  | { scope: "owned"; ownedPaths: string[]; diff: SessionDiff }
+  /**
+   * A full-access member. Its write surface IS the lane worktree, so the gate
+   * froze no ownership-scoped snapshot and the approval API answers
+   * `whole_tree` — an explicit answer about the scope, not a missing one. The
+   * whole-worktree delta is never substituted: in a shared lane it is partly a
+   * sibling's in-progress work, and no read of it is scoped to this gate.
+   */
+  | { scope: "whole_tree" };
+
 export type ApprovalScopedChanges =
   | { status: "loading" }
-  | { status: "ready"; ownedPaths: string[]; diff: SessionDiff }
+  | { status: "ready"; candidate: ApprovalCandidate }
   | { status: "drifted" }
   | { status: "unavailable"; reason: string };
 
 interface ApprovalGatePanelProps {
   contextTitle: string | null;
   workflowName: string | null;
+  /** The iteration whose candidate is frozen for this gate, when known. */
+  iteration?: number | null;
   /** ISO timestamp of when the gate parked; drives the wait-time readout. */
   requestedAt: string;
   isSubmitting: boolean;
@@ -70,88 +90,155 @@ interface ApprovalGatePanelProps {
   onReject(message: string): void;
 }
 
-function ScopedChangesSection({
+function diffSummary(ownedPaths: string[], diff: SessionDiff): string {
+  const fileCount = diff.files.length;
+  const files = `${fileCount} ${fileCount === 1 ? "file" : "files"}`;
+  const lines = `+${diff.totalAdditions} −${diff.totalDeletions}`;
+  const scope =
+    ownedPaths.length > 0
+      ? `scoped to ${ownedPaths.join(", ")}`
+      : "owns no writable path";
+  return `${files} · ${lines} · ${scope}`;
+}
+
+/**
+ * The four candidate states, as one row (E2). Each names what the reviewer is
+ * looking at and what it costs them: Approve is a decision ABOUT the frozen
+ * artifact, so it is unavailable until the artifact is on screen, while Reject
+ * stays available in every state — it is the way out of drift and of a
+ * candidate that could not be assembled.
+ */
+function CandidateState({
   scopedChanges,
 }: {
   scopedChanges: ApprovalScopedChanges;
+}) {
+  const { tone, icon, label, aside, detail } = ((): {
+    tone: string;
+    icon: React.ReactNode;
+    label: string;
+    aside: string;
+    detail: string | null;
+  } => {
+    switch (scopedChanges.status) {
+      case "loading":
+        return {
+          tone: "border-border-subtle bg-bg-base text-text-secondary",
+          icon: <Spinner size="sm" tone="inherit" />,
+          label: "Loading the candidate…",
+          aside: "Approve disabled",
+          detail: null,
+        };
+      case "ready":
+        return {
+          tone: "border-[var(--cc-green-a20)] bg-green-glow text-green",
+          icon: <CheckIcon size={12} />,
+          label: "Candidate ready",
+          aside:
+            scopedChanges.candidate.scope === "owned"
+              ? diffSummary(
+                  scopedChanges.candidate.ownedPaths,
+                  scopedChanges.candidate.diff,
+                )
+              : "whole lane worktree · no ownership scope",
+          detail:
+            scopedChanges.candidate.scope === "owned"
+              ? null
+              : "This context writes without an ownership envelope, so its gate froze no scoped change set. Its lane worktree is the candidate — review it there before approving.",
+        };
+      case "drifted":
+        return {
+          tone: "border-[var(--cc-amber-a30)] bg-[var(--cc-amber-a10)] text-amber",
+          icon: <AlertTriangleIcon size={12} />,
+          label: "Drifted — the tree moved since the freeze",
+          aside: "Approve disabled · Reject available",
+          detail:
+            "These are no longer the changes this context submitted. Reject to send it back for a fresh review.",
+        };
+      case "unavailable":
+        return {
+          tone: "border-[var(--cc-red-a25)] bg-[var(--cc-red-a10)] text-red",
+          icon: <AlertTriangleIcon size={12} />,
+          label: "Unavailable — candidate could not be assembled",
+          aside: "Reject is the way out",
+          detail: `The changes this context owns could not be read (${scopedChanges.reason}). Inspect its worktree directly before deciding.`,
+        };
+    }
+  })();
+
+  return (
+    <div
+      data-testid="approval-candidate-state"
+      data-candidate-status={scopedChanges.status}
+      className={cn(
+        "flex flex-col gap-[4px] rounded-sm border border-solid px-[10px] py-[7px]",
+        tone,
+      )}
+    >
+      <div className="flex flex-wrap items-center gap-sm">
+        <span className="flex shrink-0 items-center" aria-hidden="true">
+          {icon}
+        </span>
+        <span className="font-mono text-[0.72rem] font-medium">{label}</span>
+        <span className="ml-auto font-mono text-[0.7rem] text-text-tertiary">
+          {aside}
+        </span>
+      </div>
+      {detail !== null && (
+        <span className="font-mono text-[0.7rem] leading-[1.5] text-text-tertiary">
+          {detail}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** The frozen bytes themselves, under the state that vouches for them. */
+function ScopedChangesSection({
+  ownedPaths,
+  diff,
+}: {
+  ownedPaths: string[];
+  diff: SessionDiff;
 }) {
   return (
     <div
       className="flex flex-col gap-xs rounded-md border border-solid border-border-subtle bg-bg-surface"
       data-testid="approval-gate-scoped-changes"
     >
-      {scopedChanges.status === "ready" && (
-        <>
-          <div className="flex flex-wrap items-baseline gap-sm px-md pt-sm font-mono text-[0.68rem] text-text-tertiary">
-            <span className="text-text-secondary">Changes under review</span>
-            <span>
-              +{scopedChanges.diff.totalAdditions} −
-              {scopedChanges.diff.totalDeletions}
-            </span>
-            <span>
-              {scopedChanges.ownedPaths.length > 0
-                ? `owned: ${scopedChanges.ownedPaths.join(", ")}`
-                : "owns no writable path"}
-            </span>
-          </div>
-          {scopedChanges.diff.files.length === 0 ? (
-            <div className={cn(HINT_BASE, "px-md pb-sm text-text-tertiary")}>
-              No changes inside the paths this context owns. Work by other
-              contexts sharing this worktree is deliberately not shown.
-            </div>
-          ) : (
-            <div className="max-h-[320px] overflow-auto pb-sm font-mono text-[0.7rem] leading-[1.5]">
-              {scopedChanges.diff.files.map((file) => (
-                <div key={file.filePath} className={DIFF_FILE_SECTION_CLASS}>
-                  <div className={DIFF_FILE_HEADER_CLASS}>
-                    <span className={DIFF_FILE_NAME_CLASS}>
-                      {file.filePath}
-                    </span>
-                    <span className={cn(DIFF_FILE_STAT_CLASS, "text-green")}>
-                      +{file.additions}
-                    </span>
-                    <span className={cn(DIFF_FILE_STAT_CLASS, "text-red")}>
-                      -{file.deletions}
-                    </span>
-                  </div>
-                  {file.hunks.map((hunk, hunkIndex) => (
-                    <div key={`${file.filePath}:${hunkIndex}`}>
-                      {hunk.lines.map((line, lineIndex) => (
-                        <div
-                          key={`${file.filePath}:${hunkIndex}:${lineIndex}`}
-                          className={cn(
-                            DIFF_LINE_BASE,
-                            DIFF_LINE_TYPE[line.type],
-                          )}
-                        >
-                          {line.content}
-                        </div>
-                      ))}
+      {diff.files.length === 0 ? (
+        <div className={cn(HINT_BASE, "px-md py-sm text-text-tertiary")}>
+          No changes inside the paths this context owns
+          {ownedPaths.length > 0 ? ` (${ownedPaths.join(", ")})` : ""}. Work by
+          other contexts sharing this worktree is deliberately not shown.
+        </div>
+      ) : (
+        <div className="max-h-[320px] overflow-auto py-sm font-mono text-[0.7rem] leading-[1.5]">
+          {diff.files.map((file) => (
+            <div key={file.filePath} className={DIFF_FILE_SECTION_CLASS}>
+              <div className={DIFF_FILE_HEADER_CLASS}>
+                <span className={DIFF_FILE_NAME_CLASS}>{file.filePath}</span>
+                <span className={cn(DIFF_FILE_STAT_CLASS, "text-green")}>
+                  +{file.additions}
+                </span>
+                <span className={cn(DIFF_FILE_STAT_CLASS, "text-red")}>
+                  -{file.deletions}
+                </span>
+              </div>
+              {file.hunks.map((hunk, hunkIndex) => (
+                <div key={`${file.filePath}:${hunkIndex}`}>
+                  {hunk.lines.map((line, lineIndex) => (
+                    <div
+                      key={`${file.filePath}:${hunkIndex}:${lineIndex}`}
+                      className={cn(DIFF_LINE_BASE, DIFF_LINE_TYPE[line.type])}
+                    >
+                      {line.content}
                     </div>
                   ))}
                 </div>
               ))}
             </div>
-          )}
-        </>
-      )}
-      {scopedChanges.status === "loading" && (
-        <div className={cn(HINT_BASE, "px-md py-sm text-text-tertiary")}>
-          Loading the changes this context owns…
-        </div>
-      )}
-      {scopedChanges.status === "drifted" && (
-        <div className={cn(HINT_BASE, "px-md py-sm text-amber-dim")}>
-          The files this context owns have changed since it entered review, so
-          these are no longer the changes it submitted. Reject to send it back
-          for a fresh review.
-        </div>
-      )}
-      {scopedChanges.status === "unavailable" && (
-        <div className={cn(HINT_BASE, "px-md py-sm text-text-tertiary")}>
-          The changes this context owns could not be read (
-          {scopedChanges.reason}). Inspect its worktree directly before
-          deciding.
+          ))}
         </div>
       )}
     </div>
@@ -171,9 +258,19 @@ function formatWaitTime(isoDate: string): string | null {
   return `waiting ${days}d`;
 }
 
+/**
+ * The context approval surface (E2 · README §10).
+ *
+ * The second of the four approvals, and only the second: this reviews the
+ * candidate frozen for one context's gate. Approving lets orchestration
+ * continue — it is neither the lane join nor publication — and rejecting
+ * returns the work to the implementer, which is why feedback is required and
+ * the field stands open rather than hiding behind the decision.
+ */
 export default function ApprovalGatePanel({
   contextTitle,
   workflowName,
+  iteration = null,
   requestedAt,
   isSubmitting,
   conversationBusy,
@@ -183,20 +280,21 @@ export default function ApprovalGatePanel({
   onApprove,
   onReject,
 }: ApprovalGatePanelProps) {
-  const [rejecting, setRejecting] = useState(false);
   const [message, setMessage] = useState("");
   const [rejectVoiceBusy, setRejectVoiceBusy] = useState(false);
   const rejectActionRef = useRef<MultilineInputActionHandle | null>(null);
 
   const actionsDisabled = isSubmitting || conversationBusy;
-  // Approving is a decision ABOUT the frozen artifact, so it stays unavailable
-  // until that artifact is on screen: loading, drift, and an unreadable
-  // candidate all mean the reviewer cannot see what they would be approving.
-  // Rejecting is never blocked — it is the documented way out of drift.
+  // Approve is a decision ABOUT the frozen candidate, so it needs one. A host
+  // that resolved no candidate state at all is not a fifth, permissive state —
+  // it is an unanswered question, and answering it "approve" blind is the thing
+  // this row exists to prevent.
   const approveDisabled =
     actionsDisabled ||
-    (scopedChanges !== null && scopedChanges.status !== "ready");
+    scopedChanges === null ||
+    scopedChanges.status !== "ready";
   const trimmedMessage = message.trim();
+  const needsFeedback = trimmedMessage === "" && !rejectVoiceBusy;
   const waitLabel = formatWaitTime(requestedAt);
 
   const busyHint = conversationBusy
@@ -204,11 +302,6 @@ export default function ApprovalGatePanel({
     : isSubmitting
       ? "Submitting decision…"
       : null;
-
-  const cancelReject = () => {
-    setRejecting(false);
-    setMessage("");
-  };
 
   const submitReject = (nextMessage = message) => {
     const trimmed = nextMessage.trim();
@@ -220,50 +313,95 @@ export default function ApprovalGatePanel({
     if (e.key === "Escape") {
       e.preventDefault();
       if (isSubmitting) return;
-      cancelReject();
+      setMessage("");
     }
   };
 
+  const meta = [
+    iteration === null ? null : `iteration ${iteration}`,
+    workflowName,
+    waitLabel,
+  ].filter((part): part is string => part !== null && part !== "");
+
   return (
     <div
-      className="relative flex shrink-0 flex-col gap-sm border-x-0 border-t border-b-0 border-solid border-t-border-subtle bg-bg-base px-lg py-md before:absolute before:inset-x-0 before:-top-px before:h-[2px] before:opacity-80 before:content-[''] before:[background:linear-gradient(90deg,var(--amber),transparent_65%)]"
+      className="shrink-0 border-x-0 border-t border-b-0 border-solid border-t-border-subtle bg-bg-base px-lg py-md"
       data-testid="approval-gate-panel"
     >
-      <div className="flex items-center gap-md">
-        <span
-          className="size-[7px] shrink-0 animate-pulse-dot rounded-full bg-amber shadow-[0_0_8px_var(--amber)]"
-          aria-hidden="true"
-        />
-        <div className="font-mono text-[0.7rem] font-semibold tracking-[0.06em] whitespace-nowrap text-amber uppercase">
-          Approval required
-        </div>
-        {(contextTitle || workflowName) && (
-          <div className="flex min-w-0 flex-1 items-baseline gap-sm overflow-hidden font-mono text-[0.7rem] whitespace-nowrap">
-            {contextTitle && (
-              <span className="overflow-hidden text-ellipsis text-text-secondary">
-                {contextTitle}
-              </span>
-            )}
-            {contextTitle && workflowName && (
-              <span className="text-text-tertiary" aria-hidden="true">
-                /
-              </span>
-            )}
-            {workflowName && (
-              <span className="whitespace-nowrap text-text-tertiary">
-                {workflowName}
-              </span>
-            )}
-          </div>
-        )}
-        {waitLabel !== null && (
-          <span className="ml-auto font-mono text-[0.66rem] whitespace-nowrap text-text-tertiary">
-            {waitLabel}
+      <section
+        aria-label="Context approval"
+        className="flex flex-col overflow-hidden rounded-md border border-solid border-[var(--cc-amber-a30)] bg-bg-base"
+      >
+        <header className="flex flex-wrap items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim bg-[var(--cc-amber-a10)] px-3 py-[9px]">
+          <span className="font-mono text-[0.74rem] font-semibold text-amber">
+            {contextTitle
+              ? `Context approval — ${contextTitle}`
+              : "Context approval"}
           </span>
-        )}
-        {!rejecting && (
-          <div className="flex shrink-0 items-center gap-sm">
+          {meta.length > 0 && (
+            <span className="ml-auto flex items-baseline gap-sm font-mono text-[0.7rem] whitespace-nowrap text-text-tertiary">
+              {meta.map((part) => (
+                <span key={part}>{part}</span>
+              ))}
+            </span>
+          )}
+        </header>
+
+        <div className="flex flex-col gap-[10px] px-3 py-[11px]">
+          {scopedChanges !== null && (
+            <CandidateState scopedChanges={scopedChanges} />
+          )}
+
+          <p className={NOTE_CLASS}>
+            You are reviewing the candidate{" "}
+            <span className="text-text-primary">frozen for this gate</span>.
+            Approving lets orchestration continue; it does not land the lane or
+            publish it.
+          </p>
+
+          {scopedChanges?.status === "ready" &&
+            scopedChanges.candidate.scope === "owned" && (
+              <ScopedChangesSection
+                ownedPaths={scopedChanges.candidate.ownedPaths}
+                diff={scopedChanges.candidate.diff}
+              />
+            )}
+
+          {busyHint && (
+            <div className={cn(HINT_BASE, "text-text-tertiary")}>
+              {busyHint}
+            </div>
+          )}
+          {executionSuspended && (
+            <div className={cn(HINT_BASE, "text-amber-dim")}>
+              Execution suspended — the decision applies when the workflow
+              resumes.
+            </div>
+          )}
+
+          <label className="flex flex-col gap-[5px]">
+            <span className="font-mono text-[0.7rem] font-medium tracking-[0.06em] text-text-tertiary uppercase">
+              Rejection feedback
+            </span>
+            <MultilineInput
+              className="w-full resize-y rounded-sm border border-solid border-border-default bg-bg-surface px-md py-sm font-mono text-[0.72rem] leading-[1.5] text-text-primary transition-[border-color,box-shadow] duration-150 ease-[ease] placeholder:text-text-tertiary focus:border-red-dim focus:shadow-[0_0_0_2px_var(--red-glow)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+              aria-label="Rejection feedback"
+              placeholder="Required to reject — returned to the implementer"
+              value={message}
+              onValueChange={setMessage}
+              onKeyDown={handleRejectKeyDown}
+              onPrimaryAction={submitReject}
+              actionRef={rejectActionRef}
+              onVoiceStateChange={setRejectVoiceBusy}
+              voiceProjectName={voiceProjectName}
+              disabled={actionsDisabled}
+              rows={2}
+            />
+          </label>
+
+          <div className="flex flex-wrap items-center gap-sm">
             <button
+              type="button"
               className={cn(ACTION_BTN_BASE, ACTION_BTN_VARIANT.primary)}
               disabled={approveDisabled}
               onClick={onApprove}
@@ -271,68 +409,28 @@ export default function ApprovalGatePanel({
               Approve
             </button>
             <button
+              type="button"
               className={cn(ACTION_BTN_BASE, ACTION_BTN_VARIANT.danger)}
-              disabled={actionsDisabled}
-              onClick={() => setRejecting(true)}
-            >
-              Reject
-            </button>
-          </div>
-        )}
-      </div>
-
-      {busyHint && (
-        <div className={cn(HINT_BASE, "text-text-tertiary")}>{busyHint}</div>
-      )}
-      {executionSuspended && (
-        <div className={cn(HINT_BASE, "text-amber-dim")}>
-          Execution suspended — the decision applies when the workflow resumes.
-        </div>
-      )}
-      {scopedChanges !== null && (
-        <ScopedChangesSection scopedChanges={scopedChanges} />
-      )}
-
-      {rejecting && (
-        <div className="flex flex-col gap-sm">
-          <MultilineInput
-            className="w-full resize-y rounded-md border border-solid border-border-default bg-bg-surface px-md py-sm font-mono text-[0.78rem] leading-[1.5] text-text-primary transition-[border-color,box-shadow] duration-150 ease-[ease] placeholder:text-text-tertiary focus:border-red-dim focus:shadow-[0_0_0_2px_var(--red-glow)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-            aria-label="Rejection feedback"
-            placeholder="Explain what needs to change..."
-            value={message}
-            onValueChange={setMessage}
-            onKeyDown={handleRejectKeyDown}
-            onPrimaryAction={submitReject}
-            actionRef={rejectActionRef}
-            onVoiceStateChange={setRejectVoiceBusy}
-            voiceProjectName={voiceProjectName}
-            disabled={actionsDisabled}
-            autoFocus
-            rows={3}
-          />
-          <div className="flex shrink-0 items-center gap-sm">
-            <button
-              className={cn(ACTION_BTN_BASE, ACTION_BTN_VARIANT.danger)}
-              disabled={
-                actionsDisabled || (trimmedMessage === "" && !rejectVoiceBusy)
-              }
+              disabled={actionsDisabled || needsFeedback}
               onClick={() => rejectActionRef.current?.primaryAction()}
             >
-              Submit rejection
+              {needsFeedback ? "Reject — needs feedback" : "Reject"}
             </button>
-            <button
-              className={cn(ACTION_BTN_BASE, ACTION_BTN_VARIANT.ghost)}
-              disabled={isSubmitting}
-              onClick={cancelReject}
-            >
-              Cancel
-            </button>
-            <span className="ml-auto font-mono text-[0.64rem] text-text-tertiary">
-              ⌘↵ submit · esc cancel
+            <span className="ml-auto font-mono text-[0.7rem] text-text-tertiary">
+              rejection reruns validators
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-sm">
+            <span className="font-mono text-[0.7rem] text-text-tertiary">
+              Sibling contexts keep running — nothing here pauses the run.
+            </span>
+            <span className="ml-auto font-mono text-[0.7rem] text-text-tertiary">
+              ⌘↵ reject · esc clear
             </span>
           </div>
         </div>
-      )}
+      </section>
     </div>
   );
 }

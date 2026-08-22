@@ -161,7 +161,7 @@ function CopyOutputButton({ value }: { value: Record<string, unknown> }) {
       <button
         type="button"
         onClick={handleCopy}
-        className="inline-flex h-[22px] shrink-0 cursor-pointer items-center gap-[5px] rounded-sm border border-solid border-border-default bg-bg-raised px-[8px] py-[3px] text-[0.7rem] font-medium text-text-secondary transition-colors duration-150 hover:border-border-strong hover:text-text-primary"
+        className="inline-flex h-[22px] shrink-0 cursor-pointer items-center gap-[5px] rounded-sm border border-solid border-border-default bg-bg-raised px-[8px] py-[3px] text-[0.7rem] font-medium text-text-secondary transition-colors duration-150 hover:border-border-strong hover:text-text-primary max-768:h-auto max-768:min-h-[44px] max-768:px-md"
       >
         {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
         {copied ? "Copied" : "Copy output"}

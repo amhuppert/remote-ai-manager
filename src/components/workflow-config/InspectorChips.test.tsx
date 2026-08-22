@@ -2,6 +2,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import { modelDisplayLabel } from "@/lib/agent-backends/catalog";
 import {
   graphWorkflowAgentConfigSchema,
   validatorAssignmentSchema,
@@ -24,7 +25,7 @@ describe("implementerChipLabel / validatorChipLabel", () => {
           reasoningEffort: "high",
         }),
       ),
-    ).toBe("Claude opus · high");
+    ).toBe(`Claude ${modelDisplayLabel("claude", "opus")} · high`);
     expect(
       implementerChipLabel(
         graphWorkflowAgentConfigSchema.parse({
@@ -33,7 +34,7 @@ describe("implementerChipLabel / validatorChipLabel", () => {
           reasoningEffort: "medium",
         }),
       ),
-    ).toBe("Codex gpt-5.4 · medium");
+    ).toBe(`Codex ${modelDisplayLabel("codex", "gpt-5.4")} · medium`);
   });
 
   it("leads with the assignment id so two cohort entries stay distinguishable", () => {
@@ -53,7 +54,7 @@ describe("implementerChipLabel / validatorChipLabel", () => {
           reasoningEffort: "medium",
         }),
       ),
-    ).toBe("security · Claude sonnet");
+    ).toBe(`security · Claude ${modelDisplayLabel("claude", "sonnet")}`);
     expect(
       validatorChipLabel(
         parse("performance", {
@@ -62,7 +63,21 @@ describe("implementerChipLabel / validatorChipLabel", () => {
           reasoningEffort: "medium",
         }),
       ),
-    ).toBe("performance · Codex gpt-5.4");
+    ).toBe(`performance · Codex ${modelDisplayLabel("codex", "gpt-5.4")}`);
+  });
+
+  // The catalog holds short ids; every surface that DISPLAYS a model shows the
+  // canonical long name, so the short id must not reach the chip text.
+  it("shows the canonical long model name rather than the short id", () => {
+    const label = implementerChipLabel(
+      graphWorkflowAgentConfigSchema.parse({
+        backend: "claude",
+        model: "opus",
+        reasoningEffort: "high",
+      }),
+    );
+    expect(label).toContain("Opus 5");
+    expect(label).not.toContain("Claude opus");
   });
 });
 

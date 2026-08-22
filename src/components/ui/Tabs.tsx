@@ -100,17 +100,29 @@ const tabsTriggerClass = cn(
 // appearance, which the layout-only allowlist forbids in `layoutClassName`.
 const tabsTriggerFill = "max-768:justify-center max-768:min-h-[36px]";
 
+// The 44px touch minimum, for a surface whose whole responsive contract is that
+// every target clears it (the workflow pages' §12 ladder). Additive alongside
+// `fill`, whose 36px is the mobile spine's own density — the same shape
+// `Button`/`IconButton` already expose as `touch`. The primitive owns this box
+// appearance; the layout-only allowlist forbids `min-h`/`min-w` in
+// `layoutClassName` (docs/tailwind-conventions.md §2).
+const tabsTriggerTouch =
+  "max-768:min-h-[44px] max-768:min-w-[44px] max-768:justify-center";
+
 type TabsTriggerProps = Omit<
   React.ComponentProps<typeof RadixTabs.Trigger>,
   "className" | "style"
 > & {
   /** Mobile-spine fill/touch treatment: centre the label, 36px min-height. */
   fill?: boolean;
+  /** 44px touch minimum below 768px, for surfaces that require it. */
+  touch?: boolean;
   layoutClassName?: string;
 };
 
 export function TabsTrigger({
   fill = false,
+  touch = false,
   asChild = false,
   layoutClassName,
   ...rest
@@ -127,7 +139,12 @@ export function TabsTrigger({
   return (
     <RadixTabs.Trigger
       {...rest}
-      className={cn(tabsTriggerClass, fill && tabsTriggerFill, layoutClassName)}
+      className={cn(
+        tabsTriggerClass,
+        fill && tabsTriggerFill,
+        touch && tabsTriggerTouch,
+        layoutClassName,
+      )}
     />
   );
 }

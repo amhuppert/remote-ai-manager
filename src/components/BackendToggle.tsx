@@ -9,6 +9,12 @@ interface BackendToggleProps {
   onChange(backend: AgentBackendId): void;
   disabled?: boolean;
   readOnly?: boolean;
+  /**
+   * Opt-in mobile touch sizing: 44px below 768px. Opt-in because 36px is the
+   * session spine's density, and the two workflow pages are the surfaces held
+   * to the 44px minimum.
+   */
+  touch?: boolean;
 }
 
 // `backend-toggle`, `backend-toggle-btn`, and `backend-toggle-badge` are
@@ -27,11 +33,20 @@ const btnClass = cn(
   "disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-40",
 );
 
+const touchTrackClass = "max-768:h-[44px]";
+// The track's padding and border leave each segment short of 44px, so the
+// pointer target is an invisible box the full height of the track. It grows
+// only vertically — segments sit side by side, and a wider area would reach
+// into the neighbouring backend.
+const touchBtnClass =
+  "max-768:relative max-768:min-w-[44px] max-768:px-md max-768:after:absolute max-768:after:top-1/2 max-768:after:left-0 max-768:after:h-[44px] max-768:after:w-full max-768:after:-translate-y-1/2 max-768:after:content-['']";
+
 export default function BackendToggle({
   value,
   onChange,
   disabled = false,
   readOnly = false,
+  touch = false,
 }: BackendToggleProps): React.JSX.Element {
   const { data: backends } = useBackendCatalogQuery();
 
@@ -40,7 +55,10 @@ export default function BackendToggle({
     if (!entry) {
       return (
         <span
-          className="backend-toggle-badge flex h-[36px] shrink-0 items-center rounded-md border border-solid border-amber-dim bg-bg-surface px-[12px] font-mono text-[0.72rem] text-amber"
+          className={cn(
+            "backend-toggle-badge flex h-[36px] shrink-0 items-center rounded-md border border-solid border-amber-dim bg-bg-surface px-[12px] font-mono text-[0.72rem] text-amber",
+            touch && touchTrackClass,
+          )}
           data-backend-unknown="true"
           title={`Unknown agent backend: ${value}`}
         >
@@ -49,19 +67,29 @@ export default function BackendToggle({
       );
     }
     return (
-      <span className="backend-toggle-badge flex h-[36px] shrink-0 items-center rounded-md border border-solid border-border-default bg-bg-surface px-[12px] font-mono text-[0.72rem] text-text-secondary">
+      <span
+        className={cn(
+          "backend-toggle-badge flex h-[36px] shrink-0 items-center rounded-md border border-solid border-border-default bg-bg-surface px-[12px] font-mono text-[0.72rem] text-text-secondary",
+          touch && touchTrackClass,
+        )}
+      >
         {entry.label}
       </span>
     );
   }
 
   return (
-    <div className="backend-toggle flex h-[36px] shrink-0 items-center gap-[2px] rounded-md border border-solid border-border-subtle bg-bg-surface p-[2px]">
+    <div
+      className={cn(
+        "backend-toggle flex h-[36px] shrink-0 items-center gap-[2px] rounded-md border border-solid border-border-subtle bg-bg-surface p-[2px]",
+        touch && touchTrackClass,
+      )}
+    >
       {backends.map((b) => (
         <button
           key={b.id}
           type="button"
-          className={btnClass}
+          className={cn(btnClass, touch && touchBtnClass)}
           data-backend={b.id}
           data-tone={b.toneToken}
           data-active={b.id === value}

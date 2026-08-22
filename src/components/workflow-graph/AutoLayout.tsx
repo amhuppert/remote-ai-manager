@@ -31,12 +31,39 @@ function dimensionsKey(dims: NodeDimensions): string {
     .join("|");
 }
 
+function samePositions(
+  a: GraphWorkflowVisualLayout,
+  b: GraphWorkflowVisualLayout,
+): boolean {
+  const left = a.contextPositions;
+  const right = b.contextPositions;
+  const ids = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const id of ids) {
+    if (left[id]?.x !== right[id]?.x || left[id]?.y !== right[id]?.y) {
+      return false;
+    }
+  }
+  return true;
+}
+
 interface AutoLayoutProps {
   definition: WorkflowSemanticDefinition | ResolvedWorkflowSemanticDefinition;
+  /**
+   * The layout as it stands. Its explicit positions WIN: measurement re-runs
+   * the geometry for contexts that have none, and never re-places one a human
+   * dragged or a Re-layout committed. Required rather than optional — a canvas
+   * that forgot it would silently discard its saved layout on every mount, so
+   * a canvas with nothing to preserve passes `null` and says so.
+   */
+  existingLayout: GraphWorkflowVisualLayout | null;
   onLayout: (layout: GraphWorkflowVisualLayout) => void;
 }
 
-export default function AutoLayout({ definition, onLayout }: AutoLayoutProps) {
+export default function AutoLayout({
+  definition,
+  existingLayout,
+  onLayout,
+}: AutoLayoutProps) {
   const nodes = useNodes();
   const nodesInitialized = useNodesInitialized();
   const lastDimsKeyRef = useRef<string>("");
@@ -51,8 +78,12 @@ export default function AutoLayout({ definition, onLayout }: AutoLayoutProps) {
     if (key === lastDimsKeyRef.current) return;
     lastDimsKeyRef.current = key;
 
-    onLayout(generateWorkflowLayout(definition, null, dims));
-  }, [nodes, nodesInitialized, definition, onLayout]);
+    const next = generateWorkflowLayout(definition, existingLayout, dims);
+    // A layout that places nothing new is not an edit: reporting it would mark
+    // a clean draft dirty on every mount.
+    if (existingLayout && samePositions(next, existingLayout)) return;
+    onLayout(next);
+  }, [nodes, nodesInitialized, definition, existingLayout, onLayout]);
 
   return null;
 }

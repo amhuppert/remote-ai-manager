@@ -20,7 +20,7 @@
  *
  * Downstream consumers of the client half are named tasks, not this one:
  * `OutputSchemaField` + builder inspector (T8, lane `context-lane-ui-editing`)
- * and the ContextConfigTab live editor (T9, same lane). They must IMPORT these
+ * and the config panel's own schema lint (T9, same lane). They must IMPORT these
  * exports — re-deriving a keyword list in the UI is the exact drift this module
  * exists to prevent, and `output-schema-subset.arch.test.ts` fails the build if
  * this module ever grows an import that would break browser use.

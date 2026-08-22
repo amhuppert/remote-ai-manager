@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/styles.css">
+  <script src="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.js"></script>
+  <style>
+    html, body { height: auto !important; max-height: none !important; overflow: visible !important; background: #04070c !important; }
+    body { margin: 0; font-family: var(--font-body, "Manrope", sans-serif); }
+    a { color: var(--cyan, #00e5ff); text-decoration: none; }
+    a:hover { color: var(--text-primary, #dce2f0); }
+    @keyframes pulse-node { 0%,100% { box-shadow: 0 0 4px 0 var(--node-color-glow); } 50% { box-shadow: 0 0 18px 3px var(--node-color-glow); } }
+    @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+  </style>
+</helmet>
+<div role="note" style="position:sticky;top:0;z-index:999;display:flex;align-items:center;gap:12px;background:#2b0b0b;border-bottom:2px solid #e5484d;color:#ffd7d7;font:600 14px/1.5 ui-monospace,monospace;padding:14px 24px">ARCHIVED — superseded exploration. This is NOT an accepted design and must not be implemented. The canonical files are listed in README.md §1.</div>
+
+
+<section style="display:flex;flex-direction:column;gap:40px;padding:48px;min-width:1200px">
+
+  <div style="max-width:1000px">
+    <div style="font:800 24px/1.2 var(--font-display);color:var(--text-primary)">Context node — committed design (crew ledger)</div>
+    <div style="margin-top:8px;font-size:13.5px;line-height:1.6;color:var(--text-secondary);max-width:820px">
+      One row per agent seat (implementer + every validator) with model and reasoning effort; Tasks / Loop / Gates stat row; <span style="color:var(--amber);font-family:var(--font-mono)">Δ</span> marks each field overridden from the workflow default. Hovering a seat row opens the popover with the full default→override diff. Example: <span style="font-family:var(--font-mono);color:var(--text-primary)">Implement checkout</span>, running, loop 2/3, lane delivery ◪ src/checkout. Workflow defaults: <span style="font-family:var(--font-mono);color:var(--text-primary)">claude/sonnet-4.5 · medium</span>.
+    </div>
+    <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px 18px;font:500 11px var(--font-mono);color:var(--text-tertiary)">
+      <span><span style="color:var(--amber)">Δ</span> overridden from workflow default</span>
+      <span><span style="background:var(--rainbow-gradient);-webkit-background-clip:text;background-clip:text;color:transparent;font-weight:700">xhigh</span> beyond-scale effort (rainbow, per DS)</span>
+      <span><span style="color:var(--violet)">◆</span> Codex seat · <span style="color:var(--cyan)">◆</span> Claude seat</span>
+    </div>
+  </div>
+
+  <div id="1a" data-screen-label="1a Crew ledger" style="width:760px">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px">
+      <a href="#1a" style="display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:22px;border:1px solid var(--cyan-glow-strong);border-radius:6px;background:var(--cc-cyan-a08);font:700 11.5px var(--font-mono);color:var(--cyan)">1a</a>
+      <span style="font:700 14px var(--font-body);color:var(--text-primary)">Crew ledger + hover popover</span>
+    </div>
+    <div style="display:flex;gap:18px;align-items:flex-start">
+      <div class="graph-node relative overflow-hidden rounded-[14px] border border-solid bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)] [--node-color:var(--cyan)] [--node-color-glow:var(--cyan-glow)] border-[var(--cc-cyan-a25)] [border-top-color:var(--cc-cyan-a50)] [animation:pulse-node_2s_ease-in-out_infinite]" style="width:360px;padding:14px 16px 12px">
+        <div style="position:relative;z-index:1;display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:4px">
+          <span style="font-size:.9rem;font-weight:700;line-height:1.2;color:var(--text-primary)">Implement checkout</span>
+          <span style="flex-shrink:0;border:1px solid var(--cyan-glow-strong);background:var(--cc-cyan-a08);color:var(--cyan);border-radius:20px;padding:2px 8px;font-size:.62rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Running</span>
+        </div>
+        <div style="position:relative;z-index:1;margin-bottom:10px;font:500 10.5px var(--font-mono);color:var(--text-tertiary)">▍delivery · ◪ src/checkout</div>
+        <div style="position:relative;z-index:1;border:1px solid var(--border-subtle);border-radius:8px;background:var(--cc-graph-ink-a55);overflow:hidden;margin-bottom:10px">
+          <div style="display:flex;align-items:center;gap:7px;padding:7px 10px">
+            <span style="font:700 9.5px var(--font-mono);letter-spacing:.1em;color:var(--text-tertiary);width:32px">IMPL</span>
+            <span style="color:var(--cyan);font-size:.68rem">◆</span>
+            <span style="font:600 11px var(--font-mono);color:var(--text-primary)">opus-4.1</span>
+            <span title="Overridden — workflow default: sonnet-4.5" style="font:700 11px var(--font-mono);color:var(--amber)">Δ</span>
+            <span style="margin-left:auto;border:1px solid var(--border-default);border-radius:9px;padding:1px 7px;font:600 9.5px var(--font-mono);text-transform:uppercase;color:var(--text-secondary)">high <span title="Overridden — workflow default: medium" style="color:var(--amber)">Δ</span></span>
+          </div>
+          <div style="display:flex;align-items:center;gap:7px;padding:7px 10px;border-top:1px solid var(--border-dim)">
+            <span style="font:700 9.5px var(--font-mono);letter-spacing:.1em;color:var(--text-tertiary);width:32px">VAL</span>
+            <span style="color:var(--violet);font-size:.68rem">◆</span>
+            <span style="font:600 11px var(--font-mono);color:var(--text-primary)">security · gpt-5-codex</span>
+            <span style="margin-left:auto;border:1px solid var(--cc-rainbow-glow-violet-a15);border-radius:9px;padding:1px 7px;font:700 9.5px var(--font-mono);text-transform:uppercase;background:var(--rainbow-tint)"><span style="background:var(--rainbow-gradient);-webkit-background-clip:text;background-clip:text;color:transparent">xhigh</span></span>
+          </div>
+          <div style="display:flex;align-items:center;gap:7px;padding:7px 10px;border-top:1px solid var(--border-dim)">
+            <span style="font:700 9.5px var(--font-mono);letter-spacing:.1em;color:var(--text-tertiary);width:32px"></span>
+            <span style="color:var(--cyan);font-size:.68rem">◆</span>
+            <span style="font:600 11px var(--font-mono);color:var(--text-primary)">a11y · sonnet-4.5</span>
+            <span style="margin-left:auto;border:1px solid var(--border-default);border-radius:9px;padding:1px 7px;font:600 9.5px var(--font-mono);text-transform:uppercase;color:var(--text-secondary)">med</span>
+          </div>
+        </div>
+        <div style="position:relative;z-index:1;display:flex;gap:6px;margin-bottom:10px">
+          <div style="flex:1;border:1px solid var(--border-subtle);border-radius:10px;background:var(--cc-graph-ink-a55);padding:8px 10px">
+            <div style="font:600 9.5px var(--font-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--text-tertiary);margin-bottom:3px">Tasks</div>
+            <div style="font:700 13px var(--font-mono);color:var(--text-primary)">3/5</div>
+          </div>
+          <div style="flex:1;border:1px solid var(--border-subtle);border-radius:10px;background:var(--cc-graph-ink-a55);padding:8px 10px">
+            <div style="font:600 9.5px var(--font-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--text-tertiary);margin-bottom:3px">Loop</div>
+            <div style="font:700 13px var(--font-mono);color:var(--violet)">↻ 2/3</div>
+          </div>
+          <div style="flex:1.2;border:1px solid var(--border-subtle);border-radius:10px;background:var(--cc-graph-ink-a55);padding:8px 10px">
+            <div style="font:600 9.5px var(--font-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--text-tertiary);margin-bottom:3px">Gates</div>
+            <div style="display:flex;align-items:center;gap:10px;height:18px">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" role="img" aria-label="Script gate"><rect x="1.5" y="1.5" width="13" height="13" rx="2.5" stroke="var(--text-secondary)" stroke-width="1.5"></rect><path d="M 5 6 L 7.5 8 L 5 10" stroke="var(--text-secondary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path><path d="M 8.5 10.5 H 11" stroke="var(--text-secondary)" stroke-width="1.5" stroke-linecap="round"></path></svg>
+              <span title="Human approval — overridden from workflow default" style="position:relative;display:inline-flex;width:15px;height:15px"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" role="img" aria-label="Human approval"><circle cx="8" cy="8" r="6.5" stroke="var(--amber)" stroke-width="1.5"></circle><path d="M 5.2 8.2 L 7.2 10.2 L 10.8 6" stroke="var(--amber)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg><span aria-label="Overridden" style="position:absolute;top:-4px;right:-3px;display:flex;align-items:center;justify-content:center;width:8px;height:8px;border-radius:50%;background:var(--cc-graph-node-grad-top);font:800 7px var(--font-mono);color:var(--amber);line-height:1">Δ</span></span>
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" role="img" aria-label="Output schema declared"><path d="M 8 1.8 L 14.2 8 L 8 14.2 L 1.8 8 Z" stroke="var(--text-tertiary)" stroke-width="1.5" stroke-linejoin="round"></path></svg>
+            </div>
+          </div>
+        </div>
+        <div style="position:relative;z-index:1;height:3px;border-radius:3px;background:var(--cc-graph-ink-a50);margin-bottom:7px"><div style="width:60%;height:100%;border-radius:3px;background:var(--cyan);box-shadow:0 0 6px var(--cyan-glow)"></div></div>
+        <div style="position:relative;z-index:1;font-size:.66rem;font-weight:500;color:var(--text-secondary)">Running task 3/5</div>
+      </div>
+
+      <!-- popover: hovering the IMPL row -->
+      <div style="position:relative;flex-shrink:0;width:330px;border:1px solid var(--border-strong);border-radius:8px;background:var(--bg-elevated);box-shadow:var(--cc-shadow-popover);padding:12px 14px">
+        <span style="position:absolute;left:-5px;top:48px;width:9px;height:9px;background:var(--bg-elevated);border-left:1px solid var(--border-strong);border-bottom:1px solid var(--border-strong);transform:rotate(45deg)"></span>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+          <span style="color:var(--cyan);font-size:.72rem">◆</span>
+          <span style="font:700 12px var(--font-mono);color:var(--text-primary)">Implementer</span>
+          <span style="border:1px solid var(--amber-dim);background:var(--amber-glow);color:var(--amber);border-radius:9px;padding:1px 8px;font:700 10px var(--font-mono)">Δ 2 overrides</span>
+          <span style="margin-left:auto;font:400 10px var(--font-mono);color:var(--text-tertiary)">builder:impl@7</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;font:400 11px var(--font-mono)">
+          <div style="display:flex;gap:8px;align-items:baseline"><span style="width:80px;color:var(--text-tertiary)">model</span><span style="color:var(--text-tertiary);text-decoration:line-through">sonnet-4.5</span><span style="color:var(--amber)">→ opus-4.1 Δ</span></div>
+          <div style="display:flex;gap:8px;align-items:baseline"><span style="width:80px;color:var(--text-tertiary)">effort</span><span style="color:var(--text-tertiary);text-decoration:line-through">medium</span><span style="color:var(--amber)">→ high Δ</span></div>
+          <div style="display:flex;gap:8px;align-items:baseline"><span style="width:80px;color:var(--text-tertiary)">backend</span><span style="color:var(--text-secondary)">claude-code</span><span style="color:var(--text-tertiary)">(default)</span></div>
+          <div style="display:flex;gap:8px;align-items:baseline"><span style="width:80px;color:var(--text-tertiary)">TDD</span><span style="color:var(--text-secondary)">on</span><span style="color:var(--text-tertiary)">(default)</span></div>
+          <div style="display:flex;gap:8px;align-items:baseline"><span style="width:80px;color:var(--text-tertiary)">conversation</span><span style="color:var(--cyan)">conv_b41f9d2e · live</span></div>
+          <div style="display:flex;gap:8px;align-items:baseline"><span style="width:80px;color:var(--text-tertiary)">context fill</span><span style="color:var(--text-secondary)">62%</span><span style="color:var(--text-tertiary)">rotates at 85%</span></div>
+        </div>
+        <div style="margin:10px 0;height:1px;background:var(--border-dim)"></div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <span style="font:700 10px var(--font-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--text-tertiary)">Validators · 2 seats</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;font:400 11px var(--font-mono)">
+          <div style="display:flex;gap:8px;align-items:baseline"><span style="width:80px;color:var(--text-tertiary)">security</span><span style="color:var(--violet)">◆ gpt-5-codex</span><span style="background:var(--rainbow-gradient);-webkit-background-clip:text;background-clip:text;color:transparent;font-weight:800;text-transform:uppercase">xhigh</span><span style="color:var(--text-tertiary)">validator:security@3</span></div>
+          <div style="display:flex;gap:8px;align-items:baseline"><span style="width:80px;color:var(--text-tertiary)">a11y</span><span style="color:var(--cyan)">◆ sonnet-4.5</span><span style="color:var(--text-secondary);text-transform:uppercase">med</span><span style="color:var(--text-tertiary)">validator:a11y@1</span></div>
+        </div>
+        <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border-dim);display:flex;gap:12px;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">
+          <span><span style="color:var(--amber)">Δ 3</span> total vs. workflow default</span>
+          <span style="margin-left:auto">click row → inspector</span>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:10px;width:760px;font-size:12px;line-height:1.55;color:var(--text-secondary)">One row per agent seat — scan the whole crew top to bottom. Effort as a right-aligned pill; Δ marks each overridden field individually; scales by adding rows. Hovering a seat row opens the popover (DS Popover) with the full default→override diff for that seat plus what the node has no room for: backend, TDD, live conversation, context fill, seat versions.</div>
+  </div>
+</section>
+</x-dc>
+</body>
+</html>

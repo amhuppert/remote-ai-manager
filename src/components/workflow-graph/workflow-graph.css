@@ -8,65 +8,29 @@
 
 /* ---- Node status pulse keyframes ---- */
 
-@keyframes pulse-node {
-  0%,
-  100% {
-    box-shadow: 0 0 4px 0 var(--node-color-glow);
-  }
-  50% {
-    box-shadow: 0 0 18px 3px var(--node-color-glow);
-  }
+/* The live pulse, reserved for a RUNNING context. Bound to a class rather than
+   an arbitrary-value utility so the reduced-motion rule below has one selector
+   to switch off — a reader who asks for less motion gets the static ring. */
+.node-live-pulse {
+  animation: cc-node-live 2.4s ease-in-out infinite;
 }
 
-@keyframes pulse-node-selected {
+@keyframes cc-node-live {
   0%,
   100% {
-    box-shadow:
-      0 0 0 1px rgba(0, 229, 255, 0.25),
-      0 0 6px 0 rgba(0, 229, 255, 0.15);
+    box-shadow: 0 0 0 1px var(--cc-cyan-a25);
   }
   50% {
     box-shadow:
-      0 0 0 1px rgba(0, 229, 255, 0.4),
-      0 0 22px 4px rgba(0, 229, 255, 0.25);
+      0 0 0 1px var(--cc-cyan-a40),
+      0 0 14px var(--cyan-glow);
   }
 }
 
-@keyframes pulse-node-validating-selected {
-  0%,
-  100% {
-    box-shadow:
-      0 0 0 1px rgba(255, 179, 0, 0.3),
-      0 0 6px 0 rgba(255, 179, 0, 0.15);
-  }
-  50% {
-    box-shadow:
-      0 0 0 1px rgba(255, 179, 0, 0.45),
-      0 0 22px 4px rgba(255, 179, 0, 0.25);
-  }
-}
-
-@keyframes pulse-node-merging-selected {
-  0%,
-  100% {
-    box-shadow:
-      0 0 0 1px rgba(0, 230, 118, 0.3),
-      0 0 6px 0 rgba(0, 230, 118, 0.15);
-  }
-  50% {
-    box-shadow:
-      0 0 0 1px rgba(0, 230, 118, 0.5),
-      0 0 22px 4px rgba(0, 230, 118, 0.3);
-  }
-}
-
-@keyframes merging-chevron {
-  0% {
-    background-position: 0 0;
-  }
-  100% {
-    background-position: 24px 0;
-  }
+/* The lane band header's live dot — the band equivalent of the node's live
+   ring, and switched off by the same reduced-motion rule below. */
+.lane-band-live-dot {
+  animation: pulse-dot 2.4s ease-in-out infinite;
 }
 
 /* ---- Node Connection Ports (React Flow Handle overrides) ----
@@ -99,6 +63,21 @@
   box-shadow: 0 0 8px var(--cyan-glow);
 }
 
+/* ---- Reduced motion ----
+   Every graph animation is decorative: the node's live ring, the lane band's
+   live dot and the active edge's marching dash all repeat what the status pill,
+   the band header and the edge colour already state. A reader who asks for less
+   motion loses nothing but the movement. */
+
+@media (prefers-reduced-motion: reduce) {
+  .node-live-pulse,
+  .lane-band-live-dot,
+  .graph-node,
+  .edge-line {
+    animation: none !important;
+  }
+}
+
 /* ---- Graph Edge keyframes ---- */
 
 @keyframes dash-flow {
@@ -125,22 +104,6 @@
 .react-flow__minimap {
   background: var(--bg-base);
 }
-.react-flow__controls button {
-  background: var(--bg-surface);
-  color: var(--text-secondary);
-  border: 1px solid var(--border-subtle);
-  border-bottom: none;
-}
-.react-flow__controls button:hover {
-  background: var(--bg-raised);
-}
-.react-flow__controls button:first-child {
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-}
-.react-flow__controls button:last-child {
-  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
-  border-bottom: 1px solid var(--border-subtle);
-}
 .react-flow__selection {
   background: rgba(0, 229, 255, 0.08);
   border: 1px solid var(--cyan-dim);
@@ -150,6 +113,21 @@
 .react-flow__edge.selected .edge-line {
   stroke: var(--cyan);
   stroke-width: 2;
+}
+
+/* React Flow makes a selectable edge keyboard-focusable and its own stylesheet
+   clears the wrapper outline, so without this rule tabbing to an edge shows
+   nothing until it is also selected. An SVG group cannot carry a reliable
+   outline, so the focus indicator is drawn on the line: a heavier stroke plus a
+   glow, which stays visible over the satisfied, active and pending treatments
+   alike. Deliberately distinct from the `.selected` recolour above — an edge can
+   be focused without being selected, and the two states must not look alike. */
+.react-flow__edge:focus-visible .edge-line {
+  stroke: var(--cyan);
+  stroke-width: 3;
+  /* The token glow is a 0.15-alpha wash, too faint to read as a focus ring over
+     an already-cyan active edge; the halo is drawn from the solid hue. */
+  filter: drop-shadow(0 0 4px var(--cyan));
 }
 
 /* ---- Inspector / sidebar scrollbars ---- */
@@ -186,18 +164,4 @@
 }
 .wb-transcript-body::-webkit-scrollbar-thumb:hover {
   background: var(--border-strong);
-}
-
-/* ================================================================
-   Mobile Layout Overrides (≤768px) — vendor control repositioning
-   ================================================================ */
-
-@media (max-width: 768px) {
-  .app[data-page="workflow-builder"] .react-flow__controls {
-    bottom: 12px;
-  }
-
-  .app[data-page="workflow"] .react-flow__controls {
-    bottom: 12px;
-  }
 }

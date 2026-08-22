@@ -1,13 +1,22 @@
 // @vitest-environment jsdom
+import { createElement } from "react";
 import { renderHook, act } from "@testing-library/react";
+import { hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useWorkflowMobilePanel } from "./useWorkflowMobilePanel";
 
 function createMatchMediaMock(matches: boolean) {
   const listeners: Array<(e: MediaQueryListEvent) => void> = [];
+  // A real MediaQueryList updates `matches` before it notifies, so a subscriber
+  // that re-reads the list — rather than trusting the event — sees the new
+  // value. A fake with a frozen `matches` would hide that.
+  const state = { matches };
   return {
     mock: {
-      matches,
+      get matches() {
+        return state.matches;
+      },
       media: "(max-width: 768px)",
       addEventListener: (_: string, cb: (e: MediaQueryListEvent) => void) => {
         listeners.push(cb);
@@ -21,6 +30,7 @@ function createMatchMediaMock(matches: boolean) {
       },
     } as unknown as MediaQueryList,
     fireChange(newMatches: boolean) {
+      state.matches = newMatches;
       for (const cb of listeners) {
         cb({ matches: newMatches } as MediaQueryListEvent);
       }
@@ -90,6 +100,60 @@ describe("useWorkflowMobilePanel", () => {
       result.current.setMobilePanel("inspector");
     });
     expect(result.current.mobilePanel).toBe("inspector");
+  });
+
+  // The page mounts the bottom tab bar behind `isMobile`, so a mobile-width
+  // client render that disagrees with the server's HTML throws the whole
+  // subtree away and re-renders it. The viewport is external state: the server
+  // has no snapshot of it, so the first client render has to agree with the
+  // server and correct itself afterwards.
+  it("hydrates server markup at a mobile width without a mismatch", async () => {
+    function Probe(): React.ReactElement {
+      const { isMobile } = useWorkflowMobilePanel<"graph" | "inspector">(
+        "graph",
+      );
+      return createElement(
+        "nav",
+        { "data-mobile": String(isMobile) },
+        isMobile ? "tabs" : null,
+      );
+    }
+
+    // The server has no viewport, so its markup is always the non-mobile
+    // shape — jsdom keeps `window` around during `renderToString`, so the
+    // absent viewport is modelled by the query not matching.
+    const serverMql = createMatchMediaMock(false);
+    const matchMedia = vi
+      .spyOn(window, "matchMedia")
+      .mockReturnValue(serverMql.mock);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    container.innerHTML = renderToString(createElement(Probe));
+
+    // …and then the real client, on a 390px phone.
+    const clientMql = createMatchMediaMock(true);
+    matchMedia.mockReturnValue(clientMql.mock);
+
+    const errors: unknown[][] = [];
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation((...args: unknown[]) => {
+        errors.push(args);
+      });
+
+    await act(async () => {
+      hydrateRoot(container, createElement(Probe));
+    });
+
+    consoleError.mockRestore();
+    expect(
+      errors.filter((entry) => String(entry[0]).includes("Hydration")),
+    ).toEqual([]);
+    // …and the corrected render still reaches the mobile shape.
+    expect(container.querySelector("nav")).toHaveAttribute(
+      "data-mobile",
+      "true",
+    );
   });
 
   it("autoSwitchPanel updates only when mobile", () => {

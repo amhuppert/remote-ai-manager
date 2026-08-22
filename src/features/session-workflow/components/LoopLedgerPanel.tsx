@@ -15,9 +15,9 @@ const headerClass = "flex items-center gap-[8px] text-[0.72rem]";
 const detailClass = "text-[0.7rem] text-text-tertiary mt-1 leading-[1.4]";
 const metaClass = "text-[0.7rem] text-text-tertiary";
 const supersededClass =
-  "text-[0.65rem] uppercase tracking-[0.06em] text-text-tertiary border border-border-dim rounded-sm px-[6px] py-[1px]";
+  "text-[0.7rem] uppercase tracking-[0.06em] text-text-tertiary border border-border-dim rounded-sm px-[6px] py-[1px]";
 const loadMoreClass =
-  "mt-2 inline-flex items-center justify-center text-[0.7rem] py-[3px] px-[8px] h-[22px] rounded-sm cursor-pointer border border-border-default bg-bg-raised text-text-secondary hover:bg-bg-elevated hover:text-text-primary";
+  "mt-2 inline-flex items-center justify-center text-[0.7rem] py-[3px] px-[8px] h-[22px] rounded-sm cursor-pointer border border-border-default bg-bg-raised text-text-secondary hover:bg-bg-elevated hover:text-text-primary max-768:h-auto max-768:min-h-[44px] max-768:px-md";
 
 export interface LoopLedgerPanelProps {
   projectName: string;

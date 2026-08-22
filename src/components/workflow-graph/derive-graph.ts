@@ -11,12 +11,15 @@ import type {
   GraphWorkflowCascadeContext,
   GraphWorkflowTaskDefinition,
   GraphWorkflowVisualLayout,
+  WorkflowConfigOverride,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 import {
   deriveContextWaitState,
   type ContextWaitState,
 } from "./derive-wait-state";
+import type { WorkflowDefaults } from "@/lib/config/schemas";
+import { resolveContext } from "@/lib/workflow-graph/resolve-config";
 import { createExecutionIndex } from "@/lib/workflow-graph/execution-index";
 import { projectExecutionRoutes } from "@/lib/workflow-graph/execution-routes";
 import {
@@ -30,6 +33,18 @@ import {
 } from "@/lib/workflow-graph/loop-ledger";
 import { resolveExpansionProvenance } from "@/lib/workflow-graph/expansion-receipts";
 import type { GraphWorkflowContextSkipReason } from "@/lib/workflow-graph/schemas";
+import {
+  deriveDefinitionLaneBands,
+  deriveExecutionLaneBands,
+  type LaneBandState,
+} from "@/lib/workflow-graph/lane-bands";
+import {
+  contextNodeAriaLabel,
+  contextNodeCrew,
+  contextNodeGrade,
+  contextNodeStatus,
+  ownedPathsText,
+} from "./node-presentation";
 
 /**
  * The graph is a read-only projection, so it takes the CASCADE shape: a seeded
@@ -90,6 +105,40 @@ export type ExecutionContextNodeData = {
   loop?: ContextLoopDisplay;
   /** Present only on a context a runtime expansion created (D4 R8). */
   provenance?: ContextProvenanceDisplay;
+  /**
+   * The state of the band this context sits in, so the node's lane chip and the
+   * band behind it cannot disagree. Derived from the same lane-band model the
+   * band layer renders.
+   */
+  laneState: LaneBandState;
+  /** Present only when a runtime expansion created this context's whole lane. */
+  laneCreatedAtRuntime?: true;
+  /**
+   * Blocks this context overrides at its OWN tier, named for display — the
+   * set-on-this-context marker's reason. Empty when everything is inherited.
+   */
+  configOverrides: string[];
+};
+
+export type DeriveNodesOptions = {
+  /**
+   * The pre-cascade draft, when the caller has one. A resolved context cannot
+   * distinguish a context-tier block from an inherited one for most settings —
+   * only the authored document can — so a caller holding the draft passes it
+   * and gets exact override provenance instead of the partial record a resolved
+   * context carries.
+   */
+  authoredDefinition?: WorkflowSemanticDefinition;
+  /**
+   * The global tier, for a caller whose `definition` is ITSELF the authored
+   * document (the launch preview). An inherited implementer or cohort is simply
+   * absent from an authored context, so without this the card would show no
+   * crew at all for a workflow that configures its agents once at the workflow
+   * tier. Present → every context is put through `resolveContext`, the owner of
+   * the global → workflow → context cascade, so the preview names the crew that
+   * would actually run. A caller that already resolved its definition omits it.
+   */
+  workflowDefaults?: WorkflowDefaults;
 };
 
 export type ContextEdgeData = {
@@ -277,21 +326,256 @@ export function deriveContextProvenanceDisplay(
   };
 }
 
+/**
+ * The blocks an AUTHORED context declares at its own tier, in a stable display
+ * order. Presence is the whole signal: the cascade takes the nearest tier that
+ * declares a block, so a declared block IS an override.
+ */
+const AUTHORED_OVERRIDE_LABELS: readonly [
+  keyof GraphWorkflowExecutionContextDefinition,
+  string,
+][] = [
+  ["implementer", "implementer"],
+  ["contextValidator", "validator cohort"],
+  ["scriptValidator", "script validator"],
+  ["humanApprovalGate", "human approval gate"],
+  ["askUserQuestions", "ask user questions"],
+  ["iterationPolicy", "iteration policy"],
+  ["circuitBreaker", "circuit breaker"],
+  ["mutability", "mutability"],
+  ["planRepair", "plan repair"],
+  ["collaboration", "collaboration"],
+  ["agentValidation", "agent validation"],
+];
+
+/**
+ * Blocks whose resolved value is shape-identical to the tier it cascaded from,
+ * so the two can be compared directly. `collaboration` and `agentValidation`
+ * are deliberately absent: the resolver rewrites them into per-field
+ * `{value, source}` records, which no longer compare against a tier — and it
+ * records their provenance outright, so the pass below already answers them.
+ */
+const TIER_COMPARABLE_BLOCKS = [
+  "implementer",
+  "contextValidator",
+  "scriptValidator",
+  "humanApprovalGate",
+  "askUserQuestions",
+  "iterationPolicy",
+  "circuitBreaker",
+  "mutability",
+  "planRepair",
+] as const satisfies readonly (keyof WorkflowConfigOverride &
+  keyof GraphWorkflowExecutionContextDefinition)[];
+
+type TierComparableBlock = (typeof TIER_COMPARABLE_BLOCKS)[number];
+
+function isTierComparable(
+  field: keyof GraphWorkflowExecutionContextDefinition,
+): field is TierComparableBlock {
+  return (TIER_COMPARABLE_BLOCKS as readonly string[]).includes(field);
+}
+
+/**
+ * A block's identity for tier comparison, with the bytes SEEDING adds removed.
+ * Both the seed boundary and the live-edit boundary attach `profileSnapshot` by
+ * spreading the assignment they were given, so an untouched inherited block
+ * differs from its tier by exactly that key — which is delivered instructions,
+ * not a configuration choice, and must not read as an override. Keys are sorted
+ * and undefined-valued keys dropped so the comparison cannot turn on authoring
+ * order.
+ */
+function blockIdentity(value: unknown): string {
+  const canonical = (input: unknown): unknown => {
+    if (Array.isArray(input)) return input.map(canonical);
+    if (typeof input === "object" && input !== null) {
+      return Object.fromEntries(
+        Object.entries(input)
+          .filter(
+            ([key, entry]) => key !== "profileSnapshot" && entry !== undefined,
+          )
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          .map(([key, entry]) => [key, canonical(entry)]),
+      );
+    }
+    return input;
+  };
+  return JSON.stringify(canonical(value));
+}
+
+/**
+ * What this context sets on ITSELF, named for the set-on-this-context marker.
+ *
+ * Three independent signals, unioned — the marker must appear whenever ANY of
+ * them shows an override, and the criterion is that it appear ONLY then:
+ *
+ *  1. The authored context declares the block. A declared block IS an override,
+ *     because the cascade takes the nearest tier that declares one.
+ *  2. The resolved context's value no longer matches the tier it was launched
+ *     inheriting from. This is what catches a LIVE EDIT: the working definition
+ *     is rewritten in place while `authored` — the launch snapshot — is
+ *     immutable and keeps reporting the block as inherited forever.
+ *  3. The provenance the resolver recorded per field and per role, which is the
+ *     only signal for the blocks it rewrites into `{value, source}` records.
+ *
+ * A block inherited from the GLOBAL tier and then live-edited is not detectable
+ * here: signal 2 needs the tier's value, and a launch document carries the
+ * workflow tier but not the global one. Reporting it would take provenance the
+ * resolved context does not carry, so it is left undetected rather than guessed
+ * — a marker that lies about what is set on a context is worse than one that is
+ * occasionally absent.
+ */
+export function deriveContextConfigOverrides(
+  context: ExecutionContextNodeData["context"],
+  authored?: GraphWorkflowExecutionContextDefinition,
+  workflowConfig?: WorkflowConfigOverride,
+): string[] {
+  const overrides: string[] = [];
+
+  if (authored) {
+    for (const [field, label] of AUTHORED_OVERRIDE_LABELS) {
+      if (authored[field] !== undefined) {
+        overrides.push(label);
+        continue;
+      }
+      if (!isTierComparable(field) || !(field in context)) continue;
+      const tierValue = workflowConfig?.[field];
+      if (tierValue === undefined) continue;
+      const resolvedValue = (context as Record<string, unknown>)[field];
+      if (blockIdentity(resolvedValue) !== blockIdentity(tierValue)) {
+        overrides.push(label);
+      }
+    }
+  }
+
+  if (
+    "scriptValidatorSource" in context &&
+    context.scriptValidatorSource === "per-node"
+  ) {
+    overrides.push("script validator");
+  }
+  if (
+    context.collaboration !== undefined &&
+    Object.values(context.collaboration).some(isPerNode)
+  ) {
+    overrides.push("collaboration");
+  }
+  const agentValidation = context.agentValidation;
+  if (isPerNode(agentValidation?.implementer)) {
+    overrides.push("agent validation (implementer)");
+  }
+  if (isPerNode(agentValidation?.contextValidator)) {
+    overrides.push("agent validation (context validator)");
+  }
+  // Deduped, not concatenated: "script validator" is reachable from both the
+  // authored/tier pass and the provenance pass, and the marker names each
+  // overridden block once.
+  return [...new Set(overrides)];
+}
+
+/**
+ * Whether a resolved, provenanced value was set at the context tier. The `in`
+ * guard is load-bearing: on the AUTHORED shape the same field is a bare value
+ * with no provenance at all, which is correctly "not per-node here" — the
+ * authored branch above answers that case exactly.
+ */
+function isPerNode(field: unknown): boolean {
+  return (
+    typeof field === "object" &&
+    field !== null &&
+    "source" in field &&
+    field.source === "per-node"
+  );
+}
+
+/**
+ * Lanes whose EVERY member arrived through an accepted runtime expansion — the
+ * "runtime" marker on the node's lane chip. Derived rather than recorded: the
+ * engine keeps receipts per context, not per lane, and a lane holding even one
+ * authored member is an authored lane a generated context happened to join.
+ */
+function runtimeCreatedLaneNames(
+  definition: DeriveGraphDefinition,
+  execution: GraphWorkflowExecution,
+): Set<string> {
+  const membersByLane = new Map<string, string[]>();
+  for (const context of definition.executionContexts) {
+    const lane = context.placement?.lane;
+    if (!lane) continue;
+    const members = membersByLane.get(lane);
+    if (members) members.push(context.id);
+    else membersByLane.set(lane, [context.id]);
+  }
+
+  const runtimeLanes = new Set<string>();
+  for (const [lane, members] of membersByLane) {
+    const allGenerated = members.every(
+      (contextId) =>
+        resolveExpansionProvenance(execution.expansionReceipts, contextId)
+          ?.nodeKind === "context",
+    );
+    if (allGenerated) runtimeLanes.add(lane);
+  }
+  return runtimeLanes;
+}
+
 export function deriveNodes(
   definition: DeriveGraphDefinition,
   layout: GraphWorkflowVisualLayout,
   execution?: GraphWorkflowExecution | null,
+  options?: DeriveNodesOptions,
 ): Node<ExecutionContextNodeData>[] {
   const index = createExecutionIndex(definition, execution);
+  const bands = execution
+    ? deriveExecutionLaneBands(execution)
+    : deriveDefinitionLaneBands(definition);
+  const bandStateByContext = new Map<string, LaneBandState>(
+    bands.flatMap((band) =>
+      band.memberContextIds.map(
+        (contextId) => [contextId, band.state] as const,
+      ),
+    ),
+  );
+  const runtimeLanes = execution
+    ? runtimeCreatedLaneNames(definition, execution)
+    : new Set<string>();
+  const authoredById = new Map(
+    (options?.authoredDefinition?.executionContexts ?? []).map((context) => [
+      context.id,
+      context,
+    ]),
+  );
+
+  const workflowConfig = options?.authoredDefinition?.workflowConfig ?? {};
+  const workflowDefaults = options?.workflowDefaults;
 
   return definition.executionContexts.map((context) => {
+    const authored = authoredById.get(context.id);
+    // The card reads the EFFECTIVE context: an authored preview resolves
+    // through the cascade's owner, everyone else already passed a resolved
+    // definition and the context is effective as it stands.
+    const displayContext =
+      workflowDefaults && authored
+        ? resolveContext(workflowDefaults, workflowConfig, authored)
+        : context;
+
     const data: ExecutionContextNodeData = {
-      context,
+      context: displayContext,
       tasks: index.tasksByContext.get(context.id) ?? [],
       mode: execution ? "execution" : "builder",
+      laneState: bandStateByContext.get(context.id) ?? "pending",
+      configOverrides: deriveContextConfigOverrides(
+        displayContext,
+        authored,
+        workflowConfig,
+      ),
     };
 
-    if (context.outputSchema !== undefined) {
+    if (runtimeLanes.has(displayContext.placement.lane)) {
+      data.laneCreatedAtRuntime = true;
+    }
+
+    if (displayContext.outputSchema !== undefined) {
       // Read through the D6 accessor rather than `execution.contextOutputs`, so
       // "captured" means the same thing on the node as it does in the inspector
       // and in the downstream prompt injection.
@@ -342,8 +626,32 @@ export function deriveNodes(
       id: context.id,
       type: "executionContext" as const,
       position: layout.contextPositions[context.id] ?? { x: 0, y: 0 },
+      // React Flow names its own focusable node wrapper from this; the card
+      // repeats it on its inner group so the same sentence reaches a reader
+      // whichever element they land on.
+      ariaLabel: contextNodeAccessibleName(data),
       data,
     };
+  });
+}
+
+/**
+ * The node's accessible name, from node data alone — so the canvas wrapper and
+ * the rendered card cannot describe the same context two different ways.
+ */
+export function contextNodeAccessibleName(
+  data: ExecutionContextNodeData,
+): string {
+  return contextNodeAriaLabel({
+    title: data.context.title,
+    status: contextNodeStatus(data.mode, data.waitState),
+    laneName: data.context.placement.lane,
+    grade: contextNodeGrade(data.context.placement),
+    ownedPaths: ownedPathsText(data.context.placement),
+    completedTaskCount: data.contextState?.completedTaskCount ?? 0,
+    totalTaskCount: data.contextState?.totalTaskCount ?? data.tasks.length,
+    crew: contextNodeCrew(data.context),
+    configOverrides: data.configOverrides,
   });
 }
 

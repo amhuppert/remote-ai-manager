@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo } from "react";
 import {
   Background,
   BackgroundVariant,
-  Controls,
   ReactFlow,
   ReactFlowProvider,
   useEdgesState,
@@ -17,8 +16,12 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 
+import type { WorkflowDefaults } from "@/lib/config/schemas";
 import type { WorkflowDefinitionMutation } from "@/lib/workflow-graph/definition-schemas";
 
+import { deriveDefinitionLaneBands } from "@/lib/workflow-graph/lane-bands";
+
+import CanvasControls from "./CanvasControls";
 import ContextEdge from "./ContextEdge";
 import {
   deriveEdges,
@@ -27,6 +30,7 @@ import {
   type ExecutionContextNodeData,
 } from "./derive-graph";
 import ExecutionContextNode from "./ExecutionContextNode";
+import LaneBandLayer from "./LaneBandLayer";
 
 const nodeTypes = {
   executionContext: ExecutionContextNode,
@@ -36,6 +40,14 @@ const edgeTypes = { contextEdge: ContextEdge } as unknown as EdgeTypes;
 export interface WorkflowDefinitionCanvasProps {
   readonly launch: WorkflowDefinitionMutation;
   readonly onSelectContext?: (contextId: string | null) => void;
+  /**
+   * The global tier this preview would launch against, so each context renders
+   * the crew the cascade would give it. Required rather than optional: an
+   * authored context that inherits its implementer declares none, and a caller
+   * that forgot this would silently preview a workflow with no crew at all.
+   * `useGlobalDefaults()` is where a caller gets it.
+   */
+  readonly globalDefaults: WorkflowDefaults;
 }
 
 export default function WorkflowDefinitionCanvas(
@@ -51,6 +63,7 @@ export default function WorkflowDefinitionCanvas(
 function WorkflowDefinitionCanvasInner({
   launch,
   onSelectContext,
+  globalDefaults,
 }: WorkflowDefinitionCanvasProps): React.JSX.Element {
   const { definition, layout } = launch;
   const [nodes, setNodes, onNodesChange] = useNodesState<
@@ -58,11 +71,23 @@ function WorkflowDefinitionCanvasInner({
   >([]);
   const [edges, setEdges] = useEdgesState<Edge<ContextEdgeData>>([]);
 
+  // The launch document IS the authored draft here, so it serves both jobs: it
+  // is what says which blocks each context sets on itself, and — with the
+  // global tier — what the cascade resolves into the crew the card shows.
   const derivedNodes = useMemo(
-    () => deriveNodes(definition, layout),
-    [definition, layout],
+    () =>
+      deriveNodes(definition, layout, null, {
+        authoredDefinition: definition,
+        workflowDefaults: globalDefaults,
+      }),
+    [definition, layout, globalDefaults],
   );
   const derivedEdges = useMemo(() => deriveEdges(definition), [definition]);
+  // A definition preview has no runtime, so its bands read as draft lanes.
+  const bands = useMemo(
+    () => deriveDefinitionLaneBands(definition),
+    [definition],
+  );
 
   useEffect(() => {
     setNodes(derivedNodes);
@@ -102,13 +127,14 @@ function WorkflowDefinitionCanvasInner({
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
       >
+        <LaneBandLayer bands={bands} mode="builder" />
         <Background
           variant={BackgroundVariant.Dots}
           color="var(--border-default)"
           gap={20}
           size={2}
         />
-        <Controls showInteractive={false} />
+        <CanvasControls />
       </ReactFlow>
     </div>
   );

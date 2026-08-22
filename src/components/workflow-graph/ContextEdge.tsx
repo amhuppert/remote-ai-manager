@@ -6,44 +6,52 @@ import { cn } from "@/lib/ui/cn";
 import type { ContextEdgeData } from "./derive-graph";
 
 type ContextEdgeType = Edge<ContextEdgeData>;
-type EdgeStatus = "default" | "active" | "completed";
+
+/**
+ * The three states the design gives a dependency (`Workflow Execution.dc.html`
+ * E1): `pending` is a neutral dashed line (the dependency exists but has not
+ * been met), `active` is the marching cyan dash (work is flowing across it now),
+ * `satisfied` is a solid green line (the dependency is discharged).
+ */
+type EdgeStatus = "pending" | "active" | "satisfied";
 
 function getEdgeStatus(
   sourceStatus?: string,
   targetStatus?: string,
 ): EdgeStatus {
-  if (!sourceStatus) return "default";
+  if (!sourceStatus) return "pending";
 
   const sourceCompleted = sourceStatus === "completed";
   const targetCompleted = targetStatus === "completed";
   const targetRunning = targetStatus === "running";
   const targetReady = targetStatus === "ready";
 
-  if (sourceCompleted && targetCompleted) return "completed";
+  if (sourceCompleted && targetCompleted) return "satisfied";
   if (sourceCompleted && (targetRunning || targetReady)) return "active";
   if ((sourceStatus === "running" || sourceCompleted) && targetRunning)
     return "active";
 
-  return "default";
+  return "pending";
 }
 
 // `edge-line` survives as a rule-less hook: the preserved
 // `.react-flow__edge.selected .edge-line` rule (workflow-graph.css) recolours the
-// path on selection via the React Flow wrapper's `.selected` class.
+// path on selection via the React Flow wrapper's `.selected` class. It is also
+// the selector the reduced-motion rule switches the marching dash off through.
 const EDGE_LINE_BASE =
   "edge-line fill-none stroke-2 transition-[stroke] duration-300";
 
 const EDGE_LINE_STATUS: Record<EdgeStatus, string> = {
-  default: "stroke-border-default",
+  pending: "stroke-border-strong [stroke-dasharray:3_5]",
   active:
     "stroke-cyan [stroke-dasharray:8_4] [animation:dash-flow_1s_linear_infinite]",
-  completed: "stroke-green-dim",
+  satisfied: "stroke-green-dim",
 };
 
 const EDGE_ARROW_STATUS: Record<EdgeStatus, string> = {
-  default: "fill-border-default",
+  pending: "fill-border-strong",
   active: "fill-cyan",
-  completed: "fill-green-dim",
+  satisfied: "fill-green-dim",
 };
 
 /**
@@ -103,7 +111,7 @@ function GuardChip({
 }) {
   const label = guard.kind === "else" ? "else" : "when";
   const tone = GUARD_CHIP_TONE[guard.resolution];
-  const width = label.length * 7 + 12;
+  const width = label.length * 8 + 14;
   return (
     <g
       role="img"
@@ -123,7 +131,7 @@ function GuardChip({
         x={x}
         y={y + 4}
         textAnchor="middle"
-        className={cn("font-mono text-[0.62rem]", tone.text)}
+        className={cn("font-mono text-[0.7rem]", tone.text)}
       >
         {label}
       </text>
@@ -172,6 +180,7 @@ export default function ContextEdge({
       <path
         id={id}
         d={edgePath}
+        data-edge-state={status}
         {...(guard
           ? {
               "data-guard": guard.kind,
@@ -192,7 +201,7 @@ export default function ContextEdge({
           x={labelX}
           y={labelY + (guard ? 22 : 4)}
           textAnchor="middle"
-          className="fill-text-tertiary font-mono text-[0.6rem]"
+          className="fill-text-tertiary font-mono text-[0.7rem]"
         >
           via {effectiveSourceId}
         </text>

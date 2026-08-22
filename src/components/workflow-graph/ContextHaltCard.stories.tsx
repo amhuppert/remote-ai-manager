@@ -155,8 +155,83 @@ const deliveryUnmetCriteria: GraphWorkflowHaltReason = {
   },
 };
 
+const outputSchemaRejection: GraphWorkflowHaltReason = {
+  type: "circuit_breaker",
+  contextId: "context-implement",
+  condition: "output_schema_validation",
+  failureCount: 3,
+  summary: null,
+};
+
 export const CircuitBreaker: Story = {
   args: { primary: circuitBreaker },
+};
+
+/**
+ * The one halt with a repair the card can point at (E2): it names the keyword
+ * and the context that declared it, offers *Edit schema* as the way out, and
+ * shows Resume as blocked until the contract is accepted.
+ */
+export const OutputSchemaRejected: Story = {
+  args: {
+    primary: outputSchemaRejection,
+    outputSchemaEvidence: {
+      "context-implement": {
+        contextId: "context-implement",
+        // Shaped as `toOutputSchemaIssues` emits: title EQUAL to path, with the
+        // engine's words in the description.
+        issues: [
+          {
+            path: "$.auditTable",
+            title: "$.auditTable",
+            description: "must be string",
+          },
+        ],
+        rejectedOutput: '{"auditTable":[]}',
+        // `format` is outside the enforceable subset, so the card names it as
+        // the keyword no payload could ever satisfy.
+        declaredSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["auditTable"],
+          properties: { auditTable: { type: "string", format: "email" } },
+        },
+        schemaEditedSinceRejection: false,
+        contractUnchangedSinceRejection: true,
+        failureCount: 3,
+        breakerThreshold: 3,
+        iteration: 3,
+        maxIterations: 4,
+        gateRepairAttempts: 1,
+        gateRepairBudget: 2,
+      },
+    },
+    onEditSchema: () => {},
+  },
+};
+
+/** Without a host that can navigate to the contract, the card offers the
+ *  blocked Resume alone rather than a dead Edit schema button. */
+export const OutputSchemaRejectedWithoutNavigation: Story = {
+  args: {
+    primary: outputSchemaRejection,
+    outputSchemaEvidence: {
+      "context-implement": {
+        contextId: "context-implement",
+        issues: [{ path: "$.auditTable", title: "$.auditTable" }],
+        rejectedOutput: null,
+        declaredSchema: null,
+        schemaEditedSinceRejection: false,
+        contractUnchangedSinceRejection: true,
+        failureCount: 3,
+        breakerThreshold: 3,
+        iteration: null,
+        maxIterations: null,
+        gateRepairAttempts: null,
+        gateRepairBudget: null,
+      },
+    },
+  },
 };
 
 export const DeliveryApprovalRequired: Story = {

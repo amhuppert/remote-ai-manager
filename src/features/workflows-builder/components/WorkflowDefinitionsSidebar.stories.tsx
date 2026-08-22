@@ -3,8 +3,10 @@ import { fn } from "storybook/test";
 import "@/components/workflow-graph/workflow-graph.css";
 import WorkflowDefinitionsSidebar from "./WorkflowDefinitionsSidebar";
 
+// Only the loaded draft's row knows its context count — the list endpoint
+// returns a body-less summary — so the others state their revision alone.
 const sampleDefinitions = [
-  { id: "wf-1", name: "Poem Writing & Review", revision: 4 },
+  { id: "wf-1", name: "Poem Writing & Review", revision: 4, contextCount: 6 },
   { id: "wf-2", name: "Setup & Build", revision: 2 },
   { id: "wf-3", name: "API Migration", revision: 1 },
   { id: "wf-4", name: "Refactor Auth Module", revision: 7 },
@@ -33,6 +35,20 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Default = {} satisfies Story;
+
+/** The loaded draft has edits nothing has persisted; only its row says so. */
+export const ActiveDraftUnsaved = {
+  args: {
+    activeDraftDirty: true,
+  },
+} satisfies Story;
+
+/** The global `/templates` mount, which heads the same list differently. */
+export const GlobalTemplates = {
+  args: {
+    title: "Global Templates",
+  },
+} satisfies Story;
 
 export const NoneSelected = {
   args: {

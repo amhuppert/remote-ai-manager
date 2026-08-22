@@ -172,6 +172,11 @@ const MIGRATED_UTILITY_FIRST = [
   // .prettierrc class-sort override and the tailwind-utility-collisions
   // UTILITY_FIRST_PATHS allowlist.
   "src/components/workflow-config/**/*.{ts,tsx}",
+  // Lanes-first graph-workflow config panel: the host-aware configuration
+  // editor mounted by the builder and the execution page, authored
+  // utility-first against the design system. Mirrors the .prettierrc class-sort
+  // override and the tailwind-utility-collisions UTILITY_FIRST_PATHS allowlist.
+  "src/components/workflow-config-panel/**/*.{ts,tsx}",
   // Ticket-system UI: tickets feature + the promoted session indicator, authored
   // utility-first against the design system. Mirrors the .prettierrc class-sort
   // override and the tailwind-utility-collisions UTILITY_FIRST_PATHS allowlist.

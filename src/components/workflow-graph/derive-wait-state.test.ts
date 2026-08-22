@@ -504,7 +504,15 @@ describe("deriveContextWaitState", () => {
     expect(result).toEqual({ kind: "completed" });
   });
 
-  it("reports published for a worktree-isolation context whose merge succeeded", () => {
+  /**
+   * The legacy per-context worktree shape, which predates lanes entirely: no
+   * laneId, and a squash-merge that landed the work directly in the session
+   * worktree at completion time. `isContextOutputCommittedToLane` already
+   * defines this state as landed, so a historical execution's nodes have to
+   * read Published rather than being stranded on Completed for want of a lane
+   * record that never existed.
+   */
+  it("reports published for a legacy worktree merge that carries no laneId", () => {
     const execution = makeExecution({
       contextStates: {
         "ctx-1": makeContextState({
@@ -513,6 +521,7 @@ describe("deriveContextWaitState", () => {
           completedTaskCount: 3,
           isolation: "worktree",
           mergeStatus: "merged-success",
+          laneId: null,
         }),
       },
     });
@@ -524,6 +533,224 @@ describe("deriveContextWaitState", () => {
     });
 
     expect(result).toEqual({ kind: "published" });
+  });
+
+  /**
+   * The legacy shape's own negative: no laneId AND no successful merge is not a
+   * publication, so the null lane must not become a blanket "published".
+   */
+  it("reports completed for a laneless context whose merge did not succeed", () => {
+    const execution = makeExecution({
+      contextStates: {
+        "ctx-1": makeContextState({
+          status: "completed",
+          totalTaskCount: 3,
+          completedTaskCount: 3,
+          isolation: "worktree",
+          mergeStatus: "not-applicable",
+          laneId: null,
+        }),
+      },
+    });
+
+    const result = deriveContextWaitState({
+      contextId: "ctx-1",
+      definition: makeDefinition(),
+      execution,
+    });
+
+    expect(result).toEqual({ kind: "completed" });
+  });
+
+  it("reports published once the final publish join landed the context's lane", () => {
+    const execution = makeExecution({
+      contextStates: {
+        "ctx-1": makeContextState({
+          status: "completed",
+          totalTaskCount: 3,
+          completedTaskCount: 3,
+          isolation: "worktree",
+          mergeStatus: "merged-success",
+          laneId: "lane-delivery",
+        }),
+      },
+      joins: {
+        "join-publish": makeJoin({
+          joinId: "join-publish",
+          kind: "final_publish",
+          sourceLaneIds: ["lane-delivery"],
+          targetLaneId: "__session__",
+          status: "succeeded",
+        }),
+      },
+    });
+
+    const result = deriveContextWaitState({
+      contextId: "ctx-1",
+      definition: makeDefinition(),
+      execution,
+    });
+
+    expect(result).toEqual({ kind: "published" });
+  });
+
+  /**
+   * The lane a context RAN on is rarely the lane the publish names. Final-publish
+   * planning drops any lane a succeeded context_merge already consumed, so a
+   * fan-in topology (plan → delivery → session) lists only `lane-delivery` as a
+   * source. Publication has to be read as reachability through succeeded joins,
+   * or every context upstream of a join stalls on "completed" forever.
+   */
+  it("reports published for a lane that reached the session through a chained join", () => {
+    const execution = makeExecution({
+      contextStates: {
+        "ctx-1": makeContextState({
+          status: "completed",
+          totalTaskCount: 3,
+          completedTaskCount: 3,
+          isolation: "worktree",
+          mergeStatus: "merged-success",
+          laneId: "lane-plan",
+        }),
+      },
+      joins: {
+        "join-merge": makeJoin({
+          joinId: "join-merge",
+          kind: "context_merge",
+          sourceLaneIds: ["lane-plan"],
+          targetLaneId: "lane-delivery",
+          status: "succeeded",
+        }),
+        "join-publish": makeJoin({
+          joinId: "join-publish",
+          kind: "final_publish",
+          sourceLaneIds: ["lane-delivery"],
+          targetLaneId: "__session__",
+          status: "succeeded",
+        }),
+      },
+    });
+
+    const result = deriveContextWaitState({
+      contextId: "ctx-1",
+      definition: makeDefinition(),
+      execution,
+    });
+
+    expect(result).toEqual({ kind: "published" });
+  });
+
+  /**
+   * The other half of reachability: an UNFINISHED link in the chain must not
+   * publish the whole upstream. The publish landed `lane-delivery`, but the
+   * merge that would have carried `lane-plan` into it never succeeded.
+   */
+  it("reports completed when the chain to the session is broken by an unfinished join", () => {
+    const execution = makeExecution({
+      contextStates: {
+        "ctx-1": makeContextState({
+          status: "completed",
+          totalTaskCount: 3,
+          completedTaskCount: 3,
+          isolation: "worktree",
+          mergeStatus: "merged-success",
+          laneId: "lane-plan",
+        }),
+      },
+      joins: {
+        "join-merge": makeJoin({
+          joinId: "join-merge",
+          kind: "context_merge",
+          sourceLaneIds: ["lane-plan"],
+          targetLaneId: "lane-delivery",
+          status: "pending",
+        }),
+        "join-publish": makeJoin({
+          joinId: "join-publish",
+          kind: "final_publish",
+          sourceLaneIds: ["lane-delivery"],
+          targetLaneId: "__session__",
+          status: "succeeded",
+        }),
+      },
+    });
+
+    const result = deriveContextWaitState({
+      contextId: "ctx-1",
+      definition: makeDefinition(),
+      execution,
+    });
+
+    expect(result).toEqual({ kind: "completed" });
+  });
+
+  /**
+   * The defect this pins: a lane-local merge only proves the context landed
+   * among its band mates. Saying "published" here would tell an operator the
+   * work reached the session worktree while the run still owes a final publish.
+   */
+  it("reports completed, not published, while a final publish is still owed", () => {
+    const execution = makeExecution({
+      contextStates: {
+        "ctx-1": makeContextState({
+          status: "completed",
+          totalTaskCount: 3,
+          completedTaskCount: 3,
+          isolation: "worktree",
+          mergeStatus: "merged-success",
+          laneId: "lane-delivery",
+        }),
+      },
+      joins: {
+        "join-publish": makeJoin({
+          joinId: "join-publish",
+          kind: "final_publish",
+          sourceLaneIds: ["lane-delivery"],
+          targetLaneId: "__session__",
+          status: "pending",
+        }),
+      },
+    });
+
+    const result = deriveContextWaitState({
+      contextId: "ctx-1",
+      definition: makeDefinition(),
+      execution,
+    });
+
+    expect(result).toEqual({ kind: "completed" });
+  });
+
+  it("reports completed for a lane merge that no final publish covers", () => {
+    const execution = makeExecution({
+      contextStates: {
+        "ctx-1": makeContextState({
+          status: "completed",
+          totalTaskCount: 3,
+          completedTaskCount: 3,
+          isolation: "worktree",
+          mergeStatus: "merged-success",
+          laneId: "lane-delivery",
+        }),
+      },
+      joins: {
+        "join-other": makeJoin({
+          joinId: "join-other",
+          kind: "final_publish",
+          sourceLaneIds: ["lane-docs"],
+          targetLaneId: "__session__",
+          status: "succeeded",
+        }),
+      },
+    });
+
+    const result = deriveContextWaitState({
+      contextId: "ctx-1",
+      definition: makeDefinition(),
+      execution,
+    });
+
+    expect(result).toEqual({ kind: "completed" });
   });
 
   it("reports halted regardless of upstream state", () => {

@@ -1,12 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import "@/components/workflow-graph/workflow-graph.css";
+import { ChevronLeftIcon, ChevronRightIcon } from "@/components/icons";
+import type { ConfigScope } from "@/components/workflow-config-panel/types";
 import type { WorkflowDefaults } from "@/lib/config/schemas";
-import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
-import type { InspectorTab } from "./WorkflowInspectorPanel";
+import type {
+  WorkflowDefinitionRecord,
+  WorkflowGraphValidationError,
+} from "@/lib/workflow-graph/definition-schemas";
+import { cn } from "@/lib/ui/cn";
 import {
   addExecutionContext,
   deleteExecutionContext,
@@ -14,12 +19,49 @@ import {
 import { generateWorkflowLayout } from "@/lib/workflow-graph/layout";
 import { collectNodeDimensions } from "@/components/workflow-graph/AutoLayout";
 import { validateAuthoredDefinition } from "@/lib/workflow-graph/validation";
+import {
+  railOverlayPanelClass,
+  RailOverlaySpacer,
+} from "@/components/workflow-graph/RailOverlay";
+import { useWorkflowRailCollapse } from "@/components/workflow-graph/useWorkflowRailCollapse";
+import { MobilePanelVisibility } from "@/components/workflow-graph/mobile-panel-visibility";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
+import BuilderConfigPanel, {
+  type BuilderConfigPanelFocus,
+} from "./BuilderConfigPanel";
+import { useOutputSchemaBlocks } from "./output-schema-drafts";
 import WorkflowBuilderCanvas from "./WorkflowBuilderCanvas";
-import WorkflowInspectorPanel from "./WorkflowInspectorPanel";
 import WorkflowToolbar from "./WorkflowToolbar";
+import {
+  OUTPUT_SCHEMA_SCREEN_PATH,
+  routeValidationError,
+  validationErrorRowLabel,
+  type ValidationErrorRoute,
+} from "./validation-error-routing";
 
 export type BuilderMobilePanel = "graph" | "definitions" | "inspector";
+
+interface IssueRow {
+  key: string;
+  label: string;
+  route: ValidationErrorRoute;
+}
+
+function issueRow(
+  error: WorkflowGraphValidationError,
+  index: number,
+): IssueRow {
+  return {
+    key: `${error.code}:${error.contextId ?? ""}:${index}`,
+    label: validationErrorRowLabel(error),
+    route: routeValidationError(error),
+  };
+}
+
+const ISSUE_ROW_TEXT = "text-left font-mono text-[0.72rem] leading-[1.55]";
+
+const RAIL_ICON_BTN =
+  "inline-flex size-[24px] flex-shrink-0 cursor-pointer items-center justify-center rounded-sm border border-solid border-border-default bg-bg-raised p-0 text-text-secondary transition-all duration-150 hover:border-border-strong hover:bg-bg-elevated hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:2px]";
 
 interface WorkflowBuilderEditorProps {
   record: WorkflowDefinitionRecord;
@@ -35,12 +77,13 @@ interface WorkflowBuilderEditorProps {
   }) => void | Promise<void>;
   saveError?: string | null;
   globalDefaults?: WorkflowDefaults;
-  activeTab?: InspectorTab;
-  onTabChange?: (tab: InspectorTab) => void;
-  onOpenWorkflowSettings?: () => void;
+  /** Which tier the right rail is editing. */
+  configScope?: ConfigScope;
+  onConfigScopeChange?: (scope: ConfigScope) => void;
   isMobile?: boolean;
+  /** Which panel the bottom toolbar has on screen; `graph` below 768px. */
+  mobilePanel?: BuilderMobilePanel;
   onAutoSwitchPanel?: (panel: BuilderMobilePanel) => void;
-  voiceProjectName?: string | null;
   /** Builder scope: registry source for command multi-selects (null = global). */
   projectName?: string | null;
   /** Scopes the agent-profile listing the assignment pickers offer. */
@@ -67,12 +110,11 @@ function WorkflowBuilderEditorInner({
   onSave,
   saveError,
   globalDefaults,
-  activeTab,
-  onTabChange,
-  onOpenWorkflowSettings,
+  configScope = "workflow",
+  onConfigScopeChange,
   isMobile,
+  mobilePanel = "graph",
   onAutoSwitchPanel,
-  voiceProjectName,
   projectName,
   libraryProjectName,
 }: WorkflowBuilderEditorProps): React.JSX.Element {
@@ -82,9 +124,6 @@ function WorkflowBuilderEditorInner({
   );
   const draftLayout = _useGraphWorkflowBuilderStore((s) => s.draftLayout);
   const dirty = _useGraphWorkflowBuilderStore((s) => s.dirty);
-  const validationErrors = _useGraphWorkflowBuilderStore(
-    (s) => s.validationErrors,
-  );
   const loadPersistedDraft = _useGraphWorkflowBuilderStore(
     (s) => s.loadPersistedDraft,
   );
@@ -95,20 +134,47 @@ function WorkflowBuilderEditorInner({
   const setSelectedContextId = _useGraphWorkflowBuilderStore(
     (s) => s.setSelectedContextId,
   );
-  const setValidationErrors = _useGraphWorkflowBuilderStore(
-    (s) => s.setValidationErrors,
-  );
   const markSaved = _useGraphWorkflowBuilderStore((s) => s.markSaved);
+  const addEphemeralLane = _useGraphWorkflowBuilderStore(
+    (s) => s.addEphemeralLane,
+  );
   const resetToPersisted = _useGraphWorkflowBuilderStore(
     (s) => s.resetToPersisted,
   );
   const [isSaving, setIsSaving] = useState(false);
-  // The inspector's schema editor holds raw text; text outside the engine's
-  // supported subset never reaches the store, so `dirty` cannot see it. Both
-  // save controls route through THIS component's `handleSave`, so the verdict
-  // has to live here — gating it inside the inspector alone would leave the
-  // toolbar free to persist the last valid schema and mark the draft saved.
-  const [outputSchemaBlocked, setOutputSchemaBlocked] = useState(false);
+  const {
+    collapsed: railCollapsed,
+    setCollapsed: setRailCollapsed,
+    overlay: railOverlay,
+  } = useWorkflowRailCollapse();
+  const [panelFocus, setPanelFocus] = useState<BuilderConfigPanelFocus | null>(
+    null,
+  );
+  // Output-schema text outside the engine's supported subset never reaches the
+  // store, so `dirty` cannot see it and no verdict about the draft can raise
+  // it. Both save controls route through THIS component's `handleSave`, so the
+  // gate lives here — inside the panel alone it would leave the toolbar free to
+  // persist the last valid schema and report the draft saved.
+  const outputSchemaBlocks = useOutputSchemaBlocks();
+  const outputSchemaBlocked = outputSchemaBlocks.length > 0;
+
+  // README §5: the toolbar status IS the definition validation — there is no
+  // separate Validate action — so the verdict has to track the draft rather
+  // than freeze at the last save attempt. A frozen verdict would refuse Save
+  // forever, because the fix it asked for could never be re-checked, and the
+  // strip an author is working through would be a list of already-fixed rows.
+  const draftErrors = useMemo(
+    () =>
+      draftDefinition === null
+        ? []
+        : validateAuthoredDefinition(draftDefinition).errors,
+    [draftDefinition],
+  );
+  // An edit the canvas refused (§2.1) was never applied: the draft is unchanged
+  // and may well be perfectly savable. It is feedback about ONE attempt, shown
+  // apart from the draft's own errors and retired by the next accepted edit —
+  // gating Save on it would strand a valid draft on a rejected gesture.
+  const refusedEdits = _useGraphWorkflowBuilderStore((s) => s.refusedEdits);
 
   useEffect(() => {
     loadPersistedDraft({
@@ -128,18 +194,13 @@ function WorkflowBuilderEditorInner({
       return;
     }
 
-    // Run the SAME accept-time validation the storage choke point applies
+    // The same accept-time validation the storage choke point applies
     // (parameter shape checks + placeholder/reference lint + structural graph
-    // validation). Routing the builder save through it lands the rich
-    // parameter lint errors — each carrying its offending field and undeclared
-    // name — in the store so the parameter editor surfaces them on save (R8.3),
-    // instead of only the comma-joined codes the server throw produces.
-    const validation = validateAuthoredDefinition(draftDefinition);
-    if (!validation.ok) {
-      setValidationErrors(validation.errors);
-      return;
-    }
-    setValidationErrors([]);
+    // validation) already drives the strip and the disabled Save. Re-running it
+    // here keeps the refusal fail-closed for any path that reaches the handler
+    // without the button — the mobile menu, a stale render — rather than
+    // trusting the gate that hid it.
+    if (!validateAuthoredDefinition(draftDefinition).ok) return;
 
     setIsSaving(true);
     try {
@@ -161,7 +222,8 @@ function WorkflowBuilderEditorInner({
     updateDefinition(result.definition);
     updateLayout(result.layout);
     setSelectedContextId(result.contextId);
-    setValidationErrors([]);
+    onConfigScopeChange?.("context");
+    setRailCollapsed(false);
     onAutoSwitchPanel?.("inspector");
   }
 
@@ -180,6 +242,12 @@ function WorkflowBuilderEditorInner({
     updateLayout(newLayout);
   }
 
+  function handleOpenWorkflowSettings() {
+    onConfigScopeChange?.("workflow");
+    setRailCollapsed(false);
+    onAutoSwitchPanel?.("inspector");
+  }
+
   function handleDeleteContext(contextId: string) {
     if (!draftDefinition || !draftLayout) return;
     const result = deleteExecutionContext(
@@ -189,7 +257,6 @@ function WorkflowBuilderEditorInner({
     updateDefinition(result.definition);
     updateLayout(result.layout);
     setSelectedContextId(null);
-    setValidationErrors([]);
   }
 
   const handleSelectContext = useCallback(
@@ -199,6 +266,83 @@ function WorkflowBuilderEditorInner({
     [onAutoSwitchPanel],
   );
 
+  /**
+   * Opening the editor that can clear one row. The panel's navigation stack is
+   * its own state, so a deep link is a remount request carrying the path — and
+   * the request id changes on every click so re-opening the same row works.
+   */
+  function handleOpenValidationRow(route: ValidationErrorRoute) {
+    if (route.contextId !== null) setSelectedContextId(route.contextId);
+    onConfigScopeChange?.(route.scope);
+    setRailCollapsed(false);
+    onAutoSwitchPanel?.("inspector");
+    setPanelFocus((current) => ({
+      requestId: (current?.requestId ?? 0) + 1,
+      screenPath: route.screenPath,
+    }));
+  }
+
+  // Everything standing between the author and a saved draft (README §5): the
+  // validator's verdict on the draft, and the schema text no commit could
+  // accept — which the store never sees, so only this list carries it.
+  const validationRows: IssueRow[] = [
+    ...draftErrors.map(issueRow),
+    ...outputSchemaBlocks.map((block) => ({
+      key: `output-schema:${block.contextId}`,
+      label: `${block.contextId} · outputSchema — ${block.message}`,
+      route: {
+        contextId: block.contextId,
+        scope: "context" as const,
+        screenPath: OUTPUT_SCHEMA_SCREEN_PATH,
+      },
+    })),
+  ];
+  const refusedRows: IssueRow[] = refusedEdits.map(issueRow);
+  const hasValidationErrors = validationRows.length > 0;
+
+  function renderIssueList(
+    label: string,
+    rows: IssueRow[],
+    listClassName: string,
+    rowClassName: string,
+  ): React.JSX.Element {
+    return (
+      <ul
+        aria-label={label}
+        className={cn(
+          "m-0 flex list-none flex-col gap-[5px] border-x-0 border-t-0 border-b border-solid px-md py-[9px]",
+          listClassName,
+        )}
+      >
+        {rows.map((row) => (
+          <li key={row.key} className="flex">
+            {row.route.contextId === null &&
+            row.route.screenPath.length === 0 ? (
+              // Nothing in the panel can clear this one — an edge, a cycle,
+              // a shape. A control that opened the root would be a dead
+              // affordance, so the row simply states it.
+              <span className={cn(ISSUE_ROW_TEXT, rowClassName)}>
+                {row.label}
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => handleOpenValidationRow(row.route)}
+                className={cn(
+                  ISSUE_ROW_TEXT,
+                  rowClassName,
+                  "cursor-pointer rounded-sm border-0 bg-transparent p-0 underline decoration-transparent underline-offset-2 transition-colors duration-150 hover:decoration-current focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:2px] max-768:min-h-[44px]",
+                )}
+              >
+                {row.label}
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <WorkflowToolbar
@@ -207,39 +351,101 @@ function WorkflowBuilderEditorInner({
         onRename={onRename}
         onDelete={onDelete}
         onAddContext={handleAddContext}
+        onNewLane={addEphemeralLane}
         onSave={() => void handleSave()}
         onReset={handleReset}
         onRelayout={handleRelayout}
-        onOpenWorkflowSettings={onOpenWorkflowSettings}
+        onOpenWorkflowSettings={handleOpenWorkflowSettings}
         dirty={dirty || outputSchemaBlocked}
         saving={isSaving}
         deleting={deleting}
-        hasValidationErrors={validationErrors.length > 0}
+        hasValidationErrors={hasValidationErrors}
         saveBlocked={outputSchemaBlocked}
         isMobile={isMobile}
       />
+      {hasValidationErrors &&
+        renderIssueList(
+          "Validation errors",
+          validationRows,
+          "border-b-[var(--cc-red-a15)] bg-[var(--cc-red-a10)]",
+          "text-red",
+        )}
+      {refusedRows.length > 0 &&
+        renderIssueList(
+          "Refused edits",
+          refusedRows,
+          "border-b-[var(--cc-amber-border-subtle)] bg-[var(--cc-amber-bg-subtle)]",
+          "text-amber",
+        )}
       {saveError && (
         <div className="border-b border-solid border-b-[var(--cc-red-a15)] bg-[var(--cc-red-a06)] px-md py-sm font-mono text-[0.72rem] leading-[1.4] whitespace-pre-line text-red">
           {saveError}
         </div>
       )}
-      <div className="flex min-h-0 flex-1 max-768:flex-col">
+      <div className="relative flex min-h-0 flex-1 max-768:flex-col">
         <WorkflowBuilderCanvas
           onSelectContext={handleSelectContext}
           globalDefaults={globalDefaults}
+          isMobile={isMobile === true}
         />
-        <WorkflowInspectorPanel
-          onSave={handleSave}
-          onDelete={handleDeleteContext}
-          saving={isSaving}
-          globalDefaults={globalDefaults}
-          activeTab={activeTab}
-          onTabChange={onTabChange}
-          voiceProjectName={voiceProjectName}
-          projectName={projectName}
-          libraryProjectName={libraryProjectName}
-          onOutputSchemaBlockedChange={setOutputSchemaBlocked}
-        />
+        {railOverlay && <RailOverlaySpacer side="right" stripWidth="48" />}
+        <aside
+          aria-label="Configuration"
+          className={cn(
+            "flex min-h-0 flex-col border-l border-solid border-border-subtle bg-bg-surface",
+            // Positioned either way: the collapse chevron hangs off the rail's
+            // own left edge, so the rail has to be the containing block.
+            railOverlay ? railOverlayPanelClass("right") : "relative",
+            // §2.4: 420px is the one approved width exception — the rail is
+            // that width at every desktop size, and becomes a full-width panel
+            // only where the mobile layout takes over.
+            railCollapsed ? "w-[48px] min-w-[48px]" : "w-[420px] min-w-[420px]",
+            "max-768:w-full max-768:min-w-0 max-768:flex-1 max-768:border-l-0 max-768:[.app[data-page=workflow-builder][data-mobile-panel=definitions]_&]:hidden max-768:[.app[data-page=workflow-builder][data-mobile-panel=graph]_&]:hidden",
+          )}
+        >
+          {railCollapsed ? (
+            <div className="flex flex-col items-center gap-[6px] py-[10px]">
+              <button
+                type="button"
+                className={RAIL_ICON_BTN}
+                onClick={() => setRailCollapsed(false)}
+                aria-label="Expand configuration panel"
+                title="Expand configuration panel"
+              >
+                <ChevronLeftIcon size={13} />
+              </button>
+            </div>
+          ) : (
+            <>
+              <button
+                type="button"
+                className={cn(
+                  RAIL_ICON_BTN,
+                  "absolute top-[10px] left-[-13px] z-10 max-768:hidden",
+                )}
+                onClick={() => setRailCollapsed(true)}
+                aria-label="Collapse configuration panel"
+                title="Collapse configuration panel"
+              >
+                <ChevronRightIcon size={13} />
+              </button>
+              <MobilePanelVisibility
+                onScreen={isMobile !== true || mobilePanel === "inspector"}
+              >
+                <BuilderConfigPanel
+                  workflowName={workflowName}
+                  scope={configScope}
+                  onScopeChange={(next) => onConfigScopeChange?.(next)}
+                  globalDefaults={globalDefaults}
+                  projectName={projectName}
+                  libraryProjectName={libraryProjectName}
+                  onDeleteContext={handleDeleteContext}
+                  focus={panelFocus}
+                />
+              </MobilePanelVisibility>
+            </>
+          )}
+        </aside>
       </div>
     </div>
   );

@@ -8,7 +8,7 @@ import {
   beforeEach,
   beforeAll,
 } from "vitest";
-import { act, fireEvent, render } from "@testing-library/react";
+import { act, fireEvent, render, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HotkeyProvider } from "@/components/hotkeys/HotkeyProvider";
 import {
@@ -145,9 +145,31 @@ vi.mock("@/lib/workflows/queries", () => ({
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
       },
+      // A second, UNLOADED definition: the builder holds one draft, so this row
+      // is the one that proves list metadata does not depend on being selected.
+      {
+        id: "workflow-unloaded",
+        name: "Unloaded Workflow",
+        description: null,
+        revision: 7,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+      },
     ],
     isPending: false,
   }),
+  // Echoes back a count per id it was asked about, so a row missing from the
+  // rendered list can only be the page failing to ask for it.
+  useScopedWorkflowDefinitionContextCounts: (
+    _scope: unknown,
+    ids: readonly string[],
+  ) =>
+    Object.fromEntries(
+      ids.map((id) => [
+        id,
+        id === record.id ? record.definition.executionContexts.length : 5,
+      ]),
+    ),
   useScopedWorkflowDefinitionQuery: () => ({
     data: {
       item: record,
@@ -181,20 +203,35 @@ vi.mock("@/lib/workflows/mutations", async (importOriginal) => ({
   }),
 }));
 
+// The §12 ladder is width-driven, so the stub answers `(max-width: Npx)` from a
+// viewport a test can set rather than always reporting desktop — the mobile
+// panels only exist below 768px.
+let viewportWidth = 1440;
+
 beforeAll(() => {
   Object.defineProperty(window, "matchMedia", {
     writable: true,
-    value: vi.fn().mockImplementation((query: string) => ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    })),
+    value: vi.fn().mockImplementation((query: string) => {
+      const maxWidth = /\(max-width:\s*(\d+)px\)/.exec(query);
+      return {
+        matches:
+          maxWidth === undefined || maxWidth === null
+            ? false
+            : viewportWidth <= Number(maxWidth[1]),
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      };
+    }),
   });
+});
+
+beforeEach(() => {
+  viewportWidth = 1440;
 });
 
 function resetStore() {
@@ -205,19 +242,24 @@ function resetStore() {
     selectedContextId: null,
     selectedTaskId: null,
     dirty: false,
-    validationErrors: [],
+    refusedEdits: [],
+    pendingOutputSchemaText: {},
   });
 }
 
-function renderPage(dispatcher?: HotkeyDispatcher) {
+function renderPage(
+  dispatcher?: HotkeyDispatcher,
+  scope: React.ComponentProps<typeof ConnectedWorkflowBuilderPage>["scope"] = {
+    kind: "project",
+    projectName: "test-project",
+  },
+) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   const page = (
     <QueryClientProvider client={qc}>
-      <ConnectedWorkflowBuilderPage
-        scope={{ kind: "project", projectName: "test-project" }}
-      />
+      <ConnectedWorkflowBuilderPage scope={scope} />
     </QueryClientProvider>
   );
   return render(
@@ -249,16 +291,13 @@ describe("ConnectedWorkflowBuilderPage — workflow-settings chrome button", () 
   });
 
   it("renders the Workflow settings ghost button in the toolbar chrome", () => {
-    const { container } = renderPage();
-    const button = container.querySelector(
-      "button[aria-label='Workflow settings']",
-    );
-    expect(button).not.toBeNull();
-    expect(button?.textContent).toMatch(/Workflow settings/);
+    const { getByRole } = renderPage();
+    const button = getByRole("button", { name: "Workflow settings" });
+    expect(button.querySelector("svg")).not.toBeNull();
   });
 
-  it("switches the inspector to the Workflow tab without clearing graph selection", () => {
-    const { container, getByRole } = renderPage();
+  it("switches the rail to Workflow scope without clearing graph selection", () => {
+    const { getByRole } = renderPage();
 
     // Select a graph node (simulates clicking a context)
     act(() => {
@@ -267,17 +306,12 @@ describe("ConnectedWorkflowBuilderPage — workflow-settings chrome button", () 
       });
     });
 
-    // Context tab should now be active
-    const contextTab = getByRole("tab", { name: /Context/i });
-    expect(contextTab.getAttribute("aria-selected")).toBe("true");
+    // Selecting a context switches the rail to Context scope (README §5).
+    expect(getByRole("radio", { name: "Context" })).toBeChecked();
 
-    const gearBtn = container.querySelector(
-      "button[aria-label='Workflow settings']",
-    ) as HTMLButtonElement;
-    fireEvent.click(gearBtn);
+    fireEvent.click(getByRole("button", { name: "Workflow settings" }));
 
-    const workflowTab = getByRole("tab", { name: /Workflow/i });
-    expect(workflowTab.getAttribute("aria-selected")).toBe("true");
+    expect(getByRole("radio", { name: "Workflow" })).toBeChecked();
 
     // Selection is preserved
     expect(_useGraphWorkflowBuilderStore.getState().selectedContextId).toBe(
@@ -298,7 +332,7 @@ describe("ConnectedWorkflowBuilderPage — workflow-settings chrome button", () 
     await vi.waitFor(() => {
       expect(workflowMutationState.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          name: "Workflow 2",
+          name: "Workflow 3",
         }),
       );
     });
@@ -341,6 +375,329 @@ describe("ConnectedWorkflowBuilderPage — workflow-settings chrome button", () 
         .getCommands()
         .find((command) => command.definition.id === "newWorkflow")?.available,
     ).toBe(false);
+  });
+});
+
+// README §5: the sidebar lists every definition with `rN · N contexts`, and the
+// row carrying the draft says when that draft has unsaved work.
+describe("ConnectedWorkflowBuilderPage — definitions sidebar metadata", () => {
+  beforeEach(() => {
+    resetStore();
+    workflowMutationState.createPending = false;
+    workflowMutationState.create.mockReset();
+  });
+
+  let view: ReturnType<typeof renderPage>;
+
+  it("states a context count on every row, loaded or not", () => {
+    view = renderPage();
+
+    const sidebar = view.getByLabelText("Definitions");
+    expect(
+      within(sidebar).getByText(`r${record.revision} · 3 contexts`),
+    ).toBeInTheDocument();
+    // The unloaded row is the one the previous shape could not describe.
+    expect(within(sidebar).getByText("r7 · 5 contexts")).toBeInTheDocument();
+  });
+
+  it("marks the active row unsaved while the draft is dirty", () => {
+    view = renderPage();
+    const sidebar = view.getByLabelText("Definitions");
+    expect(within(sidebar).queryByTestId("definition-unsaved-dot")).toBeNull();
+
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({ dirty: true });
+    });
+
+    expect(
+      within(sidebar).getByTestId("definition-unsaved-dot"),
+    ).toBeInTheDocument();
+    expect(
+      within(sidebar).getByText(`r${record.revision} · 3 contexts · unsaved`),
+    ).toBeInTheDocument();
+  });
+
+  // Output-schema text the draft could not absorb leaves `dirty` false. The row
+  // must still say the draft holds work, or the author loses it on a switch.
+  it("marks the active row unsaved for schema text the draft cannot absorb", () => {
+    view = renderPage();
+    const sidebar = view.getByLabelText("Definitions");
+
+    act(() => {
+      _useGraphWorkflowBuilderStore
+        .getState()
+        .setPendingOutputSchemaText("context-plan", {
+          text: '{ "type": ',
+          committed: "",
+        });
+    });
+
+    expect(_useGraphWorkflowBuilderStore.getState().dirty).toBe(false);
+    expect(
+      within(sidebar).getByTestId("definition-unsaved-dot"),
+    ).toBeInTheDocument();
+    expect(
+      within(sidebar).getByText(`r${record.revision} · 3 contexts · unsaved`),
+    ).toBeInTheDocument();
+  });
+});
+
+// The `/templates` route mounts this same page with the global tier
+// (GlobalWorkflowsBuilderPage). The reworked shell is one component for both
+// scopes, so parity is a claim about what the global mount actually renders.
+describe("ConnectedWorkflowBuilderPage — global template scope", () => {
+  beforeEach(() => {
+    resetStore();
+    workflowMutationState.createPending = false;
+    workflowMutationState.create.mockReset();
+  });
+
+  it("renders the reworked shell with every README §5 toolbar destination", () => {
+    const { getByRole, getByLabelText } = renderPage(undefined, {
+      kind: "global",
+    });
+
+    // The sidebar is scoped to the global tier and still heads with create.
+    const sidebar = getByLabelText("Global Templates");
+    expect(
+      within(sidebar).getByRole("button", { name: /New workflow/ }),
+    ).toBeInTheDocument();
+    expect(
+      within(sidebar).getByRole("button", {
+        name: "Collapse global templates sidebar",
+      }),
+    ).toBeInTheDocument();
+
+    for (const name of [
+      "Add Context",
+      "Save Draft",
+      "Reset",
+      "Re-layout",
+      "Workflow settings",
+      "Delete",
+    ]) {
+      expect(getByRole("button", { name })).toBeInTheDocument();
+    }
+    expect(getByRole("button", { name: record.name })).toBeInTheDocument();
+    expect(getByRole("radio", { name: "Workflow" })).toBeChecked();
+  });
+
+  it("mounts the 420px config rail and exposes no Launch action", () => {
+    const { getByRole, queryByRole } = renderPage(undefined, {
+      kind: "global",
+    });
+
+    expect(getByRole("complementary", { name: "Configuration" })).toHaveClass(
+      "w-[420px]",
+    );
+    expect(getByRole("button", { name: "Charter" })).toBeInTheDocument();
+    expect(
+      queryByRole("button", { name: /^launch( workflow)?$/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("switches the rail to Context scope when a context is selected", () => {
+    const { getByRole } = renderPage(undefined, { kind: "global" });
+
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({
+        selectedContextId: "context-plan",
+      });
+    });
+
+    expect(getByRole("radio", { name: "Context" })).toBeChecked();
+    expect(getByRole("button", { name: "Placement" })).toBeInTheDocument();
+    // Both tabs stay navigable while a context is selected (README §5).
+    expect(getByRole("radio", { name: "Workflow" })).toBeEnabled();
+  });
+});
+
+// README §12 and the M1 prototype: at 768px and below the builder shows one
+// primary panel at a time — Graph, Defs, Inspector — and the bottom toolbar is
+// the only thing that decides which. The panel is stated on the page shell, so
+// these assert the shell's own record of it rather than a CSS-resolved layout
+// jsdom does not compute.
+describe("ConnectedWorkflowBuilderPage — mobile panels (M1)", () => {
+  beforeEach(() => {
+    resetStore();
+    viewportWidth = 390;
+    workflowMutationState.createPending = false;
+    workflowMutationState.create.mockReset();
+    workflowMutationState.create.mockResolvedValue({
+      item: { id: "created-workflow" },
+    });
+  });
+
+  function activePanel(view: ReturnType<typeof renderPage>): string | null {
+    const shell = view.container.querySelector(
+      "[data-page=workflow-builder]",
+    ) as HTMLElement | null;
+    return shell?.getAttribute("data-mobile-panel") ?? null;
+  }
+
+  it("opens on Graph with a three-tab bottom toolbar", () => {
+    const view = renderPage();
+
+    const toolbar = view.getByRole("navigation", { name: "Builder panels" });
+    expect(
+      within(toolbar)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["Graph", "Defs", "Inspector"]);
+
+    expect(activePanel(view)).toBe("graph");
+    expect(
+      within(toolbar).getByRole("button", { name: "Graph" }),
+    ).toHaveAttribute("aria-current", "page");
+  });
+
+  it("draws the stacked lane list rather than the pannable canvas", () => {
+    const view = renderPage();
+
+    expect(view.getByTestId("workflow-mobile-graph")).toBeInTheDocument();
+    expect(
+      view
+        .getAllByTestId("mobile-lane-band")
+        .map((band) => band.getAttribute("data-lane")),
+    ).toEqual(["plan", "implement", "verify"]);
+    // §12: the graph's controls float above the bottom toolbar.
+    expect(view.getByRole("button", { name: "Fit graph" })).toBeInTheDocument();
+  });
+
+  it("switches to the Inspector on Context scope when a context is selected", () => {
+    const view = renderPage();
+    expect(activePanel(view)).toBe("graph");
+
+    const member = view
+      .getAllByTestId("mobile-lane-member")
+      .find((card) => card.getAttribute("data-context-id") === "context-plan");
+    fireEvent.click(member as HTMLElement);
+
+    expect(activePanel(view)).toBe("inspector");
+    expect(view.getByRole("radio", { name: "Context" })).toBeChecked();
+    expect(_useGraphWorkflowBuilderStore.getState().selectedContextId).toBe(
+      "context-plan",
+    );
+    expect(
+      within(
+        view.getByRole("navigation", { name: "Builder panels" }),
+      ).getByRole("button", { name: "Inspector" }),
+    ).toHaveAttribute("aria-current", "page");
+  });
+
+  // §12: the back gesture answers the panel the reader can see. Switching away
+  // leaves the config panel mounted but hidden, so it has to release the
+  // history entries its drill levels stand on — otherwise the next gesture is
+  // spent unwinding a stack off screen and Back appears to do nothing.
+  it("releases the config panel's back entries when the toolbar leaves it", () => {
+    const pushState = vi.spyOn(window.history, "pushState");
+    const go = vi.spyOn(window.history, "go").mockImplementation(() => {});
+    const view = renderPage();
+
+    fireEvent.click(
+      view
+        .getAllByTestId("mobile-lane-member")
+        .find(
+          (card) => card.getAttribute("data-context-id") === "context-plan",
+        ) as HTMLElement,
+    );
+    fireEvent.click(view.getByRole("button", { name: /Quality gates/ }));
+    expect(pushState).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(
+      within(
+        view.getByRole("navigation", { name: "Builder panels" }),
+      ).getByRole("button", { name: "Graph" }),
+    );
+
+    expect(activePanel(view)).toBe("graph");
+    expect(go).toHaveBeenCalledWith(-1);
+  });
+
+  it("loads a definition selected in Defs and returns to Graph", () => {
+    const view = renderPage();
+
+    // Get off Graph first, so the return is the switch under test.
+    fireEvent.click(
+      view.getAllByTestId("mobile-lane-member")[0] as HTMLElement,
+    );
+    expect(activePanel(view)).toBe("inspector");
+
+    const sidebar = view.getByRole("navigation", { name: "Definitions" });
+    const row = within(sidebar).getByRole("button", {
+      name: /Unloaded Workflow/,
+    });
+    fireEvent.click(row);
+
+    expect(activePanel(view)).toBe("graph");
+    expect(row).toHaveAttribute("aria-current", "true");
+  });
+
+  it("returns to Graph after creating a workflow from Defs", async () => {
+    const view = renderPage();
+
+    fireEvent.click(
+      view.getAllByTestId("mobile-lane-member")[0] as HTMLElement,
+    );
+    expect(activePanel(view)).toBe("inspector");
+
+    const sidebar = view.getByRole("navigation", { name: "Definitions" });
+    await act(async () => {
+      fireEvent.click(
+        within(sidebar).getByRole("button", { name: /New workflow/ }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(workflowMutationState.create).toHaveBeenCalled();
+    expect(activePanel(view)).toBe("graph");
+  });
+
+  // capability-preservation: the M1 action row is Add Context + Save + an
+  // overflow menu, and every destination the desktop toolbar carries has to be
+  // reachable through one of them.
+  it("keeps every desktop toolbar destination reachable from the action row", () => {
+    const view = renderPage();
+
+    expect(
+      view.getByRole("button", { name: "Add Context" }),
+    ).toBeInTheDocument();
+    expect(view.getByRole("button", { name: "Save" })).toBeInTheDocument();
+
+    fireEvent.click(
+      view.getByRole("button", { name: "More workflow actions" }),
+    );
+    for (const name of [
+      "New Lane",
+      "Reset",
+      "Re-layout",
+      "Workflow settings",
+      "Delete",
+    ]) {
+      expect(view.getByRole("button", { name })).toBeInTheDocument();
+    }
+  });
+
+  it("shows the workflow name, revision and save status in the mobile header", () => {
+    const view = renderPage();
+
+    expect(view.getByRole("button", { name: record.name })).toBeInTheDocument();
+    expect(view.getByText(`r${record.revision}`)).toBeInTheDocument();
+    expect(view.getByText("All changes saved")).toBeInTheDocument();
+
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({ dirty: true });
+    });
+    expect(view.getByTestId("workflow-save-status-dot")).toBeInTheDocument();
+    expect(view.getByText("Unsaved changes")).toBeInTheDocument();
+  });
+
+  it("mounts no bottom toolbar above the mobile breakpoint", () => {
+    viewportWidth = 1440;
+    const view = renderPage();
+    expect(
+      view.queryByRole("navigation", { name: "Builder panels" }),
+    ).not.toBeInTheDocument();
   });
 });
 

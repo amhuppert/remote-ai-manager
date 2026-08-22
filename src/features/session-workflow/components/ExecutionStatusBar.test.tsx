@@ -18,6 +18,14 @@ function makeExecution(
   });
 }
 
+const resumableHalt: GraphWorkflowHaltReason = {
+  type: "agent_turn_failed",
+  contextId: "context-plan",
+  engine: "claude",
+  cause: "sdk_error",
+  message: "SDK stream ended unexpectedly",
+};
+
 const baseProps = {
   onPause: vi.fn(),
   onResume: vi.fn(),
@@ -25,6 +33,35 @@ const baseProps = {
   isMutating: false,
   pendingAction: null,
 };
+
+describe("ExecutionStatusBar state chip", () => {
+  it("names the execution's state and pulses only while it is running", () => {
+    const { rerender } = render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={makeExecution({ status: "running", haltReason: null })}
+      />,
+    );
+
+    expect(screen.getByTestId("execution-state-chip")).toHaveTextContent(
+      "running",
+    );
+    expect(screen.getByTestId("execution-state-dot")).toBeInTheDocument();
+
+    for (const status of ["pending", "paused", "completed"] as const) {
+      rerender(
+        <ExecutionStatusBar
+          {...baseProps}
+          execution={makeExecution({ status, haltReason: null })}
+        />,
+      );
+      expect(screen.getByTestId("execution-state-chip")).toHaveTextContent(
+        status,
+      );
+      expect(screen.queryByTestId("execution-state-dot")).toBeNull();
+    }
+  });
+});
 
 describe("ExecutionStatusBar per-action pending feedback", () => {
   it("shows Pausing… on the pause button and disables the others while pause is in flight", () => {
@@ -69,6 +106,24 @@ describe("ExecutionStatusBar per-action pending feedback", () => {
     expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
   });
 
+  it("shows Abandoning… while the halted run's lease is being released", () => {
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={makeExecution({
+          status: "halted",
+          haltReason: resumableHalt,
+        })}
+        onAbandon={vi.fn()}
+        isMutating
+        pendingAction="abandon"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /abandoning…/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Resume" })).toBeDisabled();
+  });
+
   it("offers no control on a settled run, which released its lease on its own", () => {
     render(
       <ExecutionStatusBar
@@ -95,49 +150,70 @@ describe("ExecutionStatusBar per-action pending feedback", () => {
   });
 });
 
-describe("ExecutionStatusBar awaiting-approval chip", () => {
-  it("renders an awaiting-approval chip with count when a context is parked", () => {
+describe("ExecutionStatusBar gates chip", () => {
+  function parked(count: number): GraphWorkflowExecution {
     const base = makeExecution({ status: "running", haltReason: null });
-    const execution: GraphWorkflowExecution = {
+    const ids = ["context-plan", "context-implement"].slice(0, count);
+    return {
       ...base,
       contextStates: {
         ...base.contextStates,
-        "context-plan": {
-          ...base.contextStates["context-plan"]!,
-          status: "awaiting_approval",
-        },
+        ...Object.fromEntries(
+          ids.map((contextId) => [
+            contextId,
+            {
+              ...base.contextStates[contextId]!,
+              status: "awaiting_approval" as const,
+              pendingApproval: {
+                conversationId: `conv-${contextId}`,
+                requestedAt: "2026-08-20T10:00:00.000Z",
+                decision: null,
+                approvalScope: { kind: "whole_tree" as const },
+              },
+            },
+          ]),
+        ),
       },
     };
+  }
 
-    render(<ExecutionStatusBar {...baseProps} execution={execution} />);
+  it("announces one waiting gate in the singular", () => {
+    render(<ExecutionStatusBar {...baseProps} execution={parked(1)} />);
 
-    const chip = screen.getByText("1 awaiting approval");
-    expect(chip).toBeInTheDocument();
+    expect(screen.getByText("1 gate awaiting you")).toBeInTheDocument();
   });
 
-  it("counts multiple parked contexts in the chip", () => {
-    const base = makeExecution({ status: "running", haltReason: null });
-    const execution: GraphWorkflowExecution = {
-      ...base,
-      contextStates: {
-        ...base.contextStates,
-        "context-plan": {
-          ...base.contextStates["context-plan"]!,
-          status: "awaiting_approval",
-        },
-        "context-implement": {
-          ...base.contextStates["context-implement"]!,
-          status: "awaiting_approval",
-        },
-      },
-    };
+  it("counts every waiting gate", () => {
+    render(<ExecutionStatusBar {...baseProps} execution={parked(2)} />);
 
-    render(<ExecutionStatusBar {...baseProps} execution={execution} />);
-
-    expect(screen.getByText("2 awaiting approval")).toBeInTheDocument();
+    expect(screen.getByText("2 gates awaiting you")).toBeInTheDocument();
   });
 
-  it("does not render the chip when no context is awaiting approval", () => {
+  it("states the count without offering a control on a host with no rail", () => {
+    render(<ExecutionStatusBar {...baseProps} execution={parked(1)} />);
+
+    expect(
+      screen.queryByRole("button", { name: /gate awaiting you/ }),
+    ).toBeNull();
+  });
+
+  it("opens the gates list from the chip", async () => {
+    const user = userEvent.setup();
+    const onOpenGates = vi.fn();
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={parked(1)}
+        onOpenGates={onOpenGates}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /gate awaiting you/ }));
+
+    expect(onOpenGates).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not render the chip when nothing is waiting on the human", () => {
     render(
       <ExecutionStatusBar
         {...baseProps}
@@ -145,12 +221,12 @@ describe("ExecutionStatusBar awaiting-approval chip", () => {
       />,
     );
 
-    expect(screen.queryByText(/awaiting approval/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/awaiting you/)).not.toBeInTheDocument();
   });
 });
 
-describe("ExecutionStatusBar lane activity", () => {
-  it("shows both concurrently active members of an authored lane", () => {
+describe("ExecutionStatusBar contextual summary", () => {
+  it("names the active lane, both parallel contexts and the current task", () => {
     const base = makeExecution({ status: "running", haltReason: null });
     const execution = makeExecution({
       status: "running",
@@ -205,10 +281,9 @@ describe("ExecutionStatusBar lane activity", () => {
 
     render(<ExecutionStatusBar {...baseProps} execution={execution} />);
 
-    const lane = screen.getByTestId("execution-lane-activity");
-    expect(lane).toHaveTextContent("delivery");
-    expect(lane).toHaveTextContent("context-plan: running");
-    expect(lane).toHaveTextContent("context-implement: running");
+    expect(screen.getByTestId("execution-status-summary")).toHaveTextContent(
+      "Lane delivery · context-plan and context-implement running in parallel · task Inspect code",
+    );
   });
 });
 
@@ -304,7 +379,7 @@ describe("ExecutionStatusBar halt display", () => {
       within(dialog).getByText(/Resolve conflicts in the target worktree/),
     ).toBeInTheDocument();
     expect(
-      within(dialog).getByRole("button", { name: /retry merge/i }),
+      within(dialog).getByRole("button", { name: /retry join/i }),
     ).toBeInTheDocument();
   });
 
@@ -326,7 +401,7 @@ describe("ExecutionStatusBar halt display", () => {
       "keep the lane-a side",
     );
     await user.click(
-      within(dialog).getByRole("button", { name: /retry merge/i }),
+      within(dialog).getByRole("button", { name: /retry join/i }),
     );
 
     expect(onResume).toHaveBeenCalledWith([
@@ -544,5 +619,440 @@ describe("ExecutionStatusBar output-schema halt (R3.2)", () => {
     );
 
     expect(onEditSchema).toHaveBeenCalledWith("context-plan");
+  });
+
+  // The halt card shows a disabled "Resume — blocked until the contract is
+  // accepted". That claim is only true if the page's OWN resume controls honour
+  // it: an enabled Resume in the bar (or a second one in the details dialog)
+  // spends another turn against the contract that just refused.
+  describe("while the refusing contract is still in force", () => {
+    const unrepairedEvents = rejectionEvents.map((entry) => ({
+      ...entry,
+      event: {
+        ...entry.event,
+        rejectedAgainstSchema: {
+          type: "object",
+          properties: { verdict: { type: "string" } },
+        },
+      },
+    }));
+
+    it("offers Resume only in its blocked, unclickable form", async () => {
+      const onResume = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <ExecutionStatusBar
+          {...baseProps}
+          onResume={onResume}
+          execution={schemaExecution()}
+          events={unrepairedEvents}
+        />,
+      );
+
+      const resume = screen.getByRole("button", {
+        name: "Resume — blocked until the contract is accepted",
+      });
+      expect(resume).toBeDisabled();
+      await user.click(resume);
+      expect(onResume).not.toHaveBeenCalled();
+    });
+
+    it("withholds the details dialog's resume as well", async () => {
+      const onResume = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <ExecutionStatusBar
+          {...baseProps}
+          onResume={onResume}
+          execution={schemaExecution()}
+          events={unrepairedEvents}
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: "Details" }));
+      const dialog = await screen.findByRole("dialog");
+      // The read view keeps its resume in the same blocked form the bar shows —
+      // absent, it would read as "this run is over"; enabled, it would let the
+      // dialog take the act the bar beside it refuses.
+      expect(
+        within(dialog).queryByRole("button", { name: /^Resume$/ }),
+      ).not.toBeInTheDocument();
+      const blocked = within(dialog).getByRole("button", {
+        name: "Resume — blocked until the contract is accepted",
+      });
+      expect(blocked).toBeDisabled();
+      await user.click(blocked);
+      expect(onResume).not.toHaveBeenCalled();
+    });
+
+    it("releases Resume once the contract has been edited", () => {
+      const repaired = schemaExecution();
+      render(
+        <ExecutionStatusBar
+          {...baseProps}
+          execution={{
+            ...repaired,
+            workingDefinition: {
+              ...repaired.workingDefinition,
+              executionContexts:
+                repaired.workingDefinition.executionContexts.map((context) =>
+                  context.id === "context-plan"
+                    ? {
+                        ...context,
+                        outputSchema: {
+                          type: "object",
+                          properties: { verdict: { type: "number" } },
+                        },
+                      }
+                    : context,
+                ),
+            },
+          }}
+          events={unrepairedEvents}
+        />,
+      );
+
+      expect(screen.getByRole("button", { name: "Resume" })).toBeEnabled();
+    });
+
+    // A rejection recorded before the contract snapshot existed proves nothing
+    // about the live contract, and a run nobody can resume is worse than one
+    // resumed a turn early.
+    it("does not block when no contract snapshot was recorded", () => {
+      render(
+        <ExecutionStatusBar
+          {...baseProps}
+          execution={schemaExecution()}
+          events={rejectionEvents}
+        />,
+      );
+
+      expect(screen.getByRole("button", { name: "Resume" })).toBeEnabled();
+    });
+  });
+});
+
+describe("ExecutionStatusBar destructive confirmation", () => {
+  it("aborts only after the confirmation is accepted", async () => {
+    const user = userEvent.setup();
+    const onAbort = vi.fn();
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        onAbort={onAbort}
+        execution={makeExecution({ status: "running", haltReason: null })}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Abort" }));
+    expect(onAbort).not.toHaveBeenCalled();
+
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Abort execution" }),
+    );
+
+    expect(onAbort).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the execution alone when the confirmation is cancelled", async () => {
+    const user = userEvent.setup();
+    const onAbort = vi.fn();
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        onAbort={onAbort}
+        execution={makeExecution({ status: "running", haltReason: null })}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Abort" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(onAbort).not.toHaveBeenCalled();
+  });
+
+  it("confirms an abandon with the design's lease copy", async () => {
+    const user = userEvent.setup();
+    const onAbandon = vi.fn();
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        onAbandon={onAbandon}
+        execution={makeExecution({
+          status: "halted",
+          haltReason: {
+            type: "agent_turn_failed",
+            contextId: "context-plan",
+            engine: "claude",
+            cause: "sdk_error",
+            message: "SDK stream ended unexpectedly",
+          },
+        })}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Abandon" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(
+      within(dialog).getByText(
+        "End this resumably halted execution's lease and move it to History.",
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Abandon execution" }),
+    );
+    expect(onAbandon).toHaveBeenCalledTimes(1);
+  });
+
+  it("pauses without a confirmation, because pausing is reversible", async () => {
+    const user = userEvent.setup();
+    const onPause = vi.fn();
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        onPause={onPause}
+        execution={makeExecution({ status: "running", haltReason: null })}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Pause" }));
+
+    expect(onPause).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+});
+
+describe("ExecutionStatusBar definition approval", () => {
+  const parked = () =>
+    makeExecution({
+      status: "pending",
+      haltReason: null,
+      definitionApproval: {
+        requestedAt: "2026-08-20T09:00:00.000Z",
+        approvedAt: null,
+      },
+    });
+
+  it("states that the snapshot is frozen for the decision", () => {
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={parked()}
+        onApproveDefinition={vi.fn()}
+        onRejectDefinition={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("execution-status-summary")).toHaveTextContent(
+      "Definition awaiting approval · the snapshot is frozen for the decision",
+    );
+  });
+
+  it("approves without a confirmation and shows its pending label", async () => {
+    const user = userEvent.setup();
+    const onApproveDefinition = vi.fn();
+    const { rerender } = render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={parked()}
+        onApproveDefinition={onApproveDefinition}
+        onRejectDefinition={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+    expect(onApproveDefinition).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={parked()}
+        onApproveDefinition={onApproveDefinition}
+        onRejectDefinition={vi.fn()}
+        isApprovingDefinition
+        isMutating
+      />,
+    );
+    const approving = screen.getByRole("button", { name: "Approving…" });
+    expect(approving).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
+  });
+
+  it("rejects only after the confirmation naming the move to History is accepted", async () => {
+    const user = userEvent.setup();
+    const onRejectDefinition = vi.fn();
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={parked()}
+        onApproveDefinition={vi.fn()}
+        onRejectDefinition={onRejectDefinition}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reject" }));
+    expect(onRejectDefinition).not.toHaveBeenCalled();
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("move the execution to History");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Reject definition" }),
+    );
+
+    expect(onRejectDefinition).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a refused decision where the decision was made", () => {
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={parked()}
+        onApproveDefinition={vi.fn()}
+        onRejectDefinition={vi.fn()}
+        definitionApprovalError="The execution changed since you started reviewing."
+      />,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The execution changed since you started reviewing.",
+    );
+  });
+
+  it("offers no decision on a read-only historical selection", () => {
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={parked()}
+        onApproveDefinition={vi.fn()}
+        onRejectDefinition={vi.fn()}
+        allowActions={false}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+  });
+});
+
+// M2: at 768px and below the bar is a header — state, which run it is, and the
+// one control that state is about — with everything else the matrix admits
+// moved into the Executions sheet the run chip opens.
+describe("ExecutionStatusBar mobile header (M2)", () => {
+  function renderMobile(
+    overrides: Partial<React.ComponentProps<typeof ExecutionStatusBar>> = {},
+  ) {
+    const onSelect = vi.fn();
+    const view = render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={makeExecution({ status: "running", haltReason: null })}
+        isMobile
+        executionChipLabel="exec_abc · Current"
+        renderExecutionsSheet={(close) => (
+          <button
+            type="button"
+            onClick={() => {
+              close();
+              onSelect();
+            }}
+          >
+            Pick another execution
+          </button>
+        )}
+        {...overrides}
+      />,
+    );
+    return { ...view, onSelect };
+  }
+
+  it("carries only the state's primary control in the header", async () => {
+    const user = userEvent.setup();
+    renderMobile();
+
+    // running -> [Pause, Abort]: Pause is the state's control, Abort is not.
+    expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Abort" })).toBeNull();
+
+    await user.click(screen.getByTestId("execution-chip"));
+    expect(screen.getByRole("button", { name: "Abort" })).toBeInTheDocument();
+  });
+
+  it("keeps the same confirmation on a control taken from the sheet", async () => {
+    const user = userEvent.setup();
+    const onAbort = vi.fn();
+    renderMobile({ onAbort });
+
+    await user.click(screen.getByTestId("execution-chip"));
+    await user.click(screen.getByRole("button", { name: "Abort" }));
+
+    // The destructive act is still gated by the matrix's own prompt, and the
+    // sheet has stepped aside for it.
+    expect(screen.getByText("Abort workflow execution?")).toBeInTheDocument();
+    expect(onAbort).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Abort execution" }));
+    expect(onAbort).toHaveBeenCalledOnce();
+  });
+
+  it("opens the Executions sheet from the run chip and closes it on a selection", async () => {
+    const user = userEvent.setup();
+    const { onSelect } = renderMobile();
+
+    const chip = screen.getByTestId("execution-chip");
+    expect(chip).toHaveTextContent("exec_abc · Current");
+    expect(chip).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(chip);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Pick another execution" }),
+    );
+    expect(onSelect).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("gives the gates count its own strip under the header", async () => {
+    const user = userEvent.setup();
+    const onOpenGates = vi.fn();
+    const base = makeExecution({ status: "running", haltReason: null });
+    const gated: GraphWorkflowExecution = {
+      ...base,
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "awaiting_approval",
+          pendingApproval: {
+            conversationId: "conv-context-plan",
+            requestedAt: "2026-08-20T10:00:00.000Z",
+            decision: null,
+            approvalScope: { kind: "whole_tree" },
+          },
+        },
+      },
+    };
+
+    renderMobile({ execution: gated, onOpenGates });
+
+    const strip = screen.getByRole("button", { name: /gate.* awaiting you/ });
+    // Its own row, not a chip wedged into the header line.
+    expect(strip).not.toBe(screen.getByTestId("execution-chip"));
+    await user.click(strip);
+    expect(onOpenGates).toHaveBeenCalledOnce();
+  });
+
+  it("offers no run chip when the host wired no sheet", () => {
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={makeExecution({ status: "running", haltReason: null })}
+        isMobile
+      />,
+    );
+    expect(screen.queryByTestId("execution-chip")).toBeNull();
   });
 });

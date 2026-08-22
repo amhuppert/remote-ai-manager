@@ -4,6 +4,11 @@ import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { CompactMarkdown } from "@/components/markdown/Markdown";
 import CollapsibleText from "@/components/CollapsibleText";
+import {
+  ArrowUpRightIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+} from "@/components/icons";
 import { cn } from "@/lib/ui/cn";
 import { formatGraphWorkflowHaltReason } from "./ContextHaltCard";
 import type {
@@ -764,7 +769,7 @@ const dotStatusClass: Record<EventDotKind, string> = {
   breaker:
     "bg-red shadow-[0_0_0_1px_var(--cc-red-a40),0_0_6px_var(--cc-red-a50)]",
   "merge-start":
-    "bg-green shadow-[0_0_6px_var(--green-glow)] animate-[pulse-dot_1.2s_ease-in-out_infinite]",
+    "bg-green shadow-[0_0_6px_var(--green-glow)] animate-[pulse-dot_1.2s_ease-in-out_infinite] motion-reduce:[animation:none]",
   "merge-success": "bg-green shadow-[0_0_6px_var(--green-glow)]",
   "merge-fail": "bg-red",
   "task-completed": "bg-green",
@@ -852,25 +857,27 @@ function EventRow({
         {event.contextId && onSelectContext && (
           <button
             type="button"
-            className="cursor-pointer rounded-[3px] border border-border-subtle bg-transparent px-[6px] py-0 font-[inherit] text-[0.7rem] leading-[1.4] text-text-tertiary hover:border-cyan-dim hover:bg-[var(--cc-cyan-a05)] hover:text-cyan"
+            className="inline-flex cursor-pointer items-center justify-center rounded-[3px] border border-solid border-border-subtle bg-transparent px-[6px] py-0 leading-[1.4] text-text-tertiary hover:border-cyan-dim hover:bg-[var(--cc-cyan-a05)] hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px] max-768:min-w-[44px]"
             onClick={(e) => {
               e.stopPropagation();
               if (event.contextId) onSelectContext(event.contextId);
             }}
             title="Open context"
+            aria-label="Open context"
           >
-            ↗
+            <ArrowUpRightIcon size={11} />
           </button>
         )}
         <span className="ml-auto shrink-0 text-[0.7rem] whitespace-nowrap text-text-tertiary">
           {formatTimestamp(event.occurredAt)}
         </span>
         {isClickable && (
-          <span
-            className="ml-[4px] shrink-0 text-[0.65rem] text-text-tertiary"
-            aria-hidden="true"
-          >
-            {expanded ? "▾" : "▸"}
+          <span className="ml-[4px] flex shrink-0 items-center text-text-tertiary">
+            {expanded ? (
+              <ChevronDownIcon size={11} />
+            ) : (
+              <ChevronRightIcon size={11} />
+            )}
           </span>
         )}
       </div>

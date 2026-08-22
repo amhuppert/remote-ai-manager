@@ -1,0 +1,1307 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/styles.css">
+  <script src="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.js"></script>
+  <style>
+    html, body { height: auto !important; max-height: none !important; overflow: visible !important; background: #04070c !important; }
+    body { margin: 0; font-family: var(--font-body, "Manrope", sans-serif); }
+    a { color: var(--cyan, #00e5ff); text-decoration: none; }
+    a:hover { color: var(--text-primary, #dce2f0); }
+    @keyframes pulse-node { 0%,100% { box-shadow: 0 0 4px 0 var(--node-color-glow); } 50% { box-shadow: 0 0 18px 3px var(--node-color-glow); } }
+    @keyframes dash-flow { to { stroke-dashoffset: -12; } }
+    @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+    @keyframes merging-chevron { 0% { background-position: 0 0; } 100% { background-position: 24px 0; } }
+  </style>
+</helmet>
+<div role="note" style="position:sticky;top:0;z-index:999;display:flex;align-items:center;gap:12px;background:#2b0b0b;border-bottom:2px solid #e5484d;color:#ffd7d7;font:600 14px/1.5 ui-monospace,monospace;padding:14px 24px">ARCHIVED — superseded exploration. This is NOT an accepted design and must not be implemented. The canonical files are listed in README.md §1.</div>
+
+
+<section style="display:flex;flex-direction:column;gap:40px;padding:48px 48px 0;min-width:1720px">
+  <div id="2a" data-screen-label="2a Implementer conversation history">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:14px">
+      <a href="#2a" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cyan-glow-strong);border-radius:6px;background:var(--cc-cyan-a08);font:700 12px var(--font-mono);color:var(--cyan)">2a</a>
+      <span style="font:700 16px var(--font-body);color:var(--text-primary)">Conversation history — variation <a href="#1g">A</a> adapted to the domain</span>
+      <span style="font-size:12.5px;color:var(--text-secondary)">rows are implementer conversations, not rounds — iterations, task completions, validator verdicts and rotations render as events inside the conversation they happened on</span>
+    </div>
+    <div style="display:flex;gap:32px;align-items:flex-start">
+      <div style="width:560px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:10px;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border-dim)">
+          <span style="font:600 11px var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-tertiary)">Implementer conversations — Implement checkout</span>
+          <span style="margin-left:auto;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">3 conversations · every transcript kept</span>
+        </div>
+        <div style="padding:12px 14px;display:flex;flex-direction:column;gap:6px">
+
+          <!-- conv 3: live, expanded -->
+          <div style="border:1px solid var(--cc-cyan-a25);border-radius:8px;background:var(--cc-cyan-a04)">
+            <div style="display:flex;align-items:center;gap:8px;padding:10px 12px">
+              <span style="color:var(--text-secondary);font-size:11px">▾</span>
+              <div style="max-width:150px;min-width:0;overflow:hidden"><x-import component-from-global-scope="CommandCenterUI.CopyableId" label="conv" value="conv_b41f9d2e" truncate-at="{{ t14 }}" hint-size="130px,20px"></x-import></div>
+              <span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-cyan-a25)] bg-cyan-glow text-cyan">live</span>
+              <span style="font:400 10.5px var(--font-mono);color:var(--text-tertiary)">started 10:58</span>
+              <button type="button" style="margin-left:auto;border:1px solid var(--cyan-glow-strong);border-radius:4px;background:var(--cc-cyan-a12);color:var(--cyan);padding:3px 10px;font:600 10.5px var(--font-mono);cursor:pointer">Transcript</button>
+            </div>
+            <div style="margin:0 12px 12px 20px;border-left:2px solid var(--border-default);padding-left:14px;display:flex;flex-direction:column;gap:8px">
+              <div style="position:relative;font:400 11px var(--font-mono);color:var(--text-secondary)"><span style="position:absolute;left:-20px;top:3px;width:8px;height:8px;border-radius:50%;background:var(--cyan);box-shadow:0 0 6px var(--cyan-glow)"></span><span style="color:var(--text-tertiary)">10:58</span> · started — fresh conversation for iteration 3 <span style="color:var(--text-tertiary)">(↺ from conv_a9c2)</span></div>
+              <div style="position:relative;font:400 11px var(--font-mono);color:var(--text-secondary)"><span style="position:absolute;left:-20px;top:3px;width:8px;height:8px;border-radius:50%;background:var(--green)"></span><span style="color:var(--text-tertiary)">11:04</span> · ⏺ task completed — Audit rows on timeout path</div>
+              <div style="position:relative;font:400 11px var(--font-mono);color:var(--text-secondary)"><span style="position:absolute;left:-20px;top:3px;width:8px;height:8px;border-radius:50%;background:var(--amber);animation:pulse-dot 2.5s ease-in-out infinite"></span><span style="color:var(--text-tertiary)">11:09</span> · ◆ security validating — iteration 3</div>
+            </div>
+          </div>
+
+          <!-- conv 2: ended, expanded -->
+          <div style="border:1px solid var(--border-subtle);border-radius:8px">
+            <div style="display:flex;align-items:center;gap:8px;padding:10px 12px">
+              <span style="color:var(--text-secondary);font-size:11px">▾</span>
+              <div style="max-width:150px;min-width:0;overflow:hidden"><x-import component-from-global-scope="CommandCenterUI.CopyableId" label="conv" value="conv_a9c24b71" truncate-at="{{ t14 }}" hint-size="130px,20px"></x-import></div>
+              <span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-border-subtle bg-transparent text-text-tertiary">ended</span>
+              <span style="font:400 10.5px var(--font-mono);color:var(--text-tertiary)">10:31 – 10:57</span>
+              <button type="button" style="margin-left:auto;border:1px solid var(--border-default);border-radius:4px;background:var(--bg-raised);color:var(--text-secondary);padding:3px 10px;font:600 10.5px var(--font-mono);cursor:pointer">Transcript</button>
+            </div>
+            <div style="margin:0 12px 12px 20px;border-left:2px solid var(--border-default);padding-left:14px;display:flex;flex-direction:column;gap:8px">
+              <div style="position:relative;font:400 11px var(--font-mono);color:var(--text-secondary)"><span style="position:absolute;left:-20px;top:3px;width:8px;height:8px;border-radius:50%;background:var(--cyan);opacity:.6"></span><span style="color:var(--text-tertiary)">10:31</span> · started — ↺ context-limit rotation from conv_88d0, iteration 2 continues</div>
+              <div style="position:relative;font:400 11px var(--font-mono);color:var(--text-secondary)"><span style="position:absolute;left:-20px;top:3px;width:8px;height:8px;border-radius:50%;background:var(--green)"></span><span style="color:var(--text-tertiary)">10:38</span> · ⏺ task completed — Wire risk rules into checkout</div>
+              <div style="position:relative;font:400 11px var(--font-mono);color:var(--text-secondary)"><span style="position:absolute;left:-20px;top:3px;width:8px;height:8px;border-radius:50%;background:var(--red)"></span><span style="color:var(--text-tertiary)">10:42</span> · ◆ security rejected — audit log bypass on timeout <button type="button" style="margin-left:6px;border:1px solid var(--border-default);border-radius:4px;background:var(--bg-raised);color:var(--text-secondary);padding:1px 7px;font:500 10px var(--font-mono);cursor:pointer">validator transcript</button></div>
+              <div style="position:relative;font:400 11px var(--font-mono);color:var(--text-secondary)"><span style="position:absolute;left:-20px;top:3px;width:8px;height:8px;border-radius:50%;background:var(--blue)"></span><span style="color:var(--text-tertiary)">10:42</span> · ↻ iteration 3 began — task-risk-rules reopened, fresh conversation chosen</div>
+              <div style="position:relative;font:400 11px var(--font-mono);color:var(--text-tertiary)"><span style="position:absolute;left:-20px;top:3px;width:8px;height:8px;border-radius:50%;border:2px solid var(--border-strong);background:transparent;box-sizing:border-box"></span><span>10:57</span> · ended — superseded by conv_b41f</div>
+            </div>
+          </div>
+
+          <!-- conv 1: collapsed -->
+          <div style="border:1px solid var(--border-subtle);border-radius:8px">
+            <div style="display:flex;align-items:center;gap:8px;padding:10px 12px">
+              <span style="color:var(--text-tertiary);font-size:11px">▸</span>
+              <div style="max-width:150px;min-width:0;overflow:hidden"><x-import component-from-global-scope="CommandCenterUI.CopyableId" label="conv" value="conv_88d03c5a" truncate-at="{{ t14 }}" hint-size="130px,20px"></x-import></div>
+              <span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-border-subtle bg-transparent text-text-tertiary">ended</span>
+              <span style="font:400 10.5px var(--font-mono);color:var(--text-tertiary)">initial · iterations 1–2 · 5 events · ⛁ context limit</span>
+              <button type="button" style="margin-left:auto;border:1px solid var(--border-default);border-radius:4px;background:var(--bg-raised);color:var(--text-secondary);padding:3px 10px;font:600 10.5px var(--font-mono);cursor:pointer">Transcript</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="width:340px;font-size:12.5px;line-height:1.65;color:var(--text-secondary)">
+        <div style="font:700 13px var(--font-body);color:var(--text-primary);margin-bottom:8px">Why conversations, not rounds</div>
+        An iteration can span several conversations (context-limit rotation) and a conversation can span several iterations (a failed validation returning to the same implementer). So the durable row is the <span style="font-family:var(--font-mono);color:var(--text-primary)">conversation</span> — the thing a transcript belongs to — and iteration boundaries, task completions, validator verdicts and rotations are events plotted inside it. Every row keeps its Transcript button forever; rotations cross-link rows (<span style="font-family:var(--font-mono)">↺ from conv_…</span> / <span style="font-family:var(--font-mono)">superseded by conv_…</span>). This panel is what the <span style="font-family:var(--font-mono)">Conversations</span> group in <a href="#1b">1b</a> opens into.
+      </div>
+    </div>
+  </div>
+</section>
+
+<section style="display:flex;flex-direction:column;gap:56px;padding:48px;min-width:1720px">
+
+  <div style="max-width:1132px">
+    <div style="font:800 26px/1.2 var(--font-display);color:var(--text-primary);letter-spacing:-0.01em">Graph Workflow — lanes as a first-class axis</div>
+    <div style="margin-top:10px;font-size:13.5px;line-height:1.6;color:var(--text-secondary);max-width:860px">
+      Placement is already the engine's only lane authority — every context declares <span style="font-family:var(--font-mono);color:var(--text-primary)">placement: { lane, mode }</span>, lanes become branches and worktrees, and joins merge them. The proposal makes that visible: the canvas becomes horizontal swimlanes (one band per lane, flow left→right), joins render as converging chevrons, and the node is redesigned to carry its full config at a glance. Both side panels collapse. <a href="#1a">1a</a> is the pixel-faithful recreation of today's page for comparison.
+    </div>
+    <sc-if value="{{ showLegend }}" hint-placeholder-val="{{ true }}">
+    <div style="margin-top:16px;display:flex;flex-wrap:wrap;gap:8px 18px;font:500 11px var(--font-mono);color:var(--text-tertiary)">
+      <span><span style="color:var(--cyan)">◆</span> agent backend</span>
+      <span><span style="color:var(--text-secondary)">▣</span> script gate</span>
+      <span><span style="color:var(--amber)">✓</span> human approval</span>
+      <span><span style="color:var(--text-secondary)">◇</span>/<span style="color:var(--green)">◈</span> output declared / captured</span>
+      <span><span style="color:var(--blue)">↻</span> loop pass</span>
+      <span><span style="color:var(--cyan)">✦</span> added at runtime</span>
+      <span><span style="color:var(--text-secondary)">◨</span> read-only placement</span>
+      <span><span style="color:var(--green)">⋙</span> lane join</span>
+      <span style="border-left:1px solid var(--border-default);padding-left:18px"><span style="color:var(--cyan)">▮</span> lane active</span>
+      <span><span style="color:var(--green)">▮</span> merged</span>
+      <span style="opacity:.7">▯ pending</span>
+      <span style="color:var(--text-secondary)">▤ session (read-only)</span>
+    </div>
+    </sc-if>
+  </div>
+
+  <!-- ============ 1b — HERO: execution page, lanes-first, running ============ -->
+  <div id="1b" data-screen-label="1b Execution — lanes canvas (running)">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:14px">
+      <a href="#1b" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cyan-glow-strong);border-radius:6px;background:var(--cc-cyan-a08);font:700 12px var(--font-mono);color:var(--cyan)">1b</a>
+      <span style="font:700 16px var(--font-body);color:var(--text-primary)">Execution — lanes-first canvas · running</span>
+      <span style="font-size:12.5px;color:var(--text-secondary)">history rail collapsed to a strip (click ⟨ to expand) · inspector collapsible · loop pass + join chevron + runtime-expanded lanes visible</span>
+    </div>
+    <div style="width:1780px;background:var(--bg-void);border:1px solid var(--border-default);border-radius:12px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.5)">
+
+      <!-- Topbar -->
+      <header class="flex h-[var(--topbar-height)] items-center justify-between border-x-0 border-t-0 border-b border-solid border-b-border-subtle bg-[var(--cc-topbar-bg)] px-lg [backdrop-filter:blur(16px)_saturate(140%)]">
+        <div class="flex items-center gap-md">
+          <span class="font-display text-[1.1rem] font-extrabold tracking-[-0.02em] text-cyan [text-shadow:0_0_20px_var(--cyan-glow-text)]">CC</span>
+          <div class="h-[20px] w-px bg-border-default"></div>
+          <nav class="flex items-center gap-sm font-mono text-[0.8rem] font-normal text-text-secondary">
+            <span>projects</span><span class="text-text-tertiary">/</span>
+            <span>atlas ▾</span><span class="text-text-tertiary">/</span>
+            <span class="font-semibold text-text-primary!">checkout-v2 ▾</span><span class="text-text-tertiary">/</span>
+            <span>Workflow</span>
+          </nav>
+        </div>
+        <div class="flex items-center gap-md">
+          <span class="inline-flex h-[28px] items-center gap-[6px] rounded-sm border border-solid border-border-default bg-transparent px-[10px] font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase text-text-secondary!">Specs</span>
+          <span class="inline-flex h-[28px] items-center gap-[6px] rounded-sm border border-solid border-border-default bg-transparent px-[10px] font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase text-text-secondary!">Tickets</span>
+          <span class="inline-flex h-[28px] items-center gap-[6px] rounded-sm border border-solid border-border-default bg-transparent px-[10px] font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase text-text-secondary!">Templates</span>
+          <span class="flex h-[30px] w-[30px] items-center justify-center rounded-sm text-text-secondary!">⚙</span>
+        </div>
+      </header>
+
+      <!-- Execution status bar -->
+      <div class="flex min-h-[44px] items-center gap-md border-b border-border-dim bg-bg-surface px-md py-2">
+        <span class="text-[0.7rem] font-semibold uppercase tracking-[0.06em] py-[3px] px-[10px] rounded-[3px] bg-[var(--cc-cyan-a12)] text-cyan border border-[var(--cyan-glow-strong)]">running</span>
+        <div class="min-w-0 truncate text-[0.72rem] text-text-secondary">
+          Lane <strong class="font-semibold text-text-primary">delivery</strong>: context-implement: running, context-settings: running · Task: <strong class="font-semibold text-text-primary">Wire risk rules into checkout</strong>
+        </div>
+        <div class="ml-auto flex gap-sm" style="align-items:center">
+          <button type="button" class="inline-flex items-center justify-center gap-[6px] font-medium rounded-sm cursor-pointer transition-all duration-150 border border-border-default whitespace-nowrap text-[0.7rem] py-[3px] px-[8px] h-[22px] bg-bg-raised text-text-secondary hover:bg-bg-elevated hover:text-text-primary hover:border-border-strong">Pause</button>
+          <button type="button" class="inline-flex items-center justify-center gap-[6px] font-medium rounded-sm cursor-pointer transition-all duration-150 border border-border-default whitespace-nowrap text-[0.7rem] py-[3px] px-[8px] h-[22px] bg-bg-raised hover:bg-bg-elevated hover:border-border-strong" style="color:var(--red)">Abort</button>
+          <span style="width:1px;height:16px;background:var(--border-default)"></span>
+          <button type="button" onClick="{{ toggleInsp }}" title="Collapse inspector" class="inline-flex items-center justify-center gap-[6px] font-medium rounded-sm cursor-pointer transition-all duration-150 border border-border-default whitespace-nowrap text-[0.7rem] py-[3px] px-[8px] h-[22px] bg-bg-raised text-text-secondary hover:bg-bg-elevated hover:text-text-primary">▤ Inspector</button>
+        </div>
+      </div>
+
+      <div style="display:flex;height:1300px;min-height:0">
+
+        <!-- Executions rail — collapsed strip (proposal: collapsible) -->
+        <sc-if value="{{ railClosed }}" hint-placeholder-val="{{ true }}">
+        <div style="width:48px;flex-shrink:0;border-right:1px solid var(--border-subtle);background:var(--bg-base);display:flex;flex-direction:column;align-items:center;gap:10px;padding:12px 0">
+          <button type="button" onClick="{{ toggleRail }}" title="Expand executions" style="width:28px;height:28px;border:1px solid var(--border-default);border-radius:4px;background:var(--bg-raised);color:var(--cyan);cursor:pointer;font-size:12px">⟩</button>
+          <span style="writing-mode:vertical-rl;font:600 10px var(--font-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--text-tertiary)">Executions · 3</span>
+          <span style="width:8px;height:8px;border-radius:50%;background:var(--cyan);box-shadow:0 0 8px var(--cyan-glow);animation:pulse-dot 2.5s ease-in-out infinite" title="current — running"></span>
+          <span style="width:8px;height:8px;border-radius:50%;background:var(--green)"></span>
+          <span style="width:8px;height:8px;border-radius:50%;background:var(--text-tertiary)"></span>
+        </div>
+        </sc-if>
+        <sc-if value="{{ railOpen }}" hint-placeholder-val="{{ false }}">
+        <nav style="width:300px;flex-shrink:0;border-right:1px solid var(--border-subtle);background:var(--bg-base);padding:12px;overflow-y:auto;display:flex;flex-direction:column;gap:16px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <h2 class="m-0 font-mono text-[0.72rem] font-bold tracking-[0.08em] text-text-secondary uppercase" style="flex:1">Current</h2>
+            <button type="button" onClick="{{ toggleRail }}" title="Collapse" style="width:24px;height:24px;border:1px solid var(--border-default);border-radius:4px;background:var(--bg-raised);color:var(--cyan);cursor:pointer;font-size:11px">⟨</button>
+          </div>
+          <div class="flex w-full flex-col gap-sm rounded-md border border-solid border-border-default bg-bg-raised p-md text-left font-mono text-text-primary">
+            <span class="flex w-full min-w-0 items-center gap-sm">
+              <span class="min-w-0 flex-1 truncate text-[0.78rem] font-semibold">Checkout rules migration</span>
+              <span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-cyan-a25)] bg-cyan-glow text-cyan">running</span>
+            </span>
+            <span class="line-clamp-2 text-[0.72rem] text-text-secondary">Replace legacy feature flags with the rules engine across checkout.</span>
+            <span class="flex w-full items-center justify-between gap-sm text-[0.7rem] text-text-tertiary"><span>Template · rev 4</span><span>exec_7f3a</span></span>
+          </div>
+          <h2 class="m-0 font-mono text-[0.72rem] font-bold tracking-[0.08em] text-text-secondary uppercase">History</h2>
+          <div class="flex w-full flex-col gap-sm rounded-md border border-solid border-border-subtle bg-bg-surface p-md font-mono text-text-primary">
+            <span class="flex w-full min-w-0 items-center gap-sm">
+              <span class="min-w-0 flex-1 truncate text-[0.78rem] font-semibold">Spike: rules engine eval</span>
+              <span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-green-a20)] bg-green-glow text-green">completed</span>
+            </span>
+            <span class="flex w-full items-center justify-between gap-sm text-[0.7rem] text-text-tertiary"><span>One-off</span><span>Aug 14, 9:12 AM</span></span>
+          </div>
+          <div class="flex w-full flex-col gap-sm rounded-md border border-solid border-border-subtle bg-bg-surface p-md font-mono text-text-primary">
+            <span class="flex w-full min-w-0 items-center gap-sm">
+              <span class="min-w-0 flex-1 truncate text-[0.78rem] font-semibold">Checkout rules migration</span>
+              <span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-border-subtle bg-transparent text-text-tertiary">aborted</span>
+            </span>
+            <span class="flex w-full items-center justify-between gap-sm text-[0.7rem] text-text-tertiary"><span>Template · rev 3</span><span>Aug 12, 4:40 PM</span></span>
+          </div>
+        </nav>
+        </sc-if>
+
+        <!-- Lanes canvas -->
+        <div style="position:relative;flex:1;min-width:0;background:var(--bg-void);background-image:radial-gradient(rgba(255,255,255,0.07) 1px,transparent 1px);background-size:20px 20px;overflow:hidden">
+
+          <!-- lane bands -->
+          <!-- plan -->
+          <div style="position:absolute;left:12px;right:12px;top:10px;height:180px;border:1px solid var(--border-subtle);border-left:2px solid var(--green-dim);border-radius:10px;background:linear-gradient(90deg,var(--cc-green-a06),transparent 28%)"></div>
+          <!-- candidate-flags -->
+          <div style="position:absolute;left:12px;right:12px;top:198px;height:180px;border:1px solid var(--border-subtle);border-left:2px solid var(--green-dim);border-radius:10px;background:linear-gradient(90deg,var(--cc-green-a06),transparent 28%)"></div>
+          <!-- candidate-rules -->
+          <div style="position:absolute;left:12px;right:12px;top:386px;height:180px;border:1px solid var(--border-subtle);border-left:2px solid var(--green-dim);border-radius:10px;background:linear-gradient(90deg,var(--cc-green-a06),transparent 28%)"></div>
+          <!-- delivery (active, two write-capable members in parallel via disjoint ownedPaths) -->
+          <div style="position:absolute;left:12px;right:12px;top:574px;height:470px;border:1px solid var(--cc-cyan-a25);border-left:2px solid var(--cyan);border-radius:10px;background:linear-gradient(90deg,var(--cc-cyan-a05),transparent 32%);box-shadow:0 0 24px rgba(0,229,255,0.04) inset"></div>
+          <!-- session (read-only, shown because a context is placed on it) -->
+          <div style="position:absolute;left:12px;right:12px;top:1052px;height:180px;border:1px dashed var(--border-default);border-radius:10px;background:repeating-linear-gradient(135deg,var(--cc-graph-ink-a50) 0 8px,transparent 8px 18px)"></div>
+
+          <!-- lane rails -->
+          <div style="position:absolute;left:12px;top:10px;width:172px;height:180px;padding:14px 14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;align-items:center;gap:7px"><span style="width:7px;height:7px;border-radius:50%;background:var(--green)"></span><span style="font:700 13px var(--font-mono);color:var(--text-primary)">plan</span></div>
+            <span style="align-self:flex-start" class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-green-a20)] bg-green-glow text-green">merged</span>
+            <span style="font:500 10.5px var(--font-mono);color:var(--text-tertiary)">1 member · ⤳ session</span>
+            <sc-if value="{{ showWorktreePaths }}" hint-placeholder-val="{{ true }}"><div style="max-width:144px;min-width:0;overflow:hidden"><x-import component-from-global-scope="CommandCenterUI.CopyableId" label="wt" value=".worktrees/checkout-v2.plan" truncate-at="{{ t14 }}" hint-size="140px,20px"></x-import></div></sc-if>
+          </div>
+          <div style="position:absolute;left:12px;top:198px;width:172px;height:180px;padding:14px 14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;align-items:center;gap:7px"><span style="width:7px;height:7px;border-radius:50%;background:var(--green)"></span><span style="font:700 13px var(--font-mono);color:var(--text-primary)">candidate-flags</span></div>
+            <span style="align-self:flex-start" class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-green-a20)] bg-green-glow text-green">merged</span>
+            <span style="font:500 10.5px var(--font-mono);color:var(--cyan)">✦ created at runtime</span>
+            <span style="font:500 10.5px var(--font-mono);color:var(--text-tertiary)">1 member · ⤳ delivery</span>
+          </div>
+          <div style="position:absolute;left:12px;top:386px;width:172px;height:180px;padding:14px 14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;align-items:center;gap:7px"><span style="width:7px;height:7px;border-radius:50%;background:var(--green)"></span><span style="font:700 13px var(--font-mono);color:var(--text-primary)">candidate-rules</span></div>
+            <span style="align-self:flex-start" class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-green-a20)] bg-green-glow text-green">merged</span>
+            <span style="font:500 10.5px var(--font-mono);color:var(--cyan)">✦ created at runtime</span>
+            <span style="font:500 10.5px var(--font-mono);color:var(--text-tertiary)">1 member · ⤳ delivery</span>
+          </div>
+          <div style="position:absolute;left:12px;top:574px;width:172px;height:470px;padding:14px 14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;align-items:center;gap:7px"><span style="width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 8px var(--cyan-glow);animation:pulse-dot 2.5s ease-in-out infinite"></span><span style="font:700 13px var(--font-mono);color:var(--text-primary)">delivery</span></div>
+            <span style="align-self:flex-start" class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-cyan-a25)] bg-cyan-glow text-cyan">active</span>
+            <span style="font:500 10.5px var(--font-mono);color:var(--text-tertiary)">3 members · 2 running in parallel</span>
+            <span style="font:500 10.5px var(--font-mono);color:var(--text-tertiary)">⤳ lands → session</span>
+            <sc-if value="{{ showWorktreePaths }}" hint-placeholder-val="{{ true }}"><div style="max-width:144px;min-width:0;overflow:hidden"><x-import component-from-global-scope="CommandCenterUI.CopyableId" label="br" value="csm/checkout-v2.delivery" truncate-at="{{ t14 }}" hint-size="140px,20px"></x-import></div></sc-if>
+            <div style="margin-top:auto;font:400 10px var(--font-mono);color:var(--text-tertiary);line-height:1.7">◪ implement · src/checkout<br>◪ settings · src/settings</div>
+          </div>
+          <div style="position:absolute;left:12px;top:1052px;width:172px;height:180px;padding:14px 14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;align-items:center;gap:7px"><span style="width:7px;height:7px;border-radius:50%;background:var(--text-tertiary)"></span><span style="font:700 13px var(--font-mono);color:var(--text-primary)">session</span></div>
+            <span style="align-self:flex-start" class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-border-default text-text-secondary">read-only</span>
+            <span style="font:500 10.5px var(--font-mono);color:var(--text-tertiary)">1 member · no writes</span>
+          </div>
+
+          <!-- edges -->
+          <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none">
+            <defs>
+              <marker id="arr-g" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 Z" fill="var(--green-dim)"></path></marker>
+              <marker id="arr-c" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 Z" fill="var(--cyan)"></path></marker>
+            </defs>
+            <path d="M 446 101 C 496 101 422 289 472 289" fill="none" stroke="var(--green-dim)" stroke-width="2" marker-end="url(#arr-g)"></path>
+            <path d="M 446 101 C 496 101 422 477 472 477" fill="none" stroke="var(--green-dim)" stroke-width="2" marker-end="url(#arr-g)"></path>
+            <path d="M 722 289 C 772 289 698 673 748 673" fill="none" stroke="var(--green-dim)" stroke-width="2" marker-end="url(#arr-g)"></path>
+            <path d="M 722 477 C 772 477 698 673 748 673" fill="none" stroke="var(--green-dim)" stroke-width="2" marker-end="url(#arr-g)"></path>
+            <path d="M 998 673 C 1048 673 974 726 1024 726" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-dasharray="8 4" style="animation:dash-flow 1s linear infinite" marker-end="url(#arr-c)"></path>
+            <path d="M 998 673 C 1048 673 974 940 1024 940" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-dasharray="8 4" style="animation:dash-flow 1s linear infinite" marker-end="url(#arr-c)"></path>
+            <path d="M 998 673 C 1058 673 954 1143 1024 1143" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-dasharray="8 4" style="animation:dash-flow 1s linear infinite" marker-end="url(#arr-c)"></path>
+          </svg>
+
+          <!-- join chevron: candidate lanes → delivery -->
+          <div title="Join: candidate-flags + candidate-rules merged into delivery" style="position:absolute;left:690px;top:660px;display:inline-flex;align-items:center;gap:4px;border:1px solid var(--cc-green-a35);border-radius:20px;background:var(--cc-green-a10);color:var(--green);padding:2px 8px;font:700 11px var(--font-mono)">⋙ 2</div>
+
+          <!-- publish marker at delivery band right edge -->
+          <div title="Lane delivery lands to the session worktree on completion" style="position:absolute;left:210px;top:1000px;display:inline-flex;align-items:center;gap:5px;border:1px dashed var(--border-strong);border-radius:20px;color:var(--text-tertiary);padding:3px 10px;font:600 10.5px var(--font-mono)">⇥ publishes → session</div>
+
+          <!-- NODES (compact redesign) -->
+          <!-- Plan the migration -->
+          <div class="graph-node relative overflow-hidden rounded-[14px] cursor-pointer border border-solid border-border-subtle bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)] [--node-color-glow:transparent] [--node-color:var(--border-subtle)] before:absolute before:top-[-1px] before:right-[10%] before:left-[10%] before:h-[2px] before:rounded-[2px] before:bg-[linear-gradient(90deg,transparent_0%,var(--node-color)_30%,var(--node-color)_70%,transparent_100%)] before:opacity-0 before:transition-opacity before:duration-300 before:content-[''] [--node-color:var(--green)] [--node-color-glow:var(--cc-green-a10)] border-[var(--cc-green-a20)] [border-top-color:var(--cc-green-a45)] before:opacity-100" style="position:absolute;left:196px;top:38px;width:250px;padding:12px 14px 10px">
+            <div style="position:relative;z-index:1;display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:7px">
+              <span style="font-size:.82rem;font-weight:700;line-height:1.2;color:var(--text-primary)">Plan the migration</span>
+              <span style="flex-shrink:0;border:1px solid var(--cc-green-border);background:var(--cc-green-a08);color:var(--green);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Published</span>
+            </div>
+            <div style="position:relative;z-index:1;border:1px solid var(--border-subtle);border-radius:8px;background:var(--cc-graph-ink-a55);margin-bottom:8px">
+              <div style="display:flex;align-items:center;gap:6px;padding:6px 9px"><span style="font:700 9px var(--font-mono);letter-spacing:.1em;color:var(--text-tertiary);width:26px">IMPL</span><span style="color:var(--cyan);font-size:.66rem">◆</span><span style="font:600 10.5px var(--font-mono);color:var(--text-primary)">sonnet-4.5</span><span style="margin-left:auto;border:1px solid var(--border-default);border-radius:9px;padding:1px 6px;font:600 9px var(--font-mono);text-transform:uppercase;color:var(--text-secondary)">med</span></div>
+            </div>
+            <div style="position:relative;z-index:1;margin-bottom:8px;font:500 10px var(--font-mono);color:var(--text-tertiary)">▣ script · <span style="color:var(--green)">◈ captured</span></div>
+            <div style="position:relative;z-index:1;height:3px;border-radius:3px;background:var(--cc-graph-ink-a50);margin-bottom:7px"><div style="width:100%;height:100%;border-radius:3px;background:var(--green);box-shadow:0 0 6px var(--green-glow)"></div></div>
+            <div style="position:relative;z-index:1;font-size:.66rem;font-weight:500;color:var(--text-tertiary)">3/3 tasks · published to session</div>
+            <span style="position:absolute;right:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+          </div>
+
+          <!-- Candidate: feature flags -->
+          <div class="graph-node relative overflow-hidden rounded-[14px] cursor-pointer border border-solid border-border-subtle bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)] [--node-color:var(--green)] [--node-color-glow:var(--cc-green-a10)] border-[var(--cc-green-a20)] [border-top-color:var(--cc-green-a45)]" style="position:absolute;left:472px;top:226px;width:250px;padding:12px 14px 10px">
+            <div style="position:relative;z-index:1;display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:7px">
+              <span style="font-size:.82rem;font-weight:700;line-height:1.2;color:var(--text-primary)">Candidate: feature flags</span>
+              <span style="flex-shrink:0;border:1px solid var(--cc-green-border);background:var(--cc-green-a08);color:var(--green);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Completed</span>
+            </div>
+            <div style="position:relative;z-index:1;border:1px solid var(--border-subtle);border-radius:8px;background:var(--cc-graph-ink-a55);margin-bottom:8px">
+              <div style="display:flex;align-items:center;gap:6px;padding:6px 9px"><span style="font:700 9px var(--font-mono);letter-spacing:.1em;color:var(--text-tertiary);width:26px">IMPL</span><span style="color:var(--cyan);font-size:.66rem">◆</span><span style="font:600 10.5px var(--font-mono);color:var(--text-primary)">sonnet-4.5</span><span style="margin-left:auto;border:1px solid var(--border-default);border-radius:9px;padding:1px 6px;font:600 9px var(--font-mono);text-transform:uppercase;color:var(--text-secondary)">med</span></div>
+            </div>
+            <div style="position:relative;z-index:1;margin-bottom:8px;font:500 10px var(--font-mono);color:var(--text-tertiary)"><span style="color:var(--cyan)">✦</span> runtime · <span style="color:var(--green)">◈ 7.5</span></div>
+            <div style="position:relative;z-index:1;height:3px;border-radius:3px;background:var(--cc-graph-ink-a50);margin-bottom:7px"><div style="width:100%;height:100%;border-radius:3px;background:var(--green);box-shadow:0 0 6px var(--green-glow)"></div></div>
+            <div style="position:relative;z-index:1;font-size:.66rem;font-weight:500;color:var(--text-tertiary)">2/2 tasks · landed → delivery</div>
+            <span style="position:absolute;left:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+            <span style="position:absolute;right:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+          </div>
+
+          <!-- Candidate: rules engine -->
+          <div class="graph-node relative overflow-hidden rounded-[14px] cursor-pointer border border-solid border-border-subtle bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)] [--node-color:var(--green)] [--node-color-glow:var(--cc-green-a10)] border-[var(--cc-green-a20)] [border-top-color:var(--cc-green-a45)]" style="position:absolute;left:472px;top:414px;width:250px;padding:12px 14px 10px">
+            <div style="position:relative;z-index:1;display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:7px">
+              <span style="font-size:.82rem;font-weight:700;line-height:1.2;color:var(--text-primary)">Candidate: rules engine</span>
+              <span style="flex-shrink:0;border:1px solid var(--cc-green-border);background:var(--cc-green-a08);color:var(--green);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Completed</span>
+            </div>
+            <div style="position:relative;z-index:1;border:1px solid var(--border-subtle);border-radius:8px;background:var(--cc-graph-ink-a55);margin-bottom:8px">
+              <div style="display:flex;align-items:center;gap:6px;padding:6px 9px"><span style="font:700 9px var(--font-mono);letter-spacing:.1em;color:var(--text-tertiary);width:26px">IMPL</span><span style="color:var(--violet);font-size:.66rem">◆</span><span style="font:600 10.5px var(--font-mono);color:var(--text-primary)">gpt-5-codex</span><span style="margin-left:auto;border:1px solid var(--border-default);border-radius:9px;padding:1px 6px;font:600 9px var(--font-mono);text-transform:uppercase;color:var(--text-secondary)">med</span></div>
+            </div>
+            <div style="position:relative;z-index:1;margin-bottom:8px;font:500 10px var(--font-mono);color:var(--text-tertiary)"><span style="color:var(--cyan)">✦</span> runtime · <span style="color:var(--green)">◈ 9.0</span></div>
+            <div style="position:relative;z-index:1;height:3px;border-radius:3px;background:var(--cc-graph-ink-a50);margin-bottom:7px"><div style="width:100%;height:100%;border-radius:3px;background:var(--green);box-shadow:0 0 6px var(--green-glow)"></div></div>
+            <div style="position:relative;z-index:1;font-size:.66rem;font-weight:500;color:var(--text-tertiary)">2/2 tasks · landed → delivery</div>
+            <span style="position:absolute;left:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+            <span style="position:absolute;right:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+          </div>
+
+          <!-- Filter candidates -->
+          <div class="graph-node relative overflow-hidden rounded-[14px] cursor-pointer border border-solid border-border-subtle bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)] [--node-color:var(--green)] [--node-color-glow:var(--cc-green-a10)] border-[var(--cc-green-a20)] [border-top-color:var(--cc-green-a45)]" style="position:absolute;left:748px;top:610px;width:250px;padding:12px 14px 10px">
+            <div style="position:relative;z-index:1;display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:7px">
+              <span style="font-size:.82rem;font-weight:700;line-height:1.2;color:var(--text-primary)">Filter candidates</span>
+              <span style="flex-shrink:0;border:1px solid var(--cc-green-border);background:var(--cc-green-a08);color:var(--green);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Completed</span>
+            </div>
+            <div style="position:relative;z-index:1;border:1px solid var(--border-subtle);border-radius:8px;background:var(--cc-graph-ink-a55);margin-bottom:8px">
+              <div style="display:flex;align-items:center;gap:6px;padding:6px 9px"><span style="font:700 9px var(--font-mono);letter-spacing:.1em;color:var(--text-tertiary);width:26px">IMPL</span><span style="color:var(--cyan);font-size:.66rem">◆</span><span style="font:600 10.5px var(--font-mono);color:var(--text-primary)">sonnet-4.5</span><span style="margin-left:auto;border:1px solid var(--border-default);border-radius:9px;padding:1px 6px;font:600 9px var(--font-mono);text-transform:uppercase;color:var(--text-secondary)">med</span></div>
+            </div>
+            <div style="position:relative;z-index:1;margin-bottom:8px;font:500 10px var(--font-mono);color:var(--text-tertiary)"><span style="color:var(--green)">◈ winner: rules</span></div>
+            <div style="position:relative;z-index:1;height:3px;border-radius:3px;background:var(--cc-graph-ink-a50);margin-bottom:7px"><div style="width:100%;height:100%;border-radius:3px;background:var(--green);box-shadow:0 0 6px var(--green-glow)"></div></div>
+            <div style="position:relative;z-index:1;font-size:.66rem;font-weight:500;color:var(--text-tertiary)">1/1 tasks · completed</div>
+            <span style="position:absolute;left:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+            <span style="position:absolute;right:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+          </div>
+
+          <!-- Implement checkout (running, loop 2/3, selected) -->
+          <div class="graph-node selected relative overflow-hidden rounded-[14px] cursor-pointer border border-solid bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)] [--node-color:var(--cyan)] [--node-color-glow:var(--cyan-glow)] border-[var(--cc-cyan-a40)] [animation:pulse-node_2s_ease-in-out_infinite]" style="position:absolute;left:1024px;top:610px;width:250px;padding:12px 14px 10px">
+            <div style="position:relative;z-index:1;display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:7px">
+              <span style="font-size:.82rem;font-weight:700;line-height:1.2;color:var(--text-primary)">Implement checkout</span>
+              <span style="flex-shrink:0;border:1px solid var(--cyan-glow-strong);background:var(--cc-cyan-a08);color:var(--cyan);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Running</span>
+            </div>
+            <div style="position:relative;z-index:1;border:1px solid var(--border-subtle);border-radius:8px;background:var(--cc-graph-ink-a55);overflow:hidden;margin-bottom:8px">
+              <div style="display:flex;align-items:center;gap:6px;padding:6px 9px"><span style="font:700 9px var(--font-mono);letter-spacing:.1em;color:var(--text-tertiary);width:26px">IMPL</span><span style="color:var(--cyan);font-size:.66rem">◆</span><span style="font:600 10px var(--font-mono);color:var(--text-primary)">opus-4.1</span><span title="Overridden — workflow default: sonnet-4.5" style="font:700 10px var(--font-mono);color:var(--amber)">Δ</span><span style="margin-left:auto;border:1px solid var(--border-default);border-radius:9px;padding:1px 6px;font:600 9px var(--font-mono);text-transform:uppercase;color:var(--text-secondary)">high <span title="Overridden — workflow default: medium" style="color:var(--amber)">Δ</span></span></div>
+              <div style="display:flex;align-items:center;gap:6px;padding:6px 9px;border-top:1px solid var(--border-dim)"><span style="font:700 9px var(--font-mono);letter-spacing:.1em;color:var(--text-tertiary);width:26px">VAL</span><span style="color:var(--violet);font-size:.66rem">◆</span><span style="font:600 10px var(--font-mono);color:var(--text-primary)">security · gpt-5-codex</span><span style="margin-left:auto;border:1px solid var(--cc-rainbow-glow-violet-a15);border-radius:9px;padding:1px 6px;font:700 9px var(--font-mono);text-transform:uppercase;background:var(--rainbow-tint)"><span style="background:var(--rainbow-gradient);-webkit-background-clip:text;background-clip:text;color:transparent">xhigh</span></span></div>
+              <div style="display:flex;align-items:center;gap:6px;padding:6px 9px;border-top:1px solid var(--border-dim)"><span style="width:26px"></span><span style="color:var(--cyan);font-size:.66rem">◆</span><span style="font:600 10px var(--font-mono);color:var(--text-primary)">a11y · sonnet-4.5</span><span style="margin-left:auto;border:1px solid var(--border-default);border-radius:9px;padding:1px 6px;font:600 9px var(--font-mono);text-transform:uppercase;color:var(--text-secondary)">med</span></div>
+            </div>
+            <div style="position:relative;z-index:1;display:flex;gap:5px;margin-bottom:8px">
+              <div style="flex:1;border:1px solid var(--border-subtle);border-radius:8px;background:var(--cc-graph-ink-a55);padding:5px 8px"><div style="font:600 8.5px var(--font-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--text-tertiary);margin-bottom:2px">Tasks</div><div style="font:700 11.5px var(--font-mono);color:var(--text-primary)">3/5</div></div>
+              <div style="flex:1;border:1px solid var(--border-subtle);border-radius:8px;background:var(--cc-graph-ink-a55);padding:5px 8px"><div style="font:600 8.5px var(--font-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--text-tertiary);margin-bottom:2px">Loop</div><div style="font:700 11.5px var(--font-mono);color:var(--blue)">↻ 2/3</div></div>
+              <div style="flex:1.3;border:1px solid var(--border-subtle);border-radius:8px;background:var(--cc-graph-ink-a55);padding:5px 8px"><div style="font:600 8.5px var(--font-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--text-tertiary);margin-bottom:2px">Gates</div><div style="display:flex;align-items:center;gap:8px;height:15px"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" role="img" aria-label="Script gate"><rect x="1.5" y="1.5" width="13" height="13" rx="2.5" stroke="var(--text-secondary)" stroke-width="1.5"></rect><path d="M 5 6 L 7.5 8 L 5 10" stroke="var(--text-secondary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path><path d="M 8.5 10.5 H 11" stroke="var(--text-secondary)" stroke-width="1.5" stroke-linecap="round"></path></svg><span title="Human approval — overridden from workflow default" style="position:relative;display:inline-flex;width:13px;height:13px"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" role="img" aria-label="Human approval"><circle cx="8" cy="8" r="6.5" stroke="var(--amber)" stroke-width="1.5"></circle><path d="M 5.2 8.2 L 7.2 10.2 L 10.8 6" stroke="var(--amber)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg><span aria-label="Overridden" style="position:absolute;top:-4px;right:-3px;display:flex;align-items:center;justify-content:center;width:8px;height:8px;border-radius:50%;background:var(--cc-graph-node-grad-top);font:800 7px var(--font-mono);color:var(--amber);line-height:1">Δ</span></span><svg width="13" height="13" viewBox="0 0 16 16" fill="none" role="img" aria-label="Output schema declared"><path d="M 8 1.8 L 14.2 8 L 8 14.2 L 1.8 8 Z" stroke="var(--text-tertiary)" stroke-width="1.5" stroke-linejoin="round"></path></svg></div></div>
+            </div>
+            <div style="position:relative;z-index:1;margin-bottom:8px;font:500 10px var(--font-mono);color:var(--text-tertiary)">◪ src/checkout</div>
+            <div style="position:relative;z-index:1;height:3px;border-radius:3px;background:var(--cc-graph-ink-a50);margin-bottom:7px"><div style="width:60%;height:100%;border-radius:3px;background:var(--cyan);box-shadow:0 0 6px var(--cyan-glow)"></div></div>
+            <div style="position:relative;z-index:1;font-size:.66rem;font-weight:500;color:var(--text-secondary)">Running task 3/5</div>
+            <span style="position:absolute;left:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:rgba(0,229,255,0.15);border:2px solid var(--cyan)"></span>
+            <span style="position:absolute;right:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:rgba(0,229,255,0.15);border:2px solid var(--cyan)"></span>
+          </div>
+
+          <!-- Migrate settings (running in PARALLEL on the same lane — disjoint ownedPaths) -->
+          <div class="graph-node relative overflow-hidden rounded-[14px] cursor-pointer border border-solid bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)] [--node-color:var(--cyan)] [--node-color-glow:var(--cyan-glow)] border-[var(--cc-cyan-a25)] [border-top-color:var(--cc-cyan-a50)] [animation:pulse-node_2s_ease-in-out_infinite]" style="position:absolute;left:1024px;top:874px;width:250px;padding:12px 14px 10px">
+            <div style="position:relative;z-index:1;display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:7px">
+              <span style="font-size:.82rem;font-weight:700;line-height:1.2;color:var(--text-primary)">Migrate settings</span>
+              <span style="flex-shrink:0;border:1px solid var(--cyan-glow-strong);background:var(--cc-cyan-a08);color:var(--cyan);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Running</span>
+            </div>
+            <div style="position:relative;z-index:1;border:1px solid var(--border-subtle);border-radius:8px;background:var(--cc-graph-ink-a55);margin-bottom:8px">
+              <div style="display:flex;align-items:center;gap:6px;padding:6px 9px"><span style="font:700 9px var(--font-mono);letter-spacing:.1em;color:var(--text-tertiary);width:26px">IMPL</span><span style="color:var(--violet);font-size:.66rem">◆</span><span style="font:600 10.5px var(--font-mono);color:var(--text-primary)">gpt-5-codex</span><span style="margin-left:auto;border:1px solid var(--border-default);border-radius:9px;padding:1px 6px;font:600 9px var(--font-mono);text-transform:uppercase;color:var(--text-secondary)">med</span></div>
+            </div>
+            <div style="position:relative;z-index:1;margin-bottom:8px;font:500 10px var(--font-mono);color:var(--text-tertiary)">▣ script · ◪ src/settings</div>
+            <div style="position:relative;z-index:1;height:3px;border-radius:3px;background:var(--cc-graph-ink-a50);margin-bottom:7px"><div style="width:30%;height:100%;border-radius:3px;background:var(--cyan);box-shadow:0 0 6px var(--cyan-glow)"></div></div>
+            <div style="position:relative;z-index:1;font-size:.66rem;font-weight:500;color:var(--text-secondary)">Running task 1/2</div>
+            <span style="position:absolute;left:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+          </div>
+
+          <!-- Audit report (session lane, readOnly, running) -->
+          <div class="graph-node relative overflow-hidden rounded-[14px] cursor-pointer border border-solid bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)] [--node-color:var(--cyan)] [--node-color-glow:var(--cyan-glow)] border-[var(--cc-cyan-a25)] [border-top-color:var(--cc-cyan-a50)] [animation:pulse-node_2.5s_ease-in-out_infinite]" style="position:absolute;left:1024px;top:1080px;width:250px;padding:12px 14px 10px">
+            <div style="position:relative;z-index:1;display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:7px">
+              <span style="font-size:.82rem;font-weight:700;line-height:1.2;color:var(--text-primary)">Audit report</span>
+              <span style="flex-shrink:0;border:1px solid var(--cyan-glow-strong);background:var(--cc-cyan-a08);color:var(--cyan);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Running</span>
+            </div>
+            <div style="position:relative;z-index:1;border:1px solid var(--border-subtle);border-radius:8px;background:var(--cc-graph-ink-a55);margin-bottom:8px">
+              <div style="display:flex;align-items:center;gap:6px;padding:6px 9px"><span style="font:700 9px var(--font-mono);letter-spacing:.1em;color:var(--text-tertiary);width:26px">IMPL</span><span style="color:var(--violet);font-size:.66rem">◆</span><span style="font:600 10.5px var(--font-mono);color:var(--text-primary)">gpt-5-codex</span><span style="margin-left:auto;border:1px solid var(--border-default);border-radius:9px;padding:1px 6px;font:600 9px var(--font-mono);text-transform:uppercase;color:var(--text-secondary)">med</span></div>
+            </div>
+            <div style="position:relative;z-index:1;margin-bottom:8px;font:500 10px var(--font-mono);color:var(--text-tertiary)">◨ read-only · ◇ declared</div>
+            <div style="position:relative;z-index:1;height:3px;border-radius:3px;background:var(--cc-graph-ink-a50);margin-bottom:7px"><div style="width:35%;height:100%;border-radius:3px;background:var(--cyan);box-shadow:0 0 6px var(--cyan-glow)"></div></div>
+            <div style="position:relative;z-index:1;font-size:.66rem;font-weight:500;color:var(--text-tertiary)">Reading session worktree</div>
+            <span style="position:absolute;left:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+          </div>
+
+          <!-- zoom controls -->
+          <div style="position:absolute;left:16px;bottom:16px;display:flex;flex-direction:column;border:1px solid var(--border-subtle);border-radius:4px;overflow:hidden">
+            <button type="button" style="width:26px;height:26px;background:var(--bg-surface);color:var(--text-secondary);border:none;border-bottom:1px solid var(--border-subtle);cursor:pointer">+</button>
+            <button type="button" style="width:26px;height:26px;background:var(--bg-surface);color:var(--text-secondary);border:none;border-bottom:1px solid var(--border-subtle);cursor:pointer">−</button>
+            <button type="button" style="width:26px;height:26px;background:var(--bg-surface);color:var(--text-secondary);border:none;cursor:pointer">⛶</button>
+          </div>
+        </div>
+
+        <!-- Inspector (collapsible, redesigned) -->
+        <sc-if value="{{ inspOpen }}" hint-placeholder-val="{{ true }}">
+        <aside style="width:420px;flex-shrink:0;border-left:1px solid var(--border-subtle);background:var(--bg-surface);display:flex;flex-direction:column;overflow:hidden">
+          <header class="flex items-center gap-sm py-3 px-md border-b border-border-dim min-h-[44px]">
+            <span class="text-[0.72rem] font-medium text-text-secondary" style="cursor:pointer">◂ Back</span>
+            <span class="min-w-0 flex-1 overflow-hidden text-[0.78rem] font-semibold text-ellipsis whitespace-nowrap text-text-primary">Implement checkout</span>
+            <span style="border:1px solid var(--cyan-glow-strong);background:var(--cc-cyan-a08);color:var(--cyan);border-radius:20px;padding:3px 10px;font-size:.66rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Running</span>
+            <button type="button" onClick="{{ toggleInsp }}" title="Collapse" style="width:24px;height:24px;border:1px solid var(--border-default);border-radius:4px;background:var(--bg-raised);color:var(--cyan);cursor:pointer;font-size:11px">⟩</button>
+          </header>
+          <div style="flex-shrink:0;border-bottom:1px solid var(--border-dim);background:var(--bg-base);padding:10px 16px;display:flex;flex-direction:column;gap:5px">
+            <div style="display:flex;align-items:center;gap:6px;min-height:19px">
+              <span style="flex-shrink:0;width:64px;font:600 9px var(--font-mono);text-transform:uppercase;letter-spacing:.09em;color:var(--text-tertiary)">impl</span>
+              <span style="flex-shrink:0;display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:600 9.5px var(--font-mono);color:var(--cyan);border:1px solid var(--cc-cyan-a25);background:var(--cyan-glow)">sonnet</span>
+              <span style="font:400 11px var(--font-mono);color:var(--text-secondary)">high</span>
+              <span style="font:400 11px var(--font-mono);color:var(--text-tertiary)">builder:impl@7</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;min-height:19px">
+              <span style="flex-shrink:0;width:64px;font:600 9px var(--font-mono);text-transform:uppercase;letter-spacing:.09em;color:var(--text-tertiary)">validator</span>
+              <span style="flex-shrink:0;display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:600 9.5px var(--font-mono);color:var(--amber);border:1px solid var(--amber-dim);background:var(--amber-glow)">security</span>
+              <span style="flex-shrink:0;display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:600 9.5px var(--font-mono);color:var(--cyan);border:1px solid var(--cc-cyan-a25);background:var(--cyan-glow)">sonnet</span>
+              <span style="font:400 11px var(--font-mono);color:var(--text-tertiary)">validator:security@3</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;min-height:19px">
+              <span style="flex-shrink:0;width:64px;font:600 9px var(--font-mono);text-transform:uppercase;letter-spacing:.09em;color:var(--text-tertiary)">gates</span>
+              <span style="flex-shrink:0;display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:600 9.5px var(--font-mono);color:var(--text-secondary);border:1px solid var(--border-default)">script ×2</span>
+              <span style="flex-shrink:0;display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:600 9.5px var(--font-mono);color:var(--amber);border:1px solid var(--amber-dim);background:var(--amber-glow)">parks before merge</span>
+            </div>
+          </div>
+          <div class="wb-inspector-body" style="flex:1;overflow-y:auto;padding:16px">
+
+            <div style="margin-bottom:14px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span style="font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Status and lane</span><span style="margin-left:auto;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">iteration 2 · pass 2 of 3</span></div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+                <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base);padding:11px 12px"><div style="font:700 1.4rem var(--font-body);color:var(--text-primary);line-height:1;margin-bottom:5px">3/5</div><div style="font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Tasks</div></div>
+                <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base);padding:11px 12px"><div style="font:700 1.4rem var(--font-body);color:var(--text-primary);line-height:1;margin-bottom:5px">2</div><div style="font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Iterations</div></div>
+              </div>
+              <div style="border:1px solid var(--border-subtle);border-left:2px solid var(--cyan);border-radius:8px;background:var(--bg-base);padding:12px 14px;display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span style="width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 8px var(--cyan-glow)"></span>
+                  <span style="font:700 12.5px var(--font-mono);color:var(--text-primary)">lane delivery</span>
+                  <span style="display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:600 9.5px var(--font-mono);color:var(--text-secondary);border:1px solid var(--border-default)">full access</span>
+                  <span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-cyan-a25)] bg-cyan-glow text-cyan" style="margin-left:auto">active</span>
+                </div>
+                <div style="max-width:100%;min-width:0;overflow:hidden"><x-import component-from-global-scope="CommandCenterUI.CopyableId" label="branch" value="csm/checkout-v2.delivery" truncate-at="{{ t22 }}" hint-size="240px,22px"></x-import></div>
+                <sc-if value="{{ showWorktreePaths }}" hint-placeholder-val="{{ true }}"><div style="max-width:100%;min-width:0;overflow:hidden"><x-import component-from-global-scope="CommandCenterUI.CopyableId" label="worktree" value=".worktrees/checkout-v2.delivery" truncate-at="{{ t22 }}" hint-size="240px,22px"></x-import></div></sc-if>
+                <div style="display:flex;flex-direction:column;gap:3px;font:500 11px var(--font-mono);color:var(--text-tertiary)">
+                  <span>members:</span>
+                  <span style="padding-left:10px;color:var(--green)">✓ context-filter</span>
+                  <span style="padding-left:10px;color:var(--cyan)">● context-implement <span style="color:var(--text-tertiary)">· ◪ src/checkout</span></span>
+                  <span style="padding-left:10px;color:var(--cyan)">● context-settings <span style="color:var(--text-tertiary)">· ◪ src/settings</span></span>
+                </div>
+                <div style="font:500 11px var(--font-mono);color:var(--text-tertiary)">⤳ lands → <span style="color:var(--text-secondary)">session</span> when all members complete</div>
+              </div>
+              <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
+                <span style="display:inline-flex;align-items:center;border-radius:999px;padding:1px 8px;font:600 9.5px var(--font-mono);color:var(--blue);border:1px solid var(--blue-dim);background:var(--blue-glow)">↻ pass 2 of 3</span>
+                <span style="font:400 11px var(--font-mono);color:var(--text-tertiary)">loop group: implement-review</span>
+              </div>
+            </div>
+
+            <div style="margin-bottom:14px;border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base);overflow:hidden">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border-dim);background:var(--bg-surface);cursor:pointer"><span style="color:var(--text-secondary);font-size:10px">▾</span><span style="font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Validation — latest</span><span style="display:inline-flex;align-items:center;gap:5px;font:600 9.5px var(--font-mono);border-radius:999px;padding:1px 8px;color:var(--red);border:1px solid var(--red-dim);background:var(--red-glow)">rejected</span><span style="margin-left:auto;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">iteration 2</span></div>
+              <div style="padding:11px 12px">
+              <div style="display:flex;align-items:flex-start;gap:8px;font-size:.72rem;color:var(--text-secondary)">
+                <span style="margin-top:5px;width:6px;height:6px;border-radius:50%;background:var(--red);flex-shrink:0"></span>
+                <div style="min-width:0;flex:1;line-height:1.5">Rejected — risk rules bypass the audit log on the timeout path.</div>
+                <span style="flex-shrink:0;font:400 11px var(--font-mono);color:var(--text-tertiary)">10:42 AM</span>
+              </div>
+              <div style="margin:8px 0 0 14px;border-left:2px solid var(--border-default);padding-left:10px">
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                  <span style="font:600 11.5px var(--font-mono);color:var(--text-primary)">security</span>
+                  <span style="font:400 10px var(--font-mono);color:var(--text-tertiary)">validator:security@3</span>
+                  <span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-red-a40)] bg-red-glow text-red">Rejected</span>
+                  <button type="button" class="inline-flex items-center justify-center gap-[6px] font-medium rounded-sm cursor-pointer border border-border-default whitespace-nowrap text-[0.68rem] py-[3px] px-[8px] h-[22px] bg-bg-raised text-text-secondary hover:bg-bg-elevated hover:text-text-primary" style="margin-left:auto">Transcript</button>
+                </div>
+                <div style="margin-top:6px;font-size:.7rem;color:var(--text-secondary);line-height:1.5">
+                  <div style="font-weight:600;color:var(--text-primary)"><span style="font-family:var(--font-mono);color:var(--amber)">checkout/risk.ts</span> — audit call skipped on timeout</div>
+                  <div>Issues attributed to this seat render once, here — never re-listed on the aggregate.</div>
+                </div>
+                <div style="margin-top:6px;font:400 10px var(--font-mono);color:var(--text-tertiary)">→ reopened: task-risk-rules</div>
+              </div>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:9px">
+              <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base);display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer">
+                <span style="color:var(--text-tertiary);font-size:10px">▸</span>
+                <span style="font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Conversations</span>
+                <span style="margin-left:auto;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">3 kept · see <a href="#2a" style="color:var(--cyan)">2a</a></span>
+                <span style="color:var(--text-tertiary);font-size:11px">›</span>
+              </div>
+              <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base);display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer">
+                <span style="color:var(--text-tertiary);font-size:10px">▸</span>
+                <span style="font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Brief</span>
+                <span style="margin-left:auto;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">3 criteria · schema 4 fields</span>
+                <span style="color:var(--text-tertiary);font-size:11px">›</span>
+              </div>
+              <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base);display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer">
+                <span style="color:var(--text-tertiary);font-size:10px">▸</span>
+                <span style="font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Tasks</span>
+                <span style="margin-left:auto;font:600 11px var(--font-mono);color:var(--text-primary)">3<span style="font-weight:400;color:var(--text-tertiary)">/5 done</span></span>
+                <span style="color:var(--text-tertiary);font-size:11px">›</span>
+              </div>
+
+              <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base);overflow:hidden">
+                <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border-dim);background:var(--bg-surface)">
+                  <span style="font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Config</span>
+                  <span style="display:inline-flex;align-items:center;gap:5px;font:600 9.5px var(--font-mono);border-radius:999px;padding:1px 8px;color:var(--cyan);border:1px solid var(--cc-cyan-a25);background:var(--cc-cyan-a08)">2 set here</span>
+                  <a href="Config Panel Prototype.dc.html" style="margin-left:auto;font:600 10px var(--font-mono);color:var(--cyan)">open ›</a>
+                </div>
+                <div style="padding:10px 12px;display:flex;flex-direction:column;gap:5px">
+                  <div style="display:flex;align-items:center;gap:6px;min-height:19px">
+                    <span style="flex-shrink:0;width:78px;font:600 9px var(--font-mono);text-transform:uppercase;letter-spacing:.09em;color:var(--text-tertiary)">implementer</span>
+                    <span style="flex-shrink:0;display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:600 9.5px var(--font-mono);color:var(--cyan);border:1px solid var(--cc-cyan-a25);background:var(--cyan-glow)">opus</span>
+                    <span style="font:400 11px var(--font-mono);color:var(--text-secondary)">high</span>
+                    <span style="width:5px;height:5px;border-radius:50%;background:var(--cyan);box-shadow:0 0 4px var(--cyan-glow)"></span>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:6px;min-height:19px">
+                    <span style="flex-shrink:0;width:78px;font:600 9px var(--font-mono);text-transform:uppercase;letter-spacing:.09em;color:var(--text-tertiary)">validator</span>
+                    <span style="flex-shrink:0;display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:600 9.5px var(--font-mono);color:var(--amber);border:1px solid var(--amber-dim);background:var(--amber-glow)">security</span>
+                    <span style="flex-shrink:0;display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:600 9.5px var(--font-mono);color:var(--text-secondary);border:1px solid var(--border-default)">style</span>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:6px;min-height:19px">
+                    <span style="flex-shrink:0;width:78px;font:600 9px var(--font-mono);text-transform:uppercase;letter-spacing:.09em;color:var(--text-tertiary)">script</span>
+                    <span style="flex-shrink:0;display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:600 9.5px var(--font-mono);color:var(--text-secondary);border:1px solid var(--border-default)">format</span>
+                    <span style="flex-shrink:0;display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:600 9.5px var(--font-mono);color:var(--text-secondary);border:1px solid var(--border-default)">lint</span>
+                    <span style="flex-shrink:0;display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:600 9.5px var(--font-mono);color:var(--text-secondary);border:1px solid var(--border-default)">typecheck</span>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:6px;min-height:19px">
+                    <span style="flex-shrink:0;width:78px;font:600 9px var(--font-mono);text-transform:uppercase;letter-spacing:.09em;color:var(--text-tertiary)">iterations</span>
+                    <span style="font:400 11px var(--font-mono);color:var(--text-tertiary)">max</span>
+                    <span style="font:600 11px var(--font-mono);color:var(--text-primary)">8</span>
+                    <span style="flex-shrink:0;display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:600 9.5px var(--font-mono);color:var(--text-secondary);border:1px solid var(--border-default)">continuity 180k</span>
+                    <span style="width:5px;height:5px;border-radius:50%;background:var(--cyan);box-shadow:0 0 4px var(--cyan-glow)"></span>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:6px;min-height:19px">
+                    <span style="flex-shrink:0;width:78px;font:600 9px var(--font-mono);text-transform:uppercase;letter-spacing:.09em;color:var(--text-tertiary)">task add</span>
+                    <span style="font:400 11px var(--font-mono);color:var(--green)">allowed</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </aside>
+        </sc-if>
+        <sc-if value="{{ inspClosed }}" hint-placeholder-val="{{ false }}">
+        <div style="width:44px;flex-shrink:0;border-left:1px solid var(--border-subtle);background:var(--bg-surface);display:flex;flex-direction:column;align-items:center;gap:10px;padding:12px 0">
+          <button type="button" onClick="{{ toggleInsp }}" title="Expand inspector" style="width:28px;height:28px;border:1px solid var(--border-default);border-radius:4px;background:var(--bg-raised);color:var(--cyan);cursor:pointer;font-size:12px">⟨</button>
+          <span style="writing-mode:vertical-rl;font:600 10px var(--font-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--text-tertiary)">Inspector · Implement checkout</span>
+        </div>
+        </sc-if>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 1c + 1d — state variants ============ -->
+  <div style="display:flex;gap:40px;align-items:flex-start">
+    <div id="1c" data-screen-label="1c Halted — lane drift" style="flex-shrink:0">
+      <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:14px">
+        <a href="#1c" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cc-red-a35);border-radius:6px;background:var(--cc-red-a08);font:700 12px var(--font-mono);color:var(--red)">1c</a>
+        <span style="font:700 15px var(--font-body);color:var(--text-primary)">Halted — lane drift</span>
+        <span style="font-size:12.5px;color:var(--text-secondary)">the halt lands on the lane that drifted, not just the node</span>
+      </div>
+      <div style="width:780px;background:var(--bg-void);border:1px solid var(--border-default);border-radius:12px;overflow:hidden">
+        <div class="flex min-h-[44px] items-center gap-md border-b border-border-dim bg-bg-surface px-md py-2">
+          <span class="text-[0.7rem] font-semibold uppercase tracking-[0.06em] py-[3px] px-[10px] rounded-[3px] bg-[var(--cc-red-a08)] text-red border border-[var(--cc-red-a25)]">halted</span>
+          <span class="min-w-0 flex-1 truncate text-[0.74rem] font-medium text-red">Lane "delivery" changed 2 path(s) no member owns</span>
+          <button type="button" class="inline-flex items-center justify-center font-medium rounded-sm cursor-pointer border whitespace-nowrap text-[0.7rem] py-[3px] px-[8px] h-[22px] bg-transparent text-red border-[var(--cc-red-a35)]">Details</button>
+          <button type="button" class="inline-flex items-center justify-center font-medium rounded-sm cursor-pointer border whitespace-nowrap text-[0.7rem] py-[3px] px-[8px] h-[22px] bg-[var(--cc-cyan-a12)] text-cyan border-[var(--cyan-glow-strong)]">Resume</button>
+          <button type="button" class="inline-flex items-center justify-center font-medium rounded-sm cursor-pointer border whitespace-nowrap text-[0.7rem] py-[3px] px-[8px] h-[22px] bg-transparent text-red border-[var(--cc-red-a35)]">Abandon</button>
+        </div>
+        <div style="position:relative;height:330px;background-image:radial-gradient(rgba(255,255,255,0.07) 1px,transparent 1px);background-size:20px 20px">
+          <div style="position:absolute;left:12px;right:12px;top:12px;height:176px;border:1px solid var(--cc-red-a25);border-left:2px solid var(--red);border-radius:10px;background:linear-gradient(90deg,var(--cc-red-a06),transparent 34%)"></div>
+          <div style="position:absolute;left:12px;top:12px;width:172px;height:176px;padding:14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;align-items:center;gap:7px"><span style="width:7px;height:7px;border-radius:50%;background:var(--red)"></span><span style="font:700 13px var(--font-mono);color:var(--text-primary)">delivery</span></div>
+            <span style="align-self:flex-start" class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-red-a40)] bg-red-glow text-red">drift halted</span>
+            <span style="font:500 10.5px var(--font-mono);color:var(--red-text)">2 unattributed paths</span>
+            <span style="font:400 10px var(--font-mono);color:var(--text-tertiary)">src/checkout/cache.ts<br>src/checkout/tmp.log</span>
+          </div>
+          <div class="graph-node relative overflow-hidden rounded-[14px] border border-solid bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)] [--node-color:var(--red)] [--node-color-glow:var(--red-glow)] border-[var(--cc-red-a20)] [border-top-color:var(--cc-red-a45)]" style="position:absolute;left:220px;top:38px;width:250px;padding:12px 14px 10px">
+            <div style="position:relative;z-index:1;display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:7px">
+              <span style="font-size:.82rem;font-weight:700;line-height:1.2;color:var(--text-primary)">Implement checkout</span>
+              <span style="flex-shrink:0;border:1px solid var(--cc-red-a25);background:var(--cc-red-a08);color:var(--red);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Halted</span>
+            </div>
+            <div style="position:relative;z-index:1;border:1px solid var(--border-subtle);border-radius:8px;background:var(--cc-graph-ink-a55);margin-bottom:8px">
+              <div style="display:flex;align-items:center;gap:6px;padding:6px 9px"><span style="font:700 9px var(--font-mono);letter-spacing:.1em;color:var(--text-tertiary);width:26px">IMPL</span><span style="color:var(--cyan);font-size:.66rem">◆</span><span style="font:600 10.5px var(--font-mono);color:var(--text-primary)">opus-4.1</span><span title="Overridden — workflow default: sonnet-4.5" style="font:700 10px var(--font-mono);color:var(--amber)">Δ</span><span style="margin-left:auto;border:1px solid var(--border-default);border-radius:9px;padding:1px 6px;font:600 9px var(--font-mono);text-transform:uppercase;color:var(--text-secondary)">high</span></div>
+            </div>
+            <div style="position:relative;z-index:1;margin-bottom:8px;font:500 10px var(--font-mono);color:var(--text-tertiary)"><span style="color:var(--blue)">↻ 2/3</span> · ◪ src/checkout</div>
+            <div style="position:relative;z-index:1;height:3px;border-radius:3px;background:var(--cc-graph-ink-a50);margin-bottom:7px"><div style="width:60%;height:100%;border-radius:3px;background:var(--red)"></div></div>
+            <div style="position:relative;z-index:1;font-size:.66rem;font-weight:500;color:var(--text-secondary)">Halted · lane drift</div>
+          </div>
+          <div style="position:absolute;left:494px;top:44px;width:254px;border:1px solid var(--cc-red-a25);border-radius:8px;background:var(--cc-graph-ink-a40);padding:12px 14px">
+            <div style="font:700 11px var(--font-mono);color:var(--red);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Lane "delivery" drift</div>
+            <div style="font-size:.7rem;color:var(--text-secondary);line-height:1.55">Found while <span style="font-family:var(--font-mono);color:var(--text-primary)">context-implement</span> landed — the lane cannot say which member wrote them. Widen a member's ownership or remove the writes, then Resume.</div>
+          </div>
+          <div style="position:absolute;left:12px;right:12px;top:200px;height:116px;border:1px dashed var(--border-default);border-radius:10px;background:repeating-linear-gradient(135deg,var(--cc-graph-ink-a50) 0 8px,transparent 8px 18px);opacity:.55"></div>
+          <div style="position:absolute;left:12px;top:200px;width:172px;height:116px;padding:14px;display:flex;flex-direction:column;gap:6px;opacity:.55">
+            <div style="display:flex;align-items:center;gap:7px"><span style="width:7px;height:7px;border-radius:50%;background:var(--text-tertiary)"></span><span style="font:700 13px var(--font-mono);color:var(--text-primary)">session</span></div>
+            <span style="font:500 10.5px var(--font-mono);color:var(--text-tertiary)">paused with execution</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="1d" data-screen-label="1d Awaiting approval" style="flex-shrink:0">
+      <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:14px">
+        <a href="#1d" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cc-amber-a30);border-radius:6px;background:var(--cc-amber-a10);font:700 12px var(--font-mono);color:var(--amber)">1d</a>
+        <span style="font:700 15px var(--font-body);color:var(--text-primary)">Awaiting approval</span>
+        <span style="font-size:12.5px;color:var(--text-secondary)">approval panel names the lane that will land when you sign off</span>
+      </div>
+      <div style="width:780px;background:var(--bg-void);border:1px solid var(--border-default);border-radius:12px;overflow:hidden">
+        <div class="flex min-h-[44px] items-center gap-md border-b border-border-dim bg-bg-surface px-md py-2">
+          <span class="text-[0.7rem] font-semibold uppercase tracking-[0.06em] py-[3px] px-[10px] rounded-[3px] bg-[var(--cc-cyan-a12)] text-cyan border border-[var(--cyan-glow-strong)]">running</span>
+          <span class="text-[0.7rem] font-semibold uppercase tracking-[0.06em] py-[3px] px-[10px] rounded-[3px] inline-flex items-center gap-[6px] border border-[var(--cc-amber-a30)] bg-[var(--cc-amber-a12)] text-amber"><span style="width:7px;height:7px;border-radius:50%;background:var(--amber);box-shadow:0 0 8px var(--amber);animation:pulse-dot 2.5s ease-in-out infinite"></span>1 awaiting approval</span>
+          <div class="ml-auto flex gap-sm">
+            <button type="button" class="inline-flex items-center justify-center font-medium rounded-sm cursor-pointer border border-border-default whitespace-nowrap text-[0.7rem] py-[3px] px-[8px] h-[22px] bg-bg-raised text-text-secondary">Pause</button>
+          </div>
+        </div>
+        <section style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--amber-dim);background:var(--amber-glow);padding:10px 14px">
+          <div>
+            <p style="margin:0;font:700 11.5px var(--font-mono);letter-spacing:.05em;text-transform:uppercase;color:var(--amber)">Implement checkout — awaiting your approval</p>
+            <p style="margin:3px 0 0;font-size:.7rem;color:var(--text-secondary)">Iteration 3 passed · security seat approved · approving lands lane <span style="font-family:var(--font-mono);color:var(--text-primary)">delivery → session</span></p>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button type="button" style="border:1px solid var(--cc-green-border);background:transparent;color:var(--green);border-radius:4px;padding:6px 14px;font:600 12px var(--font-body);cursor:pointer">Approve &amp; land</button>
+            <button type="button" style="border:1px solid var(--cc-red-a35);background:transparent;color:var(--red);border-radius:4px;padding:6px 14px;font:600 12px var(--font-body);cursor:pointer">Reject &amp; reopen</button>
+          </div>
+        </section>
+        <div style="position:relative;height:242px;background-image:radial-gradient(rgba(255,255,255,0.07) 1px,transparent 1px);background-size:20px 20px">
+          <div style="position:absolute;left:12px;right:12px;top:12px;height:176px;border:1px solid var(--cc-amber-a30);border-left:2px solid var(--amber);border-radius:10px;background:linear-gradient(90deg,var(--cc-amber-a04),transparent 34%)"></div>
+          <div style="position:absolute;left:12px;top:12px;width:172px;height:176px;padding:14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;align-items:center;gap:7px"><span style="width:7px;height:7px;border-radius:50%;background:var(--amber);box-shadow:0 0 8px var(--amber-glow);animation:pulse-dot 2.5s ease-in-out infinite"></span><span style="font:700 13px var(--font-mono);color:var(--text-primary)">delivery</span></div>
+            <span style="align-self:flex-start" class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-amber-a25)] bg-amber-glow text-amber">gated</span>
+            <span style="font:500 10.5px var(--font-mono);color:var(--text-tertiary)">⤳ lands → session<br>on approval</span>
+          </div>
+          <div class="graph-node relative overflow-hidden rounded-[14px] border border-solid bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)] [--node-color:var(--amber)] [--node-color-glow:var(--amber-glow)] border-[var(--cc-amber-a40)] [border-top-color:var(--cc-amber-a60)] [animation:pulse-node_2.5s_ease-in-out_infinite]" style="position:absolute;left:220px;top:38px;width:250px;padding:12px 14px 10px">
+            <div style="position:relative;z-index:1;display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:7px">
+              <span style="font-size:.82rem;font-weight:700;line-height:1.2;color:var(--text-primary)">Implement checkout</span>
+              <span style="flex-shrink:0;border:1px solid var(--cc-amber-a30);background:var(--cc-amber-a10);color:var(--amber);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Awaiting Approval</span>
+            </div>
+            <div style="position:relative;z-index:1;border:1px solid var(--border-subtle);border-radius:8px;background:var(--cc-graph-ink-a55);margin-bottom:8px">
+              <div style="display:flex;align-items:center;gap:6px;padding:6px 9px"><span style="font:700 9px var(--font-mono);letter-spacing:.1em;color:var(--text-tertiary);width:26px">IMPL</span><span style="color:var(--cyan);font-size:.66rem">◆</span><span style="font:600 10.5px var(--font-mono);color:var(--text-primary)">opus-4.1</span><span title="Overridden — workflow default: sonnet-4.5" style="font:700 10px var(--font-mono);color:var(--amber)">Δ</span><span style="margin-left:auto;border:1px solid var(--border-default);border-radius:9px;padding:1px 6px;font:600 9px var(--font-mono);text-transform:uppercase;color:var(--text-secondary)">high</span></div>
+            </div>
+            <div style="position:relative;z-index:1;margin-bottom:8px;font:500 10px var(--font-mono);color:var(--text-tertiary)"><span style="color:var(--amber)">✓ approval</span> · <span style="color:var(--green)">◈ captured</span></div>
+            <div style="position:relative;z-index:1;height:3px;border-radius:3px;background:var(--cc-graph-ink-a50);margin-bottom:7px"><div style="width:100%;height:100%;border-radius:3px;background:var(--amber);box-shadow:0 0 6px var(--amber-glow)"></div></div>
+            <div style="position:relative;z-index:1;font-size:.66rem;font-weight:500;color:var(--amber)">Awaiting your approval</div>
+          </div>
+          <div style="position:absolute;right:24px;top:88px;display:inline-flex;align-items:center;gap:5px;border:1px dashed var(--amber-dim);border-radius:20px;color:var(--amber);padding:3px 10px;font:600 10.5px var(--font-mono)">⇥ lands → session on approval</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 1e — Builder with swimlanes + drag re-placement ============ -->
+  <div id="1e" data-screen-label="1e Builder — drag between lanes">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:14px">
+      <a href="#1e" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cyan-glow-strong);border-radius:6px;background:var(--cc-cyan-a08);font:700 12px var(--font-mono);color:var(--cyan)">1e</a>
+      <span style="font:700 16px var(--font-body);color:var(--text-primary)">Builder — same swimlanes, drag a context between lanes to re-place it</span>
+      <span style="font-size:12.5px;color:var(--text-secondary)">dropping edits placement.lane; the placement validator runs live (ownership overlaps, reserved session lane)</span>
+    </div>
+    <div style="width:1300px;background:var(--bg-void);border:1px solid var(--border-default);border-radius:12px;overflow:hidden">
+      <div class="flex min-h-[44px] items-center gap-md border-b border-border-dim bg-bg-surface px-md py-2">
+        <span class="text-[0.7rem] font-semibold uppercase tracking-[0.06em] py-[3px] px-[10px] rounded-[3px] bg-bg-raised text-text-tertiary border border-border-default">draft</span>
+        <span class="text-[0.72rem] text-text-secondary">Checkout rules migration · rev 5 (unsaved)</span>
+        <div class="ml-auto flex gap-sm">
+          <button type="button" class="inline-flex items-center justify-center font-medium rounded-sm cursor-pointer border border-border-default whitespace-nowrap text-[0.7rem] py-[3px] px-[8px] h-[22px] bg-bg-raised text-text-secondary">Validate</button>
+          <button type="button" class="inline-flex items-center justify-center font-medium rounded-sm cursor-pointer border border-border-default whitespace-nowrap text-[0.7rem] py-[3px] px-[8px] h-[22px] bg-bg-raised text-text-secondary">Save</button>
+          <button type="button" class="inline-flex items-center justify-center font-medium rounded-sm cursor-pointer border whitespace-nowrap text-[0.7rem] py-[3px] px-[8px] h-[22px] bg-[var(--cc-cyan-a12)] text-cyan border-[var(--cyan-glow-strong)]">Launch…</button>
+        </div>
+      </div>
+      <div style="position:relative;height:560px;background-image:radial-gradient(rgba(255,255,255,0.07) 1px,transparent 1px);background-size:20px 20px">
+        <!-- plan band -->
+        <div style="position:absolute;left:12px;right:12px;top:12px;height:150px;border:1px solid var(--border-subtle);border-radius:10px"></div>
+        <div style="position:absolute;left:12px;top:12px;width:172px;height:150px;padding:14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:6px">
+          <span style="font:700 13px var(--font-mono);color:var(--text-primary)">plan</span>
+          <span style="font:500 10.5px var(--font-mono);color:var(--text-tertiary)">1 member · mode full</span>
+        </div>
+        <!-- research band (drag origin) -->
+        <div style="position:absolute;left:12px;right:12px;top:170px;height:150px;border:1px solid var(--border-subtle);border-radius:10px"></div>
+        <div style="position:absolute;left:12px;top:170px;width:172px;height:150px;padding:14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:6px">
+          <span style="font:700 13px var(--font-mono);color:var(--text-primary)">research</span>
+          <span style="font:500 10.5px var(--font-mono);color:var(--text-tertiary)">2 members · mode owned</span>
+        </div>
+        <!-- delivery band (drop target, highlighted) -->
+        <div style="position:absolute;left:12px;right:12px;top:328px;height:150px;border:1px dashed var(--cyan);border-radius:10px;background:var(--cc-cyan-a05);box-shadow:0 0 0 1px var(--cc-cyan-a25),0 0 24px var(--cyan-glow) inset"></div>
+        <div style="position:absolute;left:12px;top:328px;width:172px;height:150px;padding:14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:6px">
+          <span style="font:700 13px var(--font-mono);color:var(--cyan)">delivery</span>
+          <span style="font:500 10.5px var(--font-mono);color:var(--text-tertiary)">1 member · mode full</span>
+          <span style="font:600 10.5px var(--font-mono);color:var(--cyan)">drop to re-place here</span>
+        </div>
+        <!-- add lane row -->
+        <div style="position:absolute;left:12px;right:12px;top:486px;height:56px;border:1px dashed var(--border-default);border-radius:10px;display:flex;align-items:center;justify-content:center;font:600 12px var(--font-mono);color:var(--text-tertiary);cursor:pointer">+ New lane</div>
+
+        <!-- draft edges -->
+        <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none">
+          <defs>
+            <marker id="arr-b" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 Z" fill="var(--border-default)"></path></marker>
+          </defs>
+          <path d="M 412 84 C 452 84 432 242 472 242" fill="none" stroke="var(--border-default)" stroke-width="2" marker-end="url(#arr-b)"></path>
+          <path d="M 672 242 C 770 242 820 400 920 400" fill="none" stroke="var(--border-default)" stroke-width="2" stroke-dasharray="3 5" marker-end="url(#arr-b)"></path>
+          <g role="img" aria-label="Guarded edge (when) — unresolved">
+            <rect x="777" y="312" width="40" height="18" rx="9" fill="transparent" stroke="var(--border-default)"></rect>
+            <text x="797" y="325" text-anchor="middle" style="font:400 0.62rem var(--font-mono)" fill="var(--text-tertiary)">when</text>
+          </g>
+        </svg>
+
+        <!-- static draft nodes -->
+        <div style="position:absolute;left:212px;top:40px;width:200px;padding:12px 14px 10px" class="graph-node relative overflow-hidden rounded-[14px] border border-solid border-border-subtle bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)]">
+          <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:7px"><span style="font-size:.82rem;font-weight:700;color:var(--text-primary)">Plan the migration</span><span style="border:1px solid var(--border-default);color:var(--text-tertiary);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase">Draft</span></div>
+          <div style="display:flex;gap:4px;margin-bottom:9px"><span style="border:1px solid var(--cyan-glow-strong);background:var(--cc-cyan-a06);color:var(--cyan);border-radius:4px;padding:2px 6px;font:600 .6rem var(--font-mono);text-transform:uppercase">◆ Claude</span><span style="border:1px solid var(--border-default);background:var(--cc-graph-ink-a55);color:var(--text-primary);border-radius:4px;padding:2px 6px;font:600 .6rem var(--font-mono)">▣</span></div>
+          <div style="font-size:.66rem;color:var(--text-tertiary)">3 tasks</div>
+          <span style="position:absolute;right:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+        </div>
+        <div style="position:absolute;left:472px;top:198px;width:200px;padding:12px 14px 10px" class="graph-node relative overflow-hidden rounded-[14px] border border-solid border-border-subtle bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)]">
+          <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:7px"><span style="font-size:.82rem;font-weight:700;color:var(--text-primary)">Evaluate rules engine</span><span style="border:1px solid var(--border-default);color:var(--text-tertiary);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase">Draft</span></div>
+          <div style="display:flex;gap:4px;margin-bottom:9px"><span style="border:1px solid var(--cc-codex-violet-a35);background:var(--violet-glow);color:var(--violet);border-radius:4px;padding:2px 6px;font:600 .6rem var(--font-mono);text-transform:uppercase">◆ Codex</span><span title="mode owned: docs/eval" style="border:1px solid var(--border-default);background:var(--cc-graph-ink-a55);color:var(--text-secondary);border-radius:4px;padding:2px 6px;font:600 .6rem var(--font-mono)">◪ docs/eval</span></div>
+          <div style="font-size:.66rem;color:var(--text-tertiary)">2 tasks</div>
+          <span style="position:absolute;left:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+          <span style="position:absolute;right:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+        </div>
+        <!-- drag origin ghost slot -->
+        <div style="position:absolute;left:712px;top:198px;width:200px;height:92px;border:1px dashed var(--border-strong);border-radius:14px;opacity:.6;display:flex;align-items:center;justify-content:center;font:500 10.5px var(--font-mono);color:var(--text-tertiary)">was: lane research</div>
+        <!-- delivery band node -->
+        <div style="position:absolute;left:920px;top:356px;width:200px;padding:12px 14px 10px" class="graph-node relative overflow-hidden rounded-[14px] border border-solid border-border-subtle bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)]">
+          <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:7px"><span style="font-size:.82rem;font-weight:700;color:var(--text-primary)">Implement checkout</span><span style="border:1px solid var(--border-default);color:var(--text-tertiary);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase">Draft</span></div>
+          <div style="display:flex;gap:4px;margin-bottom:9px"><span style="border:1px solid var(--cyan-glow-strong);background:var(--cc-cyan-a06);color:var(--cyan);border-radius:4px;padding:2px 6px;font:600 .6rem var(--font-mono);text-transform:uppercase">◆ Claude</span><span style="border:1px solid var(--amber-dim);background:var(--amber-glow);color:var(--amber);border-radius:4px;padding:2px 6px;font:600 .6rem var(--font-mono)">✓</span></div>
+          <div style="font-size:.66rem;color:var(--text-tertiary)">5 tasks</div>
+          <span style="position:absolute;left:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+        </div>
+        <!-- dragged node (mid-flight, tilted) -->
+        <div style="position:absolute;left:660px;top:372px;width:200px;padding:12px 14px 10px;transform:rotate(-2deg);box-shadow:0 16px 40px rgba(0,0,0,.6),0 0 0 1px var(--cc-cyan-a40);cursor:grabbing;z-index:3" class="graph-node relative overflow-hidden rounded-[14px] border border-solid border-[var(--cc-cyan-a40)] bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)]">
+          <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:7px"><span style="font-size:.82rem;font-weight:700;color:var(--text-primary)">Write eval fixtures</span><span style="border:1px solid var(--border-default);color:var(--text-tertiary);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase">Draft</span></div>
+          <div style="display:flex;gap:4px;margin-bottom:9px"><span style="border:1px solid var(--cyan-glow-strong);background:var(--cc-cyan-a06);color:var(--cyan);border-radius:4px;padding:2px 6px;font:600 .6rem var(--font-mono);text-transform:uppercase">◆ Claude</span></div>
+          <div style="font-size:.66rem;color:var(--text-tertiary)">1 task</div>
+        </div>
+        <!-- drop tooltip -->
+        <div style="position:absolute;left:660px;top:342px;z-index:4;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--cyan-glow-strong);border-radius:6px;background:var(--bg-elevated);padding:4px 10px;font:600 11px var(--font-mono);color:var(--cyan);box-shadow:0 8px 24px rgba(0,0,0,.5)">Re-place → lane: delivery · mode: full</div>
+        <!-- live validation hint -->
+        <div style="position:absolute;right:24px;top:24px;width:330px;border:1px solid var(--cc-amber-a30);border-radius:8px;background:var(--cc-graph-ink-a40);padding:10px 12px;font-size:.7rem;color:var(--text-secondary);line-height:1.5">
+          <span style="font:700 10.5px var(--font-mono);color:var(--amber);text-transform:uppercase;letter-spacing:.06em">Placement check</span><br>
+          "Write eval fixtures" and "Implement checkout" can run concurrently on lane <span style="font-family:var(--font-mono);color:var(--text-primary)">delivery</span> — add a dependency edge or declare disjoint <span style="font-family:var(--font-mono)">ownedPaths</span>.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 1f — Mobile ============ -->
+  <div id="1f" data-screen-label="1f Mobile">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:14px">
+      <a href="#1f" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cyan-glow-strong);border-radius:6px;background:var(--cc-cyan-a08);font:700 12px var(--font-mono);color:var(--cyan)">1f</a>
+      <span style="font:700 16px var(--font-body);color:var(--text-primary)">Mobile — lanes become stacked cards; panels become tabs</span>
+      <span style="font-size:12.5px;color:var(--text-secondary)">each lane is one vertically-stacked card with a horizontally-scrollable member row; 44px+ targets</span>
+    </div>
+    <div style="display:flex;gap:32px;align-items:flex-start">
+      <!-- Phone A: Graph -->
+      <div style="width:390px;height:800px;background:var(--bg-void);border:1px solid var(--border-default);border-radius:24px;overflow:hidden;display:flex;flex-direction:column">
+        <header style="display:flex;align-items:center;gap:10px;height:48px;padding:0 12px;border-bottom:1px solid var(--border-subtle);background:var(--cc-topbar-bg);flex-shrink:0">
+          <span style="font-size:1.4rem;color:var(--text-tertiary);line-height:1">‹</span>
+          <span style="font:600 13px var(--font-mono);color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">checkout-v2 / Workflow</span>
+          <span style="margin-left:auto;border:1px solid var(--cyan-glow-strong);background:var(--cc-cyan-a12);color:var(--cyan);border-radius:3px;padding:2px 8px;font-size:.62rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em">running</span>
+        </header>
+        <div style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px;padding-bottom:70px">
+          <!-- lane card: delivery (active first) -->
+          <div style="border:1px solid var(--cc-cyan-a25);border-left:2px solid var(--cyan);border-radius:10px;background:linear-gradient(90deg,var(--cc-cyan-a05),transparent 40%)">
+            <div style="display:flex;align-items:center;gap:8px;padding:12px 14px;min-height:44px">
+              <span style="width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 8px var(--cyan-glow);animation:pulse-dot 2.5s ease-in-out infinite"></span>
+              <span style="font:700 13px var(--font-mono);color:var(--text-primary)">delivery</span>
+              <span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-cyan-a25)] bg-cyan-glow text-cyan">active</span>
+              <span style="margin-left:auto;font:500 10.5px var(--font-mono);color:var(--text-tertiary)">3 members · ⤳ session</span>
+            </div>
+            <div style="display:flex;gap:8px;overflow-x:auto;padding:0 14px 14px">
+              <div style="flex-shrink:0;width:170px;border:1px solid var(--cc-green-a20);border-radius:10px;background:linear-gradient(175deg,var(--cc-graph-node-grad-top),var(--cc-graph-node-grad-bottom));padding:10px 12px">
+                <div style="display:flex;justify-content:space-between;gap:6px;margin-bottom:6px"><span style="font-size:.76rem;font-weight:700;color:var(--text-primary)">Filter candidates</span></div>
+                <div style="font-size:.62rem;color:var(--green);font-weight:600;text-transform:uppercase;letter-spacing:.05em">Completed</div>
+              </div>
+              <div style="flex-shrink:0;width:170px;border:1px solid var(--cc-cyan-a40);border-radius:10px;background:linear-gradient(175deg,var(--cc-graph-node-grad-top),var(--cc-graph-node-grad-bottom));padding:10px 12px;box-shadow:0 0 12px var(--cyan-glow)">
+                <div style="display:flex;justify-content:space-between;gap:6px;margin-bottom:6px"><span style="font-size:.76rem;font-weight:700;color:var(--text-primary)">Implement checkout</span></div>
+                <div style="display:flex;gap:4px;margin-bottom:6px"><span style="border:1px solid var(--blue-dim);background:var(--blue-glow);color:var(--blue);border-radius:4px;padding:1px 5px;font:600 .58rem var(--font-mono)">↻ 2/3</span><span style="border:1px solid var(--amber-dim);color:var(--amber);border-radius:4px;padding:1px 5px;font:600 .58rem var(--font-mono)">✓</span></div>
+                <div style="height:3px;border-radius:3px;background:var(--cc-graph-ink-a50);margin-bottom:5px"><div style="width:60%;height:100%;border-radius:3px;background:var(--cyan)"></div></div>
+                <div style="font-size:.62rem;color:var(--text-secondary)">Running task 3/5</div>
+              </div>
+              <div style="flex-shrink:0;width:170px;border:1px solid var(--cc-cyan-a40);border-radius:10px;background:linear-gradient(175deg,var(--cc-graph-node-grad-top),var(--cc-graph-node-grad-bottom));padding:10px 12px">
+                <div style="display:flex;justify-content:space-between;gap:6px;margin-bottom:6px"><span style="font-size:.76rem;font-weight:700;color:var(--text-primary)">Migrate settings</span></div>
+                <div style="display:flex;gap:4px;margin-bottom:6px"><span style="border:1px solid var(--border-default);color:var(--text-secondary);border-radius:4px;padding:1px 5px;font:600 .58rem var(--font-mono)">◪ src/settings</span></div>
+                <div style="height:3px;border-radius:3px;background:var(--cc-graph-ink-a50);margin-bottom:5px"><div style="width:30%;height:100%;border-radius:3px;background:var(--cyan)"></div></div>
+                <div style="font-size:.62rem;color:var(--text-secondary)">Running task 1/2</div>
+              </div>
+            </div>
+          </div>
+          <!-- lane card: plan -->
+          <div style="border:1px solid var(--border-subtle);border-left:2px solid var(--green-dim);border-radius:10px">
+            <div style="display:flex;align-items:center;gap:8px;padding:12px 14px;min-height:44px">
+              <span style="width:7px;height:7px;border-radius:50%;background:var(--green)"></span>
+              <span style="font:700 13px var(--font-mono);color:var(--text-primary)">plan</span>
+              <span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-green-a20)] bg-green-glow text-green">merged</span>
+              <span style="margin-left:auto;font:500 10.5px var(--font-mono);color:var(--text-tertiary)">1 member</span>
+            </div>
+          </div>
+          <!-- lane card: candidate-flags -->
+          <div style="border:1px solid var(--border-subtle);border-left:2px solid var(--green-dim);border-radius:10px">
+            <div style="display:flex;align-items:center;gap:8px;padding:12px 14px;min-height:44px">
+              <span style="width:7px;height:7px;border-radius:50%;background:var(--green)"></span>
+              <span style="font:700 13px var(--font-mono);color:var(--text-primary)">candidate-flags</span>
+              <span style="font:500 10px var(--font-mono);color:var(--cyan)">✦</span>
+              <span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-green-a20)] bg-green-glow text-green">merged</span>
+              <span style="margin-left:auto;font:500 10.5px var(--font-mono);color:var(--text-tertiary)">⤳ delivery</span>
+            </div>
+          </div>
+          <!-- lane card: candidate-rules -->
+          <div style="border:1px solid var(--border-subtle);border-left:2px solid var(--green-dim);border-radius:10px">
+            <div style="display:flex;align-items:center;gap:8px;padding:12px 14px;min-height:44px">
+              <span style="width:7px;height:7px;border-radius:50%;background:var(--green)"></span>
+              <span style="font:700 13px var(--font-mono);color:var(--text-primary)">candidate-rules</span>
+              <span style="font:500 10px var(--font-mono);color:var(--cyan)">✦</span>
+              <span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-green-a20)] bg-green-glow text-green">merged</span>
+              <span style="margin-left:auto;font:500 10.5px var(--font-mono);color:var(--text-tertiary)">⤳ delivery</span>
+            </div>
+          </div>
+          <!-- lane card: session -->
+          <div style="border:1px dashed var(--border-default);border-radius:10px;background:repeating-linear-gradient(135deg,var(--cc-graph-ink-a50) 0 8px,transparent 8px 18px)">
+            <div style="display:flex;align-items:center;gap:8px;padding:12px 14px;min-height:44px">
+              <span style="width:7px;height:7px;border-radius:50%;background:var(--text-tertiary)"></span>
+              <span style="font:700 13px var(--font-mono);color:var(--text-primary)">session</span>
+              <span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-border-default text-text-secondary">read-only</span>
+              <span style="margin-left:auto;font:500 10.5px var(--font-mono);color:var(--cyan)">● Audit report</span>
+            </div>
+          </div>
+        </div>
+        <div style="position:relative;flex-shrink:0;height:56px;border-top:1px solid var(--border-subtle);background:var(--cc-bg-base-a92);display:flex;align-items:center;padding:0 12px">
+          <div style="display:flex;flex:1;gap:2px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-surface);padding:3px">
+            <span style="flex:1;display:flex;align-items:center;justify-content:center;min-height:32px;border-radius:4px;background:var(--cyan);color:var(--text-inverse);font:600 11px var(--font-mono);text-transform:uppercase;letter-spacing:.05em">Graph</span>
+            <span style="flex:1;display:flex;align-items:center;justify-content:center;min-height:32px;border-radius:4px;color:var(--text-secondary);font:600 11px var(--font-mono);text-transform:uppercase;letter-spacing:.05em">Inspector</span>
+            <span style="flex:1;display:flex;align-items:center;justify-content:center;min-height:32px;border-radius:4px;color:var(--text-secondary);font:600 11px var(--font-mono);text-transform:uppercase;letter-spacing:.05em">Log</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Phone B: Inspector -->
+      <div style="width:390px;height:800px;background:var(--bg-void);border:1px solid var(--border-default);border-radius:24px;overflow:hidden;display:flex;flex-direction:column">
+        <header style="display:flex;align-items:center;gap:10px;height:48px;padding:0 12px;border-bottom:1px solid var(--border-subtle);background:var(--cc-topbar-bg);flex-shrink:0">
+          <span style="font-size:1.4rem;color:var(--text-tertiary);line-height:1">‹</span>
+          <span style="font:600 13px var(--font-mono);color:var(--text-primary)">Implement checkout</span>
+          <span style="margin-left:auto;border:1px solid var(--cyan-glow-strong);background:var(--cc-cyan-a08);color:var(--cyan);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase">Running</span>
+        </header>
+        <div style="padding:10px 12px;border-bottom:1px solid var(--border-dim);background:var(--bg-base);display:flex;flex-direction:column;gap:5px">
+          <div style="display:flex;align-items:center;gap:6px"><span style="flex-shrink:0;width:58px;font:600 9px var(--font-mono);text-transform:uppercase;letter-spacing:.09em;color:var(--text-tertiary)">impl</span><span style="display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:600 9.5px var(--font-mono);color:var(--cyan);border:1px solid var(--cc-cyan-a25);background:var(--cyan-glow)">sonnet</span><span style="font:400 11px var(--font-mono);color:var(--text-secondary)">high</span></div>
+          <div style="display:flex;align-items:center;gap:6px"><span style="flex-shrink:0;width:58px;font:600 9px var(--font-mono);text-transform:uppercase;letter-spacing:.09em;color:var(--text-tertiary)">gates</span><span style="display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:600 9.5px var(--font-mono);color:var(--amber);border:1px solid var(--amber-dim);background:var(--amber-glow)">security</span><span style="display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:600 9.5px var(--font-mono);color:var(--text-secondary);border:1px solid var(--border-default)">script ×2</span><span style="display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:600 9.5px var(--font-mono);color:var(--amber);border:1px solid var(--amber-dim);background:var(--amber-glow)">approval</span></div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px;padding-bottom:70px">
+          <div style="border:1px solid var(--border-subtle);border-left:2px solid var(--cyan);border-radius:8px;background:var(--bg-base);padding:12px;display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;align-items:center;gap:8px"><span style="width:7px;height:7px;border-radius:50%;background:var(--cyan)"></span><span style="font:700 12.5px var(--font-mono);color:var(--text-primary)">lane delivery</span><span style="display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:600 9.5px var(--font-mono);color:var(--text-secondary);border:1px solid var(--border-default)">full access</span></div>
+            <div style="display:flex;align-items:center;gap:6px;min-width:0"><div style="max-width:220px;min-width:0;overflow:hidden"><x-import component-from-global-scope="CommandCenterUI.CopyableId" label="br" value="csm/checkout-v2.delivery" truncate-at="{{ t16 }}" hint-size="180px,20px"></x-import></div><span style="font:400 11px var(--font-mono);color:var(--text-tertiary)">⤳ session</span></div>
+            <div style="display:flex;gap:6px;font:500 11px var(--font-mono);color:var(--text-tertiary)"><span style="color:var(--green)">✓ filter</span><span style="color:var(--cyan)">● implement</span></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base);padding:11px 12px"><div style="font:700 1.4rem var(--font-body);color:var(--text-primary);line-height:1;margin-bottom:5px">3/5</div><div style="font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Tasks</div></div>
+            <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base);padding:11px 12px"><div style="font:700 1.4rem var(--font-body);color:var(--text-primary);line-height:1;margin-bottom:5px">↻ 2/3</div><div style="font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Loop pass</div></div>
+          </div>
+          <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base);overflow:hidden">
+            <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border-dim);background:var(--bg-surface)"><span style="color:var(--text-secondary);font-size:10px">▾</span><span style="font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Validation</span><span style="display:inline-flex;align-items:center;border-radius:999px;padding:1px 8px;font:600 9.5px var(--font-mono);color:var(--red);border:1px solid var(--red-dim);background:var(--red-glow)">rejected</span><span style="margin-left:auto;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">iteration 2</span></div>
+            <div style="padding:11px 12px;display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;align-items:flex-start;gap:8px;font-size:.72rem;color:var(--text-secondary)"><span style="margin-top:5px;width:6px;height:6px;border-radius:50%;background:var(--red);flex-shrink:0"></span><span>Rejected — risk rules bypass the audit log on the timeout path.</span></div>
+              <button type="button" style="min-height:44px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-raised);color:var(--text-secondary);font:500 12px var(--font-body);cursor:pointer">View security transcript</button>
+            </div>
+          </div>
+          <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base);display:flex;align-items:center;gap:8px;padding:0 12px;min-height:44px"><span style="color:var(--text-tertiary);font-size:10px">▸</span><span style="font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Conversations</span><span style="margin-left:auto;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">3 kept</span><span style="color:var(--text-tertiary);font-size:11px">›</span></div>
+          <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base);display:flex;align-items:center;gap:8px;padding:0 12px;min-height:44px"><span style="color:var(--text-tertiary);font-size:10px">▸</span><span style="font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Brief</span><span style="margin-left:auto;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">3 criteria</span><span style="color:var(--text-tertiary);font-size:11px">›</span></div>
+          <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base);display:flex;align-items:center;gap:8px;padding:0 12px;min-height:44px"><span style="color:var(--text-tertiary);font-size:10px">▸</span><span style="font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Tasks</span><span style="margin-left:auto;font:600 11px var(--font-mono);color:var(--text-primary)">3<span style="font-weight:400;color:var(--text-tertiary)">/5</span></span><span style="color:var(--text-tertiary);font-size:11px">›</span></div>
+          <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-base);display:flex;align-items:center;gap:8px;padding:0 12px;min-height:44px"><span style="color:var(--text-tertiary);font-size:10px">▸</span><span style="font:700 9.5px var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Config</span><span style="display:inline-flex;align-items:center;border-radius:999px;padding:1px 8px;font:600 9.5px var(--font-mono);color:var(--cyan);border:1px solid var(--cc-cyan-a25);background:var(--cc-cyan-a08)">2 set here</span><span style="margin-left:auto;color:var(--text-tertiary);font-size:11px">›</span></div>
+        </div>
+        <div style="flex-shrink:0;height:56px;border-top:1px solid var(--border-subtle);background:var(--cc-bg-base-a92);display:flex;align-items:center;padding:0 12px">
+          <div style="display:flex;flex:1;gap:2px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-surface);padding:3px">
+            <span style="flex:1;display:flex;align-items:center;justify-content:center;min-height:32px;border-radius:4px;color:var(--text-secondary);font:600 11px var(--font-mono);text-transform:uppercase;letter-spacing:.05em">Graph</span>
+            <span style="flex:1;display:flex;align-items:center;justify-content:center;min-height:32px;border-radius:4px;background:var(--cyan);color:var(--text-inverse);font:600 11px var(--font-mono);text-transform:uppercase;letter-spacing:.05em">Inspector</span>
+            <span style="flex:1;display:flex;align-items:center;justify-content:center;min-height:32px;border-radius:4px;color:var(--text-secondary);font:600 11px var(--font-mono);text-transform:uppercase;letter-spacing:.05em">Log</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 1g — Previous-iteration transcript access: 3 variations ============ -->
+  <div id="1g" data-screen-label="1g Transcript history variations">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:14px">
+      <a href="#1g" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cyan-glow-strong);border-radius:6px;background:var(--cc-cyan-a08);font:700 12px var(--font-mono);color:var(--cyan)">1g</a>
+      <span style="font:700 16px var(--font-body);color:var(--text-primary)">Reaching previous-iteration transcripts — three variations</span>
+      <span style="font-size:12.5px;color:var(--text-secondary)">A is the row-per-round model you picked; B and C for comparison</span>
+    </div>
+    <div style="display:flex;gap:32px;align-items:flex-start">
+
+      <!-- A: rounds as rows -->
+      <div style="width:400px">
+        <div style="margin-bottom:10px;font:600 12.5px var(--font-mono);color:var(--cyan)">A · rounds as rows, expand inline <span style="color:var(--text-tertiary)">(picked)</span></div>
+        <div style="background:var(--bg-surface);border:1px solid var(--border-default);border-radius:10px;overflow:hidden">
+          <div style="padding:10px 14px;border-bottom:1px solid var(--border-dim);font:600 11px var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-tertiary)">History — Implement checkout</div>
+          <div style="padding:12px 14px;display:flex;flex-direction:column;gap:4px">
+            <div style="border:1px solid var(--cc-cyan-a25);border-radius:8px;background:var(--cc-cyan-a04);padding:10px 12px">
+              <div style="display:flex;align-items:center;gap:8px"><span style="color:var(--text-secondary);font-size:11px">▾</span><span style="font:700 12px var(--font-mono);color:var(--text-primary)">Round 3</span><span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-cyan-a25)] bg-cyan-glow text-cyan">live</span><span style="margin-left:auto;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">10:58 AM</span></div>
+              <div style="margin-top:8px;padding-left:18px;display:flex;flex-direction:column;gap:6px">
+                <div style="display:flex;align-items:center;gap:8px;font:500 11.5px var(--font-mono);color:var(--text-secondary)"><span style="color:var(--cyan)">◆</span>Implementer<button type="button" style="margin-left:auto;border:1px solid var(--border-default);border-radius:4px;background:var(--bg-raised);color:var(--text-secondary);padding:2px 8px;font:500 10.5px var(--font-mono);cursor:pointer">Transcript</button></div>
+                <div style="display:flex;align-items:center;gap:8px;font:500 11.5px var(--font-mono);color:var(--text-secondary)"><span style="color:var(--amber)">◆</span>security · running<button type="button" style="margin-left:auto;border:1px solid var(--border-default);border-radius:4px;background:var(--bg-raised);color:var(--text-secondary);padding:2px 8px;font:500 10.5px var(--font-mono);cursor:pointer">Transcript</button></div>
+              </div>
+            </div>
+            <div style="border:1px solid var(--border-subtle);border-radius:8px;padding:10px 12px">
+              <div style="display:flex;align-items:center;gap:8px"><span style="color:var(--text-tertiary);font-size:11px">▸</span><span style="font:700 12px var(--font-mono);color:var(--text-primary)">Round 2</span><span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-red-a40)] bg-red-glow text-red">rejected</span><span style="margin-left:auto;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">10:42 AM</span></div>
+            </div>
+            <div style="border:1px solid var(--border-subtle);border-radius:8px;padding:10px 12px">
+              <div style="display:flex;align-items:center;gap:8px"><span style="color:var(--text-tertiary);font-size:11px">▸</span><span style="font:700 12px var(--font-mono);color:var(--text-primary)">Round 1</span><span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-red-a40)] bg-red-glow text-red">rejected</span><span style="margin-left:auto;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">10:16 AM</span></div>
+            </div>
+            <div style="margin-top:4px;font:400 10.5px var(--font-mono);color:var(--text-tertiary)">↺ continued sessions marked per seat · reset-retired rounds stay reachable from advisory links</div>
+          </div>
+        </div>
+        <div style="margin-top:8px;font-size:12px;line-height:1.55;color:var(--text-secondary)">Every round keeps its per-seat transcript buttons after the round closes. Scales to many rounds, stays in the inspector.</div>
+      </div>
+
+      <!-- B: round selector -->
+      <div style="width:400px">
+        <div style="margin-bottom:10px;font:600 12.5px var(--font-mono);color:var(--text-secondary)">B · round selector</div>
+        <div style="background:var(--bg-surface);border:1px solid var(--border-default);border-radius:10px;overflow:hidden">
+          <div style="padding:10px 14px;border-bottom:1px solid var(--border-dim);font:600 11px var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-tertiary)">History — Implement checkout</div>
+          <div style="padding:12px 14px">
+            <div style="display:inline-flex;gap:2px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-base);padding:3px;margin-bottom:12px">
+              <span style="padding:4px 12px;border-radius:4px;font:600 11px var(--font-mono);color:var(--text-secondary)">R1</span>
+              <span style="padding:4px 12px;border-radius:4px;background:var(--bg-elevated);font:600 11px var(--font-mono);color:var(--text-primary)">R2</span>
+              <span style="padding:4px 12px;border-radius:4px;font:600 11px var(--font-mono);color:var(--cyan)">R3 ●</span>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:8px;font-size:.72rem;color:var(--text-secondary)"><span style="margin-top:5px;width:6px;height:6px;border-radius:50%;background:var(--red);flex-shrink:0"></span><span>Rejected — risk rules bypass the audit log on the timeout path.</span></div>
+            <div style="margin-top:10px;display:flex;gap:6px">
+              <button type="button" style="border:1px solid var(--border-default);border-radius:4px;background:var(--bg-raised);color:var(--text-secondary);padding:3px 10px;font:500 10.5px var(--font-mono);cursor:pointer">Implementer transcript</button>
+              <button type="button" style="border:1px solid var(--border-default);border-radius:4px;background:var(--bg-raised);color:var(--text-secondary);padding:3px 10px;font:500 10.5px var(--font-mono);cursor:pointer">security transcript</button>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:8px;font-size:12px;line-height:1.55;color:var(--text-secondary)">One round visible at a time — cleanest surface, but cross-round comparison needs flipping, and a long loop crowds the segmented control.</div>
+      </div>
+
+      <!-- C: scrubber in transcript viewer -->
+      <div style="width:400px">
+        <div style="margin-bottom:10px;font:600 12.5px var(--font-mono);color:var(--text-secondary)">C · scrubber in the transcript viewer</div>
+        <div style="background:var(--bg-void);border:1px solid var(--border-default);border-radius:10px;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border-dim);background:var(--bg-surface)">
+            <span style="font:600 12px var(--font-mono);color:var(--text-primary)">Implement checkout · Implementer</span>
+            <span style="margin-left:auto;font-size:12px;color:var(--text-tertiary);cursor:pointer">✕</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border-dim)">
+            <span style="font:500 11px var(--font-mono);color:var(--text-tertiary);cursor:pointer">‹</span>
+            <div style="flex:1;display:flex;align-items:center;gap:0">
+              <span style="width:10px;height:10px;border-radius:50%;background:var(--red);opacity:.55"></span><span style="flex:1;height:2px;background:var(--border-default)"></span>
+              <span style="width:12px;height:12px;border-radius:50%;background:var(--cyan);box-shadow:0 0 8px var(--cyan-glow)"></span><span style="flex:1;height:2px;background:var(--border-default)"></span>
+              <span style="width:10px;height:10px;border-radius:50%;border:2px solid var(--border-strong);background:transparent"></span>
+            </div>
+            <span style="font:500 11px var(--font-mono);color:var(--text-tertiary);cursor:pointer">›</span>
+            <span style="font:600 11px var(--font-mono);color:var(--cyan)">Round 2 / 3</span>
+          </div>
+          <div style="padding:12px 14px;display:flex;flex-direction:column;gap:8px;font:400 11px var(--font-mono);color:var(--text-secondary);line-height:1.6">
+            <div><span style="color:var(--cyan)">›</span> Rework the timeout path so every risk decision writes an audit row…</div>
+            <div style="color:var(--text-tertiary)">⏺ Edited checkout/risk.ts (+42 −7)</div>
+            <div style="color:var(--text-tertiary)">⏺ bun run test — 34 passed</div>
+            <div><span style="color:var(--cyan)">›</span> Task complete. Audit rows now emitted on all exits.</div>
+          </div>
+        </div>
+        <div style="margin-top:8px;font-size:12px;line-height:1.55;color:var(--text-secondary)">Navigation lives where you read: step rounds without leaving the viewer. Pairs well with A (rows open the viewer, scrubber moves between rounds).</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 1a — CURRENT PAGE (faithful recreation) ============ -->
+  <div id="1a" data-screen-label="1a Current execution page (recreation)">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:14px">
+      <a href="#1a" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--border-strong);border-radius:6px;background:var(--bg-raised);font:700 12px var(--font-mono);color:var(--text-secondary)">1a</a>
+      <span style="font:700 16px var(--font-body);color:var(--text-primary)">Current execution page — recreation, for comparison</span>
+      <span style="font-size:12.5px;color:var(--text-secondary)">lane placement invisible · rails fixed-width, not collapsible · validator findings repeat (aggregate + seat) · nodes spend height on prose</span>
+    </div>
+    <div style="width:1600px;background:var(--bg-void);border:1px solid var(--border-default);border-radius:12px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.5)">
+      <header class="flex h-[var(--topbar-height)] items-center justify-between border-x-0 border-t-0 border-b border-solid border-b-border-subtle bg-[var(--cc-topbar-bg)] px-lg [backdrop-filter:blur(16px)_saturate(140%)]">
+        <div class="flex items-center gap-md">
+          <span class="font-display text-[1.1rem] font-extrabold tracking-[-0.02em] text-cyan [text-shadow:0_0_20px_var(--cyan-glow-text)]">CC</span>
+          <div class="h-[20px] w-px bg-border-default"></div>
+          <nav class="flex items-center gap-sm font-mono text-[0.8rem] font-normal text-text-secondary">
+            <span>projects</span><span class="text-text-tertiary">/</span>
+            <span>atlas ▾</span><span class="text-text-tertiary">/</span>
+            <span class="font-semibold text-text-primary!">checkout-v2 ▾</span><span class="text-text-tertiary">/</span>
+            <span>Workflow</span>
+          </nav>
+        </div>
+        <div class="flex items-center gap-md">
+          <span class="inline-flex h-[28px] items-center gap-[6px] rounded-sm border border-solid border-border-default bg-transparent px-[10px] font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase text-text-secondary!">Specs</span>
+          <span class="inline-flex h-[28px] items-center gap-[6px] rounded-sm border border-solid border-border-default bg-transparent px-[10px] font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase text-text-secondary!">Tickets</span>
+          <span class="inline-flex h-[28px] items-center gap-[6px] rounded-sm border border-solid border-border-default bg-transparent px-[10px] font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase text-text-secondary!">Templates</span>
+          <span class="flex h-[30px] w-[30px] items-center justify-center rounded-sm text-text-secondary!">⚙</span>
+        </div>
+      </header>
+      <div style="display:flex;height:846px;min-height:0">
+        <!-- executions rail (fixed 300px, not collapsible today) -->
+        <nav style="width:300px;flex-shrink:0;border-right:1px solid var(--border-subtle);background:var(--bg-base);padding:12px;overflow:hidden;display:flex;flex-direction:column;gap:16px">
+          <h2 class="m-0 font-mono text-[0.72rem] font-bold tracking-[0.08em] text-text-secondary uppercase">Current</h2>
+          <div class="flex w-full flex-col gap-sm rounded-md border border-solid border-border-default bg-bg-raised p-md text-left font-mono text-text-primary">
+            <span class="flex w-full min-w-0 items-center gap-sm">
+              <span class="min-w-0 flex-1 truncate text-[0.78rem] font-semibold">Checkout rules migration</span>
+              <span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-cyan-a25)] bg-cyan-glow text-cyan">running</span>
+            </span>
+            <span class="flex w-full flex-wrap items-center gap-xs text-[0.7rem] text-text-tertiary"><span style="border:1px solid var(--border-default);border-radius:9px;padding:0 6px">Template</span><span>rev 4</span><span>No result</span><span>Aug 19, 10:02 AM</span></span>
+            <span class="line-clamp-2 text-[0.72rem] text-text-secondary">Replace legacy feature flags with the rules engine across checkout.</span>
+            <span class="flex w-full items-center justify-between gap-sm text-[0.7rem] text-text-tertiary"><span class="truncate">conv_91ce4</span><span class="shrink-0">exec_7f3a</span></span>
+          </div>
+          <h2 class="m-0 font-mono text-[0.72rem] font-bold tracking-[0.08em] text-text-secondary uppercase">History</h2>
+          <div class="flex w-full flex-col gap-sm rounded-md border border-solid border-border-subtle bg-bg-surface p-md font-mono text-text-primary">
+            <span class="flex w-full min-w-0 items-center gap-sm">
+              <span class="min-w-0 flex-1 truncate text-[0.78rem] font-semibold">Spike: rules engine eval</span>
+              <span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-green-a20)] bg-green-glow text-green">completed</span>
+            </span>
+            <span class="flex w-full flex-wrap items-center gap-xs text-[0.7rem] text-text-tertiary"><span style="border:1px solid var(--border-default);border-radius:9px;padding:0 6px">One-off</span><span>Result</span><span>Aug 14, 9:12 AM</span></span>
+            <span class="line-clamp-2 text-[0.72rem] text-text-secondary">Compare rules-engine libraries against current flag setup.</span>
+          </div>
+          <div class="flex w-full flex-col gap-sm rounded-md border border-solid border-border-subtle bg-bg-surface p-md font-mono text-text-primary">
+            <span class="flex w-full min-w-0 items-center gap-sm">
+              <span class="min-w-0 flex-1 truncate text-[0.78rem] font-semibold">Checkout rules migration</span>
+              <span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-border-subtle bg-transparent text-text-tertiary">aborted</span>
+            </span>
+            <span class="flex w-full flex-wrap items-center gap-xs text-[0.7rem] text-text-tertiary"><span style="border:1px solid var(--border-default);border-radius:9px;padding:0 6px">Template</span><span>rev 3</span><span>Aug 12, 4:40 PM</span></span>
+          </div>
+        </nav>
+
+        <div style="display:flex;flex-direction:column;flex:1;min-width:0">
+          <div class="flex min-h-[44px] items-center gap-md border-b border-border-dim bg-bg-surface px-md py-2">
+            <span class="text-[0.7rem] font-semibold uppercase tracking-[0.06em] py-[3px] px-[10px] rounded-[3px] bg-[var(--cc-cyan-a12)] text-cyan border border-[var(--cyan-glow-strong)]">running</span>
+            <div class="min-w-0 truncate text-[0.72rem] text-text-secondary">Lane <strong class="font-semibold text-text-primary">delivery</strong>: context-implement: running · Context: <strong class="font-semibold text-text-primary">Implement checkout</strong> · Task: <strong class="font-semibold text-text-primary">Wire risk rules into checkout</strong></div>
+            <div class="ml-auto flex gap-sm">
+              <button type="button" class="inline-flex items-center justify-center gap-[6px] font-medium rounded-sm cursor-pointer border border-border-default whitespace-nowrap text-[0.7rem] py-[3px] px-[8px] h-[22px] bg-bg-raised text-text-secondary">Pause</button>
+              <button type="button" class="inline-flex items-center justify-center gap-[6px] font-medium rounded-sm cursor-pointer border border-border-default whitespace-nowrap text-[0.7rem] py-[3px] px-[8px] h-[22px] bg-bg-raised" style="color:var(--red)">Abort</button>
+            </div>
+          </div>
+
+          <!-- free-form canvas, zoomed out to fit -->
+          <div style="position:relative;flex:1;min-width:0;overflow:hidden;background:var(--bg-void);background-image:radial-gradient(rgba(255,255,255,0.07) 1px,transparent 1px);background-size:20px 20px">
+            <div style="position:absolute;left:8px;top:8px;width:1400px;height:1300px;transform:scale(0.58);transform-origin:0 0">
+              <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none" viewBox="0 0 1400 1300" preserveAspectRatio="none">
+                <defs>
+                  <marker id="arr2-g" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 Z" fill="var(--green-dim)"></path></marker>
+                  <marker id="arr2-c" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 Z" fill="var(--cyan)"></path></marker>
+                </defs>
+                <path d="M 268 570 C 320 570 248 210 300 210" fill="none" stroke="var(--green-dim)" stroke-width="2" marker-end="url(#arr2-g)"></path>
+                <path d="M 268 570 C 320 570 248 930 300 930" fill="none" stroke="var(--green-dim)" stroke-width="2" marker-end="url(#arr2-g)"></path>
+                <path d="M 548 210 C 600 210 528 570 580 570" fill="none" stroke="var(--green-dim)" stroke-width="2" marker-end="url(#arr2-g)"></path>
+                <path d="M 548 930 C 600 930 528 570 580 570" fill="none" stroke="var(--green-dim)" stroke-width="2" marker-end="url(#arr2-g)"></path>
+                <path d="M 828 570 C 848 570 840 570 860 570" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-dasharray="8 4" style="animation:dash-flow 1s linear infinite" marker-end="url(#arr2-c)"></path>
+                <path d="M 828 570 C 880 570 808 930 860 930" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-dasharray="8 4" style="animation:dash-flow 1s linear infinite" marker-end="url(#arr2-c)"></path>
+              </svg>
+
+              <!-- Current node design: full 248px card with criteria, stats, validators -->
+              <!-- Plan -->
+              <div class="graph-node relative w-[248px] overflow-hidden rounded-[14px] pt-[18px] pr-[16px] pb-[14px] pl-[16px] border border-solid bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)] [--node-color:var(--green)] [--node-color-glow:var(--cc-green-a10)] border-[var(--cc-green-a20)] [border-top-color:var(--cc-green-a45)]" style="position:absolute;left:20px;top:405px">
+                <div class="relative z-[1] mb-[6px] flex items-start justify-between gap-[8px]">
+                  <span class="text-[0.95rem] leading-[1.2] font-bold text-text-primary">Plan the migration</span>
+                  <span class="mt-[2px] shrink-0 whitespace-nowrap rounded-[20px] px-[10px] py-[4px] text-[0.7rem] font-semibold uppercase tracking-[0.06em] border border-solid border-[var(--cc-green-border)] bg-[var(--cc-green-a08)] text-green">Published</span>
+                </div>
+                <div class="relative z-[1] mb-[14px] line-clamp-3 overflow-hidden text-[0.72rem] leading-[1.5] font-normal text-text-secondary">Audit the current flag usage and write the migration charter for the rules engine.</div>
+                <div class="relative z-[1] mb-[10px]">
+                  <div class="mb-[3px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">Criteria</div>
+                  <div class="line-clamp-3 overflow-hidden text-[0.68rem] leading-[1.5] whitespace-pre-line text-text-secondary">1. [charter] Charter names every flag with an owner
+2. [scope] Out-of-scope surfaces listed explicitly</div>
+                </div>
+                <div class="relative z-[1] mb-[10px] flex gap-[8px]">
+                  <div class="min-w-0 flex-1 rounded-[10px] border border-solid border-border-subtle bg-[var(--cc-graph-ink-a55)] px-[12px] py-[8px]">
+                    <div class="mb-[3px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">Tasks</div>
+                    <div class="text-[0.88rem] font-bold text-text-primary">3/3</div>
+                  </div>
+                  <div class="min-w-0 flex-1 rounded-[10px] border border-solid border-border-subtle bg-[var(--cc-graph-ink-a55)] px-[12px] py-[8px]">
+                    <div class="mb-[3px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">Implementer</div>
+                    <div class="inline-flex items-center gap-[5px] text-[0.78rem] font-semibold tracking-[0.05em] uppercase text-cyan"><span class="text-[0.7rem] leading-none">◆</span>Claude</div>
+                  </div>
+                </div>
+                <div class="relative z-[1] mb-[10px]">
+                  <div class="mb-[4px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">Validators</div>
+                  <div class="flex flex-wrap gap-[4px]"><span class="inline-flex items-center gap-[4px] rounded-[4px] border border-solid px-[8px] py-[3px] text-[0.68rem] font-semibold uppercase tracking-[0.05em] border-border-default bg-[var(--cc-graph-ink-a55)] text-text-primary"><span class="text-[0.7rem] leading-none">▣</span>Script</span></div>
+                </div>
+                <div class="relative z-[1] mb-[10px] h-[4px] overflow-hidden rounded-[4px] bg-[var(--cc-graph-ink-a50)]"><div class="h-full rounded-[4px] bg-green shadow-[0_0_6px_var(--green-glow)]" style="width:100%"></div></div>
+                <div class="relative z-[1] text-[0.7rem] font-medium text-text-secondary">Published to session</div>
+              </div>
+
+              <!-- Candidate flags -->
+              <div class="graph-node relative w-[248px] overflow-hidden rounded-[14px] pt-[18px] pr-[16px] pb-[14px] pl-[16px] border border-solid bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)] [--node-color:var(--green)] [--node-color-glow:var(--cc-green-a10)] border-[var(--cc-green-a20)] [border-top-color:var(--cc-green-a45)]" style="position:absolute;left:300px;top:45px">
+                <div class="relative z-[1] mb-[6px] flex items-start justify-between gap-[8px]">
+                  <span class="text-[0.95rem] leading-[1.2] font-bold text-text-primary">Candidate: feature flags</span>
+                  <span class="mt-[2px] shrink-0 whitespace-nowrap rounded-[20px] px-[10px] py-[4px] text-[0.7rem] font-semibold uppercase tracking-[0.06em] border border-solid border-[var(--cc-green-border)] bg-[var(--cc-green-a08)] text-green">Completed</span>
+                </div>
+                <div class="relative z-[1] mb-[14px] line-clamp-3 overflow-hidden text-[0.72rem] leading-[1.5] font-normal text-text-secondary">Build the checkout cutover on the existing flag pipeline.</div>
+                <div class="relative z-[1] mb-[10px] flex flex-wrap gap-[4px]">
+                  <span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-cyan-a25)] bg-cyan-glow text-cyan">✦ Added at runtime</span>
+                </div>
+                <div class="relative z-[1] mb-[10px] flex gap-[8px]">
+                  <div class="min-w-0 flex-1 rounded-[10px] border border-solid border-border-subtle bg-[var(--cc-graph-ink-a55)] px-[12px] py-[8px]">
+                    <div class="mb-[3px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">Tasks</div>
+                    <div class="text-[0.88rem] font-bold text-text-primary">2/2</div>
+                  </div>
+                  <div class="min-w-0 flex-1 rounded-[10px] border border-solid border-border-subtle bg-[var(--cc-graph-ink-a55)] px-[12px] py-[8px]">
+                    <div class="mb-[3px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">Implementer</div>
+                    <div class="inline-flex items-center gap-[5px] text-[0.78rem] font-semibold tracking-[0.05em] uppercase text-cyan"><span class="text-[0.7rem] leading-none">◆</span>Claude</div>
+                  </div>
+                </div>
+                <div class="relative z-[1] mb-[10px]">
+                  <div class="mb-[4px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">Validators</div>
+                  <div class="flex flex-wrap gap-[4px]"><span class="inline-flex items-center gap-[4px] rounded-[4px] border border-solid border-dashed px-[8px] py-[3px] text-[0.68rem] border-border-subtle bg-[var(--cc-graph-ink-a55)] normal-case italic text-text-tertiary">none</span></div>
+                </div>
+                <div class="relative z-[1] mb-[10px] h-[4px] overflow-hidden rounded-[4px] bg-[var(--cc-graph-ink-a50)]"><div class="h-full rounded-[4px] bg-green shadow-[0_0_6px_var(--green-glow)]" style="width:100%"></div></div>
+                <div class="relative z-[1] text-[0.7rem] font-medium text-text-secondary">Completed</div>
+              </div>
+
+              <!-- Candidate rules -->
+              <div class="graph-node relative w-[248px] overflow-hidden rounded-[14px] pt-[18px] pr-[16px] pb-[14px] pl-[16px] border border-solid bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)] [--node-color:var(--green)] [--node-color-glow:var(--cc-green-a10)] border-[var(--cc-green-a20)] [border-top-color:var(--cc-green-a45)]" style="position:absolute;left:300px;top:765px">
+                <div class="relative z-[1] mb-[6px] flex items-start justify-between gap-[8px]">
+                  <span class="text-[0.95rem] leading-[1.2] font-bold text-text-primary">Candidate: rules engine</span>
+                  <span class="mt-[2px] shrink-0 whitespace-nowrap rounded-[20px] px-[10px] py-[4px] text-[0.7rem] font-semibold uppercase tracking-[0.06em] border border-solid border-[var(--cc-green-border)] bg-[var(--cc-green-a08)] text-green">Completed</span>
+                </div>
+                <div class="relative z-[1] mb-[14px] line-clamp-3 overflow-hidden text-[0.72rem] leading-[1.5] font-normal text-text-secondary">Build the checkout cutover on the new rules engine.</div>
+                <div class="relative z-[1] mb-[10px] flex flex-wrap gap-[4px]">
+                  <span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-cyan-a25)] bg-cyan-glow text-cyan">✦ Added at runtime</span>
+                </div>
+                <div class="relative z-[1] mb-[10px] flex gap-[8px]">
+                  <div class="min-w-0 flex-1 rounded-[10px] border border-solid border-border-subtle bg-[var(--cc-graph-ink-a55)] px-[12px] py-[8px]">
+                    <div class="mb-[3px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">Tasks</div>
+                    <div class="text-[0.88rem] font-bold text-text-primary">2/2</div>
+                  </div>
+                  <div class="min-w-0 flex-1 rounded-[10px] border border-solid border-border-subtle bg-[var(--cc-graph-ink-a55)] px-[12px] py-[8px]">
+                    <div class="mb-[3px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">Implementer</div>
+                    <div class="inline-flex items-center gap-[5px] text-[0.78rem] font-semibold tracking-[0.05em] uppercase text-violet"><span class="text-[0.7rem] leading-none">◆</span>Codex</div>
+                  </div>
+                </div>
+                <div class="relative z-[1] mb-[10px] h-[4px] overflow-hidden rounded-[4px] bg-[var(--cc-graph-ink-a50)]"><div class="h-full rounded-[4px] bg-green shadow-[0_0_6px_var(--green-glow)]" style="width:100%"></div></div>
+                <div class="relative z-[1] text-[0.7rem] font-medium text-text-secondary">Completed</div>
+              </div>
+
+              <!-- Filter -->
+              <div class="graph-node relative w-[248px] overflow-hidden rounded-[14px] pt-[18px] pr-[16px] pb-[14px] pl-[16px] border border-solid bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)] [--node-color:var(--green)] [--node-color-glow:var(--cc-green-a10)] border-[var(--cc-green-a20)] [border-top-color:var(--cc-green-a45)]" style="position:absolute;left:580px;top:430px">
+                <div class="relative z-[1] mb-[6px] flex items-start justify-between gap-[8px]">
+                  <span class="text-[0.95rem] leading-[1.2] font-bold text-text-primary">Filter candidates</span>
+                  <span class="mt-[2px] shrink-0 whitespace-nowrap rounded-[20px] px-[10px] py-[4px] text-[0.7rem] font-semibold uppercase tracking-[0.06em] border border-solid border-[var(--cc-green-border)] bg-[var(--cc-green-a08)] text-green">Completed</span>
+                </div>
+                <div class="relative z-[1] mb-[10px] flex gap-[8px]">
+                  <div class="min-w-0 flex-1 rounded-[10px] border border-solid border-border-subtle bg-[var(--cc-graph-ink-a55)] px-[12px] py-[8px]">
+                    <div class="mb-[3px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">Tasks</div>
+                    <div class="text-[0.88rem] font-bold text-text-primary">1/1</div>
+                  </div>
+                  <div class="min-w-0 flex-1 rounded-[10px] border border-solid border-border-subtle bg-[var(--cc-graph-ink-a55)] px-[12px] py-[8px]">
+                    <div class="mb-[3px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">Implementer</div>
+                    <div class="inline-flex items-center gap-[5px] text-[0.78rem] font-semibold tracking-[0.05em] uppercase text-cyan"><span class="text-[0.7rem] leading-none">◆</span>Claude</div>
+                  </div>
+                </div>
+                <div class="relative z-[1] mb-[10px] h-[4px] overflow-hidden rounded-[4px] bg-[var(--cc-graph-ink-a50)]"><div class="h-full rounded-[4px] bg-green shadow-[0_0_6px_var(--green-glow)]" style="width:100%"></div></div>
+                <div class="relative z-[1] text-[0.7rem] font-medium text-text-secondary">Completed</div>
+              </div>
+
+              <!-- Implement (running) -->
+              <div class="graph-node relative w-[248px] overflow-hidden rounded-[14px] pt-[18px] pr-[16px] pb-[14px] pl-[16px] border border-solid bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)] [--node-color:var(--cyan)] [--node-color-glow:var(--cyan-glow)] border-[var(--cc-cyan-a25)] [border-top-color:var(--cc-cyan-a50)] [animation:pulse-node_2s_ease-in-out_infinite]" style="position:absolute;left:860px;top:390px">
+                <div class="relative z-[1] mb-[6px] flex items-start justify-between gap-[8px]">
+                  <span class="text-[0.95rem] leading-[1.2] font-bold text-text-primary">Implement checkout</span>
+                  <span class="mt-[2px] shrink-0 whitespace-nowrap rounded-[20px] px-[10px] py-[4px] text-[0.7rem] font-semibold uppercase tracking-[0.06em] border border-solid border-[var(--cyan-glow-strong)] bg-[var(--cc-cyan-a08)] text-cyan">Running</span>
+                </div>
+                <div class="relative z-[1] mb-[14px] line-clamp-3 overflow-hidden text-[0.72rem] leading-[1.5] font-normal text-text-secondary">Land the winning candidate across checkout with audit-logged risk decisions.</div>
+                <div class="relative z-[1] mb-[10px]">
+                  <div class="mb-[3px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">Criteria</div>
+                  <div class="line-clamp-3 overflow-hidden text-[0.68rem] leading-[1.5] whitespace-pre-line text-text-secondary">1. [audit] Every risk decision writes an audit row
+2. [flags] No legacy flag reads remain in checkout
+3. [tests] Contract tests green</div>
+                </div>
+                <div class="relative z-[1] mb-[10px] flex gap-[8px]">
+                  <div class="min-w-0 flex-1 rounded-[10px] border border-solid border-border-subtle bg-[var(--cc-graph-ink-a55)] px-[12px] py-[8px]">
+                    <div class="mb-[3px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">Tasks</div>
+                    <div class="text-[0.88rem] font-bold text-text-primary">2/5</div>
+                  </div>
+                  <div class="min-w-0 flex-1 rounded-[10px] border border-solid border-border-subtle bg-[var(--cc-graph-ink-a55)] px-[12px] py-[8px]">
+                    <div class="mb-[3px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">Implementer</div>
+                    <div class="inline-flex items-center gap-[5px] text-[0.78rem] font-semibold tracking-[0.05em] uppercase text-cyan"><span class="text-[0.7rem] leading-none">◆</span>Claude</div>
+                  </div>
+                </div>
+                <div class="relative z-[1] mb-[10px]">
+                  <div class="mb-[4px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">Validators</div>
+                  <div class="flex flex-wrap gap-[4px]">
+                    <span class="inline-flex items-center gap-[4px] rounded-[4px] border border-solid px-[8px] py-[3px] text-[0.68rem] font-semibold uppercase tracking-[0.05em] border-border-default bg-[var(--cc-graph-ink-a55)] text-text-primary"><span class="text-[0.7rem] leading-none">▣</span>Script</span>
+                    <span class="inline-flex items-center gap-[4px] rounded-[4px] border border-solid px-[8px] py-[3px] text-[0.68rem] font-semibold uppercase tracking-[0.05em] border-[var(--cc-codex-violet-a35)] bg-violet-glow text-violet"><span class="text-[0.7rem] leading-none">◆</span>Codex</span>
+                  </div>
+                  <div class="relative mt-[8px] pt-[8px]">
+                    <span class="inline-flex items-center gap-[4px] rounded-[4px] border border-solid px-[8px] py-[3px] text-[0.68rem] font-semibold uppercase tracking-[0.05em] border-[var(--amber-dim)] bg-[var(--amber-glow)] text-amber"><span class="text-[0.7rem] leading-none">✓</span>Human approval</span>
+                  </div>
+                </div>
+                <div class="relative z-[1] mb-[10px] h-[4px] overflow-hidden rounded-[4px] bg-[var(--cc-graph-ink-a50)]"><div class="h-full rounded-[4px] bg-cyan shadow-[0_0_6px_var(--cyan-glow)]" style="width:40%"></div></div>
+                <div class="relative z-[1] text-[0.7rem] font-medium text-text-secondary">Running task 3/5</div>
+              </div>
+
+              <!-- Audit (waiting) -->
+              <div class="graph-node relative w-[248px] overflow-hidden rounded-[14px] pt-[18px] pr-[16px] pb-[14px] pl-[16px] border border-solid border-border-subtle bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)]" style="position:absolute;left:860px;top:880px">
+                <div class="relative z-[1] mb-[6px] flex items-start justify-between gap-[8px]">
+                  <span class="text-[0.95rem] leading-[1.2] font-bold text-text-primary">Audit report</span>
+                  <span class="mt-[2px] shrink-0 whitespace-nowrap rounded-[20px] px-[10px] py-[4px] text-[0.7rem] font-semibold uppercase tracking-[0.06em] border border-solid border-border-default bg-transparent text-text-tertiary">Queued</span>
+                </div>
+                <div class="relative z-[1] mb-[10px] flex gap-[8px]">
+                  <div class="min-w-0 flex-1 rounded-[10px] border border-solid border-border-subtle bg-[var(--cc-graph-ink-a55)] px-[12px] py-[8px]">
+                    <div class="mb-[3px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">Tasks</div>
+                    <div class="text-[0.88rem] font-bold text-text-primary">0/1</div>
+                  </div>
+                  <div class="min-w-0 flex-1 rounded-[10px] border border-solid border-border-subtle bg-[var(--cc-graph-ink-a55)] px-[12px] py-[8px]">
+                    <div class="mb-[3px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">Implementer</div>
+                    <div class="inline-flex items-center gap-[5px] text-[0.78rem] font-semibold tracking-[0.05em] uppercase text-violet"><span class="text-[0.7rem] leading-none">◆</span>Codex</div>
+                  </div>
+                </div>
+                <div class="relative z-[1] mb-[10px] h-[4px] overflow-hidden rounded-[4px] bg-[var(--cc-graph-ink-a50)]"><div class="h-full rounded-[4px] bg-border-default" style="width:0%"></div></div>
+                <div class="relative z-[1] text-[0.7rem] font-medium text-text-tertiary">Waiting for lane</div>
+              </div>
+            </div>
+
+            <div style="position:absolute;left:16px;bottom:16px;display:flex;flex-direction:column;border:1px solid var(--border-subtle);border-radius:4px;overflow:hidden">
+              <button type="button" style="width:26px;height:26px;background:var(--bg-surface);color:var(--text-secondary);border:none;border-bottom:1px solid var(--border-subtle);cursor:pointer">+</button>
+              <button type="button" style="width:26px;height:26px;background:var(--bg-surface);color:var(--text-secondary);border:none;border-bottom:1px solid var(--border-subtle);cursor:pointer">−</button>
+              <button type="button" style="width:26px;height:26px;background:var(--bg-surface);color:var(--text-secondary);border:none;cursor:pointer">⛶</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- current inspector: Overview, 500px fixed -->
+        <aside style="width:500px;flex-shrink:0;border-left:1px solid var(--border-subtle);background:var(--bg-surface);display:flex;flex-direction:column;overflow:hidden">
+          <header class="flex items-center gap-sm py-3 px-md border-b border-border-dim min-h-[44px]">
+            <span class="text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-text-primary">Overview</span>
+            <span class="ml-auto flex items-center gap-sm font-mono text-[0.68rem] whitespace-nowrap text-text-tertiary"><span>liveRev 12</span><span>tmpl_checkout@4</span></span>
+          </header>
+          <div style="flex:1;overflow-y:auto;padding:16px">
+            <div class="grid grid-cols-2 gap-sm mb-lg">
+              <div class="bg-bg-raised border border-border-dim rounded-md p-3"><div class="text-[1.4rem] font-bold text-text-primary leading-none mb-1">4/6</div><div class="text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-text-tertiary">Contexts</div></div>
+              <div class="bg-bg-raised border border-border-dim rounded-md p-3"><div class="text-[1.4rem] font-bold text-text-primary leading-none mb-1">10/14</div><div class="text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-text-tertiary">Tasks</div></div>
+              <div class="bg-bg-raised border border-border-dim rounded-md p-3"><div class="text-[1.4rem] font-bold text-text-primary leading-none mb-1">7</div><div class="text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-text-tertiary">Edges</div></div>
+              <div class="bg-bg-raised border border-border-dim rounded-md p-3"><div class="text-[1.4rem] font-bold text-text-primary leading-none mb-1">3/5</div><div class="text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-text-tertiary">Merges</div></div>
+            </div>
+            <div class="mb-[10px] flex items-center gap-sm"><span class="text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-text-tertiary" style="font-family:var(--font-mono)">Events</span><span style="height:1px;flex:1;background:var(--border-dim)"></span></div>
+            <div class="py-2 border-b border-border-dim"><div class="flex items-center gap-[8px] text-[0.72rem]"><span class="text-text-secondary flex-1 min-w-0">Lane active · delivery (csm/checkout-v2.delivery)</span><span class="text-[0.7rem] text-text-tertiary whitespace-nowrap shrink-0 ml-auto">10:41 AM</span></div></div>
+            <div class="py-2 border-b border-border-dim"><div class="flex items-center gap-[8px] text-[0.72rem]"><span class="text-text-secondary flex-1 min-w-0">Join completed · candidate-flags, candidate-rules → delivery</span><span class="text-[0.7rem] text-text-tertiary whitespace-nowrap shrink-0 ml-auto">10:35 AM</span></div></div>
+            <div class="py-2"><div class="flex items-center gap-[8px] text-[0.72rem]"><span class="text-text-secondary flex-1 min-w-0">Lane landed · Candidate: rules engine</span><span class="text-[0.7rem] text-text-tertiary whitespace-nowrap shrink-0 ml-auto">10:33 AM</span></div></div>
+
+            <div class="mb-[10px] mt-4 flex items-center gap-sm"><span class="text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-text-tertiary" style="font-family:var(--font-mono)">Recent Validations</span><span style="height:1px;flex:1;background:var(--border-dim)"></span></div>
+            <!-- the duplication problem, faithfully: aggregate lists the issue AND the seat repeats it -->
+            <div class="border-x-0 border-t-0 border-b border-solid border-border-dim py-[10px]">
+              <div class="flex items-start gap-[8px] text-[0.72rem]">
+                <span style="margin-top:5px;width:6px;height:6px;border-radius:50%;background:var(--red);flex-shrink:0"></span>
+                <div class="min-w-0 flex-1 text-text-secondary">Rejected — risk rules bypass the audit log on the timeout path.</div>
+                <span class="shrink-0 font-mono text-[0.68rem] text-text-tertiary">Round 2</span>
+                <span class="shrink-0 text-[0.7rem] text-text-tertiary">10:42 AM</span>
+              </div>
+              <div class="mt-2 pl-[14px]">
+                <div class="text-[0.7rem] font-semibold uppercase tracking-[0.06em] text-text-tertiary mb-1">Issues (1)</div>
+                <ul class="list-none p-0 m-0 border-l-2 border-border-default pl-[10px]">
+                  <li class="py-1"><div class="text-[0.72rem] font-semibold text-text-primary leading-[1.3]"><code class="mr-[6px] font-mono text-amber">checkout/risk.ts</code></div><div>audit call skipped on timeout</div></li>
+                </ul>
+              </div>
+              <div class="mt-2 pl-[14px]">
+                <div class="text-[0.7rem] font-semibold uppercase tracking-[0.06em] text-text-tertiary mb-1">Cohort (1)</div>
+                <div class="py-[8px]">
+                  <div class="flex flex-wrap items-center gap-[6px]">
+                    <span class="font-mono text-[0.72rem] font-semibold text-text-primary">security</span>
+                    <span class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-red-a40)] bg-red-glow text-red">Rejected</span>
+                  </div>
+                  <div class="mt-[4px] min-w-0 text-[0.72rem] text-text-secondary">Risk rules bypass the audit log on the timeout path.</div>
+                  <div class="mt-2 pl-[14px]">
+                    <div class="text-[0.7rem] font-semibold uppercase tracking-[0.06em] text-text-tertiary mb-1">Issues (1)</div>
+                    <ul class="list-none p-0 m-0 border-l-2 border-border-default pl-[10px]">
+                      <li class="py-1"><div class="text-[0.72rem] font-semibold text-text-primary leading-[1.3]"><code class="mr-[6px] font-mono text-amber">checkout/risk.ts</code></div><div>audit call skipped on timeout</div></li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="border-x-0 border-t-0 border-b-0 py-[10px]">
+              <div class="flex items-start gap-[8px] text-[0.72rem]">
+                <span style="margin-top:5px;width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green-glow);flex-shrink:0"></span>
+                <div class="min-w-0 flex-1 text-text-secondary">Passed — charter names every flag with an owner.</div>
+                <span class="shrink-0 font-mono text-[0.68rem] text-text-tertiary">Round 1</span>
+                <span class="shrink-0 text-[0.7rem] text-text-tertiary">10:08 AM</span>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;showWorktreePaths&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Lane rails&quot;},&quot;showLegend&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Canvas&quot;}}">
+class Component extends DCLogic {
+  state = { railOpen: false, inspOpen: true };
+  renderVals() {
+    return {
+      railOpen: this.state.railOpen,
+      railClosed: !this.state.railOpen,
+      inspOpen: this.state.inspOpen,
+      inspClosed: !this.state.inspOpen,
+      toggleRail: () => this.setState(s => ({ railOpen: !s.railOpen })),
+      toggleInsp: () => this.setState(s => ({ inspOpen: !s.inspOpen })),
+      showWorktreePaths: this.props.showWorktreePaths ?? true,
+      t14: 14, t16: 16, t22: 22,
+      showLegend: this.props.showLegend ?? true,
+    };
+  }
+}
+</script>
+</body>
+</html>

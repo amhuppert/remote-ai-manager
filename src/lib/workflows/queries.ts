@@ -1,4 +1,5 @@
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useCallback } from "react";
+import { useInfiniteQuery, useQueries, useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 import { apiFetch } from "@/lib/api/fetcher";
 import {
@@ -13,6 +14,7 @@ import {
 import {
   workflowDefinitionsResponseSchema,
   workflowDefinitionGetResponseSchema,
+  type WorkflowDefinitionGetResponse,
 } from "@/lib/workflow-definitions/schemas";
 import {
   graphWorkflowBoundaryKindSchema,
@@ -107,6 +109,43 @@ export function useScopedWorkflowDefinitionQuery(
       );
     },
     enabled: workflowId != null,
+  });
+}
+
+/**
+ * How many execution contexts each listed definition holds.
+ *
+ * The collection endpoint returns body-less summaries, so the count only exists
+ * in the detail record — one request per definition, sharing the detail query's
+ * key so the loaded draft is a cache hit rather than a second fetch. A
+ * definition whose record has not arrived is simply absent from the result; the
+ * sidebar states its revision alone rather than guessing.
+ */
+export function useScopedWorkflowDefinitionContextCounts(
+  scope: WorkflowDefinitionScope,
+  workflowIds: readonly string[],
+): Record<string, number> {
+  const api = workflowDefinitionScopeApi(scope);
+  const combine = useCallback(
+    (results: Array<{ data: WorkflowDefinitionGetResponse | undefined }>) => {
+      const counts: Record<string, number> = {};
+      results.forEach((result, index) => {
+        const id = workflowIds[index];
+        if (id === undefined || result.data === undefined) return;
+        counts[id] = result.data.item.definition.executionContexts.length;
+      });
+      return counts;
+    },
+    [workflowIds],
+  );
+
+  return useQueries({
+    queries: workflowIds.map((id) => ({
+      queryKey: api.detailKey(id),
+      queryFn: () =>
+        apiFetch(api.itemUrl(id), workflowDefinitionGetResponseSchema),
+    })),
+    combine,
   });
 }
 

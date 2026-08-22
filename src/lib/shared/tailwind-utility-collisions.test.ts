@@ -276,6 +276,11 @@ const UTILITY_FIRST_PATHS = [
   // design system. Registered in all three mirrored allowlists (here +
   // eslint.config.mjs MIGRATED_UTILITY_FIRST + .prettierrc).
   `${path.sep}components${path.sep}workflow-config${path.sep}`,
+  // Lanes-first graph-workflow config panel: the host-aware configuration
+  // editor mounted by the builder and the execution page is authored
+  // utility-first against the design system. Registered in all three mirrored
+  // allowlists (here + eslint.config.mjs MIGRATED_UTILITY_FIRST + .prettierrc).
+  `${path.sep}components${path.sep}workflow-config-panel${path.sep}`,
   // Ticket-system UI: the tickets feature and the promoted session indicator
   // are authored utility-first against the design system. Registered in all
   // three mirrored allowlists (here + eslint.config.mjs MIGRATED_UTILITY_FIRST

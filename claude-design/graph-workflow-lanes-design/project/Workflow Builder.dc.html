@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/styles.css">
+  <script src="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.js"></script>
+  <style>
+    html, body { height:auto !important; max-height:none !important; overflow:visible !important; background:#04070c !important; }
+    body { margin:0; font-family:var(--font-mono); }
+    a { color:var(--cyan); text-decoration:none; }
+    a:hover { color:var(--text-primary); }
+    .wb-btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:28px; padding:0 11px; border:1px solid var(--border-default); border-radius:4px; background:var(--bg-raised); color:var(--text-secondary); font:500 .72rem var(--font-mono); cursor:pointer; white-space:nowrap; }
+    .wb-btn:hover:enabled { background:var(--bg-elevated); color:var(--text-primary); border-color:var(--border-strong); }
+    .wb-btn:focus-visible { outline:2px solid var(--cyan); outline-offset:2px; }
+    .wb-btn:disabled { opacity:.45; cursor:not-allowed; }
+    .wb-btn-primary { background:var(--cc-cyan-a12); color:var(--cyan); border-color:var(--cyan-glow-strong); }
+    .wb-btn-danger { color:var(--red); border-color:var(--cc-red-a25); }
+    .wb-row { display:block; width:100%; text-align:left; background:none; border:0; padding:0; color:inherit; font:inherit; cursor:pointer; }
+    .wb-row:focus-visible { outline:2px solid var(--cyan); outline-offset:2px; }
+    .wb-name { border:1px solid transparent; background:none; color:var(--text-primary); font:600 .88rem var(--font-mono); padding:3px 6px; margin:-3px -6px; border-radius:4px; cursor:text; }
+    .wb-name:hover { border-color:var(--border-default); background:var(--bg-base); }
+    .wb-name:focus-visible { outline:2px solid var(--cyan); outline-offset:1px; }
+    .wb-note { font-family:var(--font-body); font-size:12.5px; line-height:1.65; color:var(--text-secondary); }
+    .wb-note b { color:var(--text-primary); font-weight:600; }
+    .wb-note code { font-family:var(--font-mono); color:var(--text-primary); font-size:11.5px; }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration:.001ms !important; transition-duration:.001ms !important; } }
+  </style>
+</helmet>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs>
+  <g id="bi-chev-right"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></g>
+  <g id="bi-chev-left"><path d="M10 3.5 5.5 8 10 12.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></g>
+  <g id="bi-plus"><path d="M8 3.5v9M3.5 8h9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path></g>
+  <g id="bi-gear"><circle cx="8" cy="8" r="2.4" fill="none" stroke="currentColor" stroke-width="1.3"></circle><path d="M8 1.8v1.6M8 12.6v1.6M14.2 8h-1.6M3.4 8H1.8M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1M12.4 12.4l-1.1-1.1M4.7 4.7 3.6 3.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"></path></g>
+  <g id="bi-layout"><rect x="2.5" y="3" width="11" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"></rect><rect x="2.5" y="9" width="11" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"></rect></g>
+  <g id="bi-trash"><path d="M3.5 4.5h9M6.5 4.5V3.2h3v1.3M5 4.5l.6 8.3h4.8L11 4.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path></g>
+  <g id="bi-alert"><path d="M8 2.8 14.2 13.2H1.8Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"></path><path d="M8 6.6v3M8 11.4v.1" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path></g>
+  <g id="bi-grip"><circle cx="6" cy="4" r="1" fill="currentColor"></circle><circle cx="10" cy="4" r="1" fill="currentColor"></circle><circle cx="6" cy="8" r="1" fill="currentColor"></circle><circle cx="10" cy="8" r="1" fill="currentColor"></circle><circle cx="6" cy="12" r="1" fill="currentColor"></circle><circle cx="10" cy="12" r="1" fill="currentColor"></circle></g>
+  <g id="bi-undo"><path d="M3 8a5 5 0 1 1 1.6 3.7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path><path d="M3 4.4V8h3.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path></g>
+</defs></svg>
+
+<section style="display:flex;flex-direction:column;gap:20px;padding:44px 48px 8px;min-width:2400px">
+  <div style="max-width:1080px">
+    <h1 style="margin:0;font:800 25px/1.2 var(--font-display);color:var(--text-primary);letter-spacing:-.01em">Builder — swimlanes, drag re-placement, config rail</h1>
+    <p class="wb-note" style="margin:10px 0 0">
+      Same lane canvas as the execution page, in draft. Every existing destination is preserved (README §5): definitions sidebar, select / create /
+      rename / delete workflow, Add Context, Save Draft, Reset, Re-layout, Workflow settings, delete context, selection, edges, zoom / pan / fit.
+      There is <b>no Launch action</b> and <b>no separate Validate action</b>. The one approved behaviour change is dragging a context across a lane
+      boundary, which writes <code>placement.lane</code> and nothing else.
+    </p>
+  </div>
+</section>
+
+<section style="display:flex;flex-direction:column;gap:14px;padding:8px 48px 0;min-width:2400px">
+  <div id="B1" data-screen-label="B1 Builder — nothing selected">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:12px">
+      <a href="#B1" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cyan-glow-strong);border-radius:4px;background:var(--cc-cyan-a08);font:600 12px var(--font-mono);color:var(--cyan)">B1</a>
+      <span style="font:600 15px var(--font-mono);color:var(--text-primary)">Nothing selected → Workflow scope</span>
+      <span class="wb-note">selecting a context selects it and switches the rail to Context scope; both tabs stay navigable</span>
+    </div>
+
+    <div style="width:1760px;background:var(--bg-void);border:1px solid var(--border-default);border-radius:10px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.5)">
+      <div style="display:flex;align-items:center;gap:10px;min-height:44px;padding:6px 14px;border-bottom:1px solid var(--border-dim);background:var(--bg-surface)">
+        <button type="button" class="wb-name" title="Click to rename">checkout-v2 release train</button>
+        <span style="flex-shrink:0;border-radius:4px;background:var(--bg-raised);padding:2px 8px;font:500 .7rem var(--font-mono);color:var(--text-tertiary)">r5</span>
+        <span style="width:1px;height:20px;background:var(--border-default);margin:0 4px"></span>
+        <button type="button" class="wb-btn"><svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><use href="#bi-plus"></use></svg>Add Context</button>
+        <button type="button" class="wb-btn wb-btn-primary">Save Draft</button>
+        <button type="button" class="wb-btn"><svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><use href="#bi-undo"></use></svg>Reset</button>
+        <button type="button" class="wb-btn"><svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><use href="#bi-layout"></use></svg>Re-layout</button>
+        <button type="button" class="wb-btn"><svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><use href="#bi-gear"></use></svg>Workflow settings</button>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+          <span aria-hidden="true" style="width:6px;height:6px;border-radius:50%;background:var(--amber)"></span>
+          <span style="font:500 .72rem var(--font-mono);color:var(--text-secondary)">Unsaved changes</span>
+          <span style="width:1px;height:20px;background:var(--border-default);margin:0 4px"></span>
+          <button type="button" class="wb-btn wb-btn-danger"><svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><use href="#bi-trash"></use></svg>Delete</button>
+        </div>
+      </div>
+
+      <div style="display:flex;height:1060px;min-height:0">
+        <nav aria-label="Workflow definitions" style="width:260px;flex-shrink:0;border-right:1px solid var(--border-subtle);background:var(--bg-base);display:flex;flex-direction:column;min-height:0">
+          <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border-dim)">
+            <h2 style="margin:0;font:600 .7rem var(--font-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--text-secondary)">Definitions</h2>
+            <button type="button" class="wb-btn" aria-label="Collapse definitions sidebar" title="Collapse definitions sidebar" style="margin-left:auto;width:24px;height:24px;padding:0"><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><use href="#bi-chev-left"></use></svg></button>
+          </div>
+          <div style="padding:10px 12px;border-bottom:1px solid var(--border-dim)">
+            <button type="button" class="wb-btn" style="width:100%"><svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><use href="#bi-plus"></use></svg>New workflow</button>
+          </div>
+          <div style="flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:7px">
+            <button type="button" class="wb-row" aria-current="true" style="border:1px solid var(--cc-cyan-a40);background:var(--cc-cyan-a08);border-radius:6px;padding:9px 11px;display:flex;flex-direction:column;gap:4px">
+              <span style="display:flex;align-items:center;gap:8px;width:100%">
+                <span style="min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 .76rem var(--font-mono);color:var(--text-primary)">checkout-v2 release train</span>
+                <span aria-hidden="true" style="width:6px;height:6px;border-radius:50%;background:var(--amber)"></span>
+              </span>
+              <span style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">r5 · 6 contexts · unsaved</span>
+            </button>
+            <button type="button" class="wb-row" style="border:1px solid var(--border-subtle);background:var(--bg-surface);border-radius:6px;padding:9px 11px;display:flex;flex-direction:column;gap:4px">
+              <span style="font:600 .76rem var(--font-mono);color:var(--text-primary)">Nightly seam ratchet</span>
+              <span style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">r2 · 3 contexts</span>
+            </button>
+            <button type="button" class="wb-row" style="border:1px solid var(--border-subtle);background:var(--bg-surface);border-radius:6px;padding:9px 11px;display:flex;flex-direction:column;gap:4px">
+              <span style="font:600 .76rem var(--font-mono);color:var(--text-primary)">Spec → delivery plan</span>
+              <span style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">r7 · 5 contexts</span>
+            </button>
+            <p style="margin:6px 2px 0;font:400 .7rem/1.55 var(--font-mono);color:var(--text-tertiary)">Selecting a definition loads its draft. Rename lives in the toolbar; delete is the toolbar's danger action.</p>
+          </div>
+        </nav>
+
+        <div style="position:relative;flex:1;min-width:0;background-image:radial-gradient(rgba(255,255,255,.07) 1px,transparent 1px);background-size:20px 20px;overflow:hidden">
+          <div style="position:absolute;left:12px;right:12px;top:12px;height:268px;border:1px solid var(--border-subtle);border-radius:10px"></div>
+          <div style="position:absolute;left:12px;top:12px;width:180px;height:268px;padding:12px 14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:5px">
+            <span style="font:600 .8rem var(--font-mono);color:var(--text-primary)">plan</span>
+            <span style="font:400 .7rem/1.6 var(--font-mono);color:var(--text-tertiary)">1 member · 1 full</span>
+          </div>
+
+          <div style="position:absolute;left:12px;right:12px;top:292px;height:222px;border:1px solid var(--border-subtle);border-radius:10px"></div>
+          <div style="position:absolute;left:12px;top:292px;width:180px;height:222px;padding:12px 14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:5px">
+            <span style="font:600 .8rem var(--font-mono);color:var(--text-primary)">candidate-rules</span>
+            <span style="font:400 .7rem/1.6 var(--font-mono);color:var(--text-tertiary)">1 member · 1 owning</span>
+          </div>
+
+          <div style="position:absolute;left:12px;right:12px;top:526px;height:290px;border:1px solid var(--border-subtle);border-radius:10px"></div>
+          <div style="position:absolute;left:12px;top:526px;width:180px;height:290px;padding:12px 14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:5px">
+            <span style="font:600 .8rem var(--font-mono);color:var(--text-primary)">delivery</span>
+            <span style="font:400 .7rem/1.6 var(--font-mono);color:var(--text-tertiary)">3 members · 2 owning · 1 full</span>
+            <p style="margin:auto 0 0;font:400 .7rem/1.5 var(--font-mono);color:var(--text-tertiary)">A lane has no grade of its own. This one mixes both.</p>
+          </div>
+
+          <div style="position:absolute;left:12px;right:12px;top:828px;height:200px;border:1px dashed var(--border-default);border-radius:10px"></div>
+          <div style="position:absolute;left:12px;top:828px;width:180px;height:200px;padding:12px 14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:5px">
+            <span style="font:600 .8rem var(--font-mono);color:var(--text-primary)">session</span>
+            <span style="align-self:flex-start;border-radius:999px;padding:1px 8px;font:500 .7rem var(--font-mono);color:var(--text-secondary);border:1px solid var(--border-default)">reserved</span>
+            <span style="font:400 .7rem/1.6 var(--font-mono);color:var(--text-tertiary)">1 member · 1 read-only<br>admits read-only contexts only</span>
+          </div>
+
+          <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none" aria-hidden="true">
+            <defs><marker id="wb-arr" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 8 4 0 8Z" fill="var(--border-strong)"></path></marker></defs>
+            <path d="M460 142 C510 142 146 410 196 410" fill="none" stroke="var(--border-strong)" stroke-width="2" marker-end="url(#wb-arr)"></path>
+            <path d="M460 410 C510 410 146 672 196 672" fill="none" stroke="var(--border-strong)" stroke-width="2" marker-end="url(#wb-arr)"></path>
+            <path d="M460 672 C475 672 475 656 490 656" fill="none" stroke="var(--border-strong)" stroke-width="2" marker-end="url(#wb-arr)"></path>
+            <path d="M754 656 C769 656 769 634 784 634" fill="none" stroke="var(--border-strong)" stroke-width="2" marker-end="url(#wb-arr)"></path>
+            <path d="M1048 634 C1098 634 146 915 196 915" fill="none" stroke="var(--border-strong)" stroke-width="2" stroke-dasharray="3 5" marker-end="url(#wb-arr)"></path>
+          </svg>
+
+          <div style="position:absolute;left:196px;top:36px"><dc-import name="Context Node" title="Plan the migration" status="draft" lane="plan" laneState="pending" grade="full" implModel="opus-4.1" implEffort="medium" seats="security:blocking:claude:sonnet-4.5|style:advisory:claude:haiku-4.5" tasksDone="0" tasksTotal="0" footer="3 tasks · all inherited" portIn="false" width="264" hint-size="264px,170px"></dc-import></div>
+          <div style="position:absolute;left:196px;top:316px"><dc-import name="Context Node" title="Evaluate rules engine" status="draft" lane="candidate-rules" laneState="pending" grade="owned" paths="docs/eval" implModel="gpt-5-codex" implBackend="codex" implEffort="medium" seats="security:blocking:claude:sonnet-4.5" tasksDone="0" tasksTotal="0" footer="2 tasks · 1 block set here" width="264" hint-size="264px,170px"></dc-import></div>
+          <div style="position:absolute;left:196px;top:550px"><dc-import name="Context Node" title="Implement checkout" status="draft" lane="delivery" laneState="pending" grade="owned" paths="src/checkout, src/risk" implModel="opus-4.1" implEffort="high" implSetHere="true" seats="security:blocking:claude:sonnet-4.5|style:advisory:claude:haiku-4.5" tasksDone="0" tasksTotal="0" footer="5 tasks · 2 blocks · 1 role · 1 field set here" width="264" hint-size="264px,190px"></dc-import></div>
+          <div style="position:absolute;left:490px;top:550px"><dc-import name="Context Node" title="Settings surface" status="draft" lane="delivery" laneState="pending" grade="owned" paths="src/settings" implModel="opus-4.1" implEffort="medium" seats="security:blocking:claude:sonnet-4.5|style:advisory:claude:haiku-4.5" tasksDone="0" tasksTotal="0" footer="3 tasks · all inherited" width="264" hint-size="264px,190px"></dc-import></div>
+          <div style="position:absolute;left:784px;top:550px"><dc-import name="Context Node" title="Rollout switch" status="draft" lane="delivery" laneState="pending" grade="full" implModel="opus-4.1" implEffort="medium" seats="security:blocking:claude:sonnet-4.5" tasksDone="0" tasksTotal="0" footer="2 tasks · all inherited" width="264" hint-size="264px,170px"></dc-import></div>
+          <div style="position:absolute;left:196px;top:852px"><dc-import name="Context Node" title="Release notes" status="draft" lane="session" laneState="session" grade="readOnly" implModel="haiku-4.5" implEffort="low" seats="" tasksDone="0" tasksTotal="0" footer="2 tasks · output schema declared" portOut="false" width="264" hint-size="264px,150px"></dc-import></div>
+
+          <div style="position:absolute;left:12px;right:12px;top:1042px;height:0"></div>
+
+          <div style="position:absolute;right:16px;bottom:16px;display:flex;align-items:center;gap:4px;border:1px solid var(--border-default);background:var(--bg-surface);border-radius:6px;padding:4px">
+            <button type="button" class="wb-btn" aria-label="Zoom out" style="width:26px;height:26px;padding:0">−</button>
+            <span style="font:500 .7rem var(--font-mono);color:var(--text-secondary);padding:0 4px">100%</span>
+            <button type="button" class="wb-btn" aria-label="Zoom in" style="width:26px;height:26px;padding:0">+</button>
+            <button type="button" class="wb-btn" style="height:26px;padding:0 8px">Fit</button>
+          </div>
+        </div>
+
+        <aside aria-label="Inspector" style="width:420px;flex-shrink:0;border-left:1px solid var(--border-subtle);background:var(--bg-surface);display:flex;min-height:0">
+          <dc-import name="Config Panel" host="builder" initialScope="workflow" style="width:100%;height:100%" hint-size="420px,760px"></dc-import>
+        </aside>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section style="display:flex;flex-direction:column;gap:14px;padding:36px 48px 0;min-width:2400px">
+  <div id="B2" data-screen-label="B2 Drag between lanes">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:12px">
+      <a href="#B2" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cyan-glow-strong);border-radius:4px;background:var(--cc-cyan-a08);font:600 12px var(--font-mono);color:var(--cyan)">B2</a>
+      <span style="font:600 15px var(--font-mono);color:var(--text-primary)">Dragging across a lane boundary — the one approved behaviour change</span>
+      <span class="wb-note">within a lane it is layout only; across a lane it writes <code>placement.lane</code> and preserves the grade</span>
+    </div>
+
+    <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">
+
+      <div style="width:760px;border:1px solid var(--border-default);border-radius:10px;background:var(--bg-void);overflow:hidden">
+        <div style="padding:8px 12px;border-bottom:1px solid var(--border-dim);background:var(--bg-surface);display:flex;align-items:center;gap:8px">
+          <span style="font:600 .72rem var(--font-mono);color:var(--green)">Valid drop</span>
+          <span style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">read-only context moving off the session lane</span>
+        </div>
+        <div style="position:relative;height:380px;background-image:radial-gradient(rgba(255,255,255,.07) 1px,transparent 1px);background-size:20px 20px">
+          <div style="position:absolute;left:12px;right:12px;top:14px;height:140px;border:1px dashed var(--cyan);border-radius:10px;background:var(--cc-cyan-a05);box-shadow:0 0 0 1px var(--cc-cyan-a25) inset"></div>
+          <div style="position:absolute;left:12px;top:14px;width:150px;height:140px;padding:12px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:4px">
+            <span style="font:600 .8rem var(--font-mono);color:var(--cyan)">delivery</span>
+            <span style="font:400 .7rem/1.6 var(--font-mono);color:var(--text-tertiary)">3 members · 2 owning · 1 full</span>
+            <span style="font:500 .7rem var(--font-mono);color:var(--cyan)">drop to re-place here</span>
+          </div>
+          <div style="position:absolute;left:12px;right:12px;top:174px;height:140px;border:1px dashed var(--border-default);border-radius:10px"></div>
+          <div style="position:absolute;left:12px;top:174px;width:150px;height:140px;padding:12px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:4px">
+            <span style="font:600 .8rem var(--font-mono);color:var(--text-primary)">session</span>
+            <span style="font:400 .7rem/1.6 var(--font-mono);color:var(--text-tertiary)">reserved · read-only only</span>
+          </div>
+          <div style="position:absolute;left:172px;top:196px;width:264px;height:96px;border:1px dashed var(--border-strong);border-radius:10px;opacity:.55;display:flex;align-items:center;justify-content:center;font:500 .7rem var(--font-mono);color:var(--text-tertiary)">was: lane session</div>
+          <div style="position:absolute;left:330px;top:36px;transform:rotate(-1.5deg);box-shadow:0 16px 40px rgba(0,0,0,.6);border-radius:10px">
+            <dc-import name="Context Node" title="Release notes" status="draft" lane="delivery" laneState="pending" grade="readOnly" implModel="haiku-4.5" implEffort="low" seats="" tasksDone="0" tasksTotal="0" footer="2 tasks · dragging" portIn="false" portOut="false" width="264" hint-size="264px,140px"></dc-import>
+          </div>
+          <div style="position:absolute;left:330px;top:8px;display:inline-flex;align-items:center;gap:8px;border:1px solid var(--cyan-glow-strong);border-radius:6px;background:var(--bg-elevated);padding:5px 11px;font:500 .72rem var(--font-mono);color:var(--cyan);box-shadow:0 8px 24px rgba(0,0,0,.5)">
+            Re-place → lane: delivery · grade: read-only, unchanged
+          </div>
+          <div style="position:absolute;right:14px;bottom:14px;width:300px;border:1px solid var(--cc-green-a20);background:var(--green-glow);border-radius:6px;padding:9px 11px">
+            <span style="font:600 .7rem var(--font-mono);color:var(--green);text-transform:uppercase;letter-spacing:.06em">Placement check passed</span>
+            <p style="margin:5px 0 0;font:400 .7rem/1.55 var(--font-mono);color:var(--text-secondary)">Read-only may sit on any lane — the session lane is required for nothing but write-capable refusal. Only <span style="color:var(--text-primary)">placement.lane</span> changes.</p>
+          </div>
+        </div>
+      </div>
+
+      <div style="width:760px;border:1px solid var(--cc-red-a25);border-radius:10px;background:var(--bg-void);overflow:hidden">
+        <div style="padding:8px 12px;border-bottom:1px solid var(--border-dim);background:var(--bg-surface);display:flex;align-items:center;gap:8px">
+          <span style="font:600 .72rem var(--font-mono);color:var(--red)">Refused drop</span>
+          <span style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">the draft is not mutated and the node returns to its lane</span>
+        </div>
+        <div style="position:relative;height:380px;background-image:radial-gradient(rgba(255,255,255,.07) 1px,transparent 1px);background-size:20px 20px">
+          <div style="position:absolute;left:12px;right:12px;top:14px;height:140px;border:1px solid var(--border-subtle);border-radius:10px"></div>
+          <div style="position:absolute;left:12px;top:14px;width:150px;height:140px;padding:12px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:4px">
+            <span style="font:600 .8rem var(--font-mono);color:var(--text-primary)">delivery</span>
+            <span style="font:400 .7rem/1.6 var(--font-mono);color:var(--text-tertiary)">3 members · 2 owning · 1 full</span>
+          </div>
+          <div style="position:absolute;left:12px;right:12px;top:174px;height:140px;border:1px dashed var(--cc-red-a40);border-radius:10px;background:var(--cc-red-a10)"></div>
+          <div style="position:absolute;left:12px;top:174px;width:150px;height:140px;padding:12px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:4px">
+            <span style="font:600 .8rem var(--font-mono);color:var(--red)">session</span>
+            <span style="font:400 .7rem/1.6 var(--font-mono);color:var(--text-tertiary)">reserved · read-only only</span>
+            <span style="font:500 .7rem var(--font-mono);color:var(--red)">cannot accept this context</span>
+          </div>
+          <div style="position:absolute;left:330px;top:206px;transform:rotate(-1.5deg);box-shadow:0 16px 40px rgba(0,0,0,.6);border-radius:10px">
+            <dc-import name="Context Node" title="Implement checkout" status="draft" lane="delivery" laneState="pending" grade="owned" paths="src/checkout, src/risk" implModel="opus-4.1" implEffort="high" implSetHere="true" seats="" tasksDone="0" tasksTotal="0" footer="5 tasks · dragging" portIn="false" portOut="false" width="264" hint-size="264px,130px"></dc-import>
+          </div>
+          <div style="position:absolute;left:330px;top:166px;display:inline-flex;align-items:center;gap:8px;border:1px solid var(--cc-red-a40);border-radius:6px;background:var(--bg-elevated);padding:5px 11px;font:500 .72rem var(--font-mono);color:var(--red);box-shadow:0 8px 24px rgba(0,0,0,.5)">
+            <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><use href="#bi-alert"></use></svg>Drop refused
+          </div>
+          <div style="position:absolute;right:14px;top:24px;width:300px;border:1px solid var(--cc-red-a25);background:var(--cc-red-a10);border-radius:6px;padding:9px 11px">
+            <span style="font:600 .7rem var(--font-mono);color:var(--red);text-transform:uppercase;letter-spacing:.06em">Placement check failed</span>
+            <p style="margin:5px 0 0;font:400 .7rem/1.55 var(--font-mono);color:var(--text-secondary)">
+              <span style="color:var(--text-primary)">session</span> admits only read-only contexts. “Implement checkout” is owning
+              (<span style="color:var(--text-primary)">src/checkout, src/risk</span>). Change its grade to read-only, or drop it on a group lane.
+            </p>
+            <p style="margin:6px 0 0;font:400 .7rem/1.55 var(--font-mono);color:var(--text-tertiary)">Nothing was written. The definition is still at the same dirty state it had before the drag.</p>
+          </div>
+        </div>
+      </div>
+
+      <div style="width:760px;border:1px solid var(--border-default);border-radius:10px;background:var(--bg-void);overflow:hidden">
+        <div style="padding:8px 12px;border-bottom:1px solid var(--border-dim);background:var(--bg-surface);display:flex;align-items:center;gap:8px">
+          <span style="font:600 .72rem var(--font-mono);color:var(--text-primary)">Ephemeral lane</span>
+          <span style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">client-only until a context lands in it</span>
+        </div>
+        <div style="position:relative;height:380px;background-image:radial-gradient(rgba(255,255,255,.07) 1px,transparent 1px);background-size:20px 20px;padding:14px;display:flex;flex-direction:column;gap:12px">
+          <div style="border:1px dashed var(--border-strong);border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:10px">
+            <label style="display:flex;align-items:center;gap:8px;font:500 .7rem var(--font-mono);color:var(--text-tertiary)">
+              lane name
+              <input type="text" value="rollback" style="border:1px solid var(--border-default);background:var(--bg-surface);color:var(--text-primary);border-radius:4px;padding:5px 9px;font:400 .72rem var(--font-mono);width:160px">
+            </label>
+            <span style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">0 members · nothing to save yet</span>
+            <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+              <span aria-hidden="true" style="width:6px;height:6px;border-radius:50%;background:var(--green)"></span>
+              <span style="font:500 .72rem var(--font-mono);color:var(--text-secondary)">All changes saved</span>
+            </div>
+          </div>
+          <p style="margin:0;font:400 .72rem/1.6 var(--font-mono);color:var(--text-secondary)">
+            An empty lane is draft UI state. It is not an authored entity, it is never serialized, and creating it does not make the definition dirty —
+            the toolbar still says <span style="color:var(--text-primary)">All changes saved</span>. It disappears on Reset, reload, workflow switch and
+            Save. Dropping a context into it changes that context's <span style="color:var(--text-primary)">placement.lane</span>; that is the edit, and
+            that is what Save persists. Moving the last context out removes the lane again.
+          </p>
+          <div style="border:1px solid var(--cc-amber-a30);background:var(--cc-amber-a10);border-radius:6px;padding:9px 11px;display:flex;align-items:flex-start;gap:8px">
+            <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" style="flex-shrink:0;margin-top:2px;color:var(--amber)"><use href="#bi-alert"></use></svg>
+            <span style="font:400 .7rem/1.55 var(--font-mono);color:var(--amber)">Naming it <span style="color:var(--text-primary)">delivery</span> means “use the existing lane” — the band merges with it rather than creating a duplicate. Names go through the existing lane-name validation; <span style="color:var(--text-primary)">session</span> and <span style="color:var(--text-primary)">__session__</span> are refused.</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="width:400px" class="wb-note">
+        <p style="margin:0 0 10px"><b>Layout versus semantics.</b> Moving a node inside its own lane writes visual layout only. The lane boundary is
+        the only thing that turns a drag into a semantic edit, and the only field it writes is <code>placement.lane</code>. Grade, owned paths and
+        everything else are carried across verbatim — there is no silent re-grading.</p>
+        <p style="margin:0 0 10px"><b>Validation runs before acceptance.</b> The post-drop draft goes through the same placement validation the CLI and
+        the save path use: lane-name grammar, reserved-lane rules, the read-only output contract, and same-lane concurrency. A failure refuses the drop
+        with the concrete reason and the remedy.</p>
+        <p style="margin:0"><b>Concurrency is explained where it bites.</b> Dropping a second <code>full</code> member onto an occupied lane is legal
+        but tells you it will wait for exclusive occupancy; two <code>owned</code> members with overlapping paths are refused with the overlap named.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section style="display:flex;flex-direction:column;gap:14px;padding:36px 48px 60px;min-width:2400px">
+  <div id="B3" data-screen-label="B3 Selection and save states">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:12px">
+      <a href="#B3" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cyan-glow-strong);border-radius:4px;background:var(--cc-cyan-a08);font:600 12px var(--font-mono);color:var(--cyan)">B3</a>
+      <span style="font:600 15px var(--font-mono);color:var(--text-primary)">Selection, save states, and the context rail</span>
+    </div>
+
+    <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+      <div style="width:820px;display:flex;flex-direction:column;gap:14px">
+        <div style="border:1px solid var(--border-default);border-radius:10px;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:10px;min-height:44px;padding:6px 12px;background:var(--bg-surface)">
+            <span style="font:600 .8rem var(--font-mono);color:var(--text-primary)">checkout-v2 release train</span>
+            <span style="border-radius:4px;background:var(--bg-raised);padding:2px 8px;font:500 .7rem var(--font-mono);color:var(--text-tertiary)">r5</span>
+            <button type="button" class="wb-btn">Add Context</button>
+            <button type="button" class="wb-btn wb-btn-primary" disabled="">Save Draft</button>
+            <button type="button" class="wb-btn" disabled="">Reset</button>
+            <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+              <span aria-hidden="true" style="width:6px;height:6px;border-radius:50%;background:var(--green)"></span>
+              <span style="font:500 .72rem var(--font-mono);color:var(--text-secondary)">All changes saved</span>
+            </div>
+          </div>
+        </div>
+        <div style="border:1px solid var(--border-default);border-radius:10px;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:10px;min-height:44px;padding:6px 12px;background:var(--bg-surface)">
+            <span style="font:600 .8rem var(--font-mono);color:var(--text-primary)">checkout-v2 release train</span>
+            <span style="border-radius:4px;background:var(--bg-raised);padding:2px 8px;font:500 .7rem var(--font-mono);color:var(--text-tertiary)">r5</span>
+            <button type="button" class="wb-btn">Add Context</button>
+            <button type="button" class="wb-btn wb-btn-primary">Saving...</button>
+            <button type="button" class="wb-btn">Reset</button>
+            <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+              <span aria-hidden="true" style="width:6px;height:6px;border-radius:50%;background:var(--amber)"></span>
+              <span style="font:500 .72rem var(--font-mono);color:var(--text-secondary)">Unsaved changes</span>
+            </div>
+          </div>
+        </div>
+        <div style="border:1px solid var(--cc-red-a25);border-radius:10px;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:10px;min-height:44px;padding:6px 12px;background:var(--bg-surface)">
+            <span style="font:600 .8rem var(--font-mono);color:var(--text-primary)">checkout-v2 release train</span>
+            <span style="border-radius:4px;background:var(--bg-raised);padding:2px 8px;font:500 .7rem var(--font-mono);color:var(--text-tertiary)">r5</span>
+            <button type="button" class="wb-btn">Add Context</button>
+            <button type="button" class="wb-btn wb-btn-primary" disabled="" title="The output schema is not accepted by the engine">Save Draft</button>
+            <button type="button" class="wb-btn">Reset</button>
+            <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+              <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" style="color:var(--red)"><use href="#bi-alert"></use></svg>
+              <span style="font:500 .72rem var(--font-mono);color:var(--red)">Validation errors</span>
+            </div>
+          </div>
+          <div style="border-top:1px solid var(--border-dim);background:var(--cc-red-a10);padding:9px 12px;display:flex;flex-direction:column;gap:5px">
+            <span style="font:400 .72rem/1.55 var(--font-mono);color:var(--red)">ctx_notes · placement.outputSchema — a read-only context must declare an output contract.</span>
+            <span style="font:400 .72rem/1.55 var(--font-mono);color:var(--red)">ctx_checkout · outputSchema — text is outside the engine's supported subset. Save is refused rather than persisting the last valid value under fresh red text.</span>
+            <span style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">Both rows deep-link to the field that raised them. There is no separate Validate action — this status is that validation.</span>
+          </div>
+        </div>
+        <p class="wb-note" style="margin:0">
+          <b>Selection.</b> Clicking a node selects it and switches the rail to Context scope; clicking empty canvas deselects and returns to Workflow
+          scope. The scope tabs stay usable in both states, so the workflow defaults are one click away while a context is selected. Dependency edges
+          are drawn port-to-port; a selected node or edge is removed with Delete or from its context menu.
+        </p>
+      </div>
+
+      <div style="width:420px;height:820px;border:1px solid var(--border-default);border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+        <div style="padding:8px 12px;border-bottom:1px solid var(--border-dim);background:var(--bg-base);font:500 .7rem var(--font-mono);color:var(--text-tertiary)">context selected → Context scope</div>
+        <div style="flex:1;min-height:0;display:flex"><dc-import name="Config Panel" host="builder" initialScope="context" style="width:100%;height:100%" hint-size="420px,760px"></dc-import></div>
+      </div>
+
+      <div style="width:420px;height:820px;border:1px solid var(--border-default);border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+        <div style="padding:8px 12px;border-bottom:1px solid var(--border-dim);background:var(--bg-base);font:500 .7rem var(--font-mono);color:var(--text-tertiary)">output schema · invalid text blocks Save</div>
+        <div style="flex:1;min-height:0;display:flex"><dc-import name="Config Panel" host="builder" initialScope="context" initialNav="brief>schema" style="width:100%;height:100%" hint-size="420px,760px"></dc-import></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</x-dc>
+</body>
+</html>

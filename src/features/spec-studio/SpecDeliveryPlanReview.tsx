@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { StatusChip } from "@/components/ui/StatusChip";
 import WorkflowDefinitionCanvas from "@/components/workflow-graph/WorkflowDefinitionCanvas";
 import WorkflowFinalizedLaunchMetadata from "@/components/workflow-graph/WorkflowFinalizedLaunchMetadata";
+import { useGlobalDefaults } from "@/hooks/use-global-defaults";
 import { graphWorkflowLaunchName } from "@/lib/workflow-graph/launch-presentation";
 import {
   deliveryPlanReviewViewSchema,
@@ -441,6 +442,10 @@ export function SpecDeliveryPlanReviewContent({
   review: DeliveryPlanReviewView;
   preview: DeliveryPlanPreviewView;
 }): React.JSX.Element {
+  // The candidate is authored, not resolved: without the global tier its
+  // contexts would show only the blocks they set themselves, and a workflow
+  // that configures its crew once would preview with no crew at all.
+  const { workflowDefaults } = useGlobalDefaults();
   const mismatch = previewIdentityMismatch(review, preview);
   if (mismatch !== null) {
     return (
@@ -482,7 +487,10 @@ export function SpecDeliveryPlanReviewContent({
               {graphWorkflowLaunchName(preview.launch)}
             </p>
           </div>
-          <WorkflowDefinitionCanvas launch={preview.launch} />
+          <WorkflowDefinitionCanvas
+            launch={preview.launch}
+            globalDefaults={workflowDefaults}
+          />
         </section>
         <aside className="flex min-w-0 flex-col gap-lg">
           <PreviewStage preview={preview} />

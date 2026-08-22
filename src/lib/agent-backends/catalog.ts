@@ -399,6 +399,21 @@ export function backendLabel(backend: AgentBackendId): string {
 }
 
 /**
+ * The canonical long name for a model id. Selectors and persisted config hold
+ * the SHORT id (`opus`, `sonnet`); every surface that displays a model shows
+ * this instead, so no consumer hand-maps ids to names. An id the catalog does
+ * not know (a globally configured custom Codex model) displays verbatim —
+ * showing the raw id beats inventing a label for it.
+ */
+export function modelDisplayLabel(
+  backend: AgentBackendId,
+  model: string,
+): string {
+  const entry = findBackendCatalogEntry(backend);
+  return entry?.models.find((option) => option.id === model)?.label ?? model;
+}
+
+/**
  * Catalog-derived selection defaults for client surfaces that have no global
  * config in hand (e.g. pane bodies that only display collaboration state).
  * Surfaces that render selection CONTROLS should thread the config-resolved

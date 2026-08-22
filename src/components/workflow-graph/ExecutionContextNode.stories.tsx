@@ -106,33 +106,8 @@ export const Draft: Story = {
       context: makeContext(),
       tasks: makeTasks(5),
       mode: "builder",
-    },
-  },
-};
-
-// #69 change 4 stage 1: record-shaped criteria display as numbered `[id]`
-// lines, clamped like the description (the inspector carries the full list).
-export const CriteriaRecords: Story = {
-  args: {
-    data: {
-      context: makeContext({
-        acceptanceCriteria: [
-          {
-            id: "ac-1",
-            statement: "All REST endpoints exist and pass integration tests.",
-          },
-          {
-            id: "ac-2",
-            statement: "JWT auth middleware guards every non-public route.",
-          },
-          {
-            id: "rate-limit",
-            statement: "Public endpoints enforce the configured rate limit.",
-          },
-        ],
-      }),
-      tasks: makeTasks(5),
-      mode: "builder",
+      laneState: "active",
+      configOverrides: [],
     },
   },
 };
@@ -143,6 +118,8 @@ export const DependencyBlocked: Story = {
       context: makeContext(),
       tasks: makeTasks(5),
       mode: "execution",
+      laneState: "active",
+      configOverrides: [],
       contextState: {
         skipReason: null,
         landingIntent: null,
@@ -180,6 +157,8 @@ export const Ready: Story = {
       context: makeContext(),
       tasks: makeTasks(5),
       mode: "execution",
+      laneState: "active",
+      configOverrides: [],
       contextState: {
         skipReason: null,
         landingIntent: null,
@@ -213,6 +192,8 @@ export const WaitingForLane: Story = {
       context: makeContext(),
       tasks: makeTasks(5),
       mode: "execution",
+      laneState: "active",
+      configOverrides: [],
       contextState: {
         skipReason: null,
         landingIntent: null,
@@ -246,6 +227,8 @@ export const WaitingForJoin: Story = {
       context: makeContext(),
       tasks: makeTasks(5),
       mode: "execution",
+      laneState: "active",
+      configOverrides: [],
       contextState: {
         skipReason: null,
         landingIntent: null,
@@ -279,6 +262,8 @@ export const Running: Story = {
       context: makeContext(),
       tasks: makeTasks(5),
       mode: "execution",
+      laneState: "active",
+      configOverrides: [],
       contextState: {
         skipReason: null,
         landingIntent: null,
@@ -312,6 +297,8 @@ export const Validating: Story = {
       context: makeContext(),
       tasks: makeTasks(5),
       mode: "execution",
+      laneState: "active",
+      configOverrides: [],
       contextState: {
         skipReason: null,
         landingIntent: null,
@@ -345,6 +332,8 @@ export const Completed: Story = {
       context: makeContext(),
       tasks: makeTasks(5),
       mode: "execution",
+      laneState: "active",
+      configOverrides: [],
       contextState: {
         skipReason: null,
         landingIntent: null,
@@ -378,6 +367,8 @@ export const Published: Story = {
       context: makeContext(),
       tasks: makeTasks(5),
       mode: "execution",
+      laneState: "active",
+      configOverrides: [],
       contextState: {
         skipReason: null,
         landingIntent: null,
@@ -411,6 +402,8 @@ export const AwaitingApproval: Story = {
       context: makeContext(),
       tasks: makeTasks(5),
       mode: "execution",
+      laneState: "active",
+      configOverrides: [],
       contextState: {
         skipReason: null,
         landingIntent: null,
@@ -449,6 +442,8 @@ export const AwaitingUserInput: Story = {
       context: makeContext(),
       tasks: makeTasks(2),
       mode: "execution",
+      laneState: "active",
+      configOverrides: [],
       contextState: {
         skipReason: null,
         landingIntent: null,
@@ -492,6 +487,8 @@ export const BlockedBehindGate: Story = {
       context: makeContext(),
       tasks: makeTasks(5),
       mode: "execution",
+      laneState: "active",
+      configOverrides: [],
       contextState: {
         skipReason: null,
         landingIntent: null,
@@ -529,6 +526,8 @@ export const Halted: Story = {
       context: makeContext(),
       tasks: makeTasks(5),
       mode: "execution",
+      laneState: "active",
+      configOverrides: [],
       contextState: {
         skipReason: null,
         landingIntent: null,
@@ -562,6 +561,8 @@ export const Selected: Story = {
       context: makeContext(),
       tasks: makeTasks(5),
       mode: "builder",
+      laneState: "active",
+      configOverrides: [],
     },
     selected: true,
   },
@@ -573,6 +574,8 @@ export const SelectedRunning: Story = {
       context: makeContext(),
       tasks: makeTasks(5),
       mode: "execution",
+      laneState: "active",
+      configOverrides: [],
       contextState: {
         skipReason: null,
         landingIntent: null,
@@ -607,6 +610,8 @@ export const Merging: Story = {
       context: makeContext(),
       tasks: makeTasks(5),
       mode: "execution",
+      laneState: "active",
+      configOverrides: [],
       contextState: {
         skipReason: null,
         landingIntent: null,
@@ -642,6 +647,8 @@ export const ValidatorsScriptOnly: Story = {
       }),
       tasks: makeTasks(3),
       mode: "builder",
+      laneState: "active",
+      configOverrides: [],
     },
   },
 };
@@ -670,6 +677,8 @@ export const ValidatorsClaudeAgent: Story = {
       }),
       tasks: makeTasks(3),
       mode: "builder",
+      laneState: "active",
+      configOverrides: [],
     },
   },
 };
@@ -698,6 +707,8 @@ export const ValidatorsCodexAgent: Story = {
       }),
       tasks: makeTasks(3),
       mode: "builder",
+      laneState: "active",
+      configOverrides: [],
     },
   },
 };
@@ -727,6 +738,8 @@ export const ValidatorsScriptPlusClaude: Story = {
       }),
       tasks: makeTasks(3),
       mode: "builder",
+      laneState: "active",
+      configOverrides: [],
     },
   },
 };
@@ -778,6 +791,8 @@ export const ValidatorsInheritedClaude: Story = {
       },
       tasks: makeTasks(3),
       mode: "builder",
+      laneState: "active",
+      configOverrides: [],
     },
   },
 };
@@ -829,6 +844,8 @@ export const ValidatorsInheritedScriptAndCodex: Story = {
       },
       tasks: makeTasks(3),
       mode: "builder",
+      laneState: "active",
+      configOverrides: [],
     },
   },
 };
@@ -841,6 +858,8 @@ export const ApprovalGate: Story = {
       }),
       tasks: makeTasks(3),
       mode: "builder",
+      laneState: "active",
+      configOverrides: [],
     },
   },
 };
@@ -854,6 +873,8 @@ export const ApprovalGateWithScript: Story = {
       }),
       tasks: makeTasks(3),
       mode: "builder",
+      laneState: "active",
+      configOverrides: [],
     },
   },
 };
@@ -905,6 +926,8 @@ export const ApprovalGateWithValidators: Story = {
       },
       tasks: makeTasks(3),
       mode: "builder",
+      laneState: "active",
+      configOverrides: [],
     },
   },
 };
@@ -925,6 +948,245 @@ export const ImplementerCodex: Story = {
       }),
       tasks: makeTasks(3),
       mode: "builder",
+      laneState: "active",
+      configOverrides: [],
     },
   },
+};
+
+// ---------------------------------------------------------------------------
+// The design's eight-state gallery (`0 Index.dc.html`), in one canvas so the
+// states can be compared side by side rather than one story at a time.
+// ---------------------------------------------------------------------------
+
+function contextState(
+  status: NonNullable<ExecutionContextNodeData["contextState"]>["status"],
+  overrides: Partial<
+    NonNullable<ExecutionContextNodeData["contextState"]>
+  > = {},
+): NonNullable<ExecutionContextNodeData["contextState"]> {
+  return {
+    skipReason: null,
+    landingIntent: null,
+    pendingApproval: null,
+    pendingUserInputs: {},
+    contextId: "ctx-1",
+    status,
+    totalTaskCount: 5,
+    completedTaskCount: 0,
+    iterationCount: 1,
+    consecutiveFailureCount: 0,
+    consecutiveCandidateMismatchCount: 0,
+    worktreePath: null,
+    branchName: null,
+    isolation: "session",
+    batchId: null,
+    laneId: null,
+    joinId: null,
+    mergeStatus: "not-applicable",
+    cleanupStatus: "not-applicable",
+    lastMergeError: null,
+    ...overrides,
+  };
+}
+
+const OWNED_DELIVERY = {
+  lane: "delivery",
+  mode: "owned" as const,
+  ownedPaths: ["src/checkout", "src/risk"],
+};
+
+interface GalleryEntry {
+  id: string;
+  data: ExecutionContextNodeData;
+  selected?: boolean;
+}
+
+const GALLERY: [GalleryEntry, ...GalleryEntry[]] = [
+  {
+    id: "running-selected",
+    selected: true,
+    data: {
+      context: makeContext({
+        title: "Implement checkout",
+        placement: OWNED_DELIVERY,
+      }),
+      tasks: makeTasks(5),
+      mode: "execution",
+      laneState: "active",
+      configOverrides: ["implementer model"],
+      contextState: contextState("running", { completedTaskCount: 3 }),
+      waitState: { kind: "running" },
+    },
+  },
+  {
+    id: "completed-full",
+    data: {
+      context: makeContext({
+        title: "Plan the migration",
+        placement: { lane: "plan", mode: "full" },
+      }),
+      tasks: makeTasks(3),
+      mode: "execution",
+      laneState: "merged",
+      configOverrides: [],
+      contextState: contextState("completed", {
+        totalTaskCount: 3,
+        completedTaskCount: 3,
+      }),
+      waitState: { kind: "completed" },
+    },
+  },
+  {
+    id: "pending-waiting",
+    data: {
+      context: makeContext({
+        title: "Rollout switch",
+        placement: { lane: "delivery", mode: "full" },
+      }),
+      tasks: makeTasks(2),
+      mode: "execution",
+      laneState: "active",
+      configOverrides: [],
+      contextState: contextState("ready", { totalTaskCount: 2 }),
+      // The amber notice is derived from grade + wait state, never authored.
+      waitState: { kind: "waiting-for-lane", laneId: "delivery" },
+    },
+  },
+  {
+    id: "read-only-session",
+    data: {
+      context: makeContext({
+        title: "Release notes",
+        placement: { lane: "session", mode: "readOnly" },
+      }),
+      tasks: makeTasks(2),
+      mode: "execution",
+      laneState: "session",
+      configOverrides: [],
+      contextState: contextState("pending", { totalTaskCount: 2 }),
+      waitState: {
+        kind: "dependency-blocked",
+        unmetDependencyIds: ["ctx-rollout"],
+        blockedByApproval: false,
+      },
+    },
+  },
+  {
+    id: "halted-resumable",
+    data: {
+      context: makeContext({
+        title: "Implement checkout",
+        placement: OWNED_DELIVERY,
+      }),
+      tasks: makeTasks(5),
+      mode: "execution",
+      laneState: "active",
+      configOverrides: ["implementer model"],
+      contextState: contextState("halted", { completedTaskCount: 3 }),
+      waitState: { kind: "halted" },
+    },
+  },
+  {
+    id: "awaiting-approval",
+    data: {
+      context: makeContext({
+        title: "Implement checkout",
+        placement: OWNED_DELIVERY,
+      }),
+      tasks: makeTasks(5),
+      mode: "execution",
+      laneState: "active",
+      configOverrides: [],
+      contextState: contextState("awaiting_approval", {
+        completedTaskCount: 5,
+        pendingApproval: {
+          conversationId: "conv-1",
+          requestedAt: "2026-06-10T09:00:00.000Z",
+          decision: null,
+          approvalScope: { kind: "whole_tree" },
+        },
+      }),
+      waitState: { kind: "awaiting-approval" },
+    },
+  },
+  {
+    id: "draft",
+    data: {
+      context: makeContext({
+        title: "Settings surface",
+        placement: {
+          lane: "delivery",
+          mode: "owned",
+          ownedPaths: ["src/settings"],
+        },
+      }),
+      tasks: makeTasks(3),
+      mode: "builder",
+      laneState: "pending",
+      configOverrides: [],
+    },
+  },
+  {
+    id: "published",
+    data: {
+      context: makeContext({
+        title: "Plan the migration",
+        placement: { lane: "plan", mode: "full" },
+      }),
+      tasks: makeTasks(3),
+      mode: "execution",
+      laneState: "merged",
+      configOverrides: [],
+      // Published is DERIVED from the run's publication data — there is no
+      // stored `published` context status behind this card.
+      contextState: contextState("completed", {
+        totalTaskCount: 3,
+        completedTaskCount: 3,
+        worktreePath: "/tmp/wt-plan",
+        branchName: "csm/checkout-v2.plan",
+        isolation: "worktree",
+        mergeStatus: "merged-success",
+        cleanupStatus: "removed",
+      }),
+      waitState: { kind: "published" },
+    },
+  },
+];
+
+function GalleryStory() {
+  const nodes = GALLERY.map((entry, index) => ({
+    id: entry.id,
+    type: "executionContext" as const,
+    position: { x: (index % 4) * 300, y: Math.floor(index / 4) * 340 },
+    data: entry.data,
+    selected: entry.selected ?? false,
+  }));
+
+  return (
+    <ReactFlowProvider>
+      <div style={{ width: 1240, height: 760, background: "var(--bg-void)" }}>
+        <ReactFlow
+          nodes={nodes}
+          edges={[]}
+          nodeTypes={nodeTypes}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          elementsSelectable={false}
+          proOptions={{ hideAttribution: true }}
+          fitView
+          fitViewOptions={{ padding: 0.05 }}
+        />
+      </div>
+    </ReactFlowProvider>
+  );
+}
+
+/**
+ * running · selected, completed · full, pending · waiting, read-only · session,
+ * halted · resumable, awaiting approval, draft, published.
+ */
+export const DesignStateGallery: Story = {
+  args: { data: GALLERY[0].data },
+  render: () => <GalleryStory />,
 };

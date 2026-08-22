@@ -1,0 +1,1304 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/styles.css">
+  <script src="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.js"></script>
+  <style>
+    .cfg-in { border:1px solid var(--border-default); background:var(--bg-surface); color:var(--text-primary); border-radius:4px; padding:5px 10px; font:400 .72rem var(--font-mono); outline:none; }
+    .cfg-in:focus-visible { border-color:var(--cyan); box-shadow:0 0 0 1px var(--cyan-glow); }
+    .cfg-in:disabled { opacity:.55; cursor:not-allowed; }
+    .cfg-area { border:1px solid var(--border-default); background:var(--bg-surface); color:var(--text-primary); border-radius:4px; padding:7px 10px; font:400 .74rem/1.5 var(--font-mono); outline:none; resize:vertical; width:100%; box-sizing:border-box; }
+    .cfg-area:focus-visible { border-color:var(--cyan); box-shadow:0 0 0 1px var(--cyan-glow); }
+    .cfg-area:disabled { opacity:.55; cursor:not-allowed; }
+    .cfg-btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; border:1px solid var(--border-default); background:var(--bg-raised); color:var(--text-secondary); border-radius:4px; font:500 .72rem var(--font-mono); cursor:pointer; }
+    .cfg-btn:hover:enabled { background:var(--bg-elevated); color:var(--text-primary); border-color:var(--border-strong); }
+    .cfg-btn:focus-visible { outline:2px solid var(--cyan); outline-offset:2px; }
+    .cfg-btn:disabled { opacity:.5; cursor:not-allowed; }
+    .cfg-ico { width:22px; height:22px; padding:0; }
+    .cfg-row { display:flex; width:100%; text-align:left; background:none; border:0; padding:0; color:inherit; font:inherit; }
+    .cfg-row:focus-visible { outline:2px solid var(--cyan); outline-offset:-2px; }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important; } }
+  </style>
+</helmet>
+
+<div style="display:flex;flex-direction:column;height:100%;min-height:0;background:var(--bg-surface);font-family:var(--font-mono)">
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <g id="cfgi-chev-right"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></g>
+      <g id="cfgi-chev-left"><path d="M10 3.5 5.5 8 10 12.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></g>
+      <g id="cfgi-reset"><path d="M3 8a5 5 0 1 1 1.6 3.7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path><path d="M3 4.4V8h3.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path></g>
+      <g id="cfgi-up"><path d="M8 12.5V4M4.5 7.5 8 4l3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path></g>
+      <g id="cfgi-down"><path d="M8 3.5V12M4.5 8.5 8 12l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path></g>
+      <g id="cfgi-x"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path></g>
+      <g id="cfgi-plus"><path d="M8 3.5v9M3.5 8h9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path></g>
+      <g id="cfgi-lock"><rect x="3.2" y="7" width="9.6" height="6.8" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4"></rect><path d="M5.6 7V5.2a2.4 2.4 0 0 1 4.8 0V7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path></g>
+      <g id="cfgi-alert"><path d="M8 2.8 14.2 13.2H1.8Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"></path><path d="M8 6.6v3M8 11.4v.1" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path></g>
+      <g id="cfgi-check"><path d="M3.2 8.4 6.4 11.6 12.8 4.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></g>
+      <g id="cfgi-pause"><rect x="4" y="3.5" width="2.6" height="9" rx="0.8" fill="currentColor"></rect><rect x="9.4" y="3.5" width="2.6" height="9" rx="0.8" fill="currentColor"></rect></g>
+      <g id="cfgi-trash"><path d="M3.5 4.5h9M6.5 4.5V3.2h3v1.3M5 4.5l.6 8.3h4.8L11 4.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path></g>
+    </defs>
+  </svg>
+
+  <sc-if value="{{ hasScopeRow }}" hint-placeholder-val="{{ true }}">
+    <div style="display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--border-dim);flex-shrink:0">
+      <x-import component-from-global-scope="CommandCenterUI.SegmentedControl" value="{{ scope }}" onValueChange="{{ setScope }}" aria-label="Inspector scope" hint-size="auto,30px">
+        <x-import component-from-global-scope="CommandCenterUI.SegmentedControlItem" value="workflow" hint-size="auto,22px">Workflow</x-import>
+        <x-import component-from-global-scope="CommandCenterUI.SegmentedControlItem" value="context" hint-size="auto,22px">Context</x-import>
+      </x-import>
+      <span style="margin-left:auto;font:500 .7rem var(--font-mono);color:{{ totalColor }}">{{ totalLabel }}</span>
+    </div>
+  </sc-if>
+
+  <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border-dim);flex-shrink:0;min-height:44px;box-sizing:border-box">
+    <sc-if value="{{ isRoot }}" hint-placeholder-val="{{ true }}">
+      <div style="min-width:0;display:flex;flex-direction:column;gap:3px">
+        <span style="font:600 .82rem var(--font-mono);color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ entityTitle }}</span>
+        <span style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">{{ entityMeta }}</span>
+      </div>
+    </sc-if>
+    <sc-if value="{{ isDeep }}" hint-placeholder-val="{{ false }}">
+      <button type="button" class="cfg-btn" onClick="{{ back }}" style="height:24px;padding:0 8px;flex-shrink:0" aria-label="{{ backAria }}">
+        <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><use href="#cfgi-chev-left"></use></svg>
+        {{ backLabel }}
+      </button>
+      <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 .74rem var(--font-mono);text-transform:uppercase;letter-spacing:.07em;color:var(--text-primary)">{{ screenTitle }}</span>
+    </sc-if>
+    <div style="margin-left:auto;flex-shrink:0;display:flex;align-items:center;gap:6px">
+      <sc-for list="{{ headBadges }}" as="b" hint-placeholder-count="1">
+        <span style="display:inline-flex;align-items:center;border-radius:999px;padding:1px 8px;font:500 .7rem var(--font-mono);color:{{ b.color }};border:1px solid {{ b.border }};background:{{ b.bg }}">{{ b.text }}</span>
+      </sc-for>
+    </div>
+  </div>
+
+  <sc-if value="{{ hasBanner }}" hint-placeholder-val="{{ false }}">
+    <div style="display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--border-dim);background:{{ bannerBg }};flex-shrink:0">
+      <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" style="flex-shrink:0;color:{{ bannerColor }}"><use href="{{ bannerIcon }}"></use></svg>
+      <span style="min-width:0;flex:1;font:400 .72rem/1.45 var(--font-mono);color:{{ bannerColor }}">{{ bannerText }}</span>
+      <sc-if value="{{ hasBannerAction }}" hint-placeholder-val="{{ false }}">
+        <button type="button" class="cfg-btn" style="height:26px;padding:0 10px;flex-shrink:0">{{ bannerAction }}</button>
+      </sc-if>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ hasAlert }}" hint-placeholder-val="{{ false }}">
+    <div role="alert" style="display:flex;align-items:flex-start;gap:9px;padding:9px 14px;border-bottom:1px solid var(--border-dim);background:var(--cc-red-a10);flex-shrink:0">
+      <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" style="flex-shrink:0;margin-top:1px;color:var(--red)"><use href="#cfgi-alert"></use></svg>
+      <span style="font:400 .72rem/1.45 var(--font-mono);color:var(--red)">{{ alertText }}</span>
+    </div>
+  </sc-if>
+
+  <div style="flex:1;overflow-y:auto;min-height:0">
+    <sc-if value="{{ isRoot }}" hint-placeholder-val="{{ true }}">
+      <div style="padding:12px 14px;display:flex;flex-direction:column;gap:9px">
+        <sc-for list="{{ cards }}" as="card" hint-placeholder-count="5">
+          <div style="border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base);overflow:hidden">
+            <button type="button" class="cfg-row" onClick="{{ card.open }}" style="align-items:center;gap:8px;padding:10px 13px;cursor:pointer">
+              <span style="font:600 .74rem var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-primary)">{{ card.title }}</span>
+              <sc-for list="{{ card.badges }}" as="b" hint-placeholder-count="1">
+                <span style="display:inline-flex;align-items:center;border-radius:999px;padding:1px 8px;font:500 .7rem var(--font-mono);color:{{ b.color }};border:1px solid {{ b.border }};background:{{ b.bg }}">{{ b.text }}</span>
+              </sc-for>
+              <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" style="margin-left:auto;color:var(--text-tertiary)"><use href="#cfgi-chev-right"></use></svg>
+            </button>
+            <div style="padding:0 13px 11px;display:flex;flex-direction:column;gap:4px">
+              <sc-for list="{{ card.lines }}" as="line" hint-placeholder-count="3">
+                <div style="display:flex;gap:8px;align-items:center;min-height:19px">
+                  <span style="flex-shrink:0;width:104px;font:500 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.06em;color:var(--text-tertiary)">{{ line.k }}</span>
+                  <div style="min-width:0;display:flex;flex-wrap:nowrap;overflow:hidden;align-items:center;gap:5px">
+                    <sc-for list="{{ line.parts }}" as="p" hint-placeholder-count="2">
+                      <sc-if value="{{ p.isChip }}" hint-placeholder-val="{{ false }}">
+                        <span style="flex-shrink:0;display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:500 .7rem var(--font-mono);white-space:nowrap;color:{{ p.color }};border:1px solid {{ p.border }};background:{{ p.bg }}">{{ p.text }}</span>
+                      </sc-if>
+                      <sc-if value="{{ p.isText }}" hint-placeholder-val="{{ true }}">
+                        <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:{{ p.font }} var(--font-mono);color:{{ p.color }}">{{ p.text }}</span>
+                      </sc-if>
+                      <sc-if value="{{ p.isDot }}" hint-placeholder-val="{{ false }}">
+                        <span title="{{ p.title }}" style="flex-shrink:0;width:5px;height:5px;border-radius:50%;background:{{ p.color }}"></span>
+                      </sc-if>
+                    </sc-for>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isDeep }}" hint-placeholder-val="{{ false }}">
+      <div style="padding:12px 14px;display:flex;flex-direction:column;gap:10px">
+        <sc-for list="{{ groups }}" as="grp" hint-placeholder-count="3">
+          <div style="border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base);overflow:hidden">
+            <sc-if value="{{ grp.hasLabel }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border-dim);background:var(--bg-surface)">
+                <span style="font:600 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">{{ grp.label }}</span>
+                <sc-if value="{{ grp.hasTier }}" hint-placeholder-val="{{ false }}">
+                  <span style="margin-left:auto;font:500 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.06em;color:var(--text-tertiary)">{{ grp.tier }}</span>
+                </sc-if>
+              </div>
+            </sc-if>
+            <sc-for list="{{ grp.rows }}" as="row" hint-placeholder-count="3">
+              <div style="border-bottom:{{ row.divider }};border-left:2px solid {{ row.edge }};padding:9px 12px 11px;display:flex;flex-direction:column;gap:7px;background:{{ row.bg }}">
+
+                <sc-if value="{{ row.isDrill }}" hint-placeholder-val="{{ false }}">
+                  <button type="button" class="cfg-row" onClick="{{ row.onOpen }}" style="align-items:center;gap:8px;min-height:24px;cursor:pointer">
+                    <span style="font:500 .76rem var(--font-mono);color:{{ row.labelColor }}">{{ row.label }}</span>
+                    <div style="margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0">
+                      <div style="min-width:0;display:flex;flex-wrap:nowrap;overflow:hidden;align-items:center;gap:5px">
+                        <sc-for list="{{ row.valueParts }}" as="p" hint-placeholder-count="2">
+                          <sc-if value="{{ p.isChip }}" hint-placeholder-val="{{ false }}">
+                            <span style="flex-shrink:0;display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:500 .7rem var(--font-mono);white-space:nowrap;color:{{ p.color }};border:1px solid {{ p.border }};background:{{ p.bg }}">{{ p.text }}</span>
+                          </sc-if>
+                          <sc-if value="{{ p.isText }}" hint-placeholder-val="{{ true }}">
+                            <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:{{ p.font }} var(--font-mono);color:{{ p.color }}">{{ p.text }}</span>
+                          </sc-if>
+                          <sc-if value="{{ p.isDot }}" hint-placeholder-val="{{ false }}">
+                            <span title="{{ p.title }}" style="flex-shrink:0;width:5px;height:5px;border-radius:50%;background:{{ p.color }}"></span>
+                          </sc-if>
+                        </sc-for>
+                      </div>
+                      <sc-if value="{{ row.hasTier }}" hint-placeholder-val="{{ true }}">
+                        <span title="{{ row.tierTitle }}" style="flex-shrink:0;font:400 .7rem var(--font-mono);color:var(--text-tertiary);border:1px solid var(--border-default);border-radius:4px;padding:0 5px">{{ row.tier }}</span>
+                      </sc-if>
+                      <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" style="flex-shrink:0;color:var(--text-tertiary)"><use href="#cfgi-chev-right"></use></svg>
+                    </div>
+                  </button>
+                </sc-if>
+
+                <sc-if value="{{ row.isControl }}" hint-placeholder-val="{{ true }}">
+                  <div style="display:flex;align-items:center;gap:8px;min-height:24px">
+                    <span style="font:500 .76rem var(--font-mono);color:{{ row.labelColor }}">{{ row.label }}</span>
+                    <div style="margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0">
+                      <sc-if value="{{ row.hasValue }}" hint-placeholder-val="{{ true }}">
+                        <div style="min-width:0;display:flex;flex-wrap:nowrap;overflow:hidden;align-items:center;gap:5px">
+                          <sc-for list="{{ row.valueParts }}" as="p" hint-placeholder-count="2">
+                            <sc-if value="{{ p.isChip }}" hint-placeholder-val="{{ false }}">
+                              <span style="flex-shrink:0;display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font:500 .7rem var(--font-mono);white-space:nowrap;color:{{ p.color }};border:1px solid {{ p.border }};background:{{ p.bg }}">{{ p.text }}</span>
+                            </sc-if>
+                            <sc-if value="{{ p.isText }}" hint-placeholder-val="{{ true }}">
+                              <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:{{ p.font }} var(--font-mono);color:{{ p.color }}">{{ p.text }}</span>
+                            </sc-if>
+                          </sc-for>
+                        </div>
+                      </sc-if>
+                      <sc-if value="{{ row.isNum }}" hint-placeholder-val="{{ false }}">
+                        <input class="cfg-in" type="text" inputmode="numeric" style="width:76px;text-align:right" value="{{ row.value }}" onChange="{{ row.onInput }}" disabled="{{ row.disabled }}" aria-label="{{ row.label }}">
+                      </sc-if>
+                      <sc-if value="{{ row.isText }}" hint-placeholder-val="{{ false }}">
+                        <input class="cfg-in" type="text" style="width:158px" value="{{ row.value }}" placeholder="{{ row.placeholder }}" onChange="{{ row.onInput }}" disabled="{{ row.disabled }}" aria-label="{{ row.label }}">
+                      </sc-if>
+                      <sc-if value="{{ row.isSegInline }}" hint-placeholder-val="{{ false }}">
+                        <x-import component-from-global-scope="CommandCenterUI.SegmentedControl" value="{{ row.value }}" onValueChange="{{ row.onValue }}" disabled="{{ row.disabled }}" aria-label="{{ row.label }}" hint-size="auto,30px">
+                          <sc-for list="{{ row.options }}" as="opt" hint-placeholder-count="2">
+                            <x-import component-from-global-scope="CommandCenterUI.SegmentedControlItem" value="{{ opt.value }}" hint-size="auto,22px">{{ opt.label }}</x-import>
+                          </sc-for>
+                        </x-import>
+                      </sc-if>
+                      <sc-if value="{{ row.isBackend }}" hint-placeholder-val="{{ false }}">
+                        <x-import component-from-global-scope="CommandCenterUI.BackendToggle" value="{{ row.value }}" onChange="{{ row.onValue }}" disabled="{{ row.disabled }}" hint-size="auto,36px"></x-import>
+                      </sc-if>
+                      <sc-if value="{{ row.isModel }}" hint-placeholder-val="{{ false }}">
+                        <x-import component-from-global-scope="CommandCenterUI.ModelSelector" value="{{ row.value }}" backend="{{ row.backend }}" onChange="{{ row.onValue }}" disabled="{{ row.disabled }}" hint-size="auto,36px"></x-import>
+                      </sc-if>
+                      <sc-if value="{{ row.isEffort }}" hint-placeholder-val="{{ false }}">
+                        <x-import component-from-global-scope="CommandCenterUI.ReasoningLevelSelector" value="{{ row.value }}" availableLevels="{{ row.levels }}" onChange="{{ row.onValue }}" disabled="{{ row.disabled }}" hint-size="auto,36px"></x-import>
+                      </sc-if>
+                      <sc-if value="{{ row.isSelect }}" hint-placeholder-val="{{ false }}">
+                        <x-import component-from-global-scope="CommandCenterUI.Select" value="{{ row.value }}" onValueChange="{{ row.onValue }}" disabled="{{ row.disabled }}" hint-size="auto,36px">
+                          <x-import component-from-global-scope="CommandCenterUI.SelectTrigger" hint-size="auto,36px"><span>{{ row.valueLabel }}</span></x-import>
+                          <x-import component-from-global-scope="CommandCenterUI.SelectContent" hint-size="auto,auto">
+                            <sc-for list="{{ row.options }}" as="opt" hint-placeholder-count="3">
+                              <x-import component-from-global-scope="CommandCenterUI.SelectItem" value="{{ opt.value }}" description="{{ opt.description }}" hint-size="auto,30px">{{ opt.label }}</x-import>
+                            </sc-for>
+                          </x-import>
+                        </x-import>
+                      </sc-if>
+                      <sc-if value="{{ row.isSwitch }}" hint-placeholder-val="{{ false }}">
+                        <x-import component-from-global-scope="CommandCenterUI.Switch" checked="{{ row.checked }}" onCheckedChange="{{ row.onValue }}" disabled="{{ row.disabled }}" tone="{{ row.switchTone }}" aria-label="{{ row.label }}" hint-size="34px,18px"></x-import>
+                      </sc-if>
+                      <sc-if value="{{ row.hasTier }}" hint-placeholder-val="{{ true }}">
+                        <span title="{{ row.tierTitle }}" style="flex-shrink:0;font:400 .7rem var(--font-mono);color:var(--text-tertiary);border:1px solid var(--border-default);border-radius:4px;padding:0 5px">{{ row.tier }}</span>
+                      </sc-if>
+                      <sc-if value="{{ row.showReset }}" hint-placeholder-val="{{ false }}">
+                        <button type="button" class="cfg-btn cfg-ico" onClick="{{ row.onReset }}" disabled="{{ row.disabled }}" title="{{ row.resetTitle }}" aria-label="{{ row.resetTitle }}" style="flex-shrink:0;color:var(--cyan)">
+                          <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><use href="#cfgi-reset"></use></svg>
+                        </button>
+                      </sc-if>
+                    </div>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ row.hasHint }}" hint-placeholder-val="{{ false }}">
+                  <div style="font:400 .7rem/1.5 var(--font-mono);color:{{ row.hintColor }}">{{ row.hint }}</div>
+                </sc-if>
+
+                <sc-if value="{{ row.isSegWide }}" hint-placeholder-val="{{ false }}">
+                  <x-import component-from-global-scope="CommandCenterUI.SegmentedControl" value="{{ row.value }}" onValueChange="{{ row.onValue }}" disabled="{{ row.disabled }}" aria-label="{{ row.label }}" hint-size="100%,30px">
+                    <sc-for list="{{ row.options }}" as="opt" hint-placeholder-count="3">
+                      <x-import component-from-global-scope="CommandCenterUI.SegmentedControlItem" value="{{ opt.value }}" hint-size="auto,22px">{{ opt.label }}</x-import>
+                    </sc-for>
+                  </x-import>
+                </sc-if>
+
+                <sc-if value="{{ row.isArea }}" hint-placeholder-val="{{ false }}">
+                  <textarea class="cfg-area" rows="{{ row.rows }}" value="{{ row.value }}" placeholder="{{ row.placeholder }}" onChange="{{ row.onInput }}" disabled="{{ row.disabled }}" aria-label="{{ row.label }}"></textarea>
+                </sc-if>
+
+                <sc-if value="{{ row.isSchema }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;flex-direction:column;gap:7px">
+                    <textarea class="cfg-area" rows="12" style="font:400 .72rem/1.6 var(--font-mono)" value="{{ row.value }}" onChange="{{ row.onInput }}" disabled="{{ row.disabled }}" aria-label="Output schema JSON"></textarea>
+                    <div style="display:flex;align-items:flex-start;gap:8px;border:1px solid {{ row.schemaBorder }};background:{{ row.schemaBg }};border-radius:4px;padding:8px 10px">
+                      <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" style="flex-shrink:0;margin-top:1px;color:{{ row.schemaColor }}"><use href="{{ row.schemaIcon }}"></use></svg>
+                      <div style="min-width:0;display:flex;flex-direction:column;gap:3px">
+                        <span style="font:500 .72rem var(--font-mono);color:{{ row.schemaColor }}">{{ row.schemaTitle }}</span>
+                        <span style="font:400 .7rem/1.5 var(--font-mono);color:var(--text-secondary)">{{ row.schemaDetail }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ row.isChecklist }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;flex-direction:column;gap:7px;padding:2px 0 0">
+                    <sc-for list="{{ row.commands }}" as="cmd" hint-placeholder-count="4">
+                      <x-import component-from-global-scope="CommandCenterUI.CheckboxField" label="{{ cmd.name }}" description="{{ cmd.description }}" checked="{{ cmd.checked }}" onCheckedChange="{{ cmd.onToggle }}" disabled="{{ row.disabled }}" hint-size="100%,34px"></x-import>
+                    </sc-for>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ row.isChips }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center">
+                    <sc-for list="{{ row.chips }}" as="chip" hint-placeholder-count="2">
+                      <span style="display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border-subtle);background:var(--bg-raised);border-radius:999px;padding:1px 3px 1px 9px;font:400 .72rem var(--font-mono);color:var(--text-primary)">
+                        {{ chip.text }}
+                        <button type="button" class="cfg-btn" onClick="{{ chip.onRemove }}" disabled="{{ row.disabled }}" aria-label="{{ chip.removeLabel }}" style="width:18px;height:18px;padding:0;border:0;background:none;color:var(--text-tertiary)">
+                          <svg width="10" height="10" viewBox="0 0 16 16" aria-hidden="true"><use href="#cfgi-x"></use></svg>
+                        </button>
+                      </span>
+                    </sc-for>
+                    <button type="button" class="cfg-btn" onClick="{{ row.onAdd }}" disabled="{{ row.disabled }}" style="height:24px;padding:0 10px;border-style:dashed;border-radius:999px">
+                      <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><use href="#cfgi-plus"></use></svg>{{ row.addLabel }}
+                    </button>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ row.isItems }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;flex-direction:column;gap:6px">
+                    <sc-for list="{{ row.items }}" as="it" hint-placeholder-count="2">
+                      <div style="border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base);padding:8px 10px;display:flex;flex-direction:column;gap:6px">
+                        <div style="display:flex;align-items:center;gap:7px">
+                          <sc-if value="{{ it.hasDrill }}" hint-placeholder-val="{{ false }}">
+                            <button type="button" class="cfg-row" onClick="{{ it.onOpen }}" style="align-items:center;gap:7px;cursor:pointer;min-width:0">
+                              <span style="font:600 .74rem var(--font-mono);color:var(--text-primary);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ it.title }}</span>
+                              <sc-for list="{{ it.chips }}" as="c" hint-placeholder-count="1">
+                                <span style="flex-shrink:0;font:500 .7rem var(--font-mono);border-radius:999px;padding:1px 7px;color:{{ c.color }};border:1px solid {{ c.border }};background:{{ c.bg }}">{{ c.text }}</span>
+                              </sc-for>
+                              <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" style="margin-left:auto;flex-shrink:0;color:var(--text-tertiary)"><use href="#cfgi-chev-right"></use></svg>
+                            </button>
+                          </sc-if>
+                          <sc-if value="{{ it.isStatic }}" hint-placeholder-val="{{ true }}">
+                            <span style="font:600 .74rem var(--font-mono);color:var(--text-primary);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ it.title }}</span>
+                            <sc-for list="{{ it.chips }}" as="c" hint-placeholder-count="1">
+                              <span style="flex-shrink:0;font:500 .7rem var(--font-mono);border-radius:999px;padding:1px 7px;color:{{ c.color }};border:1px solid {{ c.border }};background:{{ c.bg }}">{{ c.text }}</span>
+                            </sc-for>
+                          </sc-if>
+                          <div style="margin-left:auto;flex-shrink:0;display:flex;align-items:center;gap:4px">
+                            <sc-if value="{{ it.hasMove }}" hint-placeholder-val="{{ false }}">
+                              <button type="button" class="cfg-btn cfg-ico" onClick="{{ it.onUp }}" disabled="{{ row.disabled }}" aria-label="{{ it.upLabel }}"><svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><use href="#cfgi-up"></use></svg></button>
+                              <button type="button" class="cfg-btn cfg-ico" onClick="{{ it.onDown }}" disabled="{{ row.disabled }}" aria-label="{{ it.downLabel }}"><svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><use href="#cfgi-down"></use></svg></button>
+                            </sc-if>
+                            <sc-if value="{{ it.hasRemove }}" hint-placeholder-val="{{ false }}">
+                              <button type="button" class="cfg-btn cfg-ico" onClick="{{ it.onRemove }}" disabled="{{ row.disabled }}" aria-label="{{ it.removeLabel }}"><svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><use href="#cfgi-x"></use></svg></button>
+                            </sc-if>
+                          </div>
+                        </div>
+                        <sc-if value="{{ it.hasMeta }}" hint-placeholder-val="{{ false }}">
+                          <div style="font:400 .7rem/1.5 var(--font-mono);color:var(--text-tertiary)">{{ it.meta }}</div>
+                        </sc-if>
+                        <sc-if value="{{ it.hasInput }}" hint-placeholder-val="{{ false }}">
+                          <textarea class="cfg-area" rows="2" value="{{ it.inputValue }}" onChange="{{ it.onInput }}" disabled="{{ row.disabled }}" aria-label="{{ it.inputLabel }}"></textarea>
+                        </sc-if>
+                        <sc-if value="{{ it.hasFields }}" hint-placeholder-val="{{ false }}">
+                          <div style="display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center">
+                            <sc-for list="{{ it.fields }}" as="f" hint-placeholder-count="3">
+                              <label style="display:flex;align-items:center;gap:6px;font:400 .7rem var(--font-mono);color:var(--text-tertiary)">
+                                {{ f.label }}
+                                <sc-if value="{{ f.isText }}" hint-placeholder-val="{{ true }}">
+                                  <input class="cfg-in" type="text" style="width:{{ f.width }}" value="{{ f.value }}" placeholder="{{ f.placeholder }}" onChange="{{ f.onInput }}" disabled="{{ row.disabled }}" aria-label="{{ f.aria }}">
+                                </sc-if>
+                                <sc-if value="{{ f.isSwitch }}" hint-placeholder-val="{{ false }}">
+                                  <x-import component-from-global-scope="CommandCenterUI.Switch" checked="{{ f.checked }}" onCheckedChange="{{ f.onValue }}" disabled="{{ row.disabled }}" aria-label="{{ f.aria }}" hint-size="34px,18px"></x-import>
+                                </sc-if>
+                              </label>
+                            </sc-for>
+                          </div>
+                        </sc-if>
+                        <sc-if value="{{ it.hasChecks }}" hint-placeholder-val="{{ false }}">
+                          <div style="display:flex;flex-wrap:wrap;gap:6px 14px">
+                            <sc-for list="{{ it.checks }}" as="ck" hint-placeholder-count="2">
+                              <label style="display:flex;align-items:center;gap:6px;font:400 .7rem var(--font-mono);color:var(--text-secondary)">
+                                <x-import component-from-global-scope="CommandCenterUI.Checkbox" checked="{{ ck.checked }}" onCheckedChange="{{ ck.onToggle }}" disabled="{{ row.disabled }}" aria-label="{{ ck.aria }}" hint-size="14px,14px"></x-import>
+                                {{ ck.label }}
+                              </label>
+                            </sc-for>
+                          </div>
+                        </sc-if>
+                      </div>
+                    </sc-for>
+                    <sc-if value="{{ row.hasAdd }}" hint-placeholder-val="{{ false }}">
+                      <button type="button" class="cfg-btn" onClick="{{ row.onAdd }}" disabled="{{ row.disabled }}" style="align-self:flex-start;height:28px;padding:0 10px">
+                        <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><use href="#cfgi-plus"></use></svg>{{ row.addLabel }}
+                      </button>
+                    </sc-if>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ row.isDanger }}" hint-placeholder-val="{{ false }}">
+                  <button type="button" class="cfg-btn" disabled="{{ row.disabled }}" style="align-self:flex-start;height:28px;padding:0 10px;color:var(--red);border-color:var(--cc-red-a25)">
+                    <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><use href="#cfgi-trash"></use></svg>{{ row.label }}
+                  </button>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+  </div>
+
+  <sc-if value="{{ hasSaveBar }}" hint-placeholder-val="{{ false }}">
+    <div style="display:flex;align-items:center;gap:8px;padding:9px 14px;border-top:1px solid var(--border-dim);background:var(--bg-surface);flex-shrink:0">
+      <button type="button" class="cfg-btn" disabled="{{ saveDisabled }}" style="height:28px;padding:0 12px;color:var(--cyan);border-color:var(--cyan-glow-strong);background:var(--cc-cyan-a12)">{{ saveLabel }}</button>
+      <sc-if value="{{ showResume }}" hint-placeholder-val="{{ false }}">
+        <button type="button" class="cfg-btn" style="height:28px;padding:0 12px">Resume workflow</button>
+      </sc-if>
+      <span style="margin-left:auto;font:400 .7rem var(--font-mono);color:{{ saveNoteColor }}">{{ saveNote }}</span>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ hasLegend }}" hint-placeholder-val="{{ true }}">
+    <div style="display:flex;align-items:center;gap:12px;padding:8px 14px;border-top:1px solid var(--border-dim);font:400 .7rem var(--font-mono);color:var(--text-tertiary);flex-shrink:0">
+      <span><span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--cyan);vertical-align:middle"></span> set here</span>
+      <span>W workflow</span>
+      <span>G global</span>
+      <button type="button" class="cfg-btn" onClick="{{ resetAll }}" style="margin-left:auto;height:22px;padding:0 8px;border:0;background:none;color:var(--cyan)">Reset all overrides</button>
+    </div>
+  </sc-if>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:470,&quot;height&quot;:900},&quot;host&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;builder&quot;,&quot;execution&quot;],&quot;default&quot;:&quot;builder&quot;,&quot;tsType&quot;:&quot;'builder' | 'execution'&quot;,&quot;section&quot;:&quot;Host&quot;},&quot;initialScope&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;workflow&quot;,&quot;context&quot;],&quot;default&quot;:&quot;workflow&quot;,&quot;tsType&quot;:&quot;'workflow' | 'context'&quot;,&quot;section&quot;:&quot;Host&quot;},&quot;initialNav&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Host&quot;},&quot;affordance&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;editable&quot;,&quot;pause-to-edit&quot;,&quot;frozen&quot;,&quot;read-only&quot;],&quot;default&quot;:&quot;editable&quot;,&quot;tsType&quot;:&quot;'editable' | 'pause-to-edit' | 'frozen' | 'read-only'&quot;,&quot;section&quot;:&quot;Execution&quot;},&quot;readOnlyReason&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;completed&quot;,&quot;aborted&quot;,&quot;halt-not-resumable&quot;,&quot;awaiting-definition-approval&quot;],&quot;default&quot;:&quot;completed&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Execution&quot;},&quot;saveState&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;clean&quot;,&quot;dirty&quot;,&quot;saving&quot;,&quot;saved&quot;,&quot;conflict&quot;,&quot;error&quot;],&quot;default&quot;:&quot;clean&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Execution&quot;}}">
+const REGISTRY = [
+  { name: "build", cost: 4, description: "Production build; run at checkpoints, not per iteration" },
+  { name: "format", cost: 1, description: "Ruff and Prettier formatting (writes fixes)" },
+  { name: "lint", cost: 2, description: "Ruff and ESLint (writes safe fixes)" },
+  { name: "pre-merge", cost: 5, description: "Pre-merge composite" },
+  { name: "seams", cost: 1, description: "Architecture seam ratchet" },
+  { name: "test", cost: 8, description: "pytest, bun test and jest across the sub-projects" },
+  { name: "typecheck", cost: 2, description: "mypy and tsc across the sub-projects" },
+];
+
+const PROFILES = [
+  { value: "core/implementer", label: "core/implementer", description: "Default implementer prompt" },
+  { value: "core/reviewer", label: "core/reviewer", description: "Default reviewer prompt" },
+  { value: "core/security-reviewer", label: "core/security-reviewer", description: "Threat-model reviewer" },
+  { value: "project/checkout-impl", label: "project/checkout-impl", description: "Project profile — payments" },
+  { value: "project/style-reviewer", label: "project/style-reviewer", description: "Project profile — house style" },
+];
+
+const CLAUDE_EFFORTS = ["low", "medium", "high", "max"];
+const CODEX_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"];
+const efforts = (backend) => (backend === "codex" ? CODEX_EFFORTS : CLAUDE_EFFORTS);
+
+const GRADE_HINT = {
+  full: "Writes anywhere in the lane worktree — requires exclusive occupancy of the lane while it runs.",
+  owned: "Writes only inside the listed paths. Runs beside other owning members whose canonical paths are disjoint.",
+  readOnly: "Writes nothing; delivers through its output schema alone. Required on the reserved session lane, allowed on any lane.",
+};
+const THRESHOLD_HINT = {
+  none: "Always pause when there are conflicts",
+  minor: "Auto-resolve only minor conflicts",
+  major: "Auto-resolve up to major conflicts",
+  blocking: "Auto-resolve everything, including blocking conflicts",
+};
+const LANE_MERGE_HINT = {
+  "final-only": "Validates only the last merge of a join series.",
+  "every-merge": "Validates every lane merge in a join series.",
+};
+const READ_ONLY_REASON_TEXT = {
+  completed: "This execution has completed and can no longer be edited.",
+  aborted: "This execution was aborted and can no longer be edited.",
+  "halt-not-resumable": "This execution halted with a non-resumable reason and can no longer be edited.",
+  "awaiting-definition-approval": "This plan is parked awaiting definition approval; approve or reject it before editing.",
+};
+const SCHEMA_HINT = {
+  frozen: "The output was already captured against this schema — editing it now would not re-validate anything.",
+  "read-only": "This execution is no longer running; its working definition is immutable.",
+  "pause-to-edit": "Pause the execution to change the contract before the next iteration runs.",
+};
+
+const agent = (backend, model, reasoningEffort) => ({ backend, model, reasoningEffort });
+
+// ---- Global tier: the full resolved configuration ----
+const GLOBAL = {
+  implementer: { profile: "core/implementer", focus: "", agent: agent("claude", "sonnet", "medium") },
+  collaboration: { enabled: false, secondAgent: agent("codex", "gpt-5-codex", "medium"), negotiationRounds: 2, autonomousResolutionThreshold: "minor" },
+  contextValidator: {
+    enabled: true,
+    assignments: [{ id: "reviewer", profile: "core/reviewer", authority: "blocking", strategy: "conversation", focus: "", agent: agent("claude", "sonnet", "medium"), continuity: { enabled: true, contextLimitTokens: null } }],
+  },
+  scriptValidator: { commands: [] },
+  agentValidation: { implementer: { mode: "all", names: [] }, contextValidator: { mode: "only", names: [] } },
+  humanApprovalGate: { enabled: false },
+  askUserQuestions: { enabled: false },
+  iterationPolicy: { maxIterations: 5, continuity: { enabled: true, contextLimitTokens: null } },
+  circuitBreaker: { consecutiveFailureThreshold: 3 },
+  planRepair: { enabled: true, maxAttemptsPerContext: 2, agent: null },
+  mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: false },
+  laneMergeValidation: { strategy: "final-only", commands: { mode: "project", names: [] } },
+};
+
+// ---- Overrides are stored PER PATH, at the granularity the block cascades at ----
+const WORKFLOW_OV = {
+  implementer: { profile: "core/implementer", focus: "", agent: agent("claude", "opus", "medium") },
+  contextValidator: {
+    enabled: true,
+    assignments: [
+      { id: "security", profile: "core/security-reviewer", authority: "blocking", strategy: "conversation", focus: "Trace every write on the timeout path to an audit record.", agent: agent("claude", "sonnet", "high"), continuity: { enabled: true, contextLimitTokens: null } },
+      { id: "style", profile: "project/style-reviewer", authority: "advisory", strategy: "task", focus: "", agent: agent("claude", "haiku", "medium"), continuity: { enabled: false, contextLimitTokens: null } },
+    ],
+  },
+  scriptValidator: { commands: ["format", "lint", "typecheck"] },
+  humanApprovalGate: { enabled: true },
+  "collaboration.enabled": true,
+  "collaboration.secondAgent": agent("codex", "gpt-5-codex", "medium"),
+  "collaboration.autonomousResolutionThreshold": "minor",
+  "agentValidation.implementer": { mode: "all", names: ["build"] },
+  "laneMergeValidation.strategy": "every-merge",
+  "laneMergeValidation.commands": { mode: "only", names: ["pre-merge", "test"] },
+};
+
+const CONTEXT_OV = {
+  implementer: { profile: "project/checkout-impl", focus: "Prefer additive migrations; never drop a column in this lane.", agent: agent("claude", "opus", "high") },
+  iterationPolicy: { maxIterations: 8, continuity: { enabled: true, contextLimitTokens: 180000 } },
+  "agentValidation.contextValidator": { mode: "only", names: ["test", "typecheck"] },
+  "collaboration.negotiationRounds": 3,
+};
+
+const CTX = {
+  id: "ctx_checkout",
+  title: "Implement checkout",
+  description: "Wire the risk rules into the checkout path and keep the audit log complete on every branch, including the payment-provider timeout.",
+  acceptanceCriteria: [
+    { id: "ac-1", statement: "Every checkout attempt writes exactly one audit record, including on provider timeout." },
+    { id: "ac-2", statement: "Risk rules are evaluated before authorisation, never after." },
+    { id: "ac-3", statement: "No column is dropped; migrations are additive." },
+  ],
+  outputSchemaText: '{\n  "type": "object",\n  "properties": {\n    "auditTable": { "type": "string" },\n    "rulesetVersion": { "type": "string" },\n    "migrations": { "type": "array", "items": { "type": "string" } },\n    "timeoutPathCovered": { "type": "boolean" }\n  },\n  "required": ["auditTable", "rulesetVersion"]\n}',
+  upstreamInputs: [
+    { from: "ctx_rules", field: "ruleset" },
+    { from: "ctx_plan", field: "migrationOrder" },
+  ],
+  placement: { lane: "delivery", mode: "owned", ownedPaths: ["src/checkout", "src/risk"] },
+  tasks: [
+    { id: "task-risk-rules", order: 1, title: "Wire risk rules into checkout", instructions: "Call the ruleset before authorisation and short-circuit on a deny verdict." },
+    { id: "task-audit", order: 2, title: "Audit rows on the timeout path", instructions: "The provider timeout branch must write the same audit record as the success branch." },
+    { id: "task-migration", order: 3, title: "Additive migration for audit columns", instructions: "Add columns; never drop or rename." },
+    { id: "task-metrics", order: 4, title: "Deny-rate metric", instructions: "Emit a counter per deny reason." },
+    { id: "task-docs", order: 5, title: "Runbook entry", instructions: "Document the timeout path for on-call." },
+  ],
+  runtime: {
+    lane: "delivery", branch: "csm/checkout-v2.delivery", worktree: ".worktrees/checkout-v2.delivery",
+    activity: "active · src/checkout, src/risk", join: "join_delivery_1", batch: "batch_3",
+  },
+};
+
+const WF = {
+  name: "checkout-v2 release train",
+  id: "wf_checkout_v2",
+  contexts: ["ctx_plan", "ctx_rules", "ctx_checkout", "ctx_settings", "ctx_rollout", "ctx_notes"],
+  invariants: [
+    { id: "inv-1", statement: "No customer-facing write path may bypass the audit log.", scope: null },
+    { id: "inv-2", statement: "Migrations are additive within a release train.", scope: ["ctx_checkout"] },
+  ],
+  sources: [
+    { id: "src-spec", rank: 1, type: "spec", label: "Checkout v2 specification", locator: "docs/specs/checkout-v2.md", scope: ["ctx_checkout"] },
+    { id: "src-threat", rank: 2, type: "review", label: "Payments threat model", locator: "docs/security/payments-threat-model.md", scope: null },
+  ],
+  parameters: [
+    { id: "target_branch", label: "Target branch", type: "string", required: true, default: "main", options: [] },
+    { id: "rollout", label: "Rollout mode", type: "enum", required: false, default: "canary", options: ["canary", "full"] },
+  ],
+};
+
+// path -> granularity kind
+const PATHS = {
+  implementer: "block", contextValidator: "block", scriptValidator: "block", humanApprovalGate: "block",
+  askUserQuestions: "block", iterationPolicy: "block", circuitBreaker: "block", planRepair: "block", mutability: "block",
+  "collaboration.enabled": "field", "collaboration.secondAgent": "field", "collaboration.negotiationRounds": "field",
+  "collaboration.autonomousResolutionThreshold": "field",
+  "agentValidation.implementer": "role", "agentValidation.contextValidator": "role",
+  "laneMergeValidation.strategy": "field", "laneMergeValidation.commands": "field",
+};
+const CONTEXT_PATHS = Object.keys(PATHS).filter((p) => p.indexOf("laneMergeValidation") !== 0);
+const WORKFLOW_PATHS = Object.keys(PATHS);
+
+const GROUPS = {
+  context: [
+    { key: "brief", title: "Brief" },
+    { key: "placement", title: "Placement" },
+    { key: "agents", title: "Agents", paths: ["implementer", "collaboration.enabled", "collaboration.secondAgent", "collaboration.negotiationRounds", "collaboration.autonomousResolutionThreshold"] },
+    { key: "gates", title: "Quality gates", paths: ["contextValidator", "scriptValidator", "agentValidation.implementer", "agentValidation.contextValidator", "humanApprovalGate", "askUserQuestions"] },
+    { key: "policy", title: "Execution policy", paths: ["iterationPolicy", "circuitBreaker", "planRepair", "mutability"] },
+    { key: "tasks", title: "Tasks" },
+  ],
+  workflow: [
+    { key: "charter", title: "Charter" },
+    { key: "params", title: "Launch parameters" },
+    { key: "agents", title: "Agents", paths: ["implementer", "collaboration.enabled", "collaboration.secondAgent", "collaboration.negotiationRounds", "collaboration.autonomousResolutionThreshold"] },
+    { key: "gates", title: "Quality gates", paths: ["contextValidator", "scriptValidator", "agentValidation.implementer", "agentValidation.contextValidator", "humanApprovalGate", "askUserQuestions", "laneMergeValidation.strategy", "laneMergeValidation.commands"] },
+    { key: "policy", title: "Execution policy", paths: ["iterationPolicy", "circuitBreaker", "planRepair", "mutability"] },
+  ],
+};
+
+const TITLES = {
+  brief: "Brief", placement: "Placement", agents: "Agents", gates: "Quality gates", policy: "Execution policy",
+  tasks: "Tasks", charter: "Charter", params: "Launch parameters", implementer: "Implementer", collab: "Collaboration",
+  validator: "Validator cohort", script: "Script validator", agentval: "Agent validation", lanemerge: "Lane-merge validation",
+  planrepair: "Plan repair", schema: "Output schema", runtime: "Runtime",
+};
+
+const TONE = {
+  claude: { color: "var(--cyan)", border: "var(--cc-cyan-a25)", bg: "var(--cyan-glow)" },
+  codex: { color: "var(--violet)", border: "var(--violet-dim)", bg: "var(--violet-glow)" },
+  neutral: { color: "var(--text-secondary)", border: "var(--border-default)", bg: "transparent" },
+  amber: { color: "var(--amber)", border: "var(--amber-dim)", bg: "var(--amber-glow)" },
+  green: { color: "var(--green)", border: "var(--green-dim)", bg: "var(--green-glow)" },
+  red: { color: "var(--red)", border: "var(--red-dim)", bg: "var(--red-glow)" },
+};
+const TEXT_TONE = { dim: "var(--text-tertiary)", body: "var(--text-secondary)", strong: "var(--text-primary)", green: "var(--green)", red: "var(--red)", amber: "var(--amber)" };
+const part = (o) => Object.assign({ isChip: false, isText: false, isDot: false, text: "", title: "", font: "400 .72rem", color: "var(--text-secondary)", border: "transparent", bg: "transparent" }, o);
+const chip = (text, tone) => part(Object.assign({ isChip: true, text }, TONE[tone || "neutral"]));
+const txt = (text, tone) => part({ isText: true, text, color: TEXT_TONE[tone || "body"] });
+const val = (text) => part({ isText: true, text, font: "500 .72rem", color: "var(--text-primary)" });
+const dot = (title) => part({ isDot: true, color: "var(--cyan)", title: title || "Set on this tier" });
+// The DS ModelSelector's `value` is the short model id ("opus", "sonnet", "haiku").
+// Everything the reader SEES uses the canonical long name from README §3.3, so the
+// panel, the node, the inspector and the transcript never disagree about a model.
+const MODEL_LABEL = { opus: "opus-4.1", sonnet: "sonnet-4.5", haiku: "haiku-4.5", "gpt-5-codex": "gpt-5-codex" };
+const modelLabel = (m) => MODEL_LABEL[m] || m;
+const agentChip = (a) => chip(modelLabel(a.model), a.backend === "codex" ? "codex" : "claude");
+
+const clone = (v) => JSON.parse(JSON.stringify(v));
+const tokens = (n) => (n === null || n === undefined ? "auto" : n >= 1000 ? Math.round(n / 1000) + "k" : String(n));
+const short = (p) => p.split("/").pop();
+const readPath = (obj, path) => path.split(".").reduce((acc, k) => (acc === undefined ? undefined : acc[k]), obj);
+
+const SUPPORTED_KEYWORDS = ["type", "properties", "items", "required", "description", "title"];
+const SUPPORTED_TYPES = ["object", "string", "number", "integer", "boolean", "array"];
+
+function lintSchema(text) {
+  const trimmed = (text || "").trim();
+  if (trimmed === "") return { state: "empty", title: "No output contract", detail: "This context declares no structured output. Read-only contexts require one." };
+  let doc;
+  try { doc = JSON.parse(trimmed); } catch (e) {
+    return { state: "invalid-json", title: "Invalid JSON", detail: String(e.message || e) + " — Save is blocked while the text cannot be parsed." };
+  }
+  const bad = [];
+  const walk = (node) => {
+    if (!node || typeof node !== "object" || Array.isArray(node)) return;
+    Object.keys(node).forEach((k) => {
+      if (SUPPORTED_KEYWORDS.indexOf(k) === -1) { if (bad.indexOf(k) === -1) bad.push(k); }
+    });
+    if (typeof node.type === "string" && SUPPORTED_TYPES.indexOf(node.type) === -1 && bad.indexOf("type: " + node.type) === -1) bad.push("type: " + node.type);
+    if (node.properties && typeof node.properties === "object") Object.keys(node.properties).forEach((k) => walk(node.properties[k]));
+    if (node.items) walk(node.items);
+  };
+  walk(doc);
+  const props = doc && doc.properties && typeof doc.properties === "object" ? Object.keys(doc.properties) : [];
+  const required = Array.isArray(doc && doc.required) ? doc.required : [];
+  if (bad.length) {
+    return { state: "unsupported", title: "Outside the supported subset", detail: "The engine accepts object, string, number, boolean, array of those, and required. Unsupported here: " + bad.join(", ") + ". Save is blocked.", fields: props.length, required: required.length };
+  }
+  return { state: "valid", title: "Accepted by the engine", detail: props.length + (props.length === 1 ? " field" : " fields") + " · " + required.length + " required · " + (required.length ? required.join(", ") : "none required"), fields: props.length, required: required.length };
+}
+
+class Component extends DCLogic {
+  state = { scope: null, nav: null, ov: { workflow: clone(WORKFLOW_OV), context: clone(CONTEXT_OV) }, ctx: clone(CTX), wf: clone(WF) };
+
+  get host() { return this.props.host || "builder"; }
+  get affordance() { return this.host === "execution" ? this.props.affordance || "editable" : "editable"; }
+  get locked() { return this.affordance !== "editable"; }
+  get scope() { return this.host === "execution" ? "context" : this.state.scope || this.props.initialScope || "workflow"; }
+  get nav() {
+    if (this.state.nav) return this.state.nav;
+    const seed = this.props.initialNav;
+    return seed ? ["root"].concat(String(seed).split(">")) : ["root"];
+  }
+
+  // ---- cascade ----
+  res(path, st) {
+    const s = st || this.state;
+    if (this.scope === "context" && s.ov.context[path] !== undefined) return { v: s.ov.context[path], src: "context" };
+    if (s.ov.workflow[path] !== undefined) return { v: s.ov.workflow[path], src: "workflow" };
+    return { v: readPath(GLOBAL, path), src: "global" };
+  }
+  own(path) { return this.res(path).src === this.scope; }
+  block(name) {
+    // assemble a block value from its constituent paths
+    if (PATHS[name] === "block") return this.res(name).v;
+    const out = clone(readPath(GLOBAL, name));
+    Object.keys(PATHS).forEach((p) => {
+      if (p.indexOf(name + ".") !== 0) return;
+      out[p.slice(name.length + 1)] = this.res(p).v;
+    });
+    return out;
+  }
+  setPath(path, fn) {
+    const scope = this.scope;
+    this.setState((p) => {
+      const cur = this.res(path, p);
+      const next = typeof cur.v === "object" && cur.v !== null ? clone(cur.v) : cur.v;
+      const applied = fn(next);
+      const value = applied === undefined ? next : applied;
+      return { ov: Object.assign({}, p.ov, { [scope]: Object.assign({}, p.ov[scope], { [path]: value }) }) };
+    });
+  }
+  resetPath(path) {
+    const scope = this.scope;
+    this.setState((p) => {
+      const ov = Object.assign({}, p.ov[scope]);
+      delete ov[path];
+      return { ov: Object.assign({}, p.ov, { [scope]: ov }) };
+    });
+  }
+  editCtx(fn) { this.setState((p) => { const ctx = clone(p.ctx); fn(ctx); return { ctx }; }); }
+  editWf(fn) { this.setState((p) => { const wf = clone(p.wf); fn(wf); return { wf }; }); }
+  go(id) { this.setState({ nav: this.nav.concat([id]) }); }
+  back() { const n = this.nav; this.setState({ nav: n.length > 1 ? n.slice(0, -1) : ["root"] }); }
+
+  counts(paths) {
+    const list = paths || (this.scope === "context" ? CONTEXT_PATHS : WORKFLOW_PATHS);
+    const c = { block: 0, role: 0, field: 0 };
+    list.forEach((p) => { if (PATHS[p] && this.own(p)) c[PATHS[p]] += 1; });
+    return c;
+  }
+  countLabel(c) {
+    const bits = [];
+    if (c.block) bits.push(c.block + (c.block === 1 ? " block" : " blocks"));
+    if (c.role) bits.push(c.role + (c.role === 1 ? " role" : " roles"));
+    if (c.field) bits.push(c.field + (c.field === 1 ? " field" : " fields"));
+    return bits.length ? bits.join(" · ") + " set here" : "all inherited";
+  }
+  badges(paths) {
+    if (!paths) return [];
+    const c = this.counts(paths);
+    const total = c.block + c.role + c.field;
+    if (!total) return [];
+    return [{ text: this.countLabel(c), color: "var(--cyan)", border: "var(--cc-cyan-a25)", bg: "var(--cc-cyan-a08)" }];
+  }
+
+  // ---- value summaries ----
+  parts(name) {
+    const v = this.block(name);
+    let out = [];
+    switch (name) {
+      case "implementer": out = [agentChip(v.agent), txt(v.agent.reasoningEffort), txt(short(v.profile), "dim")]; break;
+      case "collaboration":
+        out = v.enabled ? [chip("on", "green"), agentChip(v.secondAgent), txt(v.negotiationRounds + " rounds"), txt(v.autonomousResolutionThreshold, "dim")] : [txt("off", "dim")];
+        break;
+      case "contextValidator":
+        out = v.enabled ? v.assignments.map((a) => chip(a.id, a.authority === "blocking" ? "amber" : "neutral")) : [chip("disabled", "red"), txt(v.assignments.length + " seats kept", "dim")];
+        break;
+      case "scriptValidator": out = v.commands.length ? v.commands.map((c) => chip(c)) : [txt("off — empty selection", "dim")]; break;
+      case "agentValidation": {
+        const sel = (s) => (s.mode === "all" ? (s.names.length ? "all except " + s.names.length : "all") : s.names.length ? "only " + s.names.length : "none");
+        out = [txt("impl", "dim"), chip(sel(v.implementer)), txt("val", "dim"), chip(sel(v.contextValidator))];
+        break;
+      }
+      case "humanApprovalGate": out = v.enabled ? [chip("parks before merge", "amber")] : [txt("off", "dim")]; break;
+      case "askUserQuestions": out = v.enabled ? [chip("on", "green")] : [txt("off", "dim")]; break;
+      case "iterationPolicy": out = [txt("max", "dim"), val(String(v.maxIterations)), v.continuity.enabled ? chip("continuity " + tokens(v.continuity.contextLimitTokens)) : txt("no continuity", "dim")]; break;
+      case "circuitBreaker": out = [txt("halt after", "dim"), val(String(v.consecutiveFailureThreshold)), txt("fails", "dim")]; break;
+      case "planRepair": out = v.enabled ? [chip("on", "green"), val(v.maxAttemptsPerContext + "/ctx")] : [txt("off", "dim")]; break;
+      case "mutability": out = [txt("task add", "dim"), txt(v.allowAgentTaskAdd ? "allowed" : "blocked", v.allowAgentTaskAdd ? "green" : "red")]; break;
+      case "laneMergeValidation": out = [chip(v.strategy), v.commands.mode === "project" ? txt("project default", "dim") : txt(v.commands.names.length + " commands")]; break;
+      default: out = [];
+    }
+    return out;
+  }
+  markers(name) {
+    const owned = Object.keys(PATHS).filter((p) => (p === name || p.indexOf(name + ".") === 0) && this.own(p));
+    if (!owned.length) return [];
+    const kind = PATHS[owned[0]];
+    return [dot(owned.length + " " + kind + (owned.length === 1 ? "" : "s") + " set on this " + this.scope)];
+  }
+
+  // ---- row helpers ----
+  meta(path) {
+    const r = this.res(path);
+    const own = r.src === this.scope;
+    const kind = PATHS[path];
+    return {
+      value: r.v, own,
+      edge: own ? "var(--cyan)" : "transparent",
+      labelColor: own ? "var(--text-primary)" : "var(--text-secondary)",
+      hasTier: !own, tier: r.src === "global" ? "G" : "W",
+      tierTitle: "Inherited from " + (r.src === "global" ? "global defaults" : "this workflow") + " — this " + kind + " is not set on the " + this.scope,
+      showReset: own && !this.locked,
+      resetTitle: "Reset this " + kind + " to inherit",
+      onReset: () => this.resetPath(path),
+    };
+  }
+  field(o) {
+    return Object.assign({
+      isControl: true, isDrill: false, isSection: false, edge: "transparent", bg: "transparent",
+      labelColor: "var(--text-secondary)", hintColor: "var(--text-tertiary)", disabled: this.locked,
+      hasValue: false, hasHint: false, hasTier: false, showReset: false, isSwitch: false, isNum: false,
+      isText: false, isArea: false, isSchema: false, isSegInline: false, isSegWide: false, isBackend: false,
+      isModel: false, isEffort: false, isSelect: false, isChecklist: false, isChips: false, isItems: false,
+      isDanger: false, switchTone: "cyan", rows: 3, placeholder: "", valueParts: [], resetTitle: "Reset to inherit",
+    }, o);
+  }
+  section(label, extra) { return Object.assign({ isSection: true, label, hasTier: false }, extra || {}); }
+  drill(name, label, screen, paths) {
+    const first = paths ? paths[0] : name;
+    const m = this.meta(first);
+    const allInherited = (paths || [name]).every((p) => !this.own(p));
+    return this.field({
+      label, isDrill: true, isControl: false, hasValue: true,
+      valueParts: this.parts(name).concat(this.markers(name)),
+      onOpen: () => this.go(screen), edge: allInherited ? "transparent" : "var(--cyan)",
+      labelColor: allInherited ? "var(--text-secondary)" : "var(--text-primary)",
+      hasTier: allInherited, tier: m.tier, tierTitle: m.tierTitle,
+    });
+  }
+  sw(path, label, get, set, hint, tone) {
+    const m = this.meta(path);
+    return this.field({ label, isSwitch: true, checked: get(m.value), onValue: (n) => this.setPath(path, (v) => set(v, n)),
+      hint, hasHint: !!hint, switchTone: tone || "cyan", edge: m.edge, labelColor: m.labelColor, hasTier: m.hasTier,
+      tier: m.tier, tierTitle: m.tierTitle, showReset: m.showReset, resetTitle: m.resetTitle, onReset: m.onReset });
+  }
+  num(path, label, get, set, hint) {
+    const m = this.meta(path);
+    const raw = get(m.value);
+    return this.field({ label, isNum: true, value: raw === null || raw === undefined ? "" : String(raw),
+      onInput: (e) => { const t = e.target.value.trim(); const n = t === "" ? null : parseInt(t.replace(/[^0-9]/g, ""), 10); this.setPath(path, (v) => set(v, Number.isNaN(n) ? null : n)); },
+      hint, hasHint: !!hint, edge: m.edge, labelColor: m.labelColor, hasTier: m.hasTier, tier: m.tier,
+      tierTitle: m.tierTitle, showReset: m.showReset, resetTitle: m.resetTitle, onReset: m.onReset });
+  }
+  seg(path, label, options, get, set, hint, wide) {
+    const m = this.meta(path);
+    return this.field({ label, isSegInline: !wide, isSegWide: !!wide, value: get(m.value), options,
+      onValue: (n) => { if (n) this.setPath(path, (v) => set(v, n)); }, hint, hasHint: !!hint, edge: m.edge,
+      labelColor: m.labelColor, hasTier: m.hasTier, tier: m.tier, tierTitle: m.tierTitle,
+      showReset: m.showReset, resetTitle: m.resetTitle, onReset: m.onReset });
+  }
+  runtimeRows(path, get) {
+    const m = this.meta(path);
+    const a = get(m.value);
+    const base = { edge: m.edge, hasTier: m.hasTier, tier: m.tier, tierTitle: m.tierTitle };
+    return [
+      this.field(Object.assign({ label: "Backend", isBackend: true, value: a.backend,
+        onValue: (n) => this.setPath(path, (v) => { const t = get(v); t.backend = n; t.model = n === "codex" ? "gpt-5-codex" : "sonnet"; t.reasoningEffort = "medium"; }) }, base)),
+      this.field(Object.assign({ label: "Model", isModel: true, value: a.model, backend: a.backend,
+        onValue: (n) => this.setPath(path, (v) => { get(v).model = n; }) }, base)),
+      this.field(Object.assign({ label: "Reasoning effort", isEffort: true, value: a.reasoningEffort, levels: efforts(a.backend),
+        onValue: (n) => this.setPath(path, (v) => { get(v).reasoningEffort = n; }) }, base)),
+    ];
+  }
+  checklist(path, label, get, set, hint) {
+    const m = this.meta(path);
+    const names = get(m.value);
+    return this.field({ label, isChecklist: true, hint, hasHint: !!hint, edge: m.edge, labelColor: m.labelColor,
+      hasTier: m.hasTier, tier: m.tier, tierTitle: m.tierTitle, showReset: m.showReset, resetTitle: m.resetTitle, onReset: m.onReset,
+      commands: REGISTRY.map((c) => ({ name: c.name, description: "cost " + c.cost + " — " + c.description, checked: names.indexOf(c.name) !== -1,
+        onToggle: (next) => this.setPath(path, (v) => { const list = get(v); const has = list.indexOf(c.name) !== -1;
+          if (next === true && !has) set(v, list.concat([c.name])); else if (next !== true && has) set(v, list.filter((n) => n !== c.name)); }) })) });
+  }
+
+  // ---- screens ----
+  rows(id) {
+    if (id === "brief") return this.briefRows();
+    if (id === "schema") return this.schemaRows();
+    if (id === "placement") return this.placementRows();
+    if (id === "tasks") return this.tasksRows();
+    if (id.indexOf("task:") === 0) return this.taskRows(id.slice(5));
+    if (id === "charter") return this.charterRows();
+    if (id === "params") return this.paramsRows();
+    if (id === "agents") return this.agentsRows();
+    if (id === "implementer") return this.implementerRows();
+    if (id === "collab") return this.collabRows();
+    if (id === "gates") return this.gatesRows();
+    if (id === "validator") return this.validatorRows();
+    if (id.indexOf("seat:") === 0) return this.seatRows(id.slice(5));
+    if (id === "script") return this.scriptRows();
+    if (id === "agentval") return this.agentvalRows();
+    if (id === "lanemerge") return this.laneMergeRows();
+    if (id === "policy") return this.policyRows();
+    if (id === "planrepair") return this.planRepairRows();
+    if (id === "runtime") return this.runtimeInfoRows();
+    return [];
+  }
+
+  briefRows() {
+    const c = this.state.ctx;
+    const lint = lintSchema(c.outputSchemaText);
+    const rows = [
+      this.section("Identity"),
+      this.field({ label: "Title", isText: true, value: c.title, placeholder: "Context title", onInput: (e) => this.editCtx((x) => { x.title = e.target.value; }) }),
+      this.field({ label: "Description", isArea: true, rows: 4, value: c.description, placeholder: "Add a description", onInput: (e) => this.editCtx((x) => { x.description = e.target.value; }) }),
+      this.section("Acceptance criteria"),
+      this.field({ label: "Acceptance criteria", isItems: true, hasHint: true, hint: "Ordered. Passed to the implementer and to every validator seat; verdicts cite criterion ids.",
+        hasAdd: !this.locked, addLabel: "Add criterion", onAdd: () => this.editCtx((x) => { x.acceptanceCriteria.push({ id: "ac-" + (x.acceptanceCriteria.length + 1), statement: "" }); }),
+        items: c.acceptanceCriteria.map((r, i) => ({ title: r.id, isStatic: true, chips: [], hasMove: true, hasRemove: c.acceptanceCriteria.length > 1,
+          hasInput: true, inputValue: r.statement, inputLabel: "Statement for " + r.id,
+          upLabel: "Move " + r.id + " up", downLabel: "Move " + r.id + " down", removeLabel: "Remove " + r.id,
+          onInput: (e) => this.editCtx((x) => { x.acceptanceCriteria[i].statement = e.target.value; }),
+          onUp: () => this.editCtx((x) => { if (i > 0) { const a = x.acceptanceCriteria; const t = a[i - 1]; a[i - 1] = a[i]; a[i] = t; } }),
+          onDown: () => this.editCtx((x) => { const a = x.acceptanceCriteria; if (i < a.length - 1) { const t = a[i + 1]; a[i + 1] = a[i]; a[i] = t; } }),
+          onRemove: () => this.editCtx((x) => { x.acceptanceCriteria.splice(i, 1); }) })) }),
+      this.section("Data contract"),
+      this.field({ label: "Output schema", isDrill: true, isControl: false, hasValue: true,
+        valueParts: lint.state === "valid" ? [val(String(lint.fields)), txt("fields", "dim"), val(String(lint.required)), txt("required", "dim")] : [chip(lint.state === "invalid-json" ? "invalid JSON" : "unsupported", "red")],
+        onOpen: () => this.go("schema") }),
+      this.field({ label: "Upstream inputs", isItems: true, hasHint: true, hint: "Read-only — produced by the contexts this one depends on.",
+        items: c.upstreamInputs.map((u) => ({ title: u.from, isStatic: true, chips: [{ text: u.field, color: "var(--text-secondary)", border: "var(--border-default)", bg: "transparent" }] })) }),
+    ];
+    if (this.host === "builder") {
+      rows.push(this.section("Danger zone"));
+      rows.push(this.field({ label: "Delete context", isDanger: true, isControl: false, hasHint: true, hint: "Removes this context, its tasks and its edges from the draft. Confirmed in a dialog; takes effect on Save." }));
+    }
+    return rows;
+  }
+  schemaRows() {
+    const text = this.state.ctx.outputSchemaText;
+    const lint = lintSchema(text);
+    const tone = lint.state === "valid" ? { c: "var(--green)", b: "var(--green-dim)", bg: "var(--green-glow)", i: "#cfgi-check" } : { c: "var(--red)", b: "var(--cc-red-a25)", bg: "var(--cc-red-a10)", i: "#cfgi-alert" };
+    const rows = [
+      this.field({ label: "JSON schema", isSchema: true, value: text, onInput: (e) => this.editCtx((x) => { x.outputSchemaText = e.target.value; }),
+        schemaTitle: lint.title, schemaDetail: lint.detail, schemaColor: tone.c, schemaBorder: tone.b, schemaBg: tone.bg, schemaIcon: tone.i }),
+    ];
+    if (this.locked) rows.push(this.field({ label: "Why it is locked", isControl: false, hasHint: true, hint: SCHEMA_HINT[this.affordance] }));
+    return rows;
+  }
+  placementRows() {
+    const p = this.state.ctx.placement;
+    const rows = [
+      this.section("Lane and grade"),
+      this.field({ label: "Lane", isText: true, value: p.lane, placeholder: "lane-name", onInput: (e) => this.editCtx((x) => { x.placement.lane = e.target.value; }),
+        hasHint: true, hint: "Contexts sharing a lane share one worktree and land through one join. Dragging this context to another lane on the canvas edits this field and nothing else." }),
+      this.field({ label: "Write grade", isSegWide: true, value: p.mode, options: [{ value: "full", label: "Full" }, { value: "owned", label: "Owning" }, { value: "readOnly", label: "Read-only" }],
+        onValue: (n) => { if (n) this.editCtx((x) => { x.placement.mode = n; if (n === "owned" && !x.placement.ownedPaths) x.placement.ownedPaths = []; }); },
+        hasHint: true, hint: GRADE_HINT[p.mode] }),
+    ];
+    if (p.mode === "owned") {
+      rows.push(this.section("Write surface"));
+      rows.push(this.field({ label: "Owned paths", isChips: true, addLabel: "Add path",
+        chips: (p.ownedPaths || []).map((path, i) => ({ text: path, removeLabel: "Remove " + path, onRemove: () => this.editCtx((x) => { x.placement.ownedPaths.splice(i, 1); }) })),
+        onAdd: () => this.editCtx((x) => { x.placement.ownedPaths.push("src/new-" + (x.placement.ownedPaths.length + 1)); }),
+        hasHint: true, hint: "Literal repo-relative paths, never globs. Each entry covers itself and everything beneath it." }));
+    }
+    if (this.host === "execution") rows.push(this.section("Runtime"), ...this.runtimeInfoRows());
+    return rows;
+  }
+  runtimeInfoRows() {
+    const r = this.state.ctx.runtime;
+    const row = (label, value) => this.field({ label, isControl: true, hasValue: true, valueParts: [txt(value)], disabled: true });
+    return [row("Lane", r.lane), row("Branch", r.branch), row("Worktree", r.worktree), row("Activity", r.activity), row("Join", r.join), row("Batch", r.batch)];
+  }
+  tasksRows() {
+    const t = this.state.ctx.tasks;
+    return [
+      this.field({ label: "Ordered tasks", isItems: true, hasAdd: !this.locked, addLabel: "Add task",
+        onAdd: () => this.editCtx((x) => { x.tasks.push({ id: "task-" + (x.tasks.length + 1), order: x.tasks.length + 1, title: "New task", instructions: "" }); }),
+        items: t.map((task, i) => ({ title: task.order + " · " + task.title, hasDrill: true, isStatic: false, onOpen: () => this.go("task:" + task.id),
+          chips: [], hasMove: true, hasRemove: true, hasMeta: true, meta: task.instructions || "no instructions yet",
+          upLabel: "Move " + task.title + " up", downLabel: "Move " + task.title + " down", removeLabel: "Remove " + task.title,
+          onUp: () => this.editCtx((x) => { if (i > 0) { const a = x.tasks; const t2 = a[i - 1]; a[i - 1] = a[i]; a[i] = t2; a.forEach((n, k) => { n.order = k + 1; }); } }),
+          onDown: () => this.editCtx((x) => { const a = x.tasks; if (i < a.length - 1) { const t2 = a[i + 1]; a[i + 1] = a[i]; a[i] = t2; a.forEach((n, k) => { n.order = k + 1; }); } }),
+          onRemove: () => this.editCtx((x) => { x.tasks.splice(i, 1); x.tasks.forEach((n, k) => { n.order = k + 1; }); }) })) }),
+    ];
+  }
+  taskRows(taskId) {
+    const i = this.state.ctx.tasks.findIndex((t) => t.id === taskId);
+    if (i < 0) return [];
+    const task = this.state.ctx.tasks[i];
+    return [
+      this.field({ label: "Title", isText: true, value: task.title, onInput: (e) => this.editCtx((x) => { x.tasks[i].title = e.target.value; }) }),
+      this.field({ label: "Instructions", isArea: true, rows: 6, value: task.instructions, placeholder: "What this task must do", onInput: (e) => this.editCtx((x) => { x.tasks[i].instructions = e.target.value; }) }),
+      this.field({ label: "Order", isControl: true, hasValue: true, valueParts: [txt("position", "dim"), val(String(task.order)), txt("of " + this.state.ctx.tasks.length, "dim")],
+        hasHint: true, hint: "Reorder from the Tasks screen — order is what the implementer is dispatched against." }),
+    ];
+  }
+  charterRows() {
+    const wf = this.state.wf;
+    return [
+      this.section("Invariants"),
+      this.field({ label: "Invariants", isItems: true, hasHint: true, hint: "Rendered into every scoped context's prompt. An unscoped invariant is global.",
+        hasAdd: true, addLabel: "Add invariant", onAdd: () => this.editWf((x) => { x.invariants.push({ id: "inv-" + (x.invariants.length + 1), statement: "", scope: null }); }),
+        items: wf.invariants.map((inv, i) => ({ title: inv.id, isStatic: true,
+          chips: [inv.scope ? { text: inv.scope.length + " ctx", color: "var(--cyan)", border: "var(--cc-cyan-a25)", bg: "var(--cc-cyan-a08)" } : { text: "global", color: "var(--text-tertiary)", border: "var(--border-default)", bg: "transparent" }],
+          hasRemove: true, removeLabel: "Remove " + inv.id, hasInput: true, inputValue: inv.statement, inputLabel: "Statement for " + inv.id,
+          onInput: (e) => this.editWf((x) => { x.invariants[i].statement = e.target.value; }),
+          onRemove: () => this.editWf((x) => { x.invariants.splice(i, 1); }) })) }),
+      this.section("Sources of truth"),
+      this.field({ label: "Sources of truth", isItems: true, hasHint: true, hint: "Ranked. Each context's prompt renders only the sources scoped to it; an unscoped source is global.",
+        items: wf.sources.map((s, i) => ({ title: s.id, isStatic: true,
+          chips: [{ text: "rank " + s.rank, color: "var(--text-tertiary)", border: "var(--border-default)", bg: "transparent" }, { text: s.type, color: "var(--text-secondary)", border: "var(--border-default)", bg: "transparent" }],
+          hasMeta: true, meta: s.label + " — " + s.locator, hasChecks: true,
+          checks: wf.contexts.slice(0, 4).map((cid) => ({ label: cid, checked: (s.scope || []).indexOf(cid) !== -1, aria: "Scope " + s.id + " to " + cid,
+            onToggle: (next) => this.editWf((x) => { const cur = x.sources[i].scope || []; x.sources[i].scope = next === true ? cur.concat([cid]) : cur.filter((c) => c !== cid); if (x.sources[i].scope.length === 0) x.sources[i].scope = null; }) })) })) }),
+    ];
+  }
+  paramsRows() {
+    const wf = this.state.wf;
+    const TYPES = ["string", "number", "boolean", "enum"];
+    return [
+      this.field({ label: "Declared parameters", isItems: true, hasHint: true, hint: "Collected at launch and substituted into context briefs. Name, type, label, required, default, and enum options are all authored here.",
+        hasAdd: true, addLabel: "Add parameter", onAdd: () => this.editWf((x) => { x.parameters.push({ id: "param_" + (x.parameters.length + 1), label: "New parameter", type: "string", required: false, default: "", options: [] }); }),
+        items: wf.parameters.map((p, i) => ({
+          title: p.id, isStatic: true,
+          chips: [{ text: p.type, color: "var(--text-secondary)", border: "var(--border-default)", bg: "transparent" }].concat(p.required ? [{ text: "required", color: "var(--amber)", border: "var(--amber-dim)", bg: "var(--amber-glow)" }] : []),
+          hasRemove: true, removeLabel: "Remove " + p.id,
+          onRemove: () => this.editWf((x) => { x.parameters.splice(i, 1); }),
+          hasFields: true,
+          fields: [
+            { label: "name", isText: true, width: "128px", value: p.id, aria: "Parameter name", onInput: (e) => this.editWf((x) => { x.parameters[i].id = e.target.value; }) },
+            { label: "type", isText: true, width: "84px", value: p.type, placeholder: TYPES.join("|"), aria: "Parameter type", onInput: (e) => this.editWf((x) => { x.parameters[i].type = e.target.value; }) },
+            { label: "label", isText: true, width: "140px", value: p.label, aria: "Parameter label", onInput: (e) => this.editWf((x) => { x.parameters[i].label = e.target.value; }) },
+            { label: "required", isSwitch: true, checked: p.required, aria: p.id + " required", onValue: (n) => this.editWf((x) => { x.parameters[i].required = n === true; }) },
+            { label: "default", isText: true, width: "110px", value: p.default || "", aria: "Parameter default", onInput: (e) => this.editWf((x) => { x.parameters[i].default = e.target.value; }) },
+            { label: "options", isText: true, width: "150px", value: (p.options || []).join(", "), placeholder: p.type === "enum" ? "canary, full" : "enum only", aria: "Enum options", onInput: (e) => this.editWf((x) => { x.parameters[i].options = e.target.value.split(",").map((s) => s.trim()).filter(Boolean); }) },
+          ],
+        })) }),
+    ];
+  }
+  agentsRows() {
+    return [
+      this.section("Implementer"),
+      this.drill("implementer", "Implementer", "implementer", ["implementer"]),
+      this.section("Collaboration"),
+      this.sw("collaboration.enabled", "Collaboration", (x) => x, (x, n) => n,
+        "A second agent negotiates the diff with the implementer before it is offered for validation. This field inherits on its own — the rest of the block is unaffected."),
+      this.drill("collaboration", "Collaboration setup", "collab", ["collaboration.enabled", "collaboration.secondAgent", "collaboration.negotiationRounds", "collaboration.autonomousResolutionThreshold"]),
+    ];
+  }
+  implementerRows() {
+    const m = this.meta("implementer");
+    const v = m.value;
+    return [
+      this.section("Identity"),
+      this.field({ label: "Profile", isSelect: true, value: v.profile, valueLabel: short(v.profile), options: PROFILES,
+        onValue: (n) => this.setPath("implementer", (x) => { x.profile = n; }), edge: m.edge, hasTier: m.hasTier, tier: m.tier,
+        tierTitle: m.tierTitle, showReset: m.showReset, resetTitle: "Reset the implementer block to inherit", onReset: m.onReset }),
+      this.field({ label: "Instructions", isArea: true, rows: 3, value: v.focus, placeholder: "Steer this implementer at this use site only",
+        onInput: (e) => this.setPath("implementer", (x) => { x.focus = e.target.value; }), edge: m.edge,
+        hasHint: true, hint: "Use-site steer, not a durable prompt — clearing it removes the key." }),
+      this.section("Runtime"),
+    ].concat(this.runtimeRows("implementer", (x) => x.agent));
+  }
+  collabRows() {
+    const enabled = this.res("collaboration.enabled").v;
+    const rounds = this.meta("collaboration.negotiationRounds");
+    const thr = this.meta("collaboration.autonomousResolutionThreshold");
+    return [
+      this.section("Status"),
+      this.sw("collaboration.enabled", "Enabled", (x) => x, (x, n) => n, enabled ? undefined : "Off — the fields below stay authored and inherit independently."),
+      this.section("Second agent"),
+    ].concat(this.runtimeRows("collaboration.secondAgent", (x) => x), [
+      this.section("Negotiation"),
+      this.field({ label: "Negotiation rounds", isNum: true, value: String(rounds.value),
+        onInput: (e) => { const n = parseInt(String(e.target.value).replace(/[^0-9]/g, ""), 10); if (!Number.isNaN(n)) this.setPath("collaboration.negotiationRounds", () => n); },
+        edge: rounds.edge, labelColor: rounds.labelColor, hasTier: rounds.hasTier, tier: rounds.tier, tierTitle: rounds.tierTitle,
+        showReset: rounds.showReset, resetTitle: "Reset this field to inherit", onReset: rounds.onReset,
+        hasHint: true, hint: "Per-field cascade: this field is set here; the others above still resolve from their own tier." }),
+      this.field({ label: "Auto-resolve threshold", isSegWide: true, value: thr.value,
+        options: [{ value: "none", label: "none" }, { value: "minor", label: "minor" }, { value: "major", label: "major" }, { value: "blocking", label: "blocking" }],
+        onValue: (n) => { if (n) this.setPath("collaboration.autonomousResolutionThreshold", () => n); },
+        edge: thr.edge, labelColor: thr.labelColor, hasTier: thr.hasTier, tier: thr.tier, tierTitle: thr.tierTitle,
+        showReset: thr.showReset, resetTitle: "Reset this field to inherit", onReset: thr.onReset,
+        hasHint: true, hint: THRESHOLD_HINT[thr.value] }),
+    ]);
+  }
+  gatesRows() {
+    const v = this.meta("contextValidator");
+    const rows = [
+      this.section("Agent review"),
+      this.sw("contextValidator", "Validator cohort", (x) => x.enabled, (x, n) => { x.enabled = n; if (n && x.assignments.length === 0) x.assignments = clone(GLOBAL.contextValidator.assignments); },
+        "Reviews each context's diff against its acceptance criteria after every iteration."),
+      this.drill("contextValidator", "Cohort roster", "validator", ["contextValidator"]),
+      this.section("Command gates"),
+      this.drill("scriptValidator", "Script validator", "script", ["scriptValidator"]),
+      this.drill("agentValidation", "Agent validation", "agentval", ["agentValidation.implementer", "agentValidation.contextValidator"]),
+    ];
+    if (this.scope === "workflow") rows.push(this.drill("laneMergeValidation", "Lane-merge validation", "lanemerge", ["laneMergeValidation.strategy", "laneMergeValidation.commands"]));
+    rows.push(this.section("Human gates"));
+    rows.push(this.sw("humanApprovalGate", "Human approval gate", (x) => x.enabled, (x, n) => { x.enabled = n; },
+      "After all validators pass, the context parks for review. Approval lets orchestration continue; it does not itself land or publish the lane.", "green"));
+    rows.push(this.sw("askUserQuestions", "Ask user questions", (x) => x.enabled, (x, n) => { x.enabled = n; },
+      "Agents may ask questions at consequential decision points. The context parks until answered."));
+    if (v.value.enabled === false) rows.push(this.field({ label: "Cohort is off here", isControl: false, hasHint: true, hintColor: "var(--red)", hint: "The roster below is kept dormant and restored when the cohort is switched back on." }));
+    return rows;
+  }
+  validatorRows() {
+    const m = this.meta("contextValidator");
+    const v = m.value;
+    const dormant = !v.enabled;
+    return [
+      this.section("Status"),
+      this.sw("contextValidator", "Cohort enabled", (x) => x.enabled, (x, n) => { x.enabled = n; },
+        dormant ? "Switched off here — the seats below are kept dormant and restored on re-enable." : "All blocking seats must pass for the context to advance."),
+      this.section("Roster"),
+      this.field({ label: "Seats", isItems: true, hasHint: true,
+        hint: dormant ? "Dormant — configuration to restore, not work to dispatch." : "Ordered. A frozen roster is dispatched per round; the round in flight keeps the roster it started with.",
+        hintColor: dormant ? "var(--red)" : "var(--text-tertiary)", hasAdd: !dormant && !this.locked, addLabel: "Add validator",
+        onAdd: () => this.setPath("contextValidator", (x) => { const seed = clone(GLOBAL.contextValidator.assignments[0]); seed.id = "reviewer-" + (x.assignments.length + 1); x.assignments.push(seed); }),
+        items: v.assignments.map((a, i) => ({ title: a.id, hasDrill: true, isStatic: false, onOpen: () => this.go("seat:" + a.id),
+          chips: [a.authority === "blocking" ? chip("blocking", "amber") : chip("advisory", "neutral"), agentChip(a.agent), chip(a.strategy)],
+          hasMove: !dormant, hasRemove: !dormant && v.assignments.length > 1,
+          upLabel: "Move " + a.id + " up", downLabel: "Move " + a.id + " down", removeLabel: "Remove " + a.id,
+          hasMeta: true, meta: short(a.profile) + " · " + a.agent.reasoningEffort + " · continuity " + (a.continuity.enabled ? tokens(a.continuity.contextLimitTokens) : "off"),
+          onUp: () => this.setPath("contextValidator", (x) => { if (i > 0) { const s = x.assignments; const t = s[i - 1]; s[i - 1] = s[i]; s[i] = t; } }),
+          onDown: () => this.setPath("contextValidator", (x) => { const s = x.assignments; if (i < s.length - 1) { const t = s[i + 1]; s[i + 1] = s[i]; s[i] = t; } }),
+          onRemove: () => this.setPath("contextValidator", (x) => { x.assignments.splice(i, 1); }) })) }),
+    ];
+  }
+  seatRows(seatId) {
+    const m = this.meta("contextValidator");
+    const i = m.value.assignments.findIndex((a) => a.id === seatId);
+    if (i < 0) return [];
+    const a = m.value.assignments[i];
+    const at = (x) => x.assignments[i];
+    const base = { edge: m.edge, hasTier: m.hasTier, tier: m.tier, tierTitle: m.tierTitle };
+    return [
+      this.section("Identity"),
+      this.field(Object.assign({ label: "Profile", isSelect: true, value: a.profile, valueLabel: short(a.profile), options: PROFILES,
+        onValue: (n) => this.setPath("contextValidator", (x) => { at(x).profile = n; }) }, base)),
+      this.section("Verdict"),
+      this.field(Object.assign({ label: "Authority", isSegInline: true, value: a.authority,
+        options: [{ value: "blocking", label: "blocking" }, { value: "advisory", label: "advisory" }],
+        onValue: (n) => { if (n) this.setPath("contextValidator", (x) => { at(x).authority = n; }); },
+        hasHint: true, hint: a.authority === "blocking" ? "A blocking verdict reopens tasks and can fail the context." : "Advisory findings reach the implementer as suggestions only." }, base)),
+      this.field(Object.assign({ label: a.authority === "blocking" ? "Mandate" : "Instructions", isArea: true, rows: 3, value: a.focus,
+        placeholder: a.authority === "blocking" ? "What a blocking verdict must trace to" : "Steer this reviewer at this use site only",
+        onInput: (e) => this.setPath("contextValidator", (x) => { at(x).focus = e.target.value; }) }, base)),
+      this.field(Object.assign({ label: "Strategy", isSegInline: true, value: a.strategy,
+        options: [{ value: "conversation", label: "conversation" }, { value: "task", label: "task" }],
+        onValue: (n) => { if (n) this.setPath("contextValidator", (x) => { at(x).strategy = n; }); },
+        hasHint: true, hint: a.strategy === "conversation" ? "One durable conversation per lane, rotated on context limit." : "A fresh task dispatch per round." }, base)),
+      this.section("Runtime"),
+    ].concat(this.runtimeRows("contextValidator", (x) => at(x).agent), [
+      this.section("Continuity"),
+      this.field(Object.assign({ label: "Continuity", isSwitch: true, checked: a.continuity.enabled,
+        onValue: (n) => this.setPath("contextValidator", (x) => { at(x).continuity.enabled = n; }) }, base)),
+      this.field(Object.assign({ label: "Context limit tokens", isNum: true, value: a.continuity.contextLimitTokens === null ? "" : String(a.continuity.contextLimitTokens),
+        onInput: (e) => { const t = e.target.value.trim(); const n = t === "" ? null : parseInt(t.replace(/[^0-9]/g, ""), 10); this.setPath("contextValidator", (x) => { at(x).continuity.contextLimitTokens = Number.isNaN(n) ? null : n; }); },
+        hasHint: true, hint: "Leave empty for auto." }, base)),
+    ]);
+  }
+  scriptRows() {
+    return [this.checklist("scriptValidator", "Commands", (x) => x.commands, (x, next) => { x.commands = next; },
+      "Runs before agent validation. An empty selection disables the gate.")];
+  }
+  agentvalRows() {
+    const roleRows = (role, label) => {
+      const path = "agentValidation." + role;
+      const m = this.meta(path);
+      const sel = m.value;
+      return [
+        this.section(label, { hasTier: true, tier: m.own ? this.scope : m.tier === "G" ? "global" : "workflow" }),
+        this.field({ label: "Mode", isSegInline: true, value: sel.mode, options: [{ value: "all", label: "All except" }, { value: "only", label: "Only" }],
+          onValue: (n) => { if (n && n !== sel.mode) this.setPath(path, () => ({ mode: n, names: [] })); },
+          edge: m.edge, labelColor: m.labelColor, hasTier: m.hasTier, tier: m.tier, tierTitle: m.tierTitle,
+          showReset: m.showReset, resetTitle: "Reset this role to inherit", onReset: m.onReset,
+          hasHint: true, hint: sel.mode === "all"
+            ? (sel.names.length === 0 ? "Every registered validation command is allowed, including future registrations." : "Every registered command is allowed except the listed names.")
+            : (sel.names.length === 0 ? "No validation commands are allowed." : "Only the listed commands are allowed.") }),
+        this.field({ label: sel.mode === "all" ? "Exceptions" : "Allowed commands", isChecklist: true, edge: m.edge,
+          commands: REGISTRY.map((c) => ({ name: c.name, description: "cost " + c.cost + " — " + c.description, checked: sel.names.indexOf(c.name) !== -1,
+            onToggle: (next) => this.setPath(path, (v) => { const cur = v.names; const has = cur.indexOf(c.name) !== -1;
+              v.names = next === true && !has ? cur.concat([c.name]) : next !== true && has ? cur.filter((n) => n !== c.name) : cur; }) })) }),
+      ];
+    };
+    return [this.field({ label: "Per-role cascade", isControl: false, hasHint: true,
+      hint: "The two roles resolve independently. Editing one leaves the other inheriting from its own tier." })]
+      .concat(roleRows("implementer", "Implementer"), roleRows("contextValidator", "Context validator"));
+  }
+  laneMergeRows() {
+    const strat = this.meta("laneMergeValidation.strategy");
+    const cmds = this.meta("laneMergeValidation.commands");
+    const rows = [
+      this.field({ label: "Workflow scope only", isControl: false, hasHint: true, hint: "Validates parallel-lane merges at the shared fan-in. Contexts cannot override it — it does not appear on Context scope." }),
+      this.section("Strategy"),
+      this.field({ label: "Strategy", isSegWide: true, value: strat.value, options: [{ value: "final-only", label: "final-only" }, { value: "every-merge", label: "every-merge" }],
+        onValue: (n) => { if (n) this.setPath("laneMergeValidation.strategy", () => n); },
+        edge: strat.edge, labelColor: strat.labelColor, hasTier: strat.hasTier, tier: strat.tier, tierTitle: strat.tierTitle,
+        showReset: strat.showReset, resetTitle: "Reset this field to inherit", onReset: strat.onReset, hasHint: true, hint: LANE_MERGE_HINT[strat.value] }),
+      this.section("Commands"),
+      this.field({ label: "Command source", isSegWide: true, value: cmds.value.mode, options: [{ value: "project", label: "Project default" }, { value: "only", label: "Custom list" }],
+        onValue: (n) => { if (n) this.setPath("laneMergeValidation.commands", () => (n === "project" ? { mode: "project", names: [] } : { mode: "only", names: [] })); },
+        edge: cmds.edge, labelColor: cmds.labelColor, hasTier: cmds.hasTier, tier: cmds.tier, tierTitle: cmds.tierTitle,
+        showReset: cmds.showReset, resetTitle: "Reset this field to inherit", onReset: cmds.onReset,
+        hasHint: true, hint: cmds.value.mode === "project"
+          ? "Uses the project's lane-merge command list when configured, else its pre-merge list — resolved at merge submission."
+          : cmds.value.names.length === 0 ? "Empty list — lane-merge validation is disabled." : "Runs only the listed commands, in order." }),
+    ];
+    if (cmds.value.mode === "only") {
+      rows.push(this.field({ label: "Command list", isChecklist: true, edge: cmds.edge,
+        commands: REGISTRY.map((c) => ({ name: c.name, description: "cost " + c.cost + " — " + c.description, checked: cmds.value.names.indexOf(c.name) !== -1,
+          onToggle: (next) => this.setPath("laneMergeValidation.commands", (v) => { const cur = v.names; const has = cur.indexOf(c.name) !== -1;
+            v.names = next === true && !has ? cur.concat([c.name]) : next !== true && has ? cur.filter((n) => n !== c.name) : cur; }) })) }));
+    }
+    return rows;
+  }
+  policyRows() {
+    const mut = this.block("mutability");
+    return [
+      this.section("Iteration"),
+      this.num("iterationPolicy", "Max iterations", (x) => x.maxIterations, (x, n) => { if (n) x.maxIterations = n; }),
+      this.sw("iterationPolicy", "Continuity", (x) => x.continuity.enabled, (x, n) => { x.continuity.enabled = n; },
+        "Keep one conversation across iterations, rotating it when the context limit is reached."),
+      this.num("iterationPolicy", "Context limit tokens", (x) => x.continuity.contextLimitTokens, (x, n) => { x.continuity.contextLimitTokens = n; }, "Leave empty for auto."),
+      this.section("Failure handling"),
+      this.num("circuitBreaker", "Failure threshold", (x) => x.consecutiveFailureThreshold, (x, n) => { if (n) x.consecutiveFailureThreshold = n; },
+        "Consecutive failures before the context is halted."),
+      this.drill("planRepair", "Plan repair", "planrepair", ["planRepair"]),
+      this.section("Mutability"),
+      this.sw("mutability", "Agent task add", (x) => x.allowAgentTaskAdd, (x, n) => { x.allowAgentTaskAdd = n; }, "Let agents add tasks during execution."),
+      this.field({ label: "allowAgentContextAdd", isControl: true, hasValue: true, valueParts: [txt(mut.allowAgentContextAdd ? "true" : "false", "dim"), chip("preserved")], disabled: true,
+        hasHint: true, hint: "Stored on the block and round-tripped unchanged. Not authored in this surface — an edit to Agent task add must not drop it." }),
+    ];
+  }
+  planRepairRows() {
+    const m = this.meta("planRepair");
+    const v = m.value;
+    const rows = [
+      this.section("Policy"),
+      this.sw("planRepair", "Enabled", (x) => x.enabled, (x, n) => { x.enabled = n; }, "Diagnose retry-exhaustion halts and repair the plan autonomously."),
+      this.num("planRepair", "Max attempts", (x) => x.maxAttemptsPerContext, (x, n) => { if (n) x.maxAttemptsPerContext = n; }, "Repair rounds per context before the halt sticks."),
+      this.sw("planRepair", "Custom agent", (x) => x.agent !== null, (x, n) => { x.agent = n ? agent("claude", "sonnet", "high") : null; },
+        v.agent ? undefined : "Off — uses the default repair agent (sonnet, high reasoning)."),
+    ];
+    if (v.agent) { rows.push(this.section("Repair agent")); this.runtimeRows("planRepair", (x) => x.agent).forEach((r) => rows.push(r)); }
+    return rows;
+  }
+
+  cards() {
+    const scope = this.scope;
+    const ctx = this.state.ctx, wf = this.state.wf;
+    const line = (k, name) => ({ k, parts: this.parts(name).concat(this.markers(name)) });
+    const rich = (k, parts) => ({ k, parts });
+    const lint = lintSchema(ctx.outputSchemaText);
+    return GROUPS[scope].map((g) => {
+      let lines = [];
+      if (g.key === "brief") lines = [
+        rich("title", [val(ctx.title)]),
+        rich("criteria", [val(String(ctx.acceptanceCriteria.length)), txt("ordered", "dim")]),
+        rich("schema", lint.state === "valid" ? [val(String(lint.fields)), txt("fields", "dim"), val(String(lint.required)), txt("required", "dim")] : [chip(lint.state === "invalid-json" ? "invalid JSON" : "unsupported", "red")]),
+        rich("upstream", [val(String(ctx.upstreamInputs.length)), txt("inputs", "dim")]),
+      ];
+      else if (g.key === "placement") lines = [
+        rich("lane", [chip(ctx.placement.lane)]),
+        rich("grade", [ctx.placement.mode === "readOnly" ? chip("read-only") : ctx.placement.mode === "full" ? chip("full", "amber") : chip("owning")]),
+        rich("owned paths", ctx.placement.mode === "owned" ? (ctx.placement.ownedPaths || []).map((p) => chip(p)) : [txt("—", "dim")]),
+      ];
+      else if (g.key === "tasks") lines = [rich("tasks", [val(String(ctx.tasks.length)), txt("ordered", "dim")]), rich("next", [txt(ctx.tasks[0] ? ctx.tasks[0].title : "—")])];
+      else if (g.key === "charter") lines = [rich("invariants", [val(String(wf.invariants.length)), txt("declared", "dim")]), rich("sources", [val(String(wf.sources.length)), txt("ranked", "dim")])];
+      else if (g.key === "params") lines = wf.parameters.map((p) => rich(p.id, [chip(p.type)].concat(p.required ? [chip("required", "amber")] : []).concat([txt(p.default || "—", p.default ? "body" : "dim")])));
+      else if (g.key === "agents") lines = [line("implementer", "implementer"), line("collaboration", "collaboration")];
+      else if (g.key === "gates") {
+        lines = [line("validator", "contextValidator"), line("script", "scriptValidator"), line("agent val", "agentValidation")];
+        if (scope === "workflow") lines.push(line("lane merge", "laneMergeValidation"));
+        lines.push(line("approval", "humanApprovalGate"), line("questions", "askUserQuestions"));
+      } else if (g.key === "policy") lines = [line("iterations", "iterationPolicy"), line("breaker", "circuitBreaker"), line("plan repair", "planRepair"), line("mutability", "mutability")];
+      return { title: g.title, badges: this.badges(g.paths), lines, open: () => this.go(g.key) };
+    });
+  }
+
+  banner() {
+    const off = { hasBanner: false, bannerText: "", bannerIcon: "#cfgi-lock", bannerColor: "var(--text-secondary)", bannerBg: "transparent", hasBannerAction: false, bannerAction: "" };
+    if (this.host !== "execution") return off;
+    const a = this.affordance;
+    if (a === "frozen") return { hasBanner: true, bannerText: "This context has completed — its configuration is frozen.", bannerIcon: "#cfgi-lock", bannerColor: "var(--text-secondary)", bannerBg: "var(--bg-raised)", hasBannerAction: false, bannerAction: "" };
+    if (a === "pause-to-edit") return { hasBanner: true, bannerText: "This context is in progress. Pause the workflow to edit it.", bannerIcon: "#cfgi-pause", bannerColor: "var(--amber)", bannerBg: "var(--cc-amber-a10)", hasBannerAction: true, bannerAction: "Pause to edit" };
+    if (a === "read-only") return { hasBanner: true, bannerText: READ_ONLY_REASON_TEXT[this.props.readOnlyReason || "completed"], bannerIcon: "#cfgi-lock", bannerColor: "var(--text-secondary)", bannerBg: "var(--bg-raised)", hasBannerAction: false, bannerAction: "" };
+    return off;
+  }
+  saveBar() {
+    const st = this.props.saveState || "clean";
+    if (this.host !== "execution" || this.locked) return { hasSaveBar: false, saveLabel: "", saveDisabled: true, showResume: false, saveNote: "", saveNoteColor: "var(--text-tertiary)", hasAlert: false, alertText: "" };
+    const lint = lintSchema(this.state.ctx.outputSchemaText);
+    const blocked = lint.state !== "valid" && lint.state !== "empty";
+    const map = {
+      clean: { label: "Save changes", disabled: true, note: "No unsaved changes", color: "var(--text-tertiary)", resume: false, alert: "" },
+      dirty: { label: "Save changes", disabled: blocked, note: blocked ? "Blocked: the output schema is not accepted" : "Unsaved changes", color: blocked ? "var(--red)" : "var(--amber)", resume: false, alert: "" },
+      saving: { label: "Saving…", disabled: true, note: "Applying to the paused execution", color: "var(--text-tertiary)", resume: false, alert: "" },
+      saved: { label: "Save changes", disabled: true, note: "Saved — the execution is still paused", color: "var(--green)", resume: true, alert: "" },
+      conflict: { label: "Save changes", disabled: false, note: "Retry after reviewing", color: "var(--red)", resume: false, alert: "The execution changed since you started editing. Review your changes and retry." },
+      error: { label: "Save changes", disabled: false, note: "Save failed", color: "var(--red)", resume: false, alert: "Live edit refused: lane delivery is mid-merge. Wait for the join to settle and retry." },
+    };
+    const s = map[st] || map.clean;
+    return { hasSaveBar: true, saveLabel: s.label, saveDisabled: s.disabled, showResume: s.resume, saveNote: s.note, saveNoteColor: s.color, hasAlert: !!s.alert, alertText: s.alert };
+  }
+
+  renderVals() {
+    const scope = this.scope;
+    const nav = this.nav;
+    const id = nav[nav.length - 1];
+    const isRoot = id === "root";
+    const rows = isRoot ? [] : this.rows(id);
+
+    const groups = [];
+    let bucket = { label: "", hasLabel: false, hasTier: false, tier: "", rows: [] };
+    rows.forEach((r) => {
+      if (r.isSection) {
+        if (bucket.rows.length) groups.push(bucket);
+        bucket = { label: r.label, hasLabel: true, hasTier: !!r.hasTier, tier: r.tier || "", rows: [] };
+      } else bucket.rows.push(r);
+    });
+    if (bucket.rows.length) groups.push(bucket);
+    groups.forEach((g) => g.rows.forEach((r, i) => { r.divider = i < g.rows.length - 1 ? "1px solid var(--border-dim)" : "none"; }));
+
+    const group = GROUPS[scope].find((g) => g.key === id);
+    const total = this.counts();
+    const parentId = nav.length > 1 ? nav[nav.length - 2] : "root";
+    const seatTitle = id.indexOf("seat:") === 0 ? "Seat · " + id.slice(5) : null;
+    const taskTitle = id.indexOf("task:") === 0 ? "Task · " + id.slice(5) : null;
+    const parentLabel = parentId === "root" ? (this.host === "execution" ? "Config" : scope === "context" ? "Context" : "Workflow") : TITLES[parentId] || parentId;
+    const ctx = this.state.ctx;
+
+    return Object.assign({
+      scope,
+      setScope: (n) => { if (n) this.setState({ scope: n, nav: ["root"] }); },
+      hasScopeRow: this.host !== "execution",
+      isRoot, isDeep: !isRoot,
+      screenTitle: seatTitle || taskTitle || TITLES[id] || id,
+      backLabel: parentLabel,
+      backAria: "Back to " + parentLabel,
+      back: () => this.back(),
+      entityTitle: scope === "context" ? ctx.title : this.state.wf.name,
+      entityMeta: scope === "context"
+        ? ctx.id + " · lane " + ctx.placement.lane + " · " + (ctx.placement.mode === "readOnly" ? "read-only" : ctx.placement.mode === "owned" ? "owning · " + ctx.placement.ownedPaths.join(", ") : "full") 
+        : this.state.wf.contexts.length + " contexts · defaults every context inherits unless it overrides them",
+      headBadges: isRoot ? [] : this.badges(group ? group.paths : undefined),
+      totalLabel: this.countLabel(total),
+      totalColor: total.block + total.role + total.field ? "var(--cyan)" : "var(--text-tertiary)",
+      cards: this.cards(),
+      groups,
+      hasLegend: this.host !== "execution",
+      resetAll: () => this.setState((p) => ({ ov: Object.assign({}, p.ov, { [scope]: {} }) })),
+    }, this.banner(), this.saveBar());
+  }
+}
+
+</script>
+</body>
+</html>

@@ -27,6 +27,10 @@ const TRACK_BASE = cn(
   "disabled:cursor-not-allowed disabled:opacity-45",
   "focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2",
   "data-[state=unchecked]:border-border-default data-[state=unchecked]:bg-bg-raised",
+  // Below 768px the pointer target is 44px square while the pill keeps its
+  // designed proportions: a toggle inflated to 44px tall would read as a
+  // button, so the hit area is an invisible box centred on the track.
+  "max-768:after:absolute max-768:after:top-1/2 max-768:after:left-1/2 max-768:after:size-[44px] max-768:after:-translate-x-1/2 max-768:after:-translate-y-1/2 max-768:after:content-['']",
 );
 
 const TRACK_TONE: Record<SwitchTone, string> = {

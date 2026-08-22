@@ -144,7 +144,7 @@ function RoundTimeline({
             ? { "aria-current": "step" as const }
             : {})}
           className={cn(
-            "flex items-center gap-[4px] font-mono text-[0.68rem]",
+            "flex items-center gap-[4px] font-mono text-[0.7rem]",
             STEP_STATE_CLASS[step.state],
           )}
         >
@@ -235,12 +235,12 @@ function CohortMemberRow({
           {member.assignmentId}
         </span>
         <span
-          className="font-mono text-[0.68rem] text-text-tertiary"
+          className="font-mono text-[0.7rem] text-text-tertiary"
           data-testid="cohort-member-profile"
         >
           {member.profileLabel}
         </span>
-        <span className="font-mono text-[0.68rem] text-text-tertiary">
+        <span className="font-mono text-[0.7rem] text-text-tertiary">
           {member.strategy}
         </span>
         <AuthorityChip authority={member.authority} />
@@ -251,6 +251,7 @@ function CohortMemberRow({
           <Button
             size="sm"
             variant="default"
+            touch
             layoutClassName="ml-auto"
             onClick={() => onOpenTranscript(member)}
           >
@@ -310,7 +311,7 @@ export default function CohortRoundCard({
         <StatusChip tone={aggregateTone(view)}>
           {view.aggregateLabel}
         </StatusChip>
-        <span className="font-mono text-[0.68rem] text-text-tertiary">
+        <span className="font-mono text-[0.7rem] text-text-tertiary">
           {view.members.length}{" "}
           {view.members.length === 1 ? "validator" : "validators"} · candidate{" "}
           {view.candidateTreeHash.slice(0, 8)}
@@ -346,7 +347,7 @@ export default function CohortRoundCard({
                   {incident.label}
                 </span>
                 {incident.assignmentId !== null ? (
-                  <span className="font-mono text-[0.68rem] text-text-tertiary">
+                  <span className="font-mono text-[0.7rem] text-text-tertiary">
                     {incident.assignmentId}
                   </span>
                 ) : null}

@@ -30,17 +30,19 @@ function makeData(
     },
     tasks: [],
     mode: "execution",
+    laneState: "active",
+    configOverrides: [],
     ...overrides,
   };
 }
 
-function renderNode(data: ExecutionContextNodeData) {
+function renderNode(data: ExecutionContextNodeData, selected = false) {
   // The full React Flow node contract, satisfied rather than asserted: a cast
   // would let the component drift onto a prop this fixture never supplies.
   const props: NodeProps<Node<ExecutionContextNodeData, "executionContext">> = {
     id: "ctx-1",
     data,
-    selected: false,
+    selected,
     type: "executionContext",
     dragging: false,
     zIndex: 0,
@@ -91,49 +93,6 @@ describe("ExecutionContextNode — output schema glyph (R7.7)", () => {
     const glyph = screen.getByTestId("node-output-schema-glyph");
     const badge = screen.getByText("Pending");
     expect(glyph.parentElement).toBe(badge.parentElement);
-  });
-});
-
-// #69 change 4 stage 1: the node displays the context's acceptance criteria
-// through the canonical text rendering — numbered records citing ids for
-// record-shaped values, the prose verbatim for legacy values.
-describe("ExecutionContextNode — acceptance criteria records", () => {
-  it("displays record-shaped criteria as numbered records citing ids", () => {
-    renderNode(
-      makeData({
-        context: {
-          ...makeData().context,
-          acceptanceCriteria: [
-            { id: "ac-1", statement: "A verdict is recorded" },
-            { id: "audit-log", statement: "The audit trail is complete" },
-          ],
-        },
-      }),
-    );
-
-    const block = screen.getByTestId("node-criteria");
-    expect(block).toHaveTextContent("1. [ac-1] A verdict is recorded");
-    expect(block).toHaveTextContent(
-      "2. [audit-log] The audit trail is complete",
-    );
-  });
-
-  it("displays legacy prose criteria verbatim", () => {
-    renderNode(makeData());
-
-    expect(screen.getByTestId("node-criteria")).toHaveTextContent(
-      "A verdict is recorded.",
-    );
-  });
-
-  it("renders no criteria block for the builder's empty-prose seed", () => {
-    renderNode(
-      makeData({
-        context: { ...makeData().context, acceptanceCriteria: "" },
-      }),
-    );
-
-    expect(screen.queryByTestId("node-criteria")).toBeNull();
   });
 });
 
@@ -250,5 +209,216 @@ describe("ExecutionContextNode — advisory response phase (R6.3)", () => {
     // A finished context says so twice — badge and footer.
     renderNode(makeData({ waitState: { kind: "completed" } }));
     expect(screen.getAllByText("Completed")).toHaveLength(2);
+  });
+});
+
+describe("ExecutionContextNode — selection", () => {
+  /**
+   * The connection ports recolour on selection through
+   * `.graph-node.selected .react-flow__handle` in workflow-graph.css, which
+   * jsdom never applies. The class hook the rule depends on is therefore the
+   * only part of that contract a render can assert.
+   */
+  it("carries the class hook the port recolour selects on", () => {
+    const { unmount } = renderNode(makeData(), true);
+    expect(screen.getByTestId("context-node")).toHaveClass("selected");
+    unmount();
+
+    renderNode(makeData(), false);
+    expect(screen.getByTestId("context-node")).not.toHaveClass("selected");
+  });
+});
+
+describe("ExecutionContextNode — card anatomy", () => {
+  const checkout = {
+    context: {
+      ...makeData().context,
+      title: "Implement checkout",
+      placement: {
+        lane: "delivery",
+        mode: "owned" as const,
+        ownedPaths: ["src/checkout", "src/risk"],
+      },
+      implementer: {
+        id: "implementer",
+        profile: { tier: "project" as const, id: "checkout-impl" },
+        agent: {
+          backend: "claude" as const,
+          model: "opus" as const,
+          reasoningEffort: "high" as const,
+        },
+      },
+      contextValidator: {
+        enabled: true,
+        assignments: [
+          {
+            id: "security",
+            profile: { tier: "global" as const, id: "security-reviewer" },
+            agent: {
+              backend: "claude" as const,
+              model: "sonnet" as const,
+              reasoningEffort: "high" as const,
+            },
+            strategy: "conversation" as const,
+            authority: "blocking" as const,
+            continuity: { enabled: true },
+          },
+          {
+            id: "style",
+            profile: { tier: "project" as const, id: "style-reviewer" },
+            agent: {
+              backend: "codex" as const,
+              model: "gpt-5.6-luna" as const,
+              reasoningEffort: "medium" as const,
+            },
+            strategy: "task" as const,
+            authority: "advisory" as const,
+            continuity: { enabled: true },
+          },
+        ],
+      },
+    },
+  };
+
+  it("renders title, status pill, lane chip, grade chip and owned paths", () => {
+    renderNode(
+      makeData({
+        ...checkout,
+        waitState: { kind: "running" },
+        laneState: "active",
+      }),
+    );
+
+    expect(screen.getByText("Implement checkout")).toBeInTheDocument();
+    expect(screen.getByText("Running")).toBeInTheDocument();
+
+    const lane = screen.getByTestId("node-lane-chip");
+    expect(lane).toHaveTextContent("delivery");
+    expect(lane).toHaveAttribute("data-lane-state", "active");
+
+    const gradeChip = screen.getByTestId("node-grade-chip");
+    expect(gradeChip).toHaveTextContent("owning");
+    expect(gradeChip).toHaveAttribute(
+      "title",
+      expect.stringContaining("writes only inside its declared paths"),
+    );
+
+    expect(screen.getByTestId("node-owned-paths")).toHaveTextContent(
+      "src/checkout, src/risk",
+    );
+  });
+
+  it("renders the crew ledger with long model names and seat authority", () => {
+    renderNode(makeData(checkout));
+
+    const crew = screen.getByTestId("node-crew");
+    // The catalog's canonical long name, never the short selector id.
+    expect(crew).toHaveTextContent("Opus 5");
+    expect(crew).toHaveTextContent("high");
+
+    const seats = screen.getAllByTestId("node-crew-seat");
+    expect(seats).toHaveLength(2);
+    expect(seats[0]).toHaveTextContent("security");
+    expect(seats[0]).toHaveTextContent("blocking");
+    expect(seats[0]).toHaveTextContent("Sonnet");
+    expect(seats[1]).toHaveTextContent("style");
+    expect(seats[1]).toHaveTextContent("advisory");
+    expect(seats[1]).toHaveTextContent("GPT-5.6 Luna");
+  });
+
+  it("names itself completely enough to be read without the visuals", () => {
+    renderNode(
+      makeData({
+        ...checkout,
+        waitState: { kind: "running" },
+        contextState: {
+          ...makeData().contextState,
+          contextId: "ctx-1",
+          status: "running",
+          totalTaskCount: 5,
+          completedTaskCount: 3,
+        } as ExecutionContextNodeData["contextState"],
+      }),
+    );
+
+    expect(screen.getByTestId("context-node")).toHaveAccessibleName(
+      "Implement checkout — Running, lane delivery, owning (src/checkout, src/risk), 3 of 5 tasks, implementer Opus 5 high, inherited",
+    );
+  });
+
+  it("marks configuration set on this context and puts the reason in the name", () => {
+    renderNode(
+      makeData({
+        ...checkout,
+        configOverrides: ["implementer", "iteration policy"],
+      }),
+    );
+
+    expect(screen.getByTestId("node-set-here-marker")).toBeInTheDocument();
+    expect(screen.getByTestId("context-node")).toHaveAccessibleName(
+      /set on this context: implementer, iteration policy/,
+    );
+  });
+
+  it("shows no set-here marker when every block is inherited", () => {
+    renderNode(makeData(checkout));
+
+    expect(screen.queryByTestId("node-set-here-marker")).toBeNull();
+    expect(screen.getByTestId("context-node")).toHaveAccessibleName(
+      /inherited/,
+    );
+  });
+
+  it("marks a lane an expansion created at runtime", () => {
+    renderNode(makeData({ ...checkout, laneCreatedAtRuntime: true }));
+
+    expect(screen.getByTestId("node-runtime-lane")).toHaveTextContent(
+      "runtime",
+    );
+  });
+
+  it("reads Draft in the builder and Published once the lane landed", () => {
+    const { unmount } = renderNode(makeData({ ...checkout, mode: "builder" }));
+    expect(screen.getByText("Draft")).toBeInTheDocument();
+    unmount();
+
+    renderNode(makeData({ ...checkout, waitState: { kind: "published" } }));
+    expect(screen.getByText("Published")).toBeInTheDocument();
+  });
+
+  it("pulses only while running", () => {
+    const { unmount } = renderNode(
+      makeData({ ...checkout, waitState: { kind: "running" } }),
+    );
+    expect(screen.getByTestId("context-node")).toHaveClass("node-live-pulse");
+    unmount();
+
+    renderNode(makeData({ ...checkout, waitState: { kind: "completed" } }));
+    expect(screen.getByTestId("context-node")).not.toHaveClass(
+      "node-live-pulse",
+    );
+  });
+
+  it("explains why a full-grade member is queued behind its lane", () => {
+    renderNode(
+      makeData({
+        context: {
+          ...checkout.context,
+          placement: { lane: "delivery", mode: "full" },
+        },
+        waitState: { kind: "waiting-for-lane", laneId: "delivery" },
+      }),
+    );
+
+    const notice = screen.getByTestId("node-notice");
+    expect(notice).toHaveAttribute("data-tone", "amber");
+    expect(notice).toHaveTextContent(
+      "Full grade — waits for exclusive occupancy of delivery.",
+    );
+  });
+
+  it("shows no notice for a healthy context", () => {
+    renderNode(makeData({ ...checkout, waitState: { kind: "running" } }));
+    expect(screen.queryByTestId("node-notice")).toBeNull();
   });
 });

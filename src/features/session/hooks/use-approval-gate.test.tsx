@@ -141,7 +141,6 @@ describe("deriveApprovalGateStanding", () => {
         contextId: GATED_CONTEXT_ID,
         contextTitle: "Implement",
         requestedAt: REQUESTED_AT,
-        enveloped: false,
       });
     },
   );
@@ -186,16 +185,12 @@ describe("deriveApprovalGateStanding", () => {
     ).toBeNull();
   });
 
-  it("marks a context under a file-ownership envelope", () => {
-    expect(
-      deriveApprovalGateStanding(
-        gatedExecution({ ownedPaths: ["src/api"] }),
-        GATED_CONVERSATION_ID,
-      )?.enveloped,
-    ).toBe(true);
-  });
-
-  it("keeps a parked gate enveloped when its placement is live-edited to full access", () => {
+  // Standing identifies the gate; it no longer classifies its scope. The frozen
+  // scope is the approval API's answer to give — the client asks about every
+  // parked gate and the route reads the PARKED record — so a placement edited
+  // to full access while the gate stands cannot change what is asked for. The
+  // hook-level test below proves the request still names the same gate.
+  it("identifies a gate under a file-ownership envelope by its parked record", () => {
     expect(
       deriveApprovalGateStanding(
         gatedExecution({
@@ -203,8 +198,12 @@ describe("deriveApprovalGateStanding", () => {
           placementEditedToFull: true,
         }),
         GATED_CONVERSATION_ID,
-      )?.enveloped,
-    ).toBe(true);
+      ),
+    ).toEqual({
+      contextId: GATED_CONTEXT_ID,
+      contextTitle: expect.any(String),
+      requestedAt: expect.any(String),
+    });
   });
 
   it.each(["pending", "completed", "aborted"] as const)(
@@ -411,8 +410,11 @@ describe("useApprovalGate", () => {
     await waitFor(() => {
       expect(result.current?.scopedChanges).toEqual({
         status: "ready",
-        ownedPaths: OWNED_PATHS,
-        diff: SCOPED_DIFF,
+        candidate: {
+          scope: "owned",
+          ownedPaths: OWNED_PATHS,
+          diff: SCOPED_DIFF,
+        },
       });
     });
 
@@ -427,15 +429,27 @@ describe("useApprovalGate", () => {
     expect(calls.some((c) => /\/sessions\/sess\/diff/.test(c.url))).toBe(false);
   });
 
-  it("leaves a full-access member on the whole-tree approval view", async () => {
-    const calls = stubFetch();
+  // A full-access member used to skip the request entirely and hand the panel
+  // `null`, which read as "no candidate question to answer" and turned Approve
+  // on before anything about the gate was known. The gate's own frozen scope is
+  // what the answer reports, so the request is made for every parked gate.
+  it("resolves a full-access member's gate as a whole-tree candidate", async () => {
+    // What the approval API answers for a gate frozen without an envelope.
+    const calls = stubFetch({
+      kind: "whole_tree",
+      contextId: GATED_CONTEXT_ID,
+    });
     const { result } = renderGateHook({ execution: gatedExecution() });
 
     await waitFor(() => {
-      expect(result.current?.workflowName).toBe("Review Flow");
+      expect(result.current?.scopedChanges).toEqual({
+        status: "ready",
+        candidate: { scope: "whole_tree" },
+      });
     });
-    expect(result.current?.scopedChanges).toBeNull();
-    expect(calls.some((c) => c.url.includes("/approval-snapshot"))).toBe(false);
+    expect(calls.some((c) => c.url.includes("/approval-snapshot"))).toBe(true);
+    // Still never the mutable whole-session delta.
+    expect(calls.some((c) => /\/sessions\/sess\/diff/.test(c.url))).toBe(false);
   });
 
   it("keeps requesting the frozen artifact after the placement is live-edited to full access", async () => {
@@ -453,8 +467,11 @@ describe("useApprovalGate", () => {
     await waitFor(() => {
       expect(result.current?.scopedChanges).toEqual({
         status: "ready",
-        ownedPaths: OWNED_PATHS,
-        diff: SCOPED_DIFF,
+        candidate: {
+          scope: "owned",
+          ownedPaths: OWNED_PATHS,
+          diff: SCOPED_DIFF,
+        },
       });
     });
     expect(calls.some((c) => c.url.includes("/approval-snapshot"))).toBe(true);
@@ -526,8 +543,11 @@ describe("useApprovalGate", () => {
     await waitFor(() => {
       expect(result.current?.scopedChanges).toEqual({
         status: "ready",
-        ownedPaths: OWNED_PATHS,
-        diff: SCOPED_DIFF,
+        candidate: {
+          scope: "owned",
+          ownedPaths: OWNED_PATHS,
+          diff: SCOPED_DIFF,
+        },
       });
     });
 
@@ -542,8 +562,11 @@ describe("useApprovalGate", () => {
     await waitFor(() => {
       expect(result.current?.scopedChanges).toEqual({
         status: "ready",
-        ownedPaths: OWNED_PATHS,
-        diff: SECOND_DIFF,
+        candidate: {
+          scope: "owned",
+          ownedPaths: OWNED_PATHS,
+          diff: SECOND_DIFF,
+        },
       });
     });
   });

@@ -301,12 +301,12 @@ describe("planner workflow generation — fixture snapshot", () => {
         "layout": {
           "contextPositions": {
             "context-implement": {
-              "x": 360,
-              "y": 0,
+              "x": 196,
+              "y": 278,
             },
             "context-plan": {
-              "x": 0,
-              "y": 0,
+              "x": 196,
+              "y": 22,
             },
           },
           "viewport": {

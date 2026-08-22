@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/styles.css">
+  <script src="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.js"></script>
+  <style>
+    @keyframes cc-node-live { 0%,100% { box-shadow:0 0 0 1px var(--cc-cyan-a25); } 50% { box-shadow:0 0 0 1px var(--cc-cyan-a40), 0 0 14px var(--cyan-glow); } }
+    .cc-node { font-family: var(--font-mono); }
+    .cc-node-btn { display:block; width:100%; text-align:left; background:none; border:0; padding:0; color:inherit; font:inherit; cursor:pointer; }
+    .cc-node-btn:focus-visible { outline:2px solid var(--cyan); outline-offset:3px; border-radius:10px; }
+    @media (prefers-reduced-motion: reduce) { .cc-node { animation:none !important; } }
+  </style>
+</helmet>
+
+<button type="button" class="cc-node-btn" aria-label="{{ aria }}">
+  <div class="cc-node" style="position:relative;overflow:hidden;border-radius:10px;border:1px solid {{ borderColor }};border-top-color:{{ topColor }};background:var(--cc-graph-node-grad-bottom);width:{{ width }};padding:11px 13px 10px;box-shadow:{{ shadow }};animation:{{ anim }}">
+
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:5px">
+      <span style="font:600 .8rem/1.25 var(--font-mono);color:var(--text-primary)">{{ title }}</span>
+      <span style="flex-shrink:0;border-radius:999px;padding:1px 8px;font:500 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.05em;color:{{ statusColor }};border:1px solid {{ statusBorder }};background:{{ statusBg }}">{{ statusLabel }}</span>
+    </div>
+
+    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-bottom:9px">
+      <span style="display:inline-flex;align-items:center;gap:5px;font:500 .7rem var(--font-mono);color:var(--text-secondary);border:1px solid var(--border-subtle);border-radius:4px;padding:1px 6px">
+        <span style="width:5px;height:5px;border-radius:1px;background:{{ laneColor }}"></span>{{ lane }}
+      </span>
+      <span title="{{ gradeTitle }}" style="font:500 .7rem var(--font-mono);color:{{ gradeColor }};border:1px solid {{ gradeBorder }};background:{{ gradeBg }};border-radius:4px;padding:1px 6px">{{ gradeLabel }}</span>
+      <sc-if value="{{ hasPaths }}" hint-placeholder-val="{{ false }}">
+        <span style="font:400 .7rem var(--font-mono);color:var(--text-tertiary);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ paths }}</span>
+      </sc-if>
+      <sc-if value="{{ runtimeMade }}" hint-placeholder-val="{{ false }}">
+        <span title="Lane created at runtime by expansion" style="font:500 .7rem var(--font-mono);color:var(--cyan)">runtime</span>
+      </sc-if>
+    </div>
+
+    <sc-if value="{{ hasCrew }}" hint-placeholder-val="{{ true }}">
+      <div style="border:1px solid var(--border-subtle);border-radius:6px;background:var(--cc-graph-ink-a55);overflow:hidden;margin-bottom:9px">
+        <div style="display:flex;align-items:center;gap:6px;padding:6px 9px">
+          <span style="font:600 .7rem var(--font-mono);letter-spacing:.08em;color:var(--text-tertiary);width:30px">IMPL</span>
+          <span aria-hidden="true" style="width:6px;height:6px;border-radius:50%;background:{{ implDotColor }}"></span>
+          <span style="font:500 .72rem var(--font-mono);color:var(--text-primary);white-space:nowrap">{{ implModel }}</span>
+          <sc-if value="{{ implModelDelta }}" hint-placeholder-val="{{ false }}">
+            <span title="Implementer set on this context — workflow default is sonnet-4.5" style="flex-shrink:0;width:5px;height:5px;border-radius:50%;background:var(--cyan)"></span>
+          </sc-if>
+          <span style="margin-left:auto;border:1px solid var(--border-default);border-radius:999px;padding:0 7px;font:500 .7rem var(--font-mono);text-transform:uppercase;color:var(--text-secondary)">{{ implEffort }}</span>
+        </div>
+        <sc-for list="{{ seats }}" as="seat" hint-placeholder-count="2">
+          <div style="display:flex;flex-direction:column;gap:2px;padding:5px 9px;border-top:1px solid var(--border-dim)">
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font:600 .7rem var(--font-mono);letter-spacing:.08em;color:var(--text-tertiary);width:30px;flex-shrink:0">{{ seat.slot }}</span>
+              <span style="font:500 .72rem var(--font-mono);color:var(--text-primary);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ seat.id }}</span>
+              <span style="margin-left:auto;flex-shrink:0;border:1px solid {{ seat.authBorder }};background:{{ seat.authBg }};border-radius:999px;padding:0 7px;font:500 .7rem var(--font-mono);color:{{ seat.authColor }}">{{ seat.authority }}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;padding-left:30px">
+              <span aria-hidden="true" style="flex-shrink:0;width:6px;height:6px;border-radius:50%;background:{{ seat.dot }}"></span>
+              <span style="font:400 .7rem var(--font-mono);color:var(--text-secondary);white-space:nowrap">{{ seat.model }}</span>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ hasProgress }}" hint-placeholder-val="{{ true }}">
+      <div style="height:3px;border-radius:2px;background:var(--cc-graph-ink-a50);margin-bottom:7px">
+        <div style="width:{{ progress }};height:100%;border-radius:2px;background:{{ progressColor }}"></div>
+      </div>
+    </sc-if>
+
+    <div style="display:flex;align-items:center;gap:6px;font:400 .7rem var(--font-mono);color:var(--text-tertiary)">
+      <span>{{ footer }}</span>
+    </div>
+
+    <sc-if value="{{ hasNotice }}" hint-placeholder-val="{{ false }}">
+      <div style="margin-top:9px;display:flex;align-items:flex-start;gap:7px;border:1px solid {{ noticeBorder }};background:{{ noticeBg }};border-radius:6px;padding:7px 9px">
+        <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" style="flex-shrink:0;margin-top:1px;color:{{ noticeColor }}">
+          <path d="M8 2.8 14.2 13.2H1.8Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"></path>
+          <path d="M8 6.6v3M8 11.4v.1" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path>
+        </svg>
+        <span style="font:400 .7rem/1.45 var(--font-mono);color:{{ noticeColor }}">{{ notice }}</span>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ hasPortIn }}" hint-placeholder-val="{{ true }}">
+      <span aria-hidden="true" style="position:absolute;left:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid {{ portColor }}"></span>
+    </sc-if>
+    <sc-if value="{{ hasPortOut }}" hint-placeholder-val="{{ true }}">
+      <span aria-hidden="true" style="position:absolute;right:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid {{ portColor }}"></span>
+    </sc-if>
+  </div>
+</button>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:290,&quot;height&quot;:250},&quot;title&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;Implement checkout&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;status&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;pending&quot;,&quot;running&quot;,&quot;completed&quot;,&quot;published&quot;,&quot;halted&quot;,&quot;approval&quot;,&quot;draft&quot;],&quot;default&quot;:&quot;running&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;lane&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;delivery&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;laneState&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;active&quot;,&quot;merged&quot;,&quot;pending&quot;,&quot;session&quot;],&quot;default&quot;:&quot;active&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;grade&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;full&quot;,&quot;owned&quot;,&quot;readOnly&quot;],&quot;default&quot;:&quot;owned&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;paths&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;src/checkout, src/risk&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;implModel&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;opus-4.1&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;implBackend&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;claude&quot;,&quot;codex&quot;],&quot;default&quot;:&quot;claude&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;implEffort&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;high&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;implSetHere&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;seats&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;security:blocking:claude:sonnet-4.5|style:advisory:claude:haiku-4.5&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;tasksDone&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:3,&quot;tsType&quot;:&quot;number&quot;},&quot;tasksTotal&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:5,&quot;tsType&quot;:&quot;number&quot;},&quot;footer&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;3/5 tasks · iteration 2 · loop pass 2 of 3&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;notice&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;noticeTone&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;red&quot;,&quot;amber&quot;],&quot;default&quot;:&quot;red&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;selected&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;},&quot;runtime&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;},&quot;width&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:250,&quot;tsType&quot;:&quot;number&quot;}}">
+const STATUS = {
+  pending: { label: "Pending", color: "var(--text-tertiary)", border: "var(--border-default)", bg: "transparent", edge: "var(--border-subtle)", top: "var(--border-default)" },
+  running: { label: "Running", color: "var(--cyan)", border: "var(--cyan-glow-strong)", bg: "var(--cc-cyan-a08)", edge: "var(--cc-cyan-a25)", top: "var(--cc-cyan-a50)" },
+  completed: { label: "Completed", color: "var(--green)", border: "var(--cc-green-border)", bg: "var(--cc-green-a08)", edge: "var(--cc-green-a20)", top: "var(--cc-green-a45)" },
+  published: { label: "Published", color: "var(--green)", border: "var(--cc-green-border)", bg: "var(--cc-green-a08)", edge: "var(--cc-green-a20)", top: "var(--cc-green-a45)" },
+  halted: { label: "Halted", color: "var(--red)", border: "var(--cc-red-a40)", bg: "var(--cc-red-a10)", edge: "var(--cc-red-a40)", top: "var(--cc-red-a40)" },
+  approval: { label: "Awaiting approval", color: "var(--amber)", border: "var(--amber-dim)", bg: "var(--amber-glow)", edge: "var(--cc-amber-a30)", top: "var(--cc-amber-a30)" },
+  draft: { label: "Draft", color: "var(--text-tertiary)", border: "var(--border-default)", bg: "transparent", edge: "var(--border-subtle)", top: "var(--border-subtle)" },
+};
+
+const GRADE = {
+  full: { label: "full", color: "var(--amber)", border: "var(--amber-dim)", bg: "var(--amber-glow)", title: "Full access — writes anywhere in the lane worktree; requires exclusive occupancy while it runs" },
+  owned: { label: "owning", color: "var(--text-secondary)", border: "var(--border-default)", bg: "transparent", title: "Owning — writes only inside its declared paths; runs beside members with disjoint paths" },
+  readOnly: { label: "read-only", color: "var(--text-secondary)", border: "var(--border-default)", bg: "transparent", title: "Read-only — writes nothing; delivers through its output schema" },
+};
+
+const LANE_COLOR = { active: "var(--cyan)", merged: "var(--green)", pending: "var(--text-tertiary)", session: "var(--text-tertiary)" };
+const backendDot = (b) => (b === "codex" ? "var(--violet)" : "var(--cyan)");
+
+class Component extends DCLogic {
+  renderVals() {
+    const p = this.props;
+    const status = STATUS[p.status] || STATUS.pending;
+    const grade = GRADE[p.grade] || GRADE.owned;
+    const selected = p.selected === true || p.selected === "true";
+    const live = p.status === "running";
+    const seats = String(p.seats || "")
+      .split("|")
+      .filter(Boolean)
+      .map((raw, i) => {
+        const bits = raw.split(":");
+        const authority = bits[1] || "blocking";
+        const blocking = authority === "blocking";
+        return {
+          slot: i === 0 ? "VAL" : "",
+          id: bits[0],
+          model: bits[3] || "sonnet-4.5",
+          dot: backendDot(bits[2] || "claude"),
+          authority,
+          authColor: blocking ? "var(--amber)" : "var(--text-secondary)",
+          authBorder: blocking ? "var(--amber-dim)" : "var(--border-default)",
+          authBg: blocking ? "var(--amber-glow)" : "transparent",
+        };
+      });
+    const done = Number(p.tasksDone || 0);
+    const total = Number(p.tasksTotal || 0);
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+    const notice = p.notice || "";
+    const noticeTone = p.noticeTone || "red";
+    const tone = noticeTone === "amber"
+      ? { c: "var(--amber)", b: "var(--cc-amber-a30)", bg: "var(--cc-amber-a10)" }
+      : { c: "var(--red)", b: "var(--cc-red-a25)", bg: "var(--cc-red-a10)" };
+
+    return {
+      title: p.title || "Context",
+      aria: (p.title || "Context") + " — " + status.label + ", lane " + (p.lane || "") + ", " + grade.label
+        + (p.paths ? " (" + p.paths + ")" : "") + (total ? ", " + done + " of " + total + " tasks" : "")
+        + (p.implModel ? ", implementer " + p.implModel + " " + (p.implEffort || "") + (p.implSetHere === true || p.implSetHere === "true" ? ", set on this context" : ", inherited") : ""),
+      width: p.width ? String(p.width) + "px" : "264px",
+      statusLabel: status.label, statusColor: status.color, statusBorder: status.border, statusBg: status.bg,
+      borderColor: selected ? "var(--cc-cyan-a40)" : status.edge,
+      topColor: selected ? "var(--cyan)" : status.top,
+      shadow: selected ? "0 0 0 2px var(--cc-cyan-a25), 0 14px 36px rgba(0,0,0,.55)" : "none",
+      anim: live && !selected ? "cc-node-live 2.4s ease-in-out infinite" : "none",
+      lane: p.lane || "—",
+      laneColor: LANE_COLOR[p.laneState || "pending"] || LANE_COLOR.pending,
+      gradeLabel: grade.label, gradeColor: grade.color, gradeBorder: grade.border, gradeBg: grade.bg, gradeTitle: grade.title,
+      paths: p.paths || "", hasPaths: !!p.paths,
+      runtimeMade: p.runtime === true || p.runtime === "true",
+      hasCrew: !!p.implModel,
+      implModel: p.implModel || "", implEffort: p.implEffort || "medium",
+      implDotColor: backendDot(p.implBackend || "claude"),
+      implModelDelta: p.implSetHere === true || p.implSetHere === "true",
+      seats,
+      hasProgress: total > 0,
+      progress: pct + "%",
+      progressColor: p.status === "completed" || p.status === "published" ? "var(--green)" : p.status === "halted" ? "var(--red)" : "var(--cyan)",
+      footer: p.footer || (total ? done + "/" + total + " tasks" : ""),
+      hasNotice: !!notice, notice, noticeColor: tone.c, noticeBorder: tone.b, noticeBg: tone.bg,
+      hasPortIn: p.portIn !== false && p.portIn !== "false",
+      hasPortOut: p.portOut !== false && p.portOut !== "false",
+      portColor: selected ? "var(--cyan)" : "var(--border-default)",
+    };
+  }
+}
+
+</script>
+</body>
+</html>

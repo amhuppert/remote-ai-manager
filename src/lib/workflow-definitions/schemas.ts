@@ -25,3 +25,7 @@ export const workflowDefinitionGetResponseSchema = z.object({
   item: workflowDefinitionRecordSchema,
   resolved: cascadeWorkflowSemanticDefinitionSchema,
 });
+
+export type WorkflowDefinitionGetResponse = z.infer<
+  typeof workflowDefinitionGetResponseSchema
+>;

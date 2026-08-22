@@ -58,7 +58,7 @@ export default function BriefFocusSheet({
         </div>
         <footer className="mt-md flex items-center">
           <DialogClose asChild>
-            <Button variant="primary" layoutClassName="ml-auto">
+            <Button variant="primary" touch layoutClassName="ml-auto">
               Done
             </Button>
           </DialogClose>

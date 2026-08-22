@@ -88,7 +88,7 @@ export function NumericInput({
   return (
     <input
       type="number"
-      className="w-[110px] rounded-sm border border-solid border-border-default bg-bg-surface px-[10px] py-[7px] font-mono text-[0.75rem] text-text-primary transition-[border-color] duration-150 outline-none focus:border-cyan focus:shadow-[0_0_0_1px_var(--cyan-glow)] disabled:cursor-not-allowed disabled:opacity-60"
+      className="w-[110px] rounded-sm border border-solid border-border-default bg-bg-surface px-[10px] py-[7px] font-mono text-[0.75rem] text-text-primary transition-[border-color] duration-150 outline-none focus:border-cyan focus:shadow-[0_0_0_1px_var(--cyan-glow)] disabled:cursor-not-allowed disabled:opacity-60 max-768:min-h-[44px]"
       disabled={disabled}
       value={local}
       min={min}

@@ -226,6 +226,52 @@ describe("deriveOutputSchemaHaltEvidence (R3.2)", () => {
     expect(evidence?.declaredSchema).toEqual(outputSchema);
   });
 
+  // Resume restarts the refused turn against whatever the context declares NOW,
+  // so the surfaces that offer Resume need the positive form of the edit
+  // question — "the contract that refused is provably still in force" — which
+  // `schemaEditedSinceRejection` cannot express: false there also means "no
+  // snapshot was recorded, so nothing can be compared".
+  describe("contractUnchangedSinceRejection", () => {
+    it("is true while the refusing contract is still the declared one", () => {
+      const evidence = deriveOutputSchemaHaltEvidence({
+        execution: executionWithSchema(),
+        haltReason: breakerHalt,
+        validationEvents: [
+          { ...rejection(), rejectedAgainstSchema: { ...outputSchema } },
+        ],
+      });
+
+      expect(evidence?.contractUnchangedSinceRejection).toBe(true);
+    });
+
+    it("is false once the contract has been edited since the rejection", () => {
+      const evidence = deriveOutputSchemaHaltEvidence({
+        execution: executionWithSchema(),
+        haltReason: breakerHalt,
+        validationEvents: [
+          {
+            ...rejection(),
+            rejectedAgainstSchema: { type: "object", properties: {} },
+          },
+        ],
+      });
+
+      expect(evidence?.contractUnchangedSinceRejection).toBe(false);
+    });
+
+    // Nothing to compare is not proof the contract still refuses, and a run
+    // that can never be resumed is worse than one resumed a turn too early.
+    it("is false when the rejection recorded no contract snapshot", () => {
+      const evidence = deriveOutputSchemaHaltEvidence({
+        execution: executionWithSchema(),
+        haltReason: breakerHalt,
+        validationEvents: [rejection()],
+      });
+
+      expect(evidence?.contractUnchangedSinceRejection).toBe(false);
+    });
+  });
+
   it("reports the structured-output gate's repair spend from the rejection record", () => {
     const evidence = deriveOutputSchemaHaltEvidence({
       execution: executionWithSchema(),

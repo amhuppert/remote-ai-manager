@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import "@/components/workflow-graph/workflow-graph.css";
@@ -13,43 +13,55 @@ import type {
 import type { GraphWorkflowVisualLayout } from "@/lib/workflow-graph/definition-schemas";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
-import { Button } from "@/components/ui/Button";
+import { IconButton } from "@/components/ui/IconButton";
+import {
+  railOverlayPanelClass,
+  RailOverlaySpacer,
+} from "@/components/workflow-graph/RailOverlay";
+import { useWorkflowRailCollapse } from "@/components/workflow-graph/useWorkflowRailCollapse";
+import { MobilePanelVisibility } from "@/components/workflow-graph/mobile-panel-visibility";
+import { cn } from "@/lib/ui/cn";
 import type { ExecutionMobilePanel } from "../SessionWorkflowPage";
 import ExecutionStatusBar, {
   type ExecutionControlAction,
 } from "./ExecutionStatusBar";
+import { PanelRightIcon } from "./execution-icons";
 import WorkflowExecutionCanvas from "./WorkflowExecutionCanvas";
 import LoopLedgerPanel from "./LoopLedgerPanel";
-import ExecutionInspectorPanel, {
-  type ContextTabRequest,
-} from "./ExecutionInspectorPanel";
+import ExecutionInspectorPanel from "./ExecutionInspectorPanel";
+import {
+  InspectorNavigationProvider,
+  useInspectorNavigationState,
+} from "./inspector/InspectorNavigationContext";
+import {
+  ADVISORY_ORIGIN,
+  LANE_RUNTIME,
+  OUTPUT_SCHEMA_REPAIR,
+  PLACEMENT_OWNERSHIP,
+} from "./inspector/navigation";
+import type { OverviewRowId } from "./inspector/overview-model";
 import type { AdvisoryOrigin } from "./AdvisoryIndexPanel";
 import WorkflowConversationViewer from "./WorkflowConversationViewer";
+import { isWorkflowConversationLive } from "./inspector/conversation-history";
 import { resolveViewingTask } from "./view-task-resolver";
 import { deriveUserInputStandings } from "@/hooks/use-user-input-gate";
 import ParkedQuestionPanel from "./ParkedQuestionPanel";
 import { useValidationCommandOptions } from "@/lib/validation/queries";
 import type { GraphWorkflowBoundaryResultProjection } from "@/lib/workflow-graph/execution-result-projection";
-import ConfirmDialog from "@/components/ConfirmDialog";
 import {
   awaitsDefinitionApproval,
   holdsExecutionLease,
 } from "@/lib/workflow-graph/lifecycle-classifier";
-import WorkflowApprovalHistory from "./WorkflowApprovalHistory";
 
 export type WorkflowActionCapability = "current" | "read-only";
-
-function formatResultOutputValue(value: unknown): string {
-  if (typeof value === "string") return value;
-  const serialized = JSON.stringify(value);
-  return serialized ?? "—";
-}
 
 interface GraphWorkflowPanelProps {
   projectName: string;
   sessionName: string;
   execution: GraphWorkflowExecution | null;
   events: GraphWorkflowExecutionEvent[];
+  /** Whether `events` is the whole log; see `ContextDetail`. */
+  eventsAreComplete?: boolean;
   /** @deprecated History is rendered by the page-level selectable rail. */
   archivedExecutions?: GraphWorkflowExecutionHistoryItem[];
   layout: GraphWorkflowVisualLayout | null;
@@ -57,6 +69,12 @@ interface GraphWorkflowPanelProps {
   actionCapability?: WorkflowActionCapability;
   /** Durable boundary projection for a selected historical execution. */
   result?: GraphWorkflowBoundaryResultProjection | null;
+  /**
+   * The saved template's current revision, when this run has a template to
+   * compare against. Feeds the Overview's launch note: a run reads its
+   * immutable snapshot, so a draft that has moved on must be said out loud.
+   */
+  draftRevision?: number | null;
   onPause(): void;
   onResume(conflictGuidance?: ConflictDecisionInput[]): void;
   onAbort(): void;
@@ -95,8 +113,20 @@ interface GraphWorkflowPanelProps {
   isMobile: boolean;
   mobilePanel: ExecutionMobilePanel;
   autoSwitchPanel: (panel: ExecutionMobilePanel) => void;
-  /** Current context-level approval decision, already bound to its mutation. */
-  humanApprovalPanel?: ReactNode;
+  /** M2 execution chip copy — `<exec_id> · Current`/`· History`. */
+  executionChipLabel?: string;
+  /** The M2 Executions sheet body, given the handle that dismisses it. */
+  renderExecutionsSheet?: (close: () => void) => ReactNode;
+  /**
+   * The approval surface for ONE context, already bound to its mutation.
+   *
+   * A renderer rather than a pre-built stack: README §10 is explicit that there
+   * is no single global gate, so a run with two parked approvals must not show
+   * both cards together above the canvas. Each card belongs to the context that
+   * parked it and renders inside that context's detail, exactly like a parked
+   * question, which is what a gate row navigates to.
+   */
+  renderContextApproval?: (contextId: string) => ReactNode;
 }
 
 export default function GraphWorkflowPanel({
@@ -104,9 +134,11 @@ export default function GraphWorkflowPanel({
   sessionName,
   execution,
   events,
+  eventsAreComplete = true,
   layout,
   actionCapability = "current",
   result = null,
+  draftRevision = null,
   onPause,
   onResume,
   onAbort,
@@ -135,7 +167,9 @@ export default function GraphWorkflowPanel({
   isMobile,
   mobilePanel,
   autoSwitchPanel,
-  humanApprovalPanel,
+  executionChipLabel,
+  renderExecutionsSheet,
+  renderContextApproval,
 }: GraphWorkflowPanelProps) {
   const actionsAvailable = actionCapability === "current";
   const [selectedContextId, setSelectedContextId] = useState<string | null>(
@@ -144,15 +178,23 @@ export default function GraphWorkflowPanel({
   const [viewingTaskId, setViewingTaskId] = useState<string | null>(null);
   const [viewingConversation, setViewingConversation] = useState<{
     conversationId: string;
+    /** Kept so liveness can be re-read while the transcript is open. */
+    contextId: string;
     contextTitle: string;
     label: string;
   } | null>(null);
-  const [
-    confirmingDefinitionRejectExecutionId,
-    setConfirmingDefinitionRejectExecutionId,
-  ] = useState<string | null>(null);
-  const [confirmingAbandonExecutionId, setConfirmingAbandonExecutionId] =
-    useState<string | null>(null);
+  // Desktop-only: below 768px the bottom tab bar owns which panel is visible,
+  // so a second, invisible collapse state there would silently hide the panel
+  // the tab bar says is showing.
+  const {
+    collapsed: inspectorCollapsed,
+    setCollapsed: setInspectorCollapsed,
+    overlay: inspectorOverlay,
+  } = useWorkflowRailCollapse();
+  const [overviewScreenRequest, setOverviewScreenRequest] = useState<{
+    screen: OverviewRowId;
+    seq: number;
+  } | null>(null);
 
   const handleSelectContext = useCallback(
     (contextId: string | null) => {
@@ -163,43 +205,60 @@ export default function GraphWorkflowPanel({
     [autoSwitchPanel],
   );
 
-  // "Edit schema" on an output-schema halt: select the refusing context and
-  // open the tab that owns its contract, so the fix is one click from the halt
-  // that named it. The counter makes a repeat request distinguishable from a
-  // re-render of the previous one.
-  const [contextTabRequest, setContextTabRequest] =
-    useState<ContextTabRequest | null>(null);
-  const tabRequestSeq = useRef(0);
+  // Every deep link into the rail goes through the one typed handle, which owns
+  // selecting the context and the request counter that makes a repeat ask
+  // distinguishable from a re-render of the previous one.
+  const { request: contextTabRequest, handle: inspectorNavigation } =
+    useInspectorNavigationState(handleSelectContext);
+
+  // The status bar's gates chip: the count opens the list it counts. Nothing on
+  // this run is a global gate, so the chip lands on the Overview's gates list
+  // rather than on any one context — the rows name the contexts.
+  const handleOpenGates = useCallback(() => {
+    setSelectedContextId(null);
+    setViewingTaskId(null);
+    setInspectorCollapsed(false);
+    autoSwitchPanel("inspector");
+    setOverviewScreenRequest((previous) => ({
+      screen: "gates",
+      seq: (previous?.seq ?? 0) + 1,
+    }));
+  }, [autoSwitchPanel, setInspectorCollapsed]);
+
+  // "Edit schema" on an output-schema halt: the fix is one click from the halt
+  // that named it.
   const handleEditOutputSchema = useCallback(
     (contextId: string) => {
-      handleSelectContext(contextId);
-      tabRequestSeq.current += 1;
-      setContextTabRequest({
-        contextId,
-        tab: "config",
-        seq: tabRequestSeq.current,
-      });
+      inspectorNavigation.openContext(contextId, OUTPUT_SCHEMA_REPAIR);
     },
-    [handleSelectContext],
+    [inspectorNavigation],
   );
 
-  // An advisory-index entry's origin link: select the context that raised it and
-  // open its history at the ROUND that raised it — an indexed advisory outlives
-  // its round, so by the time it is read the context is usually several rounds
-  // further on. Shares the one tab-request counter, so a request from either
-  // deep link is always distinguishable from the previous one.
-  const handleOpenAdvisoryOrigin = useCallback(
-    ({ contextId, roundSeq }: AdvisoryOrigin) => {
-      handleSelectContext(contextId);
-      tabRequestSeq.current += 1;
-      setContextTabRequest({
-        contextId,
-        tab: "history",
-        roundSeq,
-        seq: tabRequestSeq.current,
-      });
+  // A blocked join member's two ways out: its lane worktree (Config → Runtime)
+  // and the ownership that overlapped (Config → Placement). Both are the
+  // existing config destinations, reached through the one navigation handle.
+  const handleOpenLaneWorktree = useCallback(
+    (contextId: string) => {
+      inspectorNavigation.openContext(contextId, LANE_RUNTIME);
     },
-    [handleSelectContext],
+    [inspectorNavigation],
+  );
+
+  const handleEditOwnership = useCallback(
+    (contextId: string) => {
+      inspectorNavigation.openContext(contextId, PLACEMENT_OWNERSHIP);
+    },
+    [inspectorNavigation],
+  );
+
+  // An advisory-index entry's origin link: an indexed advisory outlives its
+  // round, so by the time it is read the context is usually several rounds
+  // further on and the tab alone would land in the wrong place.
+  const handleOpenAdvisoryOrigin = useCallback(
+    ({ contextId, advisory }: AdvisoryOrigin) => {
+      inspectorNavigation.openContext(contextId, ADVISORY_ORIGIN(advisory));
+    },
+    [inspectorNavigation],
   );
 
   const handleViewTask = useCallback(
@@ -234,6 +293,7 @@ export default function GraphWorkflowPanel({
         (lane === "context_validator" ? "Context Validator" : "Implementer");
       setViewingConversation({
         conversationId,
+        contextId,
         contextTitle: contextDef?.title ?? contextId,
         label,
       });
@@ -268,6 +328,15 @@ export default function GraphWorkflowPanel({
         ))
       : null;
 
+  // The approval card for the SELECTED context only. A parked approval is a
+  // wait on one context, so its decision surface lives with that context — the
+  // gates list is what says a second one exists elsewhere, and its row is how
+  // the operator reaches it.
+  const contextApprovalPanel =
+    actionsAvailable && selectedContextId !== null
+      ? (renderContextApproval?.(selectedContextId) ?? null)
+      : null;
+
   // This project's registry, for the config tab's command multi-selects.
   const commandOptions = useValidationCommandOptions(projectName);
 
@@ -275,6 +344,19 @@ export default function GraphWorkflowPanel({
     execution && viewingTaskId
       ? resolveViewingTask(execution, viewingTaskId)
       : null;
+  // Read at render, exactly like the task transcript above, because the Log
+  // header states live/ended and the run can settle while the transcript is
+  // open. The answer comes from the lane that owns the conversation rather than
+  // being assumed: a seat still validating and a seat that has returned its
+  // verdict both open from the same History surface.
+  const viewingConversationIsLive =
+    execution !== null &&
+    viewingConversation !== null &&
+    isWorkflowConversationLive(
+      execution,
+      viewingConversation.contextId,
+      viewingConversation.conversationId,
+    );
   const isAwaitingDefinitionApproval =
     execution !== null &&
     awaitsDefinitionApproval(execution.status, execution.definitionApproval);
@@ -308,294 +390,272 @@ export default function GraphWorkflowPanel({
 
   return (
     <ReactFlowProvider>
-      <div
-        className="flex min-h-0 flex-1 flex-col"
-        data-workflow-execution-id={execution.id}
-      >
-        <ExecutionStatusBar
-          execution={execution}
-          events={events}
-          {...(actionsAvailable
-            ? { onEditSchema: handleEditOutputSchema }
-            : {})}
-          onPause={onPause}
-          onResume={onResume}
-          onAbort={onAbort}
-          onAbandon={() => setConfirmingAbandonExecutionId(execution.id)}
-          isMutating={isMutating}
-          pendingAction={pendingAction}
-          allowActions={actionsAvailable}
-        />
-        {isAwaitingDefinitionApproval && (
-          <section
-            aria-label="Definition approval"
-            className="flex shrink-0 flex-wrap items-center justify-between gap-md border-x-0 border-t-0 border-b border-solid border-amber-dim bg-amber-glow px-md py-sm"
-          >
-            <div>
-              <p className="m-0 font-mono text-[0.72rem] font-bold tracking-[0.05em] text-amber uppercase">
-                Definition awaiting approval
-              </p>
-              <p className="mt-[3px] mb-0 text-[0.7rem] text-text-secondary">
-                Approve the parked definition to start this workflow.
-              </p>
-              {definitionApprovalError !== null && (
-                <p
-                  role="alert"
-                  className="mt-xs mb-0 font-mono text-[0.68rem] text-red"
-                >
-                  {definitionApprovalError}
-                </p>
-              )}
-            </div>
-            {canDecideDefinitionApproval && (
-              <div className="flex items-center gap-sm">
-                <Button
-                  size="sm"
-                  variant="success"
-                  touch
-                  loading={isApprovingDefinition}
-                  disabled={isMutating}
-                  onClick={onApproveDefinition}
-                >
-                  Approve definition &amp; start
-                </Button>
-                <Button
-                  size="sm"
-                  variant="danger"
-                  touch
-                  loading={isRejectingDefinition}
-                  disabled={isMutating}
-                  onClick={() =>
-                    setConfirmingDefinitionRejectExecutionId(execution.id)
-                  }
-                >
-                  Reject definition
-                </Button>
-              </div>
-            )}
-          </section>
-        )}
-        {actionsAvailable ? humanApprovalPanel : null}
-        {!actionsAvailable && (
-          <WorkflowApprovalHistory execution={execution} events={events} />
-        )}
-        {result !== null && (
-          <section
-            aria-label="Execution result"
-            className="flex shrink-0 flex-wrap items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim bg-bg-surface px-md py-sm font-mono text-[0.7rem] text-text-secondary"
-          >
-            <span className="font-semibold text-text-primary">
-              {result.boundaryKind} result
-            </span>
-            <span>{result.status}</span>
-            {result.outputs.kind === "declared_outputs" ? (
-              Object.entries(result.outputs.byContext).flatMap(
-                ([contextId, outputs]) =>
-                  Object.entries(outputs).map(([outputName, value]) => (
-                    <span
-                      key={`${contextId}:${outputName}`}
-                      className="inline-flex min-w-0 items-baseline gap-xs"
-                    >
-                      <span>
-                        {contextId}.{outputName}
-                      </span>
-                      <span className="break-all text-text-primary">
-                        {formatResultOutputValue(value)}
-                      </span>
-                    </span>
-                  )),
-              )
-            ) : (
-              <span>No declared structured result</span>
-            )}
-          </section>
-        )}
-        <div className="flex min-h-0 flex-1 max-768:flex-col">
-          {isMobile ? (
-            <>
-              <WorkflowExecutionCanvas
-                execution={execution}
-                layout={mergedLayout}
-                onSelectContext={handleSelectContext}
-                preserveLayout={!actionsAvailable}
-              />
-              <ExecutionInspectorPanel
-                execution={execution}
-                events={events}
-                loopLedger={
-                  <LoopLedgerPanel
-                    projectName={projectName}
-                    sessionName={sessionName}
-                    execution={execution}
-                    {...(!actionsAvailable ? { events } : {})}
-                  />
+      <InspectorNavigationProvider handle={inspectorNavigation}>
+        <div
+          className="flex min-h-0 flex-1 flex-col"
+          data-workflow-execution-id={execution.id}
+        >
+          <ExecutionStatusBar
+            // Remounted per execution so a confirmation opened for one run can
+            // never be accepted against the run that replaced it.
+            key={execution.id}
+            execution={execution}
+            events={events}
+            {...(actionsAvailable
+              ? {
+                  onEditSchema: handleEditOutputSchema,
+                  onOpenGates: handleOpenGates,
+                  onOpenLaneWorktree: handleOpenLaneWorktree,
+                  onEditOwnership: handleEditOwnership,
                 }
-                selectedContextId={selectedContextId}
-                userInputPanels={userInputPanels}
-                onSelectContext={(id) => handleSelectContext(id)}
-                onDeselectContext={() => handleSelectContext(null)}
-                onAddTask={onAddTask}
-                onUpdateTask={onUpdateTask}
-                onRemoveTask={onRemoveTask}
-                onReorderTask={onReorderTask}
-                onResetContext={onResetContext}
-                onResetAssignment={onResetAssignment}
-                resettingAssignmentId={resettingAssignmentId}
-                libraryProjectName={projectName}
-                onViewTask={handleViewTask}
-                viewingTaskId={viewingTaskId}
-                isMutating={isMutating}
-                onSaveContextConfig={onSaveContextConfig}
-                onPauseExecution={onPause}
-                onResumeExecution={() => onResume()}
-                isSavingConfig={isSavingConfig}
-                isPausingExecution={isPausingExecution}
-                isResumingExecution={isResumingExecution}
-                configEditConflict={configEditConflict}
-                configEditError={configEditError}
-                configSaveSucceeded={configSaveSucceeded}
-                onViewConversation={handleViewConversation}
-                onEditSchema={handleEditOutputSchema}
-                onOpenAdvisoryOrigin={handleOpenAdvisoryOrigin}
-                contextTabRequest={contextTabRequest}
-                commandOptions={commandOptions}
-                readOnly={!actionsAvailable}
-              />
-              {mobilePanel === "log" && (
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg-void max-768:[.app[data-page=workflow][data-mobile-panel=graph]_&]:hidden max-768:[.app[data-page=workflow][data-mobile-panel=inspector]_&]:hidden">
-                  {viewingTask ? (
-                    <WorkflowConversationViewer
-                      projectName={projectName}
-                      sessionName={sessionName}
-                      conversationId={viewingTask.conversationId}
-                      isLive={viewingTask.isLive}
-                      contextTitle={viewingTask.contextTitle}
-                      taskTitle={viewingTask.taskTitle}
-                      onClose={handleCloseTranscript}
-                    />
-                  ) : viewingConversation ? (
-                    <WorkflowConversationViewer
-                      projectName={projectName}
-                      sessionName={sessionName}
-                      conversationId={viewingConversation.conversationId}
-                      isLive={false}
-                      contextTitle={viewingConversation.contextTitle}
-                      taskTitle={viewingConversation.label}
-                      onClose={handleCloseTranscript}
-                    />
-                  ) : (
-                    <div className="flex flex-1 flex-col items-center justify-center p-xl text-[0.82rem] text-text-tertiary">
-                      Select a task in Inspector to open its log.
-                    </div>
-                  )}
-                </div>
-              )}
-            </>
-          ) : (
-            <>
-              {viewingTask ? (
-                <WorkflowConversationViewer
-                  projectName={projectName}
-                  sessionName={sessionName}
-                  conversationId={viewingTask.conversationId}
-                  isLive={viewingTask.isLive}
-                  contextTitle={viewingTask.contextTitle}
-                  taskTitle={viewingTask.taskTitle}
-                  onClose={handleCloseTranscript}
-                />
-              ) : viewingConversation ? (
-                <WorkflowConversationViewer
-                  projectName={projectName}
-                  sessionName={sessionName}
-                  conversationId={viewingConversation.conversationId}
-                  isLive={false}
-                  contextTitle={viewingConversation.contextTitle}
-                  taskTitle={viewingConversation.label}
-                  onClose={handleCloseTranscript}
-                />
-              ) : (
+              : {})}
+            onPause={onPause}
+            onResume={onResume}
+            onAbort={onAbort}
+            onAbandon={onAbandon}
+            {...(canDecideDefinitionApproval
+              ? {
+                  onApproveDefinition,
+                  onRejectDefinition,
+                  isApprovingDefinition,
+                  isRejectingDefinition,
+                  definitionApprovalError,
+                }
+              : {})}
+            isMutating={isMutating}
+            pendingAction={pendingAction}
+            allowActions={actionsAvailable}
+            isMobile={isMobile}
+            {...(executionChipLabel === undefined
+              ? {}
+              : { executionChipLabel })}
+            {...(renderExecutionsSheet === undefined
+              ? {}
+              : { renderExecutionsSheet })}
+            {...(isMobile || inspectorCollapsed
+              ? {}
+              : {
+                  // Expanding is the strip's job once the rail is collapsed —
+                  // two controls with the same name would be two ways to say
+                  // the same thing in the same view.
+                  trailingControls: (
+                    <IconButton
+                      variant="square"
+                      aria-label="Collapse inspector"
+                      title="Collapse inspector"
+                      onClick={() => setInspectorCollapsed(true)}
+                    >
+                      <PanelRightIcon />
+                    </IconButton>
+                  ),
+                })}
+          />
+          <div className="relative flex min-h-0 flex-1 max-768:flex-col">
+            {isMobile ? (
+              <>
                 <WorkflowExecutionCanvas
                   execution={execution}
                   layout={mergedLayout}
                   onSelectContext={handleSelectContext}
                   preserveLayout={!actionsAvailable}
+                  isMobile
+                  selectedContextId={selectedContextId}
+                  onOpenLaneWorktree={handleOpenLaneWorktree}
+                  onEditOwnership={handleEditOwnership}
                 />
-              )}
-              <ExecutionInspectorPanel
-                execution={execution}
-                events={events}
-                loopLedger={
-                  <LoopLedgerPanel
+                <MobilePanelVisibility onScreen={mobilePanel === "inspector"}>
+                  <ExecutionInspectorPanel
+                    execution={execution}
+                    events={events}
+                    eventsAreComplete={eventsAreComplete}
+                    loopLedger={
+                      <LoopLedgerPanel
+                        projectName={projectName}
+                        sessionName={sessionName}
+                        execution={execution}
+                        {...(!actionsAvailable ? { events } : {})}
+                      />
+                    }
+                    selectedContextId={selectedContextId}
+                    userInputPanels={userInputPanels}
+                    contextApprovalPanel={contextApprovalPanel}
+                    onSelectContext={(id) => handleSelectContext(id)}
+                    onDeselectContext={() => handleSelectContext(null)}
+                    onAddTask={onAddTask}
+                    onUpdateTask={onUpdateTask}
+                    onRemoveTask={onRemoveTask}
+                    onReorderTask={onReorderTask}
+                    onResetContext={onResetContext}
+                    onResetAssignment={onResetAssignment}
+                    resettingAssignmentId={resettingAssignmentId}
+                    libraryProjectName={projectName}
+                    onViewTask={handleViewTask}
+                    viewingTaskId={viewingTaskId}
+                    isMutating={isMutating}
+                    onSaveContextConfig={onSaveContextConfig}
+                    onPauseExecution={onPause}
+                    onResumeExecution={() => onResume()}
+                    isSavingConfig={isSavingConfig}
+                    isPausingExecution={isPausingExecution}
+                    isResumingExecution={isResumingExecution}
+                    configEditConflict={configEditConflict}
+                    configEditError={configEditError}
+                    configSaveSucceeded={configSaveSucceeded}
+                    onViewConversation={handleViewConversation}
+                    onEditSchema={handleEditOutputSchema}
+                    onOpenAdvisoryOrigin={handleOpenAdvisoryOrigin}
+                    contextTabRequest={contextTabRequest}
+                    overviewScreenRequest={overviewScreenRequest}
+                    commandOptions={commandOptions}
+                    result={result}
+                    draftRevision={draftRevision}
+                    readOnly={!actionsAvailable}
+                  />
+                </MobilePanelVisibility>
+                {mobilePanel === "log" && (
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg-void max-768:[.app[data-page=workflow][data-mobile-panel=graph]_&]:hidden max-768:[.app[data-page=workflow][data-mobile-panel=inspector]_&]:hidden">
+                    {viewingTask ? (
+                      <WorkflowConversationViewer
+                        projectName={projectName}
+                        sessionName={sessionName}
+                        conversationId={viewingTask.conversationId}
+                        isLive={viewingTask.isLive}
+                        role="Implementer"
+                        contextTitle={viewingTask.contextTitle}
+                        taskTitle={viewingTask.taskTitle}
+                        onClose={handleCloseTranscript}
+                      />
+                    ) : viewingConversation ? (
+                      <WorkflowConversationViewer
+                        projectName={projectName}
+                        sessionName={sessionName}
+                        conversationId={viewingConversation.conversationId}
+                        isLive={viewingConversationIsLive}
+                        role={viewingConversation.label}
+                        contextTitle={viewingConversation.contextTitle}
+                        onClose={handleCloseTranscript}
+                      />
+                    ) : (
+                      <div className="flex flex-1 flex-col items-center justify-center p-xl text-[0.82rem] text-text-tertiary">
+                        Select a task in Inspector to open its log.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                {viewingTask ? (
+                  <WorkflowConversationViewer
                     projectName={projectName}
                     sessionName={sessionName}
-                    execution={execution}
-                    {...(!actionsAvailable ? { events } : {})}
+                    conversationId={viewingTask.conversationId}
+                    isLive={viewingTask.isLive}
+                    role="Implementer"
+                    contextTitle={viewingTask.contextTitle}
+                    taskTitle={viewingTask.taskTitle}
+                    onClose={handleCloseTranscript}
                   />
-                }
-                selectedContextId={selectedContextId}
-                userInputPanels={userInputPanels}
-                onSelectContext={(id) => handleSelectContext(id)}
-                onDeselectContext={() => handleSelectContext(null)}
-                onAddTask={onAddTask}
-                onUpdateTask={onUpdateTask}
-                onRemoveTask={onRemoveTask}
-                onReorderTask={onReorderTask}
-                onResetContext={onResetContext}
-                onResetAssignment={onResetAssignment}
-                resettingAssignmentId={resettingAssignmentId}
-                libraryProjectName={projectName}
-                onViewTask={handleViewTask}
-                viewingTaskId={viewingTaskId}
-                isMutating={isMutating}
-                onSaveContextConfig={onSaveContextConfig}
-                onPauseExecution={onPause}
-                onResumeExecution={() => onResume()}
-                isSavingConfig={isSavingConfig}
-                isPausingExecution={isPausingExecution}
-                isResumingExecution={isResumingExecution}
-                configEditConflict={configEditConflict}
-                configEditError={configEditError}
-                configSaveSucceeded={configSaveSucceeded}
-                onViewConversation={handleViewConversation}
-                onEditSchema={handleEditOutputSchema}
-                onOpenAdvisoryOrigin={handleOpenAdvisoryOrigin}
-                contextTabRequest={contextTabRequest}
-                commandOptions={commandOptions}
-                readOnly={!actionsAvailable}
-              />
-            </>
-          )}
+                ) : viewingConversation ? (
+                  <WorkflowConversationViewer
+                    projectName={projectName}
+                    sessionName={sessionName}
+                    conversationId={viewingConversation.conversationId}
+                    isLive={viewingConversationIsLive}
+                    role={viewingConversation.label}
+                    contextTitle={viewingConversation.contextTitle}
+                    onClose={handleCloseTranscript}
+                  />
+                ) : (
+                  <WorkflowExecutionCanvas
+                    execution={execution}
+                    layout={mergedLayout}
+                    onSelectContext={handleSelectContext}
+                    preserveLayout={!actionsAvailable}
+                    onOpenLaneWorktree={handleOpenLaneWorktree}
+                    onEditOwnership={handleEditOwnership}
+                  />
+                )}
+                {inspectorCollapsed ? (
+                  // §12: the rail becomes a strip rather than vanishing, so the
+                  // way back stays where the rail was.
+                  <div className="flex w-[36px] shrink-0 flex-col items-center border-y-0 border-r-0 border-l border-solid border-border-subtle bg-bg-base py-sm">
+                    <IconButton
+                      variant="square"
+                      aria-label="Expand inspector"
+                      title="Expand inspector"
+                      onClick={() => setInspectorCollapsed(false)}
+                    >
+                      <PanelRightIcon />
+                    </IconButton>
+                  </div>
+                ) : (
+                  <>
+                    {inspectorOverlay && (
+                      <RailOverlaySpacer side="right" stripWidth="36" />
+                    )}
+                    <div
+                      className={
+                        inspectorOverlay
+                          ? cn(railOverlayPanelClass("right"), "flex")
+                          : "contents"
+                      }
+                    >
+                      <ExecutionInspectorPanel
+                        execution={execution}
+                        events={events}
+                        eventsAreComplete={eventsAreComplete}
+                        loopLedger={
+                          <LoopLedgerPanel
+                            projectName={projectName}
+                            sessionName={sessionName}
+                            execution={execution}
+                            {...(!actionsAvailable ? { events } : {})}
+                          />
+                        }
+                        selectedContextId={selectedContextId}
+                        userInputPanels={userInputPanels}
+                        contextApprovalPanel={contextApprovalPanel}
+                        onSelectContext={(id) => handleSelectContext(id)}
+                        onDeselectContext={() => handleSelectContext(null)}
+                        onAddTask={onAddTask}
+                        onUpdateTask={onUpdateTask}
+                        onRemoveTask={onRemoveTask}
+                        onReorderTask={onReorderTask}
+                        onResetContext={onResetContext}
+                        onResetAssignment={onResetAssignment}
+                        resettingAssignmentId={resettingAssignmentId}
+                        libraryProjectName={projectName}
+                        onViewTask={handleViewTask}
+                        viewingTaskId={viewingTaskId}
+                        isMutating={isMutating}
+                        onSaveContextConfig={onSaveContextConfig}
+                        onPauseExecution={onPause}
+                        onResumeExecution={() => onResume()}
+                        isSavingConfig={isSavingConfig}
+                        isPausingExecution={isPausingExecution}
+                        isResumingExecution={isResumingExecution}
+                        configEditConflict={configEditConflict}
+                        configEditError={configEditError}
+                        configSaveSucceeded={configSaveSucceeded}
+                        onViewConversation={handleViewConversation}
+                        onEditSchema={handleEditOutputSchema}
+                        onOpenAdvisoryOrigin={handleOpenAdvisoryOrigin}
+                        contextTabRequest={contextTabRequest}
+                        overviewScreenRequest={overviewScreenRequest}
+                        commandOptions={commandOptions}
+                        result={result}
+                        draftRevision={draftRevision}
+                        readOnly={!actionsAvailable}
+                      />
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+          </div>
         </div>
-      </div>
-      {actionsAvailable &&
-        confirmingDefinitionRejectExecutionId === execution.id && (
-          <ConfirmDialog
-            open
-            title="Reject workflow definition?"
-            message="Reject this parked definition and move the execution to History."
-            confirmLabel="Reject definition"
-            danger
-            onConfirm={() => {
-              setConfirmingDefinitionRejectExecutionId(null);
-              onRejectDefinition();
-            }}
-            onCancel={() => setConfirmingDefinitionRejectExecutionId(null)}
-          />
-        )}
-      {actionsAvailable && confirmingAbandonExecutionId === execution.id && (
-        <ConfirmDialog
-          open
-          title="Abandon halted execution?"
-          message="End this resumably halted execution's lease and move it to History."
-          confirmLabel="Abandon execution"
-          danger
-          onConfirm={() => {
-            setConfirmingAbandonExecutionId(null);
-            onAbandon();
-          }}
-          onCancel={() => setConfirmingAbandonExecutionId(null)}
-        />
-      )}
+      </InspectorNavigationProvider>
     </ReactFlowProvider>
   );
 }

@@ -137,6 +137,23 @@ export function ArrowUpIcon({ size, className }: IconProps) {
   );
 }
 
+/** "Open this elsewhere" — a jump out of the current surface, not navigation within it. */
+export function ArrowUpRightIcon({ size, className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      className={className}
+      {...baseSvgProps}
+      aria-hidden="true"
+    >
+      <line x1="6" y1="18" x2="18" y2="6" />
+      <path d="M8 6h10v10" />
+    </svg>
+  );
+}
+
 export function StarIcon({ size, className }: IconProps) {
   return (
     <svg
@@ -244,6 +261,94 @@ export function ArchiveIcon({ size, className }: IconProps) {
     >
       <rect x="3" y="4" width="18" height="4" />
       <path d="M5 8v12h14V8M10 13h4" />
+    </svg>
+  );
+}
+
+export function ChevronLeftIcon({ size, className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      className={className}
+      {...baseSvgProps}
+      aria-hidden="true"
+    >
+      <path d="M15 6l-6 6 6 6" />
+    </svg>
+  );
+}
+
+/** Discard local edits — the counter-clockwise arc the Reset action wears. */
+export function UndoIcon({ size, className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      className={className}
+      {...baseSvgProps}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 9h9a5 5 0 0 1 0 10h-6M4 9l4-4M4 9l4 4" />
+    </svg>
+  );
+}
+
+/** Re-place the graph: the auto-layout action's arranged-blocks glyph. */
+export function LayoutIcon({ size, className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      className={className}
+      {...baseSvgProps}
+      aria-hidden="true"
+    >
+      <rect x="3" y="4" width="7" height="7" />
+      <rect x="14" y="4" width="7" height="7" />
+      <rect x="3" y="14" width="7" height="6" />
+      <rect x="14" y="14" width="7" height="6" />
+    </svg>
+  );
+}
+
+export function GearIcon({ size, className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      className={className}
+      {...baseSvgProps}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.2 2.2M16.9 16.9l2.2 2.2M19.1 4.9l-2.2 2.2M7.1 16.9l-2.2 2.2" />
+    </svg>
+  );
+}
+
+export function AlertTriangleIcon({ size, className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      className={className}
+      {...baseSvgProps}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 3.5 22 20H2L12 3.5Z" />
+      <path d="M12 9.5v4.5M12 17h.01" />
     </svg>
   );
 }

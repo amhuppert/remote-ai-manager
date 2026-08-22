@@ -1,5 +1,8 @@
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import { findBackendCatalogEntry } from "@/lib/agent-backends/catalog";
+import {
+  findBackendCatalogEntry,
+  modelDisplayLabel,
+} from "@/lib/agent-backends/catalog";
 import type {
   GraphWorkflowAgentConfig,
   ValidatorAssignment,
@@ -154,16 +157,22 @@ function chipBackendLabel(id: string): string {
   return findBackendCatalogEntry(id)?.label ?? id;
 }
 
+// Config holds the SHORT model id; the chip shows the catalog's canonical long
+// name, matching every other surface that displays a model.
+function chipAgentLabel(config: GraphWorkflowAgentConfig): string {
+  return `${chipBackendLabel(config.backend)} ${modelDisplayLabel(config.backend, config.model)}`;
+}
+
 export function implementerChipLabel(config: GraphWorkflowAgentConfig): string {
   const effort = config.reasoningEffort;
-  const agent = `${chipBackendLabel(config.backend)} ${config.model}`;
+  const agent = chipAgentLabel(config);
   return effort ? `${agent} · ${effort}` : agent;
 }
 
 // The assignment id leads: with a cohort, "which reviewer" is the first thing
 // the chip has to answer, and two entries can share a backend and model.
 export function validatorChipLabel(validator: ValidatorAssignment): string {
-  return `${validator.id} · ${chipBackendLabel(validator.agent.backend)} ${validator.agent.model}`;
+  return `${validator.id} · ${chipAgentLabel(validator.agent)}`;
 }
 
 const CHIP_BASE =

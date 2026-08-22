@@ -20,6 +20,9 @@ import {
   getDisplayApprovalGate,
   getDisplayValidators,
 } from "./derive-graph";
+import { contextNodeCrew } from "./node-presentation";
+import { modelDisplayLabel } from "@/lib/agent-backends/catalog";
+import { SEEDED_WORKFLOW_DEFAULTS } from "@/lib/workflow-graph/resolve-config";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import {
   createResolvedWorkflowDefinition,
@@ -1443,5 +1446,396 @@ describe("deriveNodes — runtime expansion provenance (R13.1)", () => {
       acceptedAt: "2026-01-01T00:00:00.000Z",
     });
     expect(nodes[1]!.data.provenance).toBeUndefined();
+  });
+});
+
+describe("deriveNodes — lane band presentation", () => {
+  it("stamps each node with its lane's band state in builder mode", () => {
+    const definition = makeD4Definition({
+      executionContexts: [
+        makeD4Context("plan", { placement: { lane: "plan", mode: "full" } }),
+        makeD4Context("notes", {
+          placement: { lane: "session", mode: "readOnly" },
+        }),
+      ],
+    });
+
+    const nodes = deriveNodes(definition, makeLayout());
+
+    expect(nodes[0]!.data.laneState).toBe("pending");
+    expect(nodes[1]!.data.laneState).toBe("session");
+    expect(nodes[0]!.data.laneCreatedAtRuntime).toBeUndefined();
+  });
+
+  it("reads the runtime band state for a running execution", () => {
+    const definition = makeD4Definition({
+      executionContexts: [
+        makeD4Context("plan", { placement: { lane: "plan", mode: "full" } }),
+        makeD4Context("ship", {
+          placement: { lane: "delivery", mode: "full" },
+        }),
+      ],
+    });
+    const execution = makeExecution({
+      workingDefinition: definition,
+      contextStates: {
+        plan: makeD4ContextState("plan", { status: "completed" }),
+        ship: makeD4ContextState("ship", { status: "running" }),
+      },
+      executionLanes: {
+        plan: {
+          laneId: "plan",
+          kind: "worktree",
+          status: "merged",
+          branchName: "csm/x.plan",
+          worktreePath: null,
+          includedContextIds: ["plan"],
+          lastCommittingContextId: null,
+          commitSnapshots: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        delivery: {
+          laneId: "delivery",
+          kind: "worktree",
+          status: "active",
+          branchName: "csm/x.delivery",
+          worktreePath: null,
+          includedContextIds: ["ship"],
+          lastCommittingContextId: null,
+          commitSnapshots: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      },
+    });
+
+    const nodes = deriveNodes(definition, makeLayout(), execution);
+
+    expect(nodes[0]!.data.laneState).toBe("merged");
+    expect(nodes[1]!.data.laneState).toBe("active");
+  });
+
+  it("marks a lane whose every member was created by a runtime expansion", () => {
+    const definition = makeD4Definition({
+      executionContexts: [
+        makeD4Context("authored", {
+          placement: { lane: "delivery", mode: "full" },
+        }),
+        makeD4Context("generated", {
+          placement: { lane: "delivery.spawn", mode: "full" },
+        }),
+      ],
+    });
+    const execution = makeExecution({
+      workingDefinition: definition,
+      contextStates: {
+        authored: makeD4ContextState("authored"),
+        generated: makeD4ContextState("generated"),
+      },
+      expansionReceipts: {
+        accepted: [
+          {
+            requestId: "req-1",
+            payloadHash: "a".repeat(64),
+            invokerContextId: "authored",
+            initiatorConversationId: "conv-1",
+            rationale: "Fan out",
+            addedContextIds: ["generated"],
+            addedTaskIds: [],
+            rejoinContextIds: [],
+            liveRevision: 4,
+            acceptedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+        refusals: [],
+      },
+    });
+
+    const nodes = deriveNodes(definition, makeLayout(), execution);
+
+    expect(nodes[0]!.data.laneCreatedAtRuntime).toBeUndefined();
+    expect(nodes[1]!.data.laneCreatedAtRuntime).toBe(true);
+  });
+});
+
+describe("deriveNodes — context-tier config overrides", () => {
+  it("names the blocks an authored context sets on itself", () => {
+    const authored = makeDefinition({
+      executionContexts: [
+        {
+          id: "ctx-1",
+          title: "A",
+          acceptanceCriteria: "TBD",
+          placement: { lane: "delivery", mode: "full" },
+          implementer: {
+            id: "implementer",
+            profile: { tier: "builtin" as const, id: "general-implementer" },
+            agent: {
+              backend: "claude",
+              model: "opus",
+              reasoningEffort: "high",
+            },
+          },
+          iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+        },
+      ],
+    });
+
+    const nodes = deriveNodes(authored, makeLayout(), null, {
+      authoredDefinition: authored,
+    });
+
+    expect(nodes[0]!.data.configOverrides).toEqual([
+      "implementer",
+      "iteration policy",
+    ]);
+  });
+
+  it("reports no override for a context that inherits every block", () => {
+    const authored = makeDefinition({
+      executionContexts: [
+        {
+          id: "ctx-1",
+          title: "A",
+          acceptanceCriteria: "TBD",
+          placement: { lane: "delivery", mode: "full" },
+        },
+      ],
+    });
+
+    const nodes = deriveNodes(authored, makeLayout(), null, {
+      authoredDefinition: authored,
+    });
+
+    expect(nodes[0]!.data.configOverrides).toEqual([]);
+  });
+
+  /**
+   * The launch preview renders an AUTHORED definition, where an inherited
+   * implementer or cohort is simply absent from the context. Without the global
+   * tier the card would show no crew at all for a workflow that configures its
+   * agents once at the workflow tier — so the caller hands deriveNodes the
+   * defaults and every context arrives resolved through the owning cascade.
+   */
+  it("resolves an inherited implementer and cohort for an authored preview", () => {
+    const authored = makeDefinition({
+      workflowConfig: {
+        implementer: {
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          agent: {
+            backend: "claude",
+            model: "opus",
+            reasoningEffort: "high",
+          },
+        },
+        contextValidator: {
+          enabled: true,
+          assignments: [
+            {
+              id: "security",
+              profile: { tier: "builtin", id: "general-reviewer" },
+              strategy: "conversation",
+              authority: "blocking",
+              agent: {
+                backend: "claude",
+                model: "sonnet",
+                reasoningEffort: "medium",
+              },
+              continuity: { enabled: true },
+            },
+          ],
+        },
+      },
+      executionContexts: [
+        {
+          id: "ctx-1",
+          title: "A",
+          acceptanceCriteria: "TBD",
+          placement: { lane: "delivery", mode: "full" },
+        },
+      ],
+    });
+
+    const nodes = deriveNodes(authored, makeLayout(), null, {
+      authoredDefinition: authored,
+      workflowDefaults: SEEDED_WORKFLOW_DEFAULTS,
+    });
+
+    const crew = contextNodeCrew(nodes[0]!.data.context);
+    expect(crew.implementer?.modelLabel).toBe(
+      modelDisplayLabel("claude", "opus"),
+    );
+    expect(crew.seats.map((seat) => seat.seatId)).toEqual(["security"]);
+    // Inheriting is not overriding: the set-here marker stays off.
+    expect(nodes[0]!.data.configOverrides).toEqual([]);
+  });
+
+  it("leaves an authored preview unresolved when no defaults are supplied", () => {
+    const authored = makeDefinition({
+      executionContexts: [
+        {
+          id: "ctx-1",
+          title: "A",
+          acceptanceCriteria: "TBD",
+          placement: { lane: "delivery", mode: "full" },
+        },
+      ],
+    });
+
+    const nodes = deriveNodes(authored, makeLayout(), null, {
+      authoredDefinition: authored,
+    });
+
+    expect(contextNodeCrew(nodes[0]!.data.context).implementer).toBeNull();
+  });
+
+  it("falls back to the provenance a resolved context records", () => {
+    const definition = makeD4Definition({
+      executionContexts: [
+        makeD4Context("ctx-1", {
+          scriptValidatorSource: "per-node",
+          agentValidation: {
+            implementer: {
+              value: { mode: "all", except: [] },
+              source: "workflow",
+            },
+            contextValidator: {
+              value: { mode: "only", commands: ["test"] },
+              source: "per-node",
+            },
+          },
+        }),
+      ],
+    });
+
+    const nodes = deriveNodes(definition, makeLayout());
+
+    expect(nodes[0]!.data.configOverrides).toEqual([
+      "script validator",
+      "agent validation (context validator)",
+    ]);
+  });
+
+  /**
+   * A live edit rewrites the WORKING definition but can never rewrite the launch
+   * snapshot, which is immutable. Trusting the snapshot alone therefore reports
+   * a context that was edited mid-run as still inheriting, and the marker never
+   * appears. The working context's own value against the tier it was launched
+   * inheriting from is what settles it.
+   */
+  it("marks a block a live edit moved away from the workflow tier", () => {
+    const workflowImplementer = {
+      id: "implementer",
+      profile: { tier: "builtin" as const, id: "general-implementer" },
+      agent: {
+        backend: "claude" as const,
+        model: "sonnet" as const,
+        reasoningEffort: "medium" as const,
+      },
+    };
+    const authored = makeDefinition({
+      workflowConfig: { implementer: workflowImplementer },
+      executionContexts: [
+        {
+          id: "ctx-1",
+          title: "A",
+          acceptanceCriteria: "TBD",
+          placement: { lane: "delivery", mode: "full" },
+        },
+      ],
+    });
+
+    // The working context as the live edit left it: a different model, plus the
+    // profile bytes the seed boundary attaches.
+    const edited = makeD4Definition({
+      executionContexts: [
+        makeD4Context("ctx-1", {
+          implementer: {
+            ...workflowImplementer,
+            agent: { ...workflowImplementer.agent, model: "opus" },
+            profileSnapshot:
+              createResolvedWorkflowDefinition().executionContexts[0]!
+                .implementer.profileSnapshot,
+          },
+        }),
+      ],
+    });
+
+    const nodes = deriveNodes(edited, makeLayout(), null, {
+      authoredDefinition: authored,
+    });
+
+    expect(nodes[0]!.data.configOverrides).toContain("implementer");
+  });
+
+  /**
+   * The false-positive guard for the rule above: the criterion is that the
+   * marker appears ONLY where configuration is overridden on the context. An
+   * untouched inherited block differs from its tier by the seeded profile bytes
+   * alone, which are not an override.
+   */
+  it("reports no override for a block still equal to the workflow tier it inherits", () => {
+    const workflowImplementer = {
+      id: "implementer",
+      profile: { tier: "builtin" as const, id: "general-implementer" },
+      agent: {
+        backend: "claude" as const,
+        model: "sonnet" as const,
+        reasoningEffort: "medium" as const,
+      },
+    };
+    const authored = makeDefinition({
+      workflowConfig: { implementer: workflowImplementer },
+      executionContexts: [
+        {
+          id: "ctx-1",
+          title: "A",
+          acceptanceCriteria: "TBD",
+          placement: { lane: "delivery", mode: "full" },
+        },
+      ],
+    });
+
+    const inherited = makeD4Definition({
+      executionContexts: [
+        makeD4Context("ctx-1", {
+          implementer: {
+            ...workflowImplementer,
+            profileSnapshot:
+              createResolvedWorkflowDefinition().executionContexts[0]!
+                .implementer.profileSnapshot,
+          },
+        }),
+      ],
+    });
+
+    const nodes = deriveNodes(inherited, makeLayout(), null, {
+      authoredDefinition: authored,
+    });
+
+    expect(nodes[0]!.data.configOverrides).not.toContain("implementer");
+  });
+
+  it("names the node for a screen reader with its status, lane, grade and crew", () => {
+    const definition = makeD4Definition({
+      executionContexts: [
+        makeD4Context("ctx-1", {
+          title: "Implement checkout",
+          placement: {
+            lane: "delivery",
+            mode: "owned",
+            ownedPaths: ["src/checkout"],
+          },
+        }),
+      ],
+    });
+
+    const nodes = deriveNodes(definition, makeLayout());
+
+    expect(nodes[0]!.ariaLabel).toContain("Implement checkout — Draft");
+    expect(nodes[0]!.ariaLabel).toContain("lane delivery");
+    expect(nodes[0]!.ariaLabel).toContain("owning (src/checkout)");
   });
 });

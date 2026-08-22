@@ -77,6 +77,15 @@ export interface OutputSchemaHaltEvidence {
    * current declaration.
    */
   schemaEditedSinceRejection: boolean;
+  /**
+   * True only when the contract that refused is PROVABLY still the one the
+   * context declares — a snapshot was recorded and it still matches. Resume
+   * restarts the refused turn against the live contract, so this is what a
+   * surface offering Resume has to read; `schemaEditedSinceRejection` cannot
+   * answer it, because its `false` also covers "no snapshot exists, so nothing
+   * can be compared", and blocking on that would strand a run forever.
+   */
+  contractUnchangedSinceRejection: boolean;
   /** Consecutive capture failures that tripped the breaker. */
   failureCount: number | null;
   breakerThreshold: number | null;
@@ -146,6 +155,9 @@ export function deriveOutputSchemaHaltEvidence(input: {
     schemaEditedSinceRejection:
       rejectedAgainstSchema !== null &&
       !outputSchemasMatch(rejectedAgainstSchema, context?.outputSchema),
+    contractUnchangedSinceRejection:
+      rejectedAgainstSchema !== null &&
+      outputSchemasMatch(rejectedAgainstSchema, context?.outputSchema),
     failureCount: haltReason.failureCount ?? null,
     breakerThreshold:
       context === undefined

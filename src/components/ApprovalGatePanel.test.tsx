@@ -6,6 +6,10 @@ import ApprovalGatePanel, {
   type ApprovalScopedChanges,
 } from "./ApprovalGatePanel";
 
+function feedbackBox(): HTMLElement {
+  return screen.getByRole("textbox", { name: "Rejection feedback" });
+}
+
 describe("ApprovalGatePanel", () => {
   const defaultProps = {
     contextTitle: "Implement auth flow",
@@ -14,20 +18,51 @@ describe("ApprovalGatePanel", () => {
     isSubmitting: false,
     conversationBusy: false,
     executionSuspended: false,
+    // Every parked gate resolves a candidate state; the whole-tree one is the
+    // minimum a production host can hand this panel.
+    scopedChanges: {
+      status: "ready",
+      candidate: { scope: "whole_tree" },
+    } satisfies ApprovalScopedChanges,
     onApprove: vi.fn(),
     onReject: vi.fn(),
   };
 
   // =========================================================================
-  // Rendering (Req 3.5)
+  // The card (E2 · README §10)
   // =========================================================================
+
+  it("names the context approval and the iteration its candidate belongs to", () => {
+    render(<ApprovalGatePanel {...defaultProps} iteration={2} />);
+
+    expect(
+      screen.getByText("Context approval — Implement auth flow"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("iteration 2")).toBeInTheDocument();
+    expect(screen.getByText(/release-hardening/)).toBeInTheDocument();
+  });
+
+  it("states that approval continues orchestration rather than landing the lane", () => {
+    render(<ApprovalGatePanel {...defaultProps} />);
+
+    const panel = screen.getByTestId("approval-gate-panel");
+    expect(panel).toHaveTextContent(
+      "You are reviewing the candidate frozen for this gate. Approving lets orchestration continue; it does not land the lane or publish it.",
+    );
+    expect(panel).toHaveTextContent(
+      "Sibling contexts keep running — nothing here pauses the run.",
+    );
+    expect(panel).toHaveTextContent("rejection reruns validators");
+  });
 
   it("renders Approve and Reject actions with context title and workflow name (Req 3.5)", () => {
     render(<ApprovalGatePanel {...defaultProps} />);
     expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
-    expect(screen.getByText("Implement auth flow")).toBeInTheDocument();
-    expect(screen.getByText("release-hardening")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Reject — needs feedback" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Implement auth flow/)).toBeInTheDocument();
+    expect(screen.getByText(/release-hardening/)).toBeInTheDocument();
   });
 
   it("renders without context title and workflow name when null", () => {
@@ -39,7 +74,7 @@ describe("ApprovalGatePanel", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
+    expect(screen.getByText("Context approval")).toBeInTheDocument();
   });
 
   // =========================================================================
@@ -57,62 +92,53 @@ describe("ApprovalGatePanel", () => {
   // Reject flow (Req 5.1)
   // =========================================================================
 
-  it("does not show the rejection textarea until Reject is clicked", () => {
+  it("offers the rejection feedback field up front, naming who receives it", () => {
     render(<ApprovalGatePanel {...defaultProps} />);
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+
+    expect(feedbackBox()).toHaveAttribute(
+      "placeholder",
+      "Required to reject — returned to the implementer",
+    );
   });
 
-  it("expands a message textarea when Reject is clicked", () => {
+  it("keeps Reject disabled until the trimmed feedback is non-empty (Req 5.1)", () => {
     render(<ApprovalGatePanel {...defaultProps} />);
-    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+
     expect(
-      screen.getByRole("textbox", { name: "Rejection feedback" }),
-    ).toBeInTheDocument();
+      screen.getByRole("button", { name: "Reject — needs feedback" }),
+    ).toBeDisabled();
+
+    fireEvent.change(feedbackBox(), { target: { value: "   " } });
     expect(
-      screen.getByRole("button", { name: "Submit rejection" }),
-    ).toBeInTheDocument();
-  });
+      screen.getByRole("button", { name: "Reject — needs feedback" }),
+    ).toBeDisabled();
 
-  it("disables reject submit until the trimmed message is non-empty (Req 5.1)", () => {
-    render(<ApprovalGatePanel {...defaultProps} />);
-    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
-
-    const submit = screen.getByRole("button", { name: "Submit rejection" });
-    expect(submit).toBeDisabled();
-
-    fireEvent.change(screen.getByRole("textbox"), {
-      target: { value: "   " },
-    });
-    expect(submit).toBeDisabled();
-
-    fireEvent.change(screen.getByRole("textbox"), {
+    fireEvent.change(feedbackBox(), {
       target: { value: "Missing error handling in the merge step" },
     });
-    expect(submit).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
   });
 
-  it("calls onReject with the trimmed message on submit (Req 5.1)", () => {
+  it("calls onReject with the trimmed message (Req 5.1)", () => {
     const onReject = vi.fn();
     render(<ApprovalGatePanel {...defaultProps} onReject={onReject} />);
-    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
-    fireEvent.change(screen.getByRole("textbox"), {
+    fireEvent.change(feedbackBox(), {
       target: { value: "  Fix the failing tests  " },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Submit rejection" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
     expect(onReject).toHaveBeenCalledTimes(1);
     expect(onReject).toHaveBeenCalledWith("Fix the failing tests");
   });
 
-  it("collapses the reject flow on Cancel and restores Approve/Reject", () => {
+  it("clears an abandoned draft on Escape", () => {
     render(<ApprovalGatePanel {...defaultProps} />);
-    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
-    fireEvent.change(screen.getByRole("textbox"), {
-      target: { value: "draft" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
+    fireEvent.change(feedbackBox(), { target: { value: "draft" } });
+    fireEvent.keyDown(feedbackBox(), { key: "Escape" });
+
+    expect(feedbackBox()).toHaveValue("");
+    expect(
+      screen.getByRole("button", { name: "Reject — needs feedback" }),
+    ).toBeDisabled();
   });
 
   // =========================================================================
@@ -133,39 +159,26 @@ describe("ApprovalGatePanel", () => {
   // Keyboard affordances in the reject editor
   // =========================================================================
 
-  it("shows the keyboard hint in the reject action row", () => {
+  it("shows the keyboard hint beside the decision", () => {
     render(<ApprovalGatePanel {...defaultProps} />);
-    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
-    expect(screen.getByText("⌘↵ submit · esc cancel")).toBeInTheDocument();
+    expect(screen.getByText("⌘↵ reject · esc clear")).toBeInTheDocument();
   });
 
   it("submits the rejection on Ctrl+Enter when the message is non-empty", () => {
     const onReject = vi.fn();
     render(<ApprovalGatePanel {...defaultProps} onReject={onReject} />);
-    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
-    const textbox = screen.getByRole("textbox");
-    fireEvent.change(textbox, { target: { value: "  Tighten the tests " } });
-    fireEvent.keyDown(textbox, { key: "Enter", ctrlKey: true });
+    fireEvent.change(feedbackBox(), {
+      target: { value: "  Tighten the tests " },
+    });
+    fireEvent.keyDown(feedbackBox(), { key: "Enter", ctrlKey: true });
     expect(onReject).toHaveBeenCalledWith("Tighten the tests");
   });
 
   it("does not submit on Cmd+Enter while the message is empty", () => {
     const onReject = vi.fn();
     render(<ApprovalGatePanel {...defaultProps} onReject={onReject} />);
-    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
-    fireEvent.keyDown(screen.getByRole("textbox"), {
-      key: "Enter",
-      metaKey: true,
-    });
+    fireEvent.keyDown(feedbackBox(), { key: "Enter", metaKey: true });
     expect(onReject).not.toHaveBeenCalled();
-  });
-
-  it("cancels the reject flow on Escape", () => {
-    render(<ApprovalGatePanel {...defaultProps} />);
-    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
-    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
   });
 
   // =========================================================================
@@ -175,7 +188,7 @@ describe("ApprovalGatePanel", () => {
   it("disables actions and shows a hint while a chat turn is in flight", () => {
     render(<ApprovalGatePanel {...defaultProps} conversationBusy />);
     expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Reject/ })).toBeDisabled();
     expect(
       screen.getByText(
         "Chat turn in progress — actions re-enable when it completes.",
@@ -186,20 +199,15 @@ describe("ApprovalGatePanel", () => {
   it("disables actions while submitting", () => {
     render(<ApprovalGatePanel {...defaultProps} isSubmitting />);
     expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Reject/ })).toBeDisabled();
     expect(screen.getByText("Submitting decision…")).toBeInTheDocument();
   });
 
-  it("disables reject submit while a chat turn is in flight even with a message", () => {
+  it("disables reject while a chat turn is in flight even with feedback", () => {
     const { rerender } = render(<ApprovalGatePanel {...defaultProps} />);
-    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
-    fireEvent.change(screen.getByRole("textbox"), {
-      target: { value: "Needs more tests" },
-    });
+    fireEvent.change(feedbackBox(), { target: { value: "Needs more tests" } });
     rerender(<ApprovalGatePanel {...defaultProps} conversationBusy />);
-    expect(
-      screen.getByRole("button", { name: "Submit rejection" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Reject/ })).toBeDisabled();
   });
 
   // =========================================================================
@@ -208,6 +216,7 @@ describe("ApprovalGatePanel", () => {
 
   it("keeps actions enabled and shows an applies-on-resume hint when execution is suspended", () => {
     render(<ApprovalGatePanel {...defaultProps} executionSuspended />);
+    fireEvent.change(feedbackBox(), { target: { value: "send it back" } });
     expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
     expect(
@@ -227,7 +236,7 @@ describe("ApprovalGatePanel", () => {
   });
 });
 
-describe("ApprovalGatePanel scoped change set (R15.2)", () => {
+describe("ApprovalGatePanel candidate states (E2 · R15.2)", () => {
   const SCOPED_DIFF: SessionDiff = {
     files: [
       {
@@ -269,37 +278,72 @@ describe("ApprovalGatePanel scoped change set (R15.2)", () => {
     return { onApprove, onReject };
   }
 
+  it("summarises a ready candidate by files, lines and the paths it is scoped to", () => {
+    renderPanel({
+      status: "ready",
+      candidate: {
+        scope: "owned",
+        ownedPaths: ["src/api", "src/risk"],
+        diff: SCOPED_DIFF,
+      },
+    });
+
+    const state = screen.getByTestId("approval-candidate-state");
+    expect(state).toHaveTextContent("Candidate ready");
+    expect(state).toHaveTextContent(
+      "1 file · +2 −1 · scoped to src/api, src/risk",
+    );
+  });
+
   it("renders the frozen owned-path change set for an enveloped context", () => {
     renderPanel({
       status: "ready",
-      ownedPaths: ["src/api"],
-      diff: SCOPED_DIFF,
+      candidate: { scope: "owned", ownedPaths: ["src/api"], diff: SCOPED_DIFF },
     });
 
     const changes = screen.getByTestId("approval-gate-scoped-changes");
     expect(changes).toHaveTextContent("src/api/handler.ts");
     expect(changes).toHaveTextContent("+2");
     expect(changes).toHaveTextContent("-1");
-    // The ownership the artifact was frozen under, so a reviewer can tell a
-    // scoped change set from an incomplete one.
-    expect(changes).toHaveTextContent("owned: src/api");
     expect(changes).toHaveTextContent("export const handler = 2;");
   });
 
-  it("renders nothing extra for a full-access member on the whole-tree view", () => {
-    renderPanel(null);
+  // A full-access member's write surface is the whole lane worktree, so its
+  // gate froze no ownership-scoped change set — but it is still a candidate the
+  // reviewer has to be told about, and it still has to travel through loading
+  // before Approve turns on.
+  it("names the whole worktree as the write surface for a full-access member", () => {
+    renderPanel({ status: "ready", candidate: { scope: "whole_tree" } });
 
+    const state = screen.getByTestId("approval-candidate-state");
+    expect(state).toHaveAttribute("data-candidate-status", "ready");
+    expect(state).toHaveTextContent("Candidate ready");
+    expect(state).toHaveTextContent("whole lane worktree · no ownership scope");
+    // No scoped change set exists to render, and the whole-worktree delta is
+    // deliberately not substituted for it.
     expect(
       screen.queryByTestId("approval-gate-scoped-changes"),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
   });
 
+  // The panel is the last line of defence: a host that wires no candidate
+  // resolution at all must not thereby hand out a blind Approve.
+  it("withholds Approve when no candidate state was resolved", () => {
+    renderPanel(null);
+
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Reject/ })).toBeInTheDocument();
+  });
+
   it("states that an enveloped context changed nothing it owns", () => {
     renderPanel({
       status: "ready",
-      ownedPaths: ["src/api"],
-      diff: { files: [], totalAdditions: 0, totalDeletions: 0 },
+      candidate: {
+        scope: "owned",
+        ownedPaths: ["src/api"],
+        diff: { files: [], totalAdditions: 0, totalDeletions: 0 },
+      },
     });
 
     expect(
@@ -307,23 +351,39 @@ describe("ApprovalGatePanel scoped change set (R15.2)", () => {
     ).toHaveTextContent(/no changes inside the paths this context owns/i);
   });
 
-  it("refuses to render a change set that is no longer the frozen candidate", () => {
-    renderPanel({ status: "drifted" });
+  it("says the candidate is still loading and holds Approve back", () => {
+    renderPanel({ status: "loading" });
 
-    const changes = screen.getByTestId("approval-gate-scoped-changes");
-    expect(changes).toHaveTextContent(/have changed since it entered review/i);
-    expect(changes).not.toHaveTextContent("src/api/handler.ts");
+    const state = screen.getByTestId("approval-candidate-state");
+    expect(state).toHaveTextContent("Loading the candidate…");
+    expect(state).toHaveTextContent("Approve disabled");
   });
 
-  it("reports an unavailable artifact rather than an empty change set", () => {
+  it("names drift as the tree moving since the freeze", () => {
+    renderPanel({ status: "drifted" });
+
+    const state = screen.getByTestId("approval-candidate-state");
+    expect(state).toHaveTextContent(
+      "Drifted — the tree moved since the freeze",
+    );
+    expect(state).toHaveTextContent("Approve disabled · Reject available");
+    expect(
+      screen.queryByTestId("approval-gate-scoped-changes"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("reports an unavailable candidate and points at the way out", () => {
     renderPanel({
       status: "unavailable",
       reason: "the candidate tree could not be read",
     });
 
-    expect(
-      screen.getByTestId("approval-gate-scoped-changes"),
-    ).toHaveTextContent("the candidate tree could not be read");
+    const state = screen.getByTestId("approval-candidate-state");
+    expect(state).toHaveTextContent(
+      "Unavailable — candidate could not be assembled",
+    );
+    expect(state).toHaveTextContent("Reject is the way out");
+    expect(state).toHaveTextContent("the candidate tree could not be read");
   });
 
   // Approving is a decision ABOUT the frozen artifact, so it stays unavailable
@@ -342,6 +402,7 @@ describe("ApprovalGatePanel scoped change set (R15.2)", () => {
       renderPanel(scopedChanges);
 
       expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+      fireEvent.change(feedbackBox(), { target: { value: "send it back" } });
       expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
     },
   );
@@ -349,8 +410,7 @@ describe("ApprovalGatePanel scoped change set (R15.2)", () => {
   it("enables Approve once the frozen artifact is rendered", () => {
     renderPanel({
       status: "ready",
-      ownedPaths: ["src/api"],
-      diff: SCOPED_DIFF,
+      candidate: { scope: "owned", ownedPaths: ["src/api"], diff: SCOPED_DIFF },
     });
 
     expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
@@ -359,18 +419,14 @@ describe("ApprovalGatePanel scoped change set (R15.2)", () => {
   it("keeps approve and reject working alongside the scoped change set", () => {
     const { onApprove, onReject } = renderPanel({
       status: "ready",
-      ownedPaths: ["src/api"],
-      diff: SCOPED_DIFF,
+      candidate: { scope: "owned", ownedPaths: ["src/api"], diff: SCOPED_DIFF },
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(onApprove).toHaveBeenCalledTimes(1);
 
+    fireEvent.change(feedbackBox(), { target: { value: "needs more tests" } });
     fireEvent.click(screen.getByRole("button", { name: "Reject" }));
-    fireEvent.change(screen.getByRole("textbox"), {
-      target: { value: "needs more tests" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Submit rejection" }));
     expect(onReject).toHaveBeenCalledWith("needs more tests");
   });
 });

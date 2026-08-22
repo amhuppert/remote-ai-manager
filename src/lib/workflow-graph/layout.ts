@@ -3,68 +3,46 @@ import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
+import { computeContextDepths } from "./graph-depth";
+import {
+  LANE_BAND_CONTENT_OFFSET_X,
+  LANE_BAND_GAP,
+  LANE_BAND_MIN_HEIGHT,
+  LANE_BAND_PADDING_Y,
+} from "./lane-band-geometry";
+import { deriveDefinitionLaneBands } from "./lane-bands";
+
 type LayoutInputDefinition =
   | WorkflowSemanticDefinition
   | ResolvedWorkflowSemanticDefinition;
 
 export type NodeDimensions = Map<string, { width: number; height: number }>;
 
-const DEFAULT_NODE_WIDTH = 248;
-const DEFAULT_NODE_HEIGHT = 200;
-const MIN_X_GAP = 112;
-const MIN_Y_GAP = 40;
+/** The context card's authored width (`Context Node.dc.html`). */
+export const DEFAULT_NODE_WIDTH = 264;
+export const DEFAULT_NODE_HEIGHT = 200;
+/** Column pitch inside a band is one card plus this gap (design B1: 294). */
+export const LAYOUT_COLUMN_GAP = 30;
+/** Vertical gutter between two band mates sharing a column. */
+export const LAYOUT_ROW_GAP = 40;
 
-function computeDepths(definition: LayoutInputDefinition): Map<string, number> {
-  const incoming = new Map<string, number>();
-  const outgoing = new Map<string, string[]>();
-
-  for (const context of definition.executionContexts) {
-    incoming.set(context.id, 0);
-    outgoing.set(context.id, []);
-  }
-
-  for (const edge of definition.edges) {
-    outgoing.get(edge.sourceContextId)?.push(edge.targetContextId);
-    incoming.set(
-      edge.targetContextId,
-      (incoming.get(edge.targetContextId) ?? 0) + 1,
-    );
-  }
-
-  const queue = [...incoming.entries()]
-    .filter(([, count]) => count === 0)
-    .map(([contextId]) => contextId);
-  const depth = new Map<string, number>(
-    queue.map((contextId) => [contextId, 0]),
-  );
-
-  while (queue.length > 0) {
-    const contextId = queue.shift()!;
-    const currentDepth = depth.get(contextId) ?? 0;
-
-    for (const nextContextId of outgoing.get(contextId) ?? []) {
-      const nextDepth = Math.max(
-        depth.get(nextContextId) ?? 0,
-        currentDepth + 1,
-      );
-      depth.set(nextContextId, nextDepth);
-      const nextIncoming = (incoming.get(nextContextId) ?? 0) - 1;
-      incoming.set(nextContextId, nextIncoming);
-      if (nextIncoming === 0) {
-        queue.push(nextContextId);
-      }
-    }
-  }
-
-  for (const context of definition.executionContexts) {
-    if (!depth.has(context.id)) {
-      depth.set(context.id, 0);
-    }
-  }
-
-  return depth;
-}
-
+/**
+ * Band-aware automatic layout.
+ *
+ * Lanes are the primary axis: each lane gets a horizontal band, bands stack in
+ * dependency-first order, and a band's members flow left to right by dependency
+ * depth. Members that share a depth share a column and stack inside the band
+ * rather than widening it, so a band's width tracks the length of its
+ * dependency chain and never the size of a parallel fan-out.
+ *
+ * Columns are indexed per band but sized globally, which is what keeps the
+ * first member of every band on one vertical line (design B1/E1) instead of
+ * letting one wide card in one lane shift the others.
+ *
+ * The band ordering and membership come from {@link deriveDefinitionLaneBands}
+ * — the same model the band layer renders — so the generated geometry and the
+ * drawn bands cannot disagree about which lane a context is in.
+ */
 export function generateWorkflowLayout(
   definition: LayoutInputDefinition,
   existingLayout?: GraphWorkflowVisualLayout | null,
@@ -72,56 +50,90 @@ export function generateWorkflowLayout(
 ): GraphWorkflowVisualLayout {
   const contextPositions: GraphWorkflowVisualLayout["contextPositions"] = {};
   const existingPositions = existingLayout?.contextPositions ?? {};
-  const depths = computeDepths(definition);
+  const depths = computeContextDepths(definition);
+  const bands = deriveDefinitionLaneBands(definition);
 
-  function nodeWidth(contextId: string): number {
-    return nodeDimensions?.get(contextId)?.width ?? DEFAULT_NODE_WIDTH;
+  const nodeWidth = (contextId: string): number =>
+    nodeDimensions?.get(contextId)?.width ?? DEFAULT_NODE_WIDTH;
+  const nodeHeight = (contextId: string): number =>
+    nodeDimensions?.get(contextId)?.height ?? DEFAULT_NODE_HEIGHT;
+
+  // Column index per context: the rank of its depth among the depths present
+  // in ITS band, so a band whose chain starts deep still opens at column 0.
+  const columnOfContext = new Map<string, number>();
+  for (const band of bands) {
+    const bandDepths = [
+      ...new Set(band.memberContextIds.map((id) => depths.get(id) ?? 0)),
+    ].sort((a, b) => a - b);
+    for (const contextId of band.memberContextIds) {
+      columnOfContext.set(
+        contextId,
+        bandDepths.indexOf(depths.get(contextId) ?? 0),
+      );
+    }
   }
 
-  function nodeHeight(contextId: string): number {
-    return nodeDimensions?.get(contextId)?.height ?? DEFAULT_NODE_HEIGHT;
-  }
-
-  // Compute max width per depth column to determine X offsets
-  const maxWidthByDepth = new Map<number, number>();
-  for (const context of definition.executionContexts) {
-    const d = depths.get(context.id) ?? 0;
-    maxWidthByDepth.set(
-      d,
-      Math.max(maxWidthByDepth.get(d) ?? 0, nodeWidth(context.id)),
+  const columnWidths = new Map<number, number>();
+  for (const [contextId, column] of columnOfContext) {
+    columnWidths.set(
+      column,
+      Math.max(columnWidths.get(column) ?? 0, nodeWidth(contextId)),
     );
   }
 
-  const xByDepth = new Map<number, number>();
-  const sortedDepths = [...maxWidthByDepth.keys()].sort((a, b) => a - b);
-  let cumulativeX = 0;
-  for (const d of sortedDepths) {
-    xByDepth.set(d, cumulativeX);
-    cumulativeX += (maxWidthByDepth.get(d) ?? DEFAULT_NODE_WIDTH) + MIN_X_GAP;
+  const columnX = new Map<number, number>();
+  let cursorX = LANE_BAND_CONTENT_OFFSET_X;
+  for (const column of [...columnWidths.keys()].sort((a, b) => a - b)) {
+    columnX.set(column, cursorX);
+    cursorX +=
+      (columnWidths.get(column) ?? DEFAULT_NODE_WIDTH) + LAYOUT_COLUMN_GAP;
   }
 
-  // Track the next available Y position for each depth column
-  const nextYByDepth = new Map<number, number>();
+  let bandContentTop = LANE_BAND_PADDING_Y;
 
-  for (const context of definition.executionContexts) {
-    const existingPosition = existingPositions[context.id];
-    if (existingPosition) {
-      contextPositions[context.id] = existingPosition;
-      const d = depths.get(context.id) ?? 0;
-      const bottomEdge =
-        existingPosition.y + nodeHeight(context.id) + MIN_Y_GAP;
-      nextYByDepth.set(d, Math.max(nextYByDepth.get(d) ?? 0, bottomEdge));
-      continue;
+  for (const band of bands) {
+    const columnCursorY = new Map<number, number>();
+    const nextY = (column: number): number =>
+      columnCursorY.get(column) ?? bandContentTop;
+    let contentBottom = bandContentTop;
+
+    const preserved = band.memberContextIds.filter(
+      (contextId) => existingPositions[contextId] !== undefined,
+    );
+    const generated = band.memberContextIds.filter(
+      (contextId) => existingPositions[contextId] === undefined,
+    );
+
+    // Preserved positions are applied first so a generated band mate always
+    // lands clear of them, whatever order the contexts were authored in.
+    for (const contextId of preserved) {
+      const position = existingPositions[contextId];
+      if (!position) continue;
+      contextPositions[contextId] = position;
+      const column = columnOfContext.get(contextId) ?? 0;
+      const bottom = position.y + nodeHeight(contextId);
+      columnCursorY.set(
+        column,
+        Math.max(nextY(column), bottom + LAYOUT_ROW_GAP),
+      );
+      contentBottom = Math.max(contentBottom, bottom);
     }
 
-    const d = depths.get(context.id) ?? 0;
-    const y = nextYByDepth.get(d) ?? 0;
-    nextYByDepth.set(d, y + nodeHeight(context.id) + MIN_Y_GAP);
+    for (const contextId of generated) {
+      const column = columnOfContext.get(contextId) ?? 0;
+      const y = nextY(column);
+      contextPositions[contextId] = { x: columnX.get(column) ?? 0, y };
+      const bottom = y + nodeHeight(contextId);
+      columnCursorY.set(column, bottom + LAYOUT_ROW_GAP);
+      contentBottom = Math.max(contentBottom, bottom);
+    }
 
-    contextPositions[context.id] = {
-      x: xByDepth.get(d) ?? 0,
-      y,
-    };
+    const bandTop = bandContentTop - LANE_BAND_PADDING_Y;
+    const bandHeight = Math.max(
+      contentBottom + LANE_BAND_PADDING_Y - bandTop,
+      LANE_BAND_MIN_HEIGHT,
+    );
+    bandContentTop = bandTop + bandHeight + LANE_BAND_GAP + LANE_BAND_PADDING_Y;
   }
 
   return {

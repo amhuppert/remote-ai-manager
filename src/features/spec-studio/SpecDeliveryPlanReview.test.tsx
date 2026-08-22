@@ -115,6 +115,18 @@ function renderMismatchedIdentity() {
   );
 }
 
+/**
+ * The action request, found by its path rather than by call index: the surface
+ * also reads the global workflow defaults (the launch preview resolves its
+ * contexts against them), so the action is not necessarily the first fetch.
+ */
+function callTo(
+  fetch: { mock: { calls: readonly (readonly unknown[])[] } },
+  path: string,
+): readonly unknown[] | undefined {
+  return fetch.mock.calls.find((call) => call[0] === path);
+}
+
 function requestBody(call: readonly unknown[] | undefined): unknown {
   const init = call?.[1];
   if (typeof init !== "object" || init === null || !("body" in init)) {
@@ -253,8 +265,9 @@ describe("SpecDeliveryPlanReview", () => {
       screen.getByRole("button", { name: "Sign off this candidate" }),
     );
 
-    await waitFor(() => expect(fetch).toHaveBeenCalled());
-    expect(requestBody(fetch.mock.calls[0])).toEqual({
+    const signOffPath = "/api/specs/demo/native-sdd/actions/plan-sign-off";
+    await waitFor(() => expect(callTo(fetch, signOffPath)).toBeDefined());
+    expect(requestBody(callTo(fetch, signOffPath))).toEqual({
       candidateId: preview.candidateId,
       candidateHash: preview.candidateHash,
     });
@@ -336,7 +349,11 @@ describe("SpecDeliveryPlanReview", () => {
     );
     // The reaffirmation is a judgment about the draft the human read, so it
     // states that draft revision and refuses if the draft moved.
-    expect(requestBody(fetch.mock.calls[0])).toEqual({
+    expect(
+      requestBody(
+        callTo(fetch, "/api/specs/demo/native-sdd/actions/plan-reaffirm"),
+      ),
+    ).toEqual({
       criterionElementId: "criterion-pending",
       expectedDraftRevision: 3,
     });

@@ -11,6 +11,7 @@ import {
   type OutputSchemaHaltIssue,
 } from "./derive-output-schema-halt";
 import { cn } from "@/lib/ui/cn";
+import { validateOutputSchemaDeclaration } from "@/lib/workflows/primitives/output-schema-subset";
 
 const haltCardBase =
   "w-full bg-[var(--cc-red-a06)] border border-[var(--cc-red-border)] border-l-[3px] border-l-red rounded-sm py-sm px-md flex flex-col gap-[6px] text-text-secondary text-[0.74rem] leading-[1.45]";
@@ -538,7 +539,7 @@ export function formatGraphWorkflowHaltReason(
 // Small text action, sized to sit inside the card's dense body rather than
 // competing with the halt headline.
 const haltInlineActionClass =
-  "w-fit cursor-pointer appearance-none border-0 bg-transparent p-0 font-[inherit] text-[0.72rem] font-semibold text-cyan hover:underline";
+  "w-fit cursor-pointer appearance-none border-0 bg-transparent p-0 font-[inherit] text-[0.72rem] font-semibold text-cyan hover:underline max-768:inline-flex max-768:min-h-[44px] max-768:items-center";
 
 function EditSchemaAction({
   contextId,
@@ -556,6 +557,64 @@ function EditSchemaAction({
       Edit schema
     </button>
   );
+}
+
+/**
+ * Split a declaration-lint locator into the keyword it names and the property
+ * carrying it. `validateOutputSchemaDeclaration` locates a defect at the exact
+ * offending keyword (`$.properties.auditTable.format`), and every JSON Schema
+ * keyword is a plain identifier, so the final `.`-segment is always the keyword
+ * and never a bracket-quoted property name. The `properties` hop is dropped
+ * because the operator reads the payload, not the document that describes it.
+ */
+function splitDeclarationLocator(
+  path: string,
+): { keyword: string; property: string } | null {
+  const lastDot = path.lastIndexOf(".");
+  if (lastDot === -1) return null;
+  const keyword = path.slice(lastDot + 1);
+  if (keyword === "") return null;
+  const parent = path.slice(0, lastDot);
+  const propertyMatch = /(?:\.|\["?)([^.[\]"]+)"?\]?$/.exec(parent);
+  return {
+    keyword,
+    property: propertyMatch?.[1] ?? parent,
+  };
+}
+
+/**
+ * The engine's refusal, in the contract's own words.
+ *
+ * Two different defects reach this card and they have different repairs. A
+ * contract the subset validator cannot enforce is named keyword-first — that
+ * keyword is why nothing the context produced could ever pass — and it is found
+ * by the module that owns the subset, not by re-reading the rejection. An
+ * enforceable contract that the payload simply missed is named by the refused
+ * path AND the engine's own description of it: `toOutputSchemaIssues` sets the
+ * issue title EQUAL to its path, so a locator alone would be the whole sentence
+ * and would say nothing about what the contract wanted there.
+ */
+function outputSchemaRefusalSentence(
+  contextId: string,
+  evidence: OutputSchemaHaltEvidence | undefined,
+): string {
+  const declarationDefect =
+    evidence?.declaredSchema == null
+      ? null
+      : (validateOutputSchemaDeclaration(evidence.declaredSchema)
+          .map((issue) => splitDeclarationLocator(issue.path))
+          .find((split) => split !== null) ?? null);
+  const issue = evidence?.issues[0];
+  const locus = issue?.path;
+  const named =
+    declarationDefect !== null
+      ? `${contextId} declares ${declarationDefect.keyword} on ${declarationDefect.property}.`
+      : locus === undefined
+        ? `${contextId} produced no output its declared contract accepts.`
+        : issue?.description !== undefined
+          ? `${contextId} was refused at ${locus} — ${issue.description}.`
+          : `${contextId} was refused at ${locus}.`;
+  return `${named} Repair the contract, then resume — resume starts the retry budget fresh.`;
 }
 
 export interface ContextHaltCardProps {
@@ -589,6 +648,25 @@ export default function ContextHaltCard({
       : {}),
   });
   const attention = formatted.tone === "attention";
+  // The output-schema refusal is the one halt with a repair the card can point
+  // at, so E2 gives it its own headline, its own sentence and its own two
+  // actions. Every other halt keeps the formatter's headline and evidence.
+  const schemaRefusal =
+    primary.type === "circuit_breaker" &&
+    primary.condition === "output_schema_validation"
+      ? {
+          contextId: primary.contextId,
+          sentence: outputSchemaRefusalSentence(
+            primary.contextId,
+            primaryEvidence,
+          ),
+          // The SAME predicate the page's control matrix reads, so the card's
+          // blocked Resume can never stand beside an enabled one: both ask
+          // whether the contract that refused is provably still in force.
+          resumeBlocked:
+            primaryEvidence?.contractUnchangedSinceRejection === true,
+        }
+      : null;
   return (
     <div
       className={cn(attention ? haltCardAttention : haltCardBase, "mb-md")}
@@ -597,12 +675,24 @@ export default function ContextHaltCard({
     >
       <div
         className={cn(
-          "text-[0.8rem] font-semibold tracking-[0.01em]",
+          "flex items-center gap-sm text-[0.8rem] font-semibold tracking-[0.01em]",
           attention ? "text-amber" : "text-red",
         )}
       >
-        {formatted.headline}
+        {schemaRefusal !== null
+          ? "Output schema rejected by the engine"
+          : formatted.headline}
+        {schemaRefusal !== null && (
+          <StatusChip tone="neutral" layoutClassName="ml-auto">
+            resumable halt
+          </StatusChip>
+        )}
       </div>
+      {schemaRefusal !== null && (
+        <p className="m-0 font-mono text-[0.72rem] leading-[1.55] text-text-secondary">
+          {schemaRefusal.sentence}
+        </p>
+      )}
       {formatted.detail && (
         <div
           data-testid="halt-detail"
@@ -611,30 +701,54 @@ export default function ContextHaltCard({
           {formatted.detail}
         </div>
       )}
-      {formatted.action && (
+      {formatted.action && schemaRefusal === null && (
         <div className="text-[0.72rem] text-text-tertiary italic">
           {formatted.action}
+        </div>
+      )}
+      {schemaRefusal !== null && (
+        <div className="flex flex-wrap items-center gap-sm">
+          {onEditSchema !== undefined && (
+            <button
+              type="button"
+              className="inline-flex h-[24px] cursor-pointer items-center rounded-sm border border-solid border-[var(--cyan-glow-strong)] bg-[var(--cc-cyan-a12)] px-[10px] font-mono text-[0.7rem] font-medium text-cyan transition-colors duration-150 hover:bg-[var(--cc-cyan-a20)] focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:h-[44px] max-768:px-md"
+              onClick={() => onEditSchema(schemaRefusal.contextId)}
+            >
+              Edit schema
+            </button>
+          )}
+          {schemaRefusal.resumeBlocked ? (
+            <button
+              type="button"
+              disabled
+              className="inline-flex h-[24px] cursor-not-allowed items-center rounded-sm border border-solid border-border-default bg-transparent px-[10px] font-mono text-[0.7rem] font-medium text-text-tertiary opacity-60 max-768:h-auto max-768:min-h-[44px] max-768:px-md"
+            >
+              Resume — blocked until the contract is accepted
+            </button>
+          ) : (
+            // No second Resume once the block lifts: the execution controls own
+            // the act, and a duplicate here would be a second, unaudited path to
+            // the same mutation.
+            <span className="font-mono text-[0.7rem] text-text-tertiary">
+              Resume is available in the execution controls.
+            </span>
+          )}
         </div>
       )}
       {formatted.actionHref && (
         <Link
           href={formatted.actionHref}
-          className="w-fit text-[0.72rem] font-semibold text-cyan hover:underline"
+          className="w-fit text-[0.72rem] font-semibold text-cyan hover:underline max-768:inline-flex max-768:min-h-[44px] max-768:items-center"
         >
           Open the merge gate →
         </Link>
       )}
-      {primaryEvidence !== undefined && onEditSchema !== undefined && (
-        <EditSchemaAction
-          contextId={primaryEvidence.contextId}
-          onEditSchema={onEditSchema}
-        />
-      )}
+
       {secondary.length > 0 && (
         <div className="mt-[2px]">
           <button
             type="button"
-            className="cursor-pointer rounded-[3px] border border-[var(--cc-red-a35)] bg-transparent px-[8px] py-[3px] font-[inherit] text-[0.68rem] font-semibold tracking-[0.05em] text-red uppercase hover:bg-[var(--cc-red-a08)]"
+            className="cursor-pointer rounded-[3px] border border-[var(--cc-red-a35)] bg-transparent px-[8px] py-[3px] font-[inherit] text-[0.7rem] font-semibold tracking-[0.05em] text-red uppercase hover:bg-[var(--cc-red-a08)] max-768:min-h-[44px] max-768:px-md"
             onClick={() => setExpanded((v) => !v)}
             aria-expanded={expanded}
           >

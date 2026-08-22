@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   act,
   fireEvent,
+  render,
   screen,
   waitFor,
   within,
@@ -74,21 +75,44 @@ describe("GraphWorkflowPanel", () => {
   });
 
   it("shows a context configuration save refusal in the selected Config tab", async () => {
-    const view = renderWithQuery(
-      <GraphWorkflowPanel
-        execution={createWorkflowExecution({ status: "paused" })}
-        events={[]}
-        archivedExecutions={[]}
-        {...noopCallbacks}
-        configEditError='Unknown validation command "premerge".'
-      />,
+    // The refusal has to belong to a save THIS context submitted — the
+    // runtime-edit mutation is shared across the whole execution, so an
+    // unsubmitted context must not adopt its error.
+    const onSaveContextConfig = vi.fn();
+    const client = createTestQueryClient();
+    const paused = createWorkflowExecution({ status: "paused" });
+    const panel = (props: { configEditError?: string }) => (
+      <QueryClientProvider client={client}>
+        <GraphWorkflowPanel
+          execution={paused}
+          events={[]}
+          archivedExecutions={[]}
+          {...noopCallbacks}
+          onSaveContextConfig={onSaveContextConfig}
+          {...props}
+        />
+      </QueryClientProvider>
     );
+    const view = render(panel({}));
 
     const contextTitle = screen.getByText("Implement");
     const contextNode = contextTitle.closest(".react-flow__node");
     expect(contextNode).not.toBeNull();
     fireEvent.click(contextNode!);
     await userEvent.click(screen.getByRole("tab", { name: "Config" }));
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /Execution policy/ }),
+    );
+    fireEvent.change(screen.getByLabelText("Max iterations"), {
+      target: { value: "7" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(onSaveContextConfig).toHaveBeenCalledTimes(1);
+
+    view.rerender(
+      panel({ configEditError: 'Unknown validation command "premerge".' }),
+    );
 
     expect(view.getByRole("alert")).toHaveTextContent(
       'Unknown validation command "premerge".',
@@ -116,17 +140,14 @@ describe("GraphWorkflowPanel", () => {
       />,
     );
 
-    expect(screen.getByText("Definition awaiting approval")).toBeVisible();
-    const approve = screen.getByRole("button", {
-      name: "Approve definition & start",
-    });
-    await userEvent.click(approve);
+    expect(screen.getByTestId("execution-status-summary")).toHaveTextContent(
+      "Definition awaiting approval · the snapshot is frozen for the decision",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
 
     expect(onApproveDefinition).toHaveBeenCalledTimes(1);
 
-    await userEvent.click(
-      screen.getByRole("button", { name: "Reject definition" }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: "Reject" }));
     const dialog = screen.getByRole("alertdialog");
     await userEvent.click(
       within(dialog).getByRole("button", { name: "Reject definition" }),
@@ -153,11 +174,7 @@ describe("GraphWorkflowPanel", () => {
       />,
     );
 
-    expect(
-      screen.getByRole("button", {
-        name: "Approve definition & start",
-      }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
   });
 
   it("renders empty state when no execution exists", () => {
@@ -206,7 +223,7 @@ describe("GraphWorkflowPanel", () => {
   });
 
   it("renders status bar with execution status badge and active context info", () => {
-    const execution = createWorkflowExecution({
+    const base = createWorkflowExecution({
       status: "running",
       activeContextIds: ["context-plan"],
       workingDefinition: {
@@ -237,6 +254,19 @@ describe("GraphWorkflowPanel", () => {
         },
       },
     });
+    const planState = base.contextStates["context-plan"];
+    if (planState === undefined) {
+      throw new Error("fixture no longer states context-plan");
+    }
+    // Active membership alone is not liveness — a gate keeps a context in
+    // activeContextIds — so a genuinely running context has to say so.
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": { ...planState, status: "running" },
+      },
+    };
 
     renderWithQuery(
       <GraphWorkflowPanel
@@ -247,7 +277,7 @@ describe("GraphWorkflowPanel", () => {
       />,
     );
 
-    expect(screen.getByText("running")).toBeInTheDocument();
+    expect(screen.getAllByText("running").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Plan").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Inspect code").length).toBeGreaterThanOrEqual(
       1,
@@ -273,8 +303,14 @@ describe("GraphWorkflowPanel", () => {
     fireEvent.click(pauseBtn);
     expect(onPause).toHaveBeenCalledTimes(1);
 
+    // Abort is destructive, so it confirms before it fires (README §9).
     const abortBtn = screen.getByRole("button", { name: "Abort" });
     fireEvent.click(abortBtn);
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Abort execution",
+      }),
+    );
     expect(onAbort).toHaveBeenCalledTimes(1);
 
     expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
@@ -441,7 +477,7 @@ describe("GraphWorkflowPanel", () => {
       queryClient,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Reject definition" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
     expect(screen.getByRole("alertdialog")).toBeVisible();
 
     view.rerender(
@@ -513,10 +549,11 @@ describe("GraphWorkflowPanel", () => {
       />,
     );
 
-    expect(screen.getByText("Definition awaiting approval")).toBeVisible();
-    expect(
-      screen.queryByRole("button", { name: "Approve definition & start" }),
-    ).toBeNull();
+    expect(screen.getByTestId("execution-status-summary")).toHaveTextContent(
+      "Definition awaiting approval",
+    );
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
   });
 
   it("retains completed definition and context approval history without decision controls", () => {
@@ -569,6 +606,8 @@ describe("GraphWorkflowPanel", () => {
       />,
     );
 
+    // README §11 puts the approval trail on Overview → Approvals.
+    fireEvent.click(screen.getByTestId("overview-row-approvals"));
     const history = screen.getByRole("region", { name: "Approval history" });
     expect(history).toHaveTextContent("Definition approved");
     expect(history).toHaveTextContent("Plan requested approval");
@@ -699,6 +738,33 @@ describe("resolveViewingTask — codex implementer parity", () => {
     });
   });
 
+  // The Log header titles the CONVERSATION, not the task that opened it. A lane
+  // runs several tasks in one conversation, so completing a task retires the
+  // task and not the conversation: calling it ended here would tell the reader
+  // a transcript that is still being written to has stopped.
+  it("still calls the conversation live when its task completed but the lane holds it", () => {
+    const execution = createCodexExecutionWithRunningTask();
+    execution.taskStates["task-codex-1"]!.status = "completed";
+    execution.taskStates["task-codex-1"]!.completedAt =
+      "2026-03-27T16:20:00.000Z";
+    execution.laneStates = {
+      "context-codex-impl": {
+        implementer: {
+          lane: "implementer",
+          contextId: "context-codex-impl",
+          backend: "codex",
+          refKind: "conversation",
+          workflowConversationId: "cc-conv-codex-abc",
+          metrics: { rotateBeforeNextTurn: false },
+          limitEvaluation: "supported",
+          lastUsedAt: "2026-03-27T16:20:00.000Z",
+        },
+      },
+    };
+
+    expect(resolveViewingTask(execution, "task-codex-1")?.isLive).toBe(true);
+  });
+
   it("returns null when the codex task has no conversation yet", () => {
     const execution = createCodexExecutionWithRunningTask();
     execution.taskStates["task-codex-1"]!.lastConversationId = null;
@@ -729,12 +795,28 @@ describe("resolveViewingTask — codex implementer parity", () => {
 
     const resolved = resolveViewingTask(execution, "task-plan-1");
 
+    // Live for the same reason the codex task above is: a running task names
+    // the conversation the context is working in. The two backends answer
+    // identically for identical situations, which is the parity claimed here.
     expect(resolved).toEqual({
       conversationId: "cc-conv-claude-xyz",
       contextTitle: "Plan",
       taskTitle: "Inspect code",
-      isLive: false,
+      isLive: true,
     });
+  });
+
+  // The pill tracks whether another turn is possible, not what the lane record
+  // still says. A halt that nothing can resume holds no execution lease.
+  it("calls the conversation ended once the run holds no execution lease", () => {
+    const execution = createCodexExecutionWithRunningTask();
+    const halted: GraphWorkflowExecution = {
+      ...execution,
+      status: "halted",
+      haltReason: { type: "recovery_error", message: "worktree vanished" },
+    };
+
+    expect(resolveViewingTask(halted, "task-codex-1")?.isLive).toBe(false);
   });
 });
 
@@ -771,6 +853,7 @@ describe("GraphWorkflowPanel — codex transcript viewing path (mount)", () => {
         sessionName="test-session"
         conversationId={resolved!.conversationId}
         isLive={resolved!.isLive}
+        role="Implementer"
         contextTitle={resolved!.contextTitle}
         taskTitle={resolved!.taskTitle}
         onClose={vi.fn()}
@@ -778,10 +861,11 @@ describe("GraphWorkflowPanel — codex transcript viewing path (mount)", () => {
     );
 
     // Header surfaces the codex context + task titles unchanged.
-    expect(screen.getByText("Codex Implement")).toBeInTheDocument();
-    expect(screen.getByText("Ship Codex feature")).toBeInTheDocument();
+    const breadcrumb = screen.getByTestId("transcript-breadcrumb");
+    expect(breadcrumb).toHaveTextContent("Codex Implement");
+    expect(breadcrumb).toHaveTextContent("Ship Codex feature");
     // Live indicator is present (codex task is running).
-    expect(screen.getByText("Live")).toBeInTheDocument();
+    expect(screen.getByTestId("transcript-status")).toHaveTextContent("live");
 
     // The viewer calls the standard CC conversation-messages endpoint with the
     // CC conversation ID — confirming Codex tasks reuse the normal conversation
@@ -811,6 +895,7 @@ describe("GraphWorkflowPanel — codex transcript viewing path (mount)", () => {
         sessionName="test-session"
         conversationId={resolved!.conversationId}
         isLive={true}
+        role="Implementer"
         contextTitle={resolved!.contextTitle}
         taskTitle={resolved!.taskTitle}
         onClose={vi.fn()}
@@ -851,17 +936,99 @@ describe("GraphWorkflowPanel — codex transcript viewing path (mount)", () => {
 
     // Viewer close button (the viewer's marker element) must not be present.
     expect(
-      screen.queryByRole("button", { name: "Close transcript" }),
+      screen.queryByRole("button", {
+        name: "Close transcript and return to graph",
+      }),
     ).toBeNull();
     // Panel still renders normal status bar + codex context — proves the panel
     // handles codex executions through its default path.
-    expect(screen.getByText("running")).toBeInTheDocument();
+    expect(screen.getAllByText("running").length).toBeGreaterThanOrEqual(1);
     expect(
       screen.getAllByText("Codex Implement").length,
     ).toBeGreaterThanOrEqual(1);
   });
 
+  // README §11 semantic navigation: task or validator → Log transcript, and
+  // close transcript → Graph. On the desktop the transcript REPLACES the canvas,
+  // so closing has to put the graph back rather than merely emptying the panel.
+  it("returns to the graph when the Log surface is closed", async () => {
+    const execution = createCodexExecutionWithRunningTask();
+
+    const { container } = renderWithQuery(
+      <GraphWorkflowPanel
+        execution={execution}
+        events={[]}
+        archivedExecutions={[]}
+        {...noopCallbacks}
+      />,
+    );
+
+    expect(container.querySelector(".react-flow")).not.toBeNull();
+
+    fireEvent.click(screen.getAllByText("Codex Implement")[0]!);
+    fireEvent.click(await screen.findByRole("button", { name: "Watch" }));
+
+    expect(screen.getByTestId("wf-transcript-viewer")).toBeInTheDocument();
+    expect(container.querySelector(".react-flow")).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Close transcript and return to graph",
+      }),
+    );
+
+    expect(screen.queryByTestId("wf-transcript-viewer")).toBeNull();
+    expect(container.querySelector(".react-flow")).not.toBeNull();
+  });
+
+  // The Log header answers live/ended for the conversation as it stands NOW,
+  // not as it stood when the reader opened it. A run settles while the panel is
+  // open often enough — the last verdict lands, the context completes — and a
+  // pill answered once would keep pulsing at a transcript nobody is writing to.
+  it("stops calling an open conversation transcript live once the run settles", async () => {
+    const execution = createCodexExecutionWithRunningTask();
+    execution.laneStates = {
+      "context-codex-impl": {
+        implementer: {
+          lane: "implementer",
+          contextId: "context-codex-impl",
+          backend: "codex",
+          refKind: "conversation",
+          workflowConversationId: "cc-conv-codex-abc",
+          metrics: { rotateBeforeNextTurn: false },
+          limitEvaluation: "supported",
+          lastUsedAt: "2026-03-27T16:20:00.000Z",
+        },
+      },
+    };
+    const queryClient = createTestQueryClient();
+    const panel = (current: GraphWorkflowExecution) => (
+      <QueryClientProvider client={queryClient}>
+        <GraphWorkflowPanel
+          execution={current}
+          events={[]}
+          archivedExecutions={[]}
+          {...noopCallbacks}
+        />
+      </QueryClientProvider>
+    );
+    const view = render(panel(execution));
+
+    fireEvent.click(screen.getAllByText("Codex Implement")[0]!);
+    fireEvent.mouseDown(await screen.findByRole("tab", { name: /History/ }));
+    fireEvent.click(screen.getByTestId("conversation-transcript-button"));
+    expect(screen.getByTestId("transcript-status")).toHaveTextContent("live");
+
+    view.rerender(panel({ ...execution, status: "completed" }));
+
+    expect(screen.getByTestId("transcript-status")).toHaveTextContent("ended");
+  });
+
   it("deep-links Edit schema to the halted context's Config tab (R3.2)", async () => {
+    // jsdom has no layout, so the panel's scroll restoration is a no-op here;
+    // the destination is observable from the screen it lands on instead.
+    Element.prototype.scrollIntoView = () => {};
+
     const definition = createResolvedWorkflowDefinition();
     definition.executionContexts = definition.executionContexts.map(
       (context) =>
@@ -907,6 +1074,353 @@ describe("GraphWorkflowPanel — codex transcript viewing path (mount)", () => {
         "true",
       );
     });
+
+    // …and at the Brief → Output schema screen, not merely on the tab: the
+    // typed destination carries a screen, and the contract that refused the run
+    // is what the reader is sent to.
+    await waitFor(() => {
+      expect(screen.getByTestId("config-screen-title")).toHaveTextContent(
+        "Output schema",
+      );
+    });
+    expect(screen.getByLabelText("Output schema JSON")).toBeInTheDocument();
+  });
+});
+
+describe("GraphWorkflowPanel — join conflict recovery (E2)", () => {
+  function joinFailureExecution(): GraphWorkflowExecution {
+    const base = createWorkflowExecution({
+      status: "halted",
+      haltReason: {
+        type: "join_failure",
+        joinId: "join_delivery_1",
+        joinKind: "context_merge",
+        contextId: "context-implement",
+        sourceLaneIds: ["lane-plan", "lane-implement"],
+        targetLaneId: "delivery",
+        message: "merge conflict",
+        conflictFiles: ["src/checkout/audit.ts"],
+      },
+    });
+    // Per-source join progress as the engine persists it: on the join record,
+    // not on the member contexts. A context_merge join stamps `joinId` on its
+    // downstream target alone, so nothing here fakes a per-context merge state.
+    return {
+      ...base,
+      joins: {
+        join_delivery_1: {
+          joinId: "join_delivery_1",
+          kind: "context_merge",
+          contextId: "context-implement",
+          targetLaneId: "delivery",
+          sourceLaneIds: ["lane-plan", "lane-implement"],
+          mergedSourceLaneIds: ["lane-plan"],
+          validationDebtSourceLaneIds: [],
+          sourceLaneContextIds: {
+            "lane-plan": ["context-plan"],
+            "lane-implement": ["context-implement"],
+          },
+          status: "conflicts",
+          errorMessage: "both wrote the timeout branch",
+          conflicts: {
+            files: ["src/checkout/audit.ts"],
+            message: "merge conflict",
+            analysis: null,
+          },
+          conflictGuidance: null,
+          createdAt: "2026-03-27T09:00:00.000Z",
+          updatedAt: "2026-03-27T09:30:00.000Z",
+          completedAt: null,
+        },
+      },
+      executionLanes: {
+        "lane-plan": {
+          laneId: "lane-plan",
+          kind: "worktree",
+          status: "active",
+          worktreePath: "/tmp/lane-plan",
+          branchName: "wf/lane-plan",
+          includedContextIds: ["context-plan"],
+          lastCommittingContextId: "context-plan",
+          commitSnapshots: [],
+          createdAt: "2026-03-27T09:00:00.000Z",
+          updatedAt: "2026-03-27T09:30:00.000Z",
+        },
+        "lane-implement": {
+          laneId: "lane-implement",
+          kind: "worktree",
+          status: "active",
+          worktreePath: "/tmp/lane-implement",
+          branchName: "wf/lane-implement",
+          includedContextIds: ["context-implement"],
+          lastCommittingContextId: "context-implement",
+          commitSnapshots: [],
+          createdAt: "2026-03-27T09:00:00.000Z",
+          updatedAt: "2026-03-27T09:30:00.000Z",
+        },
+      },
+    };
+  }
+
+  it("names the lane, its members and sends Edit ownership to the blocked member's placement", async () => {
+    // jsdom has no layout, so the panel's scroll restoration is a no-op here;
+    // the destination is observable from the screen it lands on instead.
+    Element.prototype.scrollIntoView = () => {};
+
+    renderWithQuery(
+      <GraphWorkflowPanel
+        execution={joinFailureExecution()}
+        events={[]}
+        archivedExecutions={[]}
+        {...noopCallbacks}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText("Join conflict — delivery"),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByTestId("join-members")).toHaveTextContent(
+      "blocked · Implement → delivery — both wrote the timeout branch",
+    );
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Edit ownership" }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Config" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("config-screen-title")).toHaveTextContent(
+        "Placement",
+      );
+    });
+  });
+
+  it("sends Open lane worktree to the blocked member's runtime", async () => {
+    Element.prototype.scrollIntoView = () => {};
+
+    renderWithQuery(
+      <GraphWorkflowPanel
+        execution={joinFailureExecution()}
+        events={[]}
+        archivedExecutions={[]}
+        {...noopCallbacks}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Open lane worktree" }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Config" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+    });
+    // The lane's branch, worktree and merge state live on Placement in the
+    // config panel, so that is where "Open lane worktree" lands.
+    await waitFor(() => {
+      expect(screen.getByTestId("config-screen-title")).toHaveTextContent(
+        "Placement",
+      );
+    });
+  });
+});
+
+describe("GraphWorkflowPanel — gates chip (README §10)", () => {
+  function executionWithTwoGates(): GraphWorkflowExecution {
+    const base = createWorkflowExecution({ status: "running" });
+    const planState = base.contextStates["context-plan"]!;
+    const implementState = base.contextStates["context-implement"]!;
+    return {
+      ...base,
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...planState,
+          status: "awaiting_approval",
+          pendingApproval: {
+            conversationId: "conv-approval",
+            requestedAt: "2026-03-27T10:00:00.000Z",
+            decision: null,
+            approvalScope: { kind: "whole_tree" as const },
+          },
+        },
+        "context-implement": {
+          ...implementState,
+          status: "awaiting_user_input",
+          pendingUserInputs: {
+            implementer: {
+              lane: "implementer",
+              roundSeq: 1,
+              conversationId: "conv-1",
+              questionBatchId: "batch-1",
+              questions: [
+                {
+                  id: "q1",
+                  question: "Should the toggle default to on?",
+                  header: "Toggle",
+                  multiSelect: false,
+                  required: true,
+                  allowNote: true,
+                  options: [
+                    { label: "yes", recommended: true, description: "" },
+                  ],
+                },
+              ],
+              requestedAt: "2026-03-27T10:00:00.000Z",
+              answers: null,
+            },
+          },
+        },
+      },
+    };
+  }
+
+  it("opens the gates list from the status bar's chip", async () => {
+    renderWithQuery(
+      <GraphWorkflowPanel
+        execution={executionWithTwoGates()}
+        events={[]}
+        archivedExecutions={[]}
+        {...noopCallbacks}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "2 gates awaiting you" }),
+    );
+
+    const list = await screen.findByTestId("execution-gates-list");
+    const rows = within(list).getAllByTestId("execution-gate-row");
+    expect(rows[0]).toHaveTextContent("Plan");
+    expect(rows[0]).toHaveTextContent("context approval");
+    expect(rows[1]).toHaveTextContent("Implement");
+    expect(rows[1]).toHaveTextContent(
+      'parked question · "Should the toggle default to on?"',
+    );
+  });
+
+  it("opens the context a gate row names", async () => {
+    renderWithQuery(
+      <GraphWorkflowPanel
+        execution={executionWithTwoGates()}
+        events={[]}
+        archivedExecutions={[]}
+        {...noopCallbacks}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "2 gates awaiting you" }),
+    );
+    const list = await screen.findByTestId("execution-gates-list");
+    fireEvent.click(within(list).getAllByTestId("execution-gate-row")[1]!);
+
+    // The inspector leaves the Overview for the context that holds the gate.
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Tasks" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+    });
+  });
+
+  // README §10: there is no single global gate. Two parked approvals are two
+  // waits on two contexts, so opening one row must show THAT context's decision
+  // and nothing else — a stack of every approval card above the canvas is the
+  // surface the redesign removes.
+  it("opens one context's approval surface, not every open approval", async () => {
+    const base = executionWithTwoGates();
+    const reviewState = base.contextStates["context-verify"]!;
+    const twoApprovals: GraphWorkflowExecution = {
+      ...base,
+      contextStates: {
+        ...base.contextStates,
+        "context-verify": {
+          ...reviewState,
+          status: "awaiting_approval",
+          pendingApproval: {
+            conversationId: "conv-approval-2",
+            requestedAt: "2026-03-27T10:05:00.000Z",
+            decision: null,
+            approvalScope: { kind: "whole_tree" as const },
+          },
+        },
+      },
+    };
+
+    renderWithQuery(
+      <GraphWorkflowPanel
+        execution={twoApprovals}
+        events={[]}
+        archivedExecutions={[]}
+        {...noopCallbacks}
+        renderContextApproval={(contextId) => (
+          <div data-testid={`approval-card-${contextId}`}>
+            Context approval — {contextId}
+          </div>
+        )}
+      />,
+    );
+
+    // Nothing is selected yet, so no decision surface is on screen at all.
+    expect(screen.queryByTestId(/^approval-card-/)).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "3 gates awaiting you" }),
+    );
+    const list = await screen.findByTestId("execution-gates-list");
+    const approvalRows = within(list)
+      .getAllByTestId("execution-gate-row")
+      .filter((row) => row.dataset.gateKind === "approval");
+    expect(approvalRows).toHaveLength(2);
+    fireEvent.click(approvalRows[0]!);
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("approval-card-context-plan"),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByTestId("approval-card-context-verify"),
+    ).not.toBeInTheDocument();
+  });
+
+  // The gate row is only useful if it lands on the thing that clears the gate.
+  // A parked question's row has to reach the answering surface itself, not just
+  // the context that happens to hold it.
+  it("lands a parked question's row on the surface that answers it", async () => {
+    renderWithQuery(
+      <GraphWorkflowPanel
+        execution={executionWithTwoGates()}
+        events={[]}
+        archivedExecutions={[]}
+        {...noopCallbacks}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "2 gates awaiting you" }),
+    );
+    const list = await screen.findByTestId("execution-gates-list");
+    fireEvent.click(within(list).getAllByTestId("execution-gate-row")[1]!);
+
+    const panel = await screen.findByTestId("parked-question-panel");
+    expect(panel).toHaveAttribute("data-lane-key", "implementer");
+    expect(
+      within(panel).getByText("Should the toggle default to on?"),
+    ).toBeInTheDocument();
+    expect(within(panel).getByRole("radio", { name: /yes/ })).toBeEnabled();
   });
 });
 
@@ -1039,7 +1553,9 @@ describe("GraphWorkflowPanel — advisory index origin link (R9.4)", () => {
       />,
     );
 
-    // The overview lists the advisory without any round having been opened.
+    // The overview's Advisories drill lists the advisory without any round
+    // having been opened (README §11, screen E3).
+    fireEvent.click(screen.getByTestId("overview-row-advisories"));
     const origin = screen.getByTestId("advisory-index-origin");
     expect(origin).toHaveTextContent("Implement · Round 1 · security");
 
@@ -1063,5 +1579,295 @@ describe("GraphWorkflowPanel — advisory index origin link (R9.4)", () => {
     expect(focused).toHaveLength(1);
     expect(focused[0]).toHaveAttribute("data-round-seq", "1");
     expect(focused[0]).toHaveTextContent("Round 1 concluded");
+  });
+});
+
+describe("GraphWorkflowPanel inspector rail collapse", () => {
+  it("collapses the 420px inspector rail from the status bar and restores it", async () => {
+    renderWithQuery(
+      <GraphWorkflowPanel
+        execution={createWorkflowExecution({ id: "exec-collapse" })}
+        events={[]}
+        {...noopCallbacks}
+      />,
+    );
+
+    expect(screen.getByRole("complementary")).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Collapse inspector" }),
+    );
+    expect(screen.queryByRole("complementary")).toBeNull();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Expand inspector" }),
+    );
+    expect(screen.getByRole("complementary")).toBeInTheDocument();
+  });
+
+  it("holds the inspector at the design's one approved width exception", () => {
+    renderWithQuery(
+      <GraphWorkflowPanel
+        execution={createWorkflowExecution({ id: "exec-width" })}
+        events={[]}
+        {...noopCallbacks}
+      />,
+    );
+
+    // jsdom computes no layout, so the authored width is the only evidence
+    // available — and 420px is a spec constant, not a free layout choice.
+    expect(screen.getByRole("complementary").className).toContain("w-[420px]");
+  });
+
+  it("keeps the inspector mounted on mobile, where the tab bar owns panel choice", () => {
+    renderWithQuery(
+      <GraphWorkflowPanel
+        execution={createWorkflowExecution({ id: "exec-mobile" })}
+        events={[]}
+        {...noopCallbacks}
+        isMobile
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Collapse inspector" }),
+    ).toBeNull();
+    expect(screen.getByRole("complementary")).toBeInTheDocument();
+  });
+});
+
+/**
+ * A run whose lanes have actually moved: one merged, one holding the live
+ * context, one never entered, and the reserved session lane a final-publish
+ * join targets. The default fixture's lanes are all pending, so the band
+ * runtime states have nothing to distinguish without this.
+ */
+function executionWithRuntimeLanes(): GraphWorkflowExecution {
+  const definition = createResolvedWorkflowDefinition();
+  const verifyContext = definition.executionContexts.find(
+    (context) => context.id === "context-verify",
+  );
+  if (verifyContext === undefined) {
+    throw new Error("fixture no longer defines context-verify");
+  }
+
+  const lane = (
+    laneId: string,
+    kind: "session" | "worktree",
+    status: "pending" | "active" | "merged",
+    includedContextIds: string[],
+  ) => ({
+    laneId,
+    kind,
+    status,
+    worktreePath: kind === "session" ? null : `/tmp/lanes/${laneId}`,
+    branchName: `cc/lane-${laneId}`,
+    includedContextIds,
+    lastCommittingContextId: null,
+    commitSnapshots: [],
+    createdAt: "2026-08-20T09:00:00.000Z",
+    updatedAt: "2026-08-20T09:30:00.000Z",
+  });
+
+  const base = createWorkflowExecution({
+    id: "exec-lane-runtime",
+    status: "running",
+    workingDefinition: {
+      ...definition,
+      executionContexts: [
+        ...definition.executionContexts,
+        {
+          ...verifyContext,
+          id: "context-publish",
+          title: "Publish",
+          placement: { lane: "session", mode: "readOnly" },
+        },
+      ],
+    },
+    activeContextIds: ["context-implement"],
+    executionLanes: {
+      plan: lane("plan", "worktree", "merged", ["context-plan"]),
+      implement: lane("implement", "worktree", "active", ["context-implement"]),
+      __session__: lane("__session__", "session", "active", [
+        "context-publish",
+      ]),
+    },
+    joins: {
+      "join-publish": {
+        joinId: "join-publish",
+        kind: "final_publish",
+        contextId: null,
+        targetLaneId: "__session__",
+        sourceLaneIds: ["implement"],
+        mergedSourceLaneIds: [],
+        validationDebtSourceLaneIds: [],
+        status: "pending",
+        errorMessage: null,
+        conflicts: null,
+        conflictGuidance: null,
+        createdAt: "2026-08-20T09:00:00.000Z",
+        updatedAt: "2026-08-20T09:00:00.000Z",
+        completedAt: null,
+      },
+    },
+  });
+
+  const verifyState = base.contextStates["context-verify"];
+  if (verifyState === undefined) {
+    throw new Error("fixture no longer states context-verify");
+  }
+
+  return {
+    ...base,
+    contextStates: {
+      ...base.contextStates,
+      "context-publish": {
+        ...verifyState,
+        contextId: "context-publish",
+        laneId: "__session__",
+      },
+    },
+  };
+}
+
+describe("GraphWorkflowPanel lane canvas assembly", () => {
+  it("groups the canvas into lane bands derived from the mounted execution", async () => {
+    const { container } = renderWithQuery(
+      <GraphWorkflowPanel
+        execution={createWorkflowExecution({ id: "exec-lanes" })}
+        events={[]}
+        {...noopCallbacks}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(
+        container.querySelectorAll('[data-testid="lane-band"]').length,
+      ).toBeGreaterThan(0),
+    );
+    const laneNames = [
+      ...container.querySelectorAll('[data-testid="lane-band"]'),
+    ].map((band) => band.getAttribute("data-lane-name"));
+    expect(laneNames).toEqual(
+      expect.arrayContaining(["plan", "implement", "verify"]),
+    );
+  });
+
+  it("colours each band from the run's own lane records and names the publication target", async () => {
+    const { container } = renderWithQuery(
+      <GraphWorkflowPanel
+        execution={executionWithRuntimeLanes()}
+        events={[]}
+        {...noopCallbacks}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(
+        container.querySelectorAll('[data-testid="lane-band"]').length,
+      ).toBe(4),
+    );
+
+    const band = (laneName: string): HTMLElement => {
+      const found = container.querySelector<HTMLElement>(
+        `[data-testid="lane-band"][data-lane-name="${laneName}"]`,
+      );
+      if (found === null) throw new Error(`no band for lane ${laneName}`);
+      return found;
+    };
+
+    // A merged lane, the lane holding the live context, an untouched lane, and
+    // the reserved session lane — each state read off the execution, not a prop.
+    expect(band("plan").dataset["laneState"]).toBe("merged");
+    expect(band("implement").dataset["laneState"]).toBe("active");
+    expect(band("verify").dataset["laneState"]).toBe("pending");
+    expect(band("session").dataset["laneState"]).toBe("session");
+    expect(band("session").dataset["reserved"]).toBe("true");
+
+    // The final-publish join is stated on both ends: the source lane says where
+    // it publishes, the session lane says it is what receives the publication.
+    expect(
+      within(band("implement")).getByTestId("lane-band-runtime"),
+    ).toHaveTextContent("publishes → session");
+    expect(
+      within(band("session")).getByTestId("lane-band-runtime"),
+    ).toHaveTextContent("publication target");
+    expect(
+      within(band("session")).getByTestId("lane-band-status"),
+    ).toHaveTextContent("reserved · read-only");
+  });
+
+  it("renders the E1 publication pill naming source, target and completion condition", async () => {
+    const { container } = renderWithQuery(
+      <GraphWorkflowPanel
+        execution={executionWithRuntimeLanes()}
+        events={[]}
+        {...noopCallbacks}
+      />,
+    );
+
+    const pill = await waitFor(() => {
+      const found = container.querySelector<HTMLElement>(
+        '[data-testid="lane-band-publication"]',
+      );
+      if (found === null) throw new Error("no publication pill on the canvas");
+      return found;
+    });
+
+    // The pill states the relation between lanes, which no single band header
+    // can: who publishes, into what, and what the publish waits on.
+    expect(pill).toHaveTextContent(
+      "publication: implement → session, after every member completes",
+    );
+    // A drawn icon, never a Unicode glyph standing in for one.
+    expect(pill.querySelector("svg")).not.toBeNull();
+  });
+
+  it("still renders the publication pill when the session lane holds no context", async () => {
+    // The ordinary shape of a real final_publish run: the session lane exists to
+    // receive the publish and carries no member of its own, so it contributes no
+    // node and therefore no band box. The pill describes the run, not the band,
+    // so it must survive its target lane having nothing to wrap.
+    const base = executionWithRuntimeLanes();
+    const sessionLane = base.executionLanes["__session__"];
+    if (sessionLane === undefined) {
+      throw new Error("fixture no longer defines the session lane");
+    }
+    const { "context-publish": _publishState, ...contextStates } =
+      base.contextStates;
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      workingDefinition: {
+        ...base.workingDefinition,
+        executionContexts: base.workingDefinition.executionContexts.filter(
+          (context) => context.id !== "context-publish",
+        ),
+      },
+      executionLanes: {
+        ...base.executionLanes,
+        __session__: { ...sessionLane, includedContextIds: [] },
+      },
+      contextStates,
+    };
+
+    const { container } = renderWithQuery(
+      <GraphWorkflowPanel
+        execution={execution}
+        events={[]}
+        {...noopCallbacks}
+      />,
+    );
+
+    const pill = await waitFor(() => {
+      const found = container.querySelector<HTMLElement>(
+        '[data-testid="lane-band-publication"]',
+      );
+      if (found === null) throw new Error("no publication pill on the canvas");
+      return found;
+    });
+
+    expect(pill).toHaveTextContent(
+      "publication: implement → session, after every member completes",
+    );
   });
 });

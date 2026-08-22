@@ -4,6 +4,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import {
   OUTPUT_SCHEMA_TEMPLATE,
   OutputSchemaField,
+  describeOutputSchemaRefusal,
   lintOutputSchemaText,
 } from "./OutputSchemaField";
 import {
@@ -302,5 +303,28 @@ describe("OutputSchemaField — editor chrome", () => {
     expect(
       screen.queryByRole("button", { name: "+ Add schema" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+// A surface outside the editor — the builder's validation strip — has to say
+// why the save is refused in one line, and must not restate the lint's copy.
+describe("describeOutputSchemaRefusal", () => {
+  it("summarises a syntax refusal with the editor's own headline", () => {
+    const summary = describeOutputSchemaRefusal(BROKEN_JSON);
+    expect(summary).toContain("Invalid JSON");
+    expect(summary).toContain(
+      lintOutputSchemaText(BROKEN_JSON).issues[0]?.message ?? "",
+    );
+  });
+
+  it("summarises an unsupported document", () => {
+    expect(describeOutputSchemaRefusal(UNSUPPORTED)).toContain(
+      "Unsupported schema",
+    );
+  });
+
+  it("refuses nothing for acceptable or empty text", () => {
+    expect(describeOutputSchemaRefusal(OUTPUT_SCHEMA_TEMPLATE)).toBeNull();
+    expect(describeOutputSchemaRefusal("   ")).toBeNull();
   });
 });

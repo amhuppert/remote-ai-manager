@@ -6,10 +6,11 @@ import { useGraphWorkflowApprovalSnapshotQuery } from "@/lib/workflows/queries";
 import type { GraphWorkflowApprovalSnapshotResponse } from "@/lib/workflow-graph/schemas";
 
 /**
- * Map the approval API's answer onto what the panel renders. A response that is
- * not a scoped snapshot never degrades into a whole-tree view: `whole_tree`
- * cannot reach here (it is only returned for a full-access member, which never
- * asks), and every other kind renders as its own explicit state.
+ * Map the approval API's answer onto what the panel renders. Every kind is an
+ * explicit state, including `whole_tree`: that answer says the gate was frozen
+ * WITHOUT an ownership envelope, which is a fact about the candidate rather
+ * than an absence, and it never degrades into a whole-worktree diff — in a
+ * shared lane that delta is partly a concurrent sibling's in-progress work.
  */
 function toScopedChanges(
   response: GraphWorkflowApprovalSnapshotResponse,
@@ -18,18 +19,18 @@ function toScopedChanges(
     case "scoped":
       return {
         status: "ready",
-        ownedPaths: response.snapshot.ownedPaths,
-        diff: response.snapshot.diff,
+        candidate: {
+          scope: "owned",
+          ownedPaths: response.snapshot.ownedPaths,
+          diff: response.snapshot.diff,
+        },
       };
     case "drifted":
       return { status: "drifted" };
     case "unavailable":
       return { status: "unavailable", reason: response.reason };
     case "whole_tree":
-      return {
-        status: "unavailable",
-        reason: "this context is no longer under a file-ownership envelope",
-      };
+      return { status: "ready", candidate: { scope: "whole_tree" } };
   }
 }
 
@@ -38,7 +39,14 @@ function toScopedChanges(
  * it. Every surface that offers Approve has to offer the same frozen artifact
  * behind it (R15.2).
  *
- * Null for a full-access member, which keeps the whole-tree approval view.
+ * Asked for EVERY parked gate, enveloped or not. Skipping the request for a
+ * full-access member used to return null, which the panel read as "no candidate
+ * question to answer" and enabled Approve on the spot — a decision taken before
+ * anything about the candidate was known. The gate's own frozen scope is what
+ * the answer reports, so a full-access member now travels through the same
+ * loading → ready path as an enveloped one.
+ *
+ * Null only when there is no parked gate at all.
  */
 export function useApprovalScopedChanges(
   projectName: string,
@@ -46,18 +54,16 @@ export function useApprovalScopedChanges(
   standing: {
     contextId: string;
     requestedAt: string;
-    enveloped: boolean;
   } | null,
 ): ApprovalScopedChanges | null {
-  const scoped = standing?.enveloped === true ? standing : null;
   const snapshotQuery = useGraphWorkflowApprovalSnapshotQuery(
     projectName,
     sessionName,
-    scoped?.contextId ?? null,
-    scoped?.requestedAt ?? null,
+    standing?.contextId ?? null,
+    standing?.requestedAt ?? null,
   );
 
-  if (scoped === null) return null;
+  if (standing === null) return null;
   if (snapshotQuery.data !== undefined) {
     return toScopedChanges(snapshotQuery.data);
   }

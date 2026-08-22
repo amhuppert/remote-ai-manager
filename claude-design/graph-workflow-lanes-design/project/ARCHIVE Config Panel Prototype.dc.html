@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/styles.css">
+  <script src="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.js"></script>
+  <style>
+    html, body { height: auto !important; max-height: none !important; overflow: visible !important; background: #04070c !important; }
+    body { margin: 0; font-family: var(--font-body, "Manrope", sans-serif); }
+    a { color: var(--cyan, #00e5ff); text-decoration: none; }
+    a:hover { color: var(--text-primary, #dce2f0); }
+    @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+    @keyframes dash-flow { to { stroke-dashoffset: -12; } }
+  </style>
+</helmet>
+<div role="note" style="position:sticky;top:0;z-index:999;display:flex;align-items:center;gap:12px;background:#2b0b0b;border-bottom:2px solid #e5484d;color:#ffd7d7;font:600 14px/1.5 ui-monospace,monospace;padding:14px 24px">ARCHIVED — superseded exploration. This is NOT an accepted design and must not be implemented. The canonical files are listed in README.md §1.</div>
+
+
+<section style="display:flex;flex-direction:column;gap:48px;padding:44px 48px;min-width:2020px">
+
+  <div style="max-width:1060px">
+    <div style="font:800 25px/1.2 var(--font-display);color:var(--text-primary);letter-spacing:-0.01em">The panel in place — execution and builder</div>
+    <div style="margin-top:10px;font-size:13.5px;line-height:1.65;color:var(--text-secondary)">
+      One panel, two hosts. It is the same component in both screens — same scope switch, same summary → group → leaf drill, same cascade provenance — mounted in the right rail of the execution page and of the builder. What differs is only the frame it sits in and what a live run makes of an edit. Turn 1 below is the panel on its own.
+    </div>
+  </div>
+
+  <!-- ============ 2a — EXECUTION ============ -->
+  <div id="2a" data-screen-label="2a Execution — config in the inspector rail">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:14px">
+      <a href="#2a" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cyan-glow-strong);border-radius:6px;background:var(--cc-cyan-a08);font:700 12px var(--font-mono);color:var(--cyan)">2a</a>
+      <span style="font:700 16px var(--font-body);color:var(--text-primary)">Execution — the panel is the inspector's second level</span>
+      <span style="font-size:12.5px;color:var(--text-secondary)">selected node → inspector → Config opens the panel over the same 420px rail · Context scope, drilled into Quality gates</span>
+    </div>
+    <div style="display:flex;gap:32px;align-items:flex-start">
+      <div style="width:1500px;flex-shrink:0;background:var(--bg-void);border:1px solid var(--border-default);border-radius:12px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.5)">
+
+        <header class="flex h-[var(--topbar-height)] items-center justify-between border-x-0 border-t-0 border-b border-solid border-b-border-subtle bg-[var(--cc-topbar-bg)] px-lg [backdrop-filter:blur(16px)_saturate(140%)]">
+          <div class="flex items-center gap-md">
+            <span class="font-display text-[1.1rem] font-extrabold tracking-[-0.02em] text-cyan [text-shadow:0_0_20px_var(--cyan-glow-text)]">CC</span>
+            <div class="h-[20px] w-px bg-border-default"></div>
+            <nav class="flex items-center gap-sm font-mono text-[0.8rem] font-normal text-text-secondary">
+              <span>projects</span><span class="text-text-tertiary">/</span>
+              <span>atlas ▾</span><span class="text-text-tertiary">/</span>
+              <span class="font-semibold text-text-primary!">checkout-v2 ▾</span><span class="text-text-tertiary">/</span>
+              <span>Workflow</span>
+            </nav>
+          </div>
+          <div class="flex items-center gap-md">
+            <span class="inline-flex h-[28px] items-center gap-[6px] rounded-sm border border-solid border-border-default bg-transparent px-[10px] font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase text-text-secondary!">Specs</span>
+            <span class="inline-flex h-[28px] items-center gap-[6px] rounded-sm border border-solid border-border-default bg-transparent px-[10px] font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase text-text-secondary!">Tickets</span>
+            <span class="flex h-[30px] w-[30px] items-center justify-center rounded-sm text-text-secondary!">⚙</span>
+          </div>
+        </header>
+
+        <div class="flex min-h-[44px] items-center gap-md border-b border-border-dim bg-bg-surface px-md py-2">
+          <span class="text-[0.7rem] font-semibold uppercase tracking-[0.06em] py-[3px] px-[10px] rounded-[3px] bg-[var(--cc-cyan-a12)] text-cyan border border-[var(--cyan-glow-strong)]">running</span>
+          <div class="min-w-0 truncate text-[0.72rem] text-text-secondary">
+            Lane <strong class="font-semibold text-text-primary">delivery</strong>: context-implement: running, context-settings: running · Task: <strong class="font-semibold text-text-primary">Wire risk rules into checkout</strong>
+          </div>
+          <div class="ml-auto flex gap-sm" style="align-items:center">
+            <button type="button" class="inline-flex items-center justify-center gap-[6px] font-medium rounded-sm cursor-pointer border border-border-default whitespace-nowrap text-[0.7rem] py-[3px] px-[8px] h-[22px] bg-bg-raised text-text-secondary">Pause</button>
+            <button type="button" class="inline-flex items-center justify-center gap-[6px] font-medium rounded-sm cursor-pointer border border-border-default whitespace-nowrap text-[0.7rem] py-[3px] px-[8px] h-[22px] bg-bg-raised" style="color:var(--red)">Abort</button>
+            <span style="width:1px;height:16px;background:var(--border-default)"></span>
+            <button type="button" title="Collapse inspector" class="inline-flex items-center justify-center gap-[6px] font-medium rounded-sm cursor-pointer border whitespace-nowrap text-[0.7rem] py-[3px] px-[8px] h-[22px] bg-[var(--cc-cyan-a12)] text-cyan border-[var(--cyan-glow-strong)]">▤ Inspector</button>
+          </div>
+        </div>
+
+        <div style="display:flex;height:760px;min-height:0">
+
+          <div style="width:48px;flex-shrink:0;border-right:1px solid var(--border-subtle);background:var(--bg-base);display:flex;flex-direction:column;align-items:center;gap:10px;padding:12px 0">
+            <span title="Expand executions" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:1px solid var(--border-default);border-radius:4px;background:var(--bg-raised);color:var(--cyan);cursor:pointer;font-size:12px">⟩</span>
+            <span style="writing-mode:vertical-rl;font:600 10px var(--font-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--text-tertiary)">Executions · 3</span>
+            <span style="width:8px;height:8px;border-radius:50%;background:var(--cyan);box-shadow:0 0 8px var(--cyan-glow);animation:pulse-dot 2.5s ease-in-out infinite"></span>
+            <span style="width:8px;height:8px;border-radius:50%;background:var(--green)"></span>
+          </div>
+
+          <div style="position:relative;flex:1;min-width:0;background:var(--bg-void);background-image:radial-gradient(rgba(255,255,255,0.07) 1px,transparent 1px);background-size:20px 20px;overflow:hidden">
+
+            <div style="position:absolute;left:12px;right:12px;top:12px;height:170px;border:1px solid var(--border-subtle);border-left:2px solid var(--green-dim);border-radius:10px;background:linear-gradient(90deg,var(--cc-green-a06),transparent 28%)"></div>
+            <div style="position:absolute;left:12px;right:12px;top:198px;height:352px;border:1px solid var(--cc-cyan-a25);border-left:2px solid var(--cyan);border-radius:10px;background:linear-gradient(90deg,var(--cc-cyan-a05),transparent 32%);box-shadow:0 0 24px rgba(0,229,255,0.04) inset"></div>
+            <div style="position:absolute;left:12px;right:12px;top:566px;height:158px;border:1px dashed var(--border-default);border-radius:10px;background:repeating-linear-gradient(135deg,var(--cc-graph-ink-a50) 0 8px,transparent 8px 18px)"></div>
+
+            <div style="position:absolute;left:12px;top:12px;width:172px;height:170px;padding:14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:6px">
+              <div style="display:flex;align-items:center;gap:7px"><span style="width:7px;height:7px;border-radius:50%;background:var(--green)"></span><span style="font:700 13px var(--font-mono);color:var(--text-primary)">candidate-rules</span></div>
+              <span style="align-self:flex-start" class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-green-a20)] bg-green-glow text-green">merged</span>
+              <span style="font:500 10.5px var(--font-mono);color:var(--cyan)">✦ created at runtime</span>
+              <span style="font:500 10.5px var(--font-mono);color:var(--text-tertiary)">1 member · ⤳ delivery</span>
+            </div>
+            <div style="position:absolute;left:12px;top:198px;width:172px;height:352px;padding:14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:6px">
+              <div style="display:flex;align-items:center;gap:7px"><span style="width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 8px var(--cyan-glow);animation:pulse-dot 2.5s ease-in-out infinite"></span><span style="font:700 13px var(--font-mono);color:var(--text-primary)">delivery</span></div>
+              <span style="align-self:flex-start" class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-[var(--cc-cyan-a25)] bg-cyan-glow text-cyan">active</span>
+              <span style="font:500 10.5px var(--font-mono);color:var(--text-tertiary)">2 members · running in parallel</span>
+              <span style="font:500 10.5px var(--font-mono);color:var(--text-tertiary)">⤳ lands → session</span>
+              <div style="margin-top:auto;font:400 10px var(--font-mono);color:var(--text-tertiary);line-height:1.7">◪ implement · src/checkout<br>◪ settings · src/settings</div>
+            </div>
+            <div style="position:absolute;left:12px;top:566px;width:172px;height:158px;padding:14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:6px">
+              <div style="display:flex;align-items:center;gap:7px"><span style="width:7px;height:7px;border-radius:50%;background:var(--text-tertiary)"></span><span style="font:700 13px var(--font-mono);color:var(--text-primary)">session</span></div>
+              <span style="align-self:flex-start" class="inline-flex items-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-medium leading-[1.3] whitespace-nowrap border border-solid border-border-default text-text-secondary">read-only</span>
+              <span style="font:500 10.5px var(--font-mono);color:var(--text-tertiary)">1 member · no writes</span>
+            </div>
+
+            <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none">
+              <defs>
+                <marker id="cp-arr-g" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 Z" fill="var(--green-dim)"></path></marker>
+                <marker id="cp-arr-c" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 Z" fill="var(--cyan)"></path></marker>
+              </defs>
+              <path d="M 446 96 C 496 96 422 300 472 300" fill="none" stroke="var(--green-dim)" stroke-width="2" marker-end="url(#cp-arr-g)"></path>
+              <path d="M 722 300 C 772 300 698 452 748 452" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-dasharray="8 4" style="animation:dash-flow 1s linear infinite" marker-end="url(#cp-arr-c)"></path>
+              <path d="M 722 300 C 782 300 688 640 748 640" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-dasharray="8 4" style="animation:dash-flow 1s linear infinite" marker-end="url(#cp-arr-c)"></path>
+            </svg>
+
+            <div class="graph-node relative overflow-hidden rounded-[14px] cursor-pointer border border-solid bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)] border-[var(--cc-green-a20)] [border-top-color:var(--cc-green-a45)]" style="position:absolute;left:196px;top:44px;width:250px;padding:12px 14px 10px">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:7px">
+                <span style="font-size:.82rem;font-weight:700;line-height:1.2;color:var(--text-primary)">Candidate: rules engine</span>
+                <span style="flex-shrink:0;border:1px solid var(--cc-green-border);background:var(--cc-green-a08);color:var(--green);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Completed</span>
+              </div>
+              <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--cc-graph-ink-a55);margin-bottom:8px">
+                <div style="display:flex;align-items:center;gap:6px;padding:6px 9px"><span style="font:700 9px var(--font-mono);letter-spacing:.1em;color:var(--text-tertiary);width:26px">IMPL</span><span style="color:var(--violet);font-size:.66rem">◆</span><span style="font:600 10.5px var(--font-mono);color:var(--text-primary)">gpt-5-codex</span><span style="margin-left:auto;border:1px solid var(--border-default);border-radius:9px;padding:1px 6px;font:600 9px var(--font-mono);text-transform:uppercase;color:var(--text-secondary)">med</span></div>
+              </div>
+              <div style="font-size:.66rem;font-weight:500;color:var(--text-tertiary)">2/2 tasks · landed → delivery</div>
+              <span style="position:absolute;right:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+            </div>
+
+            <div class="graph-node relative overflow-hidden rounded-[14px] cursor-pointer border border-solid bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)] border-[var(--cc-cyan-a40)] [border-top-color:var(--cc-cyan-a50)]" style="position:absolute;left:472px;top:236px;width:250px;padding:12px 14px 10px;box-shadow:0 0 0 2px var(--cc-cyan-a25),0 14px 36px rgba(0,0,0,.55)">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:4px">
+                <span style="font-size:.82rem;font-weight:700;line-height:1.2;color:var(--text-primary)">Implement checkout</span>
+                <span style="flex-shrink:0;border:1px solid var(--cyan-glow-strong);background:var(--cc-cyan-a08);color:var(--cyan);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Running</span>
+              </div>
+              <div style="margin-bottom:8px;font:500 10px var(--font-mono);color:var(--text-tertiary)">▍delivery · ◪ src/checkout</div>
+              <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--cc-graph-ink-a55);overflow:hidden;margin-bottom:8px">
+                <div style="display:flex;align-items:center;gap:6px;padding:6px 9px"><span style="font:700 9px var(--font-mono);letter-spacing:.1em;color:var(--text-tertiary);width:26px">IMPL</span><span style="color:var(--cyan);font-size:.66rem">◆</span><span style="font:600 10.5px var(--font-mono);color:var(--text-primary)">opus-4.1</span><span title="Overridden — workflow default: sonnet-4.5" style="font:700 10px var(--font-mono);color:var(--amber)">Δ</span><span style="margin-left:auto;border:1px solid var(--border-default);border-radius:9px;padding:1px 6px;font:600 9px var(--font-mono);text-transform:uppercase;color:var(--text-secondary)">high <span style="color:var(--amber)">Δ</span></span></div>
+                <div style="display:flex;align-items:center;gap:6px;padding:6px 9px;border-top:1px solid var(--border-dim)"><span style="font:700 9px var(--font-mono);letter-spacing:.1em;color:var(--text-tertiary);width:26px">VAL</span><span style="color:var(--red);font-size:.66rem">◆</span><span style="font:600 10.5px var(--font-mono);color:var(--red)">cohort off</span><span title="Overridden — workflow default: security + style" style="font:700 10px var(--font-mono);color:var(--amber)">Δ</span></div>
+              </div>
+              <div style="height:3px;border-radius:3px;background:var(--cc-graph-ink-a50);margin-bottom:7px"><div style="width:60%;height:100%;border-radius:3px;background:var(--cyan);box-shadow:0 0 6px var(--cyan-glow)"></div></div>
+              <div style="font-size:.66rem;font-weight:500;color:var(--text-tertiary)">3/5 tasks · iteration 2</div>
+              <span style="position:absolute;left:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--cyan)"></span>
+              <span style="position:absolute;right:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+            </div>
+
+            <div class="graph-node relative overflow-hidden rounded-[14px] cursor-pointer border border-solid bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)] border-[var(--cc-cyan-a25)]" style="position:absolute;left:748px;top:392px;width:250px;padding:12px 14px 10px">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:7px">
+                <span style="font-size:.82rem;font-weight:700;line-height:1.2;color:var(--text-primary)">Settings surface</span>
+                <span style="flex-shrink:0;border:1px solid var(--cyan-glow-strong);background:var(--cc-cyan-a08);color:var(--cyan);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Running</span>
+              </div>
+              <div style="border:1px solid var(--border-subtle);border-radius:8px;background:var(--cc-graph-ink-a55);margin-bottom:8px">
+                <div style="display:flex;align-items:center;gap:6px;padding:6px 9px"><span style="font:700 9px var(--font-mono);letter-spacing:.1em;color:var(--text-tertiary);width:26px">IMPL</span><span style="color:var(--cyan);font-size:.66rem">◆</span><span style="font:600 10.5px var(--font-mono);color:var(--text-primary)">sonnet-4.5</span><span style="margin-left:auto;border:1px solid var(--border-default);border-radius:9px;padding:1px 6px;font:600 9px var(--font-mono);text-transform:uppercase;color:var(--text-secondary)">med</span></div>
+              </div>
+              <div style="font-size:.66rem;font-weight:500;color:var(--text-tertiary)">1/3 tasks · iteration 1</div>
+              <span style="position:absolute;left:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+            </div>
+
+            <div class="graph-node relative overflow-hidden rounded-[14px] cursor-pointer border border-solid bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)] border-border-subtle" style="position:absolute;left:748px;top:600px;width:250px;padding:12px 14px 10px">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:7px">
+                <span style="font-size:.82rem;font-weight:700;line-height:1.2;color:var(--text-primary)">Release notes</span>
+                <span style="flex-shrink:0;border:1px solid var(--border-default);color:var(--text-tertiary);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Pending</span>
+              </div>
+              <div style="margin-bottom:6px;font:500 10px var(--font-mono);color:var(--text-tertiary)">◨ read-only · ◇ output declared</div>
+              <div style="font-size:.66rem;font-weight:500;color:var(--text-tertiary)">0/2 tasks</div>
+              <span style="position:absolute;left:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+            </div>
+
+            <div style="position:absolute;left:472px;top:196px;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--cyan-glow-strong);border-radius:6px;background:var(--bg-elevated);padding:3px 9px;font:600 10px var(--font-mono);color:var(--cyan);box-shadow:0 8px 24px rgba(0,0,0,.5)">▤ config open in inspector</div>
+          </div>
+
+          <aside style="width:420px;flex-shrink:0;border-left:1px solid var(--border-subtle);background:var(--bg-surface);display:flex">
+            <dc-import name="Config Panel" host="execution" initial-tier="context" initial-nav="gates" style="width:100%;height:100%" hint-size="420px,760px"></dc-import>
+          </aside>
+        </div>
+      </div>
+
+      <sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+      <div style="width:400px;font-size:12.5px;line-height:1.7;color:var(--text-secondary)">
+        <div style="font:700 13px var(--font-body);color:var(--text-primary);margin-bottom:6px">How it is reached</div>
+        The rail has one stack. Selecting a node shows the run inspector (status, lane, latest validation, conversations); its <span style="font-family:var(--font-mono);color:var(--text-primary)">Config</span> card pushes this panel onto the same rail, so the header keeps a <span style="font-family:var(--font-mono)">◂ Inspector</span> return instead of opening a second surface. Collapsing the rail with ▤ Inspector collapses whichever level is showing.
+        <div style="margin-top:14px;font:700 13px var(--font-body);color:var(--text-primary);margin-bottom:6px">Editing a live run</div>
+        Nothing is greyed out — the config a running context reads is re-resolved at each iteration boundary, so an edit is written now and takes effect on the next iteration; the amber strip says exactly that. On <span style="font-family:var(--font-mono);color:var(--text-primary)">Workflow</span> scope the same strip narrows the promise: defaults reach contexts that have not started, and started contexts keep what they were dispatched with.
+        <div style="margin-top:14px;font:700 13px var(--font-body);color:var(--text-primary);margin-bottom:6px">Node ↔ panel</div>
+        The <span style="font-family:var(--font-mono);color:var(--amber)">Δ</span> marks on the node are the node-side view of the same cascade the panel reports as a cyan edge and <span style="font-family:var(--font-mono)">↺</span>: here the validator cohort is switched off on this context, which the node shows as <span style="font-family:var(--font-mono);color:var(--red)">cohort off</span> and the panel as <span style="font-family:var(--font-mono);color:var(--red)">1 off here</span>.
+      </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <!-- ============ 2b — BUILDER ============ -->
+  <div id="2b" data-screen-label="2b Builder — config as the right rail">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:14px">
+      <a href="#2b" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cyan-glow-strong);border-radius:6px;background:var(--cc-cyan-a08);font:700 12px var(--font-mono);color:var(--cyan)">2b</a>
+      <span style="font:700 16px var(--font-body);color:var(--text-primary)">Builder — the panel is the rail, and it is where authoring happens</span>
+      <span style="font-size:12.5px;color:var(--text-secondary)">nothing selected on the canvas → Workflow scope, the defaults every context inherits · selecting a node switches the switch to Context</span>
+    </div>
+    <div style="display:flex;gap:32px;align-items:flex-start">
+      <div style="width:1500px;flex-shrink:0;background:var(--bg-void);border:1px solid var(--border-default);border-radius:12px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.5)">
+        <div class="flex min-h-[44px] items-center gap-md border-b border-border-dim bg-bg-surface px-md py-2">
+          <span class="text-[0.7rem] font-semibold uppercase tracking-[0.06em] py-[3px] px-[10px] rounded-[3px] bg-bg-raised text-text-tertiary border border-border-default">draft</span>
+          <span class="text-[0.72rem] text-text-secondary">Checkout rules migration · rev 5 (unsaved)</span>
+          <div class="ml-auto flex gap-sm">
+            <button type="button" class="inline-flex items-center justify-center font-medium rounded-sm cursor-pointer border border-border-default whitespace-nowrap text-[0.7rem] py-[3px] px-[8px] h-[22px] bg-bg-raised text-text-secondary">Validate</button>
+            <button type="button" class="inline-flex items-center justify-center font-medium rounded-sm cursor-pointer border border-border-default whitespace-nowrap text-[0.7rem] py-[3px] px-[8px] h-[22px] bg-bg-raised text-text-secondary">Save</button>
+            <button type="button" class="inline-flex items-center justify-center font-medium rounded-sm cursor-pointer border whitespace-nowrap text-[0.7rem] py-[3px] px-[8px] h-[22px] bg-[var(--cc-cyan-a12)] text-cyan border-[var(--cyan-glow-strong)]">Launch…</button>
+          </div>
+        </div>
+
+        <div style="display:flex;height:700px;min-height:0">
+          <div style="position:relative;flex:1;min-width:0;background-image:radial-gradient(rgba(255,255,255,0.07) 1px,transparent 1px);background-size:20px 20px;overflow:hidden">
+
+            <div style="position:absolute;left:12px;right:12px;top:14px;height:160px;border:1px solid var(--border-subtle);border-radius:10px"></div>
+            <div style="position:absolute;left:12px;top:14px;width:172px;height:160px;padding:14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:6px">
+              <span style="font:700 13px var(--font-mono);color:var(--text-primary)">plan</span>
+              <span style="font:500 10.5px var(--font-mono);color:var(--text-tertiary)">1 member · mode full</span>
+            </div>
+
+            <div style="position:absolute;left:12px;right:12px;top:190px;height:160px;border:1px solid var(--border-subtle);border-radius:10px"></div>
+            <div style="position:absolute;left:12px;top:190px;width:172px;height:160px;padding:14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:6px">
+              <span style="font:700 13px var(--font-mono);color:var(--text-primary)">research</span>
+              <span style="font:500 10.5px var(--font-mono);color:var(--text-tertiary)">2 members · mode owned</span>
+            </div>
+
+            <div style="position:absolute;left:12px;right:12px;top:366px;height:160px;border:1px solid var(--border-subtle);border-radius:10px"></div>
+            <div style="position:absolute;left:12px;top:366px;width:172px;height:160px;padding:14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:6px">
+              <span style="font:700 13px var(--font-mono);color:var(--text-primary)">delivery</span>
+              <span style="font:500 10.5px var(--font-mono);color:var(--text-tertiary)">1 member · mode full</span>
+            </div>
+
+            <div style="position:absolute;left:12px;right:12px;top:542px;height:56px;border:1px dashed var(--border-default);border-radius:10px;display:flex;align-items:center;justify-content:center;font:600 12px var(--font-mono);color:var(--text-tertiary);cursor:pointer">+ New lane</div>
+
+            <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none">
+              <defs>
+                <marker id="cp-arr-b" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 Z" fill="var(--border-default)"></path></marker>
+              </defs>
+              <path d="M 412 88 C 452 88 432 264 472 264" fill="none" stroke="var(--border-default)" stroke-width="2" marker-end="url(#cp-arr-b)"></path>
+              <path d="M 672 264 C 740 264 800 440 868 440" fill="none" stroke="var(--border-default)" stroke-width="2" marker-end="url(#cp-arr-b)"></path>
+            </svg>
+
+            <div style="position:absolute;left:212px;top:44px;width:200px;padding:12px 14px 10px" class="graph-node relative overflow-hidden rounded-[14px] border border-solid border-border-subtle bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)]">
+              <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:7px"><span style="font-size:.82rem;font-weight:700;color:var(--text-primary)">Plan the migration</span><span style="border:1px solid var(--border-default);color:var(--text-tertiary);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase">Draft</span></div>
+              <div style="display:flex;gap:4px;margin-bottom:9px"><span style="border:1px solid var(--cyan-glow-strong);background:var(--cc-cyan-a06);color:var(--cyan);border-radius:4px;padding:2px 6px;font:600 .6rem var(--font-mono);text-transform:uppercase">◆ Claude</span><span style="border:1px solid var(--border-default);background:var(--cc-graph-ink-a55);color:var(--text-primary);border-radius:4px;padding:2px 6px;font:600 .6rem var(--font-mono)">▣</span></div>
+              <div style="font-size:.66rem;color:var(--text-tertiary)">3 tasks · all inherited</div>
+              <span style="position:absolute;right:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+            </div>
+
+            <div style="position:absolute;left:472px;top:220px;width:200px;padding:12px 14px 10px" class="graph-node relative overflow-hidden rounded-[14px] border border-solid border-border-subtle bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)]">
+              <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:7px"><span style="font-size:.82rem;font-weight:700;color:var(--text-primary)">Evaluate rules engine</span><span style="border:1px solid var(--border-default);color:var(--text-tertiary);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase">Draft</span></div>
+              <div style="display:flex;gap:4px;margin-bottom:9px"><span style="border:1px solid var(--cc-codex-violet-a35);background:var(--violet-glow);color:var(--violet);border-radius:4px;padding:2px 6px;font:600 .6rem var(--font-mono);text-transform:uppercase">◆ Codex</span><span title="mode owned: docs/eval" style="border:1px solid var(--border-default);background:var(--cc-graph-ink-a55);color:var(--text-secondary);border-radius:4px;padding:2px 6px;font:600 .6rem var(--font-mono)">◪ docs/eval</span></div>
+              <div style="font-size:.66rem;color:var(--text-tertiary)">2 tasks · <span style="color:var(--cyan)">2 set here</span></div>
+              <span style="position:absolute;left:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+              <span style="position:absolute;right:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+            </div>
+
+            <div style="position:absolute;left:868px;top:396px;width:200px;padding:12px 14px 10px" class="graph-node relative overflow-hidden rounded-[14px] border border-solid border-border-subtle bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)]">
+              <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:7px"><span style="font-size:.82rem;font-weight:700;color:var(--text-primary)">Implement checkout</span><span style="border:1px solid var(--border-default);color:var(--text-tertiary);border-radius:20px;padding:2px 8px;font-size:.6rem;font-weight:600;text-transform:uppercase">Draft</span></div>
+              <div style="display:flex;gap:4px;margin-bottom:9px"><span style="border:1px solid var(--cyan-glow-strong);background:var(--cc-cyan-a06);color:var(--cyan);border-radius:4px;padding:2px 6px;font:600 .6rem var(--font-mono);text-transform:uppercase">◆ Claude</span><span style="border:1px solid var(--amber-dim);background:var(--amber-glow);color:var(--amber);border-radius:4px;padding:2px 6px;font:600 .6rem var(--font-mono)">✓</span></div>
+              <div style="font-size:.66rem;color:var(--text-tertiary)">5 tasks · <span style="color:var(--cyan)">2 set here</span></div>
+              <span style="position:absolute;left:-4px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;background:#0a0f1a;border:2px solid var(--border-default)"></span>
+            </div>
+
+            <div style="position:absolute;right:24px;top:22px;width:300px;border:1px solid var(--border-subtle);border-radius:8px;background:var(--cc-graph-ink-a40);padding:10px 12px;font-size:.7rem;color:var(--text-secondary);line-height:1.55">
+              <span style="font:700 10.5px var(--font-mono);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.06em">Nothing selected</span><br>
+              The rail is on <span style="font-family:var(--font-mono);color:var(--text-primary)">Workflow</span> scope — edits here are the defaults all three contexts inherit.
+            </div>
+          </div>
+
+          <aside style="width:420px;flex-shrink:0;border-left:1px solid var(--border-subtle);background:var(--bg-surface);display:flex">
+            <dc-import name="Config Panel" host="builder" initial-tier="workflow" style="width:100%;height:100%" hint-size="420px,700px"></dc-import>
+          </aside>
+        </div>
+      </div>
+
+      <sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+      <div style="width:400px;font-size:12.5px;line-height:1.7;color:var(--text-secondary)">
+        <div style="font:700 13px var(--font-body);color:var(--text-primary);margin-bottom:6px">One rail, no modal</div>
+        The builder's config is not a dialog behind a node — it is the permanent right rail, so authoring the graph and authoring its config are the same session. The scope switch is the selection: nothing selected means Workflow (charter, launch parameters, and the defaults every context inherits); selecting a node flips it to Context and the same drill-down opens on that context, with <span style="font-family:var(--font-mono)">W</span> tags on everything still inherited.
+        <div style="margin-top:14px;font:700 13px var(--font-body);color:var(--text-primary);margin-bottom:6px">What the builder adds</div>
+        Two blocks only exist here: the <span style="font-family:var(--font-mono);color:var(--text-primary)">Charter</span> (invariants and ranked sources of truth, scoped per context) and <span style="font-family:var(--font-mono);color:var(--text-primary)">Launch parameters</span>, which is what the Launch… dialog collects. Lane-merge validation also stays workflow-only — contexts cannot override it, so it appears under Quality gates on this scope alone.
+        <div style="margin-top:14px;font:700 13px var(--font-body);color:var(--text-primary);margin-bottom:6px">Draft, not live</div>
+        No amber strip: everything is a draft edit against rev 5 and lands on Save, and the topbar owns Validate / Save / Launch. The panel footer keeps the same provenance legend and <span style="font-family:var(--font-mono)">reset all</span> in both hosts.
+      </div>
+      </sc-if>
+    </div>
+  </div>
+</section>
+
+<section style="display:flex;flex-direction:column;gap:28px;padding:0 48px 44px;min-width:2020px">
+  <div id="1a" data-screen-label="1a Panel on its own">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:14px">
+      <a href="#1a" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--border-strong);border-radius:6px;background:var(--bg-raised);font:700 12px var(--font-mono);color:var(--text-secondary)">1a</a>
+      <span style="font:700 16px var(--font-body);color:var(--text-primary)">Inspector — every real config option, grouped and drilled</span>
+      <span style="font-size:12.5px;color:var(--text-secondary)">the panel on its own, both scopes, all eleven cascading blocks</span>
+    </div>
+    <div style="display:flex;gap:40px;align-items:flex-start">
+      <div style="width:470px;height:900px;flex-shrink:0;border:1px solid var(--border-default);border-radius:10px;overflow:hidden;box-shadow:0 18px 56px rgba(0,0,0,.5);display:flex">
+        <dc-import name="Config Panel" host="standalone" initial-tier="context" style="width:100%;height:100%" hint-size="470px,900px"></dc-import>
+      </div>
+
+      <sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+      <div style="width:420px;font-size:12.5px;line-height:1.7;color:var(--text-secondary)">
+        <div style="font:700 13px var(--font-body);color:var(--text-primary);margin-bottom:6px">Grouping</div>
+        Context scope: <span style="font-family:var(--font-mono);color:var(--text-primary)">Brief</span> (title, description, acceptance criteria, output schema, upstream inputs) · <span style="font-family:var(--font-mono);color:var(--text-primary)">Placement</span> (lane, write grade, owned paths) · <span style="font-family:var(--font-mono);color:var(--text-primary)">Agents</span> · <span style="font-family:var(--font-mono);color:var(--text-primary)">Quality gates</span> · <span style="font-family:var(--font-mono);color:var(--text-primary)">Execution policy</span> · <span style="font-family:var(--font-mono);color:var(--text-primary)">Tasks</span>. Workflow scope swaps Brief/Placement/Tasks for <span style="font-family:var(--font-mono);color:var(--text-primary)">Charter</span> and <span style="font-family:var(--font-mono);color:var(--text-primary)">Launch parameters</span>, and gains lane-merge validation — the one block contexts cannot override.
+        <div style="margin-top:12px;font:700 13px var(--font-body);color:var(--text-primary);margin-bottom:6px">Depth</div>
+        A block whose editor is more than three fields becomes its own screen: implementer, collaboration, the validator cohort (and one screen per seat, with authority, strategy, instructions, runtime and continuity), script validator, agent validation, lane-merge, plan repair, each task, the output schema. Everything shallower stays inline on its group screen, so no screen is longer than a scroll.
+        <div style="margin-top:12px;font:700 13px var(--font-body);color:var(--text-primary);margin-bottom:6px">Provenance</div>
+        Each cascading block resolves per tier and reports it: <span style="font-family:var(--font-mono)">G</span>/<span style="font-family:var(--font-mono)">W</span> tag for inherited, cyan edge and <span style="font-family:var(--font-mono)">↺</span> for set-here, red for a gate switched off here. Editing an inherited block promotes it — a copy of the resolved value lands in this tier, which is what the real <span style="font-family:var(--font-mono)">onOverride</span> does. Nothing is hidden behind a disclosure: each drill-in shows every setting it owns, split into section cards.
+      </div>
+      </sc-if>
+    </div>
+  </div>
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;showNotes&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Presentation&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    return { showNotes: this.props.showNotes !== false };
+  }
+}
+
+</script>
+</body>
+</html>

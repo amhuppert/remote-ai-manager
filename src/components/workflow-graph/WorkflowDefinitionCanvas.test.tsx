@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import { modelDisplayLabel } from "@/lib/agent-backends/catalog";
+import type { WorkflowDefinitionMutation } from "@/lib/workflow-graph/definition-schemas";
+import { SEEDED_WORKFLOW_DEFAULTS } from "@/lib/workflow-graph/resolve-config";
 import { createMaximalAuthoredWorkflowLaunchFixture } from "@/lib/workflow-graph/testing/maximal-authored-launch";
 
 import { deriveEdges, deriveNodes } from "./derive-graph";
@@ -19,7 +22,12 @@ describe("WorkflowDefinitionCanvas with a maximal authored launch", () => {
   it("renders the authored layout without rewriting its workflowId", () => {
     const launch = createMaximalAuthoredWorkflowLaunchFixture();
 
-    render(<WorkflowDefinitionCanvas launch={launch} />);
+    render(
+      <WorkflowDefinitionCanvas
+        launch={launch}
+        globalDefaults={SEEDED_WORKFLOW_DEFAULTS}
+      />,
+    );
 
     expect(screen.getByTestId("workflow-definition-canvas")).toHaveAttribute(
       "data-workflow-id",
@@ -131,6 +139,111 @@ describe("WorkflowDefinitionCanvas with a maximal authored launch", () => {
     for (const bodyContextId of loopGroup?.bodyContextIds ?? []) {
       expect(nodes.find((node) => node.id === bodyContextId)).toBeDefined();
     }
+  });
+});
+
+/**
+ * The preview renders the AUTHORED document, so a workflow that configures its
+ * agents once at the workflow tier leaves every context's crew blocks absent.
+ * The canvas is the production path that must still show the crew that would
+ * run, and the marker that says what the context sets on itself.
+ */
+describe("WorkflowDefinitionCanvas — effective crew and overrides", () => {
+  function inheritedCrewLaunch(): WorkflowDefinitionMutation {
+    const launch = createMaximalAuthoredWorkflowLaunchFixture();
+    launch.definition.workflowConfig = {
+      ...launch.definition.workflowConfig,
+      implementer: {
+        id: "implementer",
+        profile: { tier: "builtin", id: "general-implementer" },
+        agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+      },
+      contextValidator: {
+        enabled: true,
+        assignments: [
+          {
+            id: "security",
+            profile: { tier: "builtin", id: "general-reviewer" },
+            strategy: "conversation",
+            authority: "blocking",
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
+            continuity: { enabled: true },
+          },
+        ],
+      },
+    };
+    launch.definition.executionContexts =
+      launch.definition.executionContexts.map(
+        ({
+          implementer: _implementer,
+          contextValidator: _cohort,
+          ...context
+        }) => context,
+      );
+    return launch;
+  }
+
+  it("shows the workflow-tier implementer and cohort a context inherits", () => {
+    render(
+      <WorkflowDefinitionCanvas
+        launch={inheritedCrewLaunch()}
+        globalDefaults={SEEDED_WORKFLOW_DEFAULTS}
+      />,
+    );
+
+    const crew = screen.getAllByTestId("node-crew")[0];
+    expect(crew).toHaveTextContent(modelDisplayLabel("claude", "opus"));
+    expect(within(crew!).getAllByTestId("node-crew-seat")[0]).toHaveTextContent(
+      "security",
+    );
+  });
+
+  it("marks a context that sets its own implementer, naming the reason", () => {
+    const launch = inheritedCrewLaunch();
+    const [first, ...rest] = launch.definition.executionContexts;
+    launch.definition.executionContexts = [
+      {
+        ...first!,
+        implementer: {
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          agent: {
+            backend: "codex",
+            model: "gpt-5.5",
+            reasoningEffort: "medium",
+          },
+        },
+      },
+      ...rest,
+    ];
+
+    render(
+      <WorkflowDefinitionCanvas
+        launch={launch}
+        globalDefaults={SEEDED_WORKFLOW_DEFAULTS}
+      />,
+    );
+
+    const card = screen
+      .getAllByTestId("context-node")
+      .find((node) => node.textContent?.includes(first!.title));
+    // The dot itself is decorative — it repeats what the name below states.
+    expect(within(card!).getByTestId("node-set-here-marker")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    // Hover is not a reading channel: the reason belongs to the node's name.
+    // Asserted on the attribute rather than the computed name because React
+    // Flow keeps a node hidden until the pane measures it, and jsdom never
+    // does — a computed name would be empty for reasons unrelated to this.
+    expect(card).toHaveAttribute(
+      "aria-label",
+      expect.stringContaining("set on this context: implementer"),
+    );
   });
 });
 

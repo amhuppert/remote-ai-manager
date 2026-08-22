@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
 import ContextHaltCard from "./ContextHaltCard";
+import type {
+  OutputSchemaHaltEvidence,
+  OutputSchemaHaltEvidenceByContext,
+} from "./derive-output-schema-halt";
 
 const joinFailureWithManyConflicts: GraphWorkflowHaltReason = {
   type: "join_failure",
@@ -153,18 +157,198 @@ describe("ContextHaltCard circuit-breaker conditions", () => {
     render(<ContextHaltCard primary={outputSchemaHalt} />);
 
     expect(
-      screen.getByText(
-        /Output schema not satisfied in context-plan \(3 attempts\)/,
-      ),
+      screen.getByText("Output schema rejected by the engine"),
     ).toBeInTheDocument();
+    expect(screen.getByText("resumable halt")).toBeInTheDocument();
     expect(
       screen.getByText("$.risks: expected array, received string"),
     ).toBeInTheDocument();
-    // The fix is the schema, not the work: the action must say so, otherwise
+    // The fix is the contract, not the work: the copy must say so, otherwise
     // the operator reruns tasks that already did what was asked.
     expect(
-      screen.getByText(/Loosen or correct that schema on the context/),
+      screen.getByText(
+        /Repair the contract, then resume — resume starts the retry budget fresh./,
+      ),
     ).toBeInTheDocument();
+  });
+
+  // Production issues come from `toOutputSchemaIssues`, which sets `title`
+  // EQUAL to `path` and puts the engine's words in `description`. A card that
+  // only names a keyword when title differs from path therefore names one for
+  // hand-built evidence and never for a real refusal — so both fixtures below
+  // are shaped exactly as that producer emits.
+  const productionIssue = {
+    path: "$.risks",
+    title: "$.risks",
+    description: "must be array",
+  };
+
+  it("names the offending keyword and the context that declared it", () => {
+    render(
+      <ContextHaltCard
+        primary={outputSchemaHalt}
+        outputSchemaEvidence={{
+          "context-plan": {
+            contextId: "context-plan",
+            issues: [productionIssue],
+            rejectedOutput: null,
+            // A contract the subset validator cannot enforce: `format` is the
+            // offending keyword and `auditTable` the property carrying it.
+            declaredSchema: {
+              type: "object",
+              additionalProperties: false,
+              required: ["auditTable"],
+              properties: {
+                auditTable: { type: "string", format: "email" },
+              },
+            },
+            schemaEditedSinceRejection: false,
+            contractUnchangedSinceRejection: true,
+            failureCount: 3,
+            breakerThreshold: 3,
+            iteration: 3,
+            maxIterations: 4,
+            gateRepairAttempts: null,
+            gateRepairBudget: null,
+          },
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByText(/context-plan declares format on auditTable/),
+    ).toBeInTheDocument();
+  });
+
+  it("names the refused path and the engine's own words when the contract is enforceable", () => {
+    render(
+      <ContextHaltCard
+        primary={outputSchemaHalt}
+        outputSchemaEvidence={{
+          "context-plan": {
+            contextId: "context-plan",
+            issues: [productionIssue],
+            rejectedOutput: null,
+            declaredSchema: {
+              type: "object",
+              additionalProperties: false,
+              required: ["risks"],
+              properties: {
+                risks: { type: "array", items: { type: "string" } },
+              },
+            },
+            schemaEditedSinceRejection: false,
+            contractUnchangedSinceRejection: true,
+            failureCount: 3,
+            breakerThreshold: 3,
+            iteration: 3,
+            maxIterations: 4,
+            gateRepairAttempts: null,
+            gateRepairBudget: null,
+          },
+        }}
+      />,
+    );
+
+    // Never the bare locator: `$.risks` alone tells the operator nothing about
+    // what the contract wanted there.
+    expect(
+      screen.getByText(/context-plan was refused at \$\.risks — must be array/),
+    ).toBeInTheDocument();
+  });
+
+  function schemaEvidence(
+    overrides: Partial<OutputSchemaHaltEvidence> = {},
+  ): OutputSchemaHaltEvidenceByContext {
+    return {
+      "context-plan": {
+        contextId: "context-plan",
+        issues: [productionIssue],
+        rejectedOutput: null,
+        declaredSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["risks"],
+          properties: { risks: { type: "array", items: { type: "string" } } },
+        },
+        schemaEditedSinceRejection: false,
+        contractUnchangedSinceRejection: true,
+        failureCount: 3,
+        breakerThreshold: 3,
+        iteration: 3,
+        maxIterations: 4,
+        gateRepairAttempts: null,
+        gateRepairBudget: null,
+        ...overrides,
+      },
+    };
+  }
+
+  it("blocks Resume while the contract that refused is still in force", () => {
+    render(
+      <ContextHaltCard
+        primary={outputSchemaHalt}
+        outputSchemaEvidence={schemaEvidence()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", {
+        name: "Resume — blocked until the contract is accepted",
+      }),
+    ).toBeDisabled();
+  });
+
+  // The card explains the halt; the execution controls own the act. Leaving a
+  // disabled Resume here after the edit would contradict the enabled one the
+  // status bar releases at the same moment.
+  it("offers no Resume of its own once the contract has been edited", () => {
+    render(
+      <ContextHaltCard
+        primary={outputSchemaHalt}
+        outputSchemaEvidence={schemaEvidence({
+          schemaEditedSinceRejection: true,
+          contractUnchangedSinceRejection: false,
+        })}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /^Resume/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Resume is available in the execution controls."),
+    ).toBeInTheDocument();
+  });
+
+  it("offers Edit schema as the way out for the refusing context", async () => {
+    const user = userEvent.setup();
+    const onEditSchema = vi.fn();
+    render(
+      <ContextHaltCard
+        primary={outputSchemaHalt}
+        outputSchemaEvidence={{
+          "context-plan": {
+            contextId: "context-plan",
+            issues: [],
+            rejectedOutput: null,
+            declaredSchema: null,
+            schemaEditedSinceRejection: false,
+            contractUnchangedSinceRejection: true,
+            failureCount: 3,
+            breakerThreshold: null,
+            iteration: null,
+            maxIterations: null,
+            gateRepairAttempts: null,
+            gateRepairBudget: null,
+          },
+        }}
+        onEditSchema={onEditSchema}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Edit schema" }));
+    expect(onEditSchema).toHaveBeenCalledWith("context-plan");
   });
 
   it("keeps the generic breaker headline for retry exhaustion", () => {
@@ -200,6 +384,7 @@ describe("ContextHaltCard circuit-breaker conditions", () => {
             rejectedOutput: '{ "verdict": "partial" }',
             declaredSchema: { type: "object" },
             schemaEditedSinceRejection: false,
+            contractUnchangedSinceRejection: true,
             failureCount: 3,
             breakerThreshold: 3,
             iteration: 3,
@@ -214,12 +399,17 @@ describe("ContextHaltCard circuit-breaker conditions", () => {
     const locator = screen.getByText("/verdict");
     expect(locator.tagName).toBe("CODE");
     // Amber locator + prose is the shared halt-path recipe, applied by the
-    // list rather than per-item, so assert it where it lives.
-    expect(locator.closest("ul")?.className).toContain("[&_code]:text-amber");
+    // list rather than per-item, so assert it where it lives. The headline
+    // sentence names the first refusal too, so the prose assertions are scoped
+    // to the list rather than to the whole card.
+    const list = locator.closest("ul");
+    expect(list?.className).toContain("[&_code]:text-amber");
     expect(
-      screen.getByText(/not one of the allowed values/),
+      within(list as HTMLElement).getByText(/not one of the allowed values/),
     ).toBeInTheDocument();
-    expect(screen.getByText("/confidence")).toBeInTheDocument();
+    expect(
+      within(list as HTMLElement).getByText("/confidence"),
+    ).toBeInTheDocument();
     // The compact card stays compact: the payload and the contract belong to
     // the details dialog, not to a card embedded in the inspector.
     expect(screen.queryByText(/Rejected output/)).not.toBeInTheDocument();
@@ -237,6 +427,7 @@ describe("ContextHaltCard circuit-breaker conditions", () => {
             rejectedOutput: null,
             declaredSchema: null,
             schemaEditedSinceRejection: false,
+            contractUnchangedSinceRejection: true,
             failureCount: 3,
             breakerThreshold: null,
             iteration: null,
@@ -280,6 +471,7 @@ describe("ContextHaltCard circuit-breaker conditions", () => {
             rejectedOutput: '{ "notes": "none" }',
             declaredSchema: { type: "object" },
             schemaEditedSinceRejection: false,
+            contractUnchangedSinceRejection: true,
             failureCount: 2,
             breakerThreshold: 3,
             iteration: 2,
@@ -298,7 +490,12 @@ describe("ContextHaltCard circuit-breaker conditions", () => {
     expect(locator.tagName).toBe("CODE");
     expect(screen.getByText(/is required/)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Edit schema" }));
+    // Both refusals offer their own repair: the primary names context-plan, the
+    // secondary context-build, and a single shared action would send the reader
+    // to the wrong contract.
+    const editActions = screen.getAllByRole("button", { name: "Edit schema" });
+    expect(editActions).toHaveLength(2);
+    await user.click(editActions[1]!);
     expect(onEditSchema).toHaveBeenCalledWith("context-build");
   });
 });

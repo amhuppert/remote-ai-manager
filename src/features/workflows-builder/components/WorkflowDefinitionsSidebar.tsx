@@ -1,34 +1,46 @@
 "use client";
 
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  PlusIcon,
+} from "@/components/icons";
+import {
+  railOverlayPanelClass,
+  RailOverlaySpacer,
+} from "@/components/workflow-graph/RailOverlay";
+import { useWorkflowRailCollapse } from "@/components/workflow-graph/useWorkflowRailCollapse";
 import { cn } from "@/lib/ui/cn";
-import { WithTooltip } from "@/components/ui/WithTooltip";
 
 const WB_BTN_BASE =
-  "inline-flex items-center justify-center gap-[6px] whitespace-nowrap cursor-pointer rounded-sm border border-solid border-border-default font-medium transition-all duration-150";
-const WB_BTN_XS = "h-[22px] px-[8px] py-[3px] text-[0.7rem]";
+  "inline-flex items-center justify-center gap-[6px] whitespace-nowrap cursor-pointer rounded-sm border border-solid border-border-default font-medium transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-45 focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:2px]";
+const WB_BTN_XS =
+  "h-[24px] px-[8px] py-[3px] text-[0.7rem] max-768:h-auto max-768:min-h-[44px]";
 const WB_BTN_DEFAULT =
   "bg-bg-raised text-text-secondary hover:bg-bg-elevated hover:border-border-strong hover:text-text-primary";
+const WB_ICON_BTN = cn(
+  WB_BTN_BASE,
+  WB_BTN_DEFAULT,
+  "size-[24px] flex-shrink-0 p-0",
+);
 
-const DOT_CLASS: Record<DotState["variant"], string> = {
-  default: "bg-green shadow-[0_0_4px_var(--green-glow)]",
-  workflow: "bg-cyan shadow-[0_0_4px_var(--cyan-glow)]",
-  context: "bg-amber shadow-[0_0_4px_var(--amber-glow)]",
-};
-
-type ContextOverrideFields = {
-  implementer?: unknown;
-  contextValidator?: unknown;
-  mutability?: unknown;
-  circuitBreaker?: unknown;
-  iterationPolicy?: unknown;
-};
+const ROW_BASE =
+  "flex w-full cursor-pointer appearance-none flex-col gap-[4px] rounded-md border border-solid px-[11px] py-[9px] text-left font-[inherit] transition-all duration-150 focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:2px]";
+const ROW_IDLE =
+  "border-border-subtle bg-bg-surface hover:border-border-strong hover:bg-bg-elevated";
+const ROW_ACTIVE = "border-[var(--cc-cyan-a40)] bg-[var(--cc-cyan-a08)]";
 
 interface WorkflowDefinitionSummary {
   id: string;
   name: string;
   revision: number;
-  workflowConfig?: Record<string, unknown>;
-  executionContexts?: ContextOverrideFields[];
+  /**
+   * How many execution contexts the definition holds. The list endpoint returns
+   * a body-less summary, so this arrives from the per-definition detail records
+   * the page reads; a row whose record has not landed yet states its revision
+   * alone rather than guessing a count.
+   */
+  contextCount?: number | null;
 }
 
 interface WorkflowDefinitionsSidebarProps {
@@ -39,62 +51,34 @@ interface WorkflowDefinitionsSidebarProps {
   isLoading: boolean;
   /** True while the create-definition mutation is in flight. */
   isCreating?: boolean;
+  /**
+   * The loaded draft has unsaved work — store edits, or editor text the draft
+   * could not absorb. Only the selected row can carry it: the builder holds
+   * exactly one draft, so a second row showing `unsaved` would claim an edit
+   * that does not exist.
+   */
+  activeDraftDirty?: boolean;
   footer?: React.ReactNode;
   /** Heading shown above the list. Defaults to "Definitions". */
   title?: string;
 }
 
-type DotState =
-  | { variant: "default"; tooltip: string }
-  | { variant: "workflow"; tooltip: string }
-  | { variant: "context"; tooltip: string };
-
-const OVERRIDE_KEYS: Array<keyof ContextOverrideFields> = [
-  "implementer",
-  "contextValidator",
-  "mutability",
-  "circuitBreaker",
-  "iterationPolicy",
-];
-
-function countContextOverrides(context: ContextOverrideFields): number {
-  let count = 0;
-  for (const key of OVERRIDE_KEYS) {
-    if (context[key] !== undefined) count += 1;
+function metaLine(
+  definition: WorkflowDefinitionSummary,
+  unsaved: boolean,
+): string {
+  const count = definition.contextCount;
+  const parts = [`r${definition.revision}`];
+  if (typeof count === "number") {
+    parts.push(`${count} ${count === 1 ? "context" : "contexts"}`);
   }
-  return count;
+  if (unsaved) parts.push("unsaved");
+  return parts.join(" · ");
 }
 
-function computeDotState(def: WorkflowDefinitionSummary): DotState {
-  const contexts = def.executionContexts ?? [];
-  let contextsWithOverrides = 0;
-  let totalContextOverrides = 0;
-  for (const ctx of contexts) {
-    const n = countContextOverrides(ctx);
-    if (n > 0) {
-      contextsWithOverrides += 1;
-      totalContextOverrides += n;
-    }
-  }
-
-  if (contextsWithOverrides > 0) {
-    return {
-      variant: "context",
-      tooltip: `Custom per-context config (${contextsWithOverrides} contexts, ${totalContextOverrides} overrides total)`,
-    };
-  }
-
-  const workflowKeyCount = def.workflowConfig
-    ? Object.keys(def.workflowConfig).length
-    : 0;
-  if (workflowKeyCount > 0) {
-    return {
-      variant: "workflow",
-      tooltip: `Custom workflow defaults (${workflowKeyCount} blocks overridden)`,
-    };
-  }
-
-  return { variant: "default", tooltip: "All defaults" };
+/** The strip's per-definition target: the name's first character, drawn large. */
+function initialOf(name: string): string {
+  return (name.trim()[0] ?? "?").toUpperCase();
 }
 
 export default function WorkflowDefinitionsSidebar({
@@ -104,83 +88,164 @@ export default function WorkflowDefinitionsSidebar({
   onCreate,
   isLoading,
   isCreating = false,
+  activeDraftDirty = false,
   footer,
   title = "Definitions",
 }: WorkflowDefinitionsSidebarProps) {
-  return (
-    <aside className="flex w-[240px] min-w-[240px] flex-col overflow-hidden border-r border-solid border-border-subtle bg-bg-surface max-768:w-full max-768:min-w-0 max-768:flex-1 max-768:border-r-0 max-768:border-b max-768:border-solid max-768:border-b-border-dim max-768:[.app[data-page=workflow-builder][data-mobile-panel=graph]_&]:hidden max-768:[.app[data-page=workflow-builder][data-mobile-panel=inspector]_&]:hidden">
-      <div className="flex min-h-[44px] items-center justify-between border-b border-solid border-border-dim px-md py-[10px]">
-        <span className="text-[0.72rem] font-semibold tracking-[0.08em] text-text-secondary uppercase">
-          {title}
-        </span>
+  const { collapsed, setCollapsed, overlay } = useWorkflowRailCollapse();
+
+  const unsavedDot = (
+    <span
+      data-testid="definition-unsaved-dot"
+      aria-hidden="true"
+      className="size-[6px] flex-shrink-0 rounded-full bg-amber shadow-[0_0_4px_var(--amber-glow)]"
+    />
+  );
+
+  if (collapsed) {
+    return (
+      <nav
+        aria-label={title}
+        className="flex w-[48px] min-w-[48px] flex-col items-center gap-[6px] overflow-hidden border-r border-solid border-border-subtle bg-bg-base py-[10px] max-768:w-full max-768:min-w-0 max-768:flex-1 max-768:[.app[data-page=workflow-builder][data-mobile-panel=graph]_&]:hidden max-768:[.app[data-page=workflow-builder][data-mobile-panel=inspector]_&]:hidden"
+      >
         <button
-          className={cn(WB_BTN_BASE, WB_BTN_XS, WB_BTN_DEFAULT)}
+          type="button"
+          className={WB_ICON_BTN}
+          onClick={() => setCollapsed(false)}
+          aria-label={`Expand ${title.toLowerCase()} sidebar`}
+          title={`Expand ${title.toLowerCase()} sidebar`}
+        >
+          <ChevronRightIcon size={13} />
+        </button>
+        <button
+          type="button"
+          className={WB_ICON_BTN}
           onClick={onCreate}
           disabled={isCreating}
           aria-busy={isCreating || undefined}
-          type="button"
-          title="Create workflow"
+          aria-label="New workflow"
+          title="New workflow"
         >
-          {isCreating ? "Creating…" : "+"}
+          <PlusIcon size={12} />
         </button>
-      </div>
-
-      <div className="wb-sidebar-list flex-1 overflow-y-auto py-xs">
-        {isLoading ? (
-          <div className="p-md text-[0.72rem] text-text-tertiary">
-            Loading...
-          </div>
-        ) : definitions.length === 0 ? (
-          <div className="p-md text-[0.72rem] text-text-tertiary">
-            No workflows yet
-          </div>
-        ) : (
-          definitions.map((def) => {
-            const dot = computeDotState(def);
-            const active = def.id === selectedId;
+        <div className="flex w-full flex-1 flex-col items-center gap-[6px] overflow-y-auto">
+          {definitions.map((definition) => {
+            const active = definition.id === selectedId;
+            const unsaved = active && activeDraftDirty;
             return (
               <button
-                key={def.id}
-                className={cn(
-                  "group flex w-full cursor-pointer appearance-none items-center gap-[10px] border-0 border-l-2 border-solid border-l-transparent bg-transparent px-md py-[10px] text-left font-[inherit] transition-all duration-150 hover:bg-bg-elevated",
-                  active && "border-l-cyan bg-bg-raised",
-                )}
-                onClick={() => onSelect(def.id)}
+                key={definition.id}
                 type="button"
+                onClick={() => onSelect(definition.id)}
+                {...(active ? { "aria-current": "true" as const } : {})}
+                aria-label={`${definition.name} — ${metaLine(definition, unsaved)}`}
+                title={`${definition.name} — ${metaLine(definition, unsaved)}`}
+                className={cn(
+                  "relative size-[28px] flex-shrink-0 cursor-pointer rounded-md border border-solid font-mono text-[0.74rem] font-semibold transition-all duration-150 focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:2px]",
+                  active
+                    ? cn(ROW_ACTIVE, "text-text-primary")
+                    : "border-border-subtle bg-bg-surface text-text-secondary hover:border-border-strong hover:text-text-primary",
+                )}
               >
-                <div className="min-w-0 flex-1">
-                  <div
-                    className={cn(
-                      "overflow-hidden text-[0.78rem] font-medium text-ellipsis whitespace-nowrap text-text-secondary transition-colors duration-150 group-hover:text-text-primary",
-                      active && "text-text-primary",
-                    )}
-                  >
-                    {def.name}
-                  </div>
-                </div>
-                <span className="flex-shrink-0 text-[0.7rem] font-normal text-text-tertiary">
-                  r{def.revision}
-                </span>
-                <WithTooltip label={dot.tooltip}>
-                  <span
-                    className={cn(
-                      "mx-xs inline-block h-[6px] w-[6px] flex-shrink-0 rounded-full",
-                      DOT_CLASS[dot.variant],
-                    )}
-                    aria-label={dot.tooltip}
-                    role="img"
-                  />
-                </WithTooltip>
+                <span aria-hidden="true">{initialOf(definition.name)}</span>
+                {unsaved && (
+                  <span className="absolute top-[-2px] right-[-2px]">
+                    {unsavedDot}
+                  </span>
+                )}
               </button>
             );
-          })
-        )}
-      </div>
-      {footer && (
-        <div className="border-t border-solid border-border-dim px-md pt-sm pb-md">
-          {footer}
+          })}
         </div>
-      )}
-    </aside>
+      </nav>
+    );
+  }
+
+  return (
+    <>
+      {overlay && <RailOverlaySpacer side="left" stripWidth="48" />}
+      <nav
+        aria-label={title}
+        className={cn(
+          "flex w-[260px] min-w-[260px] flex-col overflow-hidden border-r border-solid border-border-subtle bg-bg-base max-768:w-full max-768:min-w-0 max-768:flex-1 max-768:border-r-0 max-768:border-b max-768:border-solid max-768:border-b-border-dim max-768:[.app[data-page=workflow-builder][data-mobile-panel=graph]_&]:hidden max-768:[.app[data-page=workflow-builder][data-mobile-panel=inspector]_&]:hidden",
+          overlay && railOverlayPanelClass("left"),
+        )}
+      >
+        <div className="flex min-h-[44px] items-center gap-sm border-b border-solid border-border-dim px-[12px] py-[10px]">
+          <h2 className="m-0 text-[0.7rem] font-semibold tracking-[0.08em] text-text-secondary uppercase">
+            {title}
+          </h2>
+          {/* Below 768px the sidebar is not a rail but the Defs panel, and the
+              bottom toolbar is what leaves it — collapsing is a no-op there, so
+              the control is not offered rather than offered and inert. */}
+          <button
+            type="button"
+            className={cn(WB_ICON_BTN, "ml-auto max-768:hidden")}
+            onClick={() => setCollapsed(true)}
+            aria-label={`Collapse ${title.toLowerCase()} sidebar`}
+            title={`Collapse ${title.toLowerCase()} sidebar`}
+          >
+            <ChevronLeftIcon size={13} />
+          </button>
+        </div>
+
+        <div className="border-b border-solid border-border-dim px-[12px] py-[10px]">
+          <button
+            className={cn(WB_BTN_BASE, WB_BTN_XS, WB_BTN_DEFAULT, "w-full")}
+            onClick={onCreate}
+            disabled={isCreating}
+            aria-busy={isCreating || undefined}
+            type="button"
+          >
+            <PlusIcon size={11} />
+            {isCreating ? "Creating…" : "New workflow"}
+          </button>
+        </div>
+
+        <div className="wb-sidebar-list flex flex-1 flex-col gap-[7px] overflow-y-auto px-[12px] py-[10px]">
+          {isLoading ? (
+            <div className="text-[0.72rem] text-text-tertiary">Loading...</div>
+          ) : definitions.length === 0 ? (
+            <div className="text-[0.72rem] text-text-tertiary">
+              No workflows yet
+            </div>
+          ) : (
+            definitions.map((definition) => {
+              const active = definition.id === selectedId;
+              const unsaved = active && activeDraftDirty;
+              return (
+                <button
+                  key={definition.id}
+                  type="button"
+                  onClick={() => onSelect(definition.id)}
+                  {...(active ? { "aria-current": "true" as const } : {})}
+                  className={cn(ROW_BASE, active ? ROW_ACTIVE : ROW_IDLE)}
+                >
+                  <span className="flex w-full items-center gap-sm">
+                    <span
+                      className={cn(
+                        "min-w-0 flex-1 overflow-hidden text-[0.76rem] font-semibold text-ellipsis whitespace-nowrap",
+                        active ? "text-text-primary" : "text-text-secondary",
+                      )}
+                    >
+                      {definition.name}
+                    </span>
+                    {unsaved && unsavedDot}
+                  </span>
+                  <span className="text-[0.7rem] font-normal text-text-tertiary">
+                    {metaLine(definition, unsaved)}
+                  </span>
+                </button>
+              );
+            })
+          )}
+        </div>
+        {footer && (
+          <div className="border-t border-solid border-border-dim px-md pt-sm pb-md">
+            {footer}
+          </div>
+        )}
+      </nav>
+    </>
   );
 }

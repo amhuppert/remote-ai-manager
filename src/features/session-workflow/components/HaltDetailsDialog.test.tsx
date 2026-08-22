@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
 import HaltDetailsDialog from "./HaltDetailsDialog";
 
@@ -115,6 +116,7 @@ describe("HaltDetailsDialog output-schema halt (R3.2)", () => {
       properties: { verdict: { type: "string" } },
     },
     schemaEditedSinceRejection: false,
+    contractUnchangedSinceRejection: true,
     failureCount: 3,
     breakerThreshold: 3,
     iteration: 3,
@@ -251,5 +253,141 @@ describe("HaltDetailsDialog output-schema halt (R3.2)", () => {
 
     secondary.getByRole("button", { name: "Edit schema" }).click();
     expect(onEditSchema).toHaveBeenCalledWith("context-build");
+  });
+});
+
+/**
+ * A halt can carry a join failure AND an unrepaired output-schema trip at once:
+ * the schema trip withholds Resume run-wide, but the join diagnosis is a READ —
+ * which members merged, which file conflicted — and its two navigations only
+ * open other surfaces. Gating the whole recovery card on resumability would
+ * strip that from the one screen that explains the failure, leaving the
+ * operator no way to reach the blocked lane's worktree or its owned paths.
+ */
+describe("HaltDetailsDialog — join recovery under a blocked resume", () => {
+  /** The concurrent trip that withholds the resume this dialog offers. */
+  const unrepairedSchemaHalt: GraphWorkflowHaltReason = {
+    type: "circuit_breaker",
+    contextId: "context-plan",
+    condition: "output_schema_validation",
+    failureCount: 3,
+    summary: "Output schema not satisfied",
+  };
+
+  const joinPrimary: GraphWorkflowHaltReason = {
+    type: "join_failure",
+    joinId: "join_delivery_1",
+    joinKind: "context_merge",
+    contextId: "context-implement",
+    sourceLaneIds: ["lane-plan", "lane-implement"],
+    targetLaneId: "delivery",
+    message: "merge conflict",
+    conflictFiles: ["src/checkout/audit.ts"],
+  };
+
+  const blockedImplement = {
+    laneId: "lane-implement",
+    contextId: "context-implement",
+    title: "Implement",
+    status: "blocked" as const,
+    detail: "both wrote the timeout branch",
+  };
+
+  const joinSummary = {
+    joinId: "join_delivery_1",
+    laneLabel: "delivery",
+    mergedCount: 1,
+    blockedMember: blockedImplement,
+    conflictFiles: ["src/checkout/audit.ts"],
+    members: [
+      {
+        laneId: "lane-plan",
+        contextId: "context-plan",
+        title: "Plan",
+        status: "merged" as const,
+        detail: null,
+      },
+      blockedImplement,
+    ],
+  };
+
+  it("keeps the join diagnosis and its navigations while withholding Retry", () => {
+    const onOpenLaneWorktree = vi.fn();
+    const onEditOwnership = vi.fn();
+    const onResume = vi.fn();
+
+    render(
+      <HaltDetailsDialog
+        open
+        onOpenChange={() => undefined}
+        primary={joinPrimary}
+        conflictAnalysis={null}
+        canResume
+        resumeBlockedReason="blocked until the contract is accepted"
+        onResume={onResume}
+        isMutating={false}
+        isResuming={false}
+        joinConflict={joinSummary}
+        onOpenLaneWorktree={onOpenLaneWorktree}
+        onEditOwnership={onEditOwnership}
+      />,
+    );
+
+    // The diagnosis survives: lane, member outcomes and the conflicting file.
+    expect(screen.getByText("Join conflict — delivery")).toBeInTheDocument();
+    expect(screen.getByText(/1 of 2 members merged/)).toBeInTheDocument();
+    expect(screen.getAllByText("src/checkout/audit.ts").length).toBeGreaterThan(
+      0,
+    );
+
+    // Both navigations still work — neither one resumes anything.
+    screen.getByRole("button", { name: "Open lane worktree" }).click();
+    expect(onOpenLaneWorktree).toHaveBeenCalledWith("context-implement");
+    screen.getByRole("button", { name: "Edit ownership" }).click();
+    expect(onEditOwnership).toHaveBeenCalledWith("context-implement");
+
+    // Retry is the one act that resumes, so it is the one act withheld.
+    const retry = screen.getByRole("button", {
+      name: /Retry join — blocked until the contract is accepted/,
+    });
+    expect(retry).toBeDisabled();
+    retry.click();
+    expect(onResume).not.toHaveBeenCalled();
+  });
+
+  // The composition the block has to survive: a join conflict is the PRIMARY
+  // halt while an unrepaired output-schema contract sits in the secondary
+  // reasons. The dialog wires the card's retry straight to onResume, so any
+  // route to that retry is a route to resuming — including the guidance input's
+  // ⌘/ctrl↵, which never touches the disabled button.
+  it("cannot be resumed from the guidance shortcut while the contract is unrepaired", async () => {
+    const user = userEvent.setup();
+    const onResume = vi.fn();
+
+    render(
+      <HaltDetailsDialog
+        open
+        onOpenChange={() => undefined}
+        primary={joinPrimary}
+        secondary={[unrepairedSchemaHalt]}
+        conflictAnalysis={null}
+        canResume
+        resumeBlockedReason="blocked until the contract is accepted"
+        onResume={onResume}
+        isMutating={false}
+        isResuming={false}
+        joinConflict={joinSummary}
+      />,
+    );
+
+    const guidance = screen.getByLabelText(
+      "Guidance for src/checkout/audit.ts",
+    );
+    await user.click(guidance);
+    await user.type(guidance, "take the lane's side");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await user.keyboard("{Meta>}{Enter}{/Meta}");
+
+    expect(onResume).not.toHaveBeenCalled();
   });
 });

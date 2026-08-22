@@ -5,7 +5,15 @@ import type {
   GraphWorkflowLaneMergeValidationConfig,
   GraphWorkflowLaneMergeValidationOverride,
 } from "@/lib/workflow-graph/config-schemas";
-import type { InspectorConfigBlockSource } from "./InspectorConfigBlock";
+/**
+ * Which tier supplied the block-level override. It named the retired
+ * inspector's block chrome; it lives here now that the chrome is gone, because
+ * the resolution below is what decides it.
+ */
+export type AgentValidationBlockSource =
+  | "global"
+  | "workflow"
+  | "context-override";
 
 // Per-leaf validation cascade resolution for the workflow-builder inspector —
 // the validation counterpart of collaboration-cascade.ts. The leaves here are
@@ -29,7 +37,7 @@ export interface ResolvedAgentValidationRole {
 export interface ContextAgentValidationCascade {
   implementer: ResolvedAgentValidationRole;
   contextValidator: ResolvedAgentValidationRole;
-  blockSource: InspectorConfigBlockSource;
+  blockSource: AgentValidationBlockSource;
 }
 
 type AgentValidationRoleKey = "implementer" | "contextValidator";

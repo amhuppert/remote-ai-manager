@@ -27,6 +27,11 @@ export const menuItemTone =
   "text-text-primary [&_svg]:text-text-tertiary data-[highlighted]:bg-[var(--cc-cyan-a08)] data-[highlighted]:[&_svg]:text-current";
 export const menuItemDanger =
   "text-red [&_svg]:text-text-tertiary data-[highlighted]:bg-[var(--cc-red-a10)] data-[highlighted]:[&_svg]:text-current";
+// Opt-in row height for menus a reader reaches by thumb: the row grows to the
+// 44px touch minimum below 768px. Off by default — a pointer menu's density is
+// part of its design, and only the call site knows whether its menu is a mobile
+// affordance.
+export const menuItemTouch = "max-768:min-h-[44px]";
 
 // Checkbox / radio items reserve a left indicator column. The checked row takes the
 // cyan-glow treatment; the highlighted-but-unchecked bg and the checked bg are

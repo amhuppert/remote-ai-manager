@@ -5,9 +5,9 @@ import { describe, it, expect, vi } from "vitest";
 import { WorkflowMobileTabBar } from "./WorkflowMobileTabBar";
 
 const tabs = [
-  { value: "graph", label: "Graph" },
-  { value: "definitions", label: "Defs" },
-  { value: "inspector", label: "Inspector" },
+  { value: "graph", label: "Graph", icon: "graph" },
+  { value: "definitions", label: "Defs", icon: "list" },
+  { value: "inspector", label: "Inspector", icon: "panel" },
 ] as const;
 
 describe("WorkflowMobileTabBar", () => {
@@ -17,6 +17,7 @@ describe("WorkflowMobileTabBar", () => {
         tabs={tabs}
         activePanel="graph"
         onChange={() => {}}
+        label="Builder panels"
       />,
     );
     expect(screen.getByText("Graph")).toBeInTheDocument();
@@ -30,6 +31,7 @@ describe("WorkflowMobileTabBar", () => {
         tabs={tabs}
         activePanel="definitions"
         onChange={() => {}}
+        label="Builder panels"
       />,
     );
     const defsBtn = screen.getByText("Defs").closest("button");
@@ -47,6 +49,7 @@ describe("WorkflowMobileTabBar", () => {
         tabs={tabs}
         activePanel="graph"
         onChange={onChange}
+        label="Builder panels"
       />,
     );
 
@@ -62,6 +65,7 @@ describe("WorkflowMobileTabBar", () => {
         tabs={tabs}
         activePanel="graph"
         onChange={onChange}
+        label="Builder panels"
       />,
     );
 

@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/styles.css">
+  <script src="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.js"></script>
+  <style>
+    html, body { height:auto !important; max-height:none !important; overflow:visible !important; background:#04070c !important; }
+    body { margin:0; font-family:var(--font-mono); }
+    a { color:var(--cyan); text-decoration:none; }
+    a:hover { color:var(--text-primary); }
+    @keyframes wf-dash { to { stroke-dashoffset:-12; } }
+    @keyframes wf-live { 0%,100% { opacity:1; } 50% { opacity:.45; } }
+    .wf-btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:26px; padding:0 10px; border:1px solid var(--border-default); border-radius:4px; background:var(--bg-raised); color:var(--text-secondary); font:500 .72rem var(--font-mono); cursor:pointer; white-space:nowrap; }
+    .wf-btn:hover:enabled { background:var(--bg-elevated); color:var(--text-primary); border-color:var(--border-strong); }
+    .wf-btn:focus-visible { outline:2px solid var(--cyan); outline-offset:2px; }
+    .wf-btn:disabled { opacity:.45; cursor:not-allowed; }
+    .wf-btn-primary { background:var(--cc-cyan-a12); color:var(--cyan); border-color:var(--cyan-glow-strong); }
+    .wf-btn-danger { color:var(--red); border-color:var(--cc-red-a25); }
+    .wf-row { display:block; width:100%; text-align:left; background:none; border:0; padding:0; color:inherit; font:inherit; cursor:pointer; }
+    .wf-row:focus-visible { outline:2px solid var(--cyan); outline-offset:2px; }
+    .wf-tab { display:inline-flex; align-items:center; height:30px; padding:0 12px; border:0; border-bottom:2px solid transparent; background:none; color:var(--text-secondary); font:500 .74rem var(--font-mono); cursor:pointer; }
+    .wf-tab[aria-selected="true"] { color:var(--cyan); border-bottom-color:var(--cyan); }
+    .wf-tab:focus-visible { outline:2px solid var(--cyan); outline-offset:-2px; }
+    .wf-note { font-family:var(--font-body); font-size:12.5px; line-height:1.65; color:var(--text-secondary); }
+    .wf-note b { color:var(--text-primary); font-weight:600; }
+    .wf-note code { font-family:var(--font-mono); color:var(--text-primary); font-size:11.5px; }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important; } }
+  </style>
+</helmet>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs>
+  <g id="wi-chev-right"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></g>
+  <g id="wi-chev-left"><path d="M10 3.5 5.5 8 10 12.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></g>
+  <g id="wi-panel"><rect x="2.5" y="3" width="11" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"></rect><path d="M9.5 3v10" stroke="currentColor" stroke-width="1.3"></path></g>
+  <g id="wi-pause"><rect x="4" y="3.5" width="2.6" height="9" rx=".8" fill="currentColor"></rect><rect x="9.4" y="3.5" width="2.6" height="9" rx=".8" fill="currentColor"></rect></g>
+  <g id="wi-play"><path d="M5 3.6 12 8l-7 4.4Z" fill="currentColor"></path></g>
+  <g id="wi-stop"><rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor"></rect></g>
+  <g id="wi-alert"><path d="M8 2.8 14.2 13.2H1.8Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"></path><path d="M8 6.6v3M8 11.4v.1" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path></g>
+  <g id="wi-check"><path d="M3.2 8.4 6.4 11.6 12.8 4.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></g>
+  <g id="wi-lock"><rect x="3.2" y="7" width="9.6" height="6.8" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4"></rect><path d="M5.6 7V5.2a2.4 2.4 0 0 1 4.8 0V7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path></g>
+  <g id="wi-merge"><circle cx="4.5" cy="4" r="1.8" fill="none" stroke="currentColor" stroke-width="1.3"></circle><circle cx="4.5" cy="12" r="1.8" fill="none" stroke="currentColor" stroke-width="1.3"></circle><circle cx="11.5" cy="8" r="1.8" fill="none" stroke="currentColor" stroke-width="1.3"></circle><path d="M4.5 5.8v4.4M6.3 4.4c2 .6 3 1.6 3.4 2.6M6.3 11.6c2-.6 3-1.6 3.4-2.6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"></path></g>
+  <g id="wi-loop"><path d="M3 7a4.6 4.6 0 0 1 4.6-4.6h4.8M12.4 2.4 10.4.6M12.4 2.4l-2 1.8M13 9a4.6 4.6 0 0 1-4.6 4.6H3.6M3.6 13.6l2 1.8M3.6 13.6l2-1.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"></path></g>
+  <g id="wi-doc"><path d="M4 2.5h5l3 3v8H4Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"></path><path d="M9 2.5v3h3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"></path></g>
+  <g id="wi-spinner"><circle cx="8" cy="8" r="5.4" fill="none" stroke="currentColor" stroke-opacity=".25" stroke-width="1.6"></circle><path d="M8 2.6a5.4 5.4 0 0 1 5.4 5.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path></g>
+</defs></svg>
+
+<section style="display:flex;flex-direction:column;gap:20px;padding:44px 48px 8px;min-width:2400px">
+  <div style="max-width:1080px">
+    <h1 style="margin:0;font:800 25px/1.2 var(--font-display);color:var(--text-primary);letter-spacing:-.01em">Execution — lanes canvas, tenure rail, context inspector</h1>
+    <p class="wf-note" style="margin:10px 0 0">
+      One canonical fixture (README §3). Lanes carry runtime status and membership; <b>grade belongs to each context</b>. The rail splits on execution
+      <b>tenure</b>, not terminality. The inspector keeps the existing <code>Tasks · Config · History</code> tabs, and the configuration editor is
+      context-oriented with the four affordance modes the lifecycle classifier defines.
+    </p>
+  </div>
+</section>
+
+<section style="display:flex;flex-direction:column;gap:14px;padding:8px 48px 0;min-width:2400px">
+  <div id="E1" data-screen-label="E1 Execution — running">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:12px">
+      <a href="#E1" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cyan-glow-strong);border-radius:4px;background:var(--cc-cyan-a08);font:600 12px var(--font-mono);color:var(--cyan)">E1</a>
+      <span style="font:600 15px var(--font-mono);color:var(--text-primary)">Running · context selected · Config tab in pause-to-edit</span>
+      <span class="wf-note">the context is in progress while the execution runs, so the editor offers the one way in: pause</span>
+    </div>
+
+    <div style="width:1760px;background:var(--bg-void);border:1px solid var(--border-default);border-radius:10px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.5)">
+      <header style="display:flex;align-items:center;justify-content:space-between;height:48px;padding:0 16px;border-bottom:1px solid var(--border-subtle);background:var(--cc-topbar-bg)">
+        <div style="display:flex;align-items:center;gap:14px">
+          <span style="font:800 1.05rem var(--font-display);color:var(--cyan)">CC</span>
+          <span style="width:1px;height:20px;background:var(--border-default)"></span>
+          <nav aria-label="Breadcrumb" style="display:flex;align-items:center;gap:8px;font:400 .76rem var(--font-mono);color:var(--text-secondary)">
+            <span>projects</span><span style="color:var(--text-tertiary)">/</span>
+            <span>atlas</span><span style="color:var(--text-tertiary)">/</span>
+            <span style="color:var(--text-primary);font-weight:600">checkout-v2</span><span style="color:var(--text-tertiary)">/</span>
+            <span>Workflow</span>
+          </nav>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button type="button" class="wf-btn">Specs</button>
+          <button type="button" class="wf-btn">Tickets</button>
+          <button type="button" class="wf-btn" aria-label="Project settings" title="Project settings" style="width:28px;padding:0">
+            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.4" fill="none" stroke="currentColor" stroke-width="1.3"></circle><path d="M8 1.8v1.6M8 12.6v1.6M14.2 8h-1.6M3.4 8H1.8M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1M12.4 12.4l-1.1-1.1M4.7 4.7 3.6 3.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"></path></svg>
+          </button>
+        </div>
+      </header>
+
+      <div style="display:flex;align-items:center;gap:12px;min-height:44px;padding:6px 14px;border-bottom:1px solid var(--border-dim);background:var(--bg-surface)">
+        <span style="display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:4px;border:1px solid var(--cyan-glow-strong);background:var(--cc-cyan-a12);color:var(--cyan);font:600 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.06em">
+          <span aria-hidden="true" style="width:6px;height:6px;border-radius:50%;background:var(--cyan);animation:wf-live 2.4s ease-in-out infinite"></span>running
+        </span>
+        <span style="font:400 .74rem var(--font-mono);color:var(--text-secondary);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+          Lane <span style="color:var(--text-primary);font-weight:600">delivery</span> · ctx_checkout and ctx_settings running in parallel · task <span style="color:var(--text-primary);font-weight:600">Audit rows on the timeout path</span>
+        </span>
+        <button type="button" class="wf-btn" style="color:var(--amber);border-color:var(--cc-amber-a30);background:var(--cc-amber-a10)">2 gates awaiting you</button>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+          <button type="button" class="wf-btn"><svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><use href="#wi-pause"></use></svg>Pause</button>
+          <button type="button" class="wf-btn wf-btn-danger"><svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><use href="#wi-stop"></use></svg>Abort</button>
+          <span style="width:1px;height:18px;background:var(--border-default)"></span>
+          <button type="button" class="wf-btn" aria-label="Collapse inspector" title="Collapse inspector" style="width:28px;padding:0"><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><use href="#wi-panel"></use></svg></button>
+        </div>
+      </div>
+
+      <div style="display:flex;height:1010px;min-height:0">
+
+        <nav aria-label="Executions" style="width:260px;flex-shrink:0;border-right:1px solid var(--border-subtle);background:var(--bg-base);display:flex;flex-direction:column;min-height:0">
+          <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border-dim)">
+            <h2 style="margin:0;font:600 .7rem var(--font-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--text-secondary)">Executions</h2>
+            <button type="button" class="wf-btn" aria-label="Collapse executions rail" title="Collapse executions rail" style="margin-left:auto;width:24px;height:24px;padding:0"><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><use href="#wi-chev-left"></use></svg></button>
+          </div>
+          <div style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:14px">
+            <div>
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:7px">
+                <h3 style="margin:0;font:600 .7rem var(--font-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--text-tertiary)">Current</h3>
+                <span title="Current holds the session's execution lease. Paused and resumably halted runs stay here." style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">holds the lease</span>
+              </div>
+              <button type="button" class="wf-row" aria-current="true" style="border:1px solid var(--cc-cyan-a40);background:var(--cc-cyan-a08);border-radius:6px;padding:10px 11px;display:flex;flex-direction:column;gap:6px">
+                <span style="display:flex;align-items:center;gap:8px;width:100%">
+                  <span style="min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 .76rem var(--font-mono);color:var(--text-primary)">Checkout rules migration</span>
+                  <span style="flex-shrink:0;border-radius:999px;padding:1px 8px;font:500 .7rem var(--font-mono);color:var(--cyan);border:1px solid var(--cc-cyan-a25);background:var(--cyan-glow)">running</span>
+                </span>
+                <span style="font:400 .7rem/1.5 var(--font-mono);color:var(--text-secondary)">exec_7f3a · launched from r4 · 6 contexts</span>
+                <span style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">inputs: target_branch=main · rollout=canary</span>
+              </button>
+            </div>
+            <div>
+              <h3 style="margin:0 0 7px;font:600 .7rem var(--font-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--text-tertiary)">History · newest first</h3>
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <button type="button" class="wf-row" style="border:1px solid var(--border-subtle);background:var(--bg-surface);border-radius:6px;padding:10px 11px;display:flex;flex-direction:column;gap:5px">
+                  <span style="display:flex;align-items:center;gap:8px;width:100%">
+                    <span style="min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 .76rem var(--font-mono);color:var(--text-primary)">Checkout rules migration</span>
+                    <span style="flex-shrink:0;border-radius:999px;padding:1px 8px;font:500 .7rem var(--font-mono);color:var(--green);border:1px solid var(--cc-green-a20);background:var(--green-glow)">completed</span>
+                  </span>
+                  <span style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">exec_5c10 · r3 snapshot · Aug 14, 9:12</span>
+                </button>
+                <button type="button" class="wf-row" style="border:1px solid var(--border-subtle);background:var(--bg-surface);border-radius:6px;padding:10px 11px;display:flex;flex-direction:column;gap:5px">
+                  <span style="display:flex;align-items:center;gap:8px;width:100%">
+                    <span style="min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 .76rem var(--font-mono);color:var(--text-primary)">Checkout rules migration</span>
+                    <span style="flex-shrink:0;border-radius:999px;padding:1px 8px;font:500 .7rem var(--font-mono);color:var(--text-tertiary);border:1px solid var(--border-default)">aborted</span>
+                  </span>
+                  <span style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">exec_41bd · r3 snapshot · Aug 12, 16:40</span>
+                </button>
+              </div>
+              <p style="margin:9px 2px 0;font:400 .7rem/1.55 var(--font-mono);color:var(--text-tertiary)">History is inspectable and deep-linkable. Every row keeps its immutable launch snapshot and has no mutation controls.</p>
+            </div>
+          </div>
+        </nav>
+
+        <div style="position:relative;flex:1;min-width:0;background:var(--bg-void);background-image:radial-gradient(rgba(255,255,255,.07) 1px,transparent 1px);background-size:20px 20px;overflow:hidden">
+
+          <div style="position:absolute;left:12px;right:12px;top:12px;height:210px;border:1px solid var(--border-subtle);border-left:2px solid var(--green-dim);border-radius:10px"></div>
+          <div style="position:absolute;left:12px;right:12px;top:234px;height:240px;border:1px solid var(--border-subtle);border-left:2px solid var(--green-dim);border-radius:10px"></div>
+          <div style="position:absolute;left:12px;right:12px;top:486px;height:280px;border:1px solid var(--cc-cyan-a25);border-left:2px solid var(--cyan);border-radius:10px;background:var(--cc-cyan-a05)"></div>
+          <div style="position:absolute;left:12px;right:12px;top:778px;height:200px;border:1px dashed var(--border-default);border-radius:10px"></div>
+
+          <div style="position:absolute;left:12px;top:12px;width:180px;height:210px;padding:12px 14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:5px">
+            <div style="display:flex;align-items:center;gap:7px"><span aria-hidden="true" style="width:7px;height:7px;border-radius:50%;background:var(--green)"></span><span style="font:600 .8rem var(--font-mono);color:var(--text-primary)">plan</span></div>
+            <span style="align-self:flex-start;border-radius:999px;padding:1px 8px;font:500 .7rem var(--font-mono);color:var(--green);border:1px solid var(--cc-green-a20);background:var(--green-glow)">merged</span>
+            <span style="font:400 .7rem/1.6 var(--font-mono);color:var(--text-tertiary)">1 member · 1 full<br>csm/checkout-v2.plan<br>joined → session</span>
+          </div>
+          <div style="position:absolute;left:12px;top:234px;width:180px;height:240px;padding:12px 14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:5px">
+            <div style="display:flex;align-items:center;gap:7px"><span aria-hidden="true" style="width:7px;height:7px;border-radius:50%;background:var(--green)"></span><span style="font:600 .8rem var(--font-mono);color:var(--text-primary)">candidate-rules</span></div>
+            <span style="align-self:flex-start;border-radius:999px;padding:1px 8px;font:500 .7rem var(--font-mono);color:var(--green);border:1px solid var(--cc-green-a20);background:var(--green-glow)">merged</span>
+            <span style="font:400 .7rem/1.6 var(--font-mono);color:var(--text-tertiary)">1 member · 1 owning<br>csm/checkout-v2.candidate-rules<br>joined → delivery</span>
+          </div>
+          <div style="position:absolute;left:12px;top:486px;width:180px;height:280px;padding:12px 14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:5px">
+            <div style="display:flex;align-items:center;gap:7px"><span aria-hidden="true" style="width:7px;height:7px;border-radius:50%;background:var(--cyan);animation:wf-live 2.4s ease-in-out infinite"></span><span style="font:600 .8rem var(--font-mono);color:var(--text-primary)">delivery</span></div>
+            <span style="align-self:flex-start;border-radius:999px;padding:1px 8px;font:500 .7rem var(--font-mono);color:var(--cyan);border:1px solid var(--cc-cyan-a25);background:var(--cyan-glow)">active</span>
+            <span style="font:400 .7rem/1.6 var(--font-mono);color:var(--text-tertiary)">3 members · 2 owning · 1 full<br>csm/checkout-v2.delivery<br>.worktrees/checkout-v2.delivery<br>publishes → session</span>
+            <p style="margin:auto 0 0;font:400 .7rem/1.5 var(--font-mono);color:var(--text-tertiary)">Two owning members run together — their paths are disjoint. The full member waits for exclusive occupancy.</p>
+          </div>
+          <div style="position:absolute;left:12px;top:778px;width:180px;height:200px;padding:12px 14px;border-right:1px solid var(--border-dim);display:flex;flex-direction:column;gap:5px">
+            <div style="display:flex;align-items:center;gap:7px"><span aria-hidden="true" style="width:7px;height:7px;border-radius:50%;background:var(--text-tertiary)"></span><span style="font:600 .8rem var(--font-mono);color:var(--text-primary)">session</span></div>
+            <span style="align-self:flex-start;border-radius:999px;padding:1px 8px;font:500 .7rem var(--font-mono);color:var(--text-secondary);border:1px solid var(--border-default)">reserved · read-only</span>
+            <span style="font:400 .7rem/1.6 var(--font-mono);color:var(--text-tertiary)">1 member · 1 read-only<br>the session worktree<br>publication target</span>
+          </div>
+
+          <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none" aria-hidden="true">
+            <defs>
+              <marker id="wf-arr-g" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 8 4 0 8Z" fill="var(--green-dim)"></path></marker>
+              <marker id="wf-arr-c" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 8 4 0 8Z" fill="var(--cyan)"></path></marker>
+              <marker id="wf-arr-n" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 8 4 0 8Z" fill="var(--border-strong)"></path></marker>
+            </defs>
+            <path d="M460 124 C510 124 146 361 196 361" fill="none" stroke="var(--green-dim)" stroke-width="2" marker-end="url(#wf-arr-g)"></path>
+            <path d="M460 361 C510 361 146 628 196 628" fill="none" stroke="var(--green-dim)" stroke-width="2" marker-end="url(#wf-arr-g)"></path>
+            <path d="M460 628 C475 628 475 626 490 626" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-dasharray="8 4" style="animation:wf-dash 1s linear infinite" marker-end="url(#wf-arr-c)"></path>
+            <path d="M754 626 C769 626 769 633 784 633" fill="none" stroke="var(--border-strong)" stroke-width="2" stroke-dasharray="3 5" marker-end="url(#wf-arr-n)"></path>
+            <path d="M1048 633 C1098 633 146 875 196 875" fill="none" stroke="var(--border-strong)" stroke-width="2" stroke-dasharray="3 5" marker-end="url(#wf-arr-n)"></path>
+          </svg>
+
+          <div style="position:absolute;left:196px;top:34px" data-lane-band="plan"><dc-import name="Context Node" title="Plan the migration" status="completed" lane="plan" laneState="merged" grade="full" implModel="sonnet-4.5" implBackend="claude" implEffort="medium" seats="reviewer:blocking:claude:sonnet-4.5" tasksDone="3" tasksTotal="3" footer="3/3 tasks · joined 09:38" portIn="false" width="264" hint-size="264px,180px"></dc-import></div>
+          <div style="position:absolute;left:196px;top:256px"><dc-import name="Context Node" title="Evaluate rules engine" status="completed" lane="candidate-rules" laneState="merged" grade="owned" paths="docs/eval" implModel="gpt-5-codex" implBackend="codex" implEffort="medium" seats="reviewer:blocking:claude:sonnet-4.5" tasksDone="2" tasksTotal="2" footer="2/2 tasks · joined 10:12" width="264" hint-size="264px,180px"></dc-import></div>
+          <div style="position:absolute;left:196px;top:508px"><dc-import name="Context Node" title="Implement checkout" status="running" lane="delivery" laneState="active" grade="owned" paths="src/checkout, src/risk" implModel="opus-4.1" implBackend="claude" implEffort="high" implSetHere="true" seats="security:blocking:claude:sonnet-4.5|style:advisory:claude:haiku-4.5" tasksDone="3" tasksTotal="5" footer="3/5 tasks · iteration 2 · pass 2 of 3" selected="true" width="264" hint-size="264px,210px"></dc-import></div>
+          <div style="position:absolute;left:490px;top:508px"><dc-import name="Context Node" title="Settings surface" status="running" lane="delivery" laneState="active" grade="owned" paths="src/settings" implModel="opus-4.1" implBackend="claude" implEffort="medium" seats="security:blocking:claude:sonnet-4.5|style:advisory:claude:haiku-4.5" tasksDone="1" tasksTotal="3" footer="1/3 tasks · iteration 1 · question parked" width="264" hint-size="264px,210px"></dc-import></div>
+          <div style="position:absolute;left:784px;top:508px"><dc-import name="Context Node" title="Rollout switch" status="pending" lane="delivery" laneState="active" grade="full" implModel="opus-4.1" implBackend="claude" implEffort="medium" seats="security:blocking:claude:sonnet-4.5" tasksDone="0" tasksTotal="2" footer="0/2 tasks" notice="Full grade — waits for exclusive occupancy of delivery." noticeTone="amber" width="264" hint-size="264px,230px"></dc-import></div>
+          <div style="position:absolute;left:196px;top:800px"><dc-import name="Context Node" title="Release notes" status="pending" lane="session" laneState="session" grade="readOnly" implModel="haiku-4.5" implBackend="claude" implEffort="low" seats="" tasksDone="0" tasksTotal="2" footer="0/2 tasks · delivers through its output schema" portOut="false" width="264" hint-size="264px,170px"></dc-import></div>
+
+          <div style="position:absolute;left:520px;top:860px;display:flex;align-items:center;gap:7px;border:1px solid var(--border-strong);border-radius:999px;padding:3px 11px;font:500 .7rem var(--font-mono);color:var(--text-tertiary)">
+            <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><use href="#wi-merge"></use></svg>publication: delivery → session, after every member completes
+          </div>
+
+          <div style="position:absolute;right:16px;bottom:16px;display:flex;align-items:center;gap:4px;border:1px solid var(--border-default);background:var(--bg-surface);border-radius:6px;padding:4px">
+            <button type="button" class="wf-btn" aria-label="Zoom out" style="width:26px;padding:0">−</button>
+            <span style="font:500 .7rem var(--font-mono);color:var(--text-secondary);padding:0 4px">100%</span>
+            <button type="button" class="wf-btn" aria-label="Zoom in" style="width:26px;padding:0">+</button>
+            <button type="button" class="wf-btn" style="padding:0 8px">Fit</button>
+          </div>
+        </div>
+
+        <aside aria-label="Inspector" style="width:420px;flex-shrink:0;border-left:1px solid var(--border-subtle);background:var(--bg-surface);display:flex;flex-direction:column;min-height:0">
+          <div style="padding:10px 14px;border-bottom:1px solid var(--border-dim);display:flex;flex-direction:column;gap:6px;flex-shrink:0">
+            <div style="display:flex;align-items:center;gap:8px">
+              <button type="button" class="wf-btn" aria-label="Back to overview" style="width:24px;height:24px;padding:0"><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><use href="#wi-chev-left"></use></svg></button>
+              <span style="min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 .82rem var(--font-mono);color:var(--text-primary)">Implement checkout</span>
+              <span style="flex-shrink:0;border-radius:999px;padding:1px 8px;font:500 .7rem var(--font-mono);color:var(--cyan);border:1px solid var(--cc-cyan-a25);background:var(--cyan-glow)">running</span>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;font:400 .7rem var(--font-mono);color:var(--text-tertiary)">
+              <span>ctx_checkout</span><span>·</span>
+              <span style="color:var(--text-secondary)">lane delivery</span><span>·</span>
+              <span style="color:var(--text-secondary)">owning src/checkout, src/risk</span><span>·</span>
+              <span>iteration 2</span><span>·</span>
+              <span style="display:inline-flex;align-items:center;gap:4px;color:var(--blue)"><svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><use href="#wi-loop"></use></svg>pass 2 of 3</span>
+            </div>
+          </div>
+          <div role="tablist" aria-label="Context inspector sections" style="display:flex;gap:2px;padding:0 10px;border-bottom:1px solid var(--border-dim);flex-shrink:0">
+            <button type="button" class="wf-tab" role="tab" aria-selected="false">Tasks</button>
+            <button type="button" class="wf-tab" role="tab" aria-selected="true">Config</button>
+            <button type="button" class="wf-tab" role="tab" aria-selected="false">History</button>
+          </div>
+          <div style="flex:1;min-height:0;display:flex">
+            <dc-import name="Config Panel" host="execution" affordance="pause-to-edit" initialNav="gates" style="width:100%;height:100%" hint-size="420px,700px"></dc-import>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section style="display:flex;flex-direction:column;gap:14px;padding:36px 48px 0;min-width:2400px">
+  <div id="E2" data-screen-label="E2 Execution states">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:12px">
+      <a href="#E2" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cyan-glow-strong);border-radius:4px;background:var(--cc-cyan-a08);font:600 12px var(--font-mono);color:var(--cyan)">E2</a>
+      <span style="font:600 15px var(--font-mono);color:var(--text-primary)">State and action matrix — one strip per state</span>
+      <span class="wf-note">controls follow README §9; each strip is the status bar plus whatever that state adds to the canvas</span>
+    </div>
+
+    <div style="display:flex;flex-wrap:wrap;gap:24px">
+
+      <div style="width:1664px;border:1px solid var(--border-default);border-radius:10px;overflow:hidden;background:var(--bg-base)">
+        <table style="width:100%;border-collapse:collapse;font:400 .72rem var(--font-mono)">
+          <caption style="text-align:left;padding:10px 14px;border-bottom:1px solid var(--border-dim);background:var(--bg-surface);font:600 .74rem var(--font-mono);color:var(--text-primary)">
+            State and action matrix — the rail column is tenure, not terminality
+          </caption>
+          <thead>
+            <tr style="background:var(--bg-surface)">
+              <th scope="col" style="text-align:left;padding:8px 14px;font:600 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-tertiary);border-bottom:1px solid var(--border-dim)">State</th>
+              <th scope="col" style="text-align:left;padding:8px 14px;font:600 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-tertiary);border-bottom:1px solid var(--border-dim)">Rail</th>
+              <th scope="col" style="text-align:left;padding:8px 14px;font:600 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-tertiary);border-bottom:1px solid var(--border-dim)">Controls</th>
+              <th scope="col" style="text-align:left;padding:8px 14px;font:600 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-tertiary);border-bottom:1px solid var(--border-dim)">Config affordance</th>
+              <th scope="col" style="text-align:left;padding:8px 14px;font:600 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-tertiary);border-bottom:1px solid var(--border-dim)">Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td style="padding:7px 14px;color:var(--text-primary);border-bottom:1px solid var(--border-dim)">pending</td><td style="padding:7px 14px;color:var(--text-secondary);border-bottom:1px solid var(--border-dim)">Current</td><td style="padding:7px 14px;color:var(--text-secondary);border-bottom:1px solid var(--border-dim)">Abort</td><td style="padding:7px 14px;color:var(--text-secondary);border-bottom:1px solid var(--border-dim)">editable — no context has started</td><td style="padding:7px 14px;color:var(--text-tertiary);border-bottom:1px solid var(--border-dim)">—</td></tr>
+            <tr><td style="padding:7px 14px;color:var(--text-primary);border-bottom:1px solid var(--border-dim)">pending · awaiting definition approval</td><td style="padding:7px 14px;color:var(--text-secondary);border-bottom:1px solid var(--border-dim)">Current</td><td style="padding:7px 14px;color:var(--text-secondary);border-bottom:1px solid var(--border-dim)">Approve · Reject</td><td style="padding:7px 14px;color:var(--text-secondary);border-bottom:1px solid var(--border-dim)">read-only</td><td style="padding:7px 14px;color:var(--text-tertiary);border-bottom:1px solid var(--border-dim)">the snapshot is frozen for the decision; rejection moves it to History</td></tr>
+            <tr><td style="padding:7px 14px;color:var(--text-primary);border-bottom:1px solid var(--border-dim)">running</td><td style="padding:7px 14px;color:var(--text-secondary);border-bottom:1px solid var(--border-dim)">Current</td><td style="padding:7px 14px;color:var(--text-secondary);border-bottom:1px solid var(--border-dim)">Pause · Abort</td><td style="padding:7px 14px;color:var(--text-secondary);border-bottom:1px solid var(--border-dim)">pause-to-edit for a started context; editable for an unstarted one</td><td style="padding:7px 14px;color:var(--text-tertiary);border-bottom:1px solid var(--border-dim)">gates surface per context, never as one global gate</td></tr>
+            <tr><td style="padding:7px 14px;color:var(--text-primary);border-bottom:1px solid var(--border-dim)">paused</td><td style="padding:7px 14px;color:var(--text-secondary);border-bottom:1px solid var(--border-dim)">Current</td><td style="padding:7px 14px;color:var(--text-secondary);border-bottom:1px solid var(--border-dim)">Resume · Abort</td><td style="padding:7px 14px;color:var(--text-secondary);border-bottom:1px solid var(--border-dim)">editable — the run is quiescent</td><td style="padding:7px 14px;color:var(--text-tertiary);border-bottom:1px solid var(--border-dim)">save offers Resume workflow afterwards</td></tr>
+            <tr><td style="padding:7px 14px;color:var(--text-primary);border-bottom:1px solid var(--border-dim)">halted · resumable · lease held</td><td style="padding:7px 14px;color:var(--text-secondary);border-bottom:1px solid var(--border-dim)">Current</td><td style="padding:7px 14px;color:var(--text-secondary);border-bottom:1px solid var(--border-dim)">Resume · Abandon</td><td style="padding:7px 14px;color:var(--text-secondary);border-bottom:1px solid var(--border-dim)">editable</td><td style="padding:7px 14px;color:var(--text-tertiary);border-bottom:1px solid var(--border-dim)">the halt names its remedy; resume restarts the retry budget</td></tr>
+            <tr><td style="padding:7px 14px;color:var(--text-primary);border-bottom:1px solid var(--border-dim)">halted · non-resumable or abandoned</td><td style="padding:7px 14px;color:var(--text-secondary);border-bottom:1px solid var(--border-dim)">History</td><td style="padding:7px 14px;color:var(--text-tertiary);border-bottom:1px solid var(--border-dim)">none</td><td style="padding:7px 14px;color:var(--text-secondary);border-bottom:1px solid var(--border-dim)">read-only · halt-not-resumable</td><td style="padding:7px 14px;color:var(--text-tertiary);border-bottom:1px solid var(--border-dim)">—</td></tr>
+            <tr><td style="padding:7px 14px;color:var(--text-primary);border-bottom:1px solid var(--border-dim)">completed</td><td style="padding:7px 14px;color:var(--text-secondary);border-bottom:1px solid var(--border-dim)">History</td><td style="padding:7px 14px;color:var(--text-tertiary);border-bottom:1px solid var(--border-dim)">none</td><td style="padding:7px 14px;color:var(--text-secondary);border-bottom:1px solid var(--border-dim)">read-only · completed</td><td style="padding:7px 14px;color:var(--text-tertiary);border-bottom:1px solid var(--border-dim)">completed contexts are frozen individually too</td></tr>
+            <tr><td style="padding:7px 14px;color:var(--text-primary)">aborted</td><td style="padding:7px 14px;color:var(--text-secondary)">History</td><td style="padding:7px 14px;color:var(--text-tertiary)">none</td><td style="padding:7px 14px;color:var(--text-secondary)">read-only · aborted</td><td style="padding:7px 14px;color:var(--text-tertiary)">—</td></tr>
+          </tbody>
+        </table>
+        <p style="margin:0;padding:9px 14px;border-top:1px solid var(--border-dim);font:400 .7rem/1.55 var(--font-mono);color:var(--text-tertiary)">
+          Every control has a pending label (Pausing… · Resuming… · Aborting… · Abandoning…), is disabled while pending, and confirms before a
+          destructive act. Historical selections never gain controls, whatever their status was.
+        </p>
+      </div>
+
+      <div style="width:820px;border:1px solid var(--border-default);border-radius:10px;overflow:hidden;background:var(--bg-void)">
+        <div style="display:flex;align-items:center;gap:10px;min-height:44px;padding:6px 12px;border-bottom:1px solid var(--border-dim);background:var(--bg-surface)">
+          <span style="padding:2px 10px;border-radius:4px;border:1px solid var(--border-default);background:var(--bg-raised);color:var(--text-secondary);font:600 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.06em">paused</span>
+          <span style="font:400 .72rem var(--font-mono);color:var(--text-secondary)">Paused by you at 11:12 · lease held · stays in Current</span>
+          <div style="margin-left:auto;display:flex;gap:8px">
+            <button type="button" class="wf-btn"><svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><use href="#wi-play"></use></svg>Resume</button>
+            <button type="button" class="wf-btn wf-btn-danger">Abort</button>
+          </div>
+        </div>
+        <div style="padding:14px;display:flex;gap:14px;align-items:flex-start">
+          <div style="width:250px;flex-shrink:0"><dc-import name="Context Node" title="Implement checkout" status="running" lane="delivery" laneState="active" grade="owned" paths="src/checkout, src/risk" implModel="opus-4.1" implEffort="high" implSetHere="true" seats="security:blocking:claude:sonnet-4.5|style:advisory:claude:haiku-4.5" tasksDone="3" tasksTotal="5" footer="paused mid-iteration 2 · quiescent" width="250" hint-size="250px,210px"></dc-import></div>
+          <p class="wf-note" style="margin:0;width:500px">
+            Pausing makes the execution <b>quiescent</b>, which is what turns a started context from <code>pause-to-edit</code> into <code>editable</code>.
+            The rail keeps it under Current because tenure, not terminality, decides that. Every control carries a pending label — <code>Resuming…</code>,
+            <code>Aborting…</code> — and Abort confirms first.
+          </p>
+        </div>
+      </div>
+
+      <div style="width:820px;border:1px solid var(--cc-red-a25);border-radius:10px;overflow:hidden;background:var(--bg-void)">
+        <div style="display:flex;align-items:center;gap:10px;min-height:44px;padding:6px 12px;border-bottom:1px solid var(--border-dim);background:var(--bg-surface)">
+          <span style="padding:2px 10px;border-radius:4px;border:1px solid var(--cc-red-a40);background:var(--cc-red-a10);color:var(--red);font:600 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.06em">halted</span>
+          <span style="font:400 .72rem var(--font-mono);color:var(--text-secondary)">Resumable · lease held · stays in Current</span>
+          <div style="margin-left:auto;display:flex;gap:8px">
+            <button type="button" class="wf-btn"><svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><use href="#wi-play"></use></svg>Resume</button>
+            <button type="button" class="wf-btn wf-btn-danger">Abandon</button>
+          </div>
+        </div>
+        <div style="padding:14px;display:flex;gap:14px;align-items:flex-start">
+          <div style="width:250px;flex-shrink:0"><dc-import name="Context Node" title="Implement checkout" status="halted" lane="delivery" laneState="active" grade="owned" paths="src/checkout, src/risk" implModel="opus-4.1" implEffort="high" implSetHere="true" seats="security:blocking:claude:sonnet-4.5" tasksDone="3" tasksTotal="5" footer="halted at iteration 2" notice="Output contract rejected: unsupported keyword minLength." width="250" hint-size="250px,230px"></dc-import></div>
+          <div style="width:500px;display:flex;flex-direction:column;gap:10px">
+            <div style="border:1px solid var(--cc-red-a25);background:var(--cc-red-a10);border-radius:6px;padding:11px 12px;display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;align-items:center;gap:8px">
+                <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" style="color:var(--red)"><use href="#wi-alert"></use></svg>
+                <span style="font:600 .74rem var(--font-mono);color:var(--red)">Output schema rejected by the engine</span>
+                <span style="margin-left:auto;font:400 .7rem var(--font-mono);color:var(--text-tertiary)">resumable halt</span>
+              </div>
+              <p style="margin:0;font:400 .72rem/1.55 var(--font-mono);color:var(--text-secondary)">
+                <span style="color:var(--text-primary)">ctx_checkout</span> declares <span style="color:var(--text-primary)">minLength</span> on
+                <span style="color:var(--text-primary)">auditTable</span>. Repair the contract, then resume — resume starts the retry budget fresh.
+              </p>
+              <div style="display:flex;gap:8px">
+                <button type="button" class="wf-btn wf-btn-primary">Edit schema</button>
+                <button type="button" class="wf-btn" disabled="">Resume — blocked until the contract is accepted</button>
+              </div>
+            </div>
+            <p class="wf-note" style="margin:0">
+              <b>Edit schema</b> is the preserved navigation: it opens the Config tab at Brief → Output schema for this context. Abandoning ends the
+              lease and moves the execution to History; it does not repair anything.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div style="width:820px;border:1px solid var(--cc-amber-a30);border-radius:10px;overflow:hidden;background:var(--bg-void)">
+        <div style="display:flex;align-items:center;gap:10px;min-height:44px;padding:6px 12px;border-bottom:1px solid var(--border-dim);background:var(--bg-surface)">
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:4px;border:1px solid var(--cyan-glow-strong);background:var(--cc-cyan-a12);color:var(--cyan);font:600 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.06em">running</span>
+          <span style="font:400 .72rem var(--font-mono);color:var(--text-secondary)">2 gates awaiting you · sibling contexts keep running</span>
+          <div style="margin-left:auto;display:flex;gap:8px">
+            <button type="button" class="wf-btn">Pause</button>
+            <button type="button" class="wf-btn wf-btn-danger">Abort</button>
+          </div>
+        </div>
+        <div style="padding:14px;display:flex;flex-direction:column;gap:12px">
+          <div style="border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base);overflow:hidden">
+            <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border-dim);background:var(--bg-surface)">
+              <span style="font:600 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Gates awaiting you</span>
+              <span style="border-radius:999px;padding:1px 8px;font:500 .7rem var(--font-mono);color:var(--amber);border:1px solid var(--amber-dim);background:var(--amber-glow)">2</span>
+              <span style="margin-left:auto;font:400 .7rem var(--font-mono);color:var(--text-tertiary)">there is no single global gate — each row names its context</span>
+            </div>
+            <button type="button" class="wf-row" style="display:flex;align-items:center;gap:9px;padding:9px 12px;border-bottom:1px solid var(--border-dim)">
+              <span style="width:6px;height:6px;border-radius:50%;background:var(--amber)"></span>
+              <span style="font:500 .74rem var(--font-mono);color:var(--text-primary)">Implement checkout</span>
+              <span style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">context approval · iteration 2 candidate</span>
+              <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" style="margin-left:auto;color:var(--text-tertiary)"><use href="#wi-chev-right"></use></svg>
+            </button>
+            <button type="button" class="wf-row" style="display:flex;align-items:center;gap:9px;padding:9px 12px">
+              <span style="width:6px;height:6px;border-radius:50%;background:var(--blue)"></span>
+              <span style="font:500 .74rem var(--font-mono);color:var(--text-primary)">Settings surface</span>
+              <span style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">parked question · "Should the toggle default to on?"</span>
+              <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" style="margin-left:auto;color:var(--text-tertiary)"><use href="#wi-chev-right"></use></svg>
+            </button>
+          </div>
+
+          <div style="display:flex;gap:12px;align-items:flex-start">
+            <div style="width:470px;flex-shrink:0;border:1px solid var(--cc-amber-a30);border-radius:6px;background:var(--bg-base);overflow:hidden">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border-dim);background:var(--cc-amber-a10)">
+                <span style="font:600 .74rem var(--font-mono);color:var(--amber)">Context approval — Implement checkout</span>
+                <span style="margin-left:auto;font:400 .7rem var(--font-mono);color:var(--text-tertiary)">iteration 2</span>
+              </div>
+              <div style="padding:11px 12px;display:flex;flex-direction:column;gap:10px">
+                <div style="display:flex;align-items:center;gap:8px;border:1px solid var(--cc-green-a20);background:var(--green-glow);border-radius:4px;padding:7px 10px">
+                  <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" style="color:var(--green)"><use href="#wi-check"></use></svg>
+                  <span style="font:500 .72rem var(--font-mono);color:var(--green)">Candidate ready</span>
+                  <span style="margin-left:auto;font:400 .7rem var(--font-mono);color:var(--text-secondary)">12 files · +341 −86 · scoped to src/checkout, src/risk</span>
+                </div>
+                <p style="margin:0;font:400 .72rem/1.55 var(--font-mono);color:var(--text-secondary)">
+                  You are reviewing the candidate <span style="color:var(--text-primary)">frozen for this gate</span>. Approving lets orchestration
+                  continue; it does not land the lane or publish it.
+                </p>
+                <label style="display:flex;flex-direction:column;gap:5px">
+                  <span style="font:500 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.06em;color:var(--text-tertiary)">Rejection feedback</span>
+                  <textarea rows="2" placeholder="Required to reject — returned to the implementer" style="border:1px solid var(--border-default);background:var(--bg-surface);color:var(--text-primary);border-radius:4px;padding:7px 9px;font:400 .72rem/1.5 var(--font-mono);resize:vertical"></textarea>
+                </label>
+                <div style="display:flex;gap:8px;align-items:center">
+                  <button type="button" class="wf-btn wf-btn-primary">Approve</button>
+                  <button type="button" class="wf-btn wf-btn-danger" disabled="">Reject — needs feedback</button>
+                  <span style="margin-left:auto;font:400 .7rem var(--font-mono);color:var(--text-tertiary)">rejection reruns validators</span>
+                </div>
+              </div>
+            </div>
+
+            <div style="flex:1;display:flex;flex-direction:column;gap:8px">
+              <span style="font:600 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-tertiary)">The other three candidate states</span>
+              <div style="display:flex;align-items:center;gap:8px;border:1px solid var(--border-subtle);border-radius:4px;padding:7px 10px;background:var(--bg-base)">
+                <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" style="color:var(--text-tertiary)"><use href="#wi-spinner"></use></svg>
+                <span style="font:500 .72rem var(--font-mono);color:var(--text-secondary)">Loading the candidate…</span>
+                <span style="margin-left:auto;font:400 .7rem var(--font-mono);color:var(--text-tertiary)">Approve disabled</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;border:1px solid var(--cc-amber-a30);border-radius:4px;padding:7px 10px;background:var(--cc-amber-a10)">
+                <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" style="color:var(--amber)"><use href="#wi-alert"></use></svg>
+                <span style="font:500 .72rem var(--font-mono);color:var(--amber)">Drifted — the tree moved since the freeze</span>
+                <span style="margin-left:auto;font:400 .7rem var(--font-mono);color:var(--text-tertiary)">Approve disabled · Reject available</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;border:1px solid var(--cc-red-a25);border-radius:4px;padding:7px 10px;background:var(--cc-red-a10)">
+                <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" style="color:var(--red)"><use href="#wi-alert"></use></svg>
+                <span style="font:500 .72rem var(--font-mono);color:var(--red)">Unavailable — candidate could not be assembled</span>
+                <span style="margin-left:auto;font:400 .7rem var(--font-mono);color:var(--text-tertiary)">Reject is the way out</span>
+              </div>
+              <p class="wf-note" style="margin:4px 0 0">
+                Four approvals exist and are not the same act: <b>definition approval</b> before the run, <b>context approval</b> here,
+                the <b>lane join</b>, and <b>publication</b>. Only the second one is this surface.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="width:820px;border:1px solid var(--cc-red-a25);border-radius:10px;overflow:hidden;background:var(--bg-void)">
+        <div style="display:flex;align-items:center;gap:10px;min-height:44px;padding:6px 12px;border-bottom:1px solid var(--border-dim);background:var(--bg-surface)">
+          <span style="padding:2px 10px;border-radius:4px;border:1px solid var(--cc-red-a40);background:var(--cc-red-a10);color:var(--red);font:600 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.06em">halted</span>
+          <span style="font:400 .72rem var(--font-mono);color:var(--text-secondary)">join failure on lane delivery · resumable</span>
+          <div style="margin-left:auto;display:flex;gap:8px">
+            <button type="button" class="wf-btn">Resume</button>
+            <button type="button" class="wf-btn wf-btn-danger">Abandon</button>
+          </div>
+        </div>
+        <div style="padding:14px;display:flex;gap:14px;align-items:flex-start">
+          <div style="width:470px;border:1px solid var(--cc-red-a25);border-radius:6px;background:var(--bg-base);overflow:hidden">
+            <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border-dim);background:var(--cc-red-a10)">
+              <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" style="color:var(--red)"><use href="#wi-merge"></use></svg>
+              <span style="font:600 .74rem var(--font-mono);color:var(--red)">Join conflict — delivery</span>
+              <span style="margin-left:auto;font:400 .7rem var(--font-mono);color:var(--text-tertiary)">join_delivery_1</span>
+            </div>
+            <div style="padding:11px 12px;display:flex;flex-direction:column;gap:9px">
+              <p style="margin:0;font:400 .72rem/1.55 var(--font-mono);color:var(--text-secondary)">
+                2 of 3 members merged. <span style="color:var(--text-primary)">ctx_settings</span> conflicts with
+                <span style="color:var(--text-primary)">ctx_checkout</span> in <span style="color:var(--text-primary)">src/checkout/audit.ts</span> —
+                both wrote the timeout branch.
+              </p>
+              <div style="display:flex;flex-direction:column;gap:4px;font:400 .7rem/1.6 var(--font-mono);color:var(--text-tertiary)">
+                <span>merged · ctx_rules → delivery</span>
+                <span>merged · ctx_checkout → delivery</span>
+                <span style="color:var(--red)">blocked · ctx_settings → delivery</span>
+              </div>
+              <p style="margin:0;font:400 .72rem/1.55 var(--font-mono);color:var(--text-secondary)">
+                Resolve in the lane worktree, or narrow one member's owned paths so the two no longer overlap, then retry the join.
+              </p>
+              <div style="display:flex;gap:8px">
+                <button type="button" class="wf-btn wf-btn-primary">Retry join</button>
+                <button type="button" class="wf-btn">Open lane worktree</button>
+                <button type="button" class="wf-btn">Edit ownership</button>
+              </div>
+            </div>
+          </div>
+          <p class="wf-note" style="margin:0;width:280px">
+            The join is a <b>runtime</b> state with its own status and recovery. It is not an approval and it is not publication — approving a context
+            never promised this would succeed.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section style="display:flex;flex-direction:column;gap:14px;padding:36px 48px 60px;min-width:2400px">
+  <div id="E3" data-screen-label="E3 Inspector surfaces">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:12px">
+      <a href="#E3" style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border:1px solid var(--cyan-glow-strong);border-radius:4px;background:var(--cc-cyan-a08);font:600 12px var(--font-mono);color:var(--cyan)">E3</a>
+      <span style="font:600 15px var(--font-mono);color:var(--text-primary)">Inspector surfaces — Overview, History, and the live-edit flow</span>
+      <span class="wf-note">every destination in the relocation map (README §11) is reachable from one of these</span>
+    </div>
+
+    <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+
+      <div style="width:420px;height:760px;border:1px solid var(--border-default);border-radius:10px;background:var(--bg-surface);display:flex;flex-direction:column;overflow:hidden">
+        <div style="padding:10px 14px;border-bottom:1px solid var(--border-dim);flex-shrink:0">
+          <div style="font:600 .82rem var(--font-mono);color:var(--text-primary)">Overview</div>
+          <div style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">nothing selected · exec_7f3a</div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px">
+          <div style="border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base);padding:10px 12px;display:flex;flex-direction:column;gap:5px">
+            <span style="font:600 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Launch</span>
+            <span style="font:400 .72rem/1.6 var(--font-mono);color:var(--text-secondary)">definition r4 · immutable snapshot · seed exec_7f3a<br>origin: template “Checkout rules migration”<br>inputs: target_branch=main · rollout=canary</span>
+            <span style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">The builder draft is r5. Saved edits do not reach this run.</span>
+          </div>
+          <div style="border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base);padding:10px 12px;display:flex;flex-direction:column;gap:5px">
+            <span style="font:600 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Shape</span>
+            <span style="font:400 .72rem/1.6 var(--font-mono);color:var(--text-secondary)">6 contexts · 17 tasks · 6 edges · 2 joins · 4 lanes</span>
+          </div>
+          <button type="button" class="wf-row" style="border:1px solid var(--cc-amber-a30);border-radius:6px;background:var(--cc-amber-a10);padding:10px 12px;display:flex;align-items:center;gap:8px">
+            <span style="font:600 .72rem var(--font-mono);color:var(--amber)">Gates</span>
+            <span style="font:400 .7rem var(--font-mono);color:var(--text-secondary)">1 context approval · 1 parked question</span>
+            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" style="margin-left:auto;color:var(--text-tertiary)"><use href="#wi-chev-right"></use></svg>
+          </button>
+          <button type="button" class="wf-row" style="border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base);padding:10px 12px;display:flex;align-items:center;gap:8px">
+            <span style="font:600 .72rem var(--font-mono);color:var(--text-primary)">Advisories</span>
+            <span style="font:400 .7rem var(--font-mono);color:var(--text-secondary)">2 open · recertification due for src/risk</span>
+            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" style="margin-left:auto;color:var(--text-tertiary)"><use href="#wi-chev-right"></use></svg>
+          </button>
+          <button type="button" class="wf-row" style="border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base);padding:10px 12px;display:flex;align-items:center;gap:8px">
+            <span style="font:600 .72rem var(--font-mono);color:var(--text-primary)">Loop ledger</span>
+            <span style="font:400 .7rem var(--font-mono);color:var(--text-secondary)">implement-review · pass 2 of 3</span>
+            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" style="margin-left:auto;color:var(--text-tertiary)"><use href="#wi-chev-right"></use></svg>
+          </button>
+          <button type="button" class="wf-row" style="border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base);padding:10px 12px;display:flex;align-items:center;gap:8px">
+            <span style="font:600 .72rem var(--font-mono);color:var(--text-primary)">Expansion ledger</span>
+            <span style="font:400 .7rem var(--font-mono);color:var(--text-secondary)">no runtime expansion in this execution</span>
+            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" style="margin-left:auto;color:var(--text-tertiary)"><use href="#wi-chev-right"></use></svg>
+          </button>
+          <button type="button" class="wf-row" style="border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base);padding:10px 12px;display:flex;align-items:center;gap:8px">
+            <span style="font:600 .72rem var(--font-mono);color:var(--text-primary)">Approvals</span>
+            <span style="font:400 .7rem var(--font-mono);color:var(--text-secondary)">definition approved 09:31 · 1 context approval open</span>
+            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" style="margin-left:auto;color:var(--text-tertiary)"><use href="#wi-chev-right"></use></svg>
+          </button>
+          <button type="button" class="wf-row" style="border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base);padding:10px 12px;display:flex;align-items:center;gap:8px">
+            <span style="font:600 .72rem var(--font-mono);color:var(--text-primary)">Documents</span>
+            <span style="font:400 .7rem var(--font-mono);color:var(--text-secondary)">3 shared · threat model, spec, runbook</span>
+            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" style="margin-left:auto;color:var(--text-tertiary)"><use href="#wi-chev-right"></use></svg>
+          </button>
+          <button type="button" class="wf-row" style="border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base);padding:10px 12px;display:flex;align-items:center;gap:8px">
+            <span style="font:600 .72rem var(--font-mono);color:var(--text-primary)">Events</span>
+            <span style="font:400 .7rem var(--font-mono);color:var(--text-secondary)">142 · circuit-breaker trips: 0</span>
+            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" style="margin-left:auto;color:var(--text-tertiary)"><use href="#wi-chev-right"></use></svg>
+          </button>
+          <div style="border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base);padding:10px 12px;display:flex;flex-direction:column;gap:5px">
+            <span style="font:600 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Result</span>
+            <span style="font:400 .72rem var(--font-mono);color:var(--text-tertiary)">Durable result appears when the run reaches a terminal state.</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="width:420px;height:760px;border:1px solid var(--border-default);border-radius:10px;background:var(--bg-surface);display:flex;flex-direction:column;overflow:hidden">
+        <div style="padding:10px 14px;border-bottom:1px solid var(--border-dim);flex-shrink:0">
+          <div style="font:600 .82rem var(--font-mono);color:var(--text-primary)">Implement checkout · History</div>
+          <div style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">3 conversations · every transcript kept</div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:8px">
+          <div style="border:1px solid var(--cc-cyan-a25);border-radius:6px;background:var(--cc-cyan-a04)">
+            <div style="display:flex;align-items:center;gap:8px;padding:9px 11px">
+              <span style="font:600 .72rem var(--font-mono);color:var(--text-primary)">conv_b41f</span>
+              <span style="border-radius:999px;padding:1px 8px;font:500 .7rem var(--font-mono);color:var(--cyan);border:1px solid var(--cc-cyan-a25);background:var(--cyan-glow)">live</span>
+              <span style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">from 10:58</span>
+              <button type="button" class="wf-btn" style="margin-left:auto;height:22px">Transcript</button>
+            </div>
+            <div style="margin:0 11px 11px 18px;border-left:2px solid var(--border-default);padding-left:13px;display:flex;flex-direction:column;gap:7px">
+              <div style="font:400 .7rem/1.5 var(--font-mono);color:var(--text-secondary)"><span style="color:var(--text-tertiary)">10:58</span> · started — fresh conversation chosen for iteration 2 (rotated from conv_a9c2)</div>
+              <div style="font:400 .7rem/1.5 var(--font-mono);color:var(--text-secondary)"><span style="color:var(--text-tertiary)">11:04</span> · task completed — Audit rows on the timeout path</div>
+              <div style="font:400 .7rem/1.5 var(--font-mono);color:var(--text-secondary)"><span style="color:var(--text-tertiary)">11:09</span> · security validating — iteration 2 <button type="button" class="wf-btn" style="height:20px;padding:0 7px;margin-left:4px">validator transcript</button></div>
+            </div>
+          </div>
+          <div style="border:1px solid var(--border-subtle);border-radius:6px">
+            <div style="display:flex;align-items:center;gap:8px;padding:9px 11px">
+              <span style="font:600 .72rem var(--font-mono);color:var(--text-primary)">conv_a9c2</span>
+              <span style="border-radius:999px;padding:1px 8px;font:500 .7rem var(--font-mono);color:var(--text-tertiary);border:1px solid var(--border-default)">ended</span>
+              <span style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">10:31 – 10:57</span>
+              <button type="button" class="wf-btn" style="margin-left:auto;height:22px">Transcript</button>
+            </div>
+            <div style="margin:0 11px 11px 18px;border-left:2px solid var(--border-default);padding-left:13px;display:flex;flex-direction:column;gap:7px">
+              <div style="font:400 .7rem/1.5 var(--font-mono);color:var(--text-secondary)"><span style="color:var(--text-tertiary)">10:31</span> · started — context-limit rotation from conv_88d0, iteration 1 continues</div>
+              <div style="font:400 .7rem/1.5 var(--font-mono);color:var(--text-secondary)"><span style="color:var(--text-tertiary)">10:38</span> · task completed — Wire risk rules into checkout</div>
+              <div style="font:400 .7rem/1.5 var(--font-mono);color:var(--red)"><span style="color:var(--text-tertiary)">10:42</span> · security rejected — audit log bypassed on the timeout path <button type="button" class="wf-btn" style="height:20px;padding:0 7px;margin-left:4px">validator transcript</button></div>
+              <div style="font:400 .7rem/1.5 var(--font-mono);color:var(--blue)"><span style="color:var(--text-tertiary)">10:42</span> · iteration 2 began — task-risk-rules reopened</div>
+              <div style="font:400 .7rem/1.5 var(--font-mono);color:var(--text-tertiary)"><span>10:57</span> · ended — superseded by conv_b41f</div>
+            </div>
+          </div>
+          <div style="border:1px solid var(--border-subtle);border-radius:6px">
+            <div style="display:flex;align-items:center;gap:8px;padding:9px 11px">
+              <span style="font:600 .72rem var(--font-mono);color:var(--text-primary)">conv_88d0</span>
+              <span style="border-radius:999px;padding:1px 8px;font:500 .7rem var(--font-mono);color:var(--text-tertiary);border:1px solid var(--border-default)">ended</span>
+              <span style="font:400 .7rem var(--font-mono);color:var(--text-tertiary)">09:40 – 10:29 · context limit</span>
+              <button type="button" class="wf-btn" style="margin-left:auto;height:22px">Transcript</button>
+            </div>
+          </div>
+          <div style="border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-base);padding:10px 12px;display:flex;flex-direction:column;gap:6px">
+            <span style="font:600 .7rem var(--font-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)">Validation rounds</span>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font:500 .72rem var(--font-mono);color:var(--text-primary)">round 2 · iteration 2</span>
+              <span style="border-radius:999px;padding:1px 8px;font:500 .7rem var(--font-mono);color:var(--cyan);border:1px solid var(--cc-cyan-a25);background:var(--cyan-glow)">in flight</span>
+              <span style="margin-left:auto;font:400 .7rem var(--font-mono);color:var(--text-tertiary)">roster frozen: security, style</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font:500 .72rem var(--font-mono);color:var(--text-primary)">round 1 · iteration 1</span>
+              <span style="border-radius:999px;padding:1px 8px;font:500 .7rem var(--font-mono);color:var(--red);border:1px solid var(--red-dim);background:var(--red-glow)">rejected</span>
+              <button type="button" class="wf-btn" style="margin-left:auto;height:20px;padding:0 7px">Artifacts</button>
+            </div>
+            <p style="margin:0;font:400 .7rem/1.5 var(--font-mono);color:var(--text-tertiary)">Each finding stays owned by the seat that raised it. Rendering is unchanged from today.</p>
+          </div>
+        </div>
+      </div>
+
+      <div style="width:420px;height:760px;border:1px solid var(--border-default);border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+        <div style="padding:8px 12px;border-bottom:1px solid var(--border-dim);background:var(--bg-base);font:500 .7rem var(--font-mono);color:var(--text-tertiary)">paused · editable · unsaved changes</div>
+        <div style="flex:1;min-height:0;display:flex"><dc-import name="Config Panel" host="execution" affordance="editable" saveState="dirty" initialNav="policy" style="width:100%;height:100%" hint-size="420px,700px"></dc-import></div>
+      </div>
+
+      <div style="width:420px;height:760px;border:1px solid var(--border-default);border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+        <div style="padding:8px 12px;border-bottom:1px solid var(--border-dim);background:var(--bg-base);font:500 .7rem var(--font-mono);color:var(--text-tertiary)">save refused · revision conflict</div>
+        <div style="flex:1;min-height:0;display:flex"><dc-import name="Config Panel" host="execution" affordance="editable" saveState="conflict" initialNav="brief>schema" style="width:100%;height:100%" hint-size="420px,700px"></dc-import></div>
+      </div>
+
+      <div style="width:420px;height:760px;border:1px solid var(--border-default);border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+        <div style="padding:8px 12px;border-bottom:1px solid var(--border-dim);background:var(--bg-base);font:500 .7rem var(--font-mono);color:var(--text-tertiary)">saved · resume offered</div>
+        <div style="flex:1;min-height:0;display:flex"><dc-import name="Config Panel" host="execution" affordance="editable" saveState="saved" initialNav="agents" style="width:100%;height:100%" hint-size="420px,700px"></dc-import></div>
+      </div>
+
+      <div style="width:420px;height:760px;border:1px solid var(--border-default);border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+        <div style="padding:8px 12px;border-bottom:1px solid var(--border-dim);background:var(--bg-base);font:500 .7rem var(--font-mono);color:var(--text-tertiary)">historical execution · read-only</div>
+        <div style="flex:1;min-height:0;display:flex"><dc-import name="Config Panel" host="execution" affordance="read-only" readOnlyReason="completed" initialNav="gates" style="width:100%;height:100%" hint-size="420px,700px"></dc-import></div>
+      </div>
+
+      <div style="width:420px;height:760px;border:1px solid var(--border-default);border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+        <div style="padding:8px 12px;border-bottom:1px solid var(--border-dim);background:var(--bg-base);font:500 .7rem var(--font-mono);color:var(--text-tertiary)">completed context · frozen</div>
+        <div style="flex:1;min-height:0;display:flex"><dc-import name="Config Panel" host="execution" affordance="frozen" initialNav="brief" style="width:100%;height:100%" hint-size="420px,700px"></dc-import></div>
+      </div>
+
+      <div style="width:420px" class="wf-note">
+        <p style="margin:0 0 10px"><b>Why four modes and not a disabled flag.</b> The classifier answers two questions — is the execution editable, and
+        what is this context's lifecycle. Editable needs both: an unstarted context, or a started one while the run is quiescent. Everything else has a
+        different sentence and a different way out, so the surface says which one applies rather than greying the fields out silently.</p>
+        <p style="margin:0 0 10px"><b>Snapshot, not re-resolution.</b> A running execution works from its snapshotted configuration. An accepted live
+        edit affects subsequent work; it is not re-resolved from Global or Workflow at an iteration boundary, and editing the saved template never
+        reaches the run.</p>
+        <p style="margin:0"><b>No Workflow scope here.</b> The live surface is context-oriented, so the scope switch does not appear. Workflow-level
+        live changes — lane-merge validation, charter amendment — are separate existing behaviour and are not this panel.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+</x-dc>
+</body>
+</html>

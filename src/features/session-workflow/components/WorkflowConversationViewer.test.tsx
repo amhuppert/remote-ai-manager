@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderWithQuery } from "@/test/component-mocks";
 
 // react-virtuoso is layout-driven and renders no items in jsdom (no real
@@ -106,13 +107,14 @@ describe("WorkflowConversationViewer", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders the workflow chrome (close + context/task header) above the ConversationPanel", async () => {
+  it("titles the Log surface with the conversation id and the role that owns it", async () => {
     const onClose = vi.fn();
     renderWithQuery(
       <WorkflowConversationViewer
         projectName="proj"
         sessionName="sess"
         conversationId="conv-1"
+        role="Implementer"
         contextTitle="API Integration"
         taskTitle="Auth middleware"
         isLive={false}
@@ -120,41 +122,106 @@ describe("WorkflowConversationViewer", () => {
       />,
     );
 
-    expect(screen.getByText("API Integration")).toBeInTheDocument();
-    expect(screen.getByText("Auth middleware")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Close transcript" }),
-    ).toBeInTheDocument();
+    const identity = screen.getByTestId("transcript-identity");
+    expect(identity).toHaveTextContent("conv-1");
+    expect(identity).toHaveTextContent("Implementer");
   });
 
-  it("shows the live indicator when isLive=true", () => {
+  it("keeps the context / task breadcrumb so the transcript still says where it came from", () => {
     renderWithQuery(
       <WorkflowConversationViewer
         projectName="proj"
         sessionName="sess"
         conversationId="conv-1"
+        role="Implementer"
+        contextTitle="API Integration"
+        taskTitle="Auth middleware"
+        isLive={false}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const breadcrumb = screen.getByTestId("transcript-breadcrumb");
+    expect(breadcrumb).toHaveTextContent("API Integration");
+    expect(breadcrumb).toHaveTextContent("Auth middleware");
+  });
+
+  it("names only the context when the transcript was opened from a conversation row rather than a task", () => {
+    renderWithQuery(
+      <WorkflowConversationViewer
+        projectName="proj"
+        sessionName="sess"
+        conversationId="conv-1"
+        role="Validator · security"
+        contextTitle="API Integration"
+        isLive={false}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const breadcrumb = screen.getByTestId("transcript-breadcrumb");
+    expect(breadcrumb).toHaveTextContent("API Integration");
+    expect(screen.getByTestId("transcript-identity")).toHaveTextContent(
+      "Validator · security",
+    );
+  });
+
+  it("closes through a canonical SVG icon control, never a Unicode glyph", async () => {
+    const onClose = vi.fn();
+    const { container } = renderWithQuery(
+      <WorkflowConversationViewer
+        projectName="proj"
+        sessionName="sess"
+        conversationId="conv-1"
+        role="Implementer"
+        contextTitle="Ctx"
+        taskTitle="Task"
+        isLive={false}
+        onClose={onClose}
+      />,
+    );
+
+    const close = screen.getByRole("button", {
+      name: "Close transcript and return to graph",
+    });
+    expect(close.querySelector("svg")).not.toBeNull();
+    expect(close.textContent).toBe("");
+    expect(container.textContent).not.toContain("✕");
+
+    await userEvent.click(close);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a live pill when the conversation is still running", () => {
+    renderWithQuery(
+      <WorkflowConversationViewer
+        projectName="proj"
+        sessionName="sess"
+        conversationId="conv-1"
+        role="Implementer"
         contextTitle="Ctx"
         taskTitle="Task"
         isLive={true}
         onClose={vi.fn()}
       />,
     );
-    expect(screen.getByText("Live")).toBeInTheDocument();
+    expect(screen.getByTestId("transcript-status")).toHaveTextContent("live");
   });
 
-  it("omits the live indicator when isLive=false", () => {
+  it("shows an ended pill when the conversation is no longer running", () => {
     renderWithQuery(
       <WorkflowConversationViewer
         projectName="proj"
         sessionName="sess"
         conversationId="conv-1"
+        role="Implementer"
         contextTitle="Ctx"
         taskTitle="Task"
         isLive={false}
         onClose={vi.fn()}
       />,
     );
-    expect(screen.queryByText("Live")).toBeNull();
+    expect(screen.getByTestId("transcript-status")).toHaveTextContent("ended");
   });
 
   it("hits the standard CC conversation-messages endpoint for the given conversationId", async () => {
@@ -163,6 +230,7 @@ describe("WorkflowConversationViewer", () => {
         projectName="proj"
         sessionName="sess"
         conversationId="conv-codex-xyz"
+        role="Implementer"
         contextTitle="Ctx"
         taskTitle="Task"
         isLive={false}
@@ -209,6 +277,7 @@ describe("WorkflowConversationViewer", () => {
           projectName="proj"
           sessionName="sess"
           conversationId="conv-mixed"
+          role="Implementer"
           contextTitle="Auth"
           taskTitle="Refactor"
           isLive={false}
@@ -254,6 +323,35 @@ describe("WorkflowConversationViewer", () => {
       ).toBeInTheDocument();
 
       expect(consoleErrorSpy).not.toHaveBeenCalled();
+    });
+
+    // The Log surface's typographic split (README §11, M2 phone 3): only the
+    // conversation's own prose is Manrope. Everything the reader uses to
+    // identify or act on the transcript — the conv id, the role, the pill —
+    // stays Geist Mono, so the chrome never reads as part of the transcript.
+    it("renders conversation prose in the body font while the header identifiers stay mono", async () => {
+      renderWithQuery(
+        <WorkflowConversationViewer
+          projectName="proj"
+          sessionName="sess"
+          conversationId="conv-mixed"
+          role="Implementer"
+          contextTitle="Auth"
+          taskTitle="Refactor"
+          isLive={false}
+          onClose={vi.fn()}
+        />,
+      );
+
+      const prose = await screen.findByText("Kick off the auth refactor.");
+      expect(prose.closest(".font-body")).not.toBeNull();
+
+      expect(screen.getByTestId("transcript-identity")).toHaveClass(
+        "font-mono",
+      );
+      expect(screen.getByTestId("transcript-breadcrumb")).toHaveClass(
+        "font-mono",
+      );
     });
   });
 });

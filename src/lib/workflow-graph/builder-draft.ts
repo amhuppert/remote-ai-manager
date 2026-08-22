@@ -102,7 +102,13 @@ function createContextEdgeId(
   return `edge-${sourceContextId}-${targetContextId}`;
 }
 
-function createTaskId(contextId: string, order: number): string {
+/**
+ * The id shape every authoring surface mints a task with. Qualifying by context
+ * is what keeps ids unique workflow-wide (`duplicate-task-id` in
+ * `validation.ts`), so the config panel allocates through this too rather than
+ * growing a second, disagreeing shape.
+ */
+export function createTaskId(contextId: string, order: number): string {
   const numericContextId = /^context-(\d+)$/.exec(contextId)?.[1];
   if (numericContextId && order === 1) {
     return `task-${numericContextId}`;

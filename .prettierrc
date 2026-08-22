@@ -106,6 +106,7 @@
         "src/features/workflow-templates/**/*.{ts,tsx}",
         "src/components/context-artifacts/**/*.{ts,tsx}",
         "src/components/workflow-config/**/*.{ts,tsx}",
+        "src/components/workflow-config-panel/**/*.{ts,tsx}",
         "src/features/tickets/**/*.{ts,tsx}",
         "src/components/SessionTicketIndicator.tsx",
         "src/components/MultilineInput.tsx",

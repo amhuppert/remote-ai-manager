@@ -91,3 +91,43 @@ describe("ContextEdge — conditional guards (R13.1)", () => {
     );
   });
 });
+
+describe("ContextEdge — lifecycle states", () => {
+  it("draws a pending edge as a neutral dashed line with no animation", () => {
+    const { container } = renderEdge({});
+
+    const path = container.querySelector("path#e-fix");
+    expect(path).toHaveAttribute("data-edge-state", "pending");
+    const className = path?.getAttribute("class") ?? "";
+    expect(className).toContain("stroke-border-strong");
+    expect(className).toContain("stroke-dasharray:3_5");
+    expect(className).not.toContain("animation");
+  });
+
+  it("draws an active edge as a marching cyan dash", () => {
+    const { container } = renderEdge({
+      sourceStatus: "completed",
+      targetStatus: "running",
+    });
+
+    const path = container.querySelector("path#e-fix");
+    expect(path).toHaveAttribute("data-edge-state", "active");
+    const className = path?.getAttribute("class") ?? "";
+    expect(className).toContain("stroke-cyan");
+    expect(className).toContain("dash-flow");
+  });
+
+  it("draws a satisfied edge solid in green, with the motion dropped", () => {
+    const { container } = renderEdge({
+      sourceStatus: "completed",
+      targetStatus: "completed",
+    });
+
+    const path = container.querySelector("path#e-fix");
+    expect(path).toHaveAttribute("data-edge-state", "satisfied");
+    const className = path?.getAttribute("class") ?? "";
+    expect(className).toContain("stroke-green-dim");
+    expect(className).not.toContain("stroke-dasharray");
+    expect(className).not.toContain("animation");
+  });
+});

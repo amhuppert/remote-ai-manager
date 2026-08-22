@@ -121,7 +121,7 @@ describe("AdvisoryIndexPanel (R9.4)", () => {
     ).toHaveTextContent("ctx-retired");
   });
 
-  it("links each entry back to its originating context AND round", () => {
+  it("links each entry back to its originating context and round", () => {
     const { onOpenOrigin } = renderPanel([
       entry({
         contextId: "ctx-ui",
@@ -130,19 +130,20 @@ describe("AdvisoryIndexPanel (R9.4)", () => {
       entry({
         contextId: "ctx-ui",
         identity: { roundSeq: 1, assignmentId: "design", ordinal: 2 },
+        title: "The empty state is unreachable",
       }),
     ]);
 
-    // The round travels with the link. A context has one history and many
-    // rounds in it, so a link that named only the context would land on
-    // whichever round the context happens to be on now.
+    // The round travels with the link: a context has one history and many
+    // rounds in it, so a link naming only the context would land on whichever
+    // round the context happens to be on now.
     fireEvent.click(
       within(entryRows()[1]!).getByTestId("advisory-index-origin"),
     );
 
     expect(onOpenOrigin).toHaveBeenCalledWith({
       contextId: "ctx-ui",
-      roundSeq: 1,
+      advisory: { roundSeq: 1, assignmentId: "design", ordinal: 2 },
     });
   });
 

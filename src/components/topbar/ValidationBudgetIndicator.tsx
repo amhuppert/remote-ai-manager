@@ -122,7 +122,9 @@ export function ValidationBudgetMenuItem({
   if (view === null) return null;
 
   return (
-    <DropdownMenuItem onSelect={onSelect}>
+    // The overflow menu only opens below 768px, so every row in it takes the
+    // touch minimum.
+    <DropdownMenuItem onSelect={onSelect} touch>
       <span className="flex w-full items-center gap-sm">
         <ValidationBudgetGauge
           fraction={view.fraction}

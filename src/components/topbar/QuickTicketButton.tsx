@@ -59,8 +59,10 @@ export default function QuickTicketButton({
 
   const shortcut = formatHotkeyDisplay(HOTKEY_REGISTRY.quickTicket.keys);
   if (presentation === "menu-item") {
+    // This presentation exists for the mobile destinations menu, so the row
+    // takes the touch minimum.
     return (
-      <DropdownMenuItem onSelect={handleOpen}>
+      <DropdownMenuItem onSelect={handleOpen} touch>
         <QuickTicketIcon size={14} />
         Quick ticket
         <DropdownMenuShortcut>{shortcut}</DropdownMenuShortcut>

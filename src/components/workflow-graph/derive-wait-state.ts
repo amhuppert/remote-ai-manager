@@ -1,6 +1,14 @@
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowExecutionContextState,
+} from "@/lib/workflow-graph/schemas";
 import { projectExecutionRoutes } from "@/lib/workflow-graph/execution-routes";
 import { incomingRoutes } from "@/lib/workflow-graph/route-projection";
+import {
+  isContextOutputCommittedToLane,
+  reachableLanesFrom,
+} from "@/lib/workflow-graph/lane-readiness";
+import { SESSION_LANE_ID } from "@/lib/workflow-graph/lane-identity";
 import type {
   CascadeWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
@@ -65,7 +73,8 @@ export function deriveContextWaitState(input: {
   if (ctxState.status === "completed") {
     if (
       ctxState.isolation === "worktree" &&
-      ctxState.mergeStatus === "merged-success"
+      ctxState.mergeStatus === "merged-success" &&
+      hasReachedSessionWorktree(execution, ctxState)
     ) {
       return { kind: "published" };
     }
@@ -128,6 +137,36 @@ export function deriveContextWaitState(input: {
   }
 
   return { kind: "ready" };
+}
+
+/**
+ * Whether this context's work has reached the session worktree. Called only
+ * for a completed, worktree-isolated context whose merge succeeded, so both
+ * branches answer the narrower question: did that merge land in the session?
+ *
+ * A LANE-BEARING context publishes by REACHABILITY to the session lane through
+ * succeeded joins — not by its own merge into its lane, which only proves it
+ * landed among its band mates while the run may still owe the publish. And not
+ * by "a final_publish names my lane" either: final-publish planning drops every
+ * lane a succeeded `context_merge` already consumed, so in a fan-in topology
+ * the publish lists only the join target and every context upstream of a join
+ * would stall on completed forever.
+ *
+ * A LANELESS context is the legacy per-context worktree shape, which predates
+ * lanes: its squash-merge landed the work directly in the session worktree, so
+ * there is no lane to reach the session from and no join that will ever name
+ * it. `isContextOutputCommittedToLane` is where that shape is defined, and
+ * deferring to it keeps this from drifting into a second opinion about which
+ * historical states count as landed.
+ */
+function hasReachedSessionWorktree(
+  execution: GraphWorkflowExecution,
+  ctxState: GraphWorkflowExecutionContextState,
+): boolean {
+  if (ctxState.laneId === null) {
+    return isContextOutputCommittedToLane(ctxState, execution);
+  }
+  return reachableLanesFrom(ctxState.laneId, execution).has(SESSION_LANE_ID);
 }
 
 function getUnmetDependencyIds(

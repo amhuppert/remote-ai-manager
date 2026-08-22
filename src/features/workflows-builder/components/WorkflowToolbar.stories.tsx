@@ -12,9 +12,11 @@ const meta = {
     onRename: fn(),
     onDelete: fn(),
     onAddContext: fn(),
+    onNewLane: fn(),
     onSave: fn(),
     onReset: fn(),
     onRelayout: fn(),
+    onOpenWorkflowSettings: fn(),
     dirty: false,
     saving: false,
     hasValidationErrors: false,
@@ -43,6 +45,26 @@ export const ValidationErrors = {
   args: {
     dirty: true,
     hasValidationErrors: true,
+  },
+} satisfies Story;
+
+/**
+ * Save is refused for a reason no validator raised: unacceptable schema text.
+ * It still puts a row in the red strip, so the status reads *Validation errors*
+ * — only the button's title distinguishes the two refusals.
+ */
+export const SaveBlockedBySchema = {
+  args: {
+    dirty: true,
+    hasValidationErrors: true,
+    saveBlocked: true,
+  },
+} satisfies Story;
+
+export const Mobile = {
+  args: {
+    dirty: true,
+    isMobile: true,
   },
 } satisfies Story;
 

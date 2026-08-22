@@ -51,7 +51,8 @@ const TOPOLOGY_READERS: Readonly<Record<string, string>> = {
   "src/lib/workflows/edit-schemas.ts": "declares the edit vocabulary",
 
   // Views of the drawn graph: position, declared dependencies, provenance.
-  "src/lib/workflow-graph/layout.ts": "lays out the drawn graph",
+  "src/lib/workflow-graph/graph-depth.ts":
+    "ranks the drawn graph by dependency depth, which is what both the automatic layout and the lane bands mean by left-to-right; the licence moved here from layout.ts when the depth pass was extracted",
   "src/lib/workflow-graph/live-outline.ts":
     "renders DECLARED dependencies; an unstarted context has no resolved ones",
   "src/cli/commands/workflow-outline.ts":

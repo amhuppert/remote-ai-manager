@@ -1,5 +1,5 @@
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import { isTaskConversationLive } from "./task-runtime-state";
+import { isWorkflowConversationLive } from "./inspector/conversation-history";
 
 export interface ResolvedViewingTask {
   conversationId: string;
@@ -16,6 +16,11 @@ export interface ResolvedViewingTask {
  * with the context/task metadata needed by `WorkflowConversationViewer`.
  *
  * Returns `null` when the task has no conversation yet or the task is unknown.
+ *
+ * `isLive` is the CONVERSATION's, which is what the Log header's pill claims —
+ * not the task's. A lane runs task after task in one conversation, so a
+ * completed task leaves its transcript open, and a halted run that no longer
+ * holds the execution lease leaves it closed however its lanes still read.
  */
 export function resolveViewingTask(
   execution: GraphWorkflowExecution,
@@ -35,6 +40,10 @@ export function resolveViewingTask(
     conversationId: taskState.lastConversationId,
     contextTitle: context?.title ?? taskDef.contextId,
     taskTitle: taskDef.title,
-    isLive: isTaskConversationLive(execution, taskId),
+    isLive: isWorkflowConversationLive(
+      execution,
+      taskDef.contextId,
+      taskState.lastConversationId,
+    ),
   };
 }

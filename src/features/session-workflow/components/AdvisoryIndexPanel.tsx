@@ -2,19 +2,25 @@
 
 import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
 import { cn } from "@/lib/ui/cn";
+import type { WorkflowAdvisoryIdentity } from "@/lib/workflow-graph/definition-schemas";
 import type { GraphWorkflowAdvisoryIndexEntry } from "@/lib/workflow-graph/schemas";
 
 type IndexedKind = GraphWorkflowAdvisoryIndexEntry["kind"];
 
 /**
- * Where an indexed advisory was raised. The round travels with the context
- * because round numbering is per context and a context outlives its rounds: a
- * link carrying only the context would land wherever that context has since
- * got to, which is not where the advisory is.
+ * Where an indexed advisory was raised: the context, and the advisory's own
+ * identity.
+ *
+ * The identity travels rather than the round number alone. Numbering is per
+ * context and a context outlives its rounds, so a link carrying only the
+ * context lands wherever that context has since got to; and because a reset
+ * restarts the numbering, a link carrying only the number cannot say which
+ * round of that number it means. The advisory can only be in the round that
+ * holds it.
  */
 export interface AdvisoryOrigin {
   contextId: string;
-  roundSeq: number;
+  advisory: WorkflowAdvisoryIdentity;
 }
 
 const KIND_LABEL: Record<IndexedKind, string> = {
@@ -31,11 +37,11 @@ const KIND_TONE: Record<IndexedKind, StatusChipTone> = {
 };
 
 const originClass =
-  "font-mono text-[0.68rem] text-text-tertiary transition-colors duration-150";
+  "font-mono text-[0.7rem] text-text-tertiary transition-colors duration-150";
 
 const originButtonClass = cn(
   originClass,
-  "cursor-pointer appearance-none border-0 bg-transparent p-0 text-left hover:text-text-primary",
+  "cursor-pointer appearance-none border-0 bg-transparent p-0 text-left hover:text-text-primary max-768:inline-flex max-768:min-h-[44px] max-768:items-center",
   "focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2",
 );
 
@@ -100,7 +106,10 @@ export default function AdvisoryIndexPanel({
                 className={originButtonClass}
                 data-testid="advisory-index-origin"
                 onClick={() =>
-                  onOpenOrigin({ contextId: entry.contextId, roundSeq })
+                  onOpenOrigin({
+                    contextId: entry.contextId,
+                    advisory: entry.identity,
+                  })
                 }
               >
                 {originLabel}

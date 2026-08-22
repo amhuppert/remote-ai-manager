@@ -3,30 +3,181 @@ import {
   createWorkflowDefinition,
   createWorkflowLayout,
 } from "./test-fixtures";
-import { generateWorkflowLayout, type NodeDimensions } from "./layout";
+import {
+  DEFAULT_NODE_HEIGHT,
+  DEFAULT_NODE_WIDTH,
+  LAYOUT_COLUMN_GAP,
+  LAYOUT_ROW_GAP,
+  generateWorkflowLayout,
+  type NodeDimensions,
+} from "./layout";
+import {
+  LANE_BAND_CONTENT_OFFSET_X,
+  LANE_BAND_GAP,
+  LANE_BAND_MIN_HEIGHT,
+  LANE_BAND_PADDING_Y,
+} from "./lane-band-geometry";
+import type {
+  GraphWorkflowContextEdge,
+  WorkflowSemanticDefinition,
+} from "./definition-schemas";
+
+/** The `plan` → `implement` → `verify` fixture, re-laned as the test needs. */
+function definitionWithLanes(
+  lanes: Record<string, string>,
+  edges?: GraphWorkflowContextEdge[],
+): WorkflowSemanticDefinition {
+  const base = createWorkflowDefinition();
+  return {
+    ...base,
+    executionContexts: base.executionContexts.map((context) => ({
+      ...context,
+      placement: {
+        lane: lanes[context.id] ?? context.placement.lane,
+        mode: "full" as const,
+      },
+    })),
+    ...(edges ? { edges } : {}),
+  };
+}
+
+function edge(sourceContextId: string, targetContextId: string) {
+  return {
+    id: `edge-${sourceContextId}-${targetContextId}`,
+    sourceContextId,
+    targetContextId,
+  };
+}
+
+/** Where the nth stacked band's members sit, at the default card height. */
+function bandContentTop(index: number): number {
+  const bandHeight = Math.max(
+    DEFAULT_NODE_HEIGHT + LANE_BAND_PADDING_Y * 2,
+    LANE_BAND_MIN_HEIGHT,
+  );
+  return LANE_BAND_PADDING_Y + index * (bandHeight + LANE_BAND_GAP);
+}
+
+const COLUMN_PITCH = DEFAULT_NODE_WIDTH + LAYOUT_COLUMN_GAP;
 
 describe("workflow-graph layout", () => {
-  it("places contexts by dependency depth when no layout exists", () => {
-    const definition = createWorkflowDefinition();
+  it("stacks one band per lane, dependency-first, with every member at the band's first column", () => {
+    const layout = generateWorkflowLayout(createWorkflowDefinition());
+
+    // plan → implement → verify are three single-member lanes, so each opens
+    // its own band and every member sits at the same first column.
+    expect(layout.contextPositions).toEqual({
+      "context-plan": { x: LANE_BAND_CONTENT_OFFSET_X, y: bandContentTop(0) },
+      "context-implement": {
+        x: LANE_BAND_CONTENT_OFFSET_X,
+        y: bandContentTop(1),
+      },
+      "context-verify": { x: LANE_BAND_CONTENT_OFFSET_X, y: bandContentTop(2) },
+    });
+  });
+
+  it("flows a band's members left to right by dependency depth", () => {
+    const definition = definitionWithLanes({
+      "context-plan": "delivery",
+      "context-implement": "delivery",
+      "context-verify": "delivery",
+    });
+
     const layout = generateWorkflowLayout(definition);
 
-    expect(layout.contextPositions["context-plan"]?.x).toBe(0);
-    expect(layout.contextPositions["context-implement"]?.x).toBeGreaterThan(
-      layout.contextPositions["context-plan"]?.x ?? 0,
+    const top = bandContentTop(0);
+    expect(layout.contextPositions).toEqual({
+      "context-plan": { x: LANE_BAND_CONTENT_OFFSET_X, y: top },
+      "context-implement": {
+        x: LANE_BAND_CONTENT_OFFSET_X + COLUMN_PITCH,
+        y: top,
+      },
+      "context-verify": {
+        x: LANE_BAND_CONTENT_OFFSET_X + COLUMN_PITCH * 2,
+        y: top,
+      },
+    });
+  });
+
+  it("stacks same-depth band mates inside the band instead of widening it", () => {
+    const definition = definitionWithLanes(
+      {
+        "context-plan": "delivery",
+        "context-implement": "delivery",
+        "context-verify": "delivery",
+      },
+      [
+        edge("context-plan", "context-implement"),
+        edge("context-plan", "context-verify"),
+      ],
     );
-    expect(layout.contextPositions["context-verify"]?.x).toBeGreaterThan(
-      layout.contextPositions["context-implement"]?.x ?? 0,
+
+    const layout = generateWorkflowLayout(definition);
+
+    const top = bandContentTop(0);
+    // Both dependents share depth 1, so they share a column and stack.
+    expect(layout.contextPositions["context-implement"]).toEqual({
+      x: LANE_BAND_CONTENT_OFFSET_X + COLUMN_PITCH,
+      y: top,
+    });
+    expect(layout.contextPositions["context-verify"]).toEqual({
+      x: LANE_BAND_CONTENT_OFFSET_X + COLUMN_PITCH,
+      y: top + DEFAULT_NODE_HEIGHT + LAYOUT_ROW_GAP,
+    });
+  });
+
+  it("keeps a taller band from overlapping the band beneath it", () => {
+    const definition = definitionWithLanes(
+      {
+        "context-plan": "delivery",
+        "context-implement": "delivery",
+        "context-verify": "session",
+      },
+      [
+        edge("context-plan", "context-implement"),
+        edge("context-plan", "context-verify"),
+      ],
+    );
+    const dims: NodeDimensions = new Map([
+      ["context-plan", { width: 264, height: 500 }],
+      ["context-implement", { width: 264, height: 200 }],
+      ["context-verify", { width: 264, height: 200 }],
+    ]);
+
+    const layout = generateWorkflowLayout(definition, null, dims);
+
+    const deliveryBandBottom = LANE_BAND_PADDING_Y + 500 + LANE_BAND_PADDING_Y;
+    expect(layout.contextPositions["context-verify"]?.y).toBe(
+      deliveryBandBottom + LANE_BAND_GAP + LANE_BAND_PADDING_Y,
     );
   });
 
-  it("preserves manual positions for unchanged contexts and fills missing ones", () => {
-    const definition = createWorkflowDefinition();
+  it("aligns columns across bands using the widest card in each column", () => {
+    const definition = definitionWithLanes({
+      "context-plan": "plan",
+      "context-implement": "delivery",
+      "context-verify": "delivery",
+    });
+    const dims: NodeDimensions = new Map([
+      ["context-plan", { width: 400, height: 200 }],
+      ["context-implement", { width: 264, height: 200 }],
+      ["context-verify", { width: 264, height: 200 }],
+    ]);
+
+    const layout = generateWorkflowLayout(definition, null, dims);
+
+    // `context-plan` (400 wide) shares column 0 with `context-implement`, so
+    // column 1 clears the widest card in column 0, not each band's own.
+    expect(layout.contextPositions["context-verify"]?.x).toBe(
+      LANE_BAND_CONTENT_OFFSET_X + 400 + LAYOUT_COLUMN_GAP,
+    );
+  });
+
+  it("preserves an explicit position and fills the rest of the graph around it", () => {
     const layout = generateWorkflowLayout(
-      definition,
+      createWorkflowDefinition(),
       createWorkflowLayout({
-        contextPositions: {
-          "context-plan": { x: 111, y: 222 },
-        },
+        contextPositions: { "context-plan": { x: 111, y: 222 } },
       }),
     );
 
@@ -35,108 +186,91 @@ describe("workflow-graph layout", () => {
     expect(layout.contextPositions["context-verify"]).toBeDefined();
   });
 
-  it("avoids overlapping generated positions with preserved manual positions at the same depth", () => {
-    const definition = createWorkflowDefinition({
-      edges: [
-        {
-          id: "edge-plan-implement",
-          sourceContextId: "context-plan",
-          targetContextId: "context-implement",
-        },
-        {
-          id: "edge-plan-verify",
-          sourceContextId: "context-plan",
-          targetContextId: "context-verify",
-        },
+  it("drops a generated band mate below a preserved one in the same column", () => {
+    const definition = definitionWithLanes(
+      {
+        "context-plan": "delivery",
+        "context-implement": "delivery",
+        "context-verify": "delivery",
+      },
+      [
+        edge("context-plan", "context-implement"),
+        edge("context-plan", "context-verify"),
       ],
-    });
+    );
 
     const layout = generateWorkflowLayout(
       definition,
       createWorkflowLayout({
         contextPositions: {
-          "context-plan": { x: 0, y: 0 },
-          "context-implement": { x: 360, y: 0 },
+          "context-implement": { x: 999, y: 700 },
         },
       }),
     );
 
+    expect(layout.contextPositions["context-implement"]).toEqual({
+      x: 999,
+      y: 700,
+    });
     expect(layout.contextPositions["context-verify"]).toEqual({
-      x: 360,
-      y: 240,
+      x: LANE_BAND_CONTENT_OFFSET_X + COLUMN_PITCH,
+      y: 700 + DEFAULT_NODE_HEIGHT + LAYOUT_ROW_GAP,
     });
   });
 
-  describe("with nodeDimensions", () => {
-    it("spaces nodes vertically based on actual heights", () => {
-      const definition = createWorkflowDefinition({
-        edges: [],
-      });
-      const dims: NodeDimensions = new Map([
-        ["context-plan", { width: 248, height: 350 }],
-        ["context-implement", { width: 248, height: 200 }],
-        ["context-verify", { width: 248, height: 280 }],
-      ]);
-
-      const layout = generateWorkflowLayout(definition, null, dims);
-
-      expect(layout.contextPositions["context-plan"]).toEqual({ x: 0, y: 0 });
-      expect(layout.contextPositions["context-implement"]?.y).toBe(350 + 40);
-      expect(layout.contextPositions["context-verify"]?.y).toBe(
-        350 + 40 + 200 + 40,
-      );
+  it("regenerates band-aware positions when re-layout discards the old ones", () => {
+    const stale = createWorkflowLayout({
+      workflowId: "workflow-1",
+      contextPositions: {
+        "context-plan": { x: -900, y: -900 },
+        "context-implement": { x: -900, y: -400 },
+        "context-verify": { x: -900, y: 100 },
+      },
     });
 
-    it("spaces depth columns based on max node width in each column", () => {
-      const definition = createWorkflowDefinition();
-      const dims: NodeDimensions = new Map([
-        ["context-plan", { width: 300, height: 200 }],
-        ["context-implement", { width: 400, height: 200 }],
-        ["context-verify", { width: 250, height: 200 }],
-      ]);
+    const relaid = generateWorkflowLayout(createWorkflowDefinition(), null);
 
-      const layout = generateWorkflowLayout(definition, null, dims);
-
-      expect(layout.contextPositions["context-plan"]?.x).toBe(0);
-      expect(layout.contextPositions["context-implement"]?.x).toBe(300 + 112);
-      expect(layout.contextPositions["context-verify"]?.x).toBe(
-        300 + 112 + 400 + 112,
-      );
+    expect(relaid.contextPositions).not.toEqual(stale.contextPositions);
+    expect(relaid.contextPositions["context-plan"]).toEqual({
+      x: LANE_BAND_CONTENT_OFFSET_X,
+      y: bandContentTop(0),
     });
+  });
 
-    it("avoids overlap with preserved positions using actual heights", () => {
-      const definition = createWorkflowDefinition({
-        edges: [
-          {
-            id: "edge-plan-implement",
-            sourceContextId: "context-plan",
-            targetContextId: "context-implement",
-          },
-          {
-            id: "edge-plan-verify",
-            sourceContextId: "context-plan",
-            targetContextId: "context-verify",
-          },
-        ],
-      });
-      const dims: NodeDimensions = new Map([
-        ["context-plan", { width: 248, height: 200 }],
-        ["context-implement", { width: 248, height: 350 }],
-        ["context-verify", { width: 248, height: 200 }],
-      ]);
+  it("spaces stacked band mates by their measured heights", () => {
+    const definition = definitionWithLanes(
+      {
+        "context-plan": "delivery",
+        "context-implement": "delivery",
+        "context-verify": "delivery",
+      },
+      [],
+    );
+    const dims: NodeDimensions = new Map([
+      ["context-plan", { width: 264, height: 350 }],
+      ["context-implement", { width: 264, height: 200 }],
+      ["context-verify", { width: 264, height: 280 }],
+    ]);
 
-      const layout = generateWorkflowLayout(
-        definition,
-        createWorkflowLayout({
-          contextPositions: {
-            "context-plan": { x: 0, y: 0 },
-            "context-implement": { x: 360, y: 0 },
-          },
-        }),
-        dims,
-      );
+    const layout = generateWorkflowLayout(definition, null, dims);
 
-      expect(layout.contextPositions["context-verify"]?.y).toBe(350 + 40);
-    });
+    // No edges: all three are depth 0, so they stack in one column.
+    const top = LANE_BAND_PADDING_Y;
+    expect(layout.contextPositions["context-plan"]?.y).toBe(top);
+    expect(layout.contextPositions["context-implement"]?.y).toBe(
+      top + 350 + LAYOUT_ROW_GAP,
+    );
+    expect(layout.contextPositions["context-verify"]?.y).toBe(
+      top + 350 + LAYOUT_ROW_GAP + 200 + LAYOUT_ROW_GAP,
+    );
+  });
+
+  it("carries the existing workflow id and viewport through", () => {
+    const layout = generateWorkflowLayout(
+      createWorkflowDefinition(),
+      createWorkflowLayout({ workflowId: "workflow-1" }),
+    );
+
+    expect(layout.workflowId).toBe("workflow-1");
   });
 });

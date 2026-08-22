@@ -9,7 +9,10 @@ import {
   SegmentedControl,
   SegmentedControlItem,
 } from "@/components/ui/SegmentedControl";
-import { getEffortLevelsForBackend } from "@/lib/agent-backends/catalog";
+import {
+  getDefaultModelForBackend,
+  getEffortLevelsForBackend,
+} from "@/lib/agent-backends/catalog";
 import type {
   ClaudeModel,
   CodexModel,
@@ -21,11 +24,12 @@ import {
   type AgentProfileAudience,
 } from "@/lib/agent-profiles/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import type {
-  AgentAssignment,
-  GraphWorkflowAgentConfig,
-  ValidatorAssignment,
-  ValidatorAuthority,
+import {
+  graphWorkflowAgentConfigSchema,
+  type AgentAssignment,
+  type GraphWorkflowAgentConfig,
+  type ValidatorAssignment,
+  type ValidatorAuthority,
 } from "@/lib/workflow-graph/config-schemas";
 import {
   ASSIGNMENT_INSTRUCTIONS_PRESENTATION,
@@ -35,6 +39,34 @@ import { FieldRow } from "./FieldPrimitives";
 
 export const VALIDATOR_STRATEGY_OPTIONS = ["conversation", "task"] as const;
 export const VALIDATOR_AUTHORITY_OPTIONS = ["blocking", "advisory"] as const;
+
+/**
+ * What switching an assignment's backend lands on.
+ *
+ * A model id belongs to exactly one backend, so a switch cannot carry the old
+ * one across; the effort resets with it rather than being kept, because the two
+ * backends grade reasoning on different scales. Both come from the catalog
+ * rather than a per-backend literal, so adding a backend needs no branch here
+ * and a changed default model reaches every switch at once. Exported so every
+ * surface offering the switch — this editor and the config panel's runtime
+ * rows — moves an author to the same place.
+ */
+export function agentConfigForBackend(
+  backend: AgentBackendId,
+): GraphWorkflowAgentConfig {
+  const model = getDefaultModelForBackend(backend);
+  const parsed = graphWorkflowAgentConfigSchema.safeParse({
+    backend,
+    model,
+    reasoningEffort: "medium",
+  });
+  if (!parsed.success) {
+    throw new Error(
+      `The catalog's default model for ${backend} (${model}) is not a valid runtime for it.`,
+    );
+  }
+  return parsed.data;
+}
 
 /**
  * The concrete per-backend runtime an assignment runs with.
@@ -57,19 +89,7 @@ export function AgentRuntimeFields({
 
   const handleBackend = (next: AgentBackendId) => {
     if (next === value.backend) return;
-    if (next === "codex") {
-      onChange({
-        backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "medium",
-      });
-    } else {
-      onChange({
-        backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
-      });
-    }
+    onChange(agentConfigForBackend(next));
   };
 
   const handleModel = (model: string) => {

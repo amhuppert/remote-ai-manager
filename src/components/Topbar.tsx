@@ -216,7 +216,7 @@ export default function Topbar({
         <div className="flex items-center gap-md max-768:min-w-0 max-768:flex-1 max-768:gap-sm">
           <Link
             href="/projects"
-            className="font-display text-[1.1rem] font-extrabold tracking-[-0.02em] text-cyan [text-shadow:0_0_20px_var(--cyan-glow-text)] max-768:text-[0.95rem]"
+            className="font-display text-[1.1rem] font-extrabold tracking-[-0.02em] text-cyan [text-shadow:0_0_20px_var(--cyan-glow-text)] max-768:inline-flex max-768:size-[44px] max-768:items-center max-768:justify-start max-768:text-[0.95rem]"
           >
             CC
           </Link>
@@ -229,7 +229,7 @@ export default function Topbar({
                     ? (breadcrumbs[breadcrumbs.length - 2]!.href ?? "/projects")
                     : "/projects"
                 }
-                className="hidden max-768:flex max-768:shrink-0 max-768:items-center max-768:px-0 max-768:py-[4px] max-768:text-[1.4rem] max-768:leading-none max-768:text-text-tertiary! max-768:hover:text-text-primary!"
+                className="hidden max-768:flex max-768:size-[44px] max-768:shrink-0 max-768:items-center max-768:justify-center max-768:px-0 max-768:text-[1.4rem] max-768:leading-none max-768:text-text-tertiary! max-768:hover:text-text-primary!"
                 aria-label="Go back"
               >
                 &#8249;
@@ -241,6 +241,12 @@ export default function Topbar({
                 seg.isSession && "font-semibold text-text-primary!",
                 isLast &&
                   "max-768:min-w-0 max-768:overflow-hidden max-768:text-ellipsis max-768:whitespace-nowrap",
+                // The current segment is the one breadcrumb that stays on a
+                // touch viewport, so when it is a link it carries the target
+                // minimum (README §12).
+                isLast &&
+                  seg.href !== undefined &&
+                  "max-768:inline-flex max-768:min-h-[44px] max-768:items-center",
               );
               const switcherLayout = cn(
                 isLast && "max-768:min-w-0 max-768:overflow-hidden",
@@ -346,7 +352,7 @@ export default function Topbar({
           <Link
             href={ticketsHref}
             className={cn(
-              "inline-flex h-[28px] items-center gap-[6px] rounded-sm border border-solid bg-transparent px-[10px] font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase no-underline [transition:all_0.15s_ease] hover:border-cyan hover:bg-bg-hover hover:text-text-primary! max-768:h-[44px] max-768:px-sm",
+              "inline-flex h-[28px] items-center gap-[6px] rounded-sm border border-solid bg-transparent px-[10px] font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase no-underline [transition:all_0.15s_ease] hover:border-cyan hover:bg-bg-hover hover:text-text-primary! max-768:h-[44px] max-768:min-w-[44px] max-768:justify-center max-768:px-sm",
               ticketsActive
                 ? "border-cyan text-text-primary!"
                 : "border-border-default text-text-secondary!",
@@ -457,17 +463,19 @@ export default function Topbar({
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              {/* This menu only opens below 768px — its trigger is hidden
+                  above it — so every row takes the touch minimum. */}
               <QuickTicketButton pathname={pathname} presentation="menu-item" />
               <ValidationBudgetMenuItem
                 onSelect={() => setBudgetSheetOpen(true)}
               />
-              <DropdownMenuItem asChild>
+              <DropdownMenuItem asChild touch>
                 <Link href={specsHref}>Specs</Link>
               </DropdownMenuItem>
-              <DropdownMenuItem asChild>
+              <DropdownMenuItem asChild touch>
                 <Link href="/templates">Workflow Templates</Link>
               </DropdownMenuItem>
-              <DropdownMenuItem asChild>
+              <DropdownMenuItem asChild touch>
                 <Link href="/config">System Configuration</Link>
               </DropdownMenuItem>
             </DropdownMenuContent>

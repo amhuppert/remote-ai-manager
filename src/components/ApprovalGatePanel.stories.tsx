@@ -8,6 +8,7 @@ const meta = {
   args: {
     contextTitle: "Implement auth flow",
     workflowName: "release-hardening",
+    iteration: 2,
     requestedAt: new Date(Date.now() - 4 * 60_000).toISOString(),
     isSubmitting: false,
     conversationBusy: false,
@@ -54,34 +55,50 @@ export const ExecutionSuspended = {
   },
 } satisfies Story;
 
+export const WithoutIteration = {
+  args: { iteration: null },
+} satisfies Story;
+
+// The four candidate states (E2 · README §10). Approve is a decision ABOUT the
+// frozen artifact, so it stays disabled until the artifact is on screen; Reject
+// is available in every one of them.
+export const ScopedChangesLoading = {
+  args: {
+    scopedChanges: { status: "loading" },
+  },
+} satisfies Story;
+
 // An enveloped context reviews exactly the paths it owns: the change set its
 // gate froze, not the shared lane worktree's whole-tree delta (R15.2).
 export const ScopedChanges = {
   args: {
     scopedChanges: {
       status: "ready",
-      ownedPaths: ["src/api", "docs/api.md"],
-      diff: {
-        files: [
-          {
-            filePath: "src/api/handler.ts",
-            additions: 2,
-            deletions: 1,
-            hunks: [
-              {
-                header: "@@ -1,3 +1,4 @@",
-                lines: [
-                  { type: "hunk-header", content: "@@ -1,3 +1,4 @@" },
-                  { type: "context", content: "import { db } from './db';" },
-                  { type: "remove", content: "export const handler = 1;" },
-                  { type: "add", content: "export const handler = 2;" },
-                ],
-              },
-            ],
-          },
-        ],
-        totalAdditions: 2,
-        totalDeletions: 1,
+      candidate: {
+        scope: "owned",
+        ownedPaths: ["src/api", "docs/api.md"],
+        diff: {
+          files: [
+            {
+              filePath: "src/api/handler.ts",
+              additions: 2,
+              deletions: 1,
+              hunks: [
+                {
+                  header: "@@ -1,3 +1,4 @@",
+                  lines: [
+                    { type: "hunk-header", content: "@@ -1,3 +1,4 @@" },
+                    { type: "context", content: "import { db } from './db';" },
+                    { type: "remove", content: "export const handler = 1;" },
+                    { type: "add", content: "export const handler = 2;" },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalAdditions: 2,
+          totalDeletions: 1,
+        },
       },
     },
   },
@@ -91,9 +108,20 @@ export const ScopedChangesEmpty = {
   args: {
     scopedChanges: {
       status: "ready",
-      ownedPaths: ["src/api"],
-      diff: { files: [], totalAdditions: 0, totalDeletions: 0 },
+      candidate: {
+        scope: "owned",
+        ownedPaths: ["src/api"],
+        diff: { files: [], totalAdditions: 0, totalDeletions: 0 },
+      },
     },
+  },
+} satisfies Story;
+
+/** A full-access member: its write surface is the lane worktree, so the gate
+ *  froze no ownership-scoped change set to render under the state row. */
+export const WholeTreeCandidate = {
+  args: {
+    scopedChanges: { status: "ready", candidate: { scope: "whole_tree" } },
   },
 } satisfies Story;
 

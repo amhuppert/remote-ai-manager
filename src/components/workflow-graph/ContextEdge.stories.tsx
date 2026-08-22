@@ -54,6 +54,8 @@ function makeNode(
         },
       ],
       mode: status ? "execution" : "builder",
+      laneState: "active" as const,
+      configOverrides: [],
       ...(status && {
         contextState: {
           contextId: id,
@@ -143,10 +145,12 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Default: Story = {
+/** Pending: the dependency exists but has not been met — neutral dashed. */
+export const Pending: Story = {
   args: {},
 };
 
+/** Active: work is flowing across the edge now — the marching cyan dash. */
 export const Active: Story = {
   args: {
     sourceStatus: "completed",
@@ -154,7 +158,8 @@ export const Active: Story = {
   },
 };
 
-export const Completed: Story = {
+/** Satisfied: the dependency is discharged — solid green, no motion. */
+export const Satisfied: Story = {
   args: {
     sourceStatus: "completed",
     targetStatus: "completed",

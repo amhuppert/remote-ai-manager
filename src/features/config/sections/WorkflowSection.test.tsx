@@ -344,7 +344,7 @@ describe("WorkflowSection", () => {
   /**
    * The cohort editor on the global-defaults (Settings) surface (R12.1). The
    * same component is asserted on the workflow-definition surface in
-   * `src/features/workflows-builder/components/WorkflowInspectorPanel.test.tsx`.
+   * `src/components/workflow-config-panel/GatesScreens.test.tsx`.
    */
   describe("validator cohort editor", () => {
     function cohortDefaults(

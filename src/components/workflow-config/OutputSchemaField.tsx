@@ -189,6 +189,26 @@ const HEADLINE: Record<"invalid-json" | "unsupported", string> = {
   unsupported: "Unsupported schema",
 };
 
+/**
+ * Why this text cannot be committed, in one line, for a surface that has room
+ * for a row rather than for the editor's issue list — the builder's validation
+ * strip lists it beside the errors the definition validator raised. Null when
+ * nothing is refused: an absent contract is a legitimate choice.
+ *
+ * The copy is the editor's own headline and the walker's own message, so the
+ * strip and the red lines under the textarea cannot say different things.
+ */
+export function describeOutputSchemaRefusal(text: string): string | null {
+  const lint = lintOutputSchemaText(text);
+  if (lint.stage === "ok" || lint.stage === "empty") return null;
+  const headline =
+    lint.stage === "invalid-json"
+      ? HEADLINE["invalid-json"]
+      : HEADLINE.unsupported;
+  const first = lint.issues[0];
+  return first === undefined ? headline : `${headline}: ${first.message}`;
+}
+
 export interface OutputSchemaFieldProps {
   /** Raw JSON text. Held as text — never as a parsed object — so a half-typed
    * schema survives a re-render or an SSE rebase. */

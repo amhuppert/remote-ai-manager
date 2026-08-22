@@ -296,3 +296,299 @@ describe("SessionWorkflowPage execution selection", () => {
     ).toHaveAttribute("aria-current", "true");
   });
 });
+
+describe("SessionWorkflowPage rail collapse", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    );
+    routerReplace.mockReset();
+    urlSubscribers.clear();
+    urlVersion = 0;
+    window.history.replaceState({}, "", pathname);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("collapses the executions rail to a labelled strip and restores it", async () => {
+    const current = execution(
+      "exec-current",
+      "2026-08-14T16:00:00.000Z",
+      "running",
+    );
+    renderWithQuery(<SessionWorkflowPage />, seedPage(current, []));
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("navigation", { name: "Workflow executions" }),
+      ).toBeInTheDocument(),
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Collapse executions rail" }),
+    );
+    expect(
+      screen.queryByRole("navigation", { name: "Workflow executions" }),
+    ).toBeNull();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Expand executions rail" }),
+    );
+    expect(
+      screen.getByRole("navigation", { name: "Workflow executions" }),
+    ).toBeInTheDocument();
+  });
+});
+
+// M2 / criterion 4: below 768px the executions rail is not a rail — it is a
+// sheet the status bar's run chip opens, and choosing a run out of it is one
+// act: dismiss, back to Graph, and write the choice to the URL.
+describe("SessionWorkflowPage mobile executions sheet", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockImplementation((query: string) => ({
+        matches: /\(max-width:/.test(query),
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    );
+    routerReplace.mockReset();
+    urlSubscribers.clear();
+    urlVersion = 0;
+    window.history.replaceState({}, "", pathname);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("moves the executions rail into a sheet behind the run chip", async () => {
+    const current = execution(
+      "exec-current",
+      "2026-08-14T16:00:00.000Z",
+      "running",
+    );
+    renderWithQuery(
+      <SessionWorkflowPage />,
+      seedPage(current, [
+        execution("exec-history", "2026-08-14T12:00:00.000Z"),
+      ]),
+    );
+
+    // The rail never stands up as a panel at this width — the tab bar owns
+    // what is on screen, and a fourth panel it cannot reach would be stranded.
+    await waitFor(() =>
+      expect(screen.getByTestId("execution-chip")).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("navigation", { name: "Workflow executions" }),
+    ).toBeNull();
+
+    await userEvent.click(screen.getByTestId("execution-chip"));
+    expect(
+      screen.getByRole("navigation", { name: "Workflow executions" }),
+    ).toBeInTheDocument();
+  });
+
+  it("names the selected run and its tenure on the chip", async () => {
+    const current = execution(
+      "exec-current",
+      "2026-08-14T16:00:00.000Z",
+      "running",
+    );
+    renderWithQuery(<SessionWorkflowPage />, seedPage(current, []));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("execution-chip")).toHaveTextContent(
+        "exec-cur · Current",
+      ),
+    );
+  });
+
+  it("closes the sheet, returns to Graph and writes the URL on a selection", async () => {
+    const current = execution(
+      "exec-current",
+      "2026-08-14T16:00:00.000Z",
+      "running",
+    );
+    const historical = execution("exec-history", "2026-08-14T12:00:00.000Z");
+    const { container } = renderWithQuery(
+      <SessionWorkflowPage />,
+      seedPage(current, [historical]),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("execution-chip")).toBeInTheDocument(),
+    );
+
+    // Get off Graph first, so the return is the switch under test.
+    await userEvent.click(screen.getByRole("button", { name: "Inspector" }));
+    expect(container.firstElementChild).toHaveAttribute(
+      "data-mobile-panel",
+      "inspector",
+    );
+
+    await userEvent.click(screen.getByTestId("execution-chip"));
+    await userEvent.click(
+      screen.getByRole("button", { name: /execution exec-history/i }),
+    );
+
+    expect(
+      screen.queryByRole("navigation", { name: "Workflow executions" }),
+    ).toBeNull();
+    expect(container.firstElementChild).toHaveAttribute(
+      "data-mobile-panel",
+      "graph",
+    );
+    expect(routerReplace).toHaveBeenCalledWith(
+      `${pathname}?execution=exec-history`,
+      { scroll: false },
+    );
+  });
+
+  // README §12 — the target minimum covers every state of the page, and a
+  // session with no workflow is the first one a reader sees. Its only action
+  // sits at 0.78rem/10px padding, which is short of 44px on its own.
+  it("gives the empty state's only action a 44px touch target", async () => {
+    renderWithQuery(<SessionWorkflowPage />, seedPage(null, []));
+
+    await waitFor(() =>
+      expect(screen.getByText("No workflow configured")).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("link", { name: "Browse templates" })).toHaveClass(
+      "max-768:min-h-[44px]",
+    );
+  });
+});
+
+// M2 / criterion 3: the execution page's panel-switching rules. Default Graph;
+// selecting a context switches to Inspector; opening a transcript switches to
+// Log and closing it returns to Graph. Panel visibility is CSS, so the contract
+// is asserted on `data-mobile-panel` and the tab bar's current tab.
+describe("SessionWorkflowPage mobile panel switching", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockImplementation((query: string) => ({
+        matches: /\(max-width:/.test(query),
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, status: 200, json: async () => [] })),
+    );
+    routerReplace.mockReset();
+    urlSubscribers.clear();
+    urlVersion = 0;
+    window.history.replaceState({}, "", pathname);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** A run with one task that has a transcript to open. */
+  function runWithTranscript() {
+    const run = execution(
+      "exec-current",
+      "2026-08-14T16:00:00.000Z",
+      "running",
+    );
+    const task = run.taskStates["task-plan-1"];
+    if (task) {
+      task.status = "completed";
+      task.lastConversationId = "conv-plan-1";
+    }
+    return run;
+  }
+
+  function panelOf(container: HTMLElement): string | null {
+    return (
+      container.firstElementChild?.getAttribute("data-mobile-panel") ?? null
+    );
+  }
+
+  function currentTab(): string | null {
+    return (
+      document.querySelector('[aria-current="page"]')?.textContent?.trim() ??
+      null
+    );
+  }
+
+  it("opens on Graph and switches to Inspector when a context is selected", async () => {
+    const { container } = renderWithQuery(
+      <SessionWorkflowPage />,
+      seedPage(runWithTranscript(), []),
+    );
+
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-testid="mobile-lane-member"]'),
+      ).not.toBeNull(),
+    );
+    expect(panelOf(container)).toBe("graph");
+    expect(currentTab()).toBe("Graph");
+
+    await userEvent.click(
+      document.querySelector<HTMLElement>(
+        '[data-testid="mobile-lane-member"][data-context-id="context-plan"]',
+      ) as HTMLElement,
+    );
+
+    expect(panelOf(container)).toBe("inspector");
+    expect(currentTab()).toBe("Inspector");
+  });
+
+  it("switches to Log when a transcript opens and back to Graph when it closes", async () => {
+    const { container } = renderWithQuery(
+      <SessionWorkflowPage />,
+      seedPage(runWithTranscript(), []),
+    );
+
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-testid="mobile-lane-member"]'),
+      ).not.toBeNull(),
+    );
+    await userEvent.click(
+      document.querySelector<HTMLElement>(
+        '[data-testid="mobile-lane-member"][data-context-id="context-plan"]',
+      ) as HTMLElement,
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: "View" }));
+    expect(panelOf(container)).toBe("log");
+    expect(currentTab()).toBe("Log");
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /close transcript/i }),
+    );
+    expect(panelOf(container)).toBe("graph");
+    expect(currentTab()).toBe("Graph");
+  });
+});

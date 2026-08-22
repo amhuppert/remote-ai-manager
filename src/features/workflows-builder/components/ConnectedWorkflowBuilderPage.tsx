@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import "@xyflow/react/dist/base.css";
 import "@/components/workflow-graph/workflow-graph.css";
+import { ChevronLeftIcon } from "@/components/icons";
 import Topbar from "@/components/Topbar";
 import WorkRailMain from "@/components/WorkRailMain";
 import { formatWorkflowSaveError } from "@/features/workflows-builder/format-save-error";
@@ -13,6 +14,7 @@ import {
   useScopedUpdateWorkflowDefinitionMutation,
 } from "@/lib/workflows/mutations";
 import {
+  useScopedWorkflowDefinitionContextCounts,
   useScopedWorkflowDefinitionQuery,
   useScopedWorkflowDefinitionsQuery,
 } from "@/lib/workflows/queries";
@@ -30,10 +32,11 @@ import type {
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
+import { useOutputSchemaBlocks } from "./output-schema-drafts";
 import type { BuilderMobilePanel } from "./WorkflowBuilderEditor";
 import WorkflowBuilderEditor from "./WorkflowBuilderEditor";
 import WorkflowDefinitionsSidebar from "./WorkflowDefinitionsSidebar";
-import type { InspectorTab } from "./WorkflowInspectorPanel";
+import type { ConfigScope } from "@/components/workflow-config-panel/types";
 
 interface ConnectedWorkflowBuilderPageProps {
   scope: WorkflowDefinitionScope;
@@ -103,10 +106,15 @@ export default function ConnectedWorkflowBuilderPage({
     initialWorkflowId,
   );
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<InspectorTab>("workflow");
+  const [configScope, setConfigScope] = useState<ConfigScope>("workflow");
   const selectedContextId = _useGraphWorkflowBuilderStore(
     (s) => s.selectedContextId,
   );
+  const draftDirty = _useGraphWorkflowBuilderStore((s) => s.dirty);
+  // Output-schema text the draft could not absorb never reaches `dirty`, but it
+  // is unsaved work all the same — the row that carries the draft has to say so
+  // rather than showing it as clean.
+  const outputSchemaBlocks = useOutputSchemaBlocks();
   const [prevSelectedContextId, setPrevSelectedContextId] = useState<
     string | null
   >(selectedContextId);
@@ -114,7 +122,7 @@ export default function ConnectedWorkflowBuilderPage({
   if (selectedContextId !== prevSelectedContextId) {
     setPrevSelectedContextId(selectedContextId);
     if (selectedContextId) {
-      setActiveTab("context");
+      setConfigScope("context");
     }
   }
 
@@ -150,6 +158,24 @@ export default function ConnectedWorkflowBuilderPage({
       null
     );
   }, [definitionsQuery.data, selectedWorkflowId]);
+
+  // The list endpoint returns body-less summaries and this rework may not
+  // change API responses, so every row's context count comes from its detail
+  // record, read client-side through the same query key the loaded draft uses.
+  const definitionIds = useMemo(
+    () => (definitionsQuery.data ?? []).map((item) => item.id),
+    [definitionsQuery.data],
+  );
+  const contextCounts = useScopedWorkflowDefinitionContextCounts(
+    scope,
+    definitionIds,
+  );
+  const sidebarDefinitions = useMemo(() => {
+    return (definitionsQuery.data ?? []).map((item) => ({
+      ...item,
+      contextCount: contextCounts[item.id] ?? null,
+    }));
+  }, [definitionsQuery.data, contextCounts]);
 
   function handleSelectDefinition(id: string): void {
     setRequestedWorkflowId(id);
@@ -249,29 +275,29 @@ export default function ConnectedWorkflowBuilderPage({
       />
       <WorkRailMain
         {...(projectName !== null ? { projectName } : {})}
-        contentClassName="flex flex-col overflow-hidden max-768:pb-[calc(56px+env(safe-area-inset-bottom,0px))]"
+        contentClassName="flex flex-col overflow-hidden max-768:pb-[calc(64px+env(safe-area-inset-bottom,0px))]"
       >
-        <div className="flex h-full min-h-0 flex-1 max-768:flex-col">
+        <div className="relative flex h-full min-h-0 flex-1 max-768:flex-col">
           <WorkflowDefinitionsSidebar
             title={isGlobal ? "Global Templates" : "Definitions"}
-            definitions={definitionsQuery.data ?? []}
+            definitions={sidebarDefinitions}
             selectedId={selectedWorkflowId}
             onSelect={handleSelectDefinition}
             onCreate={() => void handleCreateWorkflow()}
             isLoading={definitionsQuery.isPending}
             isCreating={createMutation.isPending}
+            activeDraftDirty={draftDirty || outputSchemaBlocks.length > 0}
             footer={
               <Link
-                className="flex items-center gap-[6px] px-0 py-[6px] text-[0.72rem] font-medium text-text-secondary no-underline transition-colors duration-150 hover:text-text-primary"
+                className="flex items-center gap-[6px] px-0 py-[6px] text-[0.72rem] font-medium text-text-secondary no-underline transition-colors duration-150 hover:text-text-primary max-768:min-h-[44px]"
                 href={
                   projectName === null
                     ? "/projects"
                     : `/projects/${encodeURIComponent(projectName)}`
                 }
               >
-                {projectName === null
-                  ? "← Back to Projects"
-                  : "← Back to Sessions"}
+                <ChevronLeftIcon size={12} />
+                {projectName === null ? "Back to Projects" : "Back to Sessions"}
               </Link>
             }
           />
@@ -300,12 +326,11 @@ export default function ConnectedWorkflowBuilderPage({
                 deleting={deleteMutation.isPending}
                 saveError={saveError}
                 globalDefaults={workflowDefaults}
-                activeTab={activeTab}
-                onTabChange={setActiveTab}
-                onOpenWorkflowSettings={() => setActiveTab("workflow")}
+                configScope={configScope}
+                onConfigScopeChange={setConfigScope}
                 isMobile={isMobile}
+                mobilePanel={mobilePanel}
                 onAutoSwitchPanel={autoSwitchPanel}
-                voiceProjectName={projectName}
                 projectName={projectName}
                 libraryProjectName={projectName}
               />
@@ -324,6 +349,7 @@ export default function ConnectedWorkflowBuilderPage({
           tabs={builderMobileTabs}
           activePanel={mobilePanel}
           onChange={setMobilePanel}
+          label="Builder panels"
         />
       )}
     </div>
@@ -331,7 +357,7 @@ export default function ConnectedWorkflowBuilderPage({
 }
 
 const builderMobileTabs = [
-  { value: "graph" as const, label: "Graph" },
-  { value: "definitions" as const, label: "Defs" },
-  { value: "inspector" as const, label: "Inspector" },
+  { value: "graph" as const, label: "Graph", icon: "graph" as const },
+  { value: "definitions" as const, label: "Defs", icon: "list" as const },
+  { value: "inspector" as const, label: "Inspector", icon: "panel" as const },
 ];

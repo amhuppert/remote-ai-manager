@@ -10,6 +10,7 @@ import {
   menuItemBase,
   menuItemTone,
   menuItemDanger,
+  menuItemTouch,
   menuChoiceBase,
   menuChoiceTone,
   menuChoiceIndicator,
@@ -132,12 +133,15 @@ type DropdownMenuItemProps = Omit<
 > & {
   /** Destructive action styling (red text, red-tinted highlight). */
   danger?: boolean;
+  /** 44px row minimum below 768px, for menus reached by thumb. */
+  touch?: boolean;
   /** External-geometry utilities only; appended after appearance. */
   layoutClassName?: string;
 };
 
 export function DropdownMenuItem({
   danger = false,
+  touch = false,
   layoutClassName,
   ...rest
 }: DropdownMenuItemProps): React.JSX.Element {
@@ -147,6 +151,7 @@ export function DropdownMenuItem({
       className={cn(
         menuItemBase,
         danger ? menuItemDanger : menuItemTone,
+        touch && menuItemTouch,
         layoutClassName,
       )}
     />

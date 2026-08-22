@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import WorkflowDefinitionsSidebar from "./WorkflowDefinitionsSidebar";
 
 const baseProps = {
@@ -10,116 +11,243 @@ const baseProps = {
   isLoading: false,
 };
 
-// The override-source indicator is rendered as role="img" with its meaning
-// carried by aria-label (its accessible name; the WithTooltip hover label mirrors
-// it, and the visual color is a styling concern).
-function getDot(): HTMLElement {
-  const dots = document.querySelectorAll('[role="img"]');
-  expect(dots.length).toBe(1);
-  return dots[0] as HTMLElement;
-}
+const DEFINITIONS = [
+  {
+    id: "wf-1",
+    name: "checkout-v2 release train",
+    revision: 5,
+    contextCount: 6,
+  },
+  {
+    id: "wf-2",
+    name: "Nightly seam ratchet",
+    revision: 2,
+    contextCount: 3,
+  },
+];
 
-describe("WorkflowDefinitionsSidebar dot indicator", () => {
-  it("shows the 'All defaults' tooltip when no workflow or context overrides", () => {
+describe("WorkflowDefinitionsSidebar", () => {
+  it("lists each definition with its revision and context count", () => {
+    render(
+      <WorkflowDefinitionsSidebar {...baseProps} definitions={DEFINITIONS} />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /checkout-v2 release train/ }),
+    ).toHaveTextContent("r5 · 6 contexts");
+    expect(
+      screen.getByRole("button", { name: /Nightly seam ratchet/ }),
+    ).toHaveTextContent("r2 · 3 contexts");
+  });
+
+  it("counts a single context in the singular", () => {
     render(
       <WorkflowDefinitionsSidebar
         {...baseProps}
         definitions={[
-          {
-            id: "wf-1",
-            name: "All defaults",
-            revision: 1,
-            workflowConfig: {},
-            executionContexts: [{}, {}],
-          },
+          { id: "wf-9", name: "Solo", revision: 1, contextCount: 1 },
         ]}
       />,
     );
-    expect(getDot().getAttribute("aria-label")).toBe("All defaults");
-  });
-
-  it("shows the 'All defaults' tooltip when workflowConfig/executionContexts are omitted entirely", () => {
-    render(
-      <WorkflowDefinitionsSidebar
-        {...baseProps}
-        definitions={[{ id: "wf-1", name: "Bare", revision: 1 }]}
-      />,
-    );
-    expect(getDot().getAttribute("aria-label")).toBe("All defaults");
-  });
-
-  it("shows the workflow-defaults tooltip when workflowConfig has keys and no per-context overrides", () => {
-    render(
-      <WorkflowDefinitionsSidebar
-        {...baseProps}
-        definitions={[
-          {
-            id: "wf-2",
-            name: "Workflow overrides",
-            revision: 3,
-            workflowConfig: {
-              implementer: { backend: "claude", model: "opus" },
-              iterationPolicy: { maxAttempts: 4 },
-            },
-            executionContexts: [{}, {}],
-          },
-        ]}
-      />,
-    );
-    expect(getDot().getAttribute("aria-label")).toBe(
-      "Custom workflow defaults (2 blocks overridden)",
+    expect(screen.getByRole("button", { name: /Solo/ })).toHaveTextContent(
+      "r1 · 1 context",
     );
   });
 
-  it("shows the per-context tooltip when any context has overrides, even if workflowConfig also has keys", () => {
+  // The list endpoint returns a summary without the definition body, and this
+  // surface may not change API responses — an unloaded row states its revision
+  // rather than claiming zero contexts.
+  it("omits the count for a definition whose draft has not been loaded", () => {
     render(
       <WorkflowDefinitionsSidebar
         {...baseProps}
-        definitions={[
-          {
-            id: "wf-3",
-            name: "Context overrides",
-            revision: 2,
-            workflowConfig: { implementer: { backend: "codex" } },
-            executionContexts: [
-              {
-                implementer: { backend: "claude" },
-                iterationPolicy: { maxAttempts: 2 },
-              },
-              { mutability: { allowWrite: true } },
-              {},
-            ],
-          },
-        ]}
+        definitions={[{ id: "wf-9", name: "Unloaded", revision: 4 }]}
       />,
     );
-    expect(getDot().getAttribute("aria-label")).toBe(
-      "Custom per-context config (2 contexts, 3 overrides total)",
+    const row = screen.getByRole("button", { name: /Unloaded/ });
+    expect(row).toHaveTextContent("r4");
+    expect(row).not.toHaveTextContent("contexts");
+  });
+
+  it("marks the active definition with aria-current", () => {
+    render(
+      <WorkflowDefinitionsSidebar
+        {...baseProps}
+        definitions={DEFINITIONS}
+        selectedId="wf-2"
+      />,
     );
+
+    expect(
+      screen.getByRole("button", { name: /Nightly seam ratchet/ }),
+    ).toHaveAttribute("aria-current", "true");
+    expect(
+      screen.getByRole("button", { name: /checkout-v2 release train/ }),
+    ).not.toHaveAttribute("aria-current");
+  });
+
+  it("marks only the active row unsaved while its draft is dirty", () => {
+    render(
+      <WorkflowDefinitionsSidebar
+        {...baseProps}
+        definitions={DEFINITIONS}
+        selectedId="wf-1"
+        activeDraftDirty
+      />,
+    );
+
+    const active = screen.getByRole("button", {
+      name: /checkout-v2 release train/,
+    });
+    expect(active).toHaveTextContent("r5 · 6 contexts · unsaved");
+    expect(
+      active.querySelector('[data-testid="definition-unsaved-dot"]'),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("button", { name: /Nightly seam ratchet/ }),
+    ).not.toHaveTextContent("unsaved");
+  });
+
+  it("omits the unsaved marker when the active draft is clean", () => {
+    render(
+      <WorkflowDefinitionsSidebar
+        {...baseProps}
+        definitions={DEFINITIONS}
+        selectedId="wf-1"
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /checkout-v2 release train/ }),
+    ).not.toHaveTextContent("unsaved");
+  });
+
+  it("loads a definition when its row is chosen", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(
+      <WorkflowDefinitionsSidebar
+        {...baseProps}
+        definitions={DEFINITIONS}
+        onSelect={onSelect}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /Nightly seam ratchet/ }),
+    );
+    expect(onSelect).toHaveBeenCalledWith("wf-2");
+  });
+
+  it("offers New workflow at the head of the list", async () => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn();
+    render(
+      <WorkflowDefinitionsSidebar
+        {...baseProps}
+        definitions={DEFINITIONS}
+        onCreate={onCreate}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "New workflow" }));
+    expect(onCreate).toHaveBeenCalledTimes(1);
   });
 
   it("shows Creating… and disables the create button while creation is in flight", () => {
     render(
       <WorkflowDefinitionsSidebar {...baseProps} definitions={[]} isCreating />,
     );
-    const createBtn = screen.getByRole("button", { name: /creating…/i });
-    expect(createBtn).toBeDisabled();
+    expect(screen.getByRole("button", { name: /creating…/i })).toBeDisabled();
   });
 
-  it("places the dot after the revision chip within each row", () => {
+  it("collapses to a strip that still names every definition, and expands again", async () => {
+    const user = userEvent.setup();
     render(
       <WorkflowDefinitionsSidebar
         {...baseProps}
-        definitions={[{ id: "wf-5", name: "Order", revision: 7 }]}
+        definitions={DEFINITIONS}
+        selectedId="wf-1"
       />,
     );
-    const row = screen.getByRole("button", { name: /Order/ });
-    const children = Array.from(row.children);
-    const revisionIdx = children.findIndex((c) =>
-      c.textContent?.includes("r7"),
+
+    await user.click(
+      screen.getByRole("button", { name: /collapse definitions/i }),
     );
-    const dotIdx = children.findIndex((c) => c.getAttribute("role") === "img");
-    expect(revisionIdx).toBeGreaterThanOrEqual(0);
-    expect(dotIdx).toBeGreaterThan(revisionIdx);
+
+    const strip = screen.getByRole("navigation", { name: "Definitions" });
+    expect(strip).toHaveClass("w-[48px]");
+    // Every destination survives the collapse: create, each definition, and the
+    // control that brings the full rail back.
+    expect(
+      screen.getByRole("button", { name: /new workflow/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /checkout-v2 release train/ }),
+    ).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: /expand definitions/i }),
+    );
+    expect(
+      screen.getByRole("button", { name: /Nightly seam ratchet/ }),
+    ).toHaveTextContent("r2 · 3 contexts");
+  });
+});
+
+describe("WorkflowDefinitionsSidebar — §12 collapse ladder", () => {
+  /** A viewport `matchMedia` answers per query, so 900px is narrow but not mobile. */
+  function installViewport(width: number): void {
+    vi.spyOn(window, "matchMedia").mockImplementation((query: string) => {
+      const limit = Number(/max-width:\s*(\d+)px/.exec(query)?.[1] ?? 0);
+      return {
+        matches: width <= limit,
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      } as unknown as MediaQueryList;
+    });
+  }
+
+  it("keeps the rail expanded above 1100px", () => {
+    installViewport(1280);
+    render(
+      <WorkflowDefinitionsSidebar {...baseProps} definitions={DEFINITIONS} />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Collapse definitions sidebar" }),
+    ).toBeInTheDocument();
+  });
+
+  it("collapses the rail to a strip at 1100px and below", () => {
+    installViewport(900);
+    render(
+      <WorkflowDefinitionsSidebar {...baseProps} definitions={DEFINITIONS} />,
+    );
+
+    // The strip keeps its own way back and every definition stays reachable —
+    // the rail narrows, it does not drop what it holds.
+    expect(
+      screen.getByRole("button", { name: "Expand definitions sidebar" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /checkout-v2 release train/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("gives the whole panel to the rail at the mobile breakpoint", () => {
+    installViewport(390);
+    render(
+      <WorkflowDefinitionsSidebar {...baseProps} definitions={DEFINITIONS} />,
+    );
+
+    // The bottom tab bar decides what is on screen there, so a second collapse
+    // state would hide the panel the tab bar says is showing.
+    expect(
+      screen.queryByRole("button", { name: "Expand definitions sidebar" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /checkout-v2 release train/ }),
+    ).toHaveTextContent("r5 · 6 contexts");
   });
 });
