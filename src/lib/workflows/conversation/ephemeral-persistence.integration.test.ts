@@ -404,6 +404,7 @@ function makeFakeBackendActorDeps(
       agentBackends: {
         claude: { model: "opus", timeoutMs: 300_000 },
         codex: { model: "gpt-5.4", timeoutMs: null },
+        cursor: { model: "composer-2.5", timeoutMs: null },
       },
       maxTurns: 50,
       idleQuerySessionTtlMs: 300_000,
@@ -467,6 +468,7 @@ function makeFakeBackendActorDeps(
     executeAgentCall: async () => fakeCompletedAgentCall,
     getTaskRunner: unusedInTaskRun("getTaskRunner"),
     safeAppendTranscriptEntry: async () => {},
+    safeAppendTranscriptEntryOnce: async () => {},
     saveTranscriptImage: async () => "/tmp/img.png",
     getNextImageIndex: async () => 0,
     getDebugLogUrl: (id) => `http://localhost/debug/${id}`,

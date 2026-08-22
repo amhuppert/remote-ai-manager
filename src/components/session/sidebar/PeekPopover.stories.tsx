@@ -13,6 +13,7 @@ const now = new Date("2026-05-15T12:42:00.000Z");
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
   claude: { modelId: "opus", effort: "high" },
   codex: { modelId: "gpt-5.4", effort: "high", codexFastMode: false },
+  cursor: { modelId: "composer-2.5", effort: "high" },
 };
 const minutesAgo = (minutes: number) =>
   new Date(now.getTime() - minutes * 60_000).toISOString();

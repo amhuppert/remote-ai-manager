@@ -166,7 +166,7 @@ function makeFakeRuntime(options: {
         }
       );
     },
-    close() {},
+    async close() {},
   };
   return runtime as typeof runtime & ConversationBackendRuntime;
 }

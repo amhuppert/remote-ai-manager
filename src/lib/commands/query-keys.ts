@@ -1,3 +1,5 @@
+import type { AgentBackendId } from "@/lib/shared/schemas";
+
 export const commandKeys = {
   all: ["commands"] as const,
   lists: () => [...commandKeys.all, "list"] as const,
@@ -5,8 +7,8 @@ export const commandKeys = {
   list: (
     projectName: string,
     sessionName: string | undefined,
-    backend: "claude" | "codex" = "claude",
+    backend: AgentBackendId = "claude",
   ) => [...commandKeys.lists(), projectName, sessionName, backend] as const,
-  projectList: (projectName: string, backend: "claude" | "codex" = "claude") =>
+  projectList: (projectName: string, backend: AgentBackendId = "claude") =>
     [...commandKeys.projectLists(), projectName, backend] as const,
 };

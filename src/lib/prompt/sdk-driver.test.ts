@@ -1163,6 +1163,71 @@ describe("executePromptStream (facade)", () => {
 
     expect(deps.sendConversationEvent).toHaveBeenCalled();
   });
+
+  // Project-scoped model validation: the sync hook cannot answer membership in
+  // a per-project supported-model list, so a backend that owns one declares the
+  // async hook and the driver refuses before any conversation work happens.
+  it("refuses a model the backend rejects for this project, before accepting the prompt", async () => {
+    const onAccepted = vi.fn();
+    const validateProjectModelSelection = vi.fn(async () => ({
+      ok: false as const,
+      message: 'Cursor model "gpt-5" is not in this project\'s supported list.',
+    }));
+    deps = createTestDeps({
+      getConversationBackendFactory: vi.fn(() => ({
+        ...makeMockFactory("claude"),
+        validateProjectModelSelection,
+      })),
+    });
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    await expect(
+      executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "Hello",
+        vi.fn(),
+        "conv-123",
+        "gpt-5",
+        undefined,
+        { onAccepted },
+      ),
+    ).rejects.toThrow(ModelEffortValidationError);
+
+    expect(validateProjectModelSelection).toHaveBeenCalledWith({
+      projectPath: "/projects/repo",
+      modelId: "gpt-5",
+    });
+    expect(onAccepted).not.toHaveBeenCalled();
+  });
+
+  it("consults the project-scoped hook with no explicit model so a configured default is checked too", async () => {
+    const validateProjectModelSelection = vi.fn(async () => ({
+      ok: true as const,
+    }));
+    deps = createTestDeps({
+      getConversationBackendFactory: vi.fn(() => ({
+        ...makeMockFactory("claude"),
+        validateProjectModelSelection,
+      })),
+    });
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+    );
+
+    expect(validateProjectModelSelection).toHaveBeenCalledWith({
+      projectPath: "/projects/repo",
+    });
+    expect(deps.sendConversationEvent).toHaveBeenCalled();
+  });
 });
 
 describe("/collab prompt interception", () => {

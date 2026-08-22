@@ -3,6 +3,7 @@ import {
   effortLevelsForCatalogEntry,
   type BackendCatalogEntry,
 } from "@/lib/agent-backends/catalog";
+import { backendFacetRefusalIn } from "@/lib/agent-backends/facet-gating";
 import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
 import { conversationNamingConfigSchema } from "@/lib/config/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -99,6 +100,11 @@ export function NamingSection({
           <ConfigPillGroup
             value={backend}
             options={backends.map((b) => b.id)}
+            // Naming runs as a one-shot task, so a backend with no task facet
+            // cannot be selected here (spec D13).
+            getOptionDisabledReason={(id) =>
+              backendFacetRefusalIn(backends, id, "tasks")
+            }
             onChange={(value) => {
               const nextEntry = backends.find((b) => b.id === value);
               if (!nextEntry) {

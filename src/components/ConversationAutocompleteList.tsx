@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/ui/cn";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationStatus } from "@/lib/conversations/schemas";
 import {
   AutocompleteKbd,
@@ -27,7 +28,7 @@ export interface ConversationAutocompleteListItem {
   matchIndices: number[];
   projectName: string;
   sessionName: string;
-  backend: "claude" | "codex";
+  backend: AgentBackendId;
   /** Optional sub-row label; rendered only when set. */
   model: string | null;
   /** Pre-rendered relative time string, e.g. "8m", "2h", "1d". */

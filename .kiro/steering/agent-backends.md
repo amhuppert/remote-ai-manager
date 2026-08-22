@@ -49,6 +49,17 @@ The caller supplies its authoritative JSON Schema through the neutral conversati
 
 Keep this transport asymmetry below the backend seam. Neutral callers select behavior from declared capabilities and must not branch on provider identity.
 
+## Model selection
+
+`ConversationBackendFactory` exposes two model hooks, and which one a backend implements says where its selectable models come from:
+
+- `validateModelAndEffort` is synchronous and project-blind. It answers what Command Center knows on its own — a model/effort enum, a model↔effort compatibility rule, a shape requirement.
+- `validateProjectModelSelection` is asynchronous and receives `projectPath`, for a backend whose selectable models are a property of the project rather than of Command Center. Cursor implements it: `CommandCenter.json`'s `agentBackends.cursor.supportedModels` is the authority, read through the adapter's model policy. Omitting `modelId` asks the backend to check what it would resolve on its own, so a configured default outside the project's list fails closed instead of substituting.
+
+A backend that declares `validateProjectModelSelection` also declares `resolveProjectModelOptions`, which reports the project's permitted models and the id a turn would run with nothing selected (`null` when nothing would). `GET /api/projects/[name]/model-options` projects it for every registered backend — falling back to the catalog for the backends that declare neither — and conversation-creation surfaces build their choices from that projection rather than from `getModelsForBackend`. A value outside the projection renders as an explicit invalid selection, never as a substituted model.
+
+Callers invoke whichever hooks a factory declares; none of them is a place for provider identity above the seam.
+
 ## Adding or extending a backend
 
 1. Add or extend a descriptor and the required facets under that provider's adapter directory.

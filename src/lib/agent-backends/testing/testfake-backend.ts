@@ -161,6 +161,7 @@ export const testfakeMcpCapabilities: McpBackendCapabilities = {
   strictAuthoritativeConfig: false,
   serverDisable: "native",
   betweenTurnApply: "next-turn",
+  transports: { stdio: true, "streamable-http": true, sse: true },
   toolFiltering: {
     mode: "permission-layer",
     byTransport: {
@@ -337,7 +338,7 @@ export function createTestFakeBackend(
         };
       },
 
-      close() {
+      async close() {
         record("runtime.close", {});
         status = "dead";
       },

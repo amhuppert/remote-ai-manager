@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { NextRequest } from "next/server";
+import { NextRequest } from "next/server";
 import type { CommandItem } from "@/lib/commands/schemas";
+import { DEFAULT_AGENT_BACKEND_ID } from "@/lib/shared/schemas";
 import {
   createCommandsRouteHandlers,
   createProjectCommandsRouteHandlers,
@@ -58,6 +59,14 @@ function makeRequest(): NextRequest {
     "http://localhost/api/projects/my-project/sessions/test-session/commands",
     { method: "GET" },
   ) as unknown as NextRequest;
+}
+
+function makeSessionRequest(backend: string): NextRequest {
+  const url = new URL(
+    "http://localhost/api/projects/my-project/sessions/test-session/commands",
+  );
+  url.searchParams.set("backend", backend);
+  return new NextRequest(url, { method: "GET" });
 }
 
 function makeParams(name = "my-project", session = "test-session") {
@@ -154,6 +163,75 @@ describe("GET /api/projects/[name]/sessions/[session]/commands", () => {
     const body = (await response.json()) as { items: CommandItem[] };
     expect(body.items).toEqual([]);
   });
+
+  it("uses the default backend when the backend query is absent", async () => {
+    const response = await handlers.GET(makeRequest(), makeParams());
+
+    expect(response.status).toBe(200);
+    expect(deps.discoverCommands).toHaveBeenCalledWith(
+      testSession.worktreePath,
+      DEFAULT_AGENT_BACKEND_ID,
+    );
+  });
+
+  it("passes an explicit claude backend to command discovery", async () => {
+    await handlers.GET(makeSessionRequest("claude"), makeParams());
+
+    expect(deps.discoverCommands).toHaveBeenCalledWith(
+      testSession.worktreePath,
+      "claude",
+    );
+  });
+
+  it("passes an explicit cursor backend to command discovery and returns its bounded empty result", async () => {
+    // Cursor is registered and parses canonically, and the SDK exposes no
+    // command surface — so the honest answer is an empty result reached
+    // WITHOUT scanning another backend's directories. The discoverer's
+    // no-scan behaviour is pinned in service.test.ts; here the contract is
+    // that the route passes cursor through rather than coercing it.
+    vi.mocked(deps.discoverCommands).mockResolvedValue([]);
+
+    const response = await handlers.GET(
+      makeSessionRequest("cursor"),
+      makeParams(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.discoverCommands).toHaveBeenCalledWith(
+      testSession.worktreePath,
+      "cursor",
+    );
+    const body = (await response.json()) as { items: CommandItem[] };
+    expect(body.items).toEqual([]);
+  });
+
+  it("rejects an unknown backend with a bounded 400 instead of defaulting", async () => {
+    const response = await handlers.GET(
+      makeSessionRequest("not-a-registered-backend"),
+      makeParams(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(deps.discoverCommands).not.toHaveBeenCalled();
+    const body = (await response.json()) as { error: string; code?: string };
+    expect(body.code).toBe("INVALID_BACKEND");
+    expect(body.error).toContain("backend");
+  });
+
+  it("does not echo an unbounded unknown backend value in the error", async () => {
+    const oversized = "x".repeat(5000);
+
+    const response = await handlers.GET(
+      makeSessionRequest(oversized),
+      makeParams(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(deps.discoverCommands).not.toHaveBeenCalled();
+    const body = (await response.json()) as { error: string };
+    expect(body.error).not.toContain(oversized);
+    expect(body.error.length).toBeLessThan(200);
+  });
 });
 
 // ===========================================================================
@@ -206,5 +284,95 @@ describe("GET /api/projects/[name]/commands", () => {
       "/projects/my-project",
       "codex",
     );
+  });
+
+  it("uses the default backend when the backend query is absent", async () => {
+    const projectDeps = createProjectTestDeps();
+    const projectHandlers = createProjectCommandsRouteHandlers(projectDeps);
+
+    const response = await projectHandlers.GET(makeProjectRequest(), {
+      params: Promise.resolve({ name: "my-project" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(projectDeps.discoverCommands).toHaveBeenCalledWith(
+      "/projects/my-project",
+      DEFAULT_AGENT_BACKEND_ID,
+    );
+  });
+
+  it("passes an explicit claude backend to command discovery", async () => {
+    const projectDeps = createProjectTestDeps();
+    const projectHandlers = createProjectCommandsRouteHandlers(projectDeps);
+
+    await projectHandlers.GET(
+      makeProjectRequest(
+        "http://localhost/api/projects/my-project/commands?backend=claude",
+      ),
+      { params: Promise.resolve({ name: "my-project" }) },
+    );
+
+    expect(projectDeps.discoverCommands).toHaveBeenCalledWith(
+      "/projects/my-project",
+      "claude",
+    );
+  });
+
+  it("passes an explicit cursor backend to command discovery and returns its bounded empty result", async () => {
+    const projectDeps = createProjectTestDeps();
+    vi.mocked(projectDeps.discoverCommands).mockResolvedValue([]);
+    const projectHandlers = createProjectCommandsRouteHandlers(projectDeps);
+
+    const response = await projectHandlers.GET(
+      makeProjectRequest(
+        "http://localhost/api/projects/my-project/commands?backend=cursor",
+      ),
+      { params: Promise.resolve({ name: "my-project" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(projectDeps.discoverCommands).toHaveBeenCalledWith(
+      "/projects/my-project",
+      "cursor",
+    );
+    const body = (await response.json()) as { items: CommandItem[] };
+    expect(body.items).toEqual([]);
+  });
+
+  it("rejects an unknown backend with a bounded 400 instead of defaulting", async () => {
+    const projectDeps = createProjectTestDeps();
+    const projectHandlers = createProjectCommandsRouteHandlers(projectDeps);
+
+    const response = await projectHandlers.GET(
+      makeProjectRequest(
+        "http://localhost/api/projects/my-project/commands?backend=not-a-registered-backend",
+      ),
+      { params: Promise.resolve({ name: "my-project" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(projectDeps.discoverCommands).not.toHaveBeenCalled();
+    const body = (await response.json()) as { error: string; code?: string };
+    expect(body.code).toBe("INVALID_BACKEND");
+    expect(body.error).toContain("backend");
+  });
+
+  it("does not echo an unbounded unknown backend value in the error", async () => {
+    const projectDeps = createProjectTestDeps();
+    const projectHandlers = createProjectCommandsRouteHandlers(projectDeps);
+    const oversized = "x".repeat(5000);
+    const url = new URL("http://localhost/api/projects/my-project/commands");
+    url.searchParams.set("backend", oversized);
+
+    const response = await projectHandlers.GET(
+      makeProjectRequest(url.toString()),
+      { params: Promise.resolve({ name: "my-project" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(projectDeps.discoverCommands).not.toHaveBeenCalled();
+    const body = (await response.json()) as { error: string };
+    expect(body.error).not.toContain(oversized);
+    expect(body.error.length).toBeLessThan(200);
   });
 });

@@ -24,6 +24,8 @@ import {
   type TranscriptMaxSeqIO,
   appendTranscriptEntry,
   appendTranscriptEntryOnce,
+  safeAppendTranscriptEntry,
+  safeAppendTranscriptEntryOnce,
   appendNotice,
   getTranscriptPath,
   parseCommandContent,
@@ -3019,5 +3021,138 @@ describe("getTranscriptMaxSeq", () => {
     _resetTranscriptEntriesCacheForTesting();
     expect(await parityMaxSeq(filePath)).toBe(0);
     expect(await getTranscriptMaxSeq(filePath)).toBe(0);
+  });
+});
+
+// ==========================================================================
+// safeAppendTranscriptEntryOnce
+// ==========================================================================
+
+describe("safeAppendTranscriptEntryOnce", () => {
+  let captured: SSEEvent[] = [];
+
+  beforeEach(() => {
+    captured = [];
+    setTranscriptDeps({
+      broadcast: (event: SSEEvent) => {
+        captured.push(event);
+        return { delivered: true };
+      },
+    });
+  });
+
+  afterEach(() => {
+    _resetTranscriptDepsForTesting();
+  });
+
+  const meta = { projectName: "demo", storeSessionName: "main" };
+
+  async function readLines(conversationId: string): Promise<string[]> {
+    const raw = await readFile(
+      path.join(TEST_DIR, "transcripts", `${conversationId}.jsonl`),
+      "utf-8",
+    );
+    return raw.trim().split("\n");
+  }
+
+  function identifiedEntry(id: string, text: string) {
+    return {
+      id,
+      timestamp: "2024-01-01T00:00:00Z",
+      type: "assistant",
+      role: "assistant" as const,
+      content: [{ type: "text" as const, text }],
+    };
+  }
+
+  it("persists and broadcasts a re-delivered entry exactly once", async () => {
+    const entry = identifiedEntry("conv-ident:run-1:7", "streamed once");
+
+    await safeAppendTranscriptEntryOnce(
+      "conv-ident",
+      entry,
+      undefined,
+      TEST_DIR,
+      meta,
+    );
+    await safeAppendTranscriptEntryOnce(
+      "conv-ident",
+      entry,
+      undefined,
+      TEST_DIR,
+      meta,
+    );
+
+    expect(await readLines("conv-ident")).toHaveLength(1);
+    expect(captured).toHaveLength(1);
+  });
+
+  it("appends a second entry that carries a different id", async () => {
+    await safeAppendTranscriptEntryOnce(
+      "conv-seq",
+      identifiedEntry("conv-seq:run-1:0", "first"),
+      undefined,
+      TEST_DIR,
+      meta,
+    );
+    await safeAppendTranscriptEntryOnce(
+      "conv-seq",
+      identifiedEntry("conv-seq:run-1:1", "second"),
+      undefined,
+      TEST_DIR,
+      meta,
+    );
+
+    expect(await readLines("conv-seq")).toHaveLength(2);
+    expect(captured).toHaveLength(2);
+  });
+
+  it("leaves the ordinary append duplicate-tolerant for entries with no identity", async () => {
+    const entry: TranscriptEntry = {
+      timestamp: "2024-01-01T00:00:00Z",
+      type: "assistant",
+      role: "assistant",
+      content: [{ type: "text", text: "no identity" }],
+    };
+
+    await safeAppendTranscriptEntry(
+      "conv-anon",
+      entry,
+      undefined,
+      TEST_DIR,
+      meta,
+    );
+    await safeAppendTranscriptEntry(
+      "conv-anon",
+      entry,
+      undefined,
+      TEST_DIR,
+      meta,
+    );
+
+    expect(await readLines("conv-anon")).toHaveLength(2);
+    expect(captured).toHaveLength(2);
+  });
+
+  it("logs and resolves instead of throwing when the append fails", async () => {
+    const logger = createCapturingLogger();
+    // A regular file where the config directory must be, so the transcripts
+    // directory cannot be created: the append fails and the turn must not.
+    const blockedConfigDir = path.join(TEST_DIR, "blocked-config");
+    await writeFile(blockedConfigDir, "not a directory", "utf-8");
+
+    await expect(
+      safeAppendTranscriptEntryOnce(
+        "conv-fail",
+        identifiedEntry("conv-fail:run-1:0", "boom"),
+        logger,
+        blockedConfigDir,
+        meta,
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(
+      logger.entries.some((e) => e.message === "transcript_write_failed"),
+    ).toBe(true);
   });
 });

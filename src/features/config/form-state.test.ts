@@ -6,6 +6,10 @@ import {
 } from "@/lib/workflow-graph/config-schemas";
 import { SEEDED_WORKFLOW_DEFAULTS as canonicalSeededDefaults } from "@/lib/workflow-graph/resolve-config";
 import {
+  backendSupportsFastMode,
+  listBackendCatalogEntries,
+} from "@/lib/agent-backends/catalog";
+import {
   ALL_FIELD_PATHS,
   SEEDED_WORKFLOW_DEFAULTS,
   deepGet,
@@ -100,6 +104,24 @@ describe("ALL_FIELD_PATHS", () => {
       "codex.timeoutMs",
     ]) {
       expect(ALL_FIELD_PATHS).not.toContain(legacyPath);
+    }
+  });
+
+  // Derived from the catalog rather than hand-listed: a backend whose profile
+  // BackendsSection renders but ALL_FIELD_PATHS omits is editable on screen and
+  // silently unsaved — zero dirty fields, and the edit dropped from the PUT.
+  it("tracks a profile field for every registered backend the settings section renders", () => {
+    for (const entry of listBackendCatalogEntries()) {
+      expect(ALL_FIELD_PATHS).toContain(`agentBackends.${entry.id}.model`);
+      expect(ALL_FIELD_PATHS).toContain(`agentBackends.${entry.id}.timeoutMs`);
+    }
+  });
+
+  it("tracks fastMode only for the backend that declares one", () => {
+    for (const entry of listBackendCatalogEntries()) {
+      expect(
+        ALL_FIELD_PATHS.includes(`agentBackends.${entry.id}.fastMode`),
+      ).toBe(backendSupportsFastMode(entry.id));
     }
   });
 

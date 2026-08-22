@@ -17,7 +17,11 @@ import { discoverCommands as defaultDiscoverCommands } from "@/lib/commands/serv
 import type { ApiError } from "@/lib/api/errors";
 import type { CommandItem, CommandsResponse } from "@/lib/commands/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { AgentBackendId } from "@/lib/shared/schemas";
+import {
+  agentBackendSchema,
+  DEFAULT_AGENT_BACKEND_ID,
+  type AgentBackendId,
+} from "@/lib/shared/schemas";
 // ---------------------------------------------------------------------------
 // Deps interface
 // ---------------------------------------------------------------------------
@@ -49,6 +53,42 @@ type RouteContext = {
 };
 
 // ---------------------------------------------------------------------------
+// Backend query parsing
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves the `backend` query parameter. An absent value keeps the existing
+ * default; a present value must be a canonical backend. An unrecognized value
+ * is a client error rather than a silent fall back to the default, so a caller
+ * asking for a backend Command Center does not support never receives another
+ * backend's commands. The message names the parameter and the accepted values
+ * without echoing the rejected input.
+ */
+function parseBackendFromQuery(
+  request: Request,
+): { ok: true; backend: AgentBackendId } | { ok: false; response: Response } {
+  const requested = new URL(request.url).searchParams.get("backend");
+  if (requested === null) {
+    return { ok: true, backend: DEFAULT_AGENT_BACKEND_ID };
+  }
+
+  const parsed = agentBackendSchema.safeParse(requested);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: `Query parameter backend must be one of: ${agentBackendSchema.options.join(", ")}`,
+          code: "INVALID_BACKEND",
+        } satisfies ApiError,
+        { status: 400 },
+      ),
+    };
+  }
+  return { ok: true, backend: parsed.data };
+}
+
+// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
@@ -63,9 +103,9 @@ export function createCommandsRouteHandlers(
     const name = resolvedParams["name"] ?? "";
     const sessionSlug = resolvedParams["session"] ?? "";
     const sessionName = decodeURIComponent(sessionSlug);
-    const requestedBackend = new URL(request.url).searchParams.get("backend");
-    const backend: AgentBackendId =
-      requestedBackend === "codex" ? "codex" : "claude";
+    const requestedBackend = parseBackendFromQuery(request);
+    if (!requestedBackend.ok) return requestedBackend.response;
+    const backend = requestedBackend.backend;
 
     const resolved = await resolveProjectSessionOr404(deps, name, sessionName);
     if (!resolved.ok) return resolved.response;
@@ -112,9 +152,9 @@ export function createProjectCommandsRouteHandlers(
     context: RouteContext,
   ): Promise<Response> {
     const name = (await context.params)["name"] ?? "";
-    const requestedBackend = new URL(request.url).searchParams.get("backend");
-    const backend: AgentBackendId =
-      requestedBackend === "codex" ? "codex" : "claude";
+    const requestedBackend = parseBackendFromQuery(request);
+    if (!requestedBackend.ok) return requestedBackend.response;
+    const backend = requestedBackend.backend;
 
     const project = await resolveProjectOr404(deps, name);
     if (!project.ok) return project.response;

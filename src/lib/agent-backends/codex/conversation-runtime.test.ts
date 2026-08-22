@@ -420,6 +420,9 @@ describe("CodexConversationRuntime", () => {
       expect(result.failure).toBeNull();
       expect(result.continuationDisposition).toBe("retain");
       expect(result.aborted).toBe(false);
+      // Codex has not adopted the neutral token record; null is its explicit
+      // "usage unavailable" report, not a missing field.
+      expect(result.tokenUsage).toBeNull();
     });
 
     it("prepends session instructions and synthetic fork seed on first turn only", async () => {

@@ -16,6 +16,7 @@ import {
 } from "@/lib/agent-backends/catalog";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import { seedAgentTwoDraft } from "@/stores/collaboration.store";
+import { asCollaborationAgent } from "@/lib/workflows/collaboration/types";
 import { Button } from "@/components/ui/Button";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { usePendingPromptPersistence } from "@/hooks/use-pending-prompt-persistence";
@@ -550,7 +551,7 @@ export default function UnifiedComposer({
           negotiationRounds: 3,
           autonomousResolutionThreshold: "major",
         }}
-        originatingCollabAgent={agentBackend}
+        originatingCollabAgent={asCollaborationAgent(agentBackend)}
         onCollabConfigChange={() => {}}
         collabBackendDefaults={backendDefaults}
         onCollabDismiss={() => {}}

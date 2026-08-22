@@ -1436,6 +1436,31 @@ export async function safeAppendTranscriptEntry(
   }
 }
 
+/**
+ * Append an entry whose producer stamped a stable id, logging failures but not
+ * throwing — the non-throwing counterpart of {@link appendTranscriptEntryOnce},
+ * for stream paths where a re-delivered event must not fail the turn. Persists
+ * and broadcasts at most once per id, so live SSE and durable reload agree.
+ */
+export async function safeAppendTranscriptEntryOnce(
+  conversationId: string,
+  entry: TranscriptEntry & { id: string },
+  logger: {
+    warn: (message: string, meta?: Record<string, unknown>) => void;
+  } = transcriptLogger,
+  configDir?: string,
+  meta?: TranscriptBroadcastMeta,
+): Promise<void> {
+  try {
+    await appendTranscriptEntryOnce(conversationId, entry, configDir, meta);
+  } catch (err) {
+    logger.warn("transcript_write_failed", {
+      conversationId,
+      error: getErrorMessage(err),
+    });
+  }
+}
+
 // `message-updated` events would be wired here if there were a code path that
 // rewrites an existing JSONL entry. Today every transcript update is an
 // `appendFile` (see `appendTranscriptEntry`) and image externalization

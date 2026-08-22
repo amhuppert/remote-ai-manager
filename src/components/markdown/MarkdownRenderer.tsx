@@ -288,32 +288,32 @@ function loadHighlightRuntime(
   const languageLoader = LANGUAGE_LOADERS[canonical];
   if (!languageLoader) return Promise.resolve(null);
 
-  const promise = Promise.all([
-    import("react-syntax-highlighter"),
-    languageLoader(),
-    import("react-syntax-highlighter/dist/esm/styles/prism"),
-  ])
-    .then(([syntaxModule, languageModule, styleModule]) => {
-      const SyntaxHighlighter = syntaxModule.PrismLight;
-      const registeredName = highlighterName(canonical);
-      SyntaxHighlighter.registerLanguage(
-        registeredName,
-        languageModule.default,
-      );
+  // Sequential, not `Promise.all`: the package root is CJS while the
+  // `dist/esm/*` entries are ESM, and both reach the same `refractor` graph.
+  // Loading them concurrently lets the CJS root `require()` a module the async
+  // ESM load already has in flight, which Node rejects outright.
+  const promise = (async () => {
+    const syntaxModule = await import("react-syntax-highlighter");
+    const languageModule = await languageLoader();
+    const styleModule =
+      await import("react-syntax-highlighter/dist/esm/styles/prism");
 
-      return {
-        SyntaxHighlighter,
-        language: registeredName,
-        style: styleModule.atomDark as Record<string, CSSProperties>,
-      };
-    })
-    .catch(() => {
-      // A failed chunk load must degrade to the unhighlighted <pre> fallback
-      // instead of surfacing an unhandled rejection; drop the cached promise
-      // so a later mount can retry the import.
-      highlightRuntimePromises.delete(canonical);
-      return null;
-    });
+    const SyntaxHighlighter = syntaxModule.PrismLight;
+    const registeredName = highlighterName(canonical);
+    SyntaxHighlighter.registerLanguage(registeredName, languageModule.default);
+
+    return {
+      SyntaxHighlighter,
+      language: registeredName,
+      style: styleModule.atomDark as Record<string, CSSProperties>,
+    };
+  })().catch(() => {
+    // A failed chunk load must degrade to the unhighlighted <pre> fallback
+    // instead of surfacing an unhandled rejection; drop the cached promise
+    // so a later mount can retry the import.
+    highlightRuntimePromises.delete(canonical);
+    return null;
+  });
 
   highlightRuntimePromises.set(canonical, promise);
   return promise;

@@ -44,6 +44,7 @@ vi.mock(
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
   claude: { modelId: "sonnet", effort: "medium" },
   codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+  cursor: { modelId: "composer-2.5", effort: "high" },
 };
 
 const session: SessionListItem = {

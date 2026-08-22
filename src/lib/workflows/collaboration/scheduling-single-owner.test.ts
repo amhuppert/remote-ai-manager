@@ -262,7 +262,7 @@ const stubClaudeFactory: ConversationBackendFactory = {
       async sendTurn() {
         throw new Error("scripted exec bypasses runtime turns");
       },
-      close: () => undefined,
+      close: async () => {},
     };
   },
 };

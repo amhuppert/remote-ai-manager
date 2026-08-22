@@ -184,7 +184,7 @@ export async function checkContextMetricsCoherence(
       expect(result.contextWindowMax).toBeNull();
     }
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
@@ -230,7 +230,7 @@ export async function checkQueueCoherence(
       expect(runtime.queueUserInput).toBeUndefined();
     }
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
@@ -279,7 +279,7 @@ export async function checkExternalTurnCoherence(
       expect(externalEvents).toEqual([]);
     }
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
@@ -309,7 +309,7 @@ export async function checkConversationStructuredOutputForwarding(
     expect(result.structuredOutput).toEqual(drive.expected);
     expect(drive.readForwardedSchema()).toBeDefined();
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
@@ -348,7 +348,7 @@ export async function checkConversationStructuredOutputPostValidation(
       renderStructuredOutputInstruction(drive.schema),
     );
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
@@ -369,7 +369,7 @@ export async function checkCancellation(
   // Let the dispatch reach the provider port before tearing it down.
   await sleep(10);
   controller.abort();
-  runtime.close();
+  await runtime.close();
   const result = await turnPromise;
   expect(result.aborted).toBe(true);
   expect(result.failure).toBeNull();
@@ -408,7 +408,7 @@ export async function checkApplyTimingBehavior(
       });
     }
   } finally {
-    idleRuntime.close();
+    await idleRuntime.close();
   }
 
   const controller = new AbortController();
@@ -442,7 +442,7 @@ export async function checkApplyTimingBehavior(
     }
   } finally {
     controller.abort();
-    busyRuntime.close();
+    await busyRuntime.close();
     await turnPromise.catch(() => {});
   }
 }
@@ -611,7 +611,7 @@ export function describeBackendConformance(
         async sendTurn(): Promise<never> {
           throw new Error("not used by conformance");
         },
-        close() {},
+        async close() {},
       };
       const result = await conversation.runtimeConfig.apply({
         runtime: stubRuntime,

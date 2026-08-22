@@ -19,9 +19,9 @@ import {
   type BackendSelectionDefaultsById,
 } from "@/lib/agent-backends/catalog";
 import { deepEqualJson } from "@/lib/shared/deep-equal";
-import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { CollaborationAgent } from "@/lib/workflows/collaboration/types";
 
-type CollabAgent = "claude" | "codex";
+type CollabAgent = CollaborationAgent;
 
 type CollabAutonomousResolutionThreshold =
   | "none"
@@ -117,9 +117,13 @@ export type EffectiveCollabConfig = CollabConfigDraft & {
   agentTwo: CollabAgentTwoDraft;
 };
 
-/** A fully concrete Agent Two draft from the given backend's defaults. */
+/**
+ * A fully concrete Agent Two draft from the given backend's defaults. The
+ * parameter is a collaboration agent, not any registered backend: a lane can
+ * only be seeded for a backend the flow actually runs.
+ */
 export function seedAgentTwoDraft(
-  backend: AgentBackendId,
+  backend: CollabAgent,
   backendDefaults: BackendSelectionDefaultsById,
 ): CollabAgentTwoDraft {
   const defaults = backendDefaults[backend];

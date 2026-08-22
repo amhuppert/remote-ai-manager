@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { screen, fireEvent } from "@testing-library/react";
 import { renderWithQuery } from "@/test/component-mocks";
+import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
 import { BackendsSection } from "./BackendsSection";
 import { makeController } from "./test-controller";
 
@@ -47,6 +48,64 @@ describe("BackendsSection", () => {
     expect(
       screen.queryByText(/SDK is bundled and ready/),
     ).not.toBeInTheDocument();
+  });
+
+  it("renders a profile subsection for every registered backend", () => {
+    const { controller } = makeController();
+    renderWithQuery(<BackendsSection controller={controller} />);
+
+    for (const entry of listBackendCatalogEntries()) {
+      expect(
+        screen.getByText(`${entry.label} model`).closest("[data-field]"),
+      ).toHaveAttribute("data-field", `agentBackends.${entry.id}.model`);
+      expect(
+        screen.getByText(`${entry.label} timeout`).closest("[data-field]"),
+      ).toHaveAttribute("data-field", `agentBackends.${entry.id}.timeoutMs`);
+    }
+  });
+
+  it("gives the Cursor profile a model and a timeout only", () => {
+    const { controller } = makeController();
+    renderWithQuery(<BackendsSection controller={controller} />);
+
+    expect(screen.getByText("Cursor model")).toBeVisible();
+    expect(screen.getByText("Cursor timeout")).toBeVisible();
+    // Composer takes no reasoning effort and Cursor has no fast mode; the
+    // catalog says so, so neither field is rendered.
+    expect(screen.queryByText("Cursor effort")).not.toBeInTheDocument();
+    expect(screen.queryByText("Cursor fast mode")).not.toBeInTheDocument();
+  });
+
+  // The Cursor credential is read from the server environment and is never a
+  // settings field — a rendered input would invite an operator to paste a
+  // secret into a document Command Center persists (spec R12.2).
+  it("renders no credential field for any backend", () => {
+    const { controller } = makeController();
+    const { container } = renderWithQuery(
+      <BackendsSection controller={controller} />,
+    );
+
+    expect(
+      screen.queryByText(/api key|apikey|credential|token|secret/i),
+    ).not.toBeInTheDocument();
+    expect(container.querySelector('input[type="password"]')).toBeNull();
+    expect(container.querySelector('[data-field*="apiKey" i]')).toBeNull();
+  });
+
+  it("stores a Cursor timeout edit in the Cursor profile path", () => {
+    const { controller, getState } = makeController();
+    renderWithQuery(<BackendsSection controller={controller} />);
+
+    const cursorInput = document.querySelector(
+      '[data-field="agentBackends.cursor.timeoutMs"] input',
+    );
+    if (!(cursorInput instanceof HTMLInputElement)) {
+      throw new Error("no agentBackends.cursor.timeoutMs input");
+    }
+    fireEvent.change(cursorInput, { target: { value: "30" } });
+
+    expect(getState().agentBackends.cursor.timeoutMs).toBe(1_800_000);
+    expect(getState().agentBackends.claude.timeoutMs).toBe(3_600_000);
   });
 
   it("renders the catalog model labels while preserving alias values", () => {
@@ -129,6 +188,7 @@ describe("BackendsSection", () => {
           reasoningEffort: "ultra",
           timeoutMs: null,
         },
+        cursor: { model: "composer-2.5", timeoutMs: null },
       },
     });
     renderWithQuery(<BackendsSection controller={controller} />);
@@ -209,6 +269,7 @@ describe("BackendsSection", () => {
           reasoningEffort: "high",
           timeoutMs: null,
         },
+        cursor: { model: "composer-2.5", timeoutMs: null },
       },
     });
     renderWithQuery(<BackendsSection controller={controller} />);

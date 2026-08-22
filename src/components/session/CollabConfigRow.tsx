@@ -1,6 +1,11 @@
 "use client";
 
 import { useId, useState } from "react";
+import {
+  asCollaborationAgent,
+  collaborationBackendRefusal,
+  type CollaborationAgent,
+} from "@/lib/workflows/collaboration/types";
 import BackendToggle from "@/components/BackendToggle";
 import ModelSelector from "@/components/ModelSelector";
 import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
@@ -26,7 +31,7 @@ import {
 export const COLLAB_RUNNING_TOOLTIP =
   "collaboration in progress · stop the run to continue";
 
-type CollabAgent = "claude" | "codex";
+type CollabAgent = CollaborationAgent;
 
 type CollabAutonomousResolutionThreshold =
   | "none"
@@ -266,8 +271,14 @@ export default function CollabConfigRow({
         <span className={fieldLabelClass}>2nd agent</span>
         <BackendToggle
           value={agentTwo.backend}
-          onChange={(backend) => {
-            if (backend === agentTwo.backend) return;
+          disabledReason={collaborationBackendRefusal}
+          onChange={(selection) => {
+            // A backend Collaboration Mode does not run cannot take a lane, so
+            // selecting it is a no-op rather than a draft the start request
+            // would refuse. The toggle itself renders such an option disabled
+            // with its reason.
+            const backend = asCollaborationAgent(selection);
+            if (backend === null || backend === agentTwo.backend) return;
             // A backend switch re-seeds model/effort/fastMode from that
             // backend's defaults; the profile is prompt identity, orthogonal
             // to the runtime, so it survives the switch.

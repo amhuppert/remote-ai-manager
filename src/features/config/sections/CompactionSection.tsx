@@ -3,6 +3,7 @@ import {
   effortLevelsForCatalogEntry,
   type BackendCatalogEntry,
 } from "@/lib/agent-backends/catalog";
+import { backendFacetRefusalIn } from "@/lib/agent-backends/facet-gating";
 import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
 import { compactionConfigSchema } from "@/lib/config/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -85,6 +86,11 @@ export function CompactionSection({
           <ConfigPillGroup
             value={backend}
             options={backends.map((b) => b.id)}
+            // Compaction dispatches a task run, so a backend with no task facet
+            // cannot be selected here (spec D13).
+            getOptionDisabledReason={(id) =>
+              backendFacetRefusalIn(backends, id, "tasks")
+            }
             onChange={(value) => {
               const nextEntry = backends.find((b) => b.id === value);
               if (!nextEntry) {

@@ -23,7 +23,12 @@ import {
   codexModelSchema,
   codexReasoningEffortSchema,
 } from "@/lib/agent-backends/schemas";
-import { agentBackendSchema } from "@/lib/shared/schemas";
+import {
+  backendLabel,
+  type BackendCatalogEntry,
+} from "@/lib/agent-backends/catalog";
+import { backendFacetRefusal } from "@/lib/agent-backends/facet-gating";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 
 export {
   type CollaborationArtifactAgreement,
@@ -73,8 +78,76 @@ export {
   type CollaborationUserQuestion,
 } from "@/lib/workflow-graph/collaboration-schemas";
 
-const collaborationAgentSchema = agentBackendSchema;
+/**
+ * The backends Collaboration Mode runs — the ONE documented product-policy site
+ * for that question.
+ *
+ * Collaboration is a Claude x Codex feature, not "whatever is registered": the
+ * flow's cross-review, disagreement, and resolution contracts were designed and
+ * evidenced for that pair, and its cards carry a per-agent accent for each. A
+ * newly registered backend is therefore ineligible until its participation is
+ * separately evidenced, and this enum is what refuses it — at the schema
+ * boundary, as a bounded client error, rather than by an identity branch spread
+ * across the orchestrator and every card.
+ */
+export const collaborationAgentSchema = z.enum(["claude", "codex"]);
 export type CollaborationAgent = z.infer<typeof collaborationAgentSchema>;
+
+/** Whether a registered backend may participate in Collaboration Mode. */
+export function isCollaborationAgent(
+  backend: AgentBackendId,
+): backend is CollaborationAgent {
+  return collaborationAgentSchema.safeParse(backend).success;
+}
+
+/**
+ * The backend as a collaboration agent, or null when it is not one. Null is the
+ * signal UI surfaces gate on: a conversation whose backend cannot collaborate
+ * offers no collaboration affordance rather than one that fails on submit.
+ */
+export function asCollaborationAgent(
+  backend: AgentBackendId,
+): CollaborationAgent | null {
+  return isCollaborationAgent(backend) ? backend : null;
+}
+
+/**
+ * Why a registered backend is outside the evidenced pair, or null when it is in
+ * it. The pair-membership half of {@link collaborationBackendRefusal}.
+ */
+export function collaborationAgentRefusal(
+  backend: AgentBackendId,
+): string | null {
+  if (isCollaborationAgent(backend)) return null;
+  return `${backendLabel(backend)} cannot take a Collaboration Mode lane: collaboration runs ${collaborationAgentSchema.options.map(backendLabel).join(" and ")} only`;
+}
+
+/**
+ * Why a registered backend cannot take a collaboration lane, or null when it
+ * can — the one text a collaboration picker shows on a refused option and its
+ * API returns.
+ *
+ * The FIRST question is catalog data, not this module's enum: a non-Claude lane
+ * is dispatched as a `task_run` (see `buildLaneRequest` in ./helpers.ts), so a
+ * backend whose catalog entry registers no task facet cannot take one at all —
+ * the same `backendFacetRefusal` the task and workflow-role pickers read (spec
+ * D13). The pair enum answers only for a backend that clears that gate and is
+ * still not one of the two the flow's cross-review and resolution contracts
+ * were evidenced for.
+ *
+ * Ordering matters for honesty: reporting "not one of the two" for a backend
+ * that has no task runner at all would name a policy where the real blocker is
+ * a missing facet.
+ */
+export function collaborationBackendRefusal(
+  entry: BackendCatalogEntry,
+): string | null {
+  const facetRefusal = backendFacetRefusal(entry, "tasks");
+  if (facetRefusal !== null) {
+    return `${facetRefusal}, so it cannot take a Collaboration Mode lane`;
+  }
+  return collaborationAgentRefusal(entry.id);
+}
 
 /**
  * The model + reasoning effort a collaboration lane runs with, resolved by
@@ -114,7 +187,7 @@ export type CollaborationAgentModelSettingsMap = z.infer<
  * snapshot the lane is staffed with, when one was assigned.
  */
 export const collaborationResolvedAgentSchema = z.object({
-  backend: agentBackendSchema,
+  backend: collaborationAgentSchema,
   model: z.string().min(1),
   effort: z.string().optional(),
   fastMode: z.boolean().optional(),

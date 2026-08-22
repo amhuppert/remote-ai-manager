@@ -417,6 +417,8 @@ class ClaudeConversationRuntime
         structuredOutput: turnResult.structuredOutput,
         aborted: turnResult.aborted,
         compacted: turnResult.compacted,
+        // Claude has not adopted the neutral per-turn token record.
+        tokenUsage: null,
         ...(backgroundWait ? { backgroundWait } : {}),
       };
 
@@ -478,6 +480,9 @@ class ClaudeConversationRuntime
         contentBlocks: [],
         aborted: wasAborted,
         compacted: false,
+        // A failed or cancelled turn has no usage to attribute; unavailable is
+        // reported as the null record, never as fabricated or carried counts.
+        tokenUsage: null,
       };
     }
   }
@@ -634,7 +639,7 @@ class ClaudeConversationRuntime
     }));
   }
 
-  close(): void {
+  async close(): Promise<void> {
     if (this._status === "dead") return;
     this._status = "dead";
 
@@ -689,6 +694,7 @@ function buildExternalTurnHandler(
           structuredOutput: turnResult.structuredOutput,
           aborted: turnResult.aborted,
           compacted: turnResult.compacted,
+          tokenUsage: null,
         },
       };
       // Completion rides the turn's interpreter chain so it is delivered

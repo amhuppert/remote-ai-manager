@@ -11,6 +11,7 @@ import type { PromptEditorHandle } from "@/components/session/prompt/PromptEdito
 import { stripCollabPrefix } from "@/lib/conversation-commands/parse";
 import type { PublicConversationState } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { CollaborationAgent } from "@/lib/workflows/collaboration/types";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type {
   CollabConfigDraft,
@@ -69,7 +70,8 @@ export interface UsePromptComposerPropsArgs {
   effortSupported: boolean;
   hasCollabChip: boolean;
   effectiveCollabConfig: EffectiveCollabConfig;
-  originatingCollabAgent: "claude" | "codex";
+  /** Null when the conversation's backend cannot take a collaboration lane. */
+  originatingCollabAgent: CollaborationAgent | null;
   setCollabConfigDraft: (
     project: string,
     session: string,

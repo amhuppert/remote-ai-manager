@@ -179,7 +179,7 @@ describe("section 7.4 — primitive safety and observability (Task 7.4)", () => 
           aborted: false,
           error: null,
         }),
-        close: vi.fn(),
+        close: vi.fn(async () => {}),
       } as unknown as ConversationBackendRuntime;
 
       await dispatchConversationTurn(

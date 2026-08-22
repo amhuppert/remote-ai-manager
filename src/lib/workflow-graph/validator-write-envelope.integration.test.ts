@@ -446,7 +446,10 @@ describe("implementer task runs", () => {
  * shape — Claude reports a failed result message, Codex a failed turn — so the
  * parity has to be asserted per backend rather than assumed from one of them.
  */
-const induceSandboxUnavailable: Record<AgentBackendId, () => void> = {
+// Partial over the registered backends: only a backend whose adapter can
+// enforce a write allowlist is validator-eligible, so only those have a
+// sandbox to fail to start.
+const induceSandboxUnavailable: Partial<Record<AgentBackendId, () => void>> = {
   claude: () =>
     claudeQueryMock.mockImplementation(() =>
       (async function* () {
@@ -476,7 +479,9 @@ describe.each(["claude", "codex"] as const)(
   "fail-closed envelope establishment — %s",
   (backend) => {
     it("classifies a sandbox that could not start as an infrastructure outcome", async () => {
-      induceSandboxUnavailable[backend]();
+      const induce = induceSandboxUnavailable[backend];
+      if (!induce) throw new Error(`no sandbox inducer for ${backend}`);
+      induce();
 
       const result = await runValidatorRaw(backend, "task");
 

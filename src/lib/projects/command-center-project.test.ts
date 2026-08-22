@@ -26,6 +26,7 @@ function config(overrides: Partial<GlobalConfig> = {}): GlobalConfig {
         fastMode: false,
         timeoutMs: null,
       },
+      cursor: { model: "composer-2.5", timeoutMs: null },
     },
     defaultAgentBackend: "claude",
     ...overrides,

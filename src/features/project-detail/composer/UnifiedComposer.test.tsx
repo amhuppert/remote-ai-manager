@@ -25,6 +25,7 @@ const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
     effort: "ultra",
     codexFastMode: true,
   },
+  cursor: { modelId: "composer-2.5", effort: "high" },
 };
 
 function makeConversation(
@@ -265,6 +266,33 @@ describe("UnifiedComposer model settings", () => {
     ).toBeInTheDocument();
   });
 
+  // The canonical selection flow for a Cursor conversation: pick the backend
+  // from the shared toggle, see the effective backend and model, and see no
+  // credential anywhere — the key is a server environment variable that no
+  // client surface is given (spec R12.1).
+  it("selects cursor from the canonical toggle and shows its effective backend and model", async () => {
+    const rendered = renderComposer({
+      activeConversation: makeConversation({ promptCount: 0 }),
+    });
+
+    const cursorOption = document.querySelector('[data-backend="cursor"]');
+    if (!(cursorOption instanceof HTMLButtonElement)) {
+      throw new Error("no cursor option in the backend toggle");
+    }
+    expect(cursorOption.getAttribute("aria-disabled")).toBeNull();
+    fireEvent.click(cursorOption);
+    rendered.rerender({ agentBackend: "cursor" });
+
+    expect(await screen.findByTitle(/Model: Composer 2.5/)).toBeInTheDocument();
+    const activeToggle = document.querySelector(
+      'button[data-backend="cursor"][data-active="true"]',
+    );
+    expect(activeToggle?.textContent).toBe("Cursor");
+    // Composer declares no effort levels, so no effort control is offered.
+    expect(screen.queryByRole("combobox", { name: /Effort:/i })).toBeNull();
+    expect(document.body.innerHTML).not.toMatch(/api[-_ ]?key/i);
+  });
+
   it("initializes controls from the active conversation's last sent model and effort", async () => {
     renderComposer({
       activeConversation: makeConversation({ promptCount: 2 }),
@@ -294,6 +322,7 @@ describe("UnifiedComposer model settings", () => {
       backendDefaults: {
         claude: { modelId: "sonnet", effort: "medium" },
         codex: { modelId: customModel, effort: "ultra" },
+        cursor: { modelId: "composer-2.5", effort: "high" },
       },
     });
 
@@ -344,6 +373,7 @@ describe("UnifiedComposer model settings", () => {
       backendDefaults: {
         claude: { modelId: "sonnet", effort: "medium" },
         codex: { modelId: "opus", effort: "ultra" },
+        cursor: { modelId: "composer-2.5", effort: "high" },
       },
       initialDocument: { prompt: "run it", images: [] },
       onSendPrompt,

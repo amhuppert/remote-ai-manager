@@ -13,6 +13,7 @@ import {
   getDefaultModelForBackend,
   getEffortLevelsForBackend,
 } from "@/lib/agent-backends/catalog";
+import { backendFacetRefusal } from "@/lib/agent-backends/facet-gating";
 import type {
   ClaudeModel,
   CodexModel,
@@ -122,6 +123,10 @@ export function AgentRuntimeFields({
           value={value.backend}
           onChange={handleBackend}
           disabled={readOnly}
+          // A workflow role is dispatched through the backend's task facet, so
+          // a backend registering none cannot hold an assignment. The refusal
+          // is the catalog's, not this editor's (spec D13).
+          disabledReason={(entry) => backendFacetRefusal(entry, "tasks")}
         />
       </FieldRow>
       <FieldRow label="Model">

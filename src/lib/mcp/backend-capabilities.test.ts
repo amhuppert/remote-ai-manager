@@ -108,14 +108,104 @@ describe("defaultMcpCapabilityRegistry — Codex capabilities", () => {
 });
 
 // ===========================================================================
+// Default registry — Cursor
+// ===========================================================================
+
+describe("defaultMcpCapabilityRegistry — Cursor capabilities", () => {
+  const cursor = defaultMcpCapabilityRegistry.getCapabilities("cursor");
+
+  // The ordinary inline call path passes (spec D18 / R10), but the authority
+  // matrix — ambient merge, duplicate names, empty-inline, per-run replacement,
+  // disable/filter, permission, environment, resume-apply — is a separate gate.
+  // One passing call is not authority.
+  it("declares strict authoritative config UNSUPPORTED", () => {
+    expect(cursor.strictAuthoritativeConfig).toBe(false);
+  });
+
+  it("disables servers by omission — the SDK's inline entry has no disabled flag", () => {
+    expect(cursor.serverDisable).toBe("omit");
+  });
+
+  it("applies between-turn changes at the next turn", () => {
+    expect(cursor.betweenTurnApply).toBe("next-turn");
+  });
+
+  it("supports the stdio transport only", () => {
+    expect(cursor.transports.stdio).toBe(true);
+    expect(cursor.transports["streamable-http"]).toBe(false);
+    expect(cursor.transports.sse).toBe(false);
+  });
+
+  // Distinct from the transport question above: Cursor DOES support stdio and
+  // supports no per-tool allow/deny filtering on it.
+  it("declares no per-tool filtering mechanism on any transport", () => {
+    expect(cursor.toolFiltering.mode).toBe("unsupported");
+    expect(cursor.toolFiltering.byTransport.stdio).toBe("unsupported");
+    expect(cursor.toolFiltering.byTransport["streamable-http"]).toBe(
+      "unsupported",
+    );
+    expect(cursor.toolFiltering.byTransport.sse).toBe("unsupported");
+  });
+
+  it("prefers a direct probe — the runtime exposes no MCP server status", () => {
+    expect(cursor.toolDiscovery.preferred).toBe("probe");
+    expect(cursor.toolDiscovery.probeFallback).toBe(true);
+  });
+
+  it("carries its backend identifier", () => {
+    expect(cursor.backend).toBe("cursor");
+  });
+});
+
+// ===========================================================================
+// Transport support is a separate question from tool filtering
+// ===========================================================================
+
+describe("transport support vs tool filtering", () => {
+  it("reports Claude and Codex transport support unchanged by the split", () => {
+    const claude = defaultMcpCapabilityRegistry.getCapabilities("claude");
+    const codex = defaultMcpCapabilityRegistry.getCapabilities("codex");
+    expect(claude.transports).toEqual({
+      stdio: true,
+      "streamable-http": true,
+      sse: true,
+    });
+    expect(codex.transports).toEqual({
+      stdio: true,
+      "streamable-http": true,
+      sse: false,
+    });
+  });
+
+  it("marks a stdio server supported by Cursor even though it filters no tools", () => {
+    const lookup = buildCompatibilityLookup(defaultMcpCapabilityRegistry);
+    const view = lookup(definition({ serverKey: "kagi", transport: "stdio" }));
+    const cursor = view.backends.find((b) => b.backend === "cursor");
+    expect(cursor?.supported).toBe(true);
+    expect(cursor?.reason).toBeUndefined();
+  });
+
+  it("marks a non-stdio server unsupported by Cursor with a transport reason", () => {
+    const lookup = buildCompatibilityLookup(defaultMcpCapabilityRegistry);
+    const view = lookup(
+      definition({ serverKey: "remote", transport: "streamable-http" }),
+    );
+    const cursor = view.backends.find((b) => b.backend === "cursor");
+    expect(cursor?.supported).toBe(false);
+    expect(cursor?.reason).toMatch(/streamable-http/);
+  });
+});
+
+// ===========================================================================
 // listBackends — extension points for adding new backends
 // ===========================================================================
 
 describe("McpCapabilityRegistry — extension points", () => {
-  it("lists both shipped backends by default", () => {
+  it("lists every shipped backend by default", () => {
     expect(defaultMcpCapabilityRegistry.listBackends()).toEqual([
       "claude",
       "codex",
+      "cursor",
     ]);
   });
 
@@ -132,6 +222,11 @@ describe("McpCapabilityRegistry — extension points", () => {
       strictAuthoritativeConfig: false,
       serverDisable: "unsupported",
       betweenTurnApply: "unsupported",
+      transports: {
+        stdio: true,
+        "streamable-http": false,
+        sse: false,
+      },
       toolFiltering: {
         mode: "unsupported",
         byTransport: {
@@ -190,7 +285,11 @@ describe("buildCompatibilityLookup — registry-driven compatibility", () => {
 
   it("includes an entry for every backend the registry lists (stable order)", () => {
     const view = lookup(definition({ serverKey: "any" }));
-    expect(view.backends.map((b) => b.backend)).toEqual(["claude", "codex"]);
+    expect(view.backends.map((b) => b.backend)).toEqual([
+      "claude",
+      "codex",
+      "cursor",
+    ]);
   });
 
   it("derives compatibility from the injected registry — not hardcoded ids", () => {

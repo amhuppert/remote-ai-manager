@@ -27,19 +27,22 @@ export function unregisterRuntime(conversationId: string): void {
   logger.debug("runtime.unregistered", { conversationId });
 }
 
-export function closeAllRuntimes(): void {
+export async function closeAllRuntimes(): Promise<void> {
   const count = runtimes.size;
   logger.info("runtime.close_all", { count });
-  for (const [conversationId, runtime] of runtimes) {
+  const closings = [...runtimes].map(async ([conversationId, runtime]) => {
     try {
-      runtime.close();
+      await runtime.close();
     } catch (err) {
       logger.error("runtime.close_error", {
         conversationId,
         error: String(err),
       });
     }
-  }
+  });
+  // Each teardown owns its own failure, so one runtime that cannot shut down
+  // never strands the rest half-closed.
+  await Promise.allSettled(closings);
   runtimes.clear();
 }
 

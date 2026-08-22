@@ -130,7 +130,7 @@ function makeRecordingClaudeFactory(
             continuationDisposition: "retain",
           };
         },
-        close: () => undefined,
+        close: async () => {},
       };
     },
   };
@@ -187,7 +187,7 @@ describe("createCollaborationProductionCallAgent", () => {
               continuationDisposition: "retain",
             };
           },
-          close: () => undefined,
+          close: async () => {},
         };
         return runtime;
       },
@@ -284,7 +284,7 @@ describe("createCollaborationProductionCallAgent", () => {
               continuationDisposition: "retain",
             };
           },
-          close: () => undefined,
+          close: async () => {},
         };
         return runtime;
       },
@@ -377,7 +377,7 @@ describe("createCollaborationProductionCallAgent", () => {
               continuationDisposition: "retain",
             };
           },
-          close: () => undefined,
+          close: async () => {},
         };
         return runtime;
       },
@@ -647,7 +647,7 @@ describe("createCollaborationProductionCallAgent", () => {
               continuationDisposition: "retain",
             };
           },
-          close: () => undefined,
+          close: async () => {},
         };
         return runtime;
       },
@@ -1024,7 +1024,7 @@ describe("createCollaborationProductionCallAgent", () => {
                 continuationDisposition: "retain",
               };
             },
-            close: () => undefined,
+            close: async () => {},
           };
         },
       };
@@ -1456,7 +1456,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
               continuationDisposition: "retain",
             };
           },
-          close: () => undefined,
+          close: async () => {},
         };
       },
     };

@@ -48,7 +48,7 @@ export const FAKE_CLAUDE_INPUT_TOKENS = 1_000;
 export const FAKE_CLAUDE_CACHE_READ_TOKENS = 200;
 export const FAKE_CLAUDE_CONTEXT_WINDOW = 200_000;
 
-function buildNonNullableUsage(): NonNullableUsage {
+export function buildNonNullableUsage(): NonNullableUsage {
   return {
     cache_creation: {
       ephemeral_1h_input_tokens: 0,
@@ -66,7 +66,7 @@ function buildNonNullableUsage(): NonNullableUsage {
   };
 }
 
-function buildModelUsage(): Record<string, ModelUsage> {
+export function buildModelUsage(): Record<string, ModelUsage> {
   return {
     [FAKE_CLAUDE_MODEL]: {
       inputTokens: FAKE_CLAUDE_INPUT_TOKENS,

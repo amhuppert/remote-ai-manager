@@ -34,6 +34,7 @@ describe("useUpdateConfigMutation", () => {
                   reasoningEffort: "high",
                   timeoutMs: null,
                 },
+                cursor: { model: "composer-2.5", timeoutMs: null },
               },
             },
             raw: { commandCenterProjectName: "command-center" },

@@ -39,7 +39,7 @@ export function createMockBackendRuntime(
       contextWindowMetrics: true,
     },
     sendTurn: vi.fn(),
-    close: vi.fn(),
+    close: vi.fn(async () => {}),
     ...overrides,
   } as unknown as ConversationBackendRuntime;
 }
@@ -86,6 +86,7 @@ export function createActorImplementationDepsFixture(
         `http://localhost:3000/api/debug-logs?conversationId=${id}`,
     ),
     safeAppendTranscriptEntry: vi.fn(async () => {}),
+    safeAppendTranscriptEntryOnce: vi.fn(async () => {}),
     saveTranscriptImage: vi.fn(
       async (
         _id: string,

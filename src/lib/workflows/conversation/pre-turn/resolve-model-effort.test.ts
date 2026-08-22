@@ -24,6 +24,7 @@ function makeConfig(): ActorConfig {
         fastMode: true,
         timeoutMs: null,
       },
+      cursor: { model: "composer-2.5", timeoutMs: null },
     },
     maxTurns: 50,
     idleQuerySessionTtlMs: 300_000,
@@ -159,6 +160,7 @@ describe("resolveBackendTurnSettings", () => {
           model: "haiku",
           timeoutMs: 300_000,
         },
+        cursor: { model: "composer-2.5", timeoutMs: null },
       },
     };
 

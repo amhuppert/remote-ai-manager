@@ -15,6 +15,7 @@ import {
   getModelsForBackend,
   type BackendSelectionDefaultsById,
 } from "@/lib/agent-backends/catalog";
+import { useProjectBackendModelOptions } from "@/lib/agent-backends/queries";
 import { EFFORT_OPTIONS } from "@/components/ReasoningLevelSelector";
 import ConversationAgentCapabilitiesConfig from "@/components/agent-capabilities/ConversationAgentCapabilitiesConfig";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
@@ -39,6 +40,7 @@ import CollabConfigRow, {
   COLLAB_RUNNING_TOOLTIP,
   type CollabConfigRowConfig,
 } from "@/components/session/CollabConfigRow";
+import type { CollaborationAgent } from "@/lib/workflows/collaboration/types";
 import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
 import type {
   AddImageResult,
@@ -229,7 +231,9 @@ interface PromptComposerProps {
   effortSupported: boolean;
   hasCollabChip: boolean;
   effectiveCollabConfig: CollabConfigRowConfig;
-  originatingCollabAgent: "claude" | "codex";
+  /** Null when the conversation's backend cannot run Collaboration Mode; the
+   *  collaboration row is not offered at all in that case. */
+  originatingCollabAgent: CollaborationAgent | null;
   onCollabConfigChange: (next: CollabConfigRowConfig) => void;
   collabBackendDefaults: BackendSelectionDefaultsById;
   onCollabDismiss: () => void;
@@ -426,6 +430,13 @@ export default function PromptComposer({
       setQueueError,
     ],
   );
+  // Same project-effective options the desktop toolbar's selector uses; both
+  // read one shared React Query entry, so the two toolbars can never offer
+  // different models for the same project (spec D10).
+  const projectModelOptions = useProjectBackendModelOptions(
+    projectName,
+    selectedBackend,
+  );
   const sendBusy = sending && !conversationId;
   const sendButtonInner =
     sending && !conversationId ? (
@@ -506,7 +517,7 @@ export default function PromptComposer({
               }
             />
           </Suspense>
-          {hasCollabChip ? (
+          {hasCollabChip && originatingCollabAgent !== null ? (
             <CollabConfigRow
               config={effectiveCollabConfig}
               originatingAgent={originatingCollabAgent}
@@ -515,7 +526,7 @@ export default function PromptComposer({
               backendDefaults={collabBackendDefaults}
               projectName={projectName}
               agentOne={{
-                backend: selectedBackend,
+                backend: originatingCollabAgent,
                 model: selectedModel,
                 ...(effortSupported ? { effort: selectedEffort } : {}),
                 ...(backendSupportsFastMode(selectedBackend)
@@ -615,6 +626,7 @@ export default function PromptComposer({
           />
           <MobilePromptToolbar
             modelOptions={getModelsForBackend(selectedBackend)}
+            projectOptions={projectModelOptions}
             effortOptions={EFFORT_OPTIONS.filter((o) =>
               availableEffortLevels.includes(o.id),
             )}

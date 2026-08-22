@@ -78,6 +78,14 @@ describe("readRepoConfig", () => {
             "Run unit tests in a worker pool clamped to the machine's memory budget",
           pathArgs: "paths",
         },
+        "cursor-acceptance": {
+          command: { full: "scripts/validate/cursor-acceptance.sh" },
+          cost: 5,
+          timeoutMs: 3_600_000,
+          description:
+            "Authenticated live Cursor acceptance matrix on the pinned baseline; reports blocked (exit 78) without CURSOR_API_KEY and is never part of a merge gate",
+          pathArgs: "forbid",
+        },
       },
       preMerge: ["format", "lint", "typecheck", "seams", "test"],
       laneMerge: ["typecheck", "seams", "test"],

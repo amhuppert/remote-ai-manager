@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { fireEvent, screen } from "@testing-library/react";
+import { beforeEach, describe, it, expect, vi, afterEach } from "vitest";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithQuery } from "@/test/component-mocks";
+import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
+import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
 import PromptDesktopToolbar, {
   type PromptDesktopToolbarProps,
 } from "@/components/session/prompt/PromptDesktopToolbar";
@@ -177,4 +179,98 @@ describe("PromptDesktopToolbar", () => {
       }
     },
   );
+});
+
+describe("PromptDesktopToolbar project-scoped model options", () => {
+  let api: FetchFixture;
+
+  beforeEach(() => {
+    api = installFetchFixture();
+    api.json("GET", "/api/agent-backends", {
+      backends: listBackendCatalogEntries(),
+    });
+  });
+
+  afterEach(() => api.restore());
+
+  function serveProjectOptions(
+    models: readonly string[],
+    defaultModelId: string | null,
+  ): void {
+    api.json("GET", "/api/projects/proj/model-options", {
+      backends: listBackendCatalogEntries().map((entry) =>
+        entry.id === "cursor"
+          ? {
+              backend: entry.id,
+              models: models.map((id) => ({
+                id,
+                label: id,
+                description: "Configured for this project.",
+                effortLevels: [],
+              })),
+              defaultModelId,
+              source: "project",
+            }
+          : {
+              backend: entry.id,
+              models: entry.models,
+              defaultModelId: entry.defaultModelId,
+              source: "catalog",
+            },
+      ),
+    });
+  }
+
+  it("offers the project's models rather than the descriptor catalog's", async () => {
+    serveProjectOptions(["composer-1"], "composer-1");
+    renderWithQuery(
+      <PromptDesktopToolbar
+        {...makeProps({
+          selectedBackend: "cursor",
+          selectedModel: "composer-1",
+        })}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("model-selector-label")).toHaveTextContent(
+        "composer-1",
+      );
+    });
+  });
+
+  it("marks a configured model outside the project's list as an invalid selection", async () => {
+    serveProjectOptions(["composer-1"], "composer-1");
+    renderWithQuery(
+      <PromptDesktopToolbar
+        {...makeProps({
+          selectedBackend: "cursor",
+          selectedModel: "composer-2.5",
+        })}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("model-selector-trigger")).toHaveAttribute(
+        "data-invalid-selection",
+        "true",
+      );
+    });
+  });
+
+  it("requires an explicit choice when the project's list permits nothing", async () => {
+    serveProjectOptions([], null);
+    renderWithQuery(
+      <PromptDesktopToolbar
+        {...makeProps({
+          selectedBackend: "cursor",
+          selectedModel: "composer-2.5",
+        })}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("model-selector-trigger")).toBeDisabled();
+    });
+  });
 });

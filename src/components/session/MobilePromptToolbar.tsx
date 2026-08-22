@@ -12,6 +12,7 @@ import {
   skillTriggerPrefixForBackend,
 } from "@/lib/agent-backends/catalog";
 import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
+import type { ProjectBackendModelOptions } from "@/lib/agent-backends/project-model-options";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 
@@ -63,7 +64,16 @@ interface EffortOption {
 type SheetId = "more" | "settings" | null;
 
 export interface MobilePromptToolbarProps {
+  /** The process-global catalog's models; used when `projectOptions` is null. */
   modelOptions: readonly ModelOption[];
+  /**
+   * The project's effective options for `backend`, when the surface has project
+   * context (spec D10). Supplying them replaces `modelOptions` AND changes the
+   * out-of-range behavior: a selection the project does not permit is reported
+   * as invalid rather than shown as if it were in use, because the API will
+   * refuse it. Null means the project's options are unknown.
+   */
+  projectOptions?: ProjectBackendModelOptions | null;
   effortOptions: readonly EffortOption[];
   selectedModel: string;
   selectedEffort: EffortLevel;
@@ -114,6 +124,7 @@ export interface MobilePromptToolbarProps {
 
 export default function MobilePromptToolbar({
   modelOptions,
+  projectOptions = null,
   effortOptions,
   selectedModel,
   selectedEffort,
@@ -152,12 +163,25 @@ export default function MobilePromptToolbar({
     return () => onSheetOpenChange?.(false);
   }, [sheet, onSheetOpenChange]);
 
-  const selectedModelOpt = modelOptions.find((m) => m.id === selectedModel);
+  const availableModels = projectOptions?.models ?? modelOptions;
+  const selectedModelOpt = availableModels.find((m) => m.id === selectedModel);
   const selectedEffortOpt = effortOptions.find((e) => e.id === selectedEffort);
+  // Only a project-scoped list makes an unmatched value a real invalid
+  // selection. Against the catalog it is usually a configured custom model or a
+  // mid backend-switch transient, where the raw id is the honest label.
+  const invalidModelSelection =
+    projectOptions != null && selectedModelOpt === undefined;
+  const invalidModelReason = !invalidModelSelection
+    ? null
+    : availableModels.length === 0
+      ? `Model "${selectedModel}" is not available: this project's configuration permits no ${backendLabel(backend)} model. Update CommandCenter.json before starting a turn.`
+      : `Model "${selectedModel}" is not available for this project. Choose one of: ${availableModels
+          .map((option) => option.id)
+          .join(", ")}.`;
   const chipModelLabel = selectedModelOpt?.label ?? selectedModel;
   const chipEffortLabel = selectedEffortOpt?.label;
   const chipSettingsLabel = [
-    `Model ${chipModelLabel}`,
+    invalidModelReason ?? `Model ${chipModelLabel}`,
     effortSupported && chipEffortLabel
       ? `reasoning ${chipEffortLabel}`
       : undefined,
@@ -197,8 +221,19 @@ export default function MobilePromptToolbar({
           disabled={isReadOnly || isBusy}
           aria-haspopup="dialog"
           aria-label={chipSettingsLabel}
+          data-testid="mobile-prompt-model-chip"
+          {...(invalidModelSelection
+            ? { "data-invalid-selection": "true", "aria-invalid": true }
+            : {})}
         >
-          <span className="font-semibold">{chipModelLabel}</span>
+          <span
+            className={cn(
+              "font-semibold",
+              invalidModelSelection && "text-[var(--red)]",
+            )}
+          >
+            {chipModelLabel}
+          </span>
           {effortSupported && chipEffortLabel && (
             <>
               <span className="px-2xs text-text-tertiary">·</span>
@@ -420,7 +455,16 @@ export default function MobilePromptToolbar({
 
           <div className="mobile-action-sheet-section">
             <div className="mobile-action-sheet-label">Model</div>
-            {modelOptions.map((option) => {
+            {invalidModelReason !== null && (
+              <div
+                data-testid="mobile-prompt-model-invalid"
+                role="alert"
+                className="p-sm font-mono text-[0.78rem] text-[var(--red)]"
+              >
+                {invalidModelReason}
+              </div>
+            )}
+            {availableModels.map((option) => {
               const active = option.id === selectedModel;
               return (
                 <button

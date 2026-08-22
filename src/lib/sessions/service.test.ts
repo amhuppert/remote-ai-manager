@@ -28,6 +28,10 @@ import type {
 import { createTicketProjectOperationGate } from "../tickets/project-operation-gate";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { createSessionLifecycleGate } from "./lifecycle-gate";
+import {
+  registerRuntime,
+  _resetForTesting as _resetRuntimeRegistryForTesting,
+} from "@/lib/agent-backends/runtime-registry";
 import { STANDARD_AGENT_PROFILE_ID } from "@/lib/agent-profiles/builtins";
 import { computeContentHash } from "@/lib/agent-profiles/hashing";
 import {
@@ -1364,6 +1368,84 @@ describe("deleteSession", () => {
       "/projects/repo",
       "to-delete",
     );
+  });
+
+  it("awaits each conversation runtime teardown before stopping dev servers or removing the worktree", async () => {
+    readStateMock.mockResolvedValue(
+      stateWithSession("/projects/repo", "to-delete", {
+        conversations: [{ id: "conv-live", transcriptPath: null }],
+      }),
+    );
+    existsSyncMock.mockReturnValue(true);
+    mockGitSuccess();
+
+    let releaseClose: () => void = () => {};
+    const teardown = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    registerRuntime("conv-live", {
+      backend: "claude",
+      status: "alive",
+      modelId: undefined,
+      reasoningEffort: undefined,
+      outputFormat: undefined,
+      alignmentVersion: null,
+      sendTurn: async () => {
+        throw new Error("sendTurn is not exercised by session deletion");
+      },
+      close: () => teardown,
+    });
+
+    try {
+      const deletion = service.deleteSession("/projects/repo", "to-delete");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // The worker still owns the worktree as its cwd until teardown resolves.
+      expect(deps.stopAllForSession).not.toHaveBeenCalled();
+      expect(fastRemoveWorktreeMock).not.toHaveBeenCalled();
+
+      releaseClose();
+      await deletion;
+
+      expect(fastRemoveWorktreeMock).toHaveBeenCalledWith({
+        projectPath: "/projects/repo",
+        worktreePath: "/projects/repo/.worktrees/to-delete",
+      });
+    } finally {
+      _resetRuntimeRegistryForTesting();
+    }
+  });
+
+  it("still deletes the session when a runtime teardown rejects", async () => {
+    readStateMock.mockResolvedValue(
+      stateWithSession("/projects/repo", "to-delete", {
+        conversations: [{ id: "conv-broken", transcriptPath: null }],
+      }),
+    );
+    existsSyncMock.mockReturnValue(true);
+    mockGitSuccess();
+
+    registerRuntime("conv-broken", {
+      backend: "claude",
+      status: "alive",
+      modelId: undefined,
+      reasoningEffort: undefined,
+      outputFormat: undefined,
+      alignmentVersion: null,
+      sendTurn: async () => {
+        throw new Error("sendTurn is not exercised by session deletion");
+      },
+      close: () => Promise.reject(new Error("teardown failed")),
+    });
+
+    try {
+      await expect(
+        service.deleteSession("/projects/repo", "to-delete"),
+      ).resolves.toMatchObject({ worktreeRemoved: true });
+      expect(fastRemoveWorktreeMock).toHaveBeenCalled();
+    } finally {
+      _resetRuntimeRegistryForTesting();
+    }
   });
 
   it("does not fail when transcript file removal throws", async () => {

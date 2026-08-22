@@ -80,16 +80,21 @@ export function encodeAgentSessionRefForStorage(
  * unrelated object that merely resembles a ref (e.g. an `activeTurn` carrying
  * a `backend` field).
  */
-const LEGACY_HANDLE_KEY: Record<
-  AgentSessionRef["backend"],
-  "sessionId" | "threadId"
+const LEGACY_HANDLE_KEY: Partial<
+  Record<AgentSessionRef["backend"], "sessionId" | "threadId">
 > = {
   claude: "sessionId",
   codex: "threadId",
 };
 
-function legacyKeyFor(backend: AgentSessionRef["backend"]): string {
-  return LEGACY_HANDLE_KEY[backend];
+/**
+ * Partial by design: a backend registered after the canonical `{backend, ref}`
+ * shape existed never wrote a legacy handle, so it has no key here. Null means
+ * "this backend has no legacy shape to match", which the matchers below read as
+ * "nothing to rewrite" rather than inventing an arm no row was ever written in.
+ */
+function legacyKeyFor(backend: AgentSessionRef["backend"]): string | null {
+  return LEGACY_HANDLE_KEY[backend] ?? null;
 }
 
 function asRefObject(value: unknown): Record<string, unknown> | null {
@@ -114,7 +119,7 @@ function asLegacyRef(value: unknown): AgentSessionRef | null {
   const keys = Object.keys(obj).sort();
   if (keys.length !== 2 || keys[0] !== "backend") return null;
   const legacyKey = legacyKeyFor(backend.data);
-  if (keys[1] !== legacyKey) return null;
+  if (legacyKey === null || keys[1] !== legacyKey) return null;
   const handle = obj[legacyKey];
   if (typeof handle !== "string" || handle.length === 0) return null;
   return { backend: backend.data, ref: handle };
@@ -130,6 +135,7 @@ function asNormalizableRef(value: unknown): AgentSessionRef | null {
   const backend = agentBackendSchema.safeParse(obj.backend);
   if (!backend.success) return null;
   const legacyKey = legacyKeyFor(backend.data);
+  if (legacyKey === null) return null;
   // Sorted key order: "backend" < "ref" < "sessionId" / "threadId".
   const keys = Object.keys(obj).sort().join(",");
   const isLegacy = keys === `backend,${legacyKey}`;

@@ -32,12 +32,19 @@ import {
   getSession as defaultGetSession,
 } from "@/lib/state-store";
 import { setConversationBackend as defaultSetConversationBackend } from "@/lib/conversations/service";
+import { collaborationBackendRefusal } from "./types";
+import { getBackendCatalogEntry } from "@/lib/agent-backends/catalog";
+import {
+  backendFacetRefusalFor,
+  GATED_BACKEND_FACET_ERROR_CODE,
+} from "@/lib/agent-backends/facet-gating";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ApiError } from "@/lib/api/errors";
 import {
   collaborationResumeRequestSchema,
   collaborationStartRequestSchema,
   collaborationStopRequestSchema,
+  CollaborationBackendNotEligibleError,
   CollaborationConversationMismatchError,
   CollaborationConversationNotFoundError,
   CollaborationNotResumableError,
@@ -296,6 +303,41 @@ export function createCollaborationRouteHandlers(
         return buildValidationErrorResponse(parsed.error);
       }
 
+      // Ahead of the adoption below, which PERSISTS the backend onto the
+      // conversation: a backend collaboration does not run has to be refused
+      // before that write, or a refused start still leaves the conversation
+      // switched to it (spec R15.2). The manager raises its own refusal when it
+      // resolves the lanes, but only after that write has happened.
+      //
+      // Same text the picker shows on the refused option, so the affordance and
+      // the API cannot disagree. The code distinguishes the two causes: a
+      // missing task facet is the facet refusal every gated route returns, and
+      // pair-membership keeps the collaboration-specific code it already had.
+      if (parsed.data.backend) {
+        const requested = parsed.data.backend;
+        const refusal = collaborationBackendRefusal(
+          getBackendCatalogEntry(requested),
+        );
+        if (refusal !== null) {
+          const facetUnsupported =
+            backendFacetRefusalFor(requested, "tasks") !== null;
+          logger.warn("collaboration.route.backend_ineligible", {
+            conversationId: parsed.data.conversationId,
+            requestedBackend: requested,
+            cause: facetUnsupported ? "task_facet" : "pair_policy",
+          });
+          return NextResponse.json(
+            {
+              error: refusal,
+              code: facetUnsupported
+                ? GATED_BACKEND_FACET_ERROR_CODE
+                : "COLLABORATION_BACKEND_NOT_ELIGIBLE",
+            } satisfies ApiError,
+            { status: 400 },
+          );
+        }
+      }
+
       if (parsed.data.backend) {
         try {
           await deps.setConversationBackend(
@@ -384,6 +426,15 @@ export function createCollaborationRouteHandlers(
               code: "COLLABORATION_START_CONFLICT",
             } satisfies ApiError,
             { status: 409 },
+          );
+        }
+        if (err instanceof CollaborationBackendNotEligibleError) {
+          return NextResponse.json(
+            {
+              error: err.message,
+              code: "COLLABORATION_BACKEND_NOT_ELIGIBLE",
+            } satisfies ApiError,
+            { status: 400 },
           );
         }
         if (err instanceof CollaborationModelEffortValidationError) {

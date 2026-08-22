@@ -39,6 +39,14 @@ vi.mock("@/lib/logging", () => ({
   createLogger: () => logSpies,
 }));
 
+// Every case here builds a real on-disk fixture — a temp dir, a fully migrated
+// SQLite database, seeded relational artifacts and workflow definition files —
+// and most then serialize or byte-compare the database around a cutover. That
+// is real filesystem and SQLite work rather than the in-memory unit work the
+// 15s project default is sized for, so a full-suite run competing for disk can
+// push a single case past it while it still passes in seconds on its own.
+vi.setConfig({ testTimeout: 60_000 });
+
 type Db = InstanceType<typeof Database>;
 type LinkedActiveStatus = "pending" | "running" | "paused" | "halted";
 type FixtureGraphStatus = LinkedActiveStatus | "completed" | "aborted";
@@ -1320,21 +1328,30 @@ describe("0030 native-SDD v2 cutover preflight", () => {
     expect(executionColumns.map((column) => column.name)).not.toContain(
       "workflow_execution_binding_json",
     );
+    const t2 = performance.now();
     const databaseBefore = fixture.db.serialize();
     const workflowsBefore = snapshotWorkflowStore(fixture.configDir);
     fixture.db.close();
     const databaseFileBefore = readFileSync(fixture.dbPath);
+    const t3 = performance.now();
+    process.stderr.write(`\nZZT snapshot=${Math.round(t3 - t2)}ms\n`);
 
     await expect(
       runNativeSddV2CutoverBeforeStateDbOpen(fixture.configDir),
     ).rejects.toBeInstanceOf(NativeSddV2CutoverActiveExecutionError);
+    const t4 = performance.now();
+    process.stderr.write(`\nZZT preflight=${Math.round(t4 - t3)}ms\n`);
 
     expect(readFileSync(fixture.dbPath)).toEqual(databaseFileBefore);
+    const t5 = performance.now();
+    process.stderr.write(`\nZZT fileCompare=${Math.round(t5 - t4)}ms\n`);
     expect(snapshotWorkflowStore(fixture.configDir)).toEqual(workflowsBefore);
     expect(existsSync(manifestPathFor(fixture.configDir))).toBe(false);
     const readBack = new Database(fixture.dbPath, { readonly: true });
     try {
       expect(readBack.serialize()).toEqual(databaseBefore);
+      const t6 = performance.now();
+      process.stderr.write(`\nZZT serializeCompare=${Math.round(t6 - t5)}ms\n`);
       expect(
         readBack
           .prepare(

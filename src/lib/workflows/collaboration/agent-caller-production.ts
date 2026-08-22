@@ -361,10 +361,18 @@ function buildInnerCallAgent(
     const stallTimeoutMs = laneDefaults.stallTimeoutMs ?? 0;
     let timeoutFired = false;
     let runtimeClosed = false;
+    // Called from timeout/stall timers as well as the terminal path, so
+    // teardown is not awaited here; a failed close is recorded.
     const closeRuntime = (): void => {
       if (runtimeClosed) return;
       runtimeClosed = true;
-      runtime.close();
+      void runtime.close().catch((err: unknown) => {
+        logger.warn("collaboration.agent_call.runtime_close_error", {
+          workflowId: input.workflowId,
+          backend,
+          error: String(err),
+        });
+      });
     };
     logger.debug("collaboration.agent_call.timeout_resolved", {
       workflowId: input.workflowId,

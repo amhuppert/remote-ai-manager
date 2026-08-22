@@ -10,6 +10,7 @@ import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/catalog"
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
   claude: { modelId: "opus", effort: "high" },
   codex: { modelId: "gpt-5.4", effort: "high", codexFastMode: false },
+  cursor: { modelId: "composer-2.5", effort: "high" },
 };
 
 function renderRow(overrides: Partial<CollabConfigRowProps> = {}) {
@@ -74,6 +75,25 @@ describe("CollabConfigRow", () => {
     expect(summary.textContent).toContain("max");
   });
 
+  // A non-Claude collaboration lane is dispatched as a task run
+  // (collaboration/helpers.ts builds `kind: "task_run"` for it), so a backend
+  // registering no task facet cannot take one. The refusal is therefore read
+  // off the catalog's facet data, and names both the facet and the surface
+  // (spec D13, R15.1).
+  it("refuses a backend with no task facet and says why, naming the facet and the surface", () => {
+    const onChange = vi.fn();
+    renderRow({ onChange });
+
+    const cursor = screen.getByRole("button", { name: /Cursor/ });
+    expect(cursor).toHaveAttribute("aria-disabled", "true");
+    const reason = cursor.getAttribute("title") ?? "";
+    expect(reason).toMatch(/task/i);
+    expect(reason).toMatch(/collaboration/i);
+
+    cursor.click();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("reseeds Agent Two's runtime from the new backend's defaults on backend switch", () => {
     const onChange = vi.fn();
     renderRow({
@@ -91,7 +111,9 @@ describe("CollabConfigRow", () => {
       },
     });
 
-    screen.getByRole("button", { name: /claude/i }).click();
+    // Exact name: a refused option's accessible name carries its reason, which
+    // names the backends collaboration DOES run.
+    screen.getByRole("button", { name: "Claude" }).click();
 
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({

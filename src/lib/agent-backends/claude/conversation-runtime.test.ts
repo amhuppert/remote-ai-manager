@@ -39,6 +39,10 @@ import {
   PROFILE_BLOCK_END,
   PROFILE_LAYER_HEADING,
 } from "@/lib/agent-profiles/composer";
+import {
+  buildModelUsage,
+  buildNonNullableUsage,
+} from "@/lib/agent-backends/testing/fake-claude-sdk-port";
 import { computeContentHash } from "@/lib/agent-profiles/hashing";
 import { conversationProfileInstructionBlock } from "@/lib/conversations/conversation-profile";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
@@ -1369,6 +1373,9 @@ describe("ClaudeConversationRuntime — error result classification", () => {
       backend: "claude",
       ref: "sess-after-init",
     });
+    // A failed turn has no usage to report, and unavailable is an explicit
+    // null record — not an absent field.
+    expect(result.tokenUsage).toBeNull();
   });
 
   it("classifies a closed-during-abort failure as aborted with no error", async () => {
@@ -1419,6 +1426,63 @@ describe("ClaudeConversationRuntime — error result classification", () => {
       backend: "claude",
       ref: "sess-aborted",
     });
+    // Cancellation never fabricates counts, and reports the absence
+    // explicitly rather than omitting the record.
+    expect(result.tokenUsage).toBeNull();
+  });
+
+  it("reports the neutral token record as unavailable on a completed turn", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-usage-1",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "hello",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-usage",
+      uuid: "00000000-0000-4000-8000-000000000001",
+      total_cost_usd: 0.02,
+      duration_ms: 20,
+      duration_api_ms: 18,
+      num_turns: 1,
+      result: "done",
+      is_error: false,
+      stop_reason: "end_turn",
+      // A real `SDKResultSuccess` rather than a cast: the usage shape comes
+      // from the fake SDK port that already owns it, so this fixture cannot
+      // drift from the vendored type. Supplying real usage cannot affect what
+      // this case asserts — the adapter hardcodes `tokenUsage: null`.
+      usage: buildNonNullableUsage(),
+      modelUsage: buildModelUsage(),
+      permission_denials: [],
+    });
+
+    const result = await turnPromise;
+
+    // Claude has not adopted the neutral token record; null is its explicit
+    // "usage unavailable" report, not a missing field.
+    expect(result.tokenUsage).toBeNull();
+
+    await runtime.close();
   });
 });
 

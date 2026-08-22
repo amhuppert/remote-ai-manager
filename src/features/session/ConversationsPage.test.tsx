@@ -129,6 +129,7 @@ function renderPage(args: {
         backendDefaults={{
           claude: { modelId: "sonnet", effort: "high" },
           codex: { modelId: "gpt-5.6-sol", effort: "high" },
+          cursor: { modelId: "composer-2.5", effort: "high" },
         }}
       />
     </QueryClientProvider>,

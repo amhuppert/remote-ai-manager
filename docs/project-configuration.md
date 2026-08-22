@@ -41,7 +41,10 @@ my-project/
       "command": "npx next dev --port $CC_ASSIGNED_PORT",
       "port": { "base": 3000, "range": 100 }
     }
-  ]
+  ],
+  "agentBackends": {
+    "cursor": { "supportedModels": ["composer-2.5"] }
+  }
 }
 ```
 
@@ -50,6 +53,32 @@ my-project/
 | `initScriptPath` | `string \| null` | No | Script to run after a session worktree is created |
 | `validation` | `ValidationConfig` | No | Named validation commands and merge-workflow selections |
 | `devServers` | `Array<DevServer>` | No | Dev servers that can be launched from the session UI (see [`devServers`](#devservers--dev-server-configuration)) |
+| `agentBackends` | `{ cursor?: { supportedModels?: string[] } }` | No | Per-project agent backend configuration (see [`agentBackends.cursor`](#agentbackendscursor--cursor-supported-models)) |
+
+---
+
+## `agentBackends.cursor` — Cursor supported models
+
+Which Cursor models this project's conversations may run. The list is a project/team property — it changes when your team adopts a model, not when Command Center ships a release — so it lives here rather than in Command Center's code.
+
+```json
+{
+  "agentBackends": {
+    "cursor": { "supportedModels": ["composer-2.5", "composer-1"] }
+  }
+}
+```
+
+- **Omit the block** and the effective list is `["composer-2.5"]`, the Command Center default.
+- Writing `"cursor": {}` means the same thing: `supportedModels` defaults to `["composer-2.5"]`.
+- The **first** applicable value wins as the model for a turn: the model explicitly selected for the conversation, then the global `agentBackends.cursor.model` setting, then `composer-2.5`.
+- Whatever that resolves to must be a member of this list. A model outside it is **refused** with a client error before any Cursor process starts or any billable turn runs — Command Center never quietly substitutes a different model. That includes the case where the list omits `composer-2.5` and nothing is explicitly selected.
+- A declared-empty list (`"supportedModels": []`) permits nothing, and every Cursor turn in the project is refused.
+- Only `supportedModels` is accepted here. A per-project `model`, `reasoningEffort`, or `apiKey` is rejected by name: the model default belongs to global settings, Cursor takes no reasoning effort, and the credential comes from the server's `CURSOR_API_KEY` environment variable and is never stored in a settings file.
+
+Command Center's conversation-creation surfaces (the project composer, the session composer, ticket start, quick ticket) offer exactly this list. If the model configured in global settings is not on it, they show an explicit invalid-selection state and wait for you to choose — they do not pick one for you.
+
+For everything else about running Cursor — the `CURSOR_API_KEY` requirement, runtime pinning, image and token behavior, the tool policy, and what Cursor does not support — see [Cursor Backend](./cursor-backend.md).
 
 ---
 

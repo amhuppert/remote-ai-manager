@@ -157,7 +157,7 @@ describe("collaboration structured-output repair contract", () => {
               (await fs.readFile(mainPath, "utf-8")).length > 0;
             return conversationResult(JSON.stringify(claudeContent));
           },
-          close() {},
+          async close() {},
         };
       },
     };

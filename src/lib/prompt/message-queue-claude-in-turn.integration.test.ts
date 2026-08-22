@@ -129,7 +129,7 @@ function makeAcceptingClaudeRuntime(): {
       callOrder.push("queueUserInput");
       received.push(input);
     }),
-    close: vi.fn(() => {}),
+    close: vi.fn(async () => {}),
   };
   return { runtime, received, callOrder };
 }

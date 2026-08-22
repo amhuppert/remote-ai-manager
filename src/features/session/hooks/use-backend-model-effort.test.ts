@@ -84,6 +84,7 @@ describe("useBackendModelEffort", () => {
         backendDefaults: {
           claude: { modelId: "fable", effort: "high" },
           codex: { modelId: "gpt-5.4", effort: "high" },
+          cursor: { modelId: "composer-2.5", effort: "high" },
         },
         lastUsedModelId: "sonnet",
         lastUsedEffort: "medium",
@@ -102,6 +103,7 @@ describe("useBackendModelEffort", () => {
         backendDefaults: {
           claude: { modelId: "fable", effort: "high" },
           codex: { modelId: "gpt-5.6-terra", effort: "xhigh" },
+          cursor: { modelId: "composer-2.5", effort: "high" },
         },
       }),
     );
@@ -123,6 +125,7 @@ describe("useBackendModelEffort", () => {
         backendDefaults: {
           claude: { modelId: "opus", effort: "high" },
           codex: { modelId: "custom-codex-model", effort: "ultra" },
+          cursor: { modelId: "composer-2.5", effort: "high" },
         },
       }),
     );
@@ -144,6 +147,7 @@ describe("useBackendModelEffort", () => {
     const backendDefaults: BackendSelectionDefaultsById = {
       claude: { modelId: "fable", effort: "high" },
       codex: { modelId: "gpt-5.4", effort: "high" },
+      cursor: { modelId: "composer-2.5", effort: "high" },
     };
     const { result, rerender } = renderHook(
       ({ activeConversation, lastUsedModelId, lastUsedEffort }) =>
@@ -190,6 +194,7 @@ describe("useBackendModelEffort", () => {
     const backendDefaults: BackendSelectionDefaultsById = {
       claude: { modelId: "opus", effort: "high" },
       codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+      cursor: { modelId: "composer-2.5", effort: "high" },
     };
     const activeConversation = makeConversation({
       agentBackend: "codex",
@@ -219,6 +224,7 @@ describe("useBackendModelEffort", () => {
     const backendDefaults: BackendSelectionDefaultsById = {
       claude: { modelId: "opus", effort: "high" },
       codex: { modelId: "opus", effort: "ultra" },
+      cursor: { modelId: "composer-2.5", effort: "high" },
     };
     const activeConversation = makeConversation({
       agentBackend: "codex",
@@ -247,6 +253,7 @@ describe("useBackendModelEffort", () => {
         backendDefaults: {
           claude: { modelId: "sonnet", effort: "medium" },
           codex: { modelId: "gpt-5.4", effort: "high" },
+          cursor: { modelId: "composer-2.5", effort: "high" },
         },
         lastUsedModelId: "custom-claude-model",
         lastUsedEffort: "high",

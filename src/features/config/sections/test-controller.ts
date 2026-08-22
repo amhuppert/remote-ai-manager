@@ -23,6 +23,10 @@ export const baseFormState: GlobalConfig = {
       reasoningEffort: "high",
       timeoutMs: null,
     },
+    cursor: {
+      model: "composer-2.5",
+      timeoutMs: null,
+    },
   },
   maxConcurrentQueries: 3,
   preMergeTimeoutMs: 300_000,

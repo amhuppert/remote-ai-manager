@@ -135,16 +135,10 @@ describe("resolveScopedWorkerRequest", () => {
     ).toBe(CONFIGURED_WORKERS);
   });
 
-  it("leaves full and changed runs at the configured pool", () => {
-    // Only the paths scope is priced per token; the other scopes are charged
-    // the wrapper's full weight and may use the whole pool.
-    expect(
-      resolveScopedWorkerRequest({
-        mode: "full",
-        pathTokenCount: 0,
-        configuredWorkers: CONFIGURED_WORKERS,
-      }),
-    ).toBe(CONFIGURED_WORKERS);
+  it("leaves changed runs at the configured pool", () => {
+    // Changed scope is charged the wrapper's full weight and may use the whole
+    // pool because it covers a bounded dependency slice rather than the whole
+    // corpus.
     expect(
       resolveScopedWorkerRequest({
         mode: "changed",
@@ -152,6 +146,29 @@ describe("resolveScopedWorkerRequest", () => {
         configuredWorkers: CONFIGURED_WORKERS,
       }),
     ).toBe(CONFIGURED_WORKERS);
+  });
+
+  it("caps full-suite runs below the wrapper pool so the coordinator stays responsive", () => {
+    // Full-scope validation keeps every project collected and reporting at
+    // once. Keeping the request below the normal changed-scope pool leaves CPU
+    // and event-loop headroom for Vitest's coordinator RPCs.
+    expect(
+      resolveScopedWorkerRequest({
+        mode: "full",
+        pathTokenCount: 0,
+        configuredWorkers: CONFIGURED_WORKERS,
+      }),
+    ).toBe(4);
+  });
+
+  it("does not raise a deliberately smaller full-suite request", () => {
+    expect(
+      resolveScopedWorkerRequest({
+        mode: "full",
+        pathTokenCount: 0,
+        configuredWorkers: 3,
+      }),
+    ).toBe(3);
   });
 
   it("keeps at least one worker when no token survives", () => {

@@ -1014,8 +1014,16 @@ export function stopConversationActor(
   // Close and unregister the backend runtime if one exists
   const backendRuntime = getRuntimeFromRegistry(conversationId);
   if (backendRuntime) {
+    // Stopping an actor is a synchronous eviction — it orders no destructive
+    // follow-up work — so teardown runs to completion in the background and a
+    // failure is recorded instead of surfacing as an unhandled rejection.
     try {
-      backendRuntime.close();
+      void backendRuntime.close().catch((err: unknown) => {
+        logger.warn("conversation-manager.runtime_close_error", {
+          conversationId,
+          error: String(err),
+        });
+      });
     } catch (err) {
       logger.warn("conversation-manager.runtime_close_error", {
         conversationId,

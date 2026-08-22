@@ -32,6 +32,7 @@ describe("commandCenterProjectName config", () => {
           reasoningEffort: "high",
           timeoutMs: null,
         },
+        cursor: { model: "composer-2.5", timeoutMs: null },
       },
       commandCenterProjectName: "command-center",
     });
@@ -54,6 +55,7 @@ describe("agent backend config", () => {
         agentBackends: {
           claude: { model: "sonnet" },
           codex: { fastMode: true, timeoutMs: null },
+          cursor: { model: "composer-2.5", timeoutMs: null },
         },
       }),
     ).toEqual({
@@ -61,8 +63,148 @@ describe("agent backend config", () => {
       agentBackends: {
         claude: { model: "sonnet" },
         codex: { fastMode: true, timeoutMs: null },
+        cursor: { model: "composer-2.5", timeoutMs: null },
       },
     });
+  });
+
+  it("accepts a sparse raw Cursor profile", () => {
+    expect(
+      rawGlobalConfigSchema.parse({
+        agentBackends: { cursor: { model: "composer-2.5" } },
+      }),
+    ).toEqual({ agentBackends: { cursor: { model: "composer-2.5" } } });
+  });
+
+  it("rejects a malformed Cursor model", () => {
+    expect(
+      rawGlobalConfigSchema.safeParse({
+        agentBackends: { cursor: { model: "" } },
+      }).success,
+    ).toBe(false);
+    expect(
+      rawGlobalConfigSchema.safeParse({
+        agentBackends: { cursor: { model: 5 } },
+      }).success,
+    ).toBe(false);
+    expect(
+      rawGlobalConfigSchema.safeParse({
+        agentBackends: { cursor: { timeoutMs: "soon" } },
+      }).success,
+    ).toBe(false);
+  });
+
+  // Each of these would otherwise be stripped in silence, leaving an operator
+  // believing they had configured something Command Center never reads.
+  it.each([
+    ["fastMode", true, /fast mode/i],
+    ["pricing", { "composer-2.5": { inputPerMillion: 1 } }, /cost/i],
+    ["apiKey", "sk-cursor-not-a-real-key", /CURSOR_API_KEY/],
+  ])(
+    "rejects the prohibited Cursor option %s with a bounded reason",
+    (field, value, reasonPattern) => {
+      const result = rawGlobalConfigSchema.safeParse({
+        agentBackends: { cursor: { [field]: value } },
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.message).toMatch(reasonPattern);
+        // Whatever the operator wrote must not be echoed back — the apiKey
+        // case is the one that matters and the rule is uniform.
+        expect(result.error.message).not.toContain("sk-cursor-not-a-real-key");
+      }
+    },
+  );
+
+  // The named `z.never()` arms above only cover the options we anticipated.
+  // An option nobody predicted — a typo, a setting copied from another
+  // backend, a field from a future release — has to fail too, or the operator
+  // is told nothing while Command Center reads none of it.
+  it.each([
+    "unknownCursorOption",
+    // A typo of a real field — the case an operator is most likely to hit.
+    "modle",
+    // A plausible-sounding setting Command Center does not expose.
+    "sandbox",
+  ])("rejects the unknown raw Cursor option %s, naming the key", (field) => {
+    const result = rawGlobalConfigSchema.safeParse({
+      agentBackends: { cursor: { model: "composer-2.5", [field]: "value" } },
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues).toContainEqual(
+      expect.objectContaining({
+        path: ["agentBackends", "cursor"],
+        message: expect.stringContaining(field),
+      }),
+    );
+  });
+
+  it("names the unknown key without echoing its value", () => {
+    const result = rawGlobalConfigSchema.safeParse({
+      agentBackends: {
+        cursor: { model: "composer-2.5", token: "sk-cursor-not-a-real-key" },
+      },
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.message).toContain("token");
+    expect(result.error.message).not.toContain("sk-cursor-not-a-real-key");
+  });
+
+  it("rejects an unknown option on the normalized Cursor profile too", () => {
+    const result = globalConfigSchema.safeParse({
+      baseDir: "/projects",
+      ignorePatterns: [],
+      agentBackends: {
+        claude: { model: "opus", reasoningEffort: "high", timeoutMs: 60_000 },
+        codex: { model: "gpt-5.4", reasoningEffort: "high", timeoutMs: null },
+        cursor: {
+          model: "composer-2.5",
+          timeoutMs: null,
+          unknownCursorOption: "anything",
+        },
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  // Cursor fails closed because it is new: no shipped config file can already
+  // carry a stray key under it. Tightening the profiles that HAVE shipped
+  // tolerant is a separate migration decision, so this pins that the existing
+  // two are deliberately unchanged rather than accidentally missed.
+  it.each(["claude", "codex"])(
+    "leaves the shipped %s profile's unknown-key tolerance unchanged",
+    (backend) => {
+      const result = rawGlobalConfigSchema.safeParse({
+        agentBackends: { [backend]: { unknownLegacyOption: "tolerated" } },
+      });
+
+      expect(result.success).toBe(true);
+    },
+  );
+
+  it("normalizes a Cursor profile through the global schema", () => {
+    const parsed = globalConfigSchema.parse({
+      baseDir: "/projects",
+      ignorePatterns: [],
+      agentBackends: {
+        claude: { model: "opus", reasoningEffort: "high", timeoutMs: 60_000 },
+        codex: { model: "gpt-5.4", reasoningEffort: "high", timeoutMs: null },
+        cursor: { model: "composer-2.5", timeoutMs: null },
+      },
+    });
+
+    expect(parsed.agentBackends.cursor).toEqual({
+      model: "composer-2.5",
+      timeoutMs: null,
+    });
+    expect(parsed.agentBackends.cursor).not.toHaveProperty("fastMode");
+    expect(parsed.agentBackends.cursor).not.toHaveProperty("pricing");
   });
 
   it("rejects non-boolean Codex fast mode values", () => {
@@ -158,6 +300,7 @@ describe("agent backend config", () => {
           reasoningEffort: "high",
           timeoutMs: null,
         },
+        cursor: { model: "composer-2.5", timeoutMs: null },
       },
     });
 
@@ -250,6 +393,7 @@ describe("validation config composition", () => {
           reasoningEffort: "high",
           timeoutMs: null,
         },
+        cursor: { model: "composer-2.5", timeoutMs: null },
       },
       validation: {},
     });
@@ -328,6 +472,7 @@ describe("conversationNamingConfigSchema", () => {
           reasoningEffort: "high",
           timeoutMs: null,
         },
+        cursor: { model: "composer-2.5", timeoutMs: null },
       },
       conversationNaming: { enabled: false },
     });
@@ -355,6 +500,7 @@ describe("conversationNamingConfigSchema", () => {
           reasoningEffort: "high",
           timeoutMs: null,
         },
+        cursor: { model: "composer-2.5", timeoutMs: null },
       },
     });
 
@@ -418,5 +564,90 @@ describe("compactionConfigSchema", () => {
     const result = compactionConfigSchema.safeParse({ backend: "gpt" });
 
     expect(result.success).toBe(false);
+  });
+});
+
+describe("per-repo Cursor supported-model list", () => {
+  it("accepts a declared list and preserves its order", () => {
+    const parsed = perRepoConfigSchema.parse({
+      agentBackends: {
+        cursor: { supportedModels: ["composer-1", "composer-2.5"] },
+      },
+    });
+
+    expect(parsed.agentBackends?.cursor?.supportedModels).toEqual([
+      "composer-1",
+      "composer-2.5",
+    ]);
+  });
+
+  it("leaves the block undefined when a project declares none", () => {
+    // Undefined is "this project configures no list", which the adapter's model
+    // policy reads as the descriptor default — distinct from a declared list.
+    const parsed = perRepoConfigSchema.parse({ initScriptPath: null });
+
+    expect(parsed.agentBackends).toBeUndefined();
+  });
+
+  it("defaults an empty cursor block to composer-2.5 only", () => {
+    const parsed = perRepoConfigSchema.parse({
+      agentBackends: { cursor: {} },
+    });
+
+    expect(parsed.agentBackends?.cursor?.supportedModels).toEqual([
+      "composer-2.5",
+    ]);
+  });
+
+  it("accepts a declared-empty list, which permits nothing at use time", () => {
+    const parsed = perRepoConfigSchema.parse({
+      agentBackends: { cursor: { supportedModels: [] } },
+    });
+
+    expect(parsed.agentBackends?.cursor?.supportedModels).toEqual([]);
+  });
+
+  it("rejects a malformed list with a bounded config error", () => {
+    for (const supportedModels of ["composer-2.5", [1], [""], ["  "], [null]]) {
+      const result = perRepoConfigSchema.safeParse({
+        agentBackends: { cursor: { supportedModels } },
+      });
+
+      expect(result.success).toBe(false);
+      if (result.success) continue;
+      expect(result.error.issues[0]?.path).toEqual(
+        expect.arrayContaining(["agentBackends", "cursor", "supportedModels"]),
+      );
+    }
+  });
+
+  it("rejects an unknown key under the cursor block by name", () => {
+    const result = perRepoConfigSchema.safeParse({
+      agentBackends: { cursor: { models: ["composer-2.5"] } },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a per-repo profile field that belongs to global configuration", () => {
+    // The per-repo block declares the list only; model/effort/credential live
+    // in (or are refused by) the global Cursor profile.
+    for (const cursor of [
+      { model: "composer-1" },
+      { apiKey: "secret" },
+      { reasoningEffort: "high" },
+    ]) {
+      expect(
+        perRepoConfigSchema.safeParse({ agentBackends: { cursor } }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("rejects an unknown backend key under the per-repo agentBackends block", () => {
+    expect(
+      perRepoConfigSchema.safeParse({
+        agentBackends: { curser: { supportedModels: ["composer-2.5"] } },
+      }).success,
+    ).toBe(false);
   });
 });

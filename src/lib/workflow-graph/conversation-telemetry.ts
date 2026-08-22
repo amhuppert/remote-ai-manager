@@ -50,6 +50,7 @@ export function summarizeTranscriptTelemetry(
   jsonlText: string,
 ): ConversationTelemetrySummary {
   const lineageFinalCost = new Map<string, number>();
+  const lineageIds = new Set<string>();
   let committedLineageCost = 0;
   let lineageRestarts = 0;
   let apiTurns: number | null = null;
@@ -61,16 +62,20 @@ export function summarizeTranscriptTelemetry(
 
     const usage = projectTranscriptUsage(entry);
     if (usage) {
+      lineageIds.add(usage.lineageId);
       // Cumulative per lineage — the last result in file order is the final.
       // A cumulative drop under the same lineage id is the lineage boundary
       // (backend restart), so bank the finished lineage's final before
-      // tracking the new one.
-      const previous = lineageFinalCost.get(usage.lineageId);
-      if (previous !== undefined && usage.cumulativeCostUsd < previous) {
-        committedLineageCost += previous;
-        lineageRestarts += 1;
+      // tracking the new one. A cost-less backend contributes its lineage and
+      // turns but nothing to the total.
+      if (usage.cumulativeCostUsd !== null) {
+        const previous = lineageFinalCost.get(usage.lineageId);
+        if (previous !== undefined && usage.cumulativeCostUsd < previous) {
+          committedLineageCost += previous;
+          lineageRestarts += 1;
+        }
+        lineageFinalCost.set(usage.lineageId, usage.cumulativeCostUsd);
       }
-      lineageFinalCost.set(usage.lineageId, usage.cumulativeCostUsd);
       if (usage.numTurns !== null) {
         apiTurns = (apiTurns ?? 0) + usage.numTurns;
       }
@@ -110,7 +115,7 @@ export function summarizeTranscriptTelemetry(
   return {
     costUsd,
     apiTurns,
-    lineageCount: lineageFinalCost.size + lineageRestarts,
+    lineageCount: lineageIds.size + lineageRestarts,
     reads: {
       uniqueFiles: readCounts.size,
       totalReads,

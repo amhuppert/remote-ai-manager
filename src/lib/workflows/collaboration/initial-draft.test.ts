@@ -45,7 +45,9 @@ import {
   type StatusBusEnvelope,
 } from "@/lib/events/status-bus";
 
-type Backend = "claude" | "codex";
+import { asCollaborationAgent } from "@/lib/workflows/collaboration/types";
+
+type Backend = CollaborationAgent;
 
 function makeBackendResult(
   backend: Backend,
@@ -75,9 +77,17 @@ function makeBackendResult(
 }
 
 function backendOfRequest(request: AgentCallRequest): Backend {
-  return request.kind === "conversation_turn"
-    ? (request.backend ?? "claude")
-    : (request.backend as Backend);
+  const backend =
+    request.kind === "conversation_turn"
+      ? (request.backend ?? "claude")
+      : request.backend;
+  const agent = asCollaborationAgent(backend);
+  if (agent === null) {
+    throw new Error(
+      `collaboration dispatched an ineligible backend: ${backend}`,
+    );
+  }
+  return agent;
 }
 
 async function writeGeneratedFiles(

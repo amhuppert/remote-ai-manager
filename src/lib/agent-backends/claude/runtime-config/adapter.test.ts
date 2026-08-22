@@ -33,7 +33,7 @@ function fakeRuntime(input: {
     async sendTurn() {
       throw new Error("not used in this test");
     },
-    close() {},
+    async close() {},
     async applyCapabilityConfig(config) {
       appliedConfigs.push(config);
       if (input.isTurnActive) return { status: "skipped-turn-active" };

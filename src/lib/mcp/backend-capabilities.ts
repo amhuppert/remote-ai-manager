@@ -13,6 +13,7 @@
  *   (drop from emission, emit a native disabled flag, or unsupported).
  * - `betweenTurnApply`: whether config changes can be applied to a live idle
  *   runtime or must wait for the next turn.
+ * - `transports`: which MCP transports the backend can talk at all.
  * - `toolFiltering`: per-transport mechanism for allow/deny filters on tools.
  * - `toolDiscovery`: preferred mechanism for listing a server's tool inventory
  *   and whether a direct probe is available as a fallback.
@@ -58,11 +59,23 @@ interface McpToolDiscoveryCapability {
   probeFallback: boolean;
 }
 
+/**
+ * Whether the backend can connect to a server over each transport at all.
+ *
+ * Declared separately from {@link McpToolFilteringCapability} because they are
+ * different questions: a backend can speak a transport perfectly and still
+ * offer no per-tool allow/deny mechanism on it. Reading filtering as transport
+ * support would render such a backend as "does not support stdio", which is
+ * false.
+ */
+type McpTransportSupport = Record<McpTransport, boolean>;
+
 export interface McpBackendCapabilities {
   backend: AgentBackendId;
   strictAuthoritativeConfig: boolean;
   serverDisable: McpServerDisableMechanism;
   betweenTurnApply: McpBetweenTurnApplyMode;
+  transports: McpTransportSupport;
   toolFiltering: McpToolFilteringCapability;
   toolDiscovery: McpToolDiscoveryCapability;
 }
@@ -102,7 +115,7 @@ export function createMcpCapabilityRegistry(
 }
 
 // ---------------------------------------------------------------------------
-// Default entries — Claude and Codex
+// Default entries — Claude, Codex, and Cursor
 // ---------------------------------------------------------------------------
 
 export const claudeMcpCapabilities: McpBackendCapabilities = {
@@ -110,6 +123,7 @@ export const claudeMcpCapabilities: McpBackendCapabilities = {
   strictAuthoritativeConfig: true,
   serverDisable: "omit",
   betweenTurnApply: "live-when-idle",
+  transports: { stdio: true, "streamable-http": true, sse: true },
   toolFiltering: {
     mode: "mixed",
     byTransport: {
@@ -129,6 +143,7 @@ export const codexMcpCapabilities: McpBackendCapabilities = {
   strictAuthoritativeConfig: true,
   serverDisable: "native",
   betweenTurnApply: "next-turn",
+  transports: { stdio: true, "streamable-http": true, sse: false },
   toolFiltering: {
     mode: "native",
     byTransport: {
@@ -143,8 +158,51 @@ export const codexMcpCapabilities: McpBackendCapabilities = {
   },
 };
 
+/**
+ * Cursor (spec D18). The inline stdio path is implemented and proven, and every
+ * value here is bounded by what that path actually supports:
+ *
+ * - `strictAuthoritativeConfig: false` — the ordinary inline call works, but
+ *   the authority matrix (ambient merge, duplicate names, empty-inline, per-run
+ *   replacement, disable/filter, permission, environment, resume-apply) is a
+ *   separate gate. One passing call is not authority.
+ * - `serverDisable: "omit"` — the SDK's inline entry carries no disabled flag,
+ *   so the translator drops a disabled server rather than flagging it.
+ * - `betweenTurnApply: "next-turn"` — the map is an attach/per-send option, so
+ *   a change staged mid-turn lands on the next one.
+ * - `transports` — stdio only; the inline entry is a command/args/env spawn.
+ * - `toolFiltering` — none, on any transport. Phase 1 registers no permission
+ *   handler that could enforce a filter at call time, so the translator refuses
+ *   a server carrying one instead of passing it through unfiltered.
+ * - `toolDiscovery` — probe: the runtime exposes no MCP server status, so
+ *   nothing above the seam can ask a live agent what a server advertises.
+ */
+export const cursorMcpCapabilities: McpBackendCapabilities = {
+  backend: "cursor",
+  strictAuthoritativeConfig: false,
+  serverDisable: "omit",
+  betweenTurnApply: "next-turn",
+  transports: { stdio: true, "streamable-http": false, sse: false },
+  toolFiltering: {
+    mode: "unsupported",
+    byTransport: {
+      stdio: "unsupported",
+      "streamable-http": "unsupported",
+      sse: "unsupported",
+    },
+  },
+  toolDiscovery: {
+    preferred: "probe",
+    probeFallback: true,
+  },
+};
+
 export const defaultMcpCapabilityRegistry: McpCapabilityRegistry =
-  createMcpCapabilityRegistry([claudeMcpCapabilities, codexMcpCapabilities]);
+  createMcpCapabilityRegistry([
+    claudeMcpCapabilities,
+    codexMcpCapabilities,
+    cursorMcpCapabilities,
+  ]);
 
 // ---------------------------------------------------------------------------
 // Compatibility lookup — consumed by the resolver
@@ -171,15 +229,20 @@ export function buildCompatibilityLookup(
   };
 }
 
+/**
+ * Whether the backend can run this server at all. Reads `transports` — the
+ * transport question — and never `toolFiltering`, which answers the different
+ * question of how allow/deny lists are enforced. A backend that speaks a
+ * transport but filters no tools on it is compatible; the cascade's filtering
+ * refusal is the translator's business, not this badge's.
+ */
 function serverCompatibilityForBackend(
   definition: McpServerDefinition,
   capabilities: McpBackendCapabilities,
 ): { supported: boolean; reason?: string } {
   const transport = definition.transport;
-  const filteringForTransport =
-    capabilities.toolFiltering.byTransport[transport];
 
-  if (filteringForTransport === "unsupported") {
+  if (!capabilities.transports[transport]) {
     logger.debug("Server transport unsupported by backend", {
       backend: capabilities.backend,
       serverKey: definition.serverKey,

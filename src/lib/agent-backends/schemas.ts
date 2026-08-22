@@ -89,6 +89,27 @@ export function validateClaudeBackendModelEffort(
 
 export const backendTimeoutMsSchema = z.number().int().positive().nullable();
 
+const tokenCountSchema = z.number().int().nonnegative();
+
+/**
+ * Backend-neutral per-turn token accounting. Every count is required, so a
+ * partially-known record is not representable: a backend that cannot report
+ * usage reports the whole record as null rather than filling gaps with zeros.
+ * `totalTokens` follows the provider convention of excluding reasoning tokens,
+ * and an absent `reasoningTokens` means the backend reported none.
+ */
+export const conversationTokenUsageSchema = z.object({
+  inputTokens: tokenCountSchema,
+  outputTokens: tokenCountSchema,
+  cacheReadTokens: tokenCountSchema,
+  cacheWriteTokens: tokenCountSchema,
+  totalTokens: tokenCountSchema,
+  reasoningTokens: tokenCountSchema.optional(),
+});
+export type ConversationTokenUsage = z.infer<
+  typeof conversationTokenUsageSchema
+>;
+
 export const claudeBackendConfigSchema = z
   .object({
     model: claudeModelSchema,
@@ -212,6 +233,39 @@ export function validateCodexBackendModelEffort(
     message: `Reasoning effort "${config.reasoningEffort}" is not supported by Codex model "${config.model}".`,
   });
 }
+
+// ============================================================
+// Cursor Config
+// ============================================================
+
+/**
+ * The global Cursor backend profile (spec D10, D12.2).
+ *
+ * Deliberately narrower than the Claude and Codex profiles. There is no
+ * `fastMode` — the speed toggle is Codex's and Cursor gets no copy of it — no
+ * `pricing`, because Phase 1 reports `costUsd` null and estimating from tokens
+ * would fabricate a figure, and no credential field of any kind: the SDK key
+ * comes from the server's `CURSOR_API_KEY` environment variable and never from
+ * a settings document. Membership validation for `model` belongs to the
+ * adapter's model policy, which is the one place that knows the project's
+ * effective supported list; this schema validates shape.
+ *
+ * `.strict()` rather than the tolerant default: an option this profile does not
+ * declare is one Command Center will never read, and stripping it silently
+ * tells the operator their setting took effect when nothing did. Cursor can
+ * afford to fail closed because it is new — no config file already on disk can
+ * carry a stray key under it. The Claude and Codex profiles shipped tolerant,
+ * so tightening those is a separate migration decision, not a side effect of
+ * registering a third backend.
+ */
+export const cursorBackendConfigSchema = z
+  .object({
+    model: z.string().trim().min(1),
+    reasoningEffort: effortLevelSchema.optional(),
+    timeoutMs: backendTimeoutMsSchema,
+  })
+  .strict();
+export type CursorBackendConfig = z.infer<typeof cursorBackendConfigSchema>;
 
 export const codexConfigSchema = z
   .object({

@@ -1,11 +1,11 @@
 /**
- * Runs the shared conformance contract against the production Claude and
- * Codex descriptors and the parameterized testfake. Descriptors are assembled
- * through the same factories the registry bootstrap uses; every provider
- * touchpoint (Claude `query()`, Codex SDK client, native plugin records,
- * continuity services) is a fake port injected through the adapters' DI
- * seams, so the REAL factories/runners execute their full pipelines with no
- * subprocess and no state store.
+ * Runs the shared conformance contract against the production Claude, Codex,
+ * and Cursor descriptors and the parameterized testfake. Descriptors are
+ * assembled through the same factories the registry bootstrap uses; every
+ * provider touchpoint (Claude `query()`, Codex SDK client, native plugin
+ * records, continuity services, the Cursor worker transport) is a fake port
+ * injected through the adapters' DI seams, so the REAL factories/runners
+ * execute their full pipelines with no subprocess and no state store.
  *
  * The lying-descriptor section proves the behavior checks BITE: a descriptor
  * whose declarations contradict its observed behavior fails the exported
@@ -41,9 +41,16 @@ import { createCodexContinuityAdapter } from "./codex/continuity";
 import { createCodexRuntimeConfigAdapter } from "./codex/runtime-config";
 import { CodexTaskRunner } from "./codex/task-runner";
 import { createCodexFailureClassifier } from "./codex/failure-classifier";
+import { createCursorBackendDescriptor } from "./cursor/descriptor";
+import { CursorConversationRuntime } from "./cursor/conversation-runtime";
+import { createCursorContinuityAdapter } from "./cursor/continuity";
+import { createCursorRuntimeConfigAdapter } from "./cursor/runtime-config";
+import { createCursorFailureClassifier } from "./cursor/failure-classifier";
+import { createScriptedTransport } from "./cursor/testing/scripted-worker";
 import {
   claudeMcpCapabilities,
   codexMcpCapabilities,
+  cursorMcpCapabilities,
 } from "@/lib/mcp/backend-capabilities";
 import {
   createTestFakeBackend,
@@ -219,6 +226,89 @@ describeBackendConformance(codexDescriptor, {
       schema: STRUCTURED_OUTPUT_SCHEMA,
       expected: STRUCTURED_OUTPUT_VALUE,
       readForwardedSchema: () => codexTaskPort.lastOutputSchema,
+    },
+  },
+});
+
+// ============================================================
+// Cursor — real runtime/continuity over a scripted worker transport
+// ============================================================
+
+const CURSOR_HANGING_PROMPT = "conformance: cursor hang";
+
+let cursorRunCounter = 0;
+
+// The scripted transport plays the worker's side of the IPC contract only, so
+// the runtime, continuity adapter, projections, classifier, and runtime-config
+// adapter under test are the production ones (spec D19).
+const cursorTransport = createScriptedTransport({
+  onTurn: (turn, worker) => {
+    worker.sendInputAccepted(turn.runId);
+    // The hanging prompt never settles on its own — cancellation has to.
+    if (turn.input.promptText.includes(CURSOR_HANGING_PROMPT)) return;
+    worker.settle(turn.runId, "completed");
+  },
+});
+
+const cursorDescriptor = createCursorBackendDescriptor({
+  conversationFactory: {
+    backend: "cursor",
+    createRuntime: async (input) =>
+      new CursorConversationRuntime(input, {
+        transport: cursorTransport,
+        storePath: (conversationId) => `/state/cursor/${conversationId}`,
+        resolveModel: async () => ({
+          ok: true,
+          model: "composer-2.5",
+          source: "default",
+          supportedModels: ["composer-2.5"],
+        }),
+        translatePortableMcpToCursor: () => ({
+          servers: {},
+          rejectedServers: [],
+          rejectedFields: [],
+          errorsByServer: {},
+        }),
+        newRunId: () => `conformance-cursor-run-${(cursorRunCounter += 1)}`,
+        now: () => 0,
+        stallTimeoutMs: 5_000,
+        cancelSettleTimeoutMs: 500,
+      }),
+  },
+  continuity: createCursorContinuityAdapter({
+    transport: cursorTransport,
+    resolveBinding: async () => ({
+      conversationId: "conformance-cursor-continuity",
+      cwd: "/conformance",
+      storePath: "/state/cursor/conformance",
+      model: "composer-2.5",
+      mcpServers: {},
+    }),
+  }),
+  runtimeConfig: createCursorRuntimeConfigAdapter(),
+  mcp: cursorMcpCapabilities,
+  failureClassifier: createCursorFailureClassifier(),
+});
+
+function lastCursorTurnPrompt(): string | undefined {
+  const worker = cursorTransport.workers.at(-1);
+  return worker?.turns.at(-1)?.input.promptText;
+}
+
+describeBackendConformance(cursorDescriptor, {
+  continuity: continuityHarness,
+  conversationTurn: {
+    buildCreateInput: () => buildCreateInput("conformance-cursor-conv"),
+    hangingPromptText: CURSOR_HANGING_PROMPT,
+    structuredOutput: {
+      schema: STRUCTURED_OUTPUT_SCHEMA,
+      expected: STRUCTURED_OUTPUT_VALUE,
+      // Post-validation: the SDK is handed no schema at all, and the rendered
+      // contract rides in the prompt the worker receives.
+      readForwardedSchema: () =>
+        cursorTransport.workers.at(-1)?.turns.at(-1)?.input
+          .structuredOutputInstruction ?? undefined,
+      readDispatchedPrompt: () => lastCursorTurnPrompt() ?? "",
     },
   },
 });

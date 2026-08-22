@@ -97,6 +97,7 @@ function installBaseRoutes(): void {
           reasoningEffort: "ultra",
           timeoutMs: null,
         },
+        cursor: { model: "composer-2.5", timeoutMs: null },
       },
       defaultAgentBackend: "claude",
     },

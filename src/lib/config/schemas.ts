@@ -7,10 +7,12 @@ import {
   codexConfigSchema,
   codexPricingTableSchema,
   codexReasoningEffortSchema,
+  cursorBackendConfigSchema,
   effortLevelSchema,
   validateClaudeBackendModelEffort,
   validateCodexBackendModelEffort,
 } from "@/lib/agent-backends/schemas";
+import { CURSOR_DEFAULT_SUPPORTED_MODELS } from "@/lib/agent-backends/cursor/model-policy";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import {
   pushNotificationConfigSchema,
@@ -132,6 +134,7 @@ export const resolveConversationNamingConfig = (
 export const agentBackendsConfigSchema = z.object({
   claude: claudeBackendConfigSchema,
   codex: codexConfigSchema,
+  cursor: cursorBackendConfigSchema,
 });
 export type AgentBackendsConfig = z.infer<typeof agentBackendsConfigSchema>;
 
@@ -180,9 +183,55 @@ const rawCodexBackendConfigSchema = z
   })
   .superRefine(validateCodexBackendModelEffort);
 
+/**
+ * The Cursor profile as written on disk (spec D10, R12.2).
+ *
+ * `.strict()` is the enforcement, not a formality: an option this profile does
+ * not declare is one Command Center will never read, so stripping it in silence
+ * would leave an operator believing a setting took effect when nothing did — a
+ * typo, a field copied from another backend, or a credential parked under a key
+ * of the operator's own invention all have to fail loudly. Zod names the
+ * offending key and never its value, so a secret written under an unknown key
+ * is refused without being echoed into the error.
+ *
+ * The three `z.never()` arms sit above that catch-all so the options an
+ * operator is most likely to reach for get an answer better than "unrecognized
+ * key": each says where the value actually belongs.
+ *
+ * Cursor can fail closed because it is new — no config file already on disk can
+ * carry a stray key under it. Tightening the Claude and Codex profiles, which
+ * shipped tolerant, is a separate migration decision.
+ */
+const rawCursorBackendConfigSchema = z
+  .object({
+    model: z.string().trim().min(1).optional(),
+    reasoningEffort: effortLevelSchema.optional(),
+    timeoutMs: backendTimeoutMsSchema.optional(),
+    fastMode: z
+      .never({
+        error:
+          "Cursor has no fast mode; remove agentBackends.cursor.fastMode. Fast mode is a Codex setting.",
+      })
+      .optional(),
+    pricing: z
+      .never({
+        error:
+          "Cursor reports no cost; remove agentBackends.cursor.pricing. Command Center never estimates cost from tokens.",
+      })
+      .optional(),
+    apiKey: z
+      .never({
+        error:
+          "Command Center never stores the Cursor credential; remove agentBackends.cursor.apiKey and set the CURSOR_API_KEY environment variable on the server instead.",
+      })
+      .optional(),
+  })
+  .strict();
+
 const rawAgentBackendsConfigSchema = z.object({
   claude: rawClaudeBackendConfigSchema.optional(),
   codex: rawCodexBackendConfigSchema.optional(),
+  cursor: rawCursorBackendConfigSchema.optional(),
 });
 
 // Raw (explicit-only) variant: no defaults, so intersectKeys can distinguish
@@ -228,8 +277,67 @@ export type RawGlobalConfig = z.infer<typeof rawGlobalConfigSchema>;
 // Per-Repo Config
 // ============================================================
 
+/**
+ * The project's Cursor block (spec D10): the statically declared supported-model
+ * list, and nothing else.
+ *
+ * The list is a project/team property — which models this repo's operators may
+ * run — so it lives here rather than in CC code or the global profile. It is the
+ * adapter model policy's authority: a resolved model outside it is refused
+ * before a worker starts, never substituted.
+ *
+ * A declared-empty list is kept as written rather than rejected here. It is a
+ * well-formed statement that permits nothing, and it fails closed at the one
+ * place that knows a model was actually requested; refusing it at parse time
+ * would make the whole project's configuration unreadable over a Cursor-only
+ * mistake.
+ *
+ * `.strict()` for the same reason the global Cursor profile is strict: a key
+ * this block does not declare is one Command Center will never read, and
+ * stripping it silently tells an operator their setting took effect. The
+ * `z.never()` arms answer the fields most likely to be reached for here —
+ * per-project model/effort/credential overrides do not exist.
+ */
+const perRepoCursorConfigSchema = z
+  .object({
+    supportedModels: z
+      .array(z.string().trim().min(1))
+      .default([...CURSOR_DEFAULT_SUPPORTED_MODELS]),
+    model: z
+      .never({
+        error:
+          "The per-repo Cursor block declares supportedModels only; set the model in the global agentBackends.cursor profile or select one per conversation.",
+      })
+      .optional(),
+    reasoningEffort: z
+      .never({
+        error:
+          "Cursor takes no per-repo reasoning effort; remove agentBackends.cursor.reasoningEffort.",
+      })
+      .optional(),
+    apiKey: z
+      .never({
+        error:
+          "Command Center never stores the Cursor credential; remove agentBackends.cursor.apiKey and set the CURSOR_API_KEY environment variable on the server instead.",
+      })
+      .optional(),
+  })
+  .strict();
+
+/**
+ * Per-repo backend blocks. Strict, and Cursor-only: Claude and Codex configure
+ * nothing per repo today, so an unrecognized backend key here is a typo rather
+ * than a forward-compatible setting worth silently discarding.
+ */
+const perRepoAgentBackendsConfigSchema = z
+  .object({
+    cursor: perRepoCursorConfigSchema.optional(),
+  })
+  .strict();
+
 export const perRepoConfigSchema = z.object({
   initScriptPath: z.string().nullable().optional(),
+  agentBackends: perRepoAgentBackendsConfigSchema.optional(),
   preMergeCommand: movedConfigField("validation.commands/preMerge"),
   preMergeTimeoutMs: z.number().int().positive().optional(),
   preMergePreparePath: z.enum(["plumbing", "fallback"]).optional(),

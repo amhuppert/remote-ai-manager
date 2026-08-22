@@ -20,9 +20,13 @@ const MIGRATION_SCHEMA_VERSION = 1;
 const MIGRATION_SCHEMA_DESCRIPTION =
   "AgentSessionRef persisted as canonical {backend, ref}";
 
-const LEGACY_HANDLE_KEY: Record<
-  AgentSessionRef["backend"],
-  "sessionId" | "threadId"
+/**
+ * Partial by design: this migration converges shapes that were actually
+ * written. A backend registered after the canonical shape existed has no
+ * legacy handle key, so it has no entry and nothing here matches its rows.
+ */
+const LEGACY_HANDLE_KEY: Partial<
+  Record<AgentSessionRef["backend"], "sessionId" | "threadId">
 > = {
   claude: "sessionId",
   codex: "threadId",
@@ -45,6 +49,7 @@ function asNonCanonicalRef(value: unknown): AgentSessionRef | null {
   const backend = agentBackendSchema.safeParse(obj.backend);
   if (!backend.success) return null;
   const legacyKey = LEGACY_HANDLE_KEY[backend.data];
+  if (legacyKey === undefined) return null;
   // Sorted key order: "backend" < "ref" < "sessionId" / "threadId".
   const keys = Object.keys(obj).sort().join(",");
   const isLegacy = keys === `backend,${legacyKey}`;

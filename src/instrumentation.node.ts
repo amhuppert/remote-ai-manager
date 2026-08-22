@@ -38,6 +38,7 @@ import {
   type ParkedRefGcSummary,
 } from "./lib/jobs/parked-ref-gc";
 import { startEventLoopStallSentinel } from "./lib/logging/event-loop-stall-sentinel";
+import { installRuntimeShutdownHook } from "./lib/agent-backends/runtime-shutdown";
 
 const logger = createLogger("startup");
 
@@ -78,6 +79,11 @@ export interface StartupDeps {
    * runtime instrumentation need not supply it.
    */
   startEventLoopStallSentinel?(): void;
+  /**
+   * Installs the signal hook that closes registered conversation runtimes on
+   * shutdown. Optional so a test that is not about shutdown need not supply it.
+   */
+  installRuntimeShutdownHook?(): void;
   verifyServerBaseUrl(): void;
 }
 
@@ -128,6 +134,9 @@ const defaultStartupDeps: StartupDeps = {
     }),
   collectOrphanedParkedRefs: () => collectOrphanedParkedRefs(),
   startEventLoopStallSentinel,
+  installRuntimeShutdownHook: () => {
+    installRuntimeShutdownHook();
+  },
   verifyServerBaseUrl: () => {
     void verifyRecordedServerBaseUrl();
   },
@@ -168,6 +177,16 @@ export function createStartupRegistrar(
       deps.startEventLoopStallSentinel?.();
     } catch (err) {
       logger.error("startup.event_loop_sentinel_failed", {
+        error: getErrorMessage(err),
+      });
+    }
+
+    // Same reasoning as the sentinel above: only a server that got past the
+    // fatal migration block goes on to own runtimes worth closing.
+    try {
+      deps.installRuntimeShutdownHook?.();
+    } catch (err) {
+      logger.error("startup.runtime_shutdown_hook_failed", {
         error: getErrorMessage(err),
       });
     }

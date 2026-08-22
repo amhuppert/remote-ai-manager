@@ -40,6 +40,24 @@ describe("NamingSection", () => {
     expect(screen.getByText("Timeout")).toBeVisible();
   });
 
+  // Naming is a one-shot task run, so its backend must register a task facet.
+  // The option stays visible and explains itself rather than being hidden or
+  // silently accepted and failing at generation time (spec R15.1).
+  it("refuses a backend with no task facet and keeps the configured one", () => {
+    const { controller, getState } = makeController();
+    renderWithQuery(<NamingSection controller={controller} />);
+
+    const cursor = pillIn("conversationNaming.backend", "cursor");
+    expect(cursor.getAttribute("aria-disabled")).toBe("true");
+    expect(cursor.getAttribute("title")).toContain("task");
+
+    fireEvent.click(cursor);
+    expect(getState().conversationNaming?.backend).toBeUndefined();
+
+    fireEvent.click(pillIn("conversationNaming.backend", "codex"));
+    expect(getState().conversationNaming?.backend).toBe("codex");
+  });
+
   it("defaults to the claude haiku model when config has no naming block", () => {
     const { controller } = makeController();
     renderWithQuery(<NamingSection controller={controller} />);

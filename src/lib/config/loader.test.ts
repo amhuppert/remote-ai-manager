@@ -134,6 +134,12 @@ describe("createConfigReader", () => {
         reasoningEffort: "high",
         timeoutMs: null,
       },
+      // The evidence-backed Cursor default, with no fastMode, pricing, or
+      // credential field to materialize (spec D10).
+      cursor: {
+        model: "composer-2.5",
+        timeoutMs: null,
+      },
     });
   });
 

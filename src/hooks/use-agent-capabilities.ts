@@ -83,7 +83,7 @@ const agentCapabilityRefreshResponseSchema = z.object({
 
 export function agentCapabilityScopeQueryKey(
   scope: AgentCapabilityScope,
-  cascadeKind: AgentCapabilityCascadeKind,
+  cascadeKind: AgentCapabilityCascadeKind | typeof NO_CASCADE_KEY,
 ): QueryKey {
   switch (scope.level) {
     case "global":
@@ -133,21 +133,38 @@ function agentCapabilityRefreshScopeUrl(scope: AgentCapabilityScope): string {
   return `${agentCapabilityScopeUrl(scope)}/refresh`;
 }
 
+/**
+ * Key segment for "this backend owns no such cascade". A distinct segment, so
+ * the disabled query cannot collide with a real cascade's cached view.
+ */
+const NO_CASCADE_KEY = "none";
+
+/**
+ * A cascade view, or a permanently idle query when the backend owns no cascade
+ * of that kind. Null is a real answer — Cursor registers no capability kinds —
+ * and it must not become a request for a cascade the registry does not have.
+ */
 export function useAgentCapabilityViewQuery(
   scope: AgentCapabilityScope,
-  cascadeKind: AgentCapabilityCascadeKind,
+  cascadeKind: AgentCapabilityCascadeKind | null,
   options?: QueryOptions,
 ): UseQueryResult<AgentCapabilityViewResponse, Error> {
   return useQuery({
-    queryKey: agentCapabilityScopeQueryKey(scope, cascadeKind),
+    queryKey: agentCapabilityScopeQueryKey(
+      scope,
+      cascadeKind ?? NO_CASCADE_KEY,
+    ),
     queryFn: async () => {
+      if (cascadeKind === null) {
+        throw new Error("No cascade kind for this backend");
+      }
       const envelope = await apiFetch(
         `${agentCapabilityScopeUrl(scope)}?cascadeKind=${encodeURIComponent(cascadeKind)}`,
         agentCapabilityViewEnvelopeSchema,
       );
       return envelope.view;
     },
-    enabled: options?.enabled ?? true,
+    enabled: cascadeKind !== null && (options?.enabled ?? true),
   });
 }
 

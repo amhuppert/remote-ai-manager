@@ -9,16 +9,21 @@
  * because src/lib/config.ts captures CONFIG_DIR at module load — it MUST be
  * set before any test file imports config.ts (transitively via state-db).
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import os from "node:os";
-import path from "node:path";
 import { afterAll, beforeEach } from "vitest";
+import { createWorkerConfigDir } from "@/lib/shared/testing/worker-config-dir";
 
-const VITEST_TMP_PREFIX = path.join(os.tmpdir(), "cc-vitest-");
-if (!process.env["CC_CONFIG_DIR"]) {
-  process.env["CC_CONFIG_DIR"] = mkdtempSync(VITEST_TMP_PREFIX);
-}
-const VITEST_CONFIG_DIR = process.env["CC_CONFIG_DIR"];
+// Always worker-owned, never adopted. An inherited CC_CONFIG_DIR becomes the
+// parent to nest under: registered validation exports one scratch dir for the
+// whole run (scripts/validate/common.sh), so adopting it handed every fork the
+// same command-center.db and the `journal_mode = WAL` pragma taken at open
+// raced across workers into `SqliteError: database is locked`.
+const VITEST_CONFIG_DIR = createWorkerConfigDir(
+  process.env["CC_CONFIG_DIR"],
+  os.tmpdir(),
+);
+process.env["CC_CONFIG_DIR"] = VITEST_CONFIG_DIR;
 
 beforeEach(async () => {
   const { _resetForTesting } = await import("@/lib/state-store/state-db");
@@ -26,20 +31,21 @@ beforeEach(async () => {
 });
 
 afterAll(() => {
-  if (VITEST_CONFIG_DIR.startsWith(VITEST_TMP_PREFIX)) {
-    // Retried, because this directory can gain an entry while it is being
-    // removed. `CC_CONFIG_DIR` is per WORKER (it lives in `process.env`) while
-    // this hook is per TEST FILE, so a worker running several files removes the
-    // same directory once per file — and a SQLite handle from the file that is
-    // finishing can still flush a `-wal`/`-shm` sidecar into it between the
-    // readdir and the rmdir, which fails as ENOTEMPTY. `force` does not cover
-    // that (it only swallows ENOENT); `maxRetries` is the documented answer,
-    // retrying ENOTEMPTY with a linear backoff until the writer settles.
-    rmSync(VITEST_CONFIG_DIR, {
-      recursive: true,
-      force: true,
-      maxRetries: 10,
-      retryDelay: 20,
-    });
-  }
+  // Unconditional: this directory is always one this worker created, never a
+  // caller's, so there is no longer an inherited path to guard against.
+  //
+  // Retried, because it can gain an entry while it is being removed.
+  // `CC_CONFIG_DIR` is per WORKER (it lives in `process.env`) while this hook is
+  // per TEST FILE, so a worker running several files removes the same directory
+  // once per file — and a SQLite handle from the file that is finishing can
+  // still flush a `-wal`/`-shm` sidecar into it between the readdir and the
+  // rmdir, which fails as ENOTEMPTY. `force` does not cover that (it only
+  // swallows ENOENT); `maxRetries` is the documented answer, retrying ENOTEMPTY
+  // with a linear backoff until the writer settles.
+  rmSync(VITEST_CONFIG_DIR, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 20,
+  });
 });

@@ -47,7 +47,7 @@ describe("queueCapabilityForBackend", () => {
     },
   );
 
-  it("declares in-turn delivery for claude and next-turn for codex", () => {
+  it("declares in-turn delivery for claude and next-turn for codex and cursor", () => {
     expect(queueCapabilityForBackend("claude")).toEqual({
       acceptsWhileRunning: true,
       deliveryTiming: "in_turn",
@@ -56,6 +56,41 @@ describe("queueCapabilityForBackend", () => {
       acceptsWhileRunning: true,
       deliveryTiming: "next_turn",
     });
+    expect(queueCapabilityForBackend("cursor")).toEqual({
+      acceptsWhileRunning: false,
+      deliveryTiming: "next_turn",
+    });
+  });
+});
+
+describe("catalog facet-presence flags", () => {
+  it.each(agentBackendSchema.options)(
+    "reports the %s entry's facet flags from its registered descriptor",
+    (backend) => {
+      const descriptor = getBackendDescriptor(backend);
+      expect(getBackendCatalogEntry(backend).facets).toEqual({
+        conversation: descriptor.conversation !== undefined,
+        tasks: descriptor.tasks !== undefined,
+      });
+    },
+  );
+
+  // The flag is what facet-gated pickers and routes read instead of branching
+  // on backend identity, so it has to be wrong-proof for the one backend that
+  // actually lacks a facet.
+  it("reports cursor as conversation-only and claude/codex as both", () => {
+    expect(getBackendCatalogEntry("cursor").facets).toEqual({
+      conversation: true,
+      tasks: false,
+    });
+    expect(getBackendCatalogEntry("claude").facets).toEqual({
+      conversation: true,
+      tasks: true,
+    });
+    expect(getBackendCatalogEntry("codex").facets).toEqual({
+      conversation: true,
+      tasks: true,
+    });
   });
 });
 
@@ -63,6 +98,7 @@ describe("backendSupportsFastMode", () => {
   it("is enabled only for Codex", () => {
     expect(backendSupportsFastMode("codex")).toBe(true);
     expect(backendSupportsFastMode("claude")).toBe(false);
+    expect(backendSupportsFastMode("cursor")).toBe(false);
   });
 });
 
@@ -141,6 +177,7 @@ describe("resolveConfiguredBackendSelectionDefaults", () => {
             reasoningEffort: "xhigh",
             fastMode: true,
           },
+          cursor: { model: "composer-2.5" },
         },
       }),
     ).toEqual({
@@ -150,6 +187,9 @@ describe("resolveConfiguredBackendSelectionDefaults", () => {
         effort: "xhigh",
         codexFastMode: true,
       },
+      // No codexFastMode key: the speed toggle is Codex's, and Cursor gets no
+      // copy of it (spec D10).
+      cursor: { modelId: "composer-2.5", effort: "high" },
     });
   });
 
@@ -159,6 +199,7 @@ describe("resolveConfiguredBackendSelectionDefaults", () => {
         agentBackends: {
           claude: { model: "haiku" },
           codex: { model: "gpt-5.4" },
+          cursor: { model: "composer-2.5" },
         },
       }),
     ).toEqual({
@@ -168,6 +209,7 @@ describe("resolveConfiguredBackendSelectionDefaults", () => {
         effort: "high",
         codexFastMode: false,
       },
+      cursor: { modelId: "composer-2.5", effort: "high" },
     });
   });
 });

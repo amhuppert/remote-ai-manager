@@ -486,6 +486,9 @@ export class CodexConversationRuntime
       contentBlocks,
       structuredOutput,
       aborted: acc.aborted,
+      // Codex reports cumulative thread counters rather than per-turn ones, so
+      // it does not populate the neutral per-turn token record.
+      tokenUsage: null,
       // Codex never surfaces an SDK compaction under CC's view.
       compacted: false,
       failure,
@@ -630,7 +633,7 @@ export class CodexConversationRuntime
     };
   }
 
-  close(): void {
+  async close(): Promise<void> {
     if (this._status === "dead") return;
     this._status = "dead";
     this.threadId = null;

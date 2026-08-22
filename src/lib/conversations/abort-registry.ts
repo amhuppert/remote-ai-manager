@@ -56,9 +56,19 @@ export function abortConversation(conversationId: string): boolean {
   if (!aborted) return false;
 
   // Also close the backend runtime to terminate any active session.
-  // The next prompt will create a fresh runtime with resume.
+  // The next prompt will create a fresh runtime with resume. Abort reports the
+  // signal synchronously and orders no destructive follow-up work, so teardown
+  // runs to completion in the background; a failure is recorded rather than
+  // left as an unhandled rejection.
   try {
-    getRuntime(conversationId)?.close();
+    void getRuntime(conversationId)
+      ?.close()
+      .catch((err: unknown) => {
+        logger.warn("abort.runtime_close_error", {
+          conversationId,
+          error: String(err),
+        });
+      });
   } catch {
     // best-effort
   }

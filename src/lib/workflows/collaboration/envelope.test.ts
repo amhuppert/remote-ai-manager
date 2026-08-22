@@ -76,7 +76,12 @@ import {
   type StatusBusEnvelope,
 } from "@/lib/events/status-bus";
 
-type Backend = "claude" | "codex";
+import {
+  asCollaborationAgent,
+  type CollaborationAgent,
+} from "@/lib/workflows/collaboration/types";
+
+type Backend = CollaborationAgent;
 
 type ArtifactKind =
   | CollaborationInitialDraftOutput
@@ -222,10 +227,16 @@ function makeProgrammedCallAgent(
     request,
   ) => {
     receivedRequests.push(request);
-    const backend: Backend =
+    const requestedBackend =
       request.kind === "conversation_turn"
         ? (request.backend ?? "claude")
-        : (request.backend as Backend);
+        : request.backend;
+    const backend = asCollaborationAgent(requestedBackend);
+    if (backend === null) {
+      throw new Error(
+        `collaboration dispatched an ineligible backend: ${requestedBackend}`,
+      );
+    }
     const queue = queues[backend];
     const next = queue.shift();
     if (!next) {

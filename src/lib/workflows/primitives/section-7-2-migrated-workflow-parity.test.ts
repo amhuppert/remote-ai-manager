@@ -412,7 +412,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
           aborted: false,
           error: null,
         }),
-        close: vi.fn(),
+        close: vi.fn(async () => {}),
       } as unknown as ConversationBackendRuntime;
 
       const validateStructuredOutput = vi.fn(() => ({
@@ -473,7 +473,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
           aborted: false,
           error: null,
         }),
-        close: vi.fn(),
+        close: vi.fn(async () => {}),
       } as unknown as ConversationBackendRuntime;
 
       const result = await executeAgentCall(
@@ -721,7 +721,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
           aborted: false,
           error: null,
         }),
-        close: vi.fn(),
+        close: vi.fn(async () => {}),
       } as unknown as ConversationBackendRuntime;
 
       const successResult = await executeAgentCall(

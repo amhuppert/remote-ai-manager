@@ -361,6 +361,57 @@ describe("PUT /api/config", () => {
     expect(body.error).toMatch(/Invalid config/i);
   });
 
+  // R12.2: the settings surface, not just the schema, has to refuse an option
+  // Command Center will never read — and refuse it as a client error, never a
+  // 500 and never a silent strip that persists a config the operator thinks
+  // carries their setting.
+  it.each([
+    ["unknownCursorOption", "anything", /unknownCursorOption/],
+    ["fastMode", true, /fast mode/i],
+    ["pricing", { "composer-2.5": { inputPerMillion: 1 } }, /cost/i],
+  ])(
+    "rejects the Cursor option %s with a bounded 400 and persists nothing",
+    async (field, value, reasonPattern) => {
+      const response = await handlers.PUT(
+        makePutRequest({
+          agentBackends: { cursor: { model: "composer-2.5", [field]: value } },
+        }),
+      );
+
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toMatch(reasonPattern);
+      expect(deps.writeRawConfig).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses a credential parked under an unknown Cursor key without echoing it", async () => {
+    const response = await handlers.PUT(
+      makePutRequest({
+        agentBackends: {
+          cursor: { model: "composer-2.5", token: "sk-cursor-not-a-real-key" },
+        },
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toContain("token");
+    expect(body.error).not.toContain("sk-cursor-not-a-real-key");
+    expect(deps.writeRawConfig).not.toHaveBeenCalled();
+  });
+
+  it("accepts a well-formed Cursor profile", async () => {
+    const response = await handlers.PUT(
+      makePutRequest({
+        agentBackends: { cursor: { model: "composer-2.5", timeoutMs: null } },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.writeRawConfig).toHaveBeenCalled();
+  });
+
   it("rejects a legacy path with its normalized replacement", async () => {
     const response = await handlers.PUT(
       makePutRequest({ claudeTimeoutMs: 120_000 }),

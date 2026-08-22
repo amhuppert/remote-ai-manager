@@ -13,6 +13,7 @@ export function ConfigPillGroup<T extends string>({
   options,
   onChange,
   getOptionLabel,
+  getOptionDisabledReason,
   disabled,
   "aria-label": ariaLabel,
   "aria-labelledby": ariaLabelledBy,
@@ -21,6 +22,13 @@ export function ConfigPillGroup<T extends string>({
   options: readonly T[];
   onChange: (v: T) => void;
   getOptionLabel?: (option: T) => ReactNode;
+  /**
+   * Per-option refusal; null leaves the option selectable. A refused pill uses
+   * `aria-disabled` rather than the `disabled` attribute so the reason still
+   * reaches a pointer (title) and a screen reader (accessible name) — a
+   * natively disabled button takes neither.
+   */
+  getOptionDisabledReason?: (option: T) => string | null;
   disabled?: boolean;
   "aria-label"?: string;
   "aria-labelledby"?: string;
@@ -32,23 +40,48 @@ export function ConfigPillGroup<T extends string>({
       aria-labelledby={ariaLabelledBy}
       className="inline-flex w-fit max-w-full flex-wrap gap-[2px] rounded-md border border-solid border-border-subtle bg-bg-base p-[3px]"
     >
-      {options.map((opt) => (
-        <button
-          key={opt}
-          type="button"
-          className={cn(
-            PILL_BASE,
-            value === opt
-              ? "border-cyan bg-cyan font-semibold text-text-inverse"
-              : "bg-transparent font-medium text-text-secondary hover:bg-bg-hover hover:text-text-primary",
-          )}
-          aria-pressed={value === opt}
-          onClick={() => !disabled && onChange(opt)}
-          disabled={disabled}
-        >
-          {getOptionLabel ? getOptionLabel(opt) : opt}
-        </button>
-      ))}
+      {options.map((opt) => {
+        const reason = getOptionDisabledReason?.(opt) ?? null;
+        const label = getOptionLabel ? getOptionLabel(opt) : opt;
+        if (reason !== null) {
+          return (
+            <button
+              key={opt}
+              type="button"
+              className={cn(
+                PILL_BASE,
+                "cursor-not-allowed bg-transparent font-medium text-text-secondary opacity-40",
+              )}
+              aria-pressed={false}
+              aria-disabled="true"
+              title={reason}
+              aria-label={`${opt} — ${reason}`}
+              // aria-disabled does not stop the click the way `disabled` would,
+              // so the refusal is enforced here rather than implied.
+              onClick={() => undefined}
+            >
+              {label}
+            </button>
+          );
+        }
+        return (
+          <button
+            key={opt}
+            type="button"
+            className={cn(
+              PILL_BASE,
+              value === opt
+                ? "border-cyan bg-cyan font-semibold text-text-inverse"
+                : "bg-transparent font-medium text-text-secondary hover:bg-bg-hover hover:text-text-primary",
+            )}
+            aria-pressed={value === opt}
+            onClick={() => !disabled && onChange(opt)}
+            disabled={disabled}
+          >
+            {label}
+          </button>
+        );
+      })}
     </div>
   );
 }

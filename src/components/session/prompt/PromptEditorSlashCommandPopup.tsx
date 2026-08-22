@@ -23,10 +23,13 @@ import {
   useProjectCommandsQuery,
 } from "@/lib/commands/queries";
 import { filterDisabledCommandItems } from "@/lib/commands/capability-filter";
+import { filterCommandsForScope } from "@/lib/commands/built-in-commands";
 import {
-  BUILT_IN_COMMANDS,
-  filterCommandsForScope,
-} from "@/lib/commands/built-in-commands";
+  composeBackendCommandCatalog,
+  isSkillTriggerActive,
+} from "@/lib/commands/backend-command-catalog";
+import { skillTriggerPrefixForBackend } from "@/lib/agent-backends/catalog";
+import { commandCascadesForBackend } from "@/lib/agent-capabilities/metadata";
 import {
   useAgentCapabilityViewQuery,
   type AgentCapabilityScope,
@@ -140,19 +143,24 @@ export const PromptEditorSlashCommandPopup = forwardRef<
       }),
     [scopeRef, projectName, conversationId],
   );
-  const pluginsCascade =
-    backend === "codex" ? "codex-plugins" : "claude-plugins";
-  const skillsCascade = backend === "codex" ? "codex-skills" : "claude-skills";
+  // Which cascades filter this backend's discovered commands, and which prefix
+  // its skills answer to, are both registered facts. A backend that registers
+  // no capability kinds gets null and issues no cascade request (spec D14).
+  const cascades = useMemo(() => commandCascadesForBackend(backend), [backend]);
+  const skillTriggerPrefix = skillTriggerPrefixForBackend(backend);
   const pluginsView = useAgentCapabilityViewQuery(
     capabilityScope,
-    pluginsCascade,
+    cascades.plugins,
   );
   const skillsView = useAgentCapabilityViewQuery(
     capabilityScope,
-    skillsCascade,
+    cascades.skills,
   );
 
-  const isCodexSkillMode = backend === "codex" && triggerChar === "$";
+  const skillTriggerActive = isSkillTriggerActive(
+    skillTriggerPrefix,
+    triggerChar,
+  );
 
   const items = useMemo<CommandItem[]>(() => {
     const fetched = commandsQuery.data?.items ?? [];
@@ -161,34 +169,22 @@ export const PromptEditorSlashCommandPopup = forwardRef<
       pluginsView.data,
       skillsView.data,
     );
-    const catalog = ((): CommandItem[] => {
-      if (isCodexSkillMode) {
-        return filtered.filter((i) => i.name.startsWith("$"));
-      }
-      if (backend === "codex") {
-        return [...BUILT_IN_COMMANDS];
-      }
-      const fetchedSlashCommands = filtered.filter(
-        (item) => item.name.startsWith("/") && item.name !== "/spec",
-      );
-      const fetchedNames = new Set(fetchedSlashCommands.map((i) => i.name));
-      const builtIns = BUILT_IN_COMMANDS.filter(
-        (i) => !fetchedNames.has(i.name),
-      );
-      return [...builtIns, ...fetchedSlashCommands];
-    })();
     // One exit point, so a command the scope cannot execute cannot re-enter the
     // catalog by being discovered instead of built in.
-    return filterCommandsForScope(catalog, {
-      scope: scopeRef,
-      isWorkflowManagedConversation,
-    });
+    return filterCommandsForScope(
+      composeBackendCommandCatalog({
+        discovered: filtered,
+        skillTriggerPrefix,
+        triggerChar,
+      }),
+      { scope: scopeRef, isWorkflowManagedConversation },
+    );
   }, [
     commandsQuery.data?.items,
     pluginsView.data,
     skillsView.data,
-    backend,
-    isCodexSkillMode,
+    skillTriggerPrefix,
+    triggerChar,
     isWorkflowManagedConversation,
     scopeRef,
   ]);
@@ -326,8 +322,8 @@ export const PromptEditorSlashCommandPopup = forwardRef<
 
   useImperativeHandle(ref, () => ({ handleKeyDown }), [handleKeyDown]);
 
-  const headerLabel = isCodexSkillMode ? "Skills" : "Commands";
-  const emptyLabel = isCodexSkillMode
+  const headerLabel = skillTriggerActive ? "Skills" : "Commands";
+  const emptyLabel = skillTriggerActive
     ? "No matching skills"
     : "No matching commands";
   const error = commandsQuery.isError

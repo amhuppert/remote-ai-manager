@@ -57,7 +57,7 @@ function makeRuntime(
     async sendTurn() {
       return makeTurnResult();
     },
-    close: vi.fn(),
+    close: vi.fn(async () => {}),
     ...overrides,
   };
 }

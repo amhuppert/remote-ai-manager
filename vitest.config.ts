@@ -13,6 +13,11 @@ const dirname =
 
 const TEST_FILE_PATTERN = /\.test\.(?:ts|tsx|mjs)$/;
 const JSDOM_DIRECTIVE_PATTERN = /^\/\/ @vitest-environment jsdom\s*$/m;
+// The authenticated acceptance suite (spec R14.2, D19). Its files are named
+// apart from the unit corpus rather than merely placed apart, because the unit
+// projects collect by filename: an acceptance file that landed in the unit
+// suite would spend real credential and real money on every `test` run.
+const ACCEPTANCE_FILE_PATTERN = /\.acceptance\.test\.ts$/;
 
 function collectTestFiles(directory: string): string[] {
   const absoluteDirectory = path.join(dirname, directory);
@@ -26,8 +31,21 @@ function collectTestFiles(directory: string): string[] {
   );
 }
 
-const unitTestFiles = ["src", "scripts", "eslint-rules"].flatMap(
+const allTestFiles = ["src", "scripts", "eslint-rules"].flatMap(
   collectTestFiles,
+);
+// The closing sweep scans everything the matrix produced, so it has to run
+// after the cases that produce it. Ordering is stated here rather than left to
+// directory traversal, and the project runs one file at a time.
+const acceptanceTestFiles = allTestFiles
+  .filter((filePath) => ACCEPTANCE_FILE_PATTERN.test(filePath))
+  .sort((left, right) => {
+    const rank = (filePath: string): number =>
+      path.basename(filePath).startsWith("final-") ? 1 : 0;
+    return rank(left) - rank(right) || left.localeCompare(right);
+  });
+const unitTestFiles = allTestFiles.filter(
+  (filePath) => !ACCEPTANCE_FILE_PATTERN.test(filePath),
 );
 const jsdomTestFiles = unitTestFiles.filter((filePath) =>
   JSDOM_DIRECTIVE_PATTERN.test(
@@ -158,6 +176,25 @@ export default defineConfig({
           env: {
             CC_LOG_SILENT: "1",
           },
+        },
+      },
+      // The authenticated Cursor acceptance suite. Reached only through the
+      // registered `cursor-acceptance` command, which gates on CURSOR_API_KEY
+      // before Vitest starts; nothing selects this project by default.
+      //
+      // Logging is deliberately NOT silenced here: the suite reads its own log
+      // files back and scans them for credential material, which a silenced
+      // logger would turn into a vacuously clean scan. Timeouts are minutes,
+      // not seconds, because every case is a live model turn.
+      {
+        extends: true,
+        test: {
+          name: "cursor-acceptance",
+          environment: "node",
+          include: acceptanceTestFiles,
+          setupFiles: ["vitest.node.setup.ts"],
+          testTimeout: 300_000,
+          hookTimeout: 300_000,
         },
       },
       // Storybook tests — runs *.stories.* in a headless browser.

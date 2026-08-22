@@ -1,0 +1,67 @@
+{
+  "initScriptPath": "scripts/worktree-init.sh",
+  "validation": {
+    "commands": {
+      "pre-merge": {
+        "command": {
+          "full": "scripts/pre-merge-validate-full.sh",
+          "changed": "scripts/pre-merge-validate.sh"
+        },
+        "cost": 8,
+        "timeoutMs": 3600000,
+        "pathArgs": "forbid"
+      },
+      "format": {
+        "command": {
+          "full": "scripts/validate/format-full.sh",
+          "changed": "scripts/validate/format.sh"
+        },
+        "cost": 1,
+        "description": "Format project files",
+        "pathArgs": "forbid"
+      },
+      "lint": {
+        "command": {
+          "full": "scripts/validate/lint-full.sh",
+          "changed": "scripts/validate/lint.sh"
+        },
+        "cost": 2,
+        "description": "Lint project files",
+        "pathArgs": "forbid"
+      },
+      "typecheck": {
+        "command": {
+          "full": "scripts/validate/typecheck.sh"
+        },
+        "cost": 2,
+        "timeoutMs": 3600000,
+        "description": "Run full-project static and build checks",
+        "pathArgs": "forbid"
+      },
+      "test": {
+        "command": {
+          "full": "scripts/validate/test-full-suite.sh",
+          "changed": "scripts/validate/test.sh"
+        },
+        "cost": 8,
+        "timeoutMs": 3600000,
+        "description": "Run unit tests with eight workers",
+        "pathArgs": "paths"
+      }
+    },
+    "preMerge": ["format", "lint", "typecheck", "test"],
+    "laneMerge": ["typecheck", "test"]
+  },
+  "devServers": [
+    {
+      "name": "nextjs",
+      "command": "bun run dev",
+      "port": { "base": 3000, "range": 100 }
+    },
+    {
+      "name": "storybook",
+      "command": "npx storybook dev --port $CC_ASSIGNED_PORT --no-open",
+      "port": { "base": 6006, "range": 100 }
+    }
+  ]
+}

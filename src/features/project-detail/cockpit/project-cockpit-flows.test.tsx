@@ -38,6 +38,7 @@ import { projectConversationKeys } from "@/lib/project-conversations-client/quer
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
   claude: { modelId: "sonnet", effort: "medium" },
   codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+  cursor: { modelId: "composer-2.5", effort: "high" },
 };
 
 vi.mock(
@@ -727,6 +728,17 @@ describe("project page: pre-init backend selection in the cockpit", () => {
     expect(codexBtn).not.toBeNull();
     fireEvent.click(codexBtn!);
     expect(onSelectedBackendChange).toHaveBeenCalledWith("codex");
+
+    // A conversation surface offers every registered conversation backend —
+    // including one the facet-gated task/workflow/collaboration pickers refuse
+    // (spec R15.1).
+    const cursorBtn = document.querySelector('button[data-backend="cursor"]');
+    if (!(cursorBtn instanceof HTMLButtonElement)) {
+      throw new Error("no cursor backend toggle button");
+    }
+    expect(cursorBtn.getAttribute("aria-disabled")).toBeNull();
+    fireEvent.click(cursorBtn);
+    expect(onSelectedBackendChange).toHaveBeenCalledWith("cursor");
 
     // When the page reflects the new selection, the composer recolors to Codex
     // (the composer value tracks the pre-init selection, not the conv's backend).

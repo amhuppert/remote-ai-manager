@@ -1,11 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   abortConversation,
   registerAbortController,
   unregisterAbortController,
 } from "./abort-registry";
+import {
+  registerRuntime,
+  _resetForTesting as resetRuntimeRegistry,
+} from "@/lib/agent-backends/runtime-registry";
 
 describe("abort-registry", () => {
+  afterEach(() => {
+    resetRuntimeRegistry();
+  });
+
   it("unregister removes the controller it registered", async () => {
     const controller = new AbortController();
     registerAbortController("conv-basic", controller);
@@ -41,5 +49,31 @@ describe("abort-registry", () => {
     expect(controller.signal.aborted).toBe(true);
     // Already removed: a second abort finds nothing.
     expect(abortConversation("conv-abort")).toBe(false);
+  });
+
+  it("still signals the abort when the runtime teardown rejects", async () => {
+    // Abort is synchronous and reports whether a turn was signalled; runtime
+    // teardown resolves later. A rejected teardown must not surface as an
+    // unhandled rejection (which fails the run) or change the abort verdict.
+    const controller = new AbortController();
+    registerAbortController("conv-close-rejects", controller);
+    registerRuntime("conv-close-rejects", {
+      backend: "claude",
+      status: "alive",
+      modelId: undefined,
+      reasoningEffort: undefined,
+      outputFormat: undefined,
+      alignmentVersion: null,
+      sendTurn: async () => {
+        throw new Error("sendTurn is not exercised by abort");
+      },
+      close: () => Promise.reject(new Error("teardown failed")),
+    });
+
+    expect(abortConversation("conv-close-rejects")).toBe(true);
+    expect(controller.signal.aborted).toBe(true);
+
+    // Let the rejected teardown settle so an unhandled rejection would surface.
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 });

@@ -27,6 +27,20 @@ describe("CompactionSection", () => {
     expect(screen.getByText("Effort")).toBeVisible();
   });
 
+  // Compaction dispatches a task run, so its backend must register a task
+  // facet (spec R15.1).
+  it("refuses a backend with no task facet and keeps the configured one", () => {
+    const { controller, getState } = makeController();
+    renderWithQuery(<CompactionSection controller={controller} />);
+
+    const cursor = pillIn("compaction.backend", "cursor");
+    expect(cursor.getAttribute("aria-disabled")).toBe("true");
+    expect(cursor.getAttribute("title")).toContain("task");
+
+    fireEvent.click(cursor);
+    expect(getState().compaction?.backend).toBeUndefined();
+  });
+
   it("defaults to the claude sonnet models when config has no compaction block", () => {
     const { controller } = makeController();
     renderWithQuery(<CompactionSection controller={controller} />);

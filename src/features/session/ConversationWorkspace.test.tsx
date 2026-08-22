@@ -574,6 +574,7 @@ beforeEach(() => {
 const DEFAULT_BACKEND_SELECTIONS: BackendSelectionDefaultsById = {
   claude: { modelId: "sonnet", effort: "high" },
   codex: { modelId: "gpt-5.6-sol", effort: "high" },
+  cursor: { modelId: "composer-2.5", effort: "high" },
 };
 
 function renderPage(props?: {
@@ -860,6 +861,7 @@ describe("ConversationWorkspace", () => {
         backendDefaults: {
           ...DEFAULT_BACKEND_SELECTIONS,
           claude: { modelId: "sonnet", effort: "low" },
+          cursor: { modelId: "composer-2.5", effort: "high" },
         },
       });
       const effortTrigger = document.querySelector(

@@ -1329,6 +1329,10 @@ describe("globalConfigSchema workflowDefaults", () => {
           reasoningEffort: "high",
           timeoutMs: null,
         },
+        cursor: {
+          model: "composer-2.5",
+          timeoutMs: null,
+        },
       },
     });
     expect(result.success).toBe(true);

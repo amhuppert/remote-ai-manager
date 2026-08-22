@@ -101,6 +101,7 @@ describe("resolveCollaborationBackendModelConfig", () => {
         timeoutMs: null,
         stallTimeoutMs: 60_000,
       },
+      cursor: { model: "composer-2.5", timeoutMs: null },
     },
   };
 

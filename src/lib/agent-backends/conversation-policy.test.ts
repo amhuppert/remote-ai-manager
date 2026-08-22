@@ -22,6 +22,7 @@ function makeConfig(
         timeoutMs: null,
         ...overrides.codex,
       },
+      cursor: { model: "composer-2.5", timeoutMs: null },
     },
   };
 }

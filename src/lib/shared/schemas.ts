@@ -4,7 +4,7 @@ export const contentResponseSchema = z.object({
   content: z.string(),
 });
 
-export const agentBackendSchema = z.enum(["claude", "codex"]);
+export const agentBackendSchema = z.enum(["claude", "codex", "cursor"]);
 export type AgentBackendId = z.infer<typeof agentBackendSchema>;
 export const DEFAULT_AGENT_BACKEND_ID: AgentBackendId =
   agentBackendSchema.options[0]!;

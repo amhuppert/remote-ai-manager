@@ -10,6 +10,7 @@ import {
   type AgentCapabilityScope,
 } from "@/hooks/use-agent-capabilities";
 import type { AgentCapabilityCascadeKind } from "@/lib/agent-capabilities/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 
 import {
   AgentCapabilityPanel,
@@ -23,7 +24,7 @@ export interface AgentCapabilityPanelContainerProps {
   initialScope?: AgentCapabilityScope;
   selectedScope?: AgentCapabilityScope;
   onScopeChange?: (scope: AgentCapabilityScope) => void;
-  onOpenPlugin?: (pluginId: string, backend: "claude" | "codex") => void;
+  onOpenPlugin?: (pluginId: string, backend: AgentBackendId) => void;
   initialSearch?: string;
   hideHeader?: boolean;
   hideLevels?: boolean;

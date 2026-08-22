@@ -22,6 +22,7 @@ import {
 import BackendToggle from "@/components/BackendToggle";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import ModelSelector from "@/components/ModelSelector";
+import { useProjectBackendModelOptions } from "@/lib/agent-backends/queries";
 import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
 import { ChatIcon, ChevronRightIcon, CloseIcon } from "@/components/icons";
 import {
@@ -64,7 +65,10 @@ import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import { readCapturedClientErrors } from "@/lib/client-errors/ring-buffer";
 import { useFullConfigQuery } from "@/lib/config/queries";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
-import type { AgentBackendId } from "@/lib/shared/schemas";
+import {
+  DEFAULT_AGENT_BACKEND_ID,
+  type AgentBackendId,
+} from "@/lib/shared/schemas";
 import { createClientLogger } from "@/lib/logging/client-logger";
 import {
   useCommandCenterProjectQuery,
@@ -323,6 +327,14 @@ export default function QuickTicketDialog({
           defaultBackend: kickoffConfig.defaultAgentBackend,
           backendDefaults: kickoffDefaults,
         });
+
+  // The kickoff turn runs inside the project the draft names, so its model
+  // choices are that project's effective ones (spec D10). Null before a project
+  // is chosen, which reads as "unknown" and leaves the catalog in place.
+  const kickoffProjectModelOptions = useProjectBackendModelOptions(
+    draft !== null && draft.projectName.length > 0 ? draft.projectName : null,
+    kickoffSelection?.backend ?? DEFAULT_AGENT_BACKEND_ID,
+  );
 
   const patchKickoff = (selection: ResolvedKickoffSelection) => {
     useQuickTicketStore.getState().updateQuickTicketDraft({
@@ -1617,6 +1629,7 @@ export default function QuickTicketDialog({
                         value={kickoffSelection.model}
                         onChange={changeKickoffModel}
                         disabled={pending}
+                        projectOptions={kickoffProjectModelOptions}
                       />
                     </div>
                     <div className="flex flex-col gap-2xs">

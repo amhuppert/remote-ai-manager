@@ -16,10 +16,12 @@ import { buildMessageRefXml } from "@/lib/conversations/message-ref";
 import { buildTicketRefXml } from "@/lib/tickets/references";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
 
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
   claude: { modelId: "sonnet", effort: "medium" },
   codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+  cursor: { modelId: "composer-2.5", effort: "high" },
 };
 
 // Radix focuses items / captures the pointer on open; jsdom implements neither.
@@ -172,6 +174,7 @@ describe("SpawnCard", () => {
       backendDefaults: {
         claude: { modelId: "sonnet", effort: "medium" },
         codex: { modelId: "custom-codex-model", effort: "ultra" },
+        cursor: { modelId: "composer-2.5", effort: "high" },
       },
     });
 
@@ -294,8 +297,15 @@ describe("SpawnCard", () => {
   it("submits only the included sessions", async () => {
     const result: SpawnResult = { created: [], failed: [] };
     const captured: { body?: string } = {};
-    const fetchStub = vi.fn(async (_url: string, init?: RequestInit) => {
-      captured.body = init?.body as string;
+    // Counted by URL rather than by total calls: the card also issues its own
+    // reads (voice health, the project's model options), and a total-call
+    // assertion would fail whenever a card gains one.
+    const spawnRequests: string[] = [];
+    const fetchStub = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST" && url.includes("/spawn")) {
+        spawnRequests.push(url);
+        captured.body = init.body as string;
+      }
       return new Response(JSON.stringify(result), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -309,7 +319,7 @@ describe("SpawnCard", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Create 1 session" }));
 
-    await waitFor(() => expect(fetchStub).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(spawnRequests).toHaveLength(1));
     const sentBody = JSON.parse(captured.body ?? "{}") as {
       sessions: Array<{ name: string }>;
     };
@@ -542,5 +552,80 @@ describe("SpawnCard", () => {
     expect(
       screen.queryByRole("button", { name: /Run|Stop|Merge|Prompt/ }),
     ).toBeNull();
+  });
+});
+
+describe("SpawnCard project-scoped model options", () => {
+  function serveProjectOptions(
+    api: FetchFixture,
+    models: readonly string[],
+  ): void {
+    api.json("GET", "/api/projects/repo/model-options", {
+      backends: listBackendCatalogEntries().map((entry) =>
+        entry.id === "cursor"
+          ? {
+              backend: entry.id,
+              models: models.map((id) => ({
+                id,
+                label: id,
+                description: "Configured for this project.",
+                effortLevels: [],
+              })),
+              defaultModelId: models[0] ?? null,
+              source: "project",
+            }
+          : {
+              backend: entry.id,
+              models: entry.models,
+              defaultModelId: entry.defaultModelId,
+              source: "catalog",
+            },
+      ),
+    });
+  }
+
+  const cursorOnly = asProposal({
+    sessions: [{ name: "gamma", agent: "cursor", mode: "normal" }],
+  });
+
+  it("builds a spawn row's model choices from the project's list", async () => {
+    const api = installFetchFixture();
+    fetchFixture = api;
+    api.json("GET", "/api/voice/health", { available: false });
+    serveProjectOptions(api, ["composer-1"]);
+
+    renderValid(cursorOnly, {
+      backendDefaults: {
+        ...BACKEND_DEFAULTS,
+        cursor: { modelId: "composer-1", effort: "high" },
+      },
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("model-selector-label")).toHaveTextContent(
+        "composer-1",
+      ),
+    );
+    expect(
+      api.requestsTo("GET", "/api/projects/repo/model-options"),
+    ).not.toHaveLength(0);
+  });
+
+  it("marks a configured model outside the project's list as an invalid selection", async () => {
+    // The global profile still says composer-2.5, but this project lists only
+    // composer-1 — the row must say so rather than offer a substitute.
+    const api = installFetchFixture();
+    fetchFixture = api;
+    api.json("GET", "/api/voice/health", { available: false });
+    serveProjectOptions(api, ["composer-1"]);
+
+    renderValid(cursorOnly);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("model-selector-trigger")).toHaveAttribute(
+        "data-invalid-selection",
+        "true",
+      ),
+    );
   });
 });

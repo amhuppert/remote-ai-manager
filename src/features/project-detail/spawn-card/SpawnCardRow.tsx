@@ -17,6 +17,8 @@ import {
   SelectValue,
 } from "@/components/ui/Select";
 import ModelSelector from "@/components/ModelSelector";
+import { useProjectBackendModelOptions } from "@/lib/agent-backends/queries";
+import { DEFAULT_AGENT_BACKEND_ID } from "@/lib/shared/schemas";
 import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
 import { sanitizeBranchName } from "@/lib/sessions/branch-name";
 import { spawnAgentSchema, spawnModeSchema } from "@/lib/chat-spawning/schemas";
@@ -136,6 +138,15 @@ const SpawnCardRow = forwardRef<SpawnCardRowHandle, SpawnCardRowProps>(
     const backend = backendForAgent(session.agent);
     const backendEntry =
       backend === null ? null : findBackendCatalogEntry(backend);
+    // A spawn row always creates sessions inside this project, so its model
+    // choices are the project's effective ones (spec D10) rather than the
+    // process-global catalog's. The dual race has no single backend to scope,
+    // and the hook is called unconditionally, so it asks about the default
+    // backend and the result goes unused.
+    const projectModelOptions = useProjectBackendModelOptions(
+      projectName,
+      backend ?? DEFAULT_AGENT_BACKEND_ID,
+    );
     const promptRef = useRef<RichPromptInputHandle | null>(null);
     useImperativeHandle(
       ref,
@@ -252,6 +263,7 @@ const SpawnCardRow = forwardRef<SpawnCardRowHandle, SpawnCardRowProps>(
                 backend={backend}
                 value={session.model}
                 onChange={(model) => onFieldChange(index, "model", model)}
+                projectOptions={projectModelOptions}
               />
             </div>
             <div className="flex flex-col gap-2xs">

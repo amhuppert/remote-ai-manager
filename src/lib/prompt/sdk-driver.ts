@@ -901,6 +901,25 @@ export async function executePromptStream(
     }
   }
 
+  // Project-scoped model check, for a backend whose selectable models come from
+  // the project's configuration. Refusing here keeps an unsupported selection
+  // from costing a worker or a billable turn, and reports it as a client error
+  // rather than as a failed turn.
+  if (factory.validateProjectModelSelection) {
+    const validation = await factory.validateProjectModelSelection({
+      projectPath,
+      ...(modelId != null ? { modelId } : {}),
+    });
+    if (!validation.ok) {
+      logger.warn("prompt.project_model_validation_failed", {
+        backend: resolvedBackend,
+        modelId,
+        conversationId,
+      });
+      throw new ModelEffortValidationError(validation.message);
+    }
+  }
+
   const streamId = randomUUID();
 
   logger.info("prompt.submit", {

@@ -23,7 +23,11 @@ import {
   findCollabFinalDuplicateIndex,
   latestFinalAnswerText,
 } from "@/features/session/conversation/collab/page-helpers";
-import type { CollaborationReference } from "@/lib/workflows/collaboration/types";
+import {
+  asCollaborationAgent,
+  type CollaborationAgent,
+  type CollaborationReference,
+} from "@/lib/workflows/collaboration/types";
 import type {
   PublicConversationState,
   TranscriptMessage,
@@ -146,8 +150,14 @@ export function useCollabContext({
   );
   const setCollabConfigDraft = useSetCollabConfigDraft();
   const clearCollabConfigDraft = useClearCollabConfigDraft();
-  const originatingCollabAgent: "claude" | "codex" =
-    activeConversation?.agentBackend === "codex" ? "codex" : "claude";
+  // Null when the conversation's backend cannot take a lane — the signal
+  // PromptComposer gates the /collab row on. Naming a backend the conversation
+  // is not running would show the row with the wrong Agent One AND send a start
+  // request that adopts that backend onto the conversation.
+  const originatingCollabAgent: CollaborationAgent | null =
+    activeConversation === undefined
+      ? null
+      : asCollaborationAgent(activeConversation.agentBackend);
   // Agent Two's draft seeds lazily so the default tracks the conversation's
   // backend: the suggested backend is the opposite of Agent One's (an explicit
   // same-backend choice is fine), and model/effort/fastMode seed from the
@@ -157,7 +167,9 @@ export function useCollabContext({
     const agentTwo =
       collabConfigDraft.agentTwo ??
       seedAgentTwoDraft(
-        originatingCollabAgent === "claude" ? "codex" : "claude",
+        // The suggested partner is the opposite of Agent One. With no Agent One
+        // the row does not render at all, so the seed is inert.
+        originatingCollabAgent === "codex" ? "claude" : "codex",
         backendDefaults,
       );
     return { ...collabConfigDraft, agentTwo };

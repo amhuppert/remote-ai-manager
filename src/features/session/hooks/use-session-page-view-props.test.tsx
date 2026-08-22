@@ -144,6 +144,7 @@ function makeSlices(
           effort: "high" as const,
           codexFastMode: false,
         },
+        cursor: { modelId: "composer-2.5", effort: "high" },
       },
     },
     backendModelEffort: {

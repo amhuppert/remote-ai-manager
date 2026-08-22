@@ -23,6 +23,14 @@ const RAM_BUDGET_FRACTION = 0.55;
  */
 const MIN_WORKERS = 2;
 
+/**
+ * Full-suite validation keeps the whole corpus collected and reporting through
+ * one Vitest coordinator. Leaving headroom below the changed-scope pool keeps
+ * the coordinator responsive under machine contention instead of relying only
+ * on per-file timeouts.
+ */
+const FULL_SUITE_WORKERS = 4;
+
 const BYTES_PER_GB = 1024 ** 3;
 
 /**
@@ -77,6 +85,9 @@ export function resolveScopedWorkerRequest({
   pathTokenCount,
   configuredWorkers,
 }) {
+  if (mode === "full") {
+    return Math.max(1, Math.min(configuredWorkers, FULL_SUITE_WORKERS));
+  }
   if (mode !== "paths") return configuredWorkers;
   return Math.max(1, Math.min(pathTokenCount, configuredWorkers));
 }

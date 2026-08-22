@@ -4,6 +4,10 @@ import {
   projectClaudeUsageFrame,
 } from "./claude/transcript-projections";
 import { projectCodexUsageFrame } from "./codex/transcript-projections";
+import {
+  projectCursorStoredToolResultBlocks,
+  projectCursorUsageFrame,
+} from "./cursor/transcript-projections";
 
 /**
  * Neutral projections over persisted transcript frames. Conversation JSONL
@@ -32,8 +36,13 @@ interface RawFrameCarrier {
 export interface TranscriptUsageProjection {
   /** Backend session lineage the cumulative counters belong to. */
   lineageId: string;
-  /** Cumulative cost of the lineage as of this frame. */
-  cumulativeCostUsd: number;
+  /**
+   * Cumulative cost of the lineage as of this frame; null when the backend
+   * reports no cost at all. Null is not zero — a backend whose provider prices
+   * by plan rather than by token has no figure to give, and inventing one is
+   * worse than reporting the absence.
+   */
+  cumulativeCostUsd: number | null;
   /** API turns reported by this frame; null when the backend omits it. */
   numTurns: number | null;
 }
@@ -47,11 +56,13 @@ type UsageProjector = (raw: unknown) => TranscriptUsageProjection | null;
 
 const TOOL_RESULT_PROJECTORS: readonly ToolResultProjector[] = [
   projectClaudeStoredToolResultBlocks,
+  projectCursorStoredToolResultBlocks,
 ];
 
 const USAGE_PROJECTORS: readonly UsageProjector[] = [
   projectClaudeUsageFrame,
   projectCodexUsageFrame,
+  projectCursorUsageFrame,
 ];
 
 /**

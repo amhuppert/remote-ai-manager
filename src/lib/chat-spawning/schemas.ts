@@ -1,12 +1,19 @@
 import { z } from "zod";
 import { effortLevelSchema } from "@/lib/agent-backends/schemas";
 import { imagePayloadSchema } from "@/lib/images/schemas";
+import { agentBackendSchema } from "@/lib/shared/schemas";
 
 /**
- * Agent selection for a proposed session. `dual` is the Claude+Codex race
- * (seeded as a first-turn concern by the dispatcher, not at creation time).
+ * Agent selection for a proposed session: any registered backend, or `dual` —
+ * the Claude+Codex race (seeded as a first-turn concern by the dispatcher, not
+ * at creation time). Derived from the canonical backend enum rather than
+ * restated, so registering a backend cannot leave a spawn surface silently
+ * unable to name it.
  */
-export const spawnAgentSchema = z.enum(["claude", "codex", "dual"]);
+export const spawnAgentSchema = z.enum([
+  ...agentBackendSchema.options,
+  "dual",
+] as const);
 export type SpawnAgent = z.infer<typeof spawnAgentSchema>;
 
 /**

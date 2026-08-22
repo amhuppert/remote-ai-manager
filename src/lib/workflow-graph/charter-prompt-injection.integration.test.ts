@@ -111,6 +111,7 @@ const GLOBAL_CONFIG: GlobalConfig = {
       fastMode: false,
       timeoutMs: null,
     },
+    cursor: { model: "composer-2.5", timeoutMs: null },
   },
   defaultAgentBackend: "claude",
   workflowDefaults: GLOBAL_DEFAULTS,

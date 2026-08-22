@@ -324,6 +324,17 @@ export interface TranscriptDeps {
     entry: TranscriptEntry,
     meta?: TranscriptBroadcastMeta,
   ): Promise<void>;
+  /**
+   * Append an entry whose producer stamped a stable id, at most once. Backend
+   * streams can re-deliver an event (a resumed stream, a retried forward), and
+   * this seam makes persistence and the SSE broadcast agree on exactly-once
+   * without the caller comparing content.
+   */
+  safeAppendTranscriptEntryOnce(
+    conversationId: string,
+    entry: TranscriptEntry & { id: string },
+    meta?: TranscriptBroadcastMeta,
+  ): Promise<void>;
   saveTranscriptImage(
     conversationId: string,
     index: number,
@@ -596,6 +607,18 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
       meta?: TranscriptBroadcastMeta,
     ) =>
       transcriptMod.safeAppendTranscriptEntry(
+        cid,
+        entry,
+        undefined,
+        undefined,
+        meta,
+      ),
+    safeAppendTranscriptEntryOnce: (
+      cid: string,
+      entry: TranscriptEntry & { id: string },
+      meta?: TranscriptBroadcastMeta,
+    ) =>
+      transcriptMod.safeAppendTranscriptEntryOnce(
         cid,
         entry,
         undefined,
@@ -1128,6 +1151,16 @@ function readIntegerField(source: object, key: string): number | undefined {
 }
 
 /**
+ * Whether a producer stamped this entry with an id — the assertion that the
+ * entry has an identity a re-delivery can be recognized by.
+ */
+function hasStableEntryId(
+  entry: TranscriptEntry,
+): entry is TranscriptEntry & { id: string } {
+  return entry.id !== undefined;
+}
+
+/**
  * Execute a prompt via a backend-neutral conversation runtime.
  *
  * Orchestrates turn execution using ConversationBackendRuntime:
@@ -1188,6 +1221,20 @@ export async function executePromptForMachine(
     entry: TranscriptEntry,
   ): Promise<void> =>
     deps.safeAppendTranscriptEntry(conversationId, entry, broadcastMeta);
+
+  /**
+   * Persist a frame the backend emitted this turn. A backend that stamps its
+   * frames with a stable id is asserting event identity, so a re-delivered
+   * frame persists and broadcasts once; a frame without an id has no identity
+   * to compare and takes the ordinary append.
+   */
+  const appendBackendEventEntry = (
+    conversationId: string,
+    entry: TranscriptEntry,
+  ): Promise<void> =>
+    hasStableEntryId(entry)
+      ? deps.safeAppendTranscriptEntryOnce(conversationId, entry, broadcastMeta)
+      : safeAppendWithMeta(conversationId, entry);
 
   // Resolve model/effort with a three-tier fallback (explicit → conversation's
   // last-used → backend config default). A follow-up turn that carries no
@@ -1414,7 +1461,7 @@ export async function executePromptForMachine(
       ...scopeRef,
       reason,
     });
-    backendRuntime.close();
+    await backendRuntime.close();
     deps.unregisterBackendRuntime(input.conversationId);
     backendRuntime = undefined;
   }
@@ -1755,7 +1802,16 @@ export async function executePromptForMachine(
     backend: input.agentBackend,
     timeoutMs,
     stallTimeoutMs,
-    closeRuntime: () => backendRuntime?.close(),
+    // Fired from a timer, so teardown cannot be awaited here; a failed close
+    // is recorded rather than left as an unhandled rejection.
+    closeRuntime: () => {
+      void backendRuntime?.close().catch((err: unknown) => {
+        deps.log.warn("prompt.runtime_close_error", {
+          ...scopeRef,
+          error: String(err),
+        });
+      });
+    },
   });
   const abortController = abortWiring.abortController;
 
@@ -1803,7 +1859,7 @@ export async function executePromptForMachine(
             backendRef: event.backendRef,
           });
           if (initEntry !== null) {
-            await safeAppendWithMeta(input.conversationId, initEntry);
+            await appendBackendEventEntry(input.conversationId, initEntry);
           }
         }
         break;
@@ -1812,7 +1868,7 @@ export async function executePromptForMachine(
         contentBlocks.push(event.block);
         runtimeState.streamEmit?.("content", event.block);
         if (transcriptProjection.persistContentEvents) {
-          await safeAppendWithMeta(input.conversationId, {
+          await appendBackendEventEntry(input.conversationId, {
             timestamp: new Date().toISOString(),
             type: "assistant",
             role: "assistant",
@@ -1832,7 +1888,7 @@ export async function executePromptForMachine(
       case "transcript_entry":
         // The adapter interprets; the actor records. The frame is appended
         // verbatim — the payload is never read above the backend seam.
-        await safeAppendWithMeta(
+        await appendBackendEventEntry(
           input.conversationId,
           conversationTranscriptFrame(event.entry),
         );
@@ -1990,7 +2046,7 @@ export async function executePromptForMachine(
     // Shared by the pre-turn readiness gate and the dispatch retry loop.
     const recreateRuntimeForTurn =
       async (): Promise<ConversationBackendRuntime> => {
-        backendRuntime?.close();
+        await backendRuntime?.close();
         deps.unregisterBackendRuntime(input.conversationId);
         backendRuntime = await createManagedBackendRuntime();
         return backendRuntime;

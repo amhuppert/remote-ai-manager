@@ -15,6 +15,7 @@ const routerPush = vi.fn();
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
   claude: { modelId: "sonnet", effort: "medium" },
   codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+  cursor: { modelId: "composer-2.5", effort: "high" },
 };
 
 vi.mock("next/navigation", () => ({
@@ -237,6 +238,7 @@ describe("StartTicketDialog", () => {
     renderDialog(vi.fn(), "codex", {
       claude: { modelId: "sonnet", effort: "medium" },
       codex: { modelId: "custom-codex-model", effort: "ultra" },
+      cursor: { modelId: "composer-2.5", effort: "high" },
     });
     const user = userEvent.setup();
 

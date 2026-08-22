@@ -15,6 +15,8 @@ import {
   agentProfileSnapshotSchema,
   type AgentProfileRef,
 } from "@/lib/agent-profiles/schemas";
+import { backendFacetRefusalFor } from "@/lib/agent-backends/facet-gating";
+import { agentBackendSchema } from "@/lib/shared/schemas";
 import { escapeDiagnosticValue } from "@/lib/shared/diagnostic-text";
 import { validationCommandNameSchema } from "@/lib/validation/schemas";
 
@@ -34,6 +36,28 @@ const graphWorkflowCodexAgentConfigSchema = z.object({
   reasoningEffort: codexReasoningEffortSchema,
 });
 
+/**
+ * Why a `backend` value matched no arm above, phrased for the author.
+ *
+ * A registered backend that reaches here is not a typo — it is a backend whose
+ * descriptor declares no task facet, and a workflow role is dispatched through
+ * that facet. Saying so is the difference between "fix your spelling" and "this
+ * backend cannot hold a role" (spec R15.2). Anything else falls through to
+ * zod's own message.
+ *
+ * Only an unmatched DISCRIMINATOR reaches this callback; an arm that matches
+ * and then fails on its model or effort reports its own issue, so a bad Claude
+ * model can never be mislabelled as a facet problem.
+ */
+function agentConfigBackendRefusal(input: unknown): string | undefined {
+  if (typeof input !== "object" || input === null || !("backend" in input)) {
+    return undefined;
+  }
+  const parsed = agentBackendSchema.safeParse(input.backend);
+  if (!parsed.success) return undefined;
+  return backendFacetRefusalFor(parsed.data, "tasks") ?? undefined;
+}
+
 export const graphWorkflowAgentConfigSchema = z.preprocess(
   (val) => {
     if (typeof val === "object" && val !== null && !("backend" in val)) {
@@ -41,10 +65,11 @@ export const graphWorkflowAgentConfigSchema = z.preprocess(
     }
     return val;
   },
-  z.discriminatedUnion("backend", [
-    graphWorkflowClaudeAgentConfigSchema,
-    graphWorkflowCodexAgentConfigSchema,
-  ]),
+  z.discriminatedUnion(
+    "backend",
+    [graphWorkflowClaudeAgentConfigSchema, graphWorkflowCodexAgentConfigSchema],
+    { error: (issue) => agentConfigBackendRefusal(issue.input) },
+  ),
 );
 export type GraphWorkflowAgentConfig = z.infer<
   typeof graphWorkflowAgentConfigSchema

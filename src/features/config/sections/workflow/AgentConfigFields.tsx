@@ -1,6 +1,7 @@
 import ModelSelector from "@/components/ModelSelector";
 import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
 import { effortLevelsForCatalogEntry } from "@/lib/agent-backends/catalog";
+import { backendFacetRefusalIn } from "@/lib/agent-backends/facet-gating";
 import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
@@ -55,6 +56,11 @@ export function AgentConfigFields({
         <ConfigPillGroup
           value={backend}
           options={backends.map((b) => b.id)}
+          // A workflow role is dispatched through the backend's task facet, so
+          // a backend registering none cannot hold one (spec D13).
+          getOptionDisabledReason={(id) =>
+            backendFacetRefusalIn(backends, id, "tasks")
+          }
           onChange={handleBackendChange}
         />
       </ConfigField>

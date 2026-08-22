@@ -1,4 +1,5 @@
 import {
+  backendSupportsFastMode,
   effortLevelsForCatalogEntry,
   modelOptionsForCatalogEntry,
   type BackendCatalogEntry,
@@ -13,11 +14,47 @@ import { SettingsPage } from "../components/SettingsPage";
 import { SettingsSubSection } from "../components/SettingsSubSection";
 import type { ConfigFormController } from "./types";
 
+/**
+ * The profile fields this section edits, as the structural subset every
+ * registered backend's persisted profile satisfies. Provider-specific options
+ * are optional here and rendered by their own owned field component, so a
+ * backend that does not declare one simply never reaches it — no profile carries
+ * a credential, which is read from the server environment and never persisted
+ * (spec R12.2).
+ */
 interface BackendProfile {
   model: string;
   reasoningEffort?: EffortLevel;
   fastMode?: boolean;
   timeoutMs: number | null;
+}
+
+/** Codex's own speed default — the one backend that declares a fast mode. */
+function CodexFastModeField({
+  controller,
+  fieldPath,
+  fastMode,
+}: {
+  controller: ConfigFormController;
+  fieldPath: string;
+  fastMode: boolean;
+}): React.JSX.Element {
+  const { handleChange, isDefault, isModified } = controller;
+  return (
+    <ConfigField
+      label="Codex fast mode"
+      fieldPath={fieldPath}
+      isDefault={isDefault(fieldPath)}
+      isModified={isModified(fieldPath)}
+      hint="Sets the initial speed for new Codex conversations. Fast mode uses more credits."
+    >
+      <ConfigToggle
+        label="Codex fast mode"
+        value={fastMode}
+        onChange={(value) => handleChange(fieldPath, value)}
+      />
+    </ConfigField>
+  );
 }
 
 function fallbackEffort(
@@ -101,20 +138,12 @@ function BackendProfileFields({
           />
         </ConfigField>
       ) : null}
-      {entry.id === "codex" ? (
-        <ConfigField
-          label="Codex fast mode"
+      {backendSupportsFastMode(entry.id) ? (
+        <CodexFastModeField
+          controller={controller}
           fieldPath={fastModePath}
-          isDefault={isDefault(fastModePath)}
-          isModified={isModified(fastModePath)}
-          hint="Sets the initial speed for new Codex conversations. Fast mode uses more credits."
-        >
-          <ConfigToggle
-            label="Codex fast mode"
-            value={profile.fastMode ?? false}
-            onChange={(value) => handleChange(fastModePath, value)}
-          />
-        </ConfigField>
+          fastMode={profile.fastMode ?? false}
+        />
       ) : null}
       <ConfigField
         label={`${entry.label} timeout`}
@@ -146,12 +175,6 @@ export function BackendsSection({
 }): React.JSX.Element {
   const { formState, handleChange, isDefault, isModified } = controller;
   const { data: backends } = useBackendCatalogQuery();
-  const claudeEntry = backends.find((backend) => backend.id === "claude");
-  const codexEntry = backends.find((backend) => backend.id === "codex");
-
-  if (!claudeEntry || !codexEntry) {
-    throw new Error("Backend catalog is missing a configured backend");
-  }
 
   return (
     <SettingsPage
@@ -177,26 +200,19 @@ export function BackendsSection({
           />
         </ConfigField>
       </SettingsSubSection>
-      <SettingsSubSection
-        title={claudeEntry.label}
-        hint="Defaults used whenever a Claude conversation has no override."
-      >
-        <BackendProfileFields
-          controller={controller}
-          entry={claudeEntry}
-          profile={formState.agentBackends.claude}
-        />
-      </SettingsSubSection>
-      <SettingsSubSection
-        title={codexEntry.label}
-        hint="Defaults used to initialize new Codex conversations."
-      >
-        <BackendProfileFields
-          controller={controller}
-          entry={codexEntry}
-          profile={formState.agentBackends.codex}
-        />
-      </SettingsSubSection>
+      {backends.map((entry) => (
+        <SettingsSubSection
+          key={entry.id}
+          title={entry.label}
+          hint={`Defaults used to initialize new ${entry.label} conversations.`}
+        >
+          <BackendProfileFields
+            controller={controller}
+            entry={entry}
+            profile={formState.agentBackends[entry.id]}
+          />
+        </SettingsSubSection>
+      ))}
     </SettingsPage>
   );
 }

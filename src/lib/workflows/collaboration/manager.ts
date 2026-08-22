@@ -98,10 +98,13 @@ import {
 import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import {
+  collaborationAgentSchema,
   collaborationAgentTwoRequestSchema,
   collaborationAgentsMapSchema,
   collaborationArtifactSchema,
   collaborationAutonomousResolutionThresholdSchema,
+  isCollaborationAgent,
+  type CollaborationAgent,
   type CollaborationAgentsMap,
   type CollaborationArtifact,
   type CollaborationResolvedAgent,
@@ -1040,12 +1043,13 @@ export function resolveCollaborationBackendModelConfig(
 
 function resolveRuntimeConfigFor(
   deps: CollaborationManagerDeps,
-  backend: AgentBackendId,
+  backend: CollaborationAgent,
 ): Promise<CollaborationBackendRuntimeConfig> {
-  // A selection map keyed by backend id, not an identity branch: the two
-  // config resolvers are the manager's per-provider dependency surface.
+  // A selection map keyed by collaboration agent, not an identity branch: the
+  // two config resolvers are the manager's per-provider dependency surface, and
+  // the key type is exactly the set of backends the flow runs.
   const resolvers: Record<
-    AgentBackendId,
+    CollaborationAgent,
     () => Promise<CollaborationBackendRuntimeConfig>
   > = {
     codex: () => deps.resolveCodexModelConfig(),
@@ -1336,6 +1340,35 @@ export class CollaborationModelEffortValidationError extends Error {
   }
 }
 
+/**
+ * A registered backend that Collaboration Mode does not run was asked to take a
+ * lane. Bounded and named rather than substituted: silently swapping in an
+ * eligible backend would run a flow the caller did not ask for, and letting the
+ * ineligible one through would dispatch a lane whose contracts were never
+ * evidenced for it. Thrown before anything durable happens.
+ */
+export class CollaborationBackendNotEligibleError extends Error {
+  constructor(
+    public readonly agent: "agent_one" | "agent_two",
+    public readonly backend: AgentBackendId,
+  ) {
+    super(
+      `Backend "${backend}" cannot take the ${agent} lane: Collaboration Mode runs ${collaborationAgentSchema.options.join(" and ")}.`,
+    );
+    this.name = "CollaborationBackendNotEligibleError";
+  }
+}
+
+function requireCollaborationAgent(
+  agent: "agent_one" | "agent_two",
+  backend: AgentBackendId,
+): CollaborationAgent {
+  if (!isCollaborationAgent(backend)) {
+    throw new CollaborationBackendNotEligibleError(agent, backend);
+  }
+  return backend;
+}
+
 export class CollaborationNotStoppableError extends Error {
   constructor(
     public readonly workflowId: string,
@@ -1470,7 +1503,12 @@ export function createCollaborationManager(
         : { brief: parsed.brief, imageRefs: [] };
       const { brief, imageRefs } = preparedImages;
 
-      const primaryAgentBackend: AgentBackendId = conversation.agentBackend;
+      // Fail closed before anything durable: a conversation on a backend
+      // Collaboration Mode does not run cannot take Agent One's lane.
+      const primaryAgentBackend = requireCollaborationAgent(
+        "agent_one",
+        conversation.agentBackend,
+      );
 
       const sessionKey = `${input.projectPath}::${input.sessionName}`;
 
@@ -1500,9 +1538,10 @@ export function createCollaborationManager(
       // for its backend → catalog default. Its backend defaults to the
       // opposite of Agent One's, but an explicit choice — including the same
       // backend — always wins.
-      const agentTwoBackend: AgentBackendId =
-        parsed.agentTwo?.backend ??
-        oppositeCollaborationBackend(primaryAgentBackend);
+      const agentTwoBackend: CollaborationAgent =
+        parsed.agentTwo?.backend === undefined
+          ? oppositeCollaborationBackend(primaryAgentBackend)
+          : requireCollaborationAgent("agent_two", parsed.agentTwo.backend);
       const agentTwoOverride = {
         ...(parsed.agentTwo?.model !== undefined
           ? { model: parsed.agentTwo.model }
@@ -1785,12 +1824,11 @@ export function createCollaborationManager(
         typeof existingSnapshot["negotiationRounds"] === "number"
           ? (existingSnapshot["negotiationRounds"] as number)
           : 5;
-      const primaryBackendParse = agentBackendSchema.safeParse(
+      const primaryBackendParse = collaborationAgentSchema.safeParse(
         existingSnapshot["primaryAgentBackend"],
       );
-      const primaryAgentBackend: AgentBackendId = primaryBackendParse.success
-        ? primaryBackendParse.data
-        : "claude";
+      const primaryAgentBackend: CollaborationAgent =
+        primaryBackendParse.success ? primaryBackendParse.data : "claude";
       const persistedCodexFastMode = existingSnapshot["codexFastMode"];
       const codexFastMode =
         backendSupportsFastMode(primaryAgentBackend) &&
@@ -1956,7 +1994,7 @@ export function createCollaborationManager(
       const persistedAgentsParse = collaborationAgentsMapSchema.safeParse(
         existingSnapshot["agents"],
       );
-      const agentTwoBackend: AgentBackendId = persistedAgentsParse.success
+      const agentTwoBackend: CollaborationAgent = persistedAgentsParse.success
         ? persistedAgentsParse.data.agent_two.backend
         : oppositeCollaborationBackend(primaryAgentBackend);
       const agentOneRuntime = await resolveRuntimeConfigFor(

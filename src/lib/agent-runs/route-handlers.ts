@@ -21,6 +21,10 @@ import { resolveProjectPath } from "@/lib/projects/resolver";
 import { getSession } from "@/lib/state-store";
 import { createLogger, withTracing } from "@/lib/logging";
 import { resolveAgentBackendTurnDefaults } from "@/lib/agent-backends/conversation-policy";
+import {
+  backendFacetRefusalFor,
+  GATED_BACKEND_FACET_ERROR_CODE,
+} from "@/lib/agent-backends/facet-gating";
 import { createSessionArtifactRegistryForProduction } from "@/lib/workflows/primitives/default-session-artifact-registry";
 import { resolveInsideWorktree } from "@/lib/sessions/reference-documents-route-handlers";
 import type { ApiError } from "@/lib/api/errors";
@@ -131,6 +135,22 @@ export function createAgentRunHandlers(deps: AgentRunRouteDeps) {
             message: i.message,
           })),
         },
+        { status: 400 },
+      );
+    }
+
+    // An agent run IS a task run, so a backend that registers no task facet
+    // has to be refused here — before anything is started — rather than
+    // discovered when the registry has no runner to hand back (spec R15.2).
+    const facetRefusal = backendFacetRefusalFor(parsed.data.backend, "tasks");
+    if (facetRefusal !== null) {
+      log.warn("agent-run.facet_unsupported", {
+        backend: parsed.data.backend,
+        projectName: resolved.projectName,
+        sessionName: resolved.sessionName,
+      });
+      return NextResponse.json(
+        { error: facetRefusal, code: GATED_BACKEND_FACET_ERROR_CODE },
         { status: 400 },
       );
     }

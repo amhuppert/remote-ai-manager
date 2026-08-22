@@ -228,6 +228,7 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
       agentBackends: {
         claude: { model: "opus", timeoutMs: null },
         codex: { model: "gpt-5.4", timeoutMs: null },
+        cursor: { model: "composer-2.5", timeoutMs: null },
       },
       maxTurns: 50,
       idleQuerySessionTtlMs: 0,
@@ -235,6 +236,10 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
     getProjectDisplayName: (p) => p.split("/").pop() ?? p,
     getDebugLogUrl: (id) => `http://localhost/debug/${id}`,
     safeAppendTranscriptEntry: async (_id, entry) => {
+      transcript.push(entry);
+    },
+    safeAppendTranscriptEntryOnce: async (_id, entry) => {
+      if (transcript.some((existing) => existing.id === entry.id)) return;
       transcript.push(entry);
     },
     saveTranscriptImage: async (_id, index) => `/inmemory/images/${index}`,

@@ -16,6 +16,7 @@ import {
   getCodexReasoningLevelsForModel,
   type CodexReasoningEffort,
 } from "@/lib/agent-backends/schemas";
+import { CURSOR_DEFAULT_MODEL } from "@/lib/agent-backends/cursor/model-policy";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { atomicWriteJson } from "@/lib/shared/atomic-write-json";
@@ -137,6 +138,13 @@ function defaultConfig(): GlobalConfig {
         fastMode: false,
         model: "gpt-5.4",
         reasoningEffort: "high",
+        timeoutMs: null,
+      },
+      // The evidence-backed Cursor default (spec D10). Stated explicitly rather
+      // than left to provider auto-selection, so what a run uses is what
+      // Command Center chose.
+      cursor: {
+        model: CURSOR_DEFAULT_MODEL,
         timeoutMs: null,
       },
     },

@@ -14,6 +14,22 @@ describe("agent backend registry bootstrap", () => {
     );
     expect(registry.getTaskRunner("claude").backend).toBe("claude");
     expect(registry.getTaskRunner("codex").backend).toBe("codex");
+    expect(registry.getConversationBackendFactory("cursor").backend).toBe(
+      "cursor",
+    );
+  });
+
+  it("registers cursor with a conversation facet and no task facet", async () => {
+    vi.resetModules();
+
+    const registry = await import("./registry");
+    const cursor = registry.getBackendDescriptor("cursor");
+
+    expect(cursor.conversation).toBeDefined();
+    expect(cursor.tasks).toBeUndefined();
+    // The neutral accessor must refuse rather than fall back: a caller asking
+    // for a facet the descriptor does not declare has a bug, not a default.
+    expect(() => registry.getTaskRunner("cursor")).toThrow(/task/i);
   });
 
   it("declares each registered task facet's write-restriction support to the client-safe accessor", async () => {

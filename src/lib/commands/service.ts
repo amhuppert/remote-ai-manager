@@ -413,6 +413,28 @@ async function discoverCodexItems(
 }
 
 /**
+ * The discovery mechanism per backend — a TOTAL map, so registering a backend
+ * forces a deliberate decision about where (or whether) its command surface is
+ * scanned. It replaced a `codex ? … : claude` fallback whose else-branch quietly
+ * pointed every other backend at Claude's `.claude/` directories (spec D14).
+ *
+ * Cursor's arm is the empty discoverer: the tested SDK exposes no command or
+ * skill surface, so there is nothing to scan and any non-empty result would be
+ * invented. It touches no filesystem path at all.
+ */
+const DISCOVERERS: Record<
+  AgentBackendId,
+  (
+    worktreePath: string,
+    itemPrefix: SkillTriggerPrefix,
+  ) => Promise<CommandItem[]>
+> = {
+  claude: discoverClaudeItems,
+  codex: discoverCodexItems,
+  cursor: async () => [],
+};
+
+/**
  * Discover the prompt autocomplete surface for the active backend.
  * Returns a deduplicated list with priority based on scan order.
  */
@@ -426,10 +448,7 @@ export async function discoverCommands(
     { backend, worktreePath },
     async () => {
       const itemPrefix = skillTriggerPrefixForBackend(backend);
-      const allItems =
-        backend === "codex"
-          ? await discoverCodexItems(worktreePath, itemPrefix)
-          : await discoverClaudeItems(worktreePath, itemPrefix);
+      const allItems = await DISCOVERERS[backend](worktreePath, itemPrefix);
 
       const seen = new Set<string>();
       const deduplicated: CommandItem[] = [];

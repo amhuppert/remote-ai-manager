@@ -299,8 +299,13 @@ describe("consumer-locality static half: corpus E backend-id scan", () => {
  * `src/lib/**` non-test outside `agent-backends/`; 55 lines at design time).
  * Equal-to-observed ratchet: when a slice removes branch lines, this pin must
  * be ratcheted down in the same change — it may never drift upward.
+ *
+ * Ratcheted 5 → 4 by the Cursor registration slice: `commands/service.ts`
+ * dispatched on `backend === "codex"` with a fallback that pointed every other
+ * backend at Claude's directories, and is now a total per-backend discoverer
+ * map (spec D14).
  */
-export const SCOPED_BACKEND_IDENTITY_BRANCH_LINES = 5;
+export const SCOPED_BACKEND_IDENTITY_BRANCH_LINES = 4;
 
 const SCOPED_GREP =
   /backend === "claude"|backend === "codex"|agentBackend === /;

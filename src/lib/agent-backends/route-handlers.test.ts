@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { elementAt } from "@/lib/shared/testing/element-at";
 import { z } from "zod";
 
 import { GET } from "./route-handlers";
@@ -20,9 +21,9 @@ describe("GET /api/agent-backends", () => {
 
     const parsed = backendCatalogResponseSchema.parse(await response.json());
     const ids = parsed.backends.map((b) => b.id);
-    expect(ids).toEqual(["claude", "codex"]);
+    expect(ids).toEqual(["claude", "codex", "cursor"]);
 
-    const claude = parsed.backends[0]!;
+    const claude = elementAt(parsed.backends, 0);
     expect(claude.label).toBe("Claude");
     expect(claude.toneToken).toBe("cyan");
     expect(claude.skillTriggerPrefix).toBe("/");
@@ -35,11 +36,38 @@ describe("GET /api/agent-backends", () => {
     ]);
     expect(claude.capabilities?.queue.deliveryTiming).toBe("in_turn");
 
-    const codex = parsed.backends[1]!;
+    const codex = elementAt(parsed.backends, 1);
     expect(codex.toneToken).toBe("violet");
     expect(codex.skillTriggerPrefix).toBe("$");
     expect(codex.defaultModelId).toBe("gpt-5.4");
     expect(codex.capabilities?.queue.deliveryTiming).toBe("next_turn");
+
+    const cursor = elementAt(parsed.backends, 2);
+    expect(cursor.label).toBe("Cursor");
+    expect(cursor.defaultModelId).toBe("composer-2.5");
+    expect(cursor.capabilities?.queue).toEqual({
+      acceptsWhileRunning: false,
+      deliveryTiming: "next_turn",
+    });
+    // Facet presence is what the facet-gated pickers read; the wire has to
+    // carry it or they would have to guess.
+    expect(cursor.facets).toEqual({ conversation: true, tasks: false });
+    expect(claude.facets).toEqual({ conversation: true, tasks: true });
+  });
+
+  // The Cursor credential lives in the server environment and reaches the
+  // adapter only. A sentinel value proves the catalog — the one backend payload
+  // every client surface consumes — never carries it (spec R12.1).
+  it("never serves the Cursor credential, even with one present in the environment", async () => {
+    const sentinel = "cursor-api-key-sentinel-8f2a1c";
+    vi.stubEnv("CURSOR_API_KEY", sentinel);
+    try {
+      const body = await (await callGet()).text();
+      expect(body).not.toContain(sentinel);
+      expect(body).not.toMatch(/api[-_]?key/i);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("serves metadata and capability labels only — no provider config payloads", async () => {
@@ -55,6 +83,7 @@ describe("GET /api/agent-backends", () => {
           "capabilities",
           "defaultModelId",
           "defaultTimeoutMs",
+          "facets",
           "id",
           "label",
           "models",

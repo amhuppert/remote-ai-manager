@@ -339,7 +339,7 @@ describe("POST conversation answer (async consume + enqueue)", () => {
         throw new Error("sendTurn must not run in the answer path");
       }),
       queueUserInput,
-      close: vi.fn(() => {}),
+      close: vi.fn(async () => {}),
     };
     const { deps } = makeDeps({}, { getRuntime: () => runtime });
     const { POST } = createAnswerHandlers(deps);

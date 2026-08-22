@@ -20,6 +20,7 @@ import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversa
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
   claude: { modelId: "opus", effort: "high" },
   codex: { modelId: "gpt-5.4", effort: "high" },
+  cursor: { modelId: "composer-2.5", effort: "high" },
 };
 
 function projectDetailView(): React.JSX.Element {

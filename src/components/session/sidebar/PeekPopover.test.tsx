@@ -72,6 +72,7 @@ const TRANSCRIPT_MESSAGES: TranscriptMessage[] = [
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
   claude: { modelId: "opus", effort: "high" },
   codex: { modelId: "gpt-5.4", effort: "high", codexFastMode: false },
+  cursor: { modelId: "composer-2.5", effort: "high" },
 };
 
 function renderPeek(

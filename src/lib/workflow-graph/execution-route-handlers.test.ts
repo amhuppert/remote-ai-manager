@@ -147,6 +147,7 @@ function makeGlobalConfig(): GlobalConfig {
         fastMode: false,
         timeoutMs: 60_000,
       },
+      cursor: { model: "composer-2.5", timeoutMs: null },
     },
     defaultAgentBackend: "claude",
   };

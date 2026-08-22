@@ -56,6 +56,7 @@ const fullConfigData: { config: GlobalConfig; raw: RawGlobalConfig } = {
         reasoningEffort: "high",
         timeoutMs: null,
       },
+      cursor: { model: "composer-2.5", timeoutMs: null },
     },
     maxConcurrentQueries: 3,
     preMergeTimeoutMs: 300_000,

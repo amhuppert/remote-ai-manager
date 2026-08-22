@@ -62,9 +62,11 @@ export type EditableField =
  * hides the model + reasoning controls (and omits both on submit) when null.
  */
 export function backendForAgent(agent: SpawnAgent): AgentBackendId | null {
-  if (agent === "claude") return "claude";
-  if (agent === "codex") return "codex";
-  return null;
+  // `dual` is the only non-backend member of `SpawnAgent` (it is derived from
+  // the canonical backend enum plus that one literal), so excluding it leaves a
+  // registered backend. Naming the backends here instead would silently hide
+  // the model and effort controls for every backend registered afterwards.
+  return agent === "dual" ? null : agent;
 }
 
 /** A sensible default effort for a backend+model: prefer "high", else the highest supported. */

@@ -74,7 +74,7 @@ function makeStubRuntime(opts: StubRuntimeOptions = {}): {
         }
       );
     },
-    close() {},
+    async close() {},
   };
 
   return {
@@ -308,7 +308,7 @@ describe("dispatchConversationTurn", () => {
       async sendTurn() {
         throw new Error("network down");
       },
-      close() {},
+      async close() {},
     };
 
     const result = await dispatchConversationTurn(

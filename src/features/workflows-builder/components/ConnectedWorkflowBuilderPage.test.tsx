@@ -121,6 +121,7 @@ const fullConfig: { config: GlobalConfig; raw: Record<string, unknown> } = {
         fastMode: false,
         timeoutMs: null,
       },
+      cursor: { model: "composer-2.5", timeoutMs: null },
     },
     defaultAgentBackend: "claude",
     workflowDefaults,

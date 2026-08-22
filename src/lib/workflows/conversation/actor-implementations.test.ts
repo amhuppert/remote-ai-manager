@@ -82,7 +82,20 @@ import {
 } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 import { createLockManager } from "@/lib/prompt/single-flight";
 import { markPromptNotDelivered } from "@/lib/agent-backends/errors";
-import type { TranscriptBroadcastMeta } from "@/lib/prompt/transcript";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import {
+  safeAppendTranscriptEntry as realSafeAppendTranscriptEntry,
+  safeAppendTranscriptEntryOnce as realSafeAppendTranscriptEntryOnce,
+  setTranscriptDeps,
+  _resetTranscriptDepsForTesting,
+} from "@/lib/prompt/transcript";
+import type {
+  TranscriptBroadcastMeta,
+  TranscriptEntry,
+} from "@/lib/prompt/transcript";
+import type { SSEEvent } from "@/lib/api/sse-events";
 import type { GraphWorkflowResultDelivery } from "@/lib/workflow-graph/schemas";
 
 // ---------------------------------------------------------------------------
@@ -1681,6 +1694,7 @@ describe("executePromptForMachine", () => {
             reasoningEffort: "high",
             timeoutMs: null,
           },
+          cursor: { model: "composer-2.5", timeoutMs: null },
         },
         maxTurns: 50,
         idleQuerySessionTtlMs: 300_000,
@@ -1717,6 +1731,7 @@ describe("executePromptForMachine", () => {
             reasoningEffort: "max",
             timeoutMs: null,
           },
+          cursor: { model: "composer-2.5", timeoutMs: null },
         },
         maxTurns: 50,
         idleQuerySessionTtlMs: 300_000,
@@ -1880,6 +1895,7 @@ describe("executePromptForMachine", () => {
         agentBackends: {
           claude: { model: "opus", timeoutMs: 25 },
           codex: { model: "gpt-5.4", timeoutMs: null },
+          cursor: { model: "composer-2.5", timeoutMs: null },
         },
         maxTurns: 50,
         idleQuerySessionTtlMs: 300_000,
@@ -1962,6 +1978,7 @@ describe("executePromptForMachine", () => {
       agentBackends: {
         claude: { model: "opus", timeoutMs: 30 },
         codex: { model: "gpt-5.4", timeoutMs: null },
+        cursor: { model: "composer-2.5", timeoutMs: null },
       },
       maxTurns: 50,
       idleQuerySessionTtlMs: 300_000,
@@ -1974,7 +1991,7 @@ describe("executePromptForMachine", () => {
     });
 
     const closingRuntime = createMockBackendRuntime({
-      close: vi.fn(() => {
+      close: vi.fn(async () => {
         events.push(
           abortController.signal.aborted ? "close-after-abort" : "close",
         );
@@ -3411,6 +3428,151 @@ describe("executePromptForMachine", () => {
     expect(alienAppend).toBeDefined();
     // Non-frame payloads are wrapped generically with the payload untouched.
     expect((alienAppend![1] as { raw?: unknown }).raw).toBe(alienPayload);
+  });
+
+  describe("id-bearing backend frames through the real append path", () => {
+    let transcriptRoot: string;
+    let broadcasts: SSEEvent[];
+
+    /**
+     * The backend-event persistence path wired to the REAL transcript module
+     * over a temp config directory, so exactly-once is proven against the
+     * JSONL file and the broadcast the production code actually produces —
+     * a fake append could not distinguish skipped from written.
+     */
+    beforeEach(async () => {
+      transcriptRoot = await mkdtemp(
+        path.join(tmpdir(), "cc-actor-transcript-"),
+      );
+      broadcasts = [];
+      setTranscriptDeps({
+        broadcast: (event: SSEEvent) => {
+          broadcasts.push(event);
+          return { delivered: true };
+        },
+        indexMarkdownDocuments: async () => {},
+      });
+      setActorDeps(
+        createMockDeps({
+          safeAppendTranscriptEntry: (
+            conversationId: string,
+            entry: TranscriptEntry,
+            meta?: TranscriptBroadcastMeta,
+          ) =>
+            realSafeAppendTranscriptEntry(
+              conversationId,
+              entry,
+              undefined,
+              transcriptRoot,
+              meta,
+            ),
+          safeAppendTranscriptEntryOnce: (
+            conversationId: string,
+            entry: TranscriptEntry & { id: string },
+            meta?: TranscriptBroadcastMeta,
+          ) =>
+            realSafeAppendTranscriptEntryOnce(
+              conversationId,
+              entry,
+              undefined,
+              transcriptRoot,
+              meta,
+            ),
+        }),
+      );
+    });
+
+    afterEach(async () => {
+      _resetTranscriptDepsForTesting();
+      await rm(transcriptRoot, { recursive: true, force: true });
+    });
+
+    async function persistedEntries(
+      conversationId: string,
+    ): Promise<Array<{ id?: string; uuid?: string }>> {
+      const raw = await readFile(
+        path.join(transcriptRoot, "transcripts", `${conversationId}.jsonl`),
+        "utf-8",
+      );
+      return raw
+        .trim()
+        .split("\n")
+        .filter((line) => line !== "")
+        .map((line) => JSON.parse(line) as { id?: string; uuid?: string });
+    }
+
+    function emitTwice(frame: Record<string, unknown>): void {
+      mockSendTurn.mockImplementation(
+        async (turnInput: ConversationBackendTurnInput) => {
+          for (const seq of [0, 1]) {
+            await turnInput.onEvent({
+              type: "transcript_entry",
+              entry: { seq, backend: "claude", type: "assistant", raw: frame },
+            });
+          }
+          return { ...defaultTurnResult };
+        },
+      );
+    }
+
+    it("persists and broadcasts a re-delivered id-bearing frame exactly once", async () => {
+      const frameId = "backend:conv-1:run-7:3";
+      emitTwice({
+        id: frameId,
+        timestamp: "2026-07-12T10:00:00.000Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "streamed once" }],
+      });
+
+      const input = makeExecutePromptInput({ agentBackend: "claude" });
+      registerConversationRuntime(
+        conversationRuntimeKey(
+          input.projectPath,
+          input.sessionName,
+          input.conversationId,
+        ),
+        { abortController: new AbortController() },
+      );
+
+      await executePromptForMachine(input);
+
+      const entries = await persistedEntries(input.conversationId);
+      expect(entries.filter((entry) => entry.id === frameId)).toHaveLength(1);
+      expect(
+        broadcasts.filter(
+          (event) =>
+            (event as { message?: { id?: string } }).message?.id === frameId,
+        ),
+      ).toHaveLength(1);
+    });
+
+    it("keeps appending an id-less frame on every delivery", async () => {
+      emitTwice({
+        timestamp: "2026-07-12T10:00:00.000Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "no identity" }],
+        uuid: "u-anon-1",
+      });
+
+      const input = makeExecutePromptInput({ agentBackend: "claude" });
+      registerConversationRuntime(
+        conversationRuntimeKey(
+          input.projectPath,
+          input.sessionName,
+          input.conversationId,
+        ),
+        { abortController: new AbortController() },
+      );
+
+      await executePromptForMachine(input);
+
+      const entries = await persistedEntries(input.conversationId);
+      expect(entries.filter((entry) => entry.uuid === "u-anon-1")).toHaveLength(
+        2,
+      );
+    });
   });
 
   it("does not write extra assistant transcript for Claude backends", async () => {
@@ -5601,6 +5763,7 @@ describe("runTaskRunTurnForMachine", () => {
             timeoutMs: 90_000,
             stallTimeoutMs: 45_000,
           },
+          cursor: { model: "composer-2.5", timeoutMs: null },
         },
       })),
       getTaskRunner: vi.fn(() => runner),

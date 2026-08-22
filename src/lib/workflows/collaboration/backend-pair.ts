@@ -18,6 +18,7 @@
  */
 
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
+import type { CollaborationAgent } from "./types";
 import type { CollaborationFlowAgent } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
   LanePolicy,
@@ -48,7 +49,7 @@ export type CollaborationBackendPair = typeof COLLABORATION_BACKEND_PAIR;
  */
 export function oppositeCollaborationBackend(
   backend: AgentBackendId,
-): AgentBackendId {
+): CollaborationAgent {
   const [first, second] = COLLABORATION_BACKEND_PAIR;
   return backend === first ? second : first;
 }

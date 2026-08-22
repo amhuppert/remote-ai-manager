@@ -172,3 +172,28 @@ export function createAgentCapabilityMetadataRegistry(
 
 export const defaultAgentCapabilityMetadataRegistry: AgentCapabilityMetadataRegistry =
   createAgentCapabilityMetadataRegistry(agentCapabilityMetadata);
+
+/**
+ * The plugin and skill cascades a backend owns, or null where it owns none.
+ *
+ * The composer needs both to know which disabled entries filter a discovered
+ * command. Asking the registry rather than deriving `<backend>-plugins` keeps a
+ * backend that registers no capability kinds — Cursor attaches under
+ * `settingSources: []` — from naming a cascade that does not exist.
+ */
+export function commandCascadesForBackend(
+  backend: AgentBackendId,
+  registry: AgentCapabilityMetadataRegistry = defaultAgentCapabilityMetadataRegistry,
+): {
+  plugins: AgentCapabilityCascadeKind | null;
+  skills: AgentCapabilityCascadeKind | null;
+} {
+  const owned = registry.listForBackend(backend);
+  const kindOf = (
+    capabilityKind: AgentCapabilityMetadata["capabilityKind"],
+  ): AgentCapabilityCascadeKind | null =>
+    owned.find((entry) => entry.capabilityKind === capabilityKind)
+      ?.cascadeKind ?? null;
+
+  return { plugins: kindOf("plugin"), skills: kindOf("skill") };
+}

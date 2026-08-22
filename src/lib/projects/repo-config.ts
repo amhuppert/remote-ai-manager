@@ -7,9 +7,13 @@ import { perRepoConfigSchema, type PerRepoConfig } from "../config/schemas";
 // Types
 // ============================================================
 
+/**
+ * Narrowed to the two calls this module actually makes, so a test can supply a
+ * plain function instead of satisfying the full `node:fs` overload sets.
+ */
 export interface RepoConfigDeps {
-  existsSync: typeof defaultExistsSync;
-  readFile: typeof defaultReadFile;
+  existsSync(path: string): boolean;
+  readFile(path: string, encoding: "utf-8"): Promise<string>;
 }
 
 const defaultDeps: RepoConfigDeps = {

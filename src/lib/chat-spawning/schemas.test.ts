@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { sessionCreationModeSchema } from "@/lib/sessions/schemas";
+import { agentBackendSchema } from "@/lib/shared/schemas";
 import {
   proposedSessionSchema,
   spawnAgentSchema,
@@ -230,7 +231,12 @@ describe("spawn-mode sync guard", () => {
     expect(spawnModeSchema.options).toEqual(sessionCreationModeSchema.options);
   });
 
-  it("spawnAgentSchema covers claude, codex, and dual", () => {
-    expect(spawnAgentSchema.options).toEqual(["claude", "codex", "dual"]);
+  // Derived from the canonical backend enum plus `dual`, so registering a
+  // backend extends the spawn surface instead of silently leaving it unnamed.
+  it("spawnAgentSchema covers every registered backend plus dual", () => {
+    expect(spawnAgentSchema.options).toEqual([
+      ...agentBackendSchema.options,
+      "dual",
+    ]);
   });
 });

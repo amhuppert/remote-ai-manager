@@ -687,7 +687,32 @@ export const SEAMS: readonly SeamDefinition[] = [
     // per-backend config resolution became a selection map keyed by backend id,
     // and the fastMode gates moved onto the canonical backendSupportsFastMode
     // capability predicate.
-    reviewedCeiling: 21,
+    // Ratcheted 21 → 19 with the command-discovery backend validation fix: both
+    // command route handlers replaced a `=== "codex" ? "codex" : "claude"`
+    // coercion with an agentBackendSchema parse, so the accepted set follows the
+    // canonical enum instead of naming the two ids.
+    // Ratcheted 19 → 17 with the Cursor registration slice: the command
+    // discovery service replaced its `backend === "codex" ? codex : claude`
+    // dispatch — whose else-branch pointed every other backend at Claude's
+    // directories — with a total per-backend discoverer map, and the agent
+    // capabilities configurator now derives a backend's plugins tab from the
+    // cascade-kind id instead of comparing against the two names.
+    // Ratcheted 17 → 13 with the Cursor selection/cascade slice: the composer's
+    // slash-command popup dropped all four `backend === "codex"` comparisons —
+    // two picking the plugins/skills cascades, one detecting skill-trigger mode,
+    // one picking the catalog. The cascades now come from the capability
+    // metadata registry (`commandCascadesForBackend`, null where a backend
+    // registers none) and the trigger/catalog decisions from the descriptor's
+    // declared `skillTriggerPrefix` (`composeBackendCommandCatalog`), so a
+    // backend that owns no cascade and discovers no commands gets an honest
+    // empty answer instead of Claude's.
+    // Ratcheted 13 → 12: the session composer's collaboration context derived
+    // Agent One with `agentBackend === "codex" ? "codex" : "claude"`, whose
+    // else-branch named Claude for every other backend — showing the /collab
+    // row with the wrong agent on a conversation Collaboration Mode does not
+    // run. It now calls `asCollaborationAgent`, whose null is the signal
+    // PromptComposer already gated the row on.
+    reviewedCeiling: 12,
     unit: 'backend ===/!== "claude"|"codex" comparisons + case labels',
     corpus:
       "src/**/*.{ts,tsx} minus tests/stories (fixture/prototype code is not the migration population); excludes src/lib/agent-backends/. Permanent-survivor floor (ceiling > 0, not expected to reach 0): per P3 the surviving branches are sanctioned adapter-boundary and explicitly-named product-policy sites — the places where the {claude, codex} pair IS the decision, not a defect to route through a normalized adapter result. These are (a) the curated collaboration pair (D19: the Claude×Codex pairing is the feature; identity is intrinsic), (b) presentation/label and default-selection maps keyed by the two ids where a normalized capability field would add no behavior, and (c) the narrow disposition/continuation reads the descriptor classifier has not yet subsumed. Deletion condition (drops per site as each is reached): a branch leaves the floor only when its distinction is expressed as a declared capability field or a normalized result field (e.g. continuationDisposition) per P3, or when the descriptor's failure/continuation classifier subsumes it (§3.1.5/1.5). The floor reaches 0 only if every remaining site becomes such a data-driven read; absent that, the reviewed nonzero count is the intentional adapter-boundary/product-policy minimum, ratcheted down whenever a migration removes an identity check. Stays in the corpus (not a file-excluding allowlist) so any NEW identity branch added above the seam still fails the ratchet.",

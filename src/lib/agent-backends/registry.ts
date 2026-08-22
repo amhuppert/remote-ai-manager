@@ -17,12 +17,20 @@ import { codexConversationBackendFactory } from "./codex/conversation-runtime";
 import { createCodexContinuityAdapter } from "./codex/continuity";
 import { createCodexRuntimeConfigAdapter } from "./codex/runtime-config";
 import { codexTaskRunner } from "./codex/task-runner";
+import { createCursorBackendDescriptor } from "./cursor/descriptor";
+import {
+  createProductionCursorContinuityAdapter,
+  cursorConversationBackendFactory,
+} from "./cursor/production-wiring";
+import { createCursorRuntimeConfigAdapter } from "./cursor/runtime-config";
 import {
   claudeMcpCapabilities,
   codexMcpCapabilities,
+  cursorMcpCapabilities,
 } from "@/lib/mcp/backend-capabilities";
 import { createClaudeFailureClassifier } from "./claude/failure-classifier";
 import { createCodexFailureClassifier } from "./codex/failure-classifier";
+import { createCursorFailureClassifier } from "./cursor/failure-classifier";
 import { prepareCodexManagedSkillsCheckout } from "./codex/managed-skills-bridge";
 
 /**
@@ -54,6 +62,17 @@ export function bootstrapBackends(): void {
         prepareManagedSkillsCheckout: prepareCodexManagedSkillsCheckout,
         mcp: codexMcpCapabilities,
         failureClassifier: createCodexFailureClassifier(),
+      }),
+    );
+  }
+  if (!hasBackendDescriptor("cursor")) {
+    registerBackend(
+      createCursorBackendDescriptor({
+        conversationFactory: cursorConversationBackendFactory,
+        continuity: createProductionCursorContinuityAdapter(),
+        runtimeConfig: createCursorRuntimeConfigAdapter(),
+        mcp: cursorMcpCapabilities,
+        failureClassifier: createCursorFailureClassifier(),
       }),
     );
   }

@@ -103,3 +103,89 @@ describe("ModelSelector", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("ModelSelector with project-scoped options", () => {
+  const projectOptions = {
+    backend: "cursor" as const,
+    models: [
+      {
+        id: "composer-1",
+        label: "composer-1",
+        description: "Configured for this project.",
+        effortLevels: [],
+      },
+    ],
+    defaultModelId: "composer-1",
+    source: "project" as const,
+  };
+
+  it("offers only the project's models", async () => {
+    const user = userEvent.setup();
+    renderSelector(
+      <ModelSelector
+        value="composer-1"
+        backend="cursor"
+        onChange={vi.fn()}
+        projectOptions={projectOptions}
+      />,
+    );
+
+    expect(screen.getByTestId("model-selector-label")).toHaveTextContent(
+      "composer-1",
+    );
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    expect(screen.getAllByTestId("model-selector-option")).toHaveLength(1);
+    expect(screen.queryByRole("option", { name: /composer-2\.5/i })).toBeNull();
+  });
+
+  it("shows an explicit invalid-selection state instead of substituting another model", async () => {
+    // The configured value is outside the project's list. Rendering the first
+    // permitted model as if it were selected would tell the operator a model
+    // is in use that the API is about to refuse.
+    const user = userEvent.setup();
+    renderSelector(
+      <ModelSelector
+        value="composer-2.5"
+        backend="cursor"
+        onChange={vi.fn()}
+        projectOptions={projectOptions}
+      />,
+    );
+
+    const trigger = screen.getByTestId("model-selector-trigger");
+    expect(trigger).toHaveAttribute("data-invalid-selection", "true");
+    expect(trigger).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByTestId("model-selector-label")).not.toHaveTextContent(
+      "composer-1",
+    );
+    expect(trigger.getAttribute("title")).toContain("composer-2.5");
+
+    await user.click(trigger);
+    expect(screen.getAllByTestId("model-selector-option")).toHaveLength(1);
+  });
+
+  it("requires an explicit choice when the project permits nothing", () => {
+    renderSelector(
+      <ModelSelector
+        value="composer-2.5"
+        backend="cursor"
+        onChange={vi.fn()}
+        projectOptions={{ ...projectOptions, models: [], defaultModelId: null }}
+      />,
+    );
+
+    const trigger = screen.getByTestId("model-selector-trigger");
+    expect(trigger).toHaveAttribute("data-invalid-selection", "true");
+    expect(trigger).toBeDisabled();
+  });
+
+  it("falls back to the catalog when the project's options are unknown", () => {
+    renderSelector(
+      <ModelSelector value="sonnet" backend="claude" onChange={vi.fn()} />,
+    );
+
+    expect(screen.getByTestId("model-selector-trigger")).not.toHaveAttribute(
+      "data-invalid-selection",
+    );
+  });
+});

@@ -7,7 +7,15 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  expectTypeOf,
+  it,
+  vi,
+} from "vitest";
 import * as MarkdownApi from "./Markdown";
 import {
   CompactMarkdown,
@@ -31,6 +39,24 @@ function markdownRoot(container: HTMLElement, intent: MarkdownIntent) {
     `[data-markdown-intent="${intent}"]`,
   );
 }
+
+// Fenced-code assertions wait on `span.token`, which only appears after the
+// renderer chunk, `react-syntax-highlighter`, its Prism grammar, and the theme
+// module have all loaded. Left to the component's own lazy imports, that whole
+// graph is transformed on demand inside a `waitFor`, so the poll ends up
+// measuring bundler throughput rather than rendering: under a full-suite run
+// the theme module alone (it re-exports every Prism theme) can outlast a 30s
+// budget that is milliseconds when the file runs alone. Resolving the same
+// specifiers once here pays that cost against an explicit hook budget and
+// leaves the per-test waits measuring what they actually assert.
+beforeAll(async () => {
+  await Promise.all([
+    import("./MarkdownRenderer"),
+    import("react-syntax-highlighter"),
+    import("react-syntax-highlighter/dist/esm/languages/prism/typescript"),
+    import("react-syntax-highlighter/dist/esm/styles/prism"),
+  ]);
+}, 120_000);
 
 afterEach(() => {
   cleanup();
@@ -392,7 +418,10 @@ describe("canonical Markdown semantics", () => {
     expect(
       screen.getByRole("img", { name: "Architecture diagram" }),
     ).toHaveClass("max-w-full");
-  });
+    // Explicit budget: the waits this case declares (10s for the renderer
+    // module, 30s for the highlighter) already exceed the 15s project default,
+    // so the test bound has to leave room for both to be spent.
+  }, 60_000);
 
   it("renders empty input through every adapter as an empty Markdown root", async () => {
     const { container } = render(

@@ -234,7 +234,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
           continuationDisposition: "retain",
         };
       },
-      close() {},
+      async close() {},
     };
     const validate = vi.fn(() => ({
       valid: false,
@@ -293,7 +293,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
           continuationDisposition: "retain",
         };
       },
-      close() {},
+      async close() {},
     };
     const deps: AgentCallFacadeDeps = {
       resolveConversationRuntime: () => ({
@@ -356,7 +356,7 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
           continuationDisposition: "retain",
         };
       },
-      close() {},
+      async close() {},
     };
     const result = await dispatchConversationTurn(
       {
@@ -406,7 +406,7 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
           continuationDisposition: "retain",
         };
       },
-      close() {},
+      async close() {},
     };
     const result = await dispatchConversationTurn(
       {
@@ -579,7 +579,7 @@ describe("section 7.1 — capability view is attached to every dispatched result
           continuationDisposition: "retain",
         };
       },
-      close() {},
+      async close() {},
     };
     const result = await dispatchConversationTurn(
       { kind: "conversation_turn", backend: "claude", prompt: "hi" },

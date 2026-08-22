@@ -909,9 +909,11 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     sessionName: string,
     session: SessionState,
   ): Promise<{ worktreeRemoved: boolean }> {
+    // Awaited before the worktree goes away: a live backend worker holds the
+    // worktree as its cwd, so removal has to follow verified teardown.
     for (const conv of session.conversations) {
       try {
-        getRuntime(conv.id)?.close();
+        await getRuntime(conv.id)?.close();
       } catch {
         // best-effort: don't block deletion
       }

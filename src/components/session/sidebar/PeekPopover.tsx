@@ -48,6 +48,7 @@ import {
 } from "@/lib/conversation-commands/parse";
 import { buildAgentTwoStartRequest } from "@/lib/workflows/collaboration/agent-two-request";
 import { oppositeCollaborationBackend } from "@/lib/workflows/collaboration/backend-pair";
+import { asCollaborationAgent } from "@/lib/workflows/collaboration/types";
 import {
   type CollabConfigDraft,
   seedAgentTwoDraft,
@@ -175,14 +176,16 @@ function PeekReplyComposer({
   );
   const setCollabConfigDraft = useSetCollabConfigDraft();
   const clearCollabConfigDraft = useClearCollabConfigDraft();
-  const originatingAgent = conversation.agentBackend;
+  // Null when this conversation runs a backend Collaboration Mode does not
+  // support: the /collab row is not offered rather than offered and refused.
+  const originatingAgent = asCollaborationAgent(conversation.agentBackend);
   const hasCollabCommand = hasCollabPrefix(replyText);
   const effectiveCollabConfig = useMemo(() => {
     if (backendDefaults === null) return null;
     const agentTwo =
       collabConfigDraft.agentTwo ??
       seedAgentTwoDraft(
-        oppositeCollaborationBackend(originatingAgent),
+        oppositeCollaborationBackend(originatingAgent ?? "claude"),
         backendDefaults,
       );
     return { ...collabConfigDraft, agentTwo };
@@ -271,6 +274,7 @@ function PeekReplyComposer({
     <div className="flex flex-col">
       {hasCollabCommand &&
       effectiveCollabConfig !== null &&
+      originatingAgent !== null &&
       backendDefaults !== null ? (
         <CollabConfigRow
           config={effectiveCollabConfig}

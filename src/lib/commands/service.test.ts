@@ -76,6 +76,37 @@ describe("discoverCommands", () => {
     );
   });
 
+  // Spec D14: a backend with no command surface returns a bounded empty
+  // result. The load-bearing half is that it reaches that result without
+  // touching another backend's directories — the previous `codex ? … : claude`
+  // fallback would have scanned `.claude/` for it, and a populated worktree is
+  // the only way to tell "found nothing" from "looked nowhere".
+  it("returns an empty Cursor result without scanning any backend's directories", async () => {
+    const homeDir = await mkdtemp(path.join(tmpdir(), "commands-home-"));
+    const worktreePath = await mkdtemp(
+      path.join(tmpdir(), "commands-worktree-"),
+    );
+    cleanupPaths.push(homeDir, worktreePath);
+    vi.spyOn(os, "homedir").mockReturnValue(homeDir);
+
+    for (const backendDir of [".claude", ".agents", ".codex"]) {
+      await mkdir(path.join(worktreePath, backendDir, "commands"), {
+        recursive: true,
+      });
+      await writeFile(
+        path.join(worktreePath, backendDir, "commands", "visible.md"),
+        `---
+description: Would be discovered for the backend that owns this directory
+---
+Body.`,
+      );
+    }
+
+    const items = await discoverCommands(worktreePath, "cursor");
+
+    expect(items).toEqual([]);
+  });
+
   it("discovers Codex-visible skills from project, user, and system roots", async () => {
     const homeDir = await mkdtemp(path.join(tmpdir(), "commands-home-"));
     const worktreePath = await mkdtemp(

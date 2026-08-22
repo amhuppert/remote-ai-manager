@@ -8,6 +8,7 @@ import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import DebugModeToggle from "@/components/session/DebugModeToggle";
 import CodexSpeedToggle from "@/components/session/prompt/CodexSpeedToggle";
 import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
+import { useProjectBackendModelOptions } from "@/lib/agent-backends/queries";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
@@ -95,6 +96,16 @@ export default function PromptDesktopToolbar({
   onEffortOpenChange,
   onCapabilitiesOpenChange,
 }: PromptDesktopToolbarProps): React.JSX.Element {
+  // The composer always has project context, so the models it offers are the
+  // project's effective ones (spec D10) rather than the process-global
+  // catalog's. Null until the projection resolves, which reads as "unknown" —
+  // the selector then falls back to the catalog rather than showing an empty
+  // list the project never declared.
+  const projectModelOptions = useProjectBackendModelOptions(
+    projectName,
+    selectedBackend,
+  );
+
   return (
     <div className="prompt-toolbar flex items-center justify-between max-768:hidden">
       {/* Clicking an in-flow control keeps the literal editor focused (focus
@@ -139,6 +150,7 @@ export default function PromptDesktopToolbar({
           onChange={onModelChange}
           disabled={sending || isReadOnly}
           backend={selectedBackend}
+          projectOptions={projectModelOptions}
           onOpenChange={onModelOpenChange}
         />
         <ReasoningLevelSelector

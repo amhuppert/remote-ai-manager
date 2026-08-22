@@ -71,6 +71,7 @@ describe("usePromptComposerProps", () => {
             effort: "high" as const,
             codexFastMode: false,
           },
+          cursor: { modelId: "composer-2.5", effort: "high" },
         },
         clearCollabConfigDraft,
         debugToggleMutation: { isPending: false, mutate: debugToggleMutate },

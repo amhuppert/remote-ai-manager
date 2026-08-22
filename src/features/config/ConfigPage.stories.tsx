@@ -31,6 +31,7 @@ const defaultConfig: GlobalConfig = {
       reasoningEffort: "high",
       timeoutMs: null,
     },
+    cursor: { model: "composer-2.5", timeoutMs: null },
   },
   maxConcurrentQueries: 3,
   preMergeTimeoutMs: 300_000,
@@ -79,6 +80,7 @@ const fullyConfiguredRaw: RawGlobalConfig = {
       reasoningEffort: "high",
       timeoutMs: 5_400_000,
     },
+    cursor: { model: "composer-2.5", timeoutMs: null },
   },
   branchPrefix: "feat",
   maxTurns: 50,
@@ -127,6 +129,7 @@ const fullyConfiguredConfig: GlobalConfig = {
       reasoningEffort: "high",
       timeoutMs: 5_400_000,
     },
+    cursor: { model: "composer-2.5", timeoutMs: null },
   },
   branchPrefix: "feat",
   maxTurns: 50,
@@ -212,12 +215,16 @@ const haikuConfig: GlobalConfig = {
       model: "haiku",
       timeoutMs: 3_600_000,
     },
+    cursor: { model: "composer-2.5", timeoutMs: null },
   },
 };
 
 const haikuRaw: RawGlobalConfig = {
   baseDir: "/home/user/projects",
-  agentBackends: { claude: { model: "haiku" } },
+  agentBackends: {
+    claude: { model: "haiku" },
+    cursor: { model: "composer-2.5", timeoutMs: null },
+  },
 };
 
 function mockFetch(config: GlobalConfig, raw: RawGlobalConfig) {

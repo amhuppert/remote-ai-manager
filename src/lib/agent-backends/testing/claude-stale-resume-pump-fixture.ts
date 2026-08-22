@@ -105,7 +105,7 @@ export async function runStaleClaudePumpResumeTurn(identity: {
     );
     return await turn;
   } finally {
-    runtime?.close();
+    await runtime?.close();
     _setSdkQueryForTesting(null);
   }
 }

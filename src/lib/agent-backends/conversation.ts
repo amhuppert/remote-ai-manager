@@ -4,6 +4,7 @@ import type {
   MessageContentBlock,
 } from "@/lib/conversations/schemas";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
+import type { ConversationTokenUsage } from "./schemas";
 import type { FsWritePolicy } from "./task";
 import type { ConversationToolingOverrides } from "./types";
 import type {
@@ -13,6 +14,7 @@ import type {
 import type { PortableMcpConfig, McpApplyResult } from "./portable-mcp";
 import type { McpDiscoveredTool } from "@/lib/mcp/schemas";
 import type { AgentTranscriptEntry } from "./transcript";
+import type { ProjectModelOptions } from "./project-model-options";
 
 /**
  * Payload for `onBackgroundTasksLost`: the waitable background tasks that were
@@ -163,6 +165,14 @@ export interface ConversationBackendTurnResult {
    * were in flight); absent for every other turn.
    */
   backgroundWait?: BackgroundWaitSummary;
+  /**
+   * Token accounting attributed to THIS turn — at most one record per turn,
+   * reported at the terminal outcome. `null` means the backend could not
+   * report usage for this turn (cancelled, failed, or a provider that does not
+   * expose counts); counts are never fabricated or carried over from another
+   * turn. Absent where a backend has not adopted the record at all.
+   */
+  tokenUsage?: ConversationTokenUsage | null;
 }
 
 export interface ConversationQueuedUserInput {
@@ -244,7 +254,14 @@ export interface ConversationBackendRuntime {
   listMcpServerTools?(
     serverKey: string,
   ): Promise<readonly McpDiscoveredTool[] | undefined>;
-  close(): void;
+  /**
+   * Tear the runtime down. Resolves only once teardown has been verified or a
+   * bounded cleanup failure has been recorded, so lifecycle callers can order
+   * destructive follow-up work — worktree removal, dev-server stop — after the
+   * backend has actually released the workspace. Backends whose teardown is
+   * synchronous resolve immediately.
+   */
+  close(): Promise<void>;
 }
 
 export interface ConversationBackendCreateInput {
@@ -344,6 +361,14 @@ export interface ConversationBackendCreateInput {
   ) => void;
 }
 
+/**
+ * Outcome of a backend's project-scoped model check. A refusal carries the
+ * operator-facing reason; the caller turns it into a bounded client error.
+ */
+export type ProjectModelSelectionValidation =
+  | { ok: true }
+  | { ok: false; message: string };
+
 export interface ConversationBackendFactory {
   readonly backend: AgentBackendId;
   createRuntime(
@@ -353,6 +378,32 @@ export interface ConversationBackendFactory {
     modelId?: string;
     reasoningEffort?: string;
   }): void;
+  /**
+   * Optional project-scoped model check, for a backend whose selectable models
+   * are a property of the project rather than of Command Center. Declared
+   * separately from `validateModelAndEffort` because that hook is synchronous
+   * and project-blind: it cannot read a project's configuration, so it cannot
+   * answer membership in a per-project list.
+   *
+   * Called before a turn is accepted so an unsupported selection costs neither
+   * a process nor a billable turn. Omitting `modelId` asks the backend to check
+   * whatever it would resolve on its own — a configured default outside the
+   * project's list has to fail closed, not silently substitute.
+   */
+  validateProjectModelSelection?(input: {
+    projectPath: string;
+    modelId?: string;
+  }): Promise<ProjectModelSelectionValidation>;
+  /**
+   * The project's permitted models, for creation surfaces that must offer only
+   * what this project allows. Declared by the same backends that declare
+   * `validateProjectModelSelection`, and answering the same authority — a
+   * surface that offered anything else would be offering a selection the
+   * validation hook is about to refuse.
+   */
+  resolveProjectModelOptions?(input: {
+    projectPath: string;
+  }): Promise<ProjectModelOptions>;
 }
 
 /**

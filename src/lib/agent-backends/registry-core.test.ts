@@ -182,7 +182,11 @@ describe("registry-core backend registration policy", () => {
 
   it("accepts the coherent production descriptors and the coherent testfake", () => {
     bootstrapBackends();
-    expect(listBackends().map((d) => d.id)).toEqual(["claude", "codex"]);
+    expect(listBackends().map((d) => d.id)).toEqual([
+      "claude",
+      "codex",
+      "cursor",
+    ]);
     const fake = createTestFakeBackend();
     _registerBackendForTesting(fake.descriptor);
     expect(getBackendDescriptor(TESTFAKE_BACKEND_ID)).toBe(fake.descriptor);
@@ -193,7 +197,7 @@ describe("registry-core backend registration policy", () => {
     bootstrapBackends();
 
     const ids = listBackends().map((d) => d.id);
-    expect(ids).toEqual(["claude", "codex"]);
+    expect(ids).toEqual(["claude", "codex", "cursor"]);
     expect(getBackendDescriptor("claude").conversation).toBeDefined();
     expect(getBackendDescriptor("codex").tasks).toBeDefined();
   });

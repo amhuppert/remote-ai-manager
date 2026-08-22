@@ -16,6 +16,7 @@ const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
     effort: "ultra",
     codexFastMode: true,
   },
+  cursor: { modelId: "composer-2.5", effort: "high" },
 };
 
 function makeConversation(

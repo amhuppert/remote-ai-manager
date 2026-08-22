@@ -75,6 +75,26 @@ function renderAssignment(
 }
 
 describe("AssignmentEditor", () => {
+  // A workflow role is dispatched through the backend's task facet, so a
+  // backend that registers none cannot hold an assignment. The option stays
+  // visible and says why rather than vanishing (spec R15.1).
+  it("refuses a backend with no task facet and says why, leaving the others selectable", () => {
+    const { onChange } = renderAssignment();
+
+    const cursor = screen.getByRole("button", { name: /Cursor/ });
+    expect(cursor).toHaveAttribute("aria-disabled", "true");
+    expect(cursor.getAttribute("title")).toContain("task");
+    fireEvent.click(cursor);
+    expect(onChange).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: expect.objectContaining({ backend: "codex" }),
+      }),
+    );
+  });
+
   it("shows the assigned profile and its tier badge from the library listing", () => {
     renderAssignment();
     const trigger = screen.getByLabelText("Agent profile");

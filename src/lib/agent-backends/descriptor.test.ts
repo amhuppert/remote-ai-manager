@@ -49,6 +49,7 @@ function fakeMcp(backend: "claude" | "codex"): McpBackendCapabilities {
     strictAuthoritativeConfig: true,
     serverDisable: "omit",
     betweenTurnApply: "live-when-idle",
+    transports: { stdio: true, "streamable-http": true, sse: true },
     toolFiltering: {
       mode: "native",
       byTransport: {
@@ -211,12 +212,20 @@ describe("bootstrapBackends", () => {
 
     bootstrapBackends();
     bootstrapBackends();
-    expect(listBackends().map((d) => d.id)).toEqual(["claude", "codex"]);
+    expect(listBackends().map((d) => d.id)).toEqual([
+      "claude",
+      "codex",
+      "cursor",
+    ]);
 
     _resetBackendRegistryForTesting();
     expect(listBackends()).toEqual([]);
     bootstrapBackends();
-    expect(listBackends().map((d) => d.id)).toEqual(["claude", "codex"]);
+    expect(listBackends().map((d) => d.id)).toEqual([
+      "claude",
+      "codex",
+      "cursor",
+    ]);
   });
 });
 

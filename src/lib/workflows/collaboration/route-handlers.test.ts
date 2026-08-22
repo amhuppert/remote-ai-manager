@@ -254,6 +254,43 @@ describe("collaboration route handlers — START", () => {
     expect(startCalls).toHaveLength(0);
   });
 
+  // Adopting the backend onto the conversation is a persisted mutation, so a
+  // backend collaboration cannot run has to be refused BEFORE it — otherwise a
+  // refused start still leaves the conversation switched (spec R15.2).
+  it("returns a bounded 4xx for a backend Collaboration Mode does not run, adopting nothing and starting nothing", async () => {
+    const { manager, startCalls } = buildScriptedManager();
+    const setConversationBackend = vi.fn();
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      setConversationBackend,
+      manager,
+    });
+
+    const response = await handlers.START(
+      new Request("http://test/collab", {
+        method: "POST",
+        body: JSON.stringify({
+          brief: "design X",
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+          conversationId: "conv-1",
+          backend: "cursor",
+        }),
+      }),
+      buildContext("example", "sess-1"),
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string; code?: string };
+    // The same catalog-derived reason the picker shows: a non-Claude lane is a
+    // task run, so the missing task facet is the refusal, named as such.
+    expect(body.error).toMatch(/task/i);
+    expect(body.error).toMatch(/collaboration/i);
+    expect(body.code).toBe("backend-facet-unsupported");
+    expect(setConversationBackend).not.toHaveBeenCalled();
+    expect(startCalls).toHaveLength(0);
+  });
+
   it("returns 400 when conversationId is missing from the body", async () => {
     const { manager, startCalls } = buildScriptedManager();
     const handlers = createCollaborationRouteHandlers({

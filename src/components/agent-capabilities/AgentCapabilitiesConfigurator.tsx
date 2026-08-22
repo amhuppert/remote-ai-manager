@@ -10,7 +10,9 @@ import {
   TabsContent,
 } from "@/components/ui/Tabs";
 import type { AgentCapabilityCascadeKind } from "@/lib/agent-capabilities/schemas";
+import { commandCascadesForBackend } from "@/lib/agent-capabilities/metadata";
 import type { AgentCapabilityScope } from "@/hooks/use-agent-capabilities";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 
 import { AgentCapabilityPanelContainer } from "./AgentCapabilityPanelContainer";
 import {
@@ -80,8 +82,17 @@ export function AgentCapabilitiesConfigurator({
   const [selectedScope, setSelectedScope] = useState<AgentCapabilityScope>(
     () => initialScope ?? layerOptions[0]?.scope ?? { level: "global" },
   );
-  const openPluginTab = (pluginId: string, backend: "claude" | "codex") => {
-    const pluginTab = backend === "claude" ? "claude-plugins" : "codex-plugins";
+  const openPluginTab = (pluginId: string, backend: AgentBackendId) => {
+    // The capability registry owns which plugin cascade a backend has, so the
+    // tab is looked up rather than spelled. A backend that registers no plugin
+    // kind — Cursor declares no capability kinds at all — resolves to null and
+    // has no tab to reveal.
+    const pluginCascade = commandCascadesForBackend(backend).plugins;
+    const pluginTab =
+      pluginCascade === null
+        ? undefined
+        : ALL_CAPABILITY_TAB_IDS.find((id) => id === pluginCascade);
+    if (pluginTab === undefined) return;
     setPluginSearches((current) => ({
       ...current,
       [pluginTab]: pluginDisplayName(pluginId),

@@ -4,6 +4,7 @@ import BackendToggle from "./BackendToggle";
 import ModelSelector from "./ModelSelector";
 import ReasoningLevelSelector from "./ReasoningLevelSelector";
 import { getEffortLevelsForBackend } from "@/lib/agent-backends/catalog";
+import { backendFacetRefusal } from "@/lib/agent-backends/facet-gating";
 
 const meta = {
   title: "Components/BackendToggle",
@@ -42,6 +43,23 @@ export const Codex = {
   },
 } satisfies Story;
 
+export const Cursor = {
+  args: {
+    value: "cursor",
+  },
+} satisfies Story;
+
+/**
+ * A facet-gated surface (task, workflow role, collaboration) renders the
+ * backends it cannot dispatch as visibly refused options carrying the reason,
+ * rather than hiding them.
+ */
+export const OptionRefused = {
+  args: {
+    disabledReason: (entry) => backendFacetRefusal(entry, "tasks"),
+  },
+} satisfies Story;
+
 export const ReadOnly = {
   args: {
     readOnly: true,
@@ -51,6 +69,13 @@ export const ReadOnly = {
 export const ReadOnlyCodex = {
   args: {
     value: "codex",
+    readOnly: true,
+  },
+} satisfies Story;
+
+export const ReadOnlyCursor = {
+  args: {
+    value: "cursor",
     readOnly: true,
   },
 } satisfies Story;

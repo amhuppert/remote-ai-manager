@@ -528,6 +528,60 @@ describe("createStartupRegistrar", () => {
     );
   });
 
+  /**
+   * closeAllRuntimes is only reachable in production through a shutdown hook
+   * installed here, so this asserts the real startup path installs it rather
+   * than that the hook works in isolation. Ordered after migrations for the
+   * same reason as the sentinel: a startup that aborts must not leave a signal
+   * listener behind holding a registry it will never close.
+   */
+  it("installs the runtime shutdown hook exactly once, after migrations", async () => {
+    const calls: string[] = [];
+    const register = createStartupRegistrar({
+      loadConversationRehydration: async () => ({
+        rehydrateConversationActors: async () => 0,
+      }),
+      runStateMigrations: async () => {
+        calls.push("migrations");
+        return [];
+      },
+      installRuntimeShutdownHook: () => {
+        calls.push("runtime-shutdown-hook");
+      },
+      initNotificationDb: () => {},
+      setConfigReader: () => {},
+      readConfig: async () => {
+        throw new Error(
+          "readConfig should not be called during startup wiring",
+        );
+      },
+      ensureAgentToken: async () => "test-token",
+      installCli: async () =>
+        ({ installed: false, reason: "bundle_missing" }) as const,
+      publishManagedSkills: async () => null,
+      recordServerBaseUrl: () => "http://127.0.0.1:3000",
+      verifyServerBaseUrl: () => {},
+      recoverActiveWorkflowEnvelopes: async () => ({
+        scanned: 0,
+        failed: 0,
+        preservedPaused: 0,
+        preservedRunning: 0,
+        movedToPaused: 0,
+      }),
+      sweepInterruptedCompactions: () => 0,
+      recoverStaleAgentRuns: () => 0,
+      initializeValidationService: async () => {},
+      recoverInterruptedConversationSnapshots: async () => 0,
+    });
+
+    await register();
+
+    expect(calls.filter((c) => c === "runtime-shutdown-hook")).toHaveLength(1);
+    expect(calls.indexOf("migrations")).toBeLessThan(
+      calls.indexOf("runtime-shutdown-hook"),
+    );
+  });
+
   it("survives a throwing event-loop sentinel start without breaking startup", async () => {
     const calls: string[] = [];
     const register = createStartupRegistrar({

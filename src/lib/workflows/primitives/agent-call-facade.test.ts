@@ -96,7 +96,7 @@ function makeConversationRuntime(
       if (opts.capture) opts.capture.value = input;
       return { ...baseResult, ...(opts.result ?? {}) };
     },
-    close() {},
+    async close() {},
   };
 }
 
@@ -1418,7 +1418,7 @@ describe("executeAgentCall — structured-output repair", () => {
           ...(turnInputs.length === 1 ? { backgroundWait } : {}),
         };
       },
-      close() {},
+      async close() {},
     };
     resolveConversationRuntime.mockReturnValue({
       runtime,

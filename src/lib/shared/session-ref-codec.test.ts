@@ -41,6 +41,41 @@ describe("persistedAgentSessionRefSchema (lenient decode)", () => {
     expect(decoded).toEqual({ backend: "codex", ref: "thr-super-1" });
   });
 
+  it("decodes a canonical cursor ref unchanged", () => {
+    const decoded = persistedAgentSessionRefSchema.parse({
+      backend: "cursor",
+      ref: "agent-canonical-1",
+    });
+    expect(decoded).toEqual({ backend: "cursor", ref: "agent-canonical-1" });
+  });
+
+  it("decodes a superset cursor row through the superset arm", () => {
+    const decoded = persistedAgentSessionRefSchema.parse({
+      backend: "cursor",
+      ref: "agent-super-1",
+      unexpectedExtra: "ignored",
+    });
+    expect(decoded).toEqual({ backend: "cursor", ref: "agent-super-1" });
+  });
+
+  // Cursor registered after the canonical shape existed, so no row anywhere
+  // carries a legacy handle key for it. A decode that invented one would
+  // accept a shape the product never wrote.
+  it("rejects a fabricated legacy cursor handle", () => {
+    expect(
+      persistedAgentSessionRefSchema.safeParse({
+        backend: "cursor",
+        sessionId: "agent-legacy-1",
+      }).success,
+    ).toBe(false);
+    expect(
+      persistedAgentSessionRefSchema.safeParse({
+        backend: "cursor",
+        threadId: "agent-legacy-1",
+      }).success,
+    ).toBe(false);
+  });
+
   it("rejects handle-less garbage", () => {
     expect(
       persistedAgentSessionRefSchema.safeParse({ backend: "claude" }).success,
@@ -81,6 +116,7 @@ describe("encodeAgentSessionRefForStorage (canonical)", () => {
     const refs: AgentSessionRef[] = [
       { backend: "claude", ref: "sess-rt" },
       { backend: "codex", ref: "thr-rt" },
+      { backend: "cursor", ref: "agent-rt" },
     ];
     for (const ref of refs) {
       expect(
@@ -173,6 +209,21 @@ describe("canonicalizeSessionRefsForStorageDeep", () => {
     expect(rewrittenRefs).toBe(0);
     expect(value).toBe(tree);
   });
+
+  // A backend with no legacy handle key has nothing to canonicalize: the write
+  // transform must leave its canonical refs alone and must not treat a
+  // look-alike two-key object as another backend's legacy shape.
+  it("leaves cursor refs untouched — cursor has no legacy handle key", () => {
+    const tree = {
+      canonical: { backend: "cursor", ref: "agent-canon" },
+      sessionIdLookAlike: { backend: "cursor", sessionId: "agent-x" },
+      threadIdLookAlike: { backend: "cursor", threadId: "agent-x" },
+    };
+    const { value, rewrittenRefs } =
+      canonicalizeSessionRefsForStorageDeep(tree);
+    expect(rewrittenRefs).toBe(0);
+    expect(value).toBe(tree);
+  });
 });
 
 describe("normalizeSessionRefsDeepInPlace", () => {
@@ -223,6 +274,22 @@ describe("normalizeSessionRefsDeepInPlace", () => {
       backend: "claude",
       sessionId: "x",
       promptText: "hi",
+    });
+  });
+
+  it("leaves cursor refs untouched — cursor has no legacy handle key", () => {
+    const tree = {
+      backendRef: { backend: "cursor", ref: "agent-1" },
+      sessionIdLookAlike: { backend: "cursor", ref: "a", sessionId: "b" },
+      threadIdLookAlike: { backend: "cursor", ref: "a", threadId: "b" },
+    };
+    const rewritten = normalizeSessionRefsDeepInPlace(tree);
+    expect(rewritten).toBe(0);
+    expect(tree.backendRef).toEqual({ backend: "cursor", ref: "agent-1" });
+    expect(tree.sessionIdLookAlike).toEqual({
+      backend: "cursor",
+      ref: "a",
+      sessionId: "b",
     });
   });
 });

@@ -10,6 +10,7 @@ import {
 } from "@/components/agent-profiles/agent-profile-picker-state";
 import BackendToggle from "@/components/BackendToggle";
 import ModelSelector from "@/components/ModelSelector";
+import { useProjectBackendModelOptions } from "@/lib/agent-backends/queries";
 import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
 import {
   AlertDialog,
@@ -82,6 +83,12 @@ export default function StartTicketDialog({
   const [model, setModel] = useState(initialDefaults.model);
   const [reasoningEffort, setReasoningEffort] = useState<EffortLevel>(
     initialDefaults.effort,
+  );
+  // A ticket always starts inside a project, so the models offered are the
+  // project's effective ones (spec D10), not the process-global catalog's.
+  const projectModelOptions = useProjectBackendModelOptions(
+    projectName,
+    backend,
   );
   const [profileValue, setProfileValue] = useState(
     STANDARD_AGENT_PROFILE_VALUE,
@@ -271,6 +278,7 @@ export default function StartTicketDialog({
                       value={model}
                       onChange={changeModel}
                       disabled={pending}
+                      projectOptions={projectModelOptions}
                     />
                   </div>
                   <div className="flex flex-col gap-2xs">

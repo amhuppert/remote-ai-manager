@@ -1,3 +1,7 @@
+import {
+  backendSupportsFastMode,
+  listBackendCatalogEntries,
+} from "@/lib/agent-backends/catalog";
 import type { WorkflowDefaults } from "@/lib/config/schemas";
 
 export type FieldPath = string;
@@ -79,17 +83,38 @@ export function stripUndefinedDeep(value: unknown): unknown {
   return result;
 }
 
+/**
+ * The profile paths BackendsSection renders, per REGISTERED backend.
+ *
+ * Derived from the catalog rather than hand-listed because the omission is
+ * silent in exactly the wrong way: the field still renders and still edits, but
+ * `dirtyCount` never counts it, so Save stays disabled, and `buildSavePayload`
+ * — which diffs only these paths — drops the edit from the PUT body even when
+ * another field carries the request. A newly registered backend is therefore
+ * tracked the moment its card appears.
+ *
+ * The optional fields follow the same catalog data the section renders them
+ * from: an effort path only where some model declares effort levels, a fastMode
+ * path only where the backend declares one.
+ */
+function backendProfileFieldPaths(): FieldPath[] {
+  return listBackendCatalogEntries().flatMap((entry) => [
+    `agentBackends.${entry.id}.model`,
+    ...(entry.models.some((model) => model.effortLevels.length > 0)
+      ? [`agentBackends.${entry.id}.reasoningEffort`]
+      : []),
+    ...(backendSupportsFastMode(entry.id)
+      ? [`agentBackends.${entry.id}.fastMode`]
+      : []),
+    `agentBackends.${entry.id}.timeoutMs`,
+  ]);
+}
+
 export const ALL_FIELD_PATHS: readonly FieldPath[] = [
   "baseDir",
   "defaultAgentBackend",
   "branchPrefix",
-  "agentBackends.claude.model",
-  "agentBackends.claude.reasoningEffort",
-  "agentBackends.claude.timeoutMs",
-  "agentBackends.codex.model",
-  "agentBackends.codex.reasoningEffort",
-  "agentBackends.codex.fastMode",
-  "agentBackends.codex.timeoutMs",
+  ...backendProfileFieldPaths(),
   "maxTurns",
   "maxConcurrentQueries",
   "validation.concurrencyLimit",

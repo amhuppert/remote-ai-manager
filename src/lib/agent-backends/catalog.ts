@@ -29,6 +29,11 @@ import {
   codexConversationFsWriteRestriction,
   codexTaskFsWriteRestriction,
 } from "./codex/descriptor";
+import {
+  cursorBackendMetadata,
+  cursorConversationCapabilities,
+  cursorConversationFsWriteRestriction,
+} from "./cursor/descriptor";
 
 // ---------------------------------------------------------------------------
 // Wire shape — served by GET /api/agent-backends and parsed by the UI hook.
@@ -61,6 +66,18 @@ export const backendCatalogCapabilitiesSchema = z.object({
   ),
 });
 
+/**
+ * Which execution facets the backend declares. Client-safe, because the pickers
+ * embedded in task, workflow-role, and collaboration surfaces have to decide
+ * whether an option is selectable — and the descriptors that own that answer
+ * are server-only. Without this the facets were invisible to the client and a
+ * picker could only have guessed, or branched on backend identity (spec D13).
+ */
+export const backendCatalogFacetsSchema = z.object({
+  conversation: z.boolean(),
+  tasks: z.boolean(),
+});
+
 export const backendCatalogEntrySchema = z.object({
   id: agentBackendSchema,
   label: z.string(),
@@ -69,6 +86,7 @@ export const backendCatalogEntrySchema = z.object({
   models: z.array(backendCatalogModelSchema),
   defaultModelId: z.string(),
   defaultTimeoutMs: z.number().nullable(),
+  facets: backendCatalogFacetsSchema,
   /** Null for a backend without a conversation facet. */
   capabilities: backendCatalogCapabilitiesSchema.nullable(),
 });
@@ -85,6 +103,7 @@ function buildCatalogEntry(
   id: AgentBackendId,
   metadata: AgentBackendMetadata,
   capabilities: BackendConversationCapabilities | null,
+  facets: BackendCatalogEntry["facets"],
 ): BackendCatalogEntry {
   return backendCatalogEntrySchema.parse({
     id,
@@ -99,6 +118,7 @@ function buildCatalogEntry(
     })),
     defaultModelId: metadata.defaultModelId,
     defaultTimeoutMs: metadata.defaultTimeoutMs,
+    facets,
     capabilities,
   });
 }
@@ -111,6 +131,10 @@ export function catalogEntryFromDescriptor(
     descriptor.id,
     descriptor.metadata,
     descriptor.conversation?.capabilities ?? null,
+    {
+      conversation: descriptor.conversation !== undefined,
+      tasks: descriptor.tasks !== undefined,
+    },
   );
 }
 
@@ -125,11 +149,20 @@ const CATALOG: Readonly<Record<AgentBackendId, BackendCatalogEntry>> = {
     "claude",
     claudeBackendMetadata,
     claudeConversationCapabilities,
+    { conversation: true, tasks: true },
   ),
   codex: buildCatalogEntry(
     "codex",
     codexBackendMetadata,
     codexConversationCapabilities,
+    { conversation: true, tasks: true },
+  ),
+  cursor: buildCatalogEntry(
+    "cursor",
+    cursorBackendMetadata,
+    cursorConversationCapabilities,
+    // Conversation only: Cursor registers no task facet in Phase 1.
+    { conversation: true, tasks: false },
   ),
 };
 
@@ -137,6 +170,7 @@ const BACKEND_METADATA: Readonly<Record<AgentBackendId, AgentBackendMetadata>> =
   {
     claude: claudeBackendMetadata,
     codex: codexBackendMetadata,
+    cursor: cursorBackendMetadata,
   };
 
 const CONVERSATION_CAPABILITIES: Readonly<
@@ -144,18 +178,24 @@ const CONVERSATION_CAPABILITIES: Readonly<
 > = {
   claude: claudeConversationCapabilities,
   codex: codexConversationCapabilities,
+  cursor: cursorConversationCapabilities,
 };
 
 /**
  * The same literals the registered descriptors' task facets are built from —
  * re-exposed here because definition validate is client-imported and cannot
  * reach the registry, which holds the server-only task runners.
+ *
+ * A backend with no task facet declares "unsupported": there is no task runner
+ * to confine writes, so the validator-eligibility gate that reads this refuses
+ * it for exactly the right reason rather than by a missing-key accident.
  */
 const TASK_FS_WRITE_RESTRICTION: Readonly<
   Record<AgentBackendId, FsWriteRestrictionSupport>
 > = {
   claude: claudeTaskFsWriteRestriction,
   codex: codexTaskFsWriteRestriction,
+  cursor: "unsupported",
 };
 
 /** The conversation-facet twin, for the implementer dispatch gate. */
@@ -164,6 +204,7 @@ const CONVERSATION_FS_WRITE_RESTRICTION: Readonly<
 > = {
   claude: claudeConversationFsWriteRestriction,
   codex: codexConversationFsWriteRestriction,
+  cursor: cursorConversationFsWriteRestriction,
 };
 
 /**

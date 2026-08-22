@@ -115,7 +115,7 @@ function fakeRuntime(input: {
     async sendTurn() {
       throw new Error("not used in this test");
     },
-    close() {},
+    async close() {},
     async applyCapabilityConfig(config) {
       appliedConfigs.push(config);
       return input.applyResult ?? { status: "applied" };

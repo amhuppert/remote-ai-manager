@@ -109,6 +109,7 @@ function makeProps(activeConversation: ConversationState) {
         effort: "high" as const,
         codexFastMode: false,
       },
+      cursor: { modelId: "composer-2.5", effort: "high" as const },
     },
     originatingCollabAgent: "claude" as const,
     onCollabConfigChange: vi.fn(),
