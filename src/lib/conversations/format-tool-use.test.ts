@@ -42,6 +42,16 @@ describe("formatToolUse", () => {
     });
   });
 
+  it("formats Delete tool with file path", () => {
+    expect(formatToolUse("Delete", { file_path: "src/old.ts" })).toEqual({
+      name: "Delete",
+      context: "src/old.ts",
+      command: null,
+      metricsLabel: null,
+      isError: false,
+    });
+  });
+
   it("formats MultiEdit as Edit", () => {
     expect(
       formatToolUse("MultiEdit", { file_path: "src/lib/config.ts" }),

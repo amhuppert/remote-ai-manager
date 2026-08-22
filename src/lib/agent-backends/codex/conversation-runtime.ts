@@ -12,6 +12,7 @@ import type {
   ThreadEvent,
   Usage,
   McpToolCallItem,
+  FileChangeItem,
 } from "@openai/codex-sdk";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type {
@@ -742,7 +743,10 @@ export class CodexConversationRuntime
     );
 
     const options: CodexOptions = { env };
-    const configMerged: Record<string, unknown> = {};
+    const configMerged: Record<string, unknown> = {
+      model_reasoning_summary: "detailed",
+      hide_agent_reasoning: false,
+    };
 
     if (this.stagedPortableMcp !== null) {
       const { mcpServers } = this.deps.translatePortableMcpToCodex(
@@ -1011,15 +1015,18 @@ export class CodexConversationRuntime
         break;
       }
       case "file_change": {
-        const summary = item.changes
-          .map((c: { path: string; kind: string }) => `${c.path} (${c.kind})`)
-          .join(", ");
-        const block: MessageContentBlock = {
-          type: "text",
-          text: `File changes: ${summary}`,
-        };
-        contentBlocks.push(block);
-        await input.onEvent({ type: "content", block });
+        const blocks = fileChangeContentBlocks(item);
+        logger.debug("codex-runtime.file_change_completed", {
+          conversationId: this.conversationId,
+          itemId: item.id,
+          status: item.status,
+          changeCount: item.changes.length,
+          changeKinds: item.changes.map((change) => change.kind),
+        });
+        for (const block of blocks) {
+          contentBlocks.push(block);
+          await input.onEvent({ type: "content", block });
+        }
         break;
       }
       case "error": {
@@ -1071,6 +1078,36 @@ export class CodexConversationRuntime
 
 type ItemStartedEvent = Extract<ThreadEvent, { type: "item.started" }>;
 type ItemCompletedEvent = Extract<ThreadEvent, { type: "item.completed" }>;
+
+function fileChangeToolName(
+  kind: FileChangeItem["changes"][number]["kind"],
+): "Write" | "Edit" | "Delete" {
+  switch (kind) {
+    case "add":
+      return "Write";
+    case "update":
+      return "Edit";
+    case "delete":
+      return "Delete";
+  }
+}
+
+function fileChangeContentBlocks(item: FileChangeItem): MessageContentBlock[] {
+  const blocks: MessageContentBlock[] = [];
+  for (const [index, change] of item.changes.entries()) {
+    const id = `${item.id}:${index}`;
+    blocks.push({
+      type: "tool_use",
+      id,
+      name: fileChangeToolName(change.kind),
+      input: { file_path: change.path },
+    });
+    if (item.status === "failed") {
+      blocks.push({ type: "tool_result", tool_use_id: id, isError: true });
+    }
+  }
+  return blocks;
+}
 
 /** Strip the shell `-lc '...'` wrapper Codex adds around commands. */
 const SHELL_WRAPPER_RE = /^\/bin\/(?:ba|z)?sh\s+-lc\s+(['"])(.*)\1$/s;

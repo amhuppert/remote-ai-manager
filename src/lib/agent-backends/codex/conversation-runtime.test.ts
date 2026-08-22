@@ -269,12 +269,13 @@ function mcpToolCompleted(
 function fileChangeCompleted(
   changes: { path: string; kind: "add" | "delete" | "update" }[],
   id = "fc-1",
+  status: FileChangeItem["status"] = "completed",
 ): ItemCompletedEvent {
   const item: FileChangeItem = {
     id,
     type: "file_change",
     changes,
-    status: "completed",
+    status,
   };
   return { type: "item.completed", item };
 }
@@ -487,6 +488,20 @@ describe("CodexConversationRuntime", () => {
       const threadOpts = startThreadFn.mock.calls[0]![0];
       expect(threadOpts.model).toBe(getDefaultCodexModel());
       expect(threadOpts).not.toHaveProperty("modelReasoningEffort");
+    });
+
+    it("requests detailed reasoning summaries for conversation thinking blocks", async () => {
+      setupThread(minimalSuccessEvents());
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+
+      await runtime.sendTurn(makeTurnInput());
+
+      const codexCall = (deps.createCodex as ReturnType<typeof vi.fn>).mock
+        .calls[0]![0];
+      expect(codexCall.config).toMatchObject({
+        model_reasoning_summary: "detailed",
+        hide_agent_reasoning: false,
+      });
     });
 
     it("builds env with CLAUDECODE empty string", async () => {
@@ -1012,24 +1027,67 @@ describe("CodexConversationRuntime", () => {
       );
     });
 
-    it("maps file_change completion to a text summary", async () => {
+    it("maps file_change completion to structured file operation tool blocks", async () => {
       setupThread([
         threadStarted(),
         fileChangeCompleted([
           { path: "src/foo.ts", kind: "update" },
           { path: "src/bar.ts", kind: "add" },
+          { path: "src/old.ts", kind: "delete" },
         ]),
         turnCompleted(),
       ]);
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
       const result = await runtime.sendTurn(makeTurnInput());
 
-      const textBlocks = result.contentBlocks.filter((b) => b.type === "text");
-      const summary = textBlocks.find(
-        (b) => b.type === "text" && b.text.includes("src/foo.ts"),
-      );
-      expect(summary).toBeDefined();
-      expect(summary!.type === "text" && summary!.text).toContain("src/bar.ts");
+      expect(result.contentBlocks).toEqual([
+        {
+          type: "tool_use",
+          id: "fc-1:0",
+          name: "Edit",
+          input: { file_path: "src/foo.ts" },
+        },
+        {
+          type: "tool_use",
+          id: "fc-1:1",
+          name: "Write",
+          input: { file_path: "src/bar.ts" },
+        },
+        {
+          type: "tool_use",
+          id: "fc-1:2",
+          name: "Delete",
+          input: { file_path: "src/old.ts" },
+        },
+      ]);
+    });
+
+    it("marks structured file operation tool blocks as errors when the patch fails", async () => {
+      setupThread([
+        threadStarted(),
+        fileChangeCompleted(
+          [{ path: "src/foo.ts", kind: "update" }],
+          "fc-failed",
+          "failed",
+        ),
+        turnCompleted(),
+      ]);
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      expect(result.contentBlocks).toEqual([
+        {
+          type: "tool_use",
+          id: "fc-failed:0",
+          name: "Edit",
+          input: { file_path: "src/foo.ts" },
+        },
+        {
+          type: "tool_result",
+          tool_use_id: "fc-failed:0",
+          isError: true,
+        },
+      ]);
     });
 
     it("maps reasoning and todo_list into visible conversation blocks", async () => {
@@ -2025,6 +2083,8 @@ describe("CodexConversationRuntime", () => {
         .calls[0]![0];
       expect(codexCall).toHaveProperty("config");
       expect(codexCall.config).toEqual({
+        model_reasoning_summary: "detailed",
+        hide_agent_reasoning: false,
         mcp_servers: {},
         service_tier: "default",
         features: { fast_mode: false },
@@ -2093,6 +2153,8 @@ describe("CodexConversationRuntime", () => {
       const codexCall = (deps.createCodex as ReturnType<typeof vi.fn>).mock
         .calls[0]![0];
       expect(codexCall.config).toEqual({
+        model_reasoning_summary: "detailed",
+        hide_agent_reasoning: false,
         mcp_servers: {
           "external-tools": { url: "http://localhost/mcp" },
           "next-devtools-project": { command: "npx", args: ["next"] },
@@ -2124,6 +2186,8 @@ describe("CodexConversationRuntime", () => {
       const codexCall = (deps.createCodex as ReturnType<typeof vi.fn>).mock
         .calls[0]![0];
       expect(codexCall.config).toEqual({
+        model_reasoning_summary: "detailed",
+        hide_agent_reasoning: false,
         service_tier: "default",
         features: { fast_mode: false },
       });
@@ -2142,10 +2206,14 @@ describe("CodexConversationRuntime", () => {
       const createCodexCalls = (deps.createCodex as ReturnType<typeof vi.fn>)
         .mock.calls;
       expect(createCodexCalls[0]![0].config).toEqual({
+        model_reasoning_summary: "detailed",
+        hide_agent_reasoning: false,
         service_tier: "default",
         features: { fast_mode: false },
       });
       expect(createCodexCalls[1]![0].config).toEqual({
+        model_reasoning_summary: "detailed",
+        hide_agent_reasoning: false,
         service_tier: "fast",
         features: { fast_mode: true },
       });

@@ -119,6 +119,8 @@ export function formatToolUse(
       return { name, context: formatPathContext(input, worktreePath), ...base };
     case "Write":
       return { name, context: formatPathContext(input, worktreePath), ...base };
+    case "Delete":
+      return { name, context: formatPathContext(input, worktreePath), ...base };
     case "Edit":
     case "MultiEdit":
       return {
