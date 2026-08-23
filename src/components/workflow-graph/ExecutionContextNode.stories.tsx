@@ -954,6 +954,213 @@ export const ImplementerCodex: Story = {
   },
 };
 
+export const WaitingForCapacity: Story = {
+  args: {
+    data: {
+      context: makeContext({ title: "Run the full verification suite" }),
+      tasks: makeTasks(4),
+      mode: "execution",
+      laneState: "pending",
+      configOverrides: [],
+      contextState: contextState("ready", { totalTaskCount: 4 }),
+      waitState: { kind: "waiting-for-capacity" },
+    },
+  },
+};
+
+export const AdvisoryResponse: Story = {
+  args: {
+    data: {
+      context: makeContext({ title: "Address advisory review" }),
+      tasks: makeTasks(5),
+      mode: "execution",
+      laneState: "active",
+      configOverrides: [],
+      contextState: contextState("running", {
+        completedTaskCount: 5,
+        advisoryResponse: {
+          roundSeq: 2,
+          phase: "awaiting_response",
+          enteredAt: "2026-08-23T04:11:00.000Z",
+        },
+      }),
+      waitState: { kind: "advisory-response" },
+    },
+  },
+};
+
+export const SkippedBranch: Story = {
+  args: {
+    data: {
+      context: makeContext({ title: "Publish production configuration" }),
+      tasks: makeTasks(2),
+      mode: "execution",
+      laneState: "pending",
+      configOverrides: [],
+      contextState: contextState("skipped", {
+        totalTaskCount: 2,
+        skipReason: {
+          at: "2026-08-23T04:12:00.000Z",
+          edgeEvaluations: [
+            { edgeId: "dev-environment", verdict: "inactive" },
+            { edgeId: "production-fallback", verdict: "omitted" },
+          ],
+        },
+      }),
+      waitState: { kind: "skipped" },
+      skip: {
+        at: "2026-08-23T04:12:00.000Z",
+        edgeEvaluations: [
+          { edgeId: "dev-environment", verdict: "inactive" },
+          { edgeId: "production-fallback", verdict: "omitted" },
+        ],
+        decidingEdgeIds: ["dev-environment"],
+      },
+    },
+  },
+};
+
+export const OutputSchemaDeclared: Story = {
+  args: {
+    data: {
+      context: makeContext({
+        title: "Capture diagnostic context",
+        outputSchema: {
+          type: "object",
+          required: ["schemaVersion", "providers"],
+          properties: {
+            schemaVersion: { type: "number" },
+            providers: { type: "object" },
+          },
+        },
+      }),
+      tasks: makeTasks(3),
+      mode: "builder",
+      laneState: "pending",
+      configOverrides: [],
+      outputSchema: { captured: false },
+    },
+  },
+};
+
+export const OutputCaptured: Story = {
+  args: {
+    data: {
+      context: makeContext({
+        title: "Capture diagnostic context",
+        outputSchema: {
+          type: "object",
+          required: ["schemaVersion", "providers"],
+        },
+      }),
+      tasks: makeTasks(3),
+      mode: "execution",
+      laneState: "merged",
+      configOverrides: [],
+      contextState: contextState("completed", {
+        totalTaskCount: 3,
+        completedTaskCount: 3,
+      }),
+      waitState: { kind: "completed" },
+      outputSchema: { captured: true },
+    },
+  },
+};
+
+export const LoopPass: Story = {
+  args: {
+    data: {
+      context: makeContext({ title: "Refine delivery plan — pass 2" }),
+      tasks: makeTasks(3),
+      mode: "execution",
+      laneState: "active",
+      configOverrides: [],
+      contextState: contextState("running", {
+        totalTaskCount: 3,
+        completedTaskCount: 1,
+      }),
+      waitState: { kind: "running" },
+      loop: {
+        loopGroupId: "plan-refinement",
+        pass: 2,
+        maxPasses: 4,
+        passCount: 2,
+        activation: "running",
+        templateVersion: 1,
+        authoredContextId: "refine-plan",
+      },
+    },
+  },
+};
+
+export const RuntimeExpansion: Story = {
+  args: {
+    data: {
+      context: makeContext({
+        title: "Verify telemetry regression",
+        placement: { lane: "telemetry", mode: "readOnly" },
+      }),
+      tasks: makeTasks(2),
+      mode: "execution",
+      laneState: "active",
+      laneCreatedAtRuntime: true,
+      configOverrides: [],
+      contextState: contextState("ready", { totalTaskCount: 2 }),
+      waitState: { kind: "ready" },
+      provenance: {
+        requestId: "expand-telemetry-check",
+        invokerContextId: "end-to-end-verification",
+        rationale: "The live verification exposed an unplanned telemetry gap.",
+        payloadHash: "sha256:story-fixture",
+        acceptedAt: "2026-08-23T04:13:00.000Z",
+      },
+    },
+  },
+};
+
+export const ValidatorCohort: Story = {
+  args: {
+    data: {
+      context: makeContext({
+        title: "Review the trust boundary",
+        contextValidator: {
+          enabled: true,
+          assignments: [
+            {
+              id: "security",
+              profile: { tier: "builtin", id: "security-reviewer" },
+              strategy: "task",
+              authority: "blocking",
+              agent: {
+                backend: "codex",
+                model: "gpt-5.6-sol",
+                reasoningEffort: "high",
+              },
+              continuity: { enabled: true },
+            },
+            {
+              id: "product",
+              profile: { tier: "builtin", id: "general-reviewer" },
+              strategy: "conversation",
+              authority: "advisory",
+              agent: {
+                backend: "claude",
+                model: "sonnet",
+                reasoningEffort: "medium",
+              },
+              continuity: { enabled: false },
+            },
+          ],
+        },
+      }),
+      tasks: makeTasks(4),
+      mode: "builder",
+      laneState: "pending",
+      configOverrides: ["validator cohort"],
+    },
+  },
+};
+
 // ---------------------------------------------------------------------------
 // The design's eight-state gallery (`0 Index.dc.html`), in one canvas so the
 // states can be compared side by side rather than one story at a time.
