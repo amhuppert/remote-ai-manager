@@ -14,7 +14,10 @@ import {
   type WorkflowDefinitionSummary,
 } from "@/lib/workflow-graph/storage";
 import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
-import { admitAuthoredWorkflowLaunch } from "@/lib/workflow-graph/authored-launch-admission";
+import {
+  admitAuthoredWorkflowLaunch,
+  authoredLaunchWarningFields,
+} from "@/lib/workflow-graph/authored-launch-admission";
 import {
   type AssignmentReferenceChecker,
   WORKFLOW_ASSIGNMENT_REFERENCE_INVALID_CODE,
@@ -147,7 +150,7 @@ function saveAdvisoryFields(
 ): { reviewStatus: PlanReviewAdvisory; warnings?: WorkflowPlanIssue[] } {
   return {
     reviewStatus: review.advisory,
-    ...(warnings.length === 0 ? {} : { warnings: [...warnings] }),
+    ...authoredLaunchWarningFields(warnings),
   };
 }
 

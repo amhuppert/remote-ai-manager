@@ -33,6 +33,7 @@ import {
   LOOP_HISTORY_MAX_SECTION_BYTES,
 } from "../src/lib/workflow-graph/loop-history";
 import { SEEDED_WORKFLOW_DEFAULTS } from "../src/lib/workflow-graph/resolve-config";
+import { collectEnvelopedScriptCoverageIssues } from "../src/lib/workflow-graph/command-selector-validation";
 import {
   charterInvariantSchema,
   sourceOfTruthSchema,
@@ -131,6 +132,20 @@ function readPackage(dir: string): string {
  */
 function expectDocuments(doc: string, phrase: string, why: string): void {
   expect(doc.includes(phrase), `${why} — missing: ${phrase}`).toBe(true);
+}
+
+function jsonExampleAfterHeading(markdown: string, heading: string): unknown {
+  const headingIndex = markdown.indexOf(heading);
+  if (headingIndex < 0) {
+    throw new Error(`documentation example heading is missing: ${heading}`);
+  }
+  const match = markdown
+    .slice(headingIndex + heading.length)
+    .match(/```json\n([\s\S]*?)\n```/);
+  if (!match?.[1]) {
+    throw new Error(`documentation JSON example is missing after: ${heading}`);
+  }
+  return JSON.parse(match[1]);
 }
 
 function shapeKeys(schema: { shape: Record<string, unknown> }): string[] {
@@ -309,34 +324,31 @@ const REVIEWER_READ_COMMANDS = conversationReadCommands("<id>", "fresh").map(
  * stale number to plan against (ticket #69 change 6).
  */
 function trippingPlanLintWarnings() {
-  return lintPlanSemantics(
-    {
-      charter: {
-        sourcesOfTruth: [
-          { id: "unreachable", locator: "https://example.com/design.md" },
+  return lintPlanSemantics({
+    charter: {
+      sourcesOfTruth: [
+        { id: "unreachable", locator: "https://example.com/design.md" },
+      ],
+    },
+    executionContexts: [
+      {
+        id: "dense",
+        description: "d".repeat(2100),
+        acceptanceCriteria: [
+          ...Array.from({ length: 12 }, (_, index) => ({
+            id: `record-${index + 1}`,
+            statement: `Obligation ${index + 1} holds.`,
+          })),
+          {
+            id: "sweeping",
+            statement: "The handler covers every call site.",
+          },
+          { id: "blob", statement: "x".repeat(700) },
         ],
       },
-      executionContexts: [
-        {
-          id: "dense",
-          description: "d".repeat(2100),
-          acceptanceCriteria: [
-            ...Array.from({ length: 12 }, (_, index) => ({
-              id: `record-${index + 1}`,
-              statement: `Obligation ${index + 1} holds.`,
-            })),
-            {
-              id: "sweeping",
-              statement: "The handler covers every call site.",
-            },
-            { id: "blob", statement: "x".repeat(700) },
-          ],
-        },
-      ],
-      tasks: [{ id: "oversized", instructions: "i".repeat(8100) }],
-    },
-    { projectRoot: REPO_ROOT },
-  );
+    ],
+    tasks: [{ id: "oversized", instructions: "i".repeat(8100) }],
+  });
 }
 
 describe("graph-workflow planner docs (D4 R16.3)", () => {
@@ -657,6 +669,147 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
     }
     expectDocuments(skill, "resolved at plan time", why);
     expectDocuments(skill, "blocking plan-review finding", why);
+  });
+
+  it("documents charter field shapes through a schema-valid maximal example", () => {
+    const core = read(`${SKILL_DIRS[0]}/SKILL.md`);
+    const charter = workflowCharterSchema.parse(
+      jsonExampleAfterHeading(core, "### Compact maximal charter example"),
+    );
+
+    expect(typeof charter.mission).toBe("string");
+    expect(typeof charter.testStrategy).toBe("string");
+    for (const field of [
+      "conventions",
+      "nonGoals",
+      "vocabulary",
+      "knownAmbiguities",
+    ] as const) {
+      expect(
+        Array.isArray(charter[field]),
+        `${field} must be a string array`,
+      ).toBe(true);
+      expect(charter[field]?.every((value) => typeof value === "string")).toBe(
+        true,
+      );
+    }
+    expect(charter.invariants).toEqual([
+      {
+        id: "tests-first",
+        statement: "Behavior changes start with a failing test.",
+      },
+    ]);
+    expect(charter.sourcesOfTruth).toEqual([
+      {
+        rank: 1,
+        id: "runtime",
+        label: "Workflow runtime",
+        type: "code",
+        locator: "src/lib/workflow-graph",
+        description: "Governs runtime behavior.",
+      },
+    ]);
+  });
+
+  it("documents literal suppression, source resolution, warning lifetime, and mutability", () => {
+    const skill = readPackage(SKILL_DIRS[0]);
+    const why = "planner warning and mutability contracts";
+
+    expect(SEEDED_WORKFLOW_DEFAULTS.mutability).toEqual({
+      allowAgentTaskAdd: false,
+      allowAgentContextAdd: false,
+    });
+    for (const phrase of [
+      "Both mutability flags default to `false`",
+      '{"allowAgentTaskAdd":true,"allowAgentContextAdd":false}',
+      "Exact UI/output copy containing a quantifier must be syntactically quoted",
+      "Suppression is match-local",
+      "unmatched delimiters suppress nothing",
+      "named verified resolution substrate",
+      "recomputed for each response",
+      "not saved rationale",
+    ]) {
+      expectDocuments(skill, phrase, why);
+    }
+  });
+
+  it("documents lane visibility, forking, convergence, and payload delivery", () => {
+    const placement = read(
+      `${SKILL_DIRS[0]}/references/placement-and-parallelism.md`,
+    );
+    const why = "lane visibility semantics";
+
+    for (const phrase of [
+      "Same-lane landed work is visible immediately",
+      "forks from its single upstream lane",
+      "forks from the session branch",
+      "`context_merge` before dispatch",
+      "existing target lane",
+      "multiple upstream lanes",
+      "captured structured output payload",
+      "no continuous synchronization",
+      "different authoring session",
+    ]) {
+      expectDocuments(placement, phrase, why);
+    }
+  });
+
+  it("documents the placement-mode script-gate matrix", () => {
+    const validation = read(
+      `${SKILL_DIRS[0]}/references/validation-and-staffing.md`,
+    );
+    const why = "placement-mode script validation";
+
+    const cases: Array<{
+      context: Parameters<
+        typeof collectEnvelopedScriptCoverageIssues
+      >[0]["context"];
+      covered: boolean;
+    }> = [
+      {
+        context: { id: "full", placement: { lane: "solo", mode: "full" } },
+        covered: false,
+      },
+      {
+        context: {
+          id: "owned",
+          placement: {
+            lane: "shared",
+            mode: "owned",
+            ownedPaths: ["src/lib"],
+          },
+        },
+        covered: true,
+      },
+      {
+        context: {
+          id: "read-only",
+          placement: { lane: "session", mode: "readOnly" },
+        },
+        covered: true,
+      },
+    ];
+
+    for (const { context, covered } of cases) {
+      const issues = collectEnvelopedScriptCoverageIssues({
+        context,
+        commands: ["test"],
+        commandField: "scriptValidator.commands",
+        barrierCommands: [],
+      });
+      expect(issues.length > 0).toBe(covered);
+    }
+
+    for (const phrase of [
+      "Placement mode—not lane member count—controls the context script gate",
+      "single-member lane or an ordered shared lane",
+      "before agent validation",
+      "uncovered selected commands are refused",
+      "leave repository gates to a downstream write-capable context",
+      "The lane barrier is separate",
+    ]) {
+      expectDocuments(validation, phrase, why);
+    }
   });
 
   it.each(SKILL_DIRS)(

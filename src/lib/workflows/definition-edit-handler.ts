@@ -13,7 +13,11 @@ import {
   assignmentReferenceRefusal,
   assignmentReferenceRefusalBody,
 } from "@/lib/workflows/assignment-reference-refusal";
-import type { AuthoredWorkflowLaunchAdmissionResult } from "@/lib/workflow-graph/authored-launch-admission";
+import {
+  authoredLaunchWarningFields,
+  type AuthoredWorkflowLaunchAdmissionResult,
+} from "@/lib/workflow-graph/authored-launch-admission";
+import type { WorkflowPlanIssue } from "@/lib/workflows/plan-validation";
 import { WORKFLOW_ASSIGNMENT_REFERENCE_INVALID_CODE } from "@/lib/workflow-graph/assignment-references";
 
 const logger = createLogger("workflow-graph");
@@ -138,6 +142,7 @@ export async function runDefinitionEditRequest(
     layout: applied.record.layout,
   };
   let admittedLaunch = candidateLaunch;
+  let admissionWarnings: WorkflowPlanIssue[] = [];
   if (params.admitLaunch) {
     const admission = await params.admitLaunch(candidateLaunch);
     if (!admission.ok) {
@@ -167,6 +172,7 @@ export async function runDefinitionEditRequest(
       );
     }
     admittedLaunch = admission.launch;
+    admissionWarnings = admission.warnings;
   }
 
   const operationCount = parsed.data.operations.length;
@@ -184,6 +190,7 @@ export async function runDefinitionEditRequest(
       },
       applied: operationCount,
       dryRun: true,
+      ...authoredLaunchWarningFields(admissionWarnings),
     });
   }
 
@@ -208,5 +215,9 @@ export async function runDefinitionEditRequest(
     operationCount,
     revision: summary.success ? summary.data.revision : null,
   });
-  return NextResponse.json({ item: persisted, applied: operationCount });
+  return NextResponse.json({
+    item: persisted,
+    applied: operationCount,
+    ...authoredLaunchWarningFields(admissionWarnings),
+  });
 }

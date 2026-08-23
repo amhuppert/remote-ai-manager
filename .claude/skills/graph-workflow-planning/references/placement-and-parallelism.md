@@ -33,6 +33,17 @@ A lane is one git worktree on one branch, and several contexts may share it. Tha
 
 `readOnly` requires `outputSchema`: a reader produces no commit and no join, so captured structured output is the only thing it can deliver (`placement-readonly-missing-output-schema`).
 
+## Lane visibility and fork points
+
+Lane visibility follows committed branch ancestry, not dependency arrows alone:
+
+- Same-lane landed work is visible immediately. A downstream lane-mate can run as soon as the upstream member's landing commit is recorded; no join intervenes.
+- When an authored lane does not exist yet, it forks from its single upstream lane, or forks from the session branch when it has no worktree upstream. The fork carries the committed tree visible at that point.
+- When the authored target is an existing target lane and an upstream is not already visible there, the engine performs a `context_merge` before dispatch. For multiple upstream lanes, the sources likewise converge through a `context_merge` before dispatch; a new lane can then fork from the converged head.
+- A read-only context contributes its captured structured output payload. It creates no repository commit, so consumers receive the payload rather than repository ancestry from that context.
+
+A fork is a branch snapshot, with no continuous synchronization. Later commits become visible only through same-lane landing or another explicit join. A workflow lane also does not inherit uncommitted or later work from a different authoring session merely because that session created the plan.
+
 ## Choosing a grade
 
 `ownedPaths` is a **concurrency mechanism, not a scoping mechanism**. Its one job is to let write-capable contexts run at the same time in one worktree without corrupting each other — declare `mode: "owned"` only for members that actually race: two or more write-capable members of one lane that no dependency edge orders. Every other write-capable context takes `mode: "full"`:

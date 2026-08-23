@@ -1285,8 +1285,10 @@ function buildLaunchReceipt(input: {
   outcome: GraphWorkflowLaunchOutcome;
   projectName: string;
   sessionName: string;
+  warnings?: readonly WorkflowPlanIssue[];
 }): GraphWorkflowLaunchReceipt {
   const { execution } = input.outcome;
+  const warnings = input.warnings ?? input.outcome.warnings ?? [];
   return {
     executionId: execution.id,
     status: input.outcome.awaitingDefinitionApproval
@@ -1300,6 +1302,7 @@ function buildLaunchReceipt(input: {
       executionId: execution.id,
     }),
     startedAt: execution.startedAt,
+    ...(warnings.length === 0 ? {} : { warnings: [...warnings] }),
   };
 }
 
@@ -2249,6 +2252,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
       outcome,
       projectName: resolved.projectName,
       sessionName,
+      warnings: [...validation.warnings, ...(outcome.warnings ?? [])],
     });
     logger.info("graph-workflow.run.accepted", {
       projectPath,
@@ -2256,6 +2260,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
       executionId: receipt.executionId,
       status: receipt.status,
       origin: receipt.origin.kind,
+      warningCount: receipt.warnings?.length ?? 0,
     });
 
     if (outcome.awaitingDefinitionApproval) {

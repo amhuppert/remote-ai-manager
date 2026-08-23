@@ -370,17 +370,14 @@ describe("ordinary authored-launch callers", () => {
     });
     expect(expectedGlobal.ok).toBe(true);
     if (!expectedGlobal.ok) return;
-    // The normalized launch is scope-independent. The warning SET is not, and
-    // deliberately so: the charter locator lint resolves against a project
-    // root, and a global-scope template has none, so it is skipped there (#69
-    // change 6). Everything a global template CAN be warned about it is.
+    // Document scope governs profile resolution, not filesystem authority.
+    // Synchronous admission therefore returns the same root-independent
+    // lexical warnings for project and global documents.
     expect(expectedGlobal.launch).toEqual(expectedProject.launch);
     expect(expectedGlobal.stableAccountabilityContextIds).toEqual(
       expectedProject.stableAccountabilityContextIds,
     );
-    expect(expectedProject.warnings).toEqual(
-      expect.arrayContaining(expectedGlobal.warnings),
-    );
+    expect(expectedProject.warnings).toEqual(expectedGlobal.warnings);
 
     const created: WorkflowDefinitionDraft[] = [];
     const updated: WorkflowDefinitionDraft[] = [];
@@ -410,7 +407,11 @@ describe("ordinary authored-launch callers", () => {
     const validateHandlers = createGraphWorkflowValidateHandlers({
       auth,
       resolveProjectPath: async () => "/repo",
-      getSession: async () => ({ sessionName: "session" }),
+      getSession: async () => ({
+        sessionName: "session",
+        branchName: "csm/session",
+        worktreePath: "/not-a-repository",
+      }),
       readRepoConfig: async () => ({ validation: repoValidation }),
       readConfig: async () => globalConfig,
       assignmentReferences: references(projectScope),
@@ -418,7 +419,11 @@ describe("ordinary authored-launch callers", () => {
     const globalValidateHandlers = createGraphWorkflowValidateHandlers({
       auth,
       resolveProjectPath: async () => "/repo",
-      getSession: async () => ({ sessionName: "session" }),
+      getSession: async () => ({
+        sessionName: "session",
+        branchName: "csm/session",
+        worktreePath: "/not-a-repository",
+      }),
       readRepoConfig: async () => ({ validation: repoValidation }),
       readConfig: async () => globalConfig,
       assignmentReferences: references(globalScope),
@@ -597,7 +602,11 @@ describe("ordinary authored-launch callers", () => {
     const validateHandlers = createGraphWorkflowValidateHandlers({
       auth,
       resolveProjectPath: async () => "/repo",
-      getSession: async () => ({ sessionName: "session" }),
+      getSession: async () => ({
+        sessionName: "session",
+        branchName: "csm/session",
+        worktreePath: "/not-a-repository",
+      }),
       readRepoConfig: async () => ({ validation: repoValidation }),
       readConfig: async () => globalConfig,
       assignmentReferences: references(projectScope),
@@ -605,7 +614,11 @@ describe("ordinary authored-launch callers", () => {
     const globalValidateHandlers = createGraphWorkflowValidateHandlers({
       auth,
       resolveProjectPath: async () => "/repo",
-      getSession: async () => ({ sessionName: "session" }),
+      getSession: async () => ({
+        sessionName: "session",
+        branchName: "csm/session",
+        worktreePath: "/not-a-repository",
+      }),
       readRepoConfig: async () => ({ validation: repoValidation }),
       readConfig: async () => globalConfig,
       assignmentReferences: references(globalScope),

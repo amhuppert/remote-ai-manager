@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
@@ -179,6 +179,83 @@ describe("getHeadCommit", () => {
     mockGitSuccess("  \n");
     const result = await ops.getHeadCommit("/worktree");
     expect(result).toBeNull();
+  });
+});
+
+describe("commitContainsPath", () => {
+  it("passes pathspec metacharacters to Git as a literal pathspec", async () => {
+    mockGitSuccess("docs/[draft].md\n");
+
+    await expect(
+      ops.commitContainsPath("/worktree", "abc123def456", "docs/[draft].md"),
+    ).resolves.toBe(true);
+    expect(gitMock).toHaveBeenCalledWith(
+      [
+        "ls-tree",
+        "--name-only",
+        "abc123def456",
+        "--",
+        ":(literal)docs/[draft].md",
+      ],
+      "/worktree",
+      expect.anything(),
+    );
+  });
+
+  it("distinguishes an absent tree entry from an operational Git failure", async () => {
+    mockGitSuccess("");
+    await expect(
+      ops.commitContainsPath("/worktree", "abc123def456", "docs/absent.md"),
+    ).resolves.toBe(false);
+
+    mockGitFailure(new Error("fatal: bad object abc123def456"));
+    await expect(
+      ops.commitContainsPath("/worktree", "abc123def456", "docs/design.md"),
+    ).rejects.toThrow("bad object");
+  });
+});
+
+describe("commitContainsPath (real git repo)", () => {
+  let repoPath: string;
+
+  async function gitIn(args: string[]): Promise<string> {
+    const { stdout } = await execFileAsync("git", args, {
+      cwd: repoPath,
+      env: buildChildEnv(),
+    });
+    return stdout;
+  }
+
+  beforeEach(async () => {
+    repoPath = await mkdtemp(join(tmpdir(), "cc-committed-source-"));
+    await gitIn(["init", "-b", "main"]);
+    await gitIn(["config", "user.email", "test@example.com"]);
+    await gitIn(["config", "user.name", "Test"]);
+    await mkdir(join(repoPath, "docs"));
+    await writeFile(join(repoPath, "docs", "design.md"), "# design\n");
+    await writeFile(join(repoPath, "docs", "[draft].md"), "# draft\n");
+    await symlink("design.md", join(repoPath, "docs", "latest.md"));
+    await gitIn(["add", "-A"]);
+    await gitIn(["commit", "-m", "source fixtures", "--no-verify"]);
+    await writeFile(join(repoPath, "docs", "untracked.md"), "# local only\n");
+  });
+
+  afterEach(async () => {
+    await rm(repoPath, { recursive: true, force: true });
+  });
+
+  it("recognizes committed files, directories, symlinks, and literal names at HEAD but not untracked paths", async () => {
+    const sha = (await gitIn(["rev-parse", "HEAD"])).trim();
+
+    await expect(
+      Promise.all([
+        realOps.commitContainsPath(repoPath, sha, "docs/design.md"),
+        realOps.commitContainsPath(repoPath, sha, "docs"),
+        realOps.commitContainsPath(repoPath, sha, "docs/latest.md"),
+        realOps.commitContainsPath(repoPath, sha, "docs/untracked.md"),
+        realOps.commitContainsPath(repoPath, sha, "docs/[draft].md"),
+      ]),
+    ).resolves.toEqual([true, true, true, false, true]);
   });
 });
 

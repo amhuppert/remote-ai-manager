@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef } from "react";
+import { createClientLogger } from "@/lib/logging/client-logger";
 import {
   isTopOverlay,
   usePushOverlay,
@@ -16,16 +17,13 @@ interface UseOverlayScopeOptions {
   onEscape?: () => void;
 }
 
+const logger = createClientLogger("hooks/useOverlayScope");
+
 function logOverlayScopeDebug(
   message: string,
   fields: Record<string, unknown>,
 ): void {
-  // The logging system is server-file-based; mirror the established
-  // client-component pattern (no-op in the browser, lazy import on the server).
-  if (typeof window !== "undefined") return;
-  void import("@/lib/logging").then(({ createLogger }) => {
-    createLogger("hooks/useOverlayScope").debug(message, fields);
-  });
+  logger.debug(message, fields);
 }
 
 /**

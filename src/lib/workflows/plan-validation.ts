@@ -17,15 +17,17 @@ import {
   formatAssignmentUseSite,
   type AssignmentRoleLabel,
   type AssignmentTierLabel,
-} from "@/lib/workflow-graph/assignment-references";
+} from "@/lib/workflow-graph/assignment-reference-labels";
 import { findLegacyAgentShapes } from "@/lib/workflow-graph/schema-cutover-guard";
 import { lintPlanSemantics } from "./plan-lints";
+import { z } from "zod";
 
-export interface WorkflowPlanIssue {
+export const workflowPlanIssueSchema = z.object({
   /** JSON-path location within the request body, e.g. `definition.tasks.0.contextId`. */
-  path: string;
-  message: string;
-}
+  path: z.string(),
+  message: z.string(),
+});
+export type WorkflowPlanIssue = z.infer<typeof workflowPlanIssueSchema>;
 
 export interface WorkflowPlanCommandIssue extends WorkflowPlanIssue {
   code: string;
@@ -58,15 +60,6 @@ export interface WorkflowPlanValidationOptions {
    * project registry exists.
    */
   validationCommandPreflight?: ValidationCommandPreflight;
-  /**
-   * Absolute path to the project the plan is destined for, threaded from
-   * callers that have project identity. The charter locator lint needs a root
-   * to resolve worktree-relative locators against; when none is provided that
-   * lint is skipped entirely rather than guessing one, so a project-unbound
-   * caller (a global template) never reports a source absent on the strength
-   * of a root it invented.
-   */
-  projectRoot?: string;
 }
 
 /**
@@ -386,9 +379,7 @@ export function validateWorkflowPlan(
         path: structuralIssuePath(warning, parsed.data.definition),
         message: warning.message,
       })),
-      ...lintPlanSemantics(canonicalDefinition, {
-        projectRoot: options.projectRoot,
-      }),
+      ...lintPlanSemantics(canonicalDefinition),
     ],
   };
 }

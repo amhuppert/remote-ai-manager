@@ -1,7 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   createWorkflowDefinition,
   createWorkflowLayout,
@@ -899,6 +896,10 @@ describe("validateWorkflowPlan post-cutover refusal", () => {
 /** A definition that trips every semantic lint at once. */
 function createLintTrippingDefinition() {
   const definition = createWorkflowDefinition();
+  definition.charter.sourcesOfTruth[0] = {
+    ...definition.charter.sourcesOfTruth[0]!,
+    locator: "https://internal.example/design",
+  };
   definition.executionContexts[0] = {
     ...definition.executionContexts[0]!,
     description: "d".repeat(2001),
@@ -926,22 +927,9 @@ function lintIds(warnings: { message: string }[]): string[] {
 }
 
 describe("validateWorkflowPlan semantic lints", () => {
-  // An empty directory: every charter locator the fixture declares is absent
-  // from it, which is exactly the incident the locator lint pins.
-  let projectRoot: string;
-
-  beforeAll(() => {
-    projectRoot = mkdtempSync(path.join(tmpdir(), "cc-plan-validation-"));
-  });
-
-  afterAll(() => {
-    rmSync(projectRoot, { recursive: true, force: true });
-  });
-
   it("returns every lint as a warning on an otherwise valid plan", () => {
     const result = validateWorkflowPlan(
       makePlan(createLintTrippingDefinition()),
-      { projectRoot },
     );
 
     expect(result.ok).toBe(true);
@@ -961,7 +949,6 @@ describe("validateWorkflowPlan semantic lints", () => {
   it("keeps lint warnings located like issues so the CLI printer renders them", () => {
     const result = validateWorkflowPlan(
       makePlan(createLintTrippingDefinition()),
-      { projectRoot },
     );
 
     expect(result.ok).toBe(true);
@@ -983,7 +970,6 @@ describe("validateWorkflowPlan semantic lints", () => {
   it("still admits the plan and returns the canonical draft", () => {
     const result = validateWorkflowPlan(
       makePlan(createLintTrippingDefinition()),
-      { projectRoot },
     );
 
     expect(result.ok).toBe(true);
@@ -993,10 +979,13 @@ describe("validateWorkflowPlan semantic lints", () => {
     ).toHaveLength(13);
   });
 
-  it("skips the locator lint when no project root is available", () => {
-    const result = validateWorkflowPlan(
-      makePlan(createLintTrippingDefinition()),
-    );
+  it("makes no relative-path availability claim during synchronous validation", () => {
+    const definition = createLintTrippingDefinition();
+    definition.charter.sourcesOfTruth[0] = {
+      ...definition.charter.sourcesOfTruth[0]!,
+      locator: "docs/not-present-in-any-local-root.md",
+    };
+    const result = validateWorkflowPlan(makePlan(definition));
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -1007,7 +996,7 @@ describe("validateWorkflowPlan semantic lints", () => {
   });
 
   it("leaves a plan that trips nothing warning-free", () => {
-    const result = validateWorkflowPlan(makePlan(), { projectRoot: undefined });
+    const result = validateWorkflowPlan(makePlan());
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;

@@ -99,6 +99,8 @@ import {
 } from "@/lib/workflow-graph/user-input-gate";
 import { sendConversationEvent } from "@/lib/workflows/conversation/manager";
 import type { GlobalConfig } from "@/lib/config/schemas";
+import type { WorkflowPlanIssue } from "@/lib/workflows/plan-validation";
+import { lintCommittedSourceLocators as defaultLintCommittedSourceLocators } from "@/lib/workflows/committed-source-locator-lint";
 import type {
   GraphWorkflowAbandonment,
   GraphWorkflowDefinitionApprovalClaim,
@@ -321,6 +323,7 @@ export interface GraphWorkflowLaunchInput {
 export interface GraphWorkflowLaunchOutcome {
   execution: GraphWorkflowExecution;
   awaitingDefinitionApproval: boolean;
+  warnings?: WorkflowPlanIssue[];
 }
 
 /**
@@ -848,6 +851,10 @@ export interface GraphWorkflowManagerDeps {
    * prerequisite gate. Defaults to the real config loader.
    */
   readGlobalConfig?(): Promise<GlobalConfig>;
+  lintCommittedSourceLocators?(
+    definition: Pick<WorkflowSemanticDefinition, "charter">,
+    session: Pick<SessionState, "sessionName" | "branchName" | "worktreePath">,
+  ): Promise<WorkflowPlanIssue[]>;
   createBatchId?(): string;
   /**
    * Signal the in-flight Claude Code SDK query for a running task's
@@ -1794,6 +1801,30 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       },
     );
 
+    const sourceWarnings =
+      session === null
+        ? []
+        : await (
+            deps.lintCommittedSourceLocators ??
+            defaultLintCommittedSourceLocators
+          )(
+            {
+              ...pendingExecution.workingDefinition,
+              charter: pendingExecution.charter,
+            },
+            session,
+          );
+    logger.info("graph-workflow.start.source_check", {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      ...attribution,
+      resolutionKind:
+        session === null ? "session_unavailable" : "launch_session_head",
+      warningCount: sourceWarnings.length,
+    });
+    const warningFields =
+      sourceWarnings.length === 0 ? {} : { warnings: sourceWarnings };
+
     // An authored `approvalRequired` is an ACCEPTED launch that has not begun
     // (D7 R14): the pending execution is durable and holds the session's lease,
     // so the outcome carries the park rather than raising it. Nothing below this
@@ -1814,6 +1845,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       return {
         execution: pendingExecution,
         awaitingDefinitionApproval: true,
+        ...warningFields,
       };
     }
 
@@ -1833,7 +1865,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
 
     recordExecutionStarted(nextExecution, input.projectPath, input.sessionName);
 
-    return { execution: nextExecution, awaitingDefinitionApproval: false };
+    return {
+      execution: nextExecution,
+      awaitingDefinitionApproval: false,
+      ...warningFields,
+    };
   }
 
   /**

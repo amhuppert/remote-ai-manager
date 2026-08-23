@@ -147,6 +147,21 @@ export function createCommitsOperations(client: GitClient = defaultGitClient) {
     }
   }
 
+  async function commitContainsPath(
+    worktreePath: string,
+    sha: string,
+    repoRelativePath: string,
+  ): Promise<boolean> {
+    const { stdout } = await git(worktreePath, [
+      "ls-tree",
+      "--name-only",
+      sha,
+      "--",
+      `:(literal)${repoRelativePath}`,
+    ]);
+    return stdout.length > 0;
+  }
+
   function refuseConflictArtifacts(
     worktreePath: string,
     reason: "unmerged_entries" | "conflict_markers",
@@ -365,6 +380,7 @@ export function createCommitsOperations(client: GitClient = defaultGitClient) {
     collectChangeSummary,
     getCurrentBranch,
     getHeadCommit,
+    commitContainsPath,
     commitChanges,
     getCommitLog,
     getCommitDiff,
@@ -381,6 +397,7 @@ export const hasUncommittedChanges = defaultOps.hasUncommittedChanges;
 export const collectChangeSummary = defaultOps.collectChangeSummary;
 export const getCurrentBranch = defaultOps.getCurrentBranch;
 export const getHeadCommit = defaultOps.getHeadCommit;
+export const commitContainsPath = defaultOps.commitContainsPath;
 export const commitChanges = defaultOps.commitChanges;
 export const getCommitLog = defaultOps.getCommitLog;
 export const getCommitDiff = defaultOps.getCommitDiff;

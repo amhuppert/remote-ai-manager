@@ -329,7 +329,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl workflow <task complete|task add|shared-doc upsert|collab request>  (lane verbs)`
 - `cctl workflow validate` — check a plan.json without saving anything
   - `cctl workflow validate --file .cc/temp/plan.json [--tier global|project] [--json]`
-- `cctl workflow create` — save a new definition from a validated plan
+- `cctl workflow create` — save a new definition for visual review before launch
   - `cctl workflow create --file .cc/temp/plan.json [--acknowledge-review <hash>] [--json]`
 - `cctl workflow replace` — overwrite an existing definition from a plan file
   - `cctl workflow replace <id> --file .cc/temp/plan.json [--acknowledge-review <hash>] [--json]`
@@ -1052,8 +1052,8 @@ the planning method), then walk the canonical chain: validate → create → sta
   `definition.tasks.2.contextId: …`) — fix the file and re-run. On success it
   hints the `create` command. Session-scoped (reads your `CC_SESSION`).
 - `create` — save a new definition from a validated `plan.json`. Prints the new
-  workflow id and hints `start it with 'cctl workflow start <id>'`. The user
-  reviews and edits it in the visual builder before starting.
+  workflow id and hints `review it in the visual builder, then start it with
+  'cctl workflow start <id>'`.
 - `replace` — overwrite an existing definition (`<id>`) with a `plan.json`;
   submit the **complete** graph, not a diff (the previous definition is fully
   overwritten). Re-validate first. For a targeted change, prefer `edit`. No hint
@@ -1112,7 +1112,7 @@ cctl workflow validate --file .cc/temp/plan.json
 #   hint: valid — create it with 'cctl workflow create --file .cc/temp/plan.json'
 cctl workflow create --file .cc/temp/plan.json
 # → created Add OAuth2 Support (id: wf-1)
-#   hint: start it with 'cctl workflow start wf-1'
+#   hint: review it in the visual builder, then start it with 'cctl workflow start wf-1'
 cctl workflow status
 # → exec-4f1d2797  running
 #     plan       completed  2/2

@@ -964,6 +964,28 @@ describe("cctl workflow delete", () => {
 });
 
 describe("cctl workflow start", () => {
+  const warnings = [
+    {
+      path: "definition.tasks.0.instructions",
+      message:
+        'lint/source-locator-unresolvable: source "docs/launch.md" could not be resolved',
+    },
+  ];
+  const receipt = {
+    executionId: "exec-9",
+    status: "running",
+    origin: {
+      kind: "template",
+      definitionId: "wf-1",
+      definitionRevision: 3,
+      tier: "project",
+    },
+    originConversationId: null,
+    deepLink: "/projects/cc/sessions/my-session/workflow?execution=exec-9",
+    startedAt: "2026-08-22T12:00:00.000Z",
+    warnings,
+  };
+
   it("posts the definitionId, prints the run id + track-progress hint", async () => {
     const host = makeHost((req) => {
       expect(req.init.method).toBe("POST");
@@ -985,6 +1007,47 @@ describe("cctl workflow start", () => {
         .trimEnd()
         .endsWith("track progress with 'cctl workflow status'"),
     ).toBe(true);
+  });
+
+  it("prints launch warnings before the success body and keeps exit 0", async () => {
+    const host = makeHost(() =>
+      jsonResponse(
+        {
+          execution: { executionId: "exec-9", status: "running" },
+          receipt,
+        },
+        202,
+      ),
+    );
+    const result = await runCli(["workflow", "start", "wf-1"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    const warningIndex = result.stdout.indexOf(`warning: ${warnings[0]?.path}`);
+    expect(warningIndex).toBeGreaterThanOrEqual(0);
+    expect(warningIndex).toBeLessThan(
+      result.stdout.indexOf("started wf-1 (run exec-9)"),
+    );
+  });
+
+  it("carries launch warnings into the JSON success envelope", async () => {
+    const host = makeHost(() =>
+      jsonResponse(
+        {
+          execution: { executionId: "exec-9", status: "running" },
+          receipt,
+        },
+        202,
+      ),
+    );
+    const result = await runCli(
+      ["workflow", "start", "wf-1", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, warnings });
   });
 
   it("names the calling conversation so the server can capture it as the run's owner", async () => {
@@ -1274,6 +1337,49 @@ describe("cctl workflow run", () => {
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({ ok: true, ...receipt });
     expect(result.stdout).not.toContain("definitionId");
+  });
+
+  it("prints launch warnings before the receipt and preserves them in JSON", async () => {
+    const warnings = [
+      {
+        path: "definition.charter.sourcesOfTruth.0.locator",
+        message:
+          'lint/source-locator-unresolvable: source "docs/runtime.md" could not be resolved',
+      },
+    ];
+    const warnedReceipt = { ...receipt, warnings };
+    const textHost = makeHost(
+      () => jsonResponse({ receipt: warnedReceipt }, 202),
+      { "/tmp/plan.json": JSON.stringify(plan) },
+    );
+    const textResult = await runCli(
+      ["workflow", "run", "--file", "/tmp/plan.json"],
+      baseEnv,
+      textHost,
+    );
+
+    expect(textResult.exitCode).toBe(0);
+    expect(textResult.stderr).toBe("");
+    const warningIndex = textResult.stdout.indexOf(
+      `warning: ${warnings[0]?.path}`,
+    );
+    expect(warningIndex).toBeGreaterThanOrEqual(0);
+    expect(warningIndex).toBeLessThan(
+      textResult.stdout.indexOf("launched exec-one-off-9"),
+    );
+
+    const jsonHost = makeHost(
+      () => jsonResponse({ receipt: warnedReceipt }, 202),
+      { "/tmp/plan.json": JSON.stringify(plan) },
+    );
+    const jsonResult = await runCli(
+      ["workflow", "run", "--file", "/tmp/plan.json", "--json"],
+      baseEnv,
+      jsonHost,
+    );
+
+    expect(jsonResult.exitCode).toBe(0);
+    expect(JSON.parse(jsonResult.stdout)).toMatchObject({ ok: true, warnings });
   });
 
   it("accepts --wait with a bounded duration and rejects timeout misuse before a request", async () => {
@@ -2141,11 +2247,14 @@ describe("cctl workflow create", () => {
     [planFile]: JSON.stringify({ name: "X", definition: {}, layout: {} }),
   };
 
-  it("posts the plan to the project workflows route and emits the start hint", async () => {
+  it("posts the plan and emits the review-first hint after the review advisory", async () => {
     const host = makeHost((req) => {
       expect(req.init.method).toBe("POST");
       return jsonResponse(
-        { item: { id: "wf-9", name: "Auth Setup", revision: 1 } },
+        {
+          item: { id: "wf-9", name: "Auth Setup", revision: 1 },
+          reviewStatus: { state: "unreviewed" },
+        },
         201,
       );
     }, files);
@@ -2160,11 +2269,44 @@ describe("cctl workflow create", () => {
       "/api/projects/cc/workflows",
     );
     expect(result.stdout).toContain("wf-9");
-    expect(
-      result.stdout
-        .trimEnd()
-        .endsWith("start it with 'cctl workflow start wf-9'"),
-    ).toBe(true);
+    const advisoryIndex = result.stdout.indexOf("plan review: none recorded");
+    const hintIndex = result.stdout.indexOf(
+      "hint: review it in the visual builder, then start it with 'cctl workflow start wf-9'",
+    );
+    expect(advisoryIndex).toBeGreaterThan(
+      result.stdout.indexOf("created Auth Setup"),
+    );
+    expect(hintIndex).toBeGreaterThan(advisoryIndex);
+    expect(result.stdout.trimEnd().endsWith("workflow start wf-9'")).toBe(true);
+  });
+
+  it("keeps the review-first guidance in the existing JSON hint field", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse(
+          {
+            item: { id: "wf-9", name: "Auth Setup", revision: 1 },
+            reviewStatus: { state: "unreviewed" },
+          },
+          201,
+        ),
+      files,
+    );
+    const result = await runCli(
+      ["workflow", "create", "--file", planFile, "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      workflowId: "wf-9",
+      reviewStatus: { state: "unreviewed" },
+      hint: "review it in the visual builder, then start it with 'cctl workflow start wf-9'",
+    });
+    expect(JSON.parse(result.stdout)).not.toHaveProperty("reminders");
+    expect(JSON.parse(result.stdout)).not.toHaveProperty("instruction");
   });
 
   it("does not require a session identity", async () => {

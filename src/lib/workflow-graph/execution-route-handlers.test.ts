@@ -303,12 +303,46 @@ describe("graph workflow execution route handlers", () => {
       sessionName: "session-1",
       execution: startedExecution,
     });
-    await expect(response.json()).resolves.toMatchObject({
+    const cleanBody = await response.json();
+    expect(cleanBody).toMatchObject({
       execution: {
         executionId: "execution-active",
         status: "running",
         archived: false,
       },
+    });
+    expect(cleanBody.receipt).not.toHaveProperty("warnings");
+  });
+
+  it("returns committed-source warnings on an accepted saved-definition start", async () => {
+    const warning = {
+      path: "definition.charter.sourcesOfTruth.0.locator",
+      message:
+        'lint/source-locator-unresolvable: source is absent for session "session-1" on branch "csm/session-1" at commit launch-sha',
+    };
+    const startedExecution = createWorkflowExecution({
+      id: "execution-source-warning",
+      status: "running",
+    });
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    startExecution.mockResolvedValue({
+      ...acceptedLaunch(startedExecution),
+      warnings: [warning],
+    });
+
+    const response = await handlers.START(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "POST",
+        { definitionId: "workflow-1" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toMatchObject({
+      receipt: { status: "running", warnings: [warning] },
     });
   });
 
@@ -578,9 +612,48 @@ describe("graph workflow execution route handlers", () => {
       status: "awaiting_definition_approval",
       origin: { kind: "template", definitionId: "workflow-1" },
     });
+    expect(parkedBody.receipt).not.toHaveProperty("warnings");
     expect(parkedBody.code).toBeUndefined();
     expect(kickOffExecutionLoop).not.toHaveBeenCalled();
     expect(recordPendingHaltReason).not.toHaveBeenCalled();
+  });
+
+  it("keeps source warnings on a parked saved-definition start", async () => {
+    const warning = {
+      path: "definition.charter.sourcesOfTruth.0.locator",
+      message:
+        'lint/source-locator-unresolvable: source is absent for session "session-1" on branch "csm/session-1" at commit parked-sha',
+    };
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    startExecution.mockResolvedValue({
+      ...parkedLaunch(
+        createWorkflowExecution({
+          id: "execution-warning-parked",
+          status: "pending",
+          seedDefinitionId: "workflow-1",
+        }),
+      ),
+      warnings: [warning],
+    });
+
+    const response = await handlers.START(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "POST",
+        { definitionId: "workflow-1" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toMatchObject({
+      receipt: {
+        status: "awaiting_definition_approval",
+        warnings: [warning],
+      },
+    });
+    expect(kickOffExecutionLoop).not.toHaveBeenCalled();
   });
 
   it("reports a parked start through the lifecycle port before returning the accepted receipt", async () => {
@@ -5011,6 +5084,7 @@ describe("graph workflow RUN route — inline one-off launch", () => {
     // is asserted over the serialized body rather than over the fields we
     // happened to enumerate above.
     expect(JSON.stringify(body)).not.toContain("definitionId");
+    expect(body.receipt).not.toHaveProperty("warnings");
 
     // The route hands the manager the PARSED plan document, never the raw body,
     // and never a definition identity of any kind. Parsing canonicalizes prose
@@ -5041,6 +5115,56 @@ describe("graph workflow RUN route — inline one-off launch", () => {
       sessionName: SESSION_NAME,
       execution,
     });
+  });
+
+  it("appends committed-source warnings after synchronous plan warnings without refusing the run", async () => {
+    const committedWarning = {
+      path: "definition.charter.sourcesOfTruth.0.locator",
+      message:
+        'lint/source-locator-unresolvable: source is absent for session "session-1" on branch "csm/session-1" at commit inline-sha',
+    };
+    const execution = createWorkflowExecution({
+      id: "execution-warning-order",
+      status: "running",
+      origin: { kind: "one_off", planName: "Inline analysis" },
+    });
+    runExecution.mockResolvedValue({
+      execution,
+      awaitingDefinitionApproval: false,
+      warnings: [committedWarning],
+    });
+    const definition = createWorkflowDefinition();
+    const firstContext = definition.executionContexts[0];
+    if (firstContext === undefined) {
+      throw new Error("fixture missing first execution context");
+    }
+    const plan = makePlan({
+      ...definition,
+      executionContexts: [
+        {
+          ...firstContext,
+          acceptanceCriteria: "Every committed path is checked",
+        },
+        ...definition.executionContexts.slice(1),
+      ],
+    });
+
+    const response = await post({ plan });
+
+    expect(response.status).toBe(202);
+    const body = (await response.json()) as {
+      receipt: {
+        status: string;
+        warnings: Array<{ path: string; message: string }>;
+      };
+    };
+    expect(body.receipt.status).toBe("running");
+    expect(body.receipt.warnings).toHaveLength(2);
+    expect(body.receipt.warnings[0]).toMatchObject({
+      path: "definition.executionContexts.0.acceptanceCriteria.0.statement",
+      message: expect.stringContaining("lint/open-quantifier"),
+    });
+    expect(body.receipt.warnings[1]).toEqual(committedWarning);
   });
 
   it("binds the inputs document through a channel distinct from the plan", async () => {

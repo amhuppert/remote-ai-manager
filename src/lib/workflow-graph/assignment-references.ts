@@ -37,8 +37,11 @@ import {
   type AgentProfileRef,
 } from "@/lib/agent-profiles/schemas";
 import type { WorkflowDefaults } from "@/lib/config/schemas";
-import { escapeDiagnosticValue } from "@/lib/shared/diagnostic-text";
 import type { WorkflowPlanIssue } from "@/lib/workflows/plan-validation";
+import {
+  formatAssignmentUseSite,
+  type AssignmentTierLabel,
+} from "./assignment-reference-labels";
 import type { AgentAssignment, ValidatorCohort } from "./config-schemas";
 import type { WorkflowSemanticDefinition } from "./definition-schemas";
 
@@ -72,57 +75,6 @@ export interface AssignmentReferenceSite {
   tier: AssignmentTierLabel;
   /** Held by an assignment inside a DISABLED cohort — persisted, not invoked. */
   dormant: boolean;
-}
-
-/** The cascade tier an assignment was authored at. */
-export type AssignmentTierLabel =
-  | { kind: "workflow" }
-  | { kind: "global-defaults" }
-  | { kind: "context"; contextId: string };
-
-/**
- * Which staffing slot within that tier — or the cohort itself.
- *
- * `assignmentId` is nullable because the shape layer can be describing an
- * assignment whose id is the very thing that is missing or malformed. The JSON
- * path still locates it; the phrasing simply drops the quoted id rather than
- * inventing one.
- */
-export type AssignmentRoleLabel =
-  | { kind: "implementer"; assignmentId: string | null }
-  | { kind: "validator"; assignmentId: string | null }
-  | { kind: "cohort" };
-
-/**
- * The one phrasing of an assignment use site.
- *
- * Shared with the SYNCHRONOUS shape layer (`plan-validation.ts`) on purpose:
- * an author must not be able to tell which of the two validation layers refused
- * from how the refusal reads. Every message that names a use site — dangling
- * reference, scope violation, duplicate id, malformed grammar — routes through
- * here, so the vocabulary cannot drift between them.
- *
- * Quoted values are escaped here rather than at the call sites: the shape layer
- * is fed unvalidated ids by definition, and an escape that has to be remembered
- * is one that will eventually be forgotten.
- */
-export function formatAssignmentUseSite(
-  tier: AssignmentTierLabel,
-  role: AssignmentRoleLabel,
-): string {
-  const tierText =
-    tier.kind === "context"
-      ? `context "${escapeDiagnosticValue(tier.contextId)}"`
-      : tier.kind === "workflow"
-        ? "workflow-tier"
-        : "global-defaults";
-  const roleText =
-    role.kind === "cohort"
-      ? "validator cohort"
-      : role.assignmentId === null
-        ? `${role.kind} assignment`
-        : `${role.kind} assignment "${escapeDiagnosticValue(role.assignmentId)}"`;
-  return `the ${tierText} ${roleText}`;
 }
 
 export interface AssignmentReferenceCheckerDeps {

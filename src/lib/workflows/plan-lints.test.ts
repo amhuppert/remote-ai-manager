@@ -1,7 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { CriterionRecord } from "@/lib/workflow-graph/criteria/criterion-records";
 import { lintPlanSemantics, type PlanLintDefinition } from "./plan-lints";
 
@@ -116,6 +113,19 @@ describe("lintPlanSemantics — criteria density", () => {
 });
 
 describe("lintPlanSemantics — open quantifiers", () => {
+  function warningsFor(statement: string) {
+    return lintPlanSemantics(
+      makeLintDefinition({
+        executionContexts: [
+          {
+            id: "context-sweep",
+            acceptanceCriteria: [{ id: "ac-7", statement }],
+          },
+        ],
+      }),
+    );
+  }
+
   it.each([
     ["every", "Every call site is migrated"],
     ["all", "All lanes report a verdict"],
@@ -145,6 +155,83 @@ describe("lintPlanSemantics — open quantifiers", () => {
     ]);
   });
 
+  it.each([
+    ["straight double quotes", 'The label says "All results are complete"'],
+    ["straight single quotes", "The label says 'Every result is maximal'"],
+    ["curly double quotes", "The label says “All results are complete”"],
+    ["curly single quotes", "The label says ‘Every result is maximal’"],
+    ["backticks", "The output is `All results are complete`"],
+  ])("ignores quantifiers inside balanced %s", (_label, statement) => {
+    expect(warningsFor(statement)).toEqual([]);
+  });
+
+  it("warns only for unquoted terms in a statement with quoted and unquoted quantifiers", () => {
+    const warnings = warningsFor(
+      'The UI says "All results are complete", and every route is inventoried',
+    );
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.message).toMatch(/uses "every";/);
+    expect(warnings[0]?.message).not.toMatch(/uses .*"all"/);
+    expect(warnings[0]?.message).not.toMatch(/uses .*"complete"/);
+  });
+
+  it("still warns when the same token appears quoted and unquoted", () => {
+    const warnings = warningsFor(
+      'The UI says "All results", and all inventoried routes are checked',
+    );
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.message).toMatch(/uses "all";/);
+  });
+
+  it.each([
+    ["straight possessive", "The controller's view covers every route"],
+    ["straight contraction", "The button isn't complete"],
+    ["curly possessive", "The controllers’ view covers every route"],
+    ["curly contraction", "The button isn’t complete"],
+  ])("does not treat a %s as a literal opener", (_label, statement) => {
+    expect(warningsFor(statement)).toHaveLength(1);
+  });
+
+  it("does not pair straight plural possessives into a literal span", () => {
+    const warnings = warningsFor(
+      "The controllers' views cover every route and agents' reports are inventoried",
+    );
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.message).toMatch(/uses "every";/);
+  });
+
+  it.each([
+    ['The label says "Every controller\'s state is complete"'],
+    ["The label says 'Every controller's state is complete'"],
+    ["The label says ‘Every controller’s state is complete’"],
+    ["The label says ‘It isn’t complete’"],
+  ])("treats apostrophes inside a quoted label as content", (statement) => {
+    expect(warningsFor(statement)).toEqual([]);
+  });
+
+  it("keeps balanced spans suppressed when a later unmatched opener fails open", () => {
+    const warnings = warningsFor(
+      'Labels say "all routes" and `every result`, then “complete sweep',
+    );
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.message).toMatch(/uses "complete";/);
+    expect(warnings[0]?.message).not.toMatch(/uses .*"all"/);
+    expect(warnings[0]?.message).not.toMatch(/uses .*"every"/);
+  });
+
+  it("does not suppress a quantifier after an unmatched opener", () => {
+    const warnings = warningsFor(
+      'The label starts "Every route is inventoried',
+    );
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.message).toMatch(/uses "every";/);
+  });
+
   it("does not warn when a quantifier only appears inside a longer word", () => {
     const warnings = lintPlanSemantics(
       makeLintDefinition({
@@ -166,119 +253,62 @@ describe("lintPlanSemantics — open quantifiers", () => {
     expect(messages(warnings)).toEqual([]);
   });
 
-  it("advises an inventoried surface or a split", () => {
-    const warnings = lintPlanSemantics(
-      makeLintDefinition({
-        executionContexts: [
-          {
-            id: "context-sweep",
-            acceptanceCriteria: [
-              { id: "ac-1", statement: "ALL callers are updated" },
-            ],
-          },
-        ],
-      }),
-    );
+  it("advises syntactically quoting exact UI or output copy", () => {
+    const warnings = warningsFor("ALL callers are updated");
 
+    expect(warnings[0]?.message).toMatch(
+      /syntactically quote exact UI or output copy/i,
+    );
+  });
+
+  it("advises inventorying or splitting a real sweep", () => {
+    const warnings = warningsFor("ALL callers are updated");
+
+    expect(warnings[0]?.message).toMatch(/real sweep/i);
     expect(warnings[0]?.message).toMatch(/inventor/i);
     expect(warnings[0]?.message).toMatch(/split/i);
   });
 });
 
 describe("lintPlanSemantics — source locator resolvability", () => {
-  let root: string;
-
-  beforeAll(() => {
-    root = mkdtempSync(path.join(tmpdir(), "cc-plan-lints-"));
-    mkdirSync(path.join(root, "docs"), { recursive: true });
-    writeFileSync(path.join(root, "docs", "design.md"), "# design\n");
-  });
-
-  afterAll(() => {
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  it("does not warn for a worktree-relative locator that resolves", () => {
+  it("makes no availability claim for a safe worktree-relative locator", () => {
     const warnings = lintPlanSemantics(
       makeLintDefinition({
         charter: {
           sourcesOfTruth: [
             { id: "design-doc", locator: "docs/design.md" },
             { id: "design-dir", locator: "docs" },
+            {
+              id: "parameterized-design",
+              locator: "docs/{{inputs.feature}}.md",
+            },
           ],
         },
       }),
-      { projectRoot: root },
     );
 
     expect(messages(warnings)).toEqual([]);
   });
 
-  it("warns naming the source id for a locator that does not exist", () => {
+  it.each([
+    ["a URL scheme", "https://internal.example/ledger"],
+    ["an absolute path", "/etc/hosts"],
+    ["a locator escaping the worktree", "../elsewhere/spec.md"],
+  ])("warns for %s even when the target exists", (_label, locator) => {
     const warnings = lintPlanSemantics(
       makeLintDefinition({
-        charter: {
-          sourcesOfTruth: [{ id: "ghost-spec", locator: "docs/ghost.md" }],
-        },
+        charter: { sourcesOfTruth: [{ id: "external", locator }] },
       }),
-      { projectRoot: root },
     );
 
     expect(warnings).toEqual([
       {
         path: "definition.charter.sourcesOfTruth.0.locator",
         message: expect.stringMatching(
-          /^lint\/source-locator-unresolvable: .*"ghost-spec".*docs\/ghost\.md/,
+          /^lint\/source-locator-unresolvable: .*"external"/,
         ),
       },
     ]);
-  });
-
-  it.each([
-    ["a URL scheme", "https://internal.example/ledger"],
-    ["an absolute path", "/etc/hosts"],
-  ])("warns for %s even when the target exists", (_label, locator) => {
-    const warnings = lintPlanSemantics(
-      makeLintDefinition({
-        charter: { sourcesOfTruth: [{ id: "external", locator }] },
-      }),
-      { projectRoot: root },
-    );
-
-    expect(warnings).toEqual([
-      {
-        path: "definition.charter.sourcesOfTruth.0.locator",
-        message: expect.stringContaining('"external"'),
-      },
-    ]);
-  });
-
-  it("warns for a relative locator that escapes the project root", () => {
-    const warnings = lintPlanSemantics(
-      makeLintDefinition({
-        charter: {
-          sourcesOfTruth: [{ id: "sibling", locator: "../elsewhere/spec.md" }],
-        },
-      }),
-      { projectRoot: root },
-    );
-
-    expect(messages(warnings)).toHaveLength(1);
-  });
-
-  it("skips the lint entirely when no project root is available", () => {
-    const warnings = lintPlanSemantics(
-      makeLintDefinition({
-        charter: {
-          sourcesOfTruth: [
-            { id: "ghost-spec", locator: "docs/ghost.md" },
-            { id: "external", locator: "https://internal.example/ledger" },
-          ],
-        },
-      }),
-    );
-
-    expect(messages(warnings)).toEqual([]);
   });
 });
 

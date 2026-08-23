@@ -19,8 +19,13 @@ import { resolveProjectPath } from "@/lib/projects/resolver";
 import { readRepoConfig } from "@/lib/projects/repo-config";
 import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
 import { getSession } from "@/lib/state-store";
-import { createLogger, withTracing } from "@/lib/logging";
+import { createLogger, type Logger, withTracing } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
+import {
+  lintCommittedSourceLocators,
+  type CommittedSourceResolutionSession,
+} from "@/lib/workflows/committed-source-locator-lint";
+import type { WorkflowPlanIssue } from "@/lib/workflows/plan-validation";
 import { admitAuthoredWorkflowLaunch } from "./authored-launch-admission";
 import {
   type AssignmentDocumentScope,
@@ -31,6 +36,56 @@ import {
 const log = createLogger("graph-workflow-validate-route");
 
 const DOCUMENT_TIERS = ["global", "project"] as const;
+const SOURCE_LOCATOR_WARNING_PREFIX = "lint/source-locator-unresolvable:";
+const OVERSIZED_PROSE_WARNING_PREFIX = "lint/oversized-prose:";
+
+function isSourceLocatorWarning(warning: WorkflowPlanIssue): boolean {
+  return warning.message.startsWith(SOURCE_LOCATOR_WARNING_PREFIX);
+}
+
+function sourceLocatorIndex(warning: WorkflowPlanIssue): number {
+  const match = warning.path.match(
+    /^definition\.charter\.sourcesOfTruth\.(\d+)\.locator$/,
+  );
+  return match === null ? Number.MAX_SAFE_INTEGER : Number(match[1]);
+}
+
+/**
+ * Preserve the semantic lint registry's category order while ordering every
+ * lexical and committed-tree locator finding by its charter source position.
+ */
+function mergeCommittedSourceWarnings(
+  admissionWarnings: readonly WorkflowPlanIssue[],
+  committedSourceWarnings: readonly WorkflowPlanIssue[],
+): WorkflowPlanIssue[] {
+  const sourceWarnings = [
+    ...admissionWarnings.filter(isSourceLocatorWarning),
+    ...committedSourceWarnings,
+  ].sort((left, right) => sourceLocatorIndex(left) - sourceLocatorIndex(right));
+  if (sourceWarnings.length === 0) return [...admissionWarnings];
+
+  const otherWarnings = admissionWarnings.filter(
+    (warning) => !isSourceLocatorWarning(warning),
+  );
+  const firstLexicalSourceIndex = admissionWarnings.findIndex(
+    isSourceLocatorWarning,
+  );
+  const insertionIndex =
+    firstLexicalSourceIndex >= 0
+      ? admissionWarnings
+          .slice(0, firstLexicalSourceIndex)
+          .filter((warning) => !isSourceLocatorWarning(warning)).length
+      : otherWarnings.findIndex((warning) =>
+          warning.message.startsWith(OVERSIZED_PROSE_WARNING_PREFIX),
+        );
+  const boundedInsertionIndex =
+    insertionIndex < 0 ? otherWarnings.length : insertionIndex;
+  return [
+    ...otherWarnings.slice(0, boundedInsertionIndex),
+    ...sourceWarnings,
+    ...otherWarnings.slice(boundedInsertionIndex),
+  ];
+}
 
 /**
  * Which scope the plan is destined for, from `?tier=` (default project).
@@ -64,7 +119,7 @@ export interface GraphWorkflowValidateRouteDeps {
   getSession(
     projectPath: string,
     sessionName: string,
-  ): Promise<{ sessionName: string } | null>;
+  ): Promise<CommittedSourceResolutionSession | null>;
   /**
    * Reads `CommandCenter.json` so command selections can be preflighted
    * against the project's validation registry and global capacity so this
@@ -79,12 +134,14 @@ export interface GraphWorkflowValidateRouteDeps {
    */
   readConfig(): Promise<GlobalConfig>;
   assignmentReferences?: AssignmentReferenceChecker;
+  log?: Logger;
 }
 
 export function createGraphWorkflowValidateHandlers(
   deps: GraphWorkflowValidateRouteDeps,
 ) {
   const assignmentReferences = deps.assignmentReferences;
+  const routeLog = deps.log ?? log;
   async function post(
     request: Request,
     { params }: { params: Promise<Record<string, string>> },
@@ -140,11 +197,12 @@ export function createGraphWorkflowValidateHandlers(
       assignmentReferences,
     });
     if (!validation.ok) {
-      log.info("graph-workflow-validate.invalid", {
+      routeLog.info("graph-workflow-validate.invalid", {
         projectName,
         sessionName,
         code: validation.code ?? "invalid_plan",
         issueCount: validation.issues.length,
+        sourceResolutionKind: "root-independent",
       });
       return NextResponse.json(
         {
@@ -160,17 +218,25 @@ export function createGraphWorkflowValidateHandlers(
       );
     }
 
-    log.info("graph-workflow-validate.ok", {
+    const committedSourceWarnings = await lintCommittedSourceLocators(
+      validation.launch.definition,
+      resolved.value.session,
+    );
+    const warnings = mergeCommittedSourceWarnings(
+      validation.warnings,
+      committedSourceWarnings,
+    );
+
+    routeLog.info("graph-workflow-validate.ok", {
       projectName,
       sessionName,
-      warningCount: validation.warnings.length,
+      sourceResolutionKind: "session-commit",
+      warningCount: warnings.length,
     });
     // Warnings never change the verdict — the plan is valid — but the author
     // gets to see them before creating it (R3.2 enum coverage).
     return NextResponse.json(
-      validation.warnings.length === 0
-        ? { ok: true }
-        : { ok: true, warnings: validation.warnings },
+      warnings.length === 0 ? { ok: true } : { ok: true, warnings },
     );
   }
 

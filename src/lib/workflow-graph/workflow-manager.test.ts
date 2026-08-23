@@ -55,8 +55,10 @@ import {
   WorkflowPrerequisitesUnmetError,
   WorkflowStartGuardError,
   WorkflowStartInputError,
+  type GraphWorkflowManagerDeps,
   type ScheduleEligibleContextsResult,
 } from "./workflow-manager";
+import { lintCommittedSourceLocators } from "@/lib/workflows/committed-source-locator-lint";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { AgentFailureClassification } from "@/lib/agent-backends/errors";
 import type { TemplateTier } from "./template-library-service";
@@ -1068,6 +1070,7 @@ describe("graph workflow manager", () => {
        * they are two reads of live config that can disagree.
        */
       repositoryGlobalConfig: GlobalConfig = {} as GlobalConfig,
+      sourceLocatorLint?: GraphWorkflowManagerDeps["lintCommittedSourceLocators"],
     ) {
       const eventPublisher = createGraphWorkflowExecutionEventPublisher({
         broadcast: () => {},
@@ -1114,6 +1117,9 @@ describe("graph workflow manager", () => {
             return { status: "ok" };
           },
         },
+        ...(sourceLocatorLint !== undefined
+          ? { lintCommittedSourceLocators: sourceLocatorLint }
+          : {}),
       });
     }
 
@@ -1190,6 +1196,176 @@ describe("graph workflow manager", () => {
         kind: "one_off",
         planName: plan.name,
       });
+    });
+
+    it("rechecks a saved source against the launching session even when the authoring session contained it", async () => {
+      const launchProbe = {
+        getHeadCommit: vi.fn(async () => "launch-sha"),
+        commitContainsPath: vi.fn(async () => false),
+      };
+      const sourceLocatorLint = vi.fn<
+        NonNullable<GraphWorkflowManagerDeps["lintCommittedSourceLocators"]>
+      >((definition, session) =>
+        lintCommittedSourceLocators(definition, session, launchProbe),
+      );
+      const loadCalls: string[] = [];
+      const manager = buildParityManager(
+        loadCalls,
+        [],
+        {} as GlobalConfig,
+        sourceLocatorLint,
+      );
+      const base = createWorkflowDefinition();
+      const plan = {
+        ...authoredPlan(),
+        definition: createWorkflowDefinition({
+          approvalRequired: true,
+          charter: {
+            ...base.charter,
+            sourcesOfTruth: [
+              {
+                rank: 1,
+                id: "authored-design",
+                label: "Authored design",
+                type: "document",
+                locator: "docs/authored-design.md",
+                description: "Present where the template was authored",
+              },
+            ],
+          },
+        }),
+      };
+      const authoringWarnings = await lintCommittedSourceLocators(
+        plan.definition,
+        {
+          sessionName: "session-author",
+          branchName: "csm/session-author",
+          worktreePath: "/repo/.worktrees/session-author",
+        },
+        {
+          getHeadCommit: async () => "author-sha",
+          commitContainsPath: async () => true,
+        },
+      );
+      expect(authoringWarnings).toEqual([]);
+      const record = await definitionStorage().create(
+        scopeForTier("project", PROJECT_PATH),
+        plan,
+      );
+
+      const outcome = await manager.start({
+        projectPath: PROJECT_PATH,
+        sessionName: TEMPLATE_SESSION,
+        definitionId: record.id,
+      });
+
+      expect(outcome.awaitingDefinitionApproval).toBe(true);
+      expect(sourceLocatorLint).toHaveBeenCalledTimes(1);
+      const launchSession = sourceLocatorLint.mock.calls[0]?.[1];
+      expect(launchSession).toMatchObject({
+        sessionName: TEMPLATE_SESSION,
+        branchName: `csm/${TEMPLATE_SESSION}`,
+      });
+      expect(outcome.warnings).toEqual([
+        {
+          path: "definition.charter.sourcesOfTruth.0.locator",
+          message: expect.stringContaining(
+            `session "${TEMPLATE_SESSION}" on branch "csm/${TEMPLATE_SESSION}" at commit launch-sha`,
+          ),
+        },
+      ]);
+      expect(outcome.execution.status).toBe("pending");
+    });
+
+    it("checks parameterized inline locators only after binding the seeded working definition", async () => {
+      const probedPaths: string[] = [];
+      const launchProbe = {
+        getHeadCommit: vi.fn(async () => "inline-sha"),
+        commitContainsPath: vi.fn(
+          async (_worktreePath: string, _sha: string, locator: string) => {
+            probedPaths.push(locator);
+            return false;
+          },
+        ),
+      };
+      const sourceLocatorLint = vi.fn<
+        NonNullable<GraphWorkflowManagerDeps["lintCommittedSourceLocators"]>
+      >((definition, session) =>
+        lintCommittedSourceLocators(definition, session, launchProbe),
+      );
+      const manager = buildParityManager(
+        [],
+        [],
+        {} as GlobalConfig,
+        sourceLocatorLint,
+      );
+      const base = createWorkflowDefinition();
+      const plan = {
+        ...authoredPlan(),
+        definition: createWorkflowDefinition({
+          parameters: [
+            {
+              type: "string",
+              name: "source-name",
+              label: "Source name",
+              required: true,
+            },
+          ],
+          charter: {
+            ...base.charter,
+            sourcesOfTruth: [
+              {
+                rank: 1,
+                id: "bound-source",
+                label: "Bound source",
+                type: "document",
+                locator: "docs/{{inputs.source-name}}.md",
+                description: "Bound only at launch",
+              },
+              {
+                rank: 2,
+                id: "static-source",
+                label: "Static source",
+                type: "document",
+                locator: "docs/static.md",
+                description: "A second warning pins deterministic order",
+              },
+            ],
+          },
+        }),
+      };
+
+      const outcome = await manager.run({
+        projectPath: PROJECT_PATH,
+        sessionName: INLINE_SESSION,
+        plan,
+        inputs: { "source-name": "bound" },
+      });
+
+      expect(outcome.awaitingDefinitionApproval).toBe(false);
+      expect(launchProbe.getHeadCommit).toHaveBeenCalledTimes(1);
+      expect(probedPaths).toEqual(["docs/bound.md", "docs/static.md"]);
+      expect(outcome.warnings?.map((warning) => warning.path)).toEqual([
+        "definition.charter.sourcesOfTruth.0.locator",
+        "definition.charter.sourcesOfTruth.1.locator",
+      ]);
+      for (const warning of outcome.warnings ?? []) {
+        expect(warning.message).toContain(`session "${INLINE_SESSION}"`);
+        expect(warning.message).toContain(`branch "csm/${INLINE_SESSION}"`);
+        expect(warning.message).toContain("commit inline-sha");
+      }
+      expect(outcome.execution.status).toBe("running");
+      expect(
+        JSON.stringify({
+          workingDefinition: outcome.execution.workingDefinition,
+          charter: outcome.execution.charter,
+        }),
+      ).not.toContain("source-locator-unresolvable");
+      expect(
+        outcome.execution.charter.sourcesOfTruth.map(
+          (source) => source.locator,
+        ),
+      ).toEqual(["docs/bound.md", "docs/static.md"]);
     });
 
     it("admits both origins over a dirty worktree when the resolved run is wholly live-session read-only, and durably pins each (R8.2)", async () => {

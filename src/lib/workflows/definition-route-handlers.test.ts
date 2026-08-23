@@ -17,6 +17,7 @@ import {
   createWorkflowDefinition,
   createWorkflowDefinitionRecord,
   createWorkflowLayout,
+  createRootIndependentWarningDefinition,
 } from "@/lib/workflow-graph/test-fixtures";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 
@@ -469,6 +470,78 @@ describe("workflow definition route handlers", () => {
       ]),
     );
     expect(updateDefinition).not.toHaveBeenCalled();
+  });
+
+  it("keeps create, replace, and edit root-independent while preserving every context-independent warning", async () => {
+    resolveProjectPath.mockResolvedValue("/canonical-checkout-without-sources");
+    const definition = createRootIndependentWarningDefinition();
+    const record = createWorkflowDefinitionRecord({
+      revision: 3,
+      definition,
+    });
+    getDefinition.mockResolvedValue(record);
+    createDefinition.mockResolvedValue(record);
+    updateDefinition.mockResolvedValue({ ...record, revision: 4 });
+    const plan = {
+      name: record.name,
+      description: record.description,
+      definition,
+      layout: record.layout,
+    };
+
+    const responses = [
+      await handlers.CREATE(
+        makeRequest("/api/projects/repo/workflows", "POST", plan),
+        makeContext({ name: "repo" }),
+      ),
+      await handlers.UPDATE(
+        makeRequest("/api/projects/repo/workflows/workflow-1", "PUT", plan),
+        makeContext({ name: "repo", workflowId: "workflow-1" }),
+      ),
+      await handlers.EDIT(
+        makeRequest("/api/projects/repo/workflows/workflow-1/edit", "PATCH", {
+          baseRevision: 3,
+          operations: [
+            { type: "update-workflow", name: "Edited warning plan" },
+          ],
+        }),
+        makeContext({ name: "repo", workflowId: "workflow-1" }),
+      ),
+    ];
+
+    for (const response of responses) {
+      expect(response.status).toBeLessThan(300);
+      const body = (await response.json()) as {
+        warnings?: { path: string; message: string }[];
+      };
+      const warnings = body.warnings ?? [];
+      const sourcePaths = warnings
+        .filter((warning) =>
+          warning.message.startsWith("lint/source-locator-unresolvable"),
+        )
+        .map((warning) => warning.path);
+      expect(sourcePaths).toEqual([
+        "definition.charter.sourcesOfTruth.1.locator",
+        "definition.charter.sourcesOfTruth.2.locator",
+        "definition.charter.sourcesOfTruth.3.locator",
+      ]);
+      expect(warnings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            message: expect.stringContaining("lint/criteria-density"),
+          }),
+          expect.objectContaining({
+            message: expect.stringContaining("lint/open-quantifier"),
+          }),
+          expect.objectContaining({
+            message: expect.stringContaining("lint/oversized-prose"),
+          }),
+          expect.objectContaining({
+            message: expect.stringContaining("no outgoing edge covers"),
+          }),
+        ]),
+      );
+    }
   });
 
   it("accepts a POST with workflowConfig: {} and minimal contexts", async () => {

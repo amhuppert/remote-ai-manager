@@ -1,6 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
@@ -13,8 +15,15 @@ import type { AgentAuth } from "@/lib/agent-gateway/token";
 import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
 import { createAgentProfileLibraryService } from "@/lib/agent-profiles/library-service";
 import { createAgentProfileStorage } from "@/lib/agent-profiles/storage";
+import { buildChildEnv } from "@/lib/shared/child-env";
+import {
+  createCapturingLogger,
+  type CapturingLogger,
+} from "@/lib/shared/testing/capturing-logger";
 import { createAssignmentReferenceChecker } from "./assignment-references";
 import { createGraphWorkflowValidateHandlers } from "./validate-route-handlers";
+
+const execFileAsync = promisify(execFile);
 
 function makeRequest(
   body?: unknown,
@@ -47,6 +56,44 @@ function makePlan(definition = createWorkflowDefinition()) {
   };
 }
 
+function makePlanWithSource(sourceId: string, locator: string) {
+  const definition = createWorkflowDefinition();
+  const source = definition.charter.sourcesOfTruth[0]!;
+  return makePlan({
+    ...definition,
+    charter: {
+      ...definition.charter,
+      sourcesOfTruth: [{ ...source, id: sourceId, locator }],
+    },
+  });
+}
+
+async function createCommittedRepo(
+  prefix: string,
+  files: Readonly<Record<string, string>>,
+): Promise<{ path: string; sha: string }> {
+  const repoPath = await mkdtemp(path.join(tmpdir(), prefix));
+  const git = async (args: string[]): Promise<string> => {
+    const { stdout } = await execFileAsync("git", args, {
+      cwd: repoPath,
+      env: buildChildEnv(),
+    });
+    return stdout;
+  };
+  await git(["init", "-b", "main"]);
+  await git(["config", "user.email", "test@example.com"]);
+  await git(["config", "user.name", "Test"]);
+  for (const [relativePath, contents] of Object.entries(files)) {
+    await mkdir(path.dirname(path.join(repoPath, relativePath)), {
+      recursive: true,
+    });
+    await writeFile(path.join(repoPath, relativePath), contents);
+  }
+  await git(["add", "-A"]);
+  await git(["commit", "-m", "source fixtures", "--no-verify"]);
+  return { path: repoPath, sha: (await git(["rev-parse", "HEAD"])).trim() };
+}
+
 /** Auth that accepts only the exact bearer token, mirroring the real gate. */
 function tokenAuth(expected: string): AgentAuth {
   return {
@@ -68,28 +115,37 @@ function tokenAuth(expected: string): AgentAuth {
 
 describe("graph-workflow validate route handler", () => {
   const resolveProjectPath = vi.fn<(_name: string) => Promise<string | null>>();
-  const getSession =
-    vi.fn<
-      (
-        _projectPath: string,
-        _sessionName: string,
-      ) => Promise<{ sessionName: string } | null>
-    >();
+  const getSession = vi.fn<
+    (
+      _projectPath: string,
+      _sessionName: string,
+    ) => Promise<{
+      sessionName: string;
+      branchName: string;
+      worktreePath: string;
+    } | null>
+  >();
   const readRepoConfig =
     vi.fn<(_projectPath: string) => Promise<PerRepoConfig | null>>();
   const readConfig = vi.fn<() => Promise<GlobalConfig>>();
 
   let profileDir: string;
   let handlers: ReturnType<typeof createGraphWorkflowValidateHandlers>;
+  let routeLog: CapturingLogger;
 
   beforeEach(async () => {
     vi.resetAllMocks();
     resolveProjectPath.mockResolvedValue("/repo");
-    getSession.mockResolvedValue({ sessionName: "sess" });
+    getSession.mockResolvedValue({
+      sessionName: "sess",
+      branchName: "csm/sess",
+      worktreePath: "/session-worktree",
+    });
     readRepoConfig.mockResolvedValue(null);
     readConfig.mockResolvedValue({
       validation: { concurrencyLimit: 8, defaultTimeoutMs: 600_000 },
     } as GlobalConfig);
+    routeLog = createCapturingLogger();
 
     profileDir = await mkdtemp(path.join(tmpdir(), "cc-validate-profiles-"));
     handlers = createGraphWorkflowValidateHandlers({
@@ -98,6 +154,7 @@ describe("graph-workflow validate route handler", () => {
       getSession,
       readRepoConfig,
       readConfig,
+      log: routeLog,
       assignmentReferences: createAssignmentReferenceChecker({
         library: createAgentProfileLibraryService({
           storage: createAgentProfileStorage({
@@ -310,15 +367,181 @@ describe("graph-workflow validate route handler", () => {
           path: "definition.executionContexts.0.acceptanceCriteria.0.statement",
           message: expect.stringContaining("lint/open-quantifier"),
         },
-        {
-          // The stub project path has no worktree behind it, so every charter
-          // locator is unresolvable — the incident this lint pins.
-          path: "definition.charter.sourcesOfTruth.0.locator",
-          message: expect.stringContaining("lint/source-locator-unresolvable"),
-        },
       ]),
     });
     expect(body).not.toHaveProperty("issues");
+  });
+
+  it("does not report a source missing from the canonical checkout when the verified session HEAD contains it", async () => {
+    const projectRepo = await createCommittedRepo("cc-project-source-", {
+      "README.md": "# canonical checkout\n",
+    });
+    const sessionRepo = await createCommittedRepo("cc-session-source-", {
+      "docs/session-design.md": "# session design\n",
+    });
+    resolveProjectPath.mockResolvedValue(projectRepo.path);
+    getSession.mockResolvedValue({
+      sessionName: "sess",
+      branchName: "csm/session-design",
+      worktreePath: sessionRepo.path,
+    });
+
+    try {
+      const response = await handlers.POST(
+        makeRequest(
+          makePlanWithSource("session-design", "docs/session-design.md"),
+        ),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        warnings?: { message: string }[];
+      };
+      expect(
+        (body.warnings ?? []).filter((warning) =>
+          warning.message.startsWith("lint/source-locator-unresolvable"),
+        ),
+      ).toEqual([]);
+    } finally {
+      await Promise.all([
+        rm(projectRepo.path, { recursive: true, force: true }),
+        rm(sessionRepo.path, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
+  it.each([
+    { scope: "project", query: "" },
+    { scope: "global", query: "?tier=global" },
+  ])(
+    "reports a source absent from the verified session HEAD for $scope validation even when the canonical checkout contains it",
+    async ({ query }) => {
+      const projectRepo = await createCommittedRepo("cc-project-source-", {
+        "docs/canonical-only.md": "# canonical-only design\n",
+      });
+      const sessionRepo = await createCommittedRepo("cc-session-source-", {
+        "README.md": "# session checkout\n",
+      });
+      const sessionBranch = "csm/missing-session-source";
+      resolveProjectPath.mockResolvedValue(projectRepo.path);
+      getSession.mockResolvedValue({
+        sessionName: "sess",
+        branchName: sessionBranch,
+        worktreePath: sessionRepo.path,
+      });
+
+      try {
+        const response = await handlers.POST(
+          makeRequest(
+            makePlanWithSource("canonical-only", "docs/canonical-only.md"),
+            "good-token",
+            query,
+          ),
+          makeContext(),
+        );
+
+        expect(response.status).toBe(200);
+        const body = (await response.json()) as {
+          warnings?: { path: string; message: string }[];
+        };
+        expect(body.warnings).toContainEqual({
+          path: "definition.charter.sourcesOfTruth.0.locator",
+          message: expect.stringMatching(
+            new RegExp(
+              `^lint/source-locator-unresolvable: .*branch "${sessionBranch}" at commit ${sessionRepo.sha}`,
+            ),
+          ),
+        });
+        const successLog = routeLog.entries
+          .filter((entry) => entry.message === "graph-workflow-validate.ok")
+          .at(-1);
+        expect(successLog?.fields).toMatchObject({
+          sourceResolutionKind: "session-commit",
+          warningCount: body.warnings?.length,
+        });
+        expect(routeLog.allFieldValues()).not.toContain(
+          "# canonical-only design\n",
+        );
+        expect(routeLog.allFieldValues()).not.toContain("good-token");
+      } finally {
+        await Promise.all([
+          rm(projectRepo.path, { recursive: true, force: true }),
+          rm(sessionRepo.path, { recursive: true, force: true }),
+        ]);
+      }
+    },
+  );
+
+  it("merges lexical and committed source warnings in charter definition order before oversized prose", async () => {
+    const projectRepo = await createCommittedRepo("cc-project-source-", {
+      "docs/first.md": "# canonical first\n",
+      "docs/last.md": "# canonical last\n",
+    });
+    const sessionRepo = await createCommittedRepo("cc-session-source-", {
+      "README.md": "# session checkout\n",
+    });
+    resolveProjectPath.mockResolvedValue(projectRepo.path);
+    getSession.mockResolvedValue({
+      sessionName: "sess",
+      branchName: "csm/source-order",
+      worktreePath: sessionRepo.path,
+    });
+    const definition = createWorkflowDefinition();
+    const firstSource = definition.charter.sourcesOfTruth[0]!;
+    const secondSource = definition.charter.sourcesOfTruth[1]!;
+    const plan = makePlan({
+      ...definition,
+      charter: {
+        ...definition.charter,
+        sourcesOfTruth: [
+          { ...firstSource, rank: 1, id: "first", locator: "docs/first.md" },
+          {
+            ...secondSource,
+            rank: 2,
+            id: "invalid-shape",
+            locator: "https://example.test/design",
+          },
+          { ...firstSource, rank: 3, id: "last", locator: "docs/last.md" },
+        ],
+      },
+      tasks: definition.tasks.map((task, index) =>
+        index === 0 ? { ...task, instructions: "i".repeat(8001) } : task,
+      ),
+    });
+
+    try {
+      const response = await handlers.POST(makeRequest(plan), makeContext());
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        warnings: { path: string; message: string }[];
+      };
+      const sourceWarningPaths = body.warnings
+        .filter((warning) =>
+          warning.message.startsWith("lint/source-locator-unresolvable"),
+        )
+        .map((warning) => warning.path);
+      expect(sourceWarningPaths).toEqual([
+        "definition.charter.sourcesOfTruth.0.locator",
+        "definition.charter.sourcesOfTruth.1.locator",
+        "definition.charter.sourcesOfTruth.2.locator",
+      ]);
+      expect(
+        body.warnings.findIndex((warning) =>
+          warning.message.startsWith("lint/source-locator-unresolvable"),
+        ),
+      ).toBeLessThan(
+        body.warnings.findIndex((warning) =>
+          warning.message.startsWith("lint/oversized-prose"),
+        ),
+      );
+    } finally {
+      await Promise.all([
+        rm(projectRepo.path, { recursive: true, force: true }),
+        rm(sessionRepo.path, { recursive: true, force: true }),
+      ]);
+    }
   });
 
   it("skips the locator lint for a global-scope template", async () => {
@@ -626,7 +849,11 @@ describe("graph-workflow validate persists nothing", () => {
     const handlers = createGraphWorkflowValidateHandlers({
       auth: tokenAuth("good-token"),
       resolveProjectPath: async () => "/repo",
-      getSession: async () => ({ sessionName: "sess" }),
+      getSession: async () => ({
+        sessionName: "sess",
+        branchName: "csm/sess",
+        worktreePath: "/session-worktree",
+      }),
       readRepoConfig: async () => null,
       readConfig: async () =>
         ({

@@ -126,9 +126,9 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
   {
     path: ["workflow", "create"],
     dynamicContext: true,
-    summary: "save a new definition from a validated plan",
+    summary: "save a new definition for visual review before launch",
     description:
-      "Save a new definition from a validated plan.json. Prints the new workflow id and hints how to start it. The user reviews and edits it in the visual builder before starting. Any `warning: <path>: <message>` lines the same checks `validate` runs would have printed appear above that, so skipping validate never hides them; they never change the exit code. Refused only in one case: this exact revision carries a changes-requested review nobody acknowledged — read the findings, then either revise the plan (which changes its hash and clears the gate on its own) or re-run with --acknowledge-review <hash>.",
+      "Save a new definition from a validated plan.json. Prints the new workflow id and one advisory hint: review it in the visual builder, then start it with 'cctl workflow start <id>'. Any `warning: <path>: <message>` lines the same checks `validate` runs would have printed appear above that, so skipping validate never hides them; they never change the exit code. Refused only in one case: this exact revision carries a changes-requested review nobody acknowledged — read the findings, then either revise the plan (which changes its hash and clears the gate on its own) or re-run with --acknowledge-review <hash>.",
     usage: [
       "cctl workflow create --file .cc/temp/plan.json [--acknowledge-review <hash>] [--json]",
     ],
@@ -151,7 +151,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
       {
         invocation: "cctl workflow create --file .cc/temp/plan.json",
         explanation:
-          "returns the workflow id; start it with 'cctl workflow start <id>' after the user reviews it",
+          "returns the workflow id; review it in the visual builder, then start it with 'cctl workflow start <id>'",
       },
       {
         invocation:
@@ -540,7 +540,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "launch an execution from a saved definition",
     description:
-      "Launch an execution from a saved definition id. --file supplies a JSON OBJECT of launch parameter values (the {{inputs.<name>}} a template declares); a missing/invalid/non-object file exits 2. A guard rejection (a run already active, uncommitted worktree changes, unmet prerequisites) exits 1 with the reason. On success it hints to track progress with `cctl workflow status`.",
+      "Launch an execution from a saved definition id. --file supplies a JSON OBJECT of launch parameter values (the {{inputs.<name>}} a template declares); a missing/invalid/non-object file exits 2. A guard rejection (a run already active, uncommitted worktree changes, unmet prerequisites) exits 1 with the reason. An accepted launch may carry advisory `warning: <path>: <message>` lines before its success receipt; JSON exposes the same `warnings` array, and warnings do not change exit 0. On success it hints to track progress with `cctl workflow status`.",
     usage: ["cctl workflow start <id> [--file .cc/temp/inputs.json] [--json]"],
     flags: [
       {
@@ -578,7 +578,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "launch a one-off execution directly from a plan file",
     description:
-      "Launch the supplied workflow plan in this session without saving a project, global, synthetic, or hidden template. --file is the plan document; --inputs is a distinct optional JSON object of declared parameter values. Detached by default. --wait opts into a bounded observation wait, and --timeout is valid only with --wait. The receipt carries execution id, status, one_off origin, verified origin conversation, and a deep link — never a definition id. Session conversations only.",
+      "Launch the supplied workflow plan in this session without saving a project, global, synthetic, or hidden template. --file is the plan document; --inputs is a distinct optional JSON object of declared parameter values. Detached by default. --wait opts into a bounded observation wait, and --timeout is valid only with --wait. The receipt carries execution id, status, one_off origin, verified origin conversation, and a deep link — never a definition id. Advisory `warning: <path>: <message>` lines precede the text receipt; JSON exposes the same `warnings` array, and warnings do not change exit 0. Session conversations only.",
     usage: [
       "cctl workflow run --file .cc/temp/plan.json [--inputs .cc/temp/inputs.json] [--wait [--timeout <dur>]] [--json]",
     ],

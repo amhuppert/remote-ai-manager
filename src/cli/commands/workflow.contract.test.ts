@@ -274,7 +274,11 @@ function routeHost(
       },
     },
     resolveProjectPath: async () => PROJECT_PATH,
-    getSession: async () => ({ sessionName: "sess" }),
+    getSession: async () => ({
+      sessionName: "sess",
+      branchName: "csm/sess",
+      worktreePath: "/not-a-repository",
+    }),
     readRepoConfig: async () => null,
     readConfig: async () => VALIDATION_GLOBAL_CONFIG,
     ...(assignmentReferences ? { assignmentReferences } : {}),
@@ -681,6 +685,57 @@ describe("cctl workflow against the real workflow route handlers", () => {
     ).toBe(true);
   });
 
+  it("renders real start-route warnings before text success and in JSON without changing exit 0", async () => {
+    const execution = createWorkflowExecution({
+      id: "execution-warned-start",
+      status: "running",
+    });
+    const warnings = [
+      {
+        path: "definition.tasks.0.instructions",
+        message:
+          'lint/source-locator-unresolvable: source "docs/start.md" could not be resolved',
+      },
+    ];
+
+    for (const json of [false, true]) {
+      const result = await runCli(
+        ["workflow", "start", "wf-1", ...(json ? ["--json"] : [])],
+        env,
+        routeHost(
+          execution,
+          {},
+          {
+            executionDeps: {
+              startExecution: async () => ({
+                execution,
+                awaitingDefinitionApproval: false,
+                warnings,
+              }),
+            },
+          },
+        ),
+      );
+
+      expect(result.exitCode, json ? "JSON" : "text").toBe(0);
+      expect(result.stderr, json ? "JSON" : "text").toBe("");
+      if (json) {
+        expect(JSON.parse(result.stdout)).toMatchObject({
+          ok: true,
+          warnings,
+        });
+      } else {
+        const warningIndex = result.stdout.indexOf(
+          `warning: ${warnings[0]?.path}`,
+        );
+        expect(warningIndex).toBeGreaterThanOrEqual(0);
+        expect(warningIndex).toBeLessThan(
+          result.stdout.indexOf("started wf-1 (run execution-warned-start)"),
+        );
+      }
+    }
+  });
+
   it("forwards a lane capability so the real start route refuses nesting", async () => {
     const result = await runCli(
       ["workflow", "start", "wf-1", "--json"],
@@ -745,6 +800,69 @@ describe("cctl workflow against the real workflow route handlers", () => {
     });
     expect(envelope.deepLink).toContain("execution=execution-one-off");
     expect(result.stdout).not.toContain("definitionId");
+  });
+
+  it("renders real run-route warnings before text receipt and in JSON without changing exit 0", async () => {
+    const planPath = "/tmp/warned-one-off-plan.json";
+    const base = createWorkflowExecution({
+      id: "execution-warned-run",
+      status: "running",
+    });
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      origin: { kind: "one_off", planName: "Warned audit" },
+      ownerConversationId: CLI_CONVERSATION_ID,
+    };
+    const plan = {
+      name: "Warned audit",
+      description: "Inspect launch warnings",
+      definition: createWorkflowDefinition(),
+      layout: createWorkflowLayout(),
+    };
+    const warnings = [
+      {
+        path: "definition.charter.sourcesOfTruth.0.locator",
+        message:
+          'lint/source-locator-unresolvable: source "docs/run.md" could not be resolved',
+      },
+    ];
+
+    for (const json of [false, true]) {
+      const result = await runCli(
+        ["workflow", "run", "--file", planPath, ...(json ? ["--json"] : [])],
+        env,
+        routeHost(
+          execution,
+          { [planPath]: JSON.stringify(plan) },
+          {
+            executionDeps: {
+              runExecution: async () => ({
+                execution,
+                awaitingDefinitionApproval: false,
+                warnings,
+              }),
+            },
+          },
+        ),
+      );
+
+      expect(result.exitCode, json ? "JSON" : "text").toBe(0);
+      expect(result.stderr, json ? "JSON" : "text").toBe("");
+      if (json) {
+        expect(JSON.parse(result.stdout)).toMatchObject({
+          ok: true,
+          warnings,
+        });
+      } else {
+        const warningIndex = result.stdout.indexOf(
+          `warning: ${warnings[0]?.path}`,
+        );
+        expect(warningIndex).toBeGreaterThanOrEqual(0);
+        expect(warningIndex).toBeLessThan(
+          result.stdout.indexOf("launched execution-warned-run  running"),
+        );
+      }
+    }
   });
 
   it("forwards a lane capability so the real run route returns the shared blocker-free nesting refusal", async () => {
@@ -1159,7 +1277,7 @@ describe("cctl workflow author flow against the real create-path validation", ()
     expect(result.stderr).toContain("definition.edges");
   });
 
-  it("create posts through the real create-path validation and prints the start hint", async () => {
+  it("create posts through the real create-path validation and prints the review-first hint after the advisory", async () => {
     const result = await runCli(
       ["workflow", "create", "--file", PLAN],
       env,
@@ -1167,11 +1285,35 @@ describe("cctl workflow author flow against the real create-path validation", ()
     );
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("wf-new");
-    expect(
-      result.stdout
-        .trimEnd()
-        .endsWith("start it with 'cctl workflow start wf-new'"),
-    ).toBe(true);
+    const advisoryIndex = result.stdout.indexOf("plan review: none recorded");
+    const hintIndex = result.stdout.indexOf(
+      "hint: review it in the visual builder, then start it with 'cctl workflow start wf-new'",
+    );
+    expect(advisoryIndex).toBeGreaterThan(
+      result.stdout.indexOf("created Auth Setup"),
+    );
+    expect(hintIndex).toBeGreaterThan(advisoryIndex);
+    expect(result.stdout.trimEnd().endsWith("workflow start wf-new'")).toBe(
+      true,
+    );
+  });
+
+  it("create preserves review-first guidance as one JSON hint", async () => {
+    const result = await runCli(
+      ["workflow", "create", "--file", PLAN, "--json"],
+      env,
+      routeHost(null, { [PLAN]: validPlan() }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      workflowId: "wf-new",
+      reviewStatus: { state: "unreviewed" },
+      hint: "review it in the visual builder, then start it with 'cctl workflow start wf-new'",
+    });
+    expect(JSON.parse(result.stdout)).not.toHaveProperty("reminders");
+    expect(JSON.parse(result.stdout)).not.toHaveProperty("instruction");
   });
 
   it("create exits 2 when the real create-path validation rejects a cyclic graph", async () => {

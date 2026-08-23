@@ -45,6 +45,33 @@ const routeModules = (
     glob: (pattern: string) => Record<string, RouteModuleImporter>;
   }
 ).glob("/src/app/api/**/route.ts");
+const ROUTE_IMPORT_CONCURRENCY = 8;
+
+async function collectOffenders(
+  modules: Record<string, RouteModuleImporter>,
+): Promise<string[]> {
+  const entries = Object.entries(modules);
+  const offenders: string[] = [];
+
+  for (
+    let index = 0;
+    index < entries.length;
+    index += ROUTE_IMPORT_CONCURRENCY
+  ) {
+    const batch = entries.slice(index, index + ROUTE_IMPORT_CONCURRENCY);
+    const batchOffenders = await Promise.all(
+      batch.map(async ([routePath, importModule]) => {
+        const moduleNamespace = await importModule();
+        return collectUnwrappedHandlers(moduleNamespace).map(
+          (method) => `${routePath} → ${method}`,
+        );
+      }),
+    );
+    offenders.push(...batchOffenders.flat());
+  }
+
+  return offenders;
+}
 
 describe("withTracing wrapper marker", () => {
   it("stamps a detectable marker on wrapped handlers only", () => {
@@ -72,19 +99,11 @@ describe("every API route export is withTracing-wrapped", () => {
   });
 
   // Importing every route module pulls in most of the app's dependency graph,
-  // so the imports run concurrently and the assertion gets a wide timeout — this
-  // is a coverage backstop, not a hot-path test.
+  // so this test bounds concurrency instead of firing 200+ imports at once.
+  // The guard still covers every route, but it avoids the import stampede that
+  // can push the architecture check past its timeout budget.
   it("wraps every HTTP method export under src/app/api", async () => {
-    const offenders = (
-      await Promise.all(
-        Object.entries(routeModules).map(async ([routePath, importModule]) => {
-          const moduleNamespace = await importModule();
-          return collectUnwrappedHandlers(moduleNamespace).map(
-            (method) => `${routePath} → ${method}`,
-          );
-        }),
-      )
-    ).flat();
+    const offenders = await collectOffenders(routeModules);
     expect(offenders).toEqual([]);
-  }, 120_000);
+  }, 300_000);
 });

@@ -36,6 +36,7 @@ import {
   prepareLiveEditAssignmentSnapshots,
   type PrepareAssignmentSnapshotsResult,
 } from "@/lib/workflow-graph/live-edit-preparation";
+import { z } from "zod";
 const timestamp = "2026-03-27T12:00:00.000Z";
 
 /**
@@ -358,6 +359,79 @@ export function createWorkflowDefinition(
       },
     ],
     ...overrides,
+  };
+}
+
+export function createRootIndependentWarningDefinition(): WorkflowSemanticDefinition {
+  const definition = createWorkflowDefinition();
+  const firstSource = definition.charter.sourcesOfTruth[0]!;
+  const warningOutputSchema = {
+    ...z.toJSONSchema(z.object({ verdict: z.enum(["ship", "hold"]) })),
+  };
+  delete warningOutputSchema.$schema;
+  return {
+    ...definition,
+    charter: {
+      ...definition.charter,
+      sourcesOfTruth: [
+        {
+          ...firstSource,
+          rank: 1,
+          id: "safe-relative-missing",
+          locator: "docs/not-present-without-a-session.md",
+        },
+        {
+          ...firstSource,
+          rank: 2,
+          id: "url",
+          locator: "https://example.test/design",
+        },
+        {
+          ...firstSource,
+          rank: 3,
+          id: "absolute",
+          locator: "/etc/hosts",
+        },
+        {
+          ...firstSource,
+          rank: 4,
+          id: "traversal",
+          locator: "../outside.md",
+        },
+      ],
+    },
+    executionContexts: definition.executionContexts.map((context, index) =>
+      index === 0
+        ? {
+            ...context,
+            acceptanceCriteria: [
+              { id: "ac-sweep", statement: "Every call site is migrated" },
+              ...Array.from({ length: 12 }, (_, criterionIndex) => ({
+                id: `ac-fixed-${criterionIndex + 1}`,
+                statement: `Fixed behavior ${criterionIndex + 1} is pinned`,
+              })),
+            ],
+            outputSchema: warningOutputSchema,
+          }
+        : context,
+    ),
+    edges: definition.edges.map((edge) =>
+      edge.sourceContextId === "context-plan"
+        ? {
+            ...edge,
+            when: {
+              schema: {
+                type: "object" as const,
+                properties: { verdict: { const: "ship" } },
+                required: ["verdict"],
+              },
+            },
+          }
+        : edge,
+    ),
+    tasks: definition.tasks.map((task, index) =>
+      index === 0 ? { ...task, instructions: "i".repeat(8001) } : task,
+    ),
   };
 }
 

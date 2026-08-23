@@ -7,6 +7,7 @@ import type { GlobalConfig } from "@/lib/config/schemas";
 import { createWorkflowStorageService } from "./storage";
 import { createTemplateLibraryService } from "./template-library-service";
 import {
+  createRootIndependentWarningDefinition,
   createWorkflowDefinition,
   createWorkflowLayout,
 } from "./test-fixtures";
@@ -267,6 +268,89 @@ describe("template library route handlers — global-tier CRUD", () => {
       makeContext({ workflowId: id }),
     );
     expect(missingResponse.status).toBe(404);
+  });
+
+  it("keeps global create, replace, and edit root-independent while preserving every context-independent warning", async () => {
+    const handlers = realHandlers();
+    const definition = createRootIndependentWarningDefinition();
+    const plan = {
+      name: "Global warning plan",
+      description: "Root-independent global admission",
+      definition,
+      layout: createWorkflowLayout(),
+    };
+
+    const created = await handlers.CREATE(
+      makeRequest("/api/workflow-templates", "POST", plan),
+      makeContext({}),
+    );
+    const createdBody = (await created.json()) as {
+      item: { id: string; revision: number };
+      warnings?: { path: string; message: string }[];
+    };
+    const replaced = await handlers.UPDATE(
+      makeRequest(
+        `/api/workflow-templates/${createdBody.item.id}`,
+        "PUT",
+        plan,
+      ),
+      makeContext({ workflowId: createdBody.item.id }),
+    );
+    const replacedBody = (await replaced.json()) as {
+      item: { revision: number };
+      warnings?: { path: string; message: string }[];
+    };
+    const edited = await handlers.EDIT(
+      makeRequest(
+        `/api/workflow-templates/${createdBody.item.id}/edit`,
+        "PATCH",
+        {
+          baseRevision: replacedBody.item.revision,
+          operations: [
+            { type: "update-workflow", name: "Edited global warning plan" },
+          ],
+        },
+      ),
+      makeContext({ workflowId: createdBody.item.id }),
+    );
+    const editedBody = (await edited.json()) as {
+      warnings?: { path: string; message: string }[];
+    };
+
+    for (const [response, body] of [
+      [created, createdBody],
+      [replaced, replacedBody],
+      [edited, editedBody],
+    ] as const) {
+      expect(response.status).toBeLessThan(300);
+      const warnings = body.warnings ?? [];
+      const sourcePaths = warnings
+        .filter((warning) =>
+          warning.message.startsWith("lint/source-locator-unresolvable"),
+        )
+        .map((warning) => warning.path);
+      expect(sourcePaths).toEqual([
+        "definition.charter.sourcesOfTruth.1.locator",
+        "definition.charter.sourcesOfTruth.2.locator",
+        "definition.charter.sourcesOfTruth.3.locator",
+      ]);
+      expect(warnings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            message: expect.stringContaining("lint/criteria-density"),
+          }),
+          expect.objectContaining({
+            message: expect.stringContaining("lint/open-quantifier"),
+          }),
+          expect.objectContaining({
+            message: expect.stringContaining("lint/oversized-prose"),
+          }),
+          expect.objectContaining({
+            message: expect.stringContaining("no outgoing edge covers"),
+          }),
+        ]),
+      );
+    }
   });
 
   it("rejects a global template with an invalid prerequisite (accept-time validation, 400)", async () => {

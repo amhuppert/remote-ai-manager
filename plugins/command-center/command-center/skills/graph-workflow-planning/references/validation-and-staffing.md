@@ -8,6 +8,16 @@ Graph workflows have three distinct validation configuration blocks. Keep their 
 
 `scriptValidator.commands` is the ordered registered-command selection run after an implementer finishes the context's tasks. It cascades global defaults → workflow → execution context; each provided list replaces the inherited list, and `[]` disables the script gate. The seeded default is `[]`.
 
+Placement mode—not lane member count—controls the context script gate:
+
+| placement mode | context-completion behavior |
+|---|---|
+| `full` | Runs the selected commands after all context tasks and before agent validation, including on a single-member lane or an ordered shared lane. A failure skips agent validation for that iteration. |
+| `owned` | Skips the context script gate and defers repository gating to `laneMergeValidation`. Selected commands must be empty or barrier-covered; uncovered selected commands are refused at preflight. |
+| `readOnly` | Skips repository script gating because the context writes no repository candidate. Usually select no commands and leave repository gates to a downstream write-capable context; any inherited selection must still be covered by the lane barrier. |
+
+The lane barrier is separate from the context-completion gate: it validates the integrated lane tree at a join according to `laneMergeValidation`, while a `full` context's gate validates that context before its agent validator runs.
+
 ```json
 {
   "scriptValidator": {

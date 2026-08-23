@@ -6,7 +6,10 @@ import type { ApiError } from "@/lib/api/errors";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 import { resolveWorkflowDefinition } from "./resolve-config";
-import { admitAuthoredWorkflowLaunch } from "./authored-launch-admission";
+import {
+  admitAuthoredWorkflowLaunch,
+  authoredLaunchWarningFields,
+} from "./authored-launch-admission";
 import {
   type AssignmentReferenceChecker,
   WORKFLOW_ASSIGNMENT_REFERENCE_INVALID_CODE,
@@ -139,7 +142,10 @@ export function createTemplateLibraryRouteHandlers(
 
     try {
       const item = await deps.createGlobal(validation.launch);
-      return NextResponse.json({ item }, { status: 201 });
+      return NextResponse.json(
+        { item, ...authoredLaunchWarningFields(validation.warnings) },
+        { status: 201 },
+      );
     } catch (error) {
       const refusal = assignmentReferenceRefusal(error);
       if (refusal) return refusal;
@@ -188,7 +194,10 @@ export function createTemplateLibraryRouteHandlers(
 
     try {
       const item = await deps.updateGlobal(workflowId, validation.launch);
-      return NextResponse.json({ item });
+      return NextResponse.json({
+        item,
+        ...authoredLaunchWarningFields(validation.warnings),
+      });
     } catch (error) {
       const refusal = assignmentReferenceRefusal(error);
       if (refusal) return refusal;

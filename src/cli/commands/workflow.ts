@@ -237,6 +237,11 @@ const definitionItemSchema = z.object({
 const planWarningSchema = z.object({ path: z.string(), message: z.string() });
 type PlanWarning = z.infer<typeof planWarningSchema>;
 
+const cliGraphWorkflowLaunchReceiptSchema =
+  graphWorkflowLaunchReceiptSchema.extend({
+    warnings: z.array(planWarningSchema).optional(),
+  });
+
 /** `warning: <path>: <message>` per warning, newline-terminated. */
 function planWarningLines(warnings: readonly PlanWarning[]): string {
   return warnings
@@ -392,7 +397,12 @@ const startResponseSchema = z.object({
   execution: z.object({ executionId: z.string(), status: z.string() }),
   // The launch receipt (D7 R1.2). Optional so a response from an older server
   // still parses; the disposition then falls back to "started".
-  receipt: z.object({ status: z.string() }).optional(),
+  receipt: z
+    .object({
+      status: z.string(),
+      warnings: z.array(planWarningSchema).optional(),
+    })
+    .optional(),
 });
 
 const contextStateSchema = z.object({
@@ -743,7 +753,9 @@ async function runWorkflowCreate(
         ...(reviewStatus === undefined ? {} : { reviewStatus }),
         ...(item ? { workflowId: item.id } : {}),
         ...(item
-          ? { hint: `start it with 'cctl workflow start ${item.id}'` }
+          ? {
+              hint: `review it in the visual builder, then start it with 'cctl workflow start ${item.id}'`,
+            }
           : {}),
       },
     ),
@@ -2027,6 +2039,7 @@ async function runWorkflowStart(
 
   const parsed = startResponseSchema.safeParse(result.body);
   const executionId = parsed.success ? parsed.data.execution.executionId : null;
+  const warnings = parsed.success ? (parsed.data.receipt?.warnings ?? []) : [];
 
   // A park is an ACCEPTED launch carrying a receipt (D7 decision D1): the run
   // is durable and holds the session's lease, it simply has not begun. Read from
@@ -2041,11 +2054,12 @@ async function runWorkflowStart(
       exitCode: EXIT_OK,
       stdout: render(
         json,
-        `parked ${id} (run ${executionId}) awaiting definition approval\ninstruction: ${instruction}\n`,
+        `${planWarningLines(warnings)}parked ${id} (run ${executionId}) awaiting definition approval\ninstruction: ${instruction}\n`,
         {
           ok: true,
           executionId,
           status: "awaiting_definition_approval",
+          ...(warnings.length > 0 ? { warnings } : {}),
           instruction,
         },
       ),
@@ -2058,9 +2072,10 @@ async function runWorkflowStart(
 
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, humanLine, {
+    stdout: render(json, `${planWarningLines(warnings)}${humanLine}`, {
       ok: true,
       ...(executionId ? { executionId } : {}),
+      ...(warnings.length > 0 ? { warnings } : {}),
       hint: WORKFLOW_START_HINT,
     }),
     stderr: "",
@@ -2147,7 +2162,7 @@ async function runWorkflowRun(
   if (result.kind !== "ok") return workflowLaunchFailure(result, json);
 
   const response = z
-    .object({ receipt: graphWorkflowLaunchReceiptSchema })
+    .object({ receipt: cliGraphWorkflowLaunchReceiptSchema })
     .safeParse(result.body);
   if (!response.success) {
     return failure({
@@ -2186,13 +2201,13 @@ async function runWorkflowRun(
 function formatWorkflowLaunchReceipt(
   receipt: GraphWorkflowLaunchReceipt,
 ): string {
-  return [
+  return `${planWarningLines(receipt.warnings ?? [])}${[
     `launched ${receipt.executionId}  ${receipt.status}`,
     `  origin: ${formatWorkflowOrigin(receipt.origin)}`,
     `  origin conversation: ${receipt.originConversationId ?? "-"}`,
     `  deep link: ${receipt.deepLink}`,
     "",
-  ].join("\n");
+  ].join("\n")}`;
 }
 
 function formatWorkflowBoundaryResult(result: WorkflowBoundaryResult): string {

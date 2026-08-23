@@ -65,6 +65,12 @@ export interface AuthoredWorkflowLaunchAdmissionDeps {
   accountabilityGroups?: readonly AuthoredAccountabilityCoverageGroup[];
 }
 
+export function authoredLaunchWarningFields(
+  warnings: readonly WorkflowPlanIssue[],
+): { warnings?: WorkflowPlanIssue[] } {
+  return warnings.length === 0 ? {} : { warnings: [...warnings] };
+}
+
 function rejected(
   caller: AuthoredWorkflowLaunchAdmissionCaller,
   documentScope: AssignmentDocumentScope,
@@ -76,6 +82,7 @@ function rejected(
   logger.warn("workflow-graph.authored-launch-admission.rejected", {
     caller,
     documentScope: documentScope.kind,
+    sourceResolutionKind: "root-independent",
     issueCount: issues.length,
     warningCount,
     ...(code === undefined ? {} : { code }),
@@ -116,13 +123,6 @@ export async function admitAuthoredWorkflowLaunch(
         );
   const parsed = validateWorkflowPlan(rawLaunch, {
     validationCommandPreflight,
-    // The document scope already carries the only project root this layer
-    // could honestly claim. A global-scope template has none — it is not
-    // destined for any one worktree — so its charter locators go unchecked
-    // rather than being judged against an arbitrary project.
-    ...(deps.documentScope.kind === "project"
-      ? { projectRoot: deps.documentScope.projectPath }
-      : {}),
   });
   if (!parsed.ok) {
     return rejected(
@@ -168,6 +168,7 @@ export async function admitAuthoredWorkflowLaunch(
   logger.info("workflow-graph.authored-launch-admission.accepted", {
     caller: deps.caller,
     documentScope: deps.documentScope.kind,
+    sourceResolutionKind: "root-independent",
     issueCount: 0,
     warningCount: parsed.warnings.length,
     stableAccountabilityContextCount: stableAccountabilityContextIds.length,

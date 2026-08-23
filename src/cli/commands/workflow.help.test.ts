@@ -110,6 +110,43 @@ describe("one-off execution help contract", () => {
   });
 });
 
+describe("workflow create review-first help contract", () => {
+  const entry = workflowHelpEntries.find(
+    (candidate) => candidate.path.join(" ") === "workflow create",
+  );
+  const reviewFirstGuidance =
+    "review it in the visual builder, then start it with 'cctl workflow start <id>'";
+
+  it("puts visual review before the start command in the description and example", () => {
+    expect(entry?.description).toContain(reviewFirstGuidance);
+    expect(entry?.examples[0]?.explanation).toContain(reviewFirstGuidance);
+  });
+
+  it("ships the same review-first guidance in the hand-authored workflow section", () => {
+    const skill = readFileSync(
+      path.join(
+        REPO_ROOT,
+        "plugins/command-center/command-center/skills/cc-cli/SKILL.md",
+      ),
+      "utf8",
+    );
+    const workflowSection = skill.match(
+      /## cctl workflow\n[\s\S]*?(?=\n## cctl charter)/,
+    )?.[0];
+    const normalizedSection = workflowSection?.replace(/\s+/g, " ");
+
+    expect(normalizedSection).toContain(
+      "hints `review it in the visual builder, then start it with 'cctl workflow start <id>'`",
+    );
+    expect(normalizedSection).toContain(
+      "hint: review it in the visual builder, then start it with 'cctl workflow start wf-1'",
+    );
+    expect(normalizedSection).not.toContain(
+      "hint: start it with 'cctl workflow start wf-1'",
+    );
+  });
+});
+
 /**
  * The acknowledgement flag is the only way past the one refusal review
  * machinery can produce, so a refused author who runs `--help` has to find it

@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import path from "node:path";
 import {
   criterionRecordsOf,
@@ -40,16 +39,6 @@ export interface PlanLintDefinition {
     acceptanceCriteria: AcceptanceCriteria;
   }[];
   tasks: readonly { id: string; instructions: string }[];
-}
-
-export interface PlanLintOptions {
-  /**
-   * Absolute path to the project the plan is destined for, used to resolve
-   * charter source locators. Absent at project-unbound callers (a global
-   * template has no worktree to resolve against), where the locator lint is
-   * skipped entirely rather than guessing a root.
-   */
-  projectRoot?: string;
 }
 
 // Thresholds are named because they are judgment calls, not facts: each one is
@@ -138,10 +127,69 @@ function lintCriteriaDensity(
   return warnings;
 }
 
+interface LiteralRange {
+  start: number;
+  end: number;
+}
+
+const LITERAL_CLOSERS = new Map<string, string>([
+  ['"', '"'],
+  ["'", "'"],
+  ["`", "`"],
+  ["“", "”"],
+  ["‘", "’"],
+]);
+const WORD_CHARACTER_PATTERN = /[\p{L}\p{N}_]/u;
+
+function isWordCharacter(character: string | undefined): boolean {
+  return character !== undefined && WORD_CHARACTER_PATTERN.test(character);
+}
+
+function balancedLiteralRangesIn(statement: string): LiteralRange[] {
+  const ranges: LiteralRange[] = [];
+  let active: { start: number; closer: string } | undefined;
+
+  for (let index = 0; index < statement.length; index += 1) {
+    const character = statement[index];
+    const straightApostropheFollowsWord =
+      character === "'" && isWordCharacter(statement[index - 1]);
+    const isInWordApostrophe =
+      (character === "'" || character === "’") &&
+      isWordCharacter(statement[index - 1]) &&
+      isWordCharacter(statement[index + 1]);
+
+    if (active !== undefined) {
+      if (isInWordApostrophe) continue;
+      if (character === active.closer) {
+        ranges.push({ start: active.start, end: index + 1 });
+        active = undefined;
+      }
+      continue;
+    }
+
+    if (straightApostropheFollowsWord) continue;
+
+    const closer =
+      character === undefined ? undefined : LITERAL_CLOSERS.get(character);
+    if (closer !== undefined) active = { start: index, closer };
+  }
+
+  return ranges;
+}
+
 /** The distinct quantifiers a statement uses, lowercased, in first-seen order. */
 function openQuantifiersIn(statement: string): string[] {
+  const literalRanges = balancedLiteralRangesIn(statement);
   const found = new Set<string>();
   for (const match of statement.matchAll(OPEN_QUANTIFIER_PATTERN)) {
+    const matchIndex = match.index;
+    if (
+      literalRanges.some(
+        (range) => matchIndex >= range.start && matchIndex < range.end,
+      )
+    ) {
+      continue;
+    }
     found.add(match[0].toLowerCase());
   }
   return [...found];
@@ -167,7 +215,7 @@ function lintOpenQuantifiers(
               .map((word) => `"${word}"`)
               .join(
                 ", ",
-              )}; name the inventoried surface it ranges over, or split it into criteria with a fixed scope — an uninventoried sweep is discovered one site per round`,
+              )}; syntactically quote exact UI or output copy; for a real sweep, name the inventoried surface it ranges over or split it into fixed-scope criteria`,
           ),
         });
       },
@@ -177,22 +225,23 @@ function lintOpenQuantifiers(
 }
 
 /**
- * Whether a locator names something an agent in a lane worktree can open.
+ * Whether a locator has the worktree-relative shape an agent can resolve.
  *
  * Worktree-relative is the only resolvable form (planning skill: external
  * material is materialized into the worktree before it may be cited), so a URL
  * scheme and an absolute path are unresolvable BY SHAPE — an absolute path that
  * happens to exist on this machine does not exist in a lane worktree, and
  * checking it would bless a locator that is absent everywhere it is read. A
- * relative locator that escapes the root is the same case spelled differently.
+ * relative locator that lexically escapes the worktree is the same case spelled
+ * differently. Availability belongs to a server-pinned committed tree probe.
  */
-function locatorResolves(locator: string, projectRoot: string): boolean {
+export function isLexicallyResolvableSourceLocator(locator: string): boolean {
   if (URL_SCHEME_PATTERN.test(locator)) return false;
-  if (path.isAbsolute(locator)) return false;
-  const resolved = path.resolve(projectRoot, locator);
-  const root = path.resolve(projectRoot);
-  if (resolved !== root && !resolved.startsWith(root + path.sep)) return false;
-  return existsSync(resolved);
+  if (path.posix.isAbsolute(locator) || path.win32.isAbsolute(locator)) {
+    return false;
+  }
+  const normalized = path.posix.normalize(locator);
+  return normalized !== ".." && !normalized.startsWith("../");
 }
 
 /**
@@ -200,19 +249,15 @@ function locatorResolves(locator: string, projectRoot: string): boolean {
  * absent in all 19 verdicts — nineteen rounds spent re-discovering that the
  * plan cited a document no agent could read.
  */
-function lintSourceLocators(
-  definition: PlanLintDefinition,
-  projectRoot: string | undefined,
-): PlanLintWarning[] {
-  if (projectRoot === undefined) return [];
+function lintSourceLocators(definition: PlanLintDefinition): PlanLintWarning[] {
   const warnings: PlanLintWarning[] = [];
   definition.charter.sourcesOfTruth.forEach((source, index) => {
-    if (locatorResolves(source.locator, projectRoot)) return;
+    if (isLexicallyResolvableSourceLocator(source.locator)) return;
     warnings.push({
       path: `definition.charter.sourcesOfTruth.${index}.locator`,
       message: lintMessage(
         "source-locator-unresolvable",
-        `charter source "${source.id}" locator "${source.locator}" does not resolve to a file or directory in the worktree; materialize external material into the worktree and cite the committed path, or an agent asked to consult this source reports it absent every round`,
+        `charter source "${source.id}" locator "${source.locator}" is not a worktree-relative path contained by the worktree; materialize external material into the worktree and cite the committed path, or an agent asked to consult this source reports it absent every round`,
       ),
     });
   });
@@ -257,12 +302,11 @@ function lintOversizedProse(definition: PlanLintDefinition): PlanLintWarning[] {
  */
 export function lintPlanSemantics(
   definition: PlanLintDefinition,
-  options: PlanLintOptions = {},
 ): PlanLintWarning[] {
   return [
     ...lintCriteriaDensity(definition),
     ...lintOpenQuantifiers(definition),
-    ...lintSourceLocators(definition, options.projectRoot),
+    ...lintSourceLocators(definition),
     ...lintOversizedProse(definition),
   ];
 }

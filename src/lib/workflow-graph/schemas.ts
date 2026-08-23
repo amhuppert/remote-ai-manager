@@ -46,6 +46,7 @@ import {
   workflowValidatorPlanDefectSchema,
 } from "./definition-schemas";
 import { agentProfileRefSchema } from "@/lib/agent-profiles/schemas";
+import { workflowPlanIssueSchema } from "@/lib/workflows/plan-validation";
 
 /**
  * The re-verification points a round checks its frozen candidate at.
@@ -2127,6 +2128,7 @@ export const graphWorkflowLaunchReceiptSchema = z.object({
   originConversationId: z.string().trim().min(1).nullable(),
   deepLink: z.string().trim().min(1),
   startedAt: z.string(),
+  warnings: z.array(workflowPlanIssueSchema).optional(),
 });
 export type GraphWorkflowLaunchReceipt = z.infer<
   typeof graphWorkflowLaunchReceiptSchema

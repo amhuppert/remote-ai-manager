@@ -16,6 +16,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/ui/cn";
 import { useOverlayScope } from "@/hooks/useOverlayScope";
+import { createClientLogger } from "@/lib/logging/client-logger";
 import ApprovalGatePanel, {
   type ApprovalScopedChanges,
 } from "@/components/ApprovalGatePanel";
@@ -110,6 +111,7 @@ const STATUS_LABEL: Record<ActiveConversationStatus, string> = {
   new: "new",
 };
 const DEFAULT_REPLY_PLACEHOLDER = "Reply to this conversation...";
+const logger = createClientLogger("features/session/sidebar/PeekPopover");
 
 // Status dot color (legacy `.peek__dot--<status>`).
 const PEEK_DOT: Record<ActiveConversationStatus, string> = {
@@ -146,10 +148,7 @@ function getConversationTitle(conversation: ActiveConversation): string {
 }
 
 function logPeekDebug(message: string, fields: Record<string, unknown>): void {
-  if (typeof window !== "undefined") return;
-  void import("@/lib/logging").then(({ createLogger }) => {
-    createLogger("features/session/sidebar/PeekPopover").debug(message, fields);
-  });
+  logger.debug(message, fields);
 }
 
 function PeekReplyComposer({

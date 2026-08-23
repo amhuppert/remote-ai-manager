@@ -86,10 +86,25 @@ Steps 4 and 5 encode an audited failure mode: in a 21-context execution, three r
 
 `definition.charter` is required and is the plan's governing context for every executing agent. Its mission, the invariants that apply to a context, and the sources scoped to that context render into that context's implementer and validator prompts, so anything left global is paid for on every iteration — keep it small and load-bearing.
 
-- `mission` (required): one paragraph of what the workflow delivers.
+- `mission` (required) and `testStrategy` (optional) are strings.
+- `conventions`, `nonGoals`, `vocabulary`, and `knownAmbiguities` are optional string arrays, never prose strings.
 - `sourcesOfTruth` (required, at least one): the ranked reference list agents consult. Each entry: `rank` (unique positive integer, ordering the list), `id`, `label`, `type` (`code`/`config`/`document`/`spec`/`other`), `locator`, `description`, and optional `appliesTo` (`{ "contextIds": [...] }` — the same structured scope invariants take).
 - `invariants` (optional): cross-cutting rules as `{ "id", "statement", "appliesTo"? }` entries with unique kebab-case ids and one-line statements. Validators actively check each rendered invariant and cite its id in issues.
-- Optional prose fields when they earn their prompt space: `conventions`, `nonGoals`, `vocabulary`, `testStrategy`, `knownAmbiguities`.
+
+### Compact maximal charter example
+
+```json
+{
+  "mission": "Ship a trustworthy workflow.",
+  "conventions": ["Use red-green-refactor."],
+  "nonGoals": ["Do not redesign the UI."],
+  "vocabulary": ["candidate: the tree under review"],
+  "testStrategy": "Run focused tests, then the integration gate.",
+  "knownAmbiguities": ["The adapter name is implementation-local."],
+  "invariants": [{ "id": "tests-first", "statement": "Behavior changes start with a failing test." }],
+  "sourcesOfTruth": [{ "rank": 1, "id": "runtime", "label": "Workflow runtime", "type": "code", "locator": "src/lib/workflow-graph", "description": "Governs runtime behavior." }]
+}
+```
 
 Charter amendments made mid-run are recorded in an amendment log that lands in `charter.md` and the durable record; it does not render into any prompt. An amended rule therefore has to stand on its own in the charter text — a statement that only makes sense against its own change history is not finished.
 
@@ -190,6 +205,7 @@ Create workflows with default implementer and validator settings unless the user
   - `planRepair` tunes the automatic plan-repair response to halts (default ON — see [references/revising-and-recovery.md](references/revising-and-recovery.md)).
 - `acceptanceCriteria` is required on every execution context, lives on the context rather than the validator, and is authored as ordered `{ id, statement }` records — see [Acceptance Criteria](#acceptance-criteria).
 - `placement` is required on every execution context too, and it does not default or cascade — decide it deliberately per context.
+- Both mutability flags default to `false`. A final verification context that may add remediation tasks but must not expand the graph uses exactly `{"allowAgentTaskAdd":true,"allowAgentContextAdd":false}`.
 - Minimal payloads are preferred because global and workflow defaults cascade into each context at execution seed time.
 - Exception to the "use defaults" rule: select the appropriate registered commands in `scriptValidator.commands` for the **final** execution context unless there is a specific reason to leave the gate empty.
 
@@ -315,10 +331,16 @@ Alongside the structural checks, `validate` runs four semantic lints over the pl
 |---|---|
 | `lint/criteria-density` | a context with more than 12 acceptance-criteria records, or one statement longer than 600 characters — a contract no single validator round can weigh, or a prose blob wearing one record's id |
 | `lint/open-quantifier` | `every`, `all`, `complete`, or `maximal` in a criterion statement — a sweep over a surface the plan never inventories, discovered one site per round |
-| `lint/source-locator-unresolvable` | a charter source whose locator does not resolve to a file or directory inside the worktree (a URL, an absolute path, an escaping path, a path that is not there) — every agent scoped to it reports it absent, every round |
+| `lint/source-locator-unresolvable` | a charter source whose locator is not a contained worktree-relative path, or is absent from the committed session tree when a verified session substrate is available |
 | `lint/oversized-prose` | task instructions longer than 8000 characters, or a context description longer than 2000 — durable reference material that belongs in a shared document |
 
 Those numbers are dials, not judgments: each is the point past which a real execution's plan stopped being reviewable, and a plan can cross one for a good reason. The `lint/` prefix marks advice, so it is never mistaken for a structural warning.
+
+Exact UI/output copy containing a quantifier must be syntactically quoted with balanced straight quotes, curly quotes, or backticks. Suppression is match-local: only a quantifier match inside its own proven literal span is discharged; unmatched delimiters suppress nothing, and lexical phrase allowlists are forbidden.
+
+Source existence is context-dependent. Project-only authoring can reject an uncontained locator shape but cannot claim a relative path is missing. When the server has verified a session, the named verified resolution substrate is that session's worktree, branch, and HEAD commit; session validation and launch check the committed tree and name the substrate in any warning.
+
+Semantic warnings are recomputed for each response from the applicable plan and resolution substrate. They remain response advisories, not saved rationale or acknowledgments, and never change plan validity or gate save or launch.
 
 Answer each one rather than ignoring it — the same rule the submit checklist already applies to every `warning:` line. Answering means repairing the plan or having a specific reason the warning does not apply to this plan; scrolling past is neither.
 
