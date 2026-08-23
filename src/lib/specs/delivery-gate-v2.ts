@@ -42,8 +42,12 @@ import { isWaiverValidForExecution } from "./waiver-staleness";
 
 const logger = createLogger("specs.delivery-gate-v2");
 
+const ACTIVE_RECOVERY_INSTRUCTION =
+  "Resume or repair the active graph execution until the named claimant is recertified, obtain any required Studio waiver, then retry delivery from its final integrated candidate.";
+const ARCHIVED_RECOVERY_INSTRUCTION =
+  "The claimant belongs to an archived graph execution and cannot be recertified in place. Obtain a current-revision Studio waiver for the refused criterion, or abandon the current spec execution and start a replacement delivery execution, then retry Merge.";
 const RETRY_INSTRUCTION =
-  "Resume or repair the current graph execution, obtain any required Studio waiver, then retry delivery from its final integrated candidate.";
+  "Repair the current graph execution or delivery binding, obtain any required Studio waiver, then retry delivery from a final integrated candidate.";
 
 export interface GraphDeliveryOutcomePort {
   getAuthoredContextOutcome(
@@ -106,6 +110,12 @@ interface EvaluatedCriterion {
   outcome: CriterionOutcome;
   state: DeliveryCriterionSnapshot;
   satisfyingContextId: string | null;
+  claimantOutcomes: LocatedClaimantOutcome[];
+}
+
+interface LocatedClaimantOutcome {
+  contextId: string;
+  outcome: AuthoredContextOutcome;
 }
 
 export function createDeliveryGate(
@@ -280,14 +290,12 @@ async function evaluateLinkedExecution(
               "waived",
               `Studio waiver ${waiver.id} is valid for the current pinned revision.`,
             )
-          : unmetClaimantOutcome(
-              contract,
-              claimantOutcomes.map(({ outcome }) => outcome),
-            );
+          : unmetClaimantOutcome(contract, claimantOutcomes);
     evaluated.push({
       contract,
       outcome,
       satisfyingContextId,
+      claimantOutcomes,
       state: {
         criterionId,
         handle: contract.handle,
@@ -333,7 +341,12 @@ async function evaluateLinkedExecution(
     return refusedByTransition(
       execution,
       specPresentation,
-      deliveryRefusal([integrationOutcome.reason ?? RETRY_INSTRUCTION]),
+      deliveryRefusal(
+        [integrationOutcome.reason ?? RETRY_INSTRUCTION],
+        finalCandidate.executionLocation === "archived"
+          ? ARCHIVED_RECOVERY_INSTRUCTION
+          : ACTIVE_RECOVERY_INSTRUCTION,
+      ),
       [
         ...evaluated
           .filter(
@@ -345,6 +358,8 @@ async function evaluateLinkedExecution(
       ],
     );
   }
+
+  await recordVerdicts(deps, linked, evaluated);
 
   const outcomeDecision = evaluateDeliveryGate({
     policy: spec.gatePolicy,
@@ -366,16 +381,23 @@ async function evaluateLinkedExecution(
       workflowExecutionId: input.workflowExecutionId,
       candidateId: linked.binding.candidateId,
       unmetCriterionCount: unmet.length,
+      claimantContextIds: evaluated.flatMap((criterion) =>
+        criterion.state.validProof || criterion.state.waiver !== null
+          ? []
+          : criterion.claimantOutcomes.map(({ contextId }) => contextId),
+      ),
     });
     return refusedByTransition(
       execution,
       specPresentation,
-      outcomeDecision.refusal,
+      {
+        ...outcomeDecision.refusal,
+        instruction: recoveryInstructionForClaimants(evaluated),
+      },
       unmet,
     );
   }
 
-  await recordVerdicts(deps, linked, evaluated);
   await recordPolicyDeliveryAdmission(deps, spec, execution);
   const satisfied = evaluated.map((criterion) => criterion.outcome);
   const deferred = linked.binding.dispositions.flatMap((disposition) =>
@@ -481,8 +503,9 @@ function validWaiverForCriterion(
 
 function unmetClaimantOutcome(
   contract: CriterionContract,
-  outcomes: readonly AuthoredContextOutcome[],
+  claimantOutcomes: readonly LocatedClaimantOutcome[],
 ): CriterionOutcome {
+  const outcomes = claimantOutcomes.map(({ outcome }) => outcome);
   const counts = { pending: 0, skipped: 0, failed: 0, satisfied: 0 };
   for (const outcome of outcomes) counts[outcome.status] += 1;
   const outcome =
@@ -500,8 +523,47 @@ function unmetClaimantOutcome(
     reason:
       outcomes.length === 0
         ? "The frozen binding has no authored claimant for this selected criterion."
-        : `No authored claimant is satisfied in the current execution (pending=${counts.pending}, skipped=${counts.skipped}, failed=${counts.failed}).`,
+        : `No authored claimant is satisfied in the current execution (pending=${counts.pending}, skipped=${counts.skipped}, failed=${counts.failed}). Claimants: ${claimantOutcomes
+            .map(describeClaimantOutcome)
+            .join("; ")}.`,
   };
+}
+
+function describeClaimantOutcome({
+  contextId,
+  outcome,
+}: LocatedClaimantOutcome): string {
+  if (
+    outcome.status === "failed" &&
+    outcome.reason === "validation_gate_failed" &&
+    outcome.validation !== undefined
+  ) {
+    const round = outcome.validation.round;
+    if (round === null) {
+      return `${contextId} failed validation_gate_failed (required validation round is absent)`;
+    }
+    if (round.phase === "concluded") {
+      return `${contextId} failed validation_gate_failed (validation round ${round.seq} is concluded with outcome ${round.outcome ?? "null"})`;
+    }
+    return `${contextId} failed validation_gate_failed (validation round ${round.seq} is open in phase ${round.phase} with outcome ${round.outcome ?? "null"})`;
+  }
+  return `${contextId} ${outcome.status} ${outcome.reason}`;
+}
+
+function recoveryInstructionForClaimants(
+  evaluated: readonly EvaluatedCriterion[],
+): string {
+  const unmetClaimants = evaluated.flatMap((criterion) =>
+    criterion.state.validProof || criterion.state.waiver !== null
+      ? []
+      : criterion.claimantOutcomes,
+  );
+  if (unmetClaimants.length === 0) return RETRY_INSTRUCTION;
+  return unmetClaimants.some(
+    ({ outcome }) => outcome.executionLocation === "archived",
+  )
+    ? ARCHIVED_RECOVERY_INSTRUCTION
+    : ACTIVE_RECOVERY_INSTRUCTION;
 }
 
 function satisfiedOutcome(
@@ -602,11 +664,14 @@ async function requestApprovalForRefusal(
   }
 }
 
-function deliveryRefusal(unmetConditions: string[]): TransitionRefusal {
+function deliveryRefusal(
+  unmetConditions: string[],
+  instruction: string = RETRY_INSTRUCTION,
+): TransitionRefusal {
   return {
     code: "delivery_gate_failed",
     unmetConditions,
-    instruction: RETRY_INSTRUCTION,
+    instruction,
   };
 }
 

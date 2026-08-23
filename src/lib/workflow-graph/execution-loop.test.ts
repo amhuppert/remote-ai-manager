@@ -1240,6 +1240,92 @@ describe("execution loop", () => {
     expect(recordedReason?.message).toContain("ctx-1");
   });
 
+  it.each([
+    {
+      label: "absent",
+      phase: null,
+      diagnostic: "ctx-1 (no validation round)",
+    },
+    {
+      label: "open in script",
+      phase: "script" as const,
+      diagnostic: "ctx-1 (round 1, phase script, outcome null)",
+    },
+    {
+      label: "open in specialists",
+      phase: "specialists" as const,
+      diagnostic: "ctx-1 (round 1, phase specialists, outcome null)",
+    },
+    {
+      label: "concluded without a verdict",
+      phase: "concluded" as const,
+      diagnostic: "ctx-1 (round 1, phase concluded, outcome null)",
+    },
+  ])(
+    "halts instead of completing when required validation is $label",
+    async ({ phase, diagnostic }) => {
+      const definition = createSingleContextDefinition(5);
+      const target = definition.executionContexts[0]!;
+      target.scriptValidator = { commands: ["test"] };
+      const initial = createRunningExecution(definition);
+      initial.contextStates["ctx-1"] = {
+        ...initial.contextStates["ctx-1"]!,
+        status: "completed",
+        completedTaskCount: 1,
+        iterationCount: 1,
+        ...(phase === null
+          ? {}
+          : {
+              validationRound: {
+                seq: 1,
+                candidate: {
+                  headSha: "head",
+                  candidateTreeHash: "tree",
+                  taskStateHash: "tasks",
+                  identityScope: "wholeTree" as const,
+                },
+                roster: [],
+                specialists: {},
+                phase,
+                outcome: null,
+                startedAt: "2026-08-21T00:23:45.725Z",
+              },
+            }),
+      };
+      initial.taskStates["task-1"] = {
+        ...initial.taskStates["task-1"]!,
+        status: "completed",
+        completedAt: "2026-08-21T00:20:00.000Z",
+      };
+      const harness = buildHarness({
+        initialExecution: initial,
+        scheduleEligibleContexts: async () => ({
+          execution: harness.getCurrent(),
+          scheduled: { kind: "none" },
+        }),
+        iterationOrchestrator: {
+          async runIteration(): Promise<GraphWorkflowIterationResult> {
+            throw new Error("a terminal context must not be rescheduled");
+          },
+        },
+      });
+
+      const result = await createGraphWorkflowExecutionLoop(harness.deps).run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: initial,
+      });
+
+      expect(result.status).toBe("halted");
+      expect(harness.sendSpy).not.toHaveBeenCalled();
+      expect(result.haltReason).toEqual({
+        type: "recovery_error",
+        message: expect.stringContaining(diagnostic),
+      });
+    },
+  );
+
   it("waits instead of completing while a collaboration is pending, then resumes the context when it clears", async () => {
     const definition = createSingleContextDefinition(5);
     const initial = createRunningExecution(definition, {
@@ -5633,6 +5719,107 @@ describe("execution loop", () => {
     expect(joinFromState!.sourceLaneIds).toEqual(["lane-plan"]);
     expect(joinFromState!.status).toBe("succeeded");
     expect(result.status).toBe("completed");
+  });
+
+  it("supersedes a stale final publish when required validation debt appears before claim", async () => {
+    const definition = createSingleContextDefinition(5);
+    definition.executionContexts[0]!.scriptValidator = {
+      commands: ["test"],
+    };
+    const initial = createRunningExecution(definition, {
+      contextStates: {
+        "ctx-1": {
+          ...baseContextState("ctx-1"),
+          status: "completed",
+          completedTaskCount: 1,
+          iterationCount: 1,
+          isolation: "worktree",
+          laneId: "lane-plan",
+          validationRound: {
+            seq: 1,
+            candidate: {
+              headSha: "head",
+              candidateTreeHash: "tree",
+              taskStateHash: "tasks",
+              identityScope: "wholeTree",
+            },
+            roster: [],
+            specialists: {},
+            phase: "concluded",
+            outcome: null,
+            startedAt: "2026-08-21T00:23:45.725Z",
+          },
+        },
+      },
+      taskStates: {
+        "task-1": {
+          ...baseTaskState("task-1", "ctx-1"),
+          status: "completed",
+          completedAt: "2026-08-21T00:20:00.000Z",
+        },
+      },
+      executionLanes: {
+        "lane-plan": worktreeLane("lane-plan", ["ctx-1"]),
+      },
+      joins: {
+        "join-stale": {
+          joinId: "join-stale",
+          kind: "final_publish",
+          contextId: null,
+          targetLaneId: "__session__",
+          sourceLaneIds: ["lane-plan"],
+          mergedSourceLaneIds: [],
+          validationDebtSourceLaneIds: [],
+          sourceLaneContextIds: { "lane-plan": ["ctx-1"] },
+          validationEvidence: [],
+          status: "pending",
+          errorMessage: null,
+          conflicts: null,
+          conflictGuidance: null,
+          createdAt: "2026-08-21T00:21:00.000Z",
+          updatedAt: "2026-08-21T00:21:00.000Z",
+          completedAt: null,
+        },
+      },
+    });
+    const joinRunSpy = vi.fn(
+      async (
+        input: Parameters<JoinRunner["run"]>[0],
+      ): ReturnType<JoinRunner["run"]> => {
+        await input.mutateActive((execution) =>
+          applyJoinProgress(
+            execution,
+            input.joinId,
+            "2026-08-21T00:22:00.000Z",
+            { status: "succeeded" },
+          ),
+        );
+        return { status: "succeeded" };
+      },
+    );
+    const harness = buildHarness({
+      initialExecution: initial,
+      joinRunner: { run: joinRunSpy },
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          throw new Error("a terminal context must not be rescheduled");
+        },
+      },
+    });
+
+    const result = await createGraphWorkflowExecutionLoop(harness.deps).run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(joinRunSpy).not.toHaveBeenCalled();
+    expect(result.joins["join-stale"]).toMatchObject({
+      status: "failed",
+      errorMessage: expect.stringContaining("validation certification"),
+    });
+    expect(result.status).toBe("halted");
   });
 
   it("publishes multiple terminal lanes via a single final publish join", async () => {

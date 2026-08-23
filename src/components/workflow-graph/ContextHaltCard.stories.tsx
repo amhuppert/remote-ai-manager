@@ -147,7 +147,7 @@ const deliveryUnmetCriteria: GraphWorkflowHaltReason = {
     },
   ],
   instruction:
-    "Re-dispatch validation against the prepared candidate, resolve any remaining proof or waiver requirements, then retry delivery.",
+    "Repair or replace the graph execution until each required authored claimant has valid proof, resolve any remaining waiver requirements, then retry delivery.",
   spec: {
     specSlug: "native-sdd",
     specName: "Native SDD",

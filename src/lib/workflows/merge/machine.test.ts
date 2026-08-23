@@ -436,7 +436,10 @@ describe("mergeMachine", () => {
         unmet,
         instruction: "Record fresh proof and re-dispatch the merge.",
       });
-      expect(output.error).toContain("R1.1");
+      expect(output.error).toContain("R1.1: No current proof");
+      expect(output.error).toContain(
+        "Record fresh proof and re-dispatch the merge.",
+      );
     });
 
     it("carries the approval-required presentation into the halt reason instead of the unmet-criteria template", async () => {

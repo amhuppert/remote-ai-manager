@@ -98,6 +98,10 @@ import {
   resolveContextConversationId,
 } from "@/lib/workflow-graph/lane-join";
 import {
+  describeValidationCertificationDebt,
+  findValidationCertificationDebt,
+} from "@/lib/workflow-graph/validation-certification";
+import {
   applyJoinProgress,
   buildLifecycleSnapshot,
   transitionContextMergeStatus,
@@ -3495,6 +3499,23 @@ export function createGraphWorkflowExecutionLoop(
                     },
                   );
                 }
+                const validationDebt = findValidationCertificationDebt(current);
+                if (validationDebt.length > 0) {
+                  claim.reason = "stale_final_publish_superseded";
+                  return applyJoinProgress(
+                    current,
+                    active.joinId,
+                    new Date().toISOString(),
+                    {
+                      status: "failed",
+                      errorMessage: `Superseded: required validation certification is owed by ${validationDebt
+                        .map(describeValidationCertificationDebt)
+                        .join(
+                          ", ",
+                        )}. The final publish is re-planned after that debt is resolved.`,
+                    },
+                  );
+                }
               }
               currentJoin = active;
             } else {
@@ -4154,6 +4175,32 @@ export function createGraphWorkflowExecutionLoop(
             await recordHalt({
               type: "recovery_error",
               message: `Refusing to complete: ${contextsOwingOutput.length} execution context(s) declare an output schema with no validated output (${contextsOwingOutput.join(", ")}). The scheduler found no eligible work, which would otherwise report the run as finished while a declared contract went unsatisfied.`,
+            });
+            execution = await deps.workflowManager.drainAndHalt({
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+            });
+            break;
+          }
+          const validationDebt = findValidationCertificationDebt(execution);
+          if (validationDebt.length > 0) {
+            const contextIds = validationDebt.map((debt) => debt.contextId);
+            const summary = validationDebt
+              .map(describeValidationCertificationDebt)
+              .join(", ");
+            logger.error(
+              "graph-workflow.loop.completion_blocked_validation_debt",
+              {
+                executionId: execution.id,
+                contextIds,
+              },
+            );
+            execLogger?.lifecycle("loop.completion_blocked_validation_debt", {
+              contextIds,
+            });
+            await recordHalt({
+              type: "recovery_error",
+              message: `Refusing to complete: required validation is not certified for ${summary}. The context is already terminal or the scheduler found no recertification path. Abandon this execution and launch a replacement; terminal landed contexts are not reopened in place.`,
             });
             execution = await deps.workflowManager.drainAndHalt({
               projectPath: input.projectPath,

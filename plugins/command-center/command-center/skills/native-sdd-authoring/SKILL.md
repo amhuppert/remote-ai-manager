@@ -53,6 +53,19 @@ Write each launch context's graph acceptance criteria in the ordinary graph dial
 
 There is no modality-proof field. Validators and graph execution outcomes provide the evidence that the delivery gate reads. Inspect the exact binding and lifecycle contract with `cctl spec plan edit --help`, `cctl spec plan get --help`, and `cctl spec schema guidance`.
 
+### Recovering claimant validation failures
+
+Claim proof comes from the authored context's graph outcome, not from the merge
+job's prepared-candidate validation. If delivery refuses an active claimant whose
+required round is absent, open, or concluded without a passing outcome, repair or
+resume the graph until that context is recertified. If the claimant belongs to an
+archived execution, it cannot be recertified in place: obtain a current-revision
+Studio waiver for the refused criterion or abandon and start a replacement
+delivery execution. Re-running Merge validation alone cannot change native-SDD v2
+claim proof. This guidance was earned by remote-ai-manager#8 (2026-08-22), where a
+completed claimant retained a concluded/null round and every Merge retry was
+therefore deterministic.
+
 ## Finalized proposal, sign-off, and one-off start
 
 Run `cctl spec plan preview <slug> --stage draft` to review authored bytes before proposal. After `cctl spec plan propose <slug>`, inspect `--stage proposed`: it is the immutable server-finalized envelope, including injected sources, locks, origin, `approvalRequired: false`, and the `candidateId` and `candidateHash` that sign-off and launch both address. A draft never has a candidate identity; reopen a stale proposal, edit, and propose its replacement.

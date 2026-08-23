@@ -21,6 +21,7 @@ import {
 import { executionLaneIdFor } from "./lane-identity";
 import { joinLeavesOpenLoop, openLoopLanes } from "./lane-lifecycle";
 import type { RoutePublishSettlement } from "./route-projection";
+import { findValidationCertificationDebt } from "./validation-certification";
 
 type PlanningDefinition =
   | WorkflowSemanticDefinition
@@ -393,11 +394,12 @@ export function findBusyJoinSourceLaneIds(
  * via a succeeded prior join (final or context).
  *
  * Returns null when nothing terminal remains to publish, and refuses to plan
- * at all while any context still has unfinished tasks: the final publish is
- * the delivery point, so publishing around outstanding work would deliver a
- * candidate that structurally excludes it (ticket #28 / F25). A stuck context
- * then surfaces through the loop's completion invariant as a halt instead of
- * an incomplete delivery.
+ * at all while any context still has unfinished tasks or required validation
+ * certification debt: the final publish is the delivery point, so publishing
+ * around outstanding work would deliver a candidate that structurally excludes
+ * or has not certified it (ticket #28 / F25, ticket #8). A stuck context then
+ * surfaces through the loop's completion invariant as a halt instead of an
+ * incomplete delivery.
  *
  * Both refusals read the SAME land-gated publish settlement, derived once here
  * (D4 R4.1/R2.5, decision D1), so what the publish waits on and what it
@@ -412,6 +414,7 @@ export function planFinalPublishJoin(
   if (findContextsWithUnfinishedTasks(execution, publish).length > 0) {
     return null;
   }
+  if (findValidationCertificationDebt(execution).length > 0) return null;
 
   const consumedLaneIds = new Set<string>();
   for (const join of Object.values(execution.joins ?? {})) {

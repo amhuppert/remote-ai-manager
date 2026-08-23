@@ -954,7 +954,7 @@ export function evaluateDeliveryGate(
     return refused(
       "delivery_gate_failed",
       unmetConditions,
-      "Re-dispatch validation against the prepared candidate, obtain any required human waiver, or repair the delivery scope before merging.",
+      "Repair or replace the graph execution until each required authored claimant has valid proof, obtain any required human waiver, or repair the delivery scope before merging.",
     );
   }
 

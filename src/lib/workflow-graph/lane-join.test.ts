@@ -1084,6 +1084,58 @@ describe("planFinalPublishJoin", () => {
     });
   });
 
+  it("refuses final publish while a required context owes validation certification", () => {
+    const base = completeAllContextTasks(createWorkflowExecution());
+    const context = base.workingDefinition.executionContexts.find(
+      (candidate) => candidate.id === "context-plan",
+    )!;
+    context.scriptValidator = { commands: ["test"] };
+    base.contextStates["context-plan"]!.validationRound = {
+      seq: 1,
+      candidate: {
+        headSha: "head",
+        candidateTreeHash: "tree",
+        taskStateHash: "tasks",
+        identityScope: "wholeTree",
+      },
+      roster: [],
+      specialists: {},
+      phase: "concluded",
+      outcome: null,
+      startedAt: t0,
+    };
+    const sessionLaneId = "session-lane";
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      executionLanes: {
+        [sessionLaneId]: makeLane({
+          laneId: sessionLaneId,
+          branchName: "csm/session",
+          kind: "session",
+          worktreePath: "/tmp/session",
+        }),
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "csm/test-a",
+          includedContextIds: [
+            "context-plan",
+            "context-implement",
+            "context-verify",
+          ],
+        }),
+      },
+    };
+
+    expect(
+      planFinalPublishJoin({
+        execution,
+        sessionLaneId,
+        now: () => t1,
+        generateJoinId: () => "join-final",
+      }),
+    ).toBeNull();
+  });
+
   it("excludes a lane whose loop has not concluded, then publishes it once it has (lwp R10)", () => {
     // Between two passes every materialized context reads complete, so the
     // unfinished-task guard alone would let the publish consume a lane the loop
@@ -2285,17 +2337,25 @@ describe("quiescence derives from the route projection (D4 R4.1, decision D1)", 
         ...createWorkflowExecution().workingDefinition,
         executionContexts:
           createWorkflowExecution().workingDefinition.executionContexts.map(
-            (context) =>
-              context.id === "context-plan"
-                ? {
-                    ...context,
-                    outputSchema: {
-                      type: "object",
-                      properties: { verdict: { type: "string" } },
-                      required: ["verdict"],
-                    },
-                  }
-                : context,
+            (context) => {
+              if (context.id === "context-plan") {
+                return {
+                  ...context,
+                  outputSchema: {
+                    type: "object",
+                    properties: { verdict: { type: "string" } },
+                    required: ["verdict"],
+                  },
+                };
+              }
+              if (context.id === "context-implement") {
+                return {
+                  ...context,
+                  contextValidator: { enabled: true, assignments: [] },
+                };
+              }
+              return context;
+            },
           ),
         edges: [
           {
@@ -2373,7 +2433,7 @@ describe("quiescence derives from the route projection (D4 R4.1, decision D1)", 
     ).toEqual(["context-implement", "context-verify"]);
   });
 
-  it("publishes the branch that ran without waiting for the declined one", () => {
+  it("publishes without validation certification for a route-declined branch", () => {
     const join = planFinalPublishJoin({
       execution: routeDeclinedExecution(),
       sessionLaneId: "__session__",

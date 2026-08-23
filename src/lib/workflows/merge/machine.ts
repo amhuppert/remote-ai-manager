@@ -92,8 +92,12 @@ function formatDeliveryGateRefusal(
   output: Extract<DeliveryGateActorOutput, { status: "refused" }>,
 ): string {
   const criteria = output.unmet
-    .map((criterion) => criterion.criterionHandle)
-    .join(", ");
+    .map((criterion) =>
+      criterion.reason
+        ? `${criterion.criterionHandle}: ${criterion.reason}`
+        : criterion.criterionHandle,
+    )
+    .join("; ");
   return `Delivery gate refused merge; unmet criteria: ${criteria}. ${output.instruction}`;
 }
 

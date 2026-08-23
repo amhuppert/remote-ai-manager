@@ -403,6 +403,8 @@ export interface Harness {
    * never performs.
    */
   resumeHalt(): Promise<void>;
+  /** Admit the resumed ready context through the production solo scheduler. */
+  scheduleNextContext(): Promise<void>;
   /**
    * A server restart over a still-running execution, then the operator resuming
    * it: the real `normalizeAfterRestart` (which pauses, carrying no halt reason)
@@ -597,6 +599,9 @@ export function createHarness(params: {
     },
     async resumeHalt() {
       await manager.resume("/repo", "session-1");
+    },
+    async scheduleNextContext() {
+      await manager.scheduleNextContext("/repo", "session-1");
     },
     async restartAndResume() {
       // A restart only normalizes an execution the persisted record still calls

@@ -33,6 +33,7 @@ const PROJECT_PATH = "/repo/delivery-gate-v2-integration";
 const SPEC_ID = "spec-delivery-v2-integration";
 const REVISION_ID = "revision-delivery-v2-integration";
 const CRITERION_ID = "criterion-delivery-v2-integration";
+const SECONDARY_CRITERION_ID = "criterion-delivery-v2-secondary";
 const CURRENT_SPEC_EXECUTION_ID = "spec-execution-current";
 const CURRENT_WORKFLOW_EXECUTION_ID = "workflow-execution-current";
 const PRIOR_SPEC_EXECUTION_ID = "spec-execution-prior";
@@ -95,6 +96,30 @@ const snapshot = {
         updatedAt: NOW,
       },
     },
+    {
+      element: {
+        id: SECONDARY_CRITERION_ID,
+        specId: SPEC_ID,
+        kind: "criterion",
+        number: 2,
+        parentElementId: null,
+        createdAt: NOW,
+      },
+      version: {
+        revisionId: REVISION_ID,
+        elementId: SECONDARY_CRITERION_ID,
+        position: 1,
+        payload: {
+          kind: "criterion",
+          text: "The secondary authored context delivers its criterion.",
+          validationStrategy: { kinds: ["test_run"] },
+        },
+        payloadHash: "criterion-secondary-payload-hash",
+        elementVersion: 1,
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+    },
   ],
 } as SpecRevisionSnapshot;
 
@@ -130,7 +155,9 @@ function executionRow(
   };
 }
 
-function currentBinding(): SpecExecutionBindingSnapshotV2 {
+function currentBinding(
+  includeSecondary = false,
+): SpecExecutionBindingSnapshotV2 {
   return {
     schemaVersion: 2,
     candidateId: CURRENT_CANDIDATE_ID,
@@ -142,12 +169,29 @@ function currentBinding(): SpecExecutionBindingSnapshotV2 {
         disposition: "in_scope",
         deliveredByExecutionId: null,
       },
+      ...(includeSecondary
+        ? [
+            {
+              criterionElementId: SECONDARY_CRITERION_ID,
+              disposition: "in_scope" as const,
+              deliveredByExecutionId: null,
+            },
+          ]
+        : []),
     ],
     claims: [
       {
         contextId: STABLE_SPAWNER_ID,
         criterionElementIds: [CRITERION_ID],
       },
+      ...(includeSecondary
+        ? [
+            {
+              contextId: "context-implement",
+              criterionElementIds: [SECONDARY_CRITERION_ID],
+            },
+          ]
+        : []),
     ],
   };
 }
@@ -187,6 +231,11 @@ function seedParents(): void {
        id, spec_id, kind, number, parent_element_id, created_at
      ) VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(CRITERION_ID, SPEC_ID, "criterion", 1, null, NOW);
+  db.prepare(
+    `INSERT INTO spec_elements (
+       id, spec_id, kind, number, parent_element_id, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(SECONDARY_CRITERION_ID, SPEC_ID, "criterion", 2, null, NOW);
 
   const deliveryRepo = createSpecDeliveryRepo(db);
   deliveryRepo.insertExecution(
@@ -267,6 +316,68 @@ function graphExecution(
     liveRevision: 2,
     acceptedAt: NOW,
   });
+  return execution;
+}
+
+function graphExecutionWithValidationDebt(): GraphWorkflowExecution {
+  const execution = createWorkflowExecution({
+    id: CURRENT_WORKFLOW_EXECUTION_ID,
+    status: "completed",
+    completedAt: NOW,
+  });
+  execution.workingDefinition.executionContexts =
+    execution.workingDefinition.executionContexts.filter(
+      (context) =>
+        context.id === STABLE_SPAWNER_ID || context.id === "context-implement",
+    );
+  execution.workingDefinition.tasks = execution.workingDefinition.tasks.filter(
+    (task) =>
+      task.contextId === STABLE_SPAWNER_ID ||
+      task.contextId === "context-implement",
+  );
+  execution.workingDefinition.edges = [];
+  execution.contextStates = Object.fromEntries(
+    Object.entries(execution.contextStates).filter(
+      ([contextId]) =>
+        contextId === STABLE_SPAWNER_ID || contextId === "context-implement",
+    ),
+  );
+  execution.taskStates = Object.fromEntries(
+    Object.entries(execution.taskStates).filter(
+      ([, task]) =>
+        task.contextId === STABLE_SPAWNER_ID ||
+        task.contextId === "context-implement",
+    ),
+  );
+  for (const context of execution.workingDefinition.executionContexts) {
+    context.placement = { lane: "session", mode: "readOnly" };
+  }
+  const secondary = execution.workingDefinition.executionContexts.find(
+    (context) => context.id === "context-implement",
+  )!;
+  secondary.scriptValidator = { commands: ["test"] };
+  for (const state of Object.values(execution.contextStates)) {
+    state.status = "completed";
+    state.completedTaskCount = state.totalTaskCount;
+  }
+  for (const task of Object.values(execution.taskStates)) {
+    task.status = "completed";
+    task.completedAt = NOW;
+  }
+  execution.contextStates["context-implement"]!.validationRound = {
+    seq: 1,
+    candidate: {
+      headSha: "head",
+      candidateTreeHash: "tree",
+      taskStateHash: "tasks",
+      identityScope: "wholeTree",
+    },
+    roster: [],
+    specialists: {},
+    phase: "concluded",
+    outcome: null,
+    startedAt: NOW,
+  };
   return execution;
 }
 
@@ -405,6 +516,77 @@ describe("delivery gate v2 integrated execution identity", () => {
         candidate_hash: CURRENT_CANDIDATE_HASH,
         criterion_element_id: CRITERION_ID,
         satisfying_context_id: STABLE_SPAWNER_ID,
+      }),
+    ]);
+  });
+
+  it("persists stable partial proof and completes idempotently after the archived claimant is corrected", async () => {
+    db.prepare(
+      "DELETE FROM spec_execution_bindings WHERE spec_execution_id = ?",
+    ).run(CURRENT_SPEC_EXECUTION_ID);
+    createSpecExecutionBindingRepo(db).insert({
+      specExecutionId: CURRENT_SPEC_EXECUTION_ID,
+      workflowExecutionId: CURRENT_WORKFLOW_EXECUTION_ID,
+      binding: currentBinding(true),
+      createdAt: NOW,
+    });
+    const execution = graphExecutionWithValidationDebt();
+    const { deliveryRepo, gate } = createIntegratedGate(execution);
+
+    const refused = await gate.evaluate({
+      workflowExecutionId: CURRENT_WORKFLOW_EXECUTION_ID,
+      preparedSha: "prepared-current",
+      expectedTargetSha: "target-current",
+      projectPath: PROJECT_PATH,
+    });
+
+    expect(refused).toMatchObject({
+      status: "refused",
+      unmet: [
+        expect.objectContaining({
+          criterionId: SECONDARY_CRITERION_ID,
+          reason: expect.stringContaining(
+            "context-implement failed validation_gate_failed (validation round 1 is concluded with outcome null)",
+          ),
+        }),
+      ],
+    });
+    expect(
+      deliveryRepo.findDeliveryVerdictsBySpecExecutionId(
+        CURRENT_SPEC_EXECUTION_ID,
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        criterion_element_id: CRITERION_ID,
+        satisfying_context_id: STABLE_SPAWNER_ID,
+      }),
+    ]);
+
+    execution.contextStates["context-implement"]!.validationRound!.outcome =
+      "passed";
+    await expect(
+      gate.evaluate({
+        workflowExecutionId: CURRENT_WORKFLOW_EXECUTION_ID,
+        preparedSha: "prepared-current",
+        expectedTargetSha: "target-current",
+        projectPath: PROJECT_PATH,
+      }),
+    ).resolves.toMatchObject({ status: "pass" });
+    await gate.evaluate({
+      workflowExecutionId: CURRENT_WORKFLOW_EXECUTION_ID,
+      preparedSha: "prepared-current",
+      expectedTargetSha: "target-current",
+      projectPath: PROJECT_PATH,
+    });
+
+    expect(
+      deliveryRepo.findDeliveryVerdictsBySpecExecutionId(
+        CURRENT_SPEC_EXECUTION_ID,
+      ),
+    ).toEqual([
+      expect.objectContaining({ criterion_element_id: CRITERION_ID }),
+      expect.objectContaining({
+        criterion_element_id: SECONDARY_CRITERION_ID,
       }),
     ]);
   });

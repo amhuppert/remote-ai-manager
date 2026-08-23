@@ -8,6 +8,10 @@ import {
   landGatedPublishSettlement,
   reachableLanesFrom,
 } from "./lane-readiness";
+import {
+  validationCertification,
+  type ValidationCertification,
+} from "./validation-certification";
 
 const logger = createLogger("workflow-graph-authored-context-outcome");
 
@@ -46,6 +50,7 @@ export type AuthoredContextOutcome =
         | "integration_failed"
         | "write_result_not_integrated";
       executionLocation: "active" | "archived" | "missing";
+      validation?: Extract<ValidationCertification, { status: "owed" }>;
     }
   | {
       status: "satisfied";
@@ -99,22 +104,6 @@ export interface AuthoredContextOutcomeService {
     executionId: string,
     requiredAuthoredContextIds: readonly string[],
   ): Promise<IntegrationReadyFinalCandidateOutcome>;
-}
-
-function validationGatePassed(
-  execution: GraphWorkflowExecution,
-  authoredContextId: string,
-): boolean {
-  const context = execution.workingDefinition.executionContexts.find(
-    (candidate) => candidate.id === authoredContextId,
-  );
-  if (context === undefined) return false;
-  const validationRequired =
-    context.scriptValidator.commands.length > 0 ||
-    context.contextValidator.enabled;
-  if (!validationRequired) return true;
-  const round = execution.contextStates[authoredContextId]?.validationRound;
-  return round?.phase === "concluded" && round.outcome === "passed";
 }
 
 function concludedValidationFailure(
@@ -241,11 +230,13 @@ function resolveOutcome(
       executionLocation,
     };
   }
-  if (!validationGatePassed(execution, authoredContextId)) {
+  const certification = validationCertification(execution, authoredContextId);
+  if (certification.status === "owed") {
     return {
       status: "failed",
       reason: "validation_gate_failed",
       executionLocation,
+      validation: certification,
     };
   }
   if (
@@ -400,6 +391,14 @@ export function createAuthoredContextOutcomeService(
         status: outcome.status,
         reason: outcome.reason,
         executionLocation: outcome.executionLocation,
+        ...(outcome.status === "failed" && outcome.validation
+          ? {
+              validationReason: outcome.validation.reason,
+              validationRoundSeq: outcome.validation.round?.seq ?? null,
+              validationRoundPhase: outcome.validation.round?.phase ?? null,
+              validationRoundOutcome: outcome.validation.round?.outcome ?? null,
+            }
+          : {}),
       });
       return outcome;
     },

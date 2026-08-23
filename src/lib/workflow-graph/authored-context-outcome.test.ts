@@ -308,8 +308,59 @@ describe("getAuthoredContextOutcome", () => {
     await expect(outcome(validationFailed)).resolves.toMatchObject({
       status: "failed",
       reason: "validation_gate_failed",
+      validation: {
+        reason: "round_absent",
+        round: null,
+      },
     });
   });
+
+  it.each([
+    {
+      phase: "script" as const,
+      reason: "round_open",
+    },
+    {
+      phase: "specialists" as const,
+      reason: "round_open",
+    },
+    {
+      phase: "concluded" as const,
+      reason: "round_concluded_without_pass",
+    },
+  ])(
+    "retains the validation round diagnostic for a $phase non-pass",
+    async ({ phase, reason }) => {
+      const execution = oneContextExecution("readOnly");
+      execution.workingDefinition.executionContexts[0]!.scriptValidator = {
+        commands: ["test"],
+      };
+      execution.contextStates[CONTEXT_ID]!.validationRound = {
+        seq: 2,
+        candidate: {
+          headSha: "head",
+          candidateTreeHash: "tree",
+          taskStateHash: "tasks",
+          identityScope: "wholeTree",
+        },
+        roster: [],
+        specialists: {},
+        phase,
+        outcome: null,
+        startedAt: NOW,
+      };
+      completeContext(execution);
+
+      await expect(outcome(execution)).resolves.toMatchObject({
+        status: "failed",
+        reason: "validation_gate_failed",
+        validation: {
+          reason,
+          round: { seq: 2, phase, outcome: null },
+        },
+      });
+    },
+  );
 
   it("returns typed failures for failed script, validator, and approval gates", async () => {
     const scriptFailed = oneContextExecution("readOnly");

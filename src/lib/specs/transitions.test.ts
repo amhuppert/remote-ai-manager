@@ -1121,7 +1121,7 @@ describe("transition predicates", () => {
             "R1.1 needs valid proof, a valid human waiver for revision-2, or prior merged delivery.",
           ],
           instruction:
-            "Re-dispatch validation against the prepared candidate, obtain any required human waiver, or repair the delivery scope before merging.",
+            "Repair or replace the graph execution until each required authored claimant has valid proof, obtain any required human waiver, or repair the delivery scope before merging.",
         },
       });
     });

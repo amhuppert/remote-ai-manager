@@ -81,6 +81,11 @@ interface GateFixture {
   getAuthoredContextOutcome: ReturnType<typeof vi.fn>;
   getIntegrationReadyFinalCandidate: ReturnType<typeof vi.fn>;
   policyAdmitted: ReturnType<typeof vi.fn>;
+  addCriterion(input: {
+    criterionId: string;
+    contextId: string;
+    outcome: AuthoredContextOutcome;
+  }): void;
   setClaims(contextIds: string[]): void;
   setDeliveryDial(dial: "gate" | "notify"): void;
   setDeliveryApproval(granted: boolean): void;
@@ -407,6 +412,32 @@ function createFixture(): GateFixture {
     getAuthoredContextOutcome,
     getIntegrationReadyFinalCandidate,
     policyAdmitted,
+    addCriterion({ criterionId, contextId, outcome }) {
+      binding.binding.dispositions.push({
+        criterionElementId: criterionId,
+        disposition: "in_scope",
+        deliveredByExecutionId: null,
+      });
+      binding.binding.claims.push({
+        contextId,
+        criterionElementIds: [criterionId],
+      });
+      const source = snapshot.elements[0]!;
+      snapshot.elements.push({
+        element: {
+          ...source.element,
+          id: criterionId,
+          number: 2,
+        },
+        version: {
+          ...source.version,
+          elementId: criterionId,
+          position: 1,
+          payloadHash: `${criterionId}-hash`,
+        },
+      });
+      outcomes.set(contextId, outcome);
+    },
     setClaims(contextIds) {
       binding.binding.claims = contextIds.map((contextId) => ({
         contextId,
@@ -459,6 +490,27 @@ describe("current-execution authored-outcome delivery gate", () => {
     },
   );
 
+  it("directs a criterion with no authored claimant to repair its binding", async () => {
+    fixture.setClaims([]);
+
+    const result = await createDeliveryGate(fixture.deps).evaluate(gateInput());
+
+    expect(result).toMatchObject({
+      status: "refused",
+      unmet: [
+        expect.objectContaining({
+          reason: expect.stringContaining("no authored claimant"),
+        }),
+      ],
+      instruction: expect.stringMatching(
+        /graph execution or delivery binding/i,
+      ),
+    });
+    expect(result.status === "refused" ? result.instruction : "").not.toMatch(
+      /named claimant|recertified/i,
+    );
+  });
+
   it("records a current-attempt verdict for a satisfied claimant", async () => {
     const result = await createDeliveryGate(fixture.deps).evaluate(gateInput());
 
@@ -480,6 +532,113 @@ describe("current-execution authored-outcome delivery gate", () => {
         criterionElementId: CRITERION_ID,
         satisfyingContextId: "claimant-primary",
       }),
+    ]);
+  });
+
+  it("names a concluded-null claimant and gives an archived recovery that can change proof", async () => {
+    fixture.outcomes.set("claimant-primary", {
+      status: "failed",
+      reason: "validation_gate_failed",
+      executionLocation: "archived",
+      validation: {
+        status: "owed",
+        reason: "round_concluded_without_pass",
+        round: { seq: 1, phase: "concluded", outcome: null },
+      },
+    });
+
+    const result = await createDeliveryGate(fixture.deps).evaluate(gateInput());
+
+    expect(result).toMatchObject({
+      status: "refused",
+      unmet: [
+        expect.objectContaining({
+          criterionId: CRITERION_ID,
+          outcome: "failed",
+          reason: expect.stringContaining(
+            "claimant-primary failed validation_gate_failed (validation round 1 is concluded with outcome null)",
+          ),
+        }),
+      ],
+      instruction: expect.stringMatching(/Studio waiver.*replacement/i),
+    });
+    expect(result.status === "refused" ? result.instruction : "").not.toContain(
+      "prepared candidate",
+    );
+  });
+
+  it("directs an active claimant back through graph recertification", async () => {
+    fixture.outcomes.set("claimant-primary", {
+      status: "failed",
+      reason: "validation_gate_failed",
+      executionLocation: "active",
+      validation: {
+        status: "owed",
+        reason: "round_open",
+        round: { seq: 2, phase: "specialists", outcome: null },
+      },
+    });
+
+    const result = await createDeliveryGate(fixture.deps).evaluate(gateInput());
+
+    expect(result).toMatchObject({
+      status: "refused",
+      unmet: [
+        expect.objectContaining({
+          reason: expect.stringContaining(
+            "validation round 2 is open in phase specialists with outcome null",
+          ),
+        }),
+      ],
+      instruction: expect.stringMatching(/active graph.*recertified/i),
+    });
+    expect(result.status === "refused" ? result.instruction : "").not.toContain(
+      "replacement delivery execution",
+    );
+  });
+
+  it("records stable satisfied verdicts before refusing another criterion, then completes idempotently after correction", async () => {
+    const secondaryCriterionId = "criterion-secondary";
+    const secondaryContextId = "claimant-secondary";
+    fixture.addCriterion({
+      criterionId: secondaryCriterionId,
+      contextId: secondaryContextId,
+      outcome: {
+        status: "failed",
+        reason: "validation_gate_failed",
+        executionLocation: "archived",
+        validation: {
+          status: "owed",
+          reason: "round_concluded_without_pass",
+          round: { seq: 1, phase: "concluded", outcome: null },
+        },
+      },
+    });
+
+    const refused = await createDeliveryGate(fixture.deps).evaluate(
+      gateInput(),
+    );
+
+    expect(refused).toMatchObject({
+      status: "refused",
+      unmet: [expect.objectContaining({ criterionId: secondaryCriterionId })],
+    });
+    expect(fixture.verdicts).toEqual([
+      expect.objectContaining({
+        criterionElementId: CRITERION_ID,
+        satisfyingContextId: "claimant-primary",
+      }),
+    ]);
+
+    fixture.outcomes.set(secondaryContextId, satisfied());
+    await expect(
+      createDeliveryGate(fixture.deps).evaluate(gateInput()),
+    ).resolves.toMatchObject({ status: "pass" });
+    await createDeliveryGate(fixture.deps).evaluate(gateInput());
+
+    expect(fixture.verdicts).toEqual([
+      expect.objectContaining({ criterionElementId: CRITERION_ID }),
+      expect.objectContaining({ criterionElementId: secondaryCriterionId }),
     ]);
   });
 
